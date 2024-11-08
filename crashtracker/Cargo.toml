@@ -25,23 +25,23 @@ receiver = []
 
 [target.'cfg(unix)'.dependencies]
 # Should be kept in sync with the libdatadog symbolizer crate (also using blasesym)
-blazesym = { git = "https://github.com/libbpf/blazesym.git", rev = "v0.2.0-rc.0" }
+blazesym = "0.2.0-rc.0"
 
 [dependencies]
 anyhow = "1.0"
-backtrace = "0.3.69"
+backtrace = "0.3.74"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock", "serde"]}
 ddcommon = {path = "../ddcommon"}
-hyper = {version = "0.14", features = ["client"], default-features = false}
+hyper = {version = "0.14", features = ["client", "backports", "deprecated"], default-features = false}
 libc = "0.2"
-nix = { version = "0.27.1", features = ["signal"] }
+nix = { version = "0.27.1", features = ["poll", "signal", "socket"] }
 os_info = "3.7.0"
 page_size = "0.6.0"
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
 uuid = { version = "1.4.1", features = ["v4", "serde"] }
 ddtelemetry = {path = "../ddtelemetry"}
-tokio = { version = "1.23", features = ["rt", "macros"] }
+tokio = { version = "1.23", features = ["rt", "macros", "io-std", "io-util"] }
 http = "0.2"
 portable-atomic = { version = "1.6.0", features = ["serde"] }
 rand = "0.8.5"

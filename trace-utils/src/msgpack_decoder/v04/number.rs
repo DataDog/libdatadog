@@ -4,6 +4,7 @@
 use super::error::DecodeError;
 use rmp::{decode::RmpRead, Marker};
 use std::fmt;
+use tinybytes::Bytes;
 
 #[derive(Debug, PartialEq)]
 pub enum Number {
@@ -187,6 +188,12 @@ pub fn read_number(buf: &mut &[u8]) -> Result<Number, DecodeError> {
         )),
         _ => Err(DecodeError::InvalidType("Invalid number type".to_owned())),
     }
+}
+
+pub fn read_number_bytes<T: TryFrom<Number, Error = DecodeError>>(
+    buf: &mut Bytes,
+) -> Result<T, DecodeError> {
+    read_number(unsafe { buf.as_mut_slice() })?.try_into()
 }
 
 #[cfg(test)]

@@ -25,15 +25,16 @@ crashtracker-ffi = ["dep:datadog-crashtracker-ffi"]
 crashtracker-collector = ["crashtracker-ffi", "datadog-crashtracker-ffi/collector"]
 # Enables the use of this library to receiver crash-info from a suitable collector
 crashtracker-receiver = ["crashtracker-ffi", "datadog-crashtracker-ffi/receiver"]
+demangler = ["crashtracker-ffi", "datadog-crashtracker-ffi/demangler"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow = "1.0"
-datadog-crashtracker-ffi = { path = "../crashtracker-ffi", default-features = false, optional = true} 
+datadog-crashtracker-ffi = { path = "../crashtracker-ffi", default-features = false, optional = true}
 datadog-profiling = { path = "../profiling" }
-hyper = { version = "0.14", default-features = false }
+hyper = { version = "0.14", features = ["backports", "deprecated"], default-features = false }
 ddcommon = { path = "../ddcommon"}
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }

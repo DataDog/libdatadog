@@ -7,6 +7,10 @@ component_management:
       name: crashtracker  # this is a display name, and can be changed freely
       paths:
         - crashtracker
+    - component_id: crashtracker-ffi  # this is an identifier that should not be changed
+      name: crashtracker-ffi  # this is a display name, and can be changed freely
+      paths:
+        - crashtracker-ffi
     - component_id: datadog-alloc  # this is an identifier that should not be changed
       name: datadog-alloc  # this is a display name, and can be changed freely
       paths:
@@ -31,6 +35,18 @@ component_management:
       name: ddtelemetry  # this is a display name, and can be changed freely
       paths:
         - ddtelemetry
+    - component_id: ddtelemetry-ffi  # this is an identifier that should not be changed
+      name: ddtelemetry-ffi  # this is a display name, and can be changed freely
+      paths:
+        - ddtelemetry-ffi
+    - component_id: dogstatsd  # this is an identifier that should not be changed
+      name: dogstatsd  # this is a display name, and can be changed freely
+      paths:
+        - dogstatsd
+    - component_id: dogstatsd-client  # this is an identifier that should not be changed
+      name: dogstatsd-client  # this is a display name, and can be changed freely
+      paths:
+        - dogstatsd-client
     - component_id: ipc  # this is an identifier that should not be changed
       name: ipc  # this is a display name, and can be changed freely
       paths:
@@ -59,6 +75,10 @@ component_management:
       name: spawn-worker  # this is a display name, and can be changed freely
       paths:
         - spawn_worker
+    - component_id: tinybytes  # this is an identifier that should not be changed
+      name: tinybytes  # this is a display name, and can be changed freely
+      paths:
+        - tinybytes
     - component_id: trace-mini-agent  # this is an identifier that should not be changed
       name: trace-mini-agent  # this is a display name, and can be changed freely
       paths:

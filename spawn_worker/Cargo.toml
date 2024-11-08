@@ -9,6 +9,7 @@ bench = false
 [dependencies]
 anyhow = { version = "1.0" }
 io-lifetimes = { version = "1.0" }
+fastrand = "2.0.1"
 
 [build-dependencies]
 cc_utils = {path = "../tools/cc_utils"}
@@ -22,16 +23,15 @@ features = [
   "Win32_System_Diagnostics_Debug",
   "Win32_System_Kernel",
 ]
-version = "0.48"
+version = "0.51.1"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "=0.2.8" }
 kernel32-sys = "0.2.2"
-fastrand = "2.0.1"
 
 [target.'cfg(not(windows))'.dependencies]
 memfd = { version = "0.6" }
-nix = { version = "0.24" }
+nix = { version = "0.27.1", features = ["dir", "process"] }
 tempfile = { version = "3.3" }
 
 [target.'cfg(windows)'.dev-dependencies]

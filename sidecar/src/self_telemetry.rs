@@ -252,7 +252,7 @@ impl SelfTelemetry {
                 MetricNamespace::Tracers,
             ),
             trace_api_bytes: worker.register_metric_context(
-                "trace_api_bytes".to_string(),
+                "trace_api.bytes".to_string(),
                 vec![],
                 MetricType::Distribution,
                 true,

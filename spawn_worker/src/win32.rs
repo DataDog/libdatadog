@@ -1,7 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use anyhow::Context;
 use kernel32::{CreateFileA, WaitForSingleObject};
 use std::ffi::{c_void, OsStr, OsString};
 use std::fs::{File, OpenOptions};
@@ -108,7 +107,8 @@ impl From<&File> for Stdio {
                     0,
                     true,
                     DUPLICATE_SAME_ACCESS,
-                );
+                )
+                .unwrap();
                 ret.0 as RawHandle
             })
         })
@@ -231,6 +231,7 @@ impl SpawnWorker {
         }
     }
 
+    #[allow(clippy::manual_c_str_literals)] // c"NUL" from 1.77 and up
     fn open_null(read: bool) -> HANDLE {
         let mut sa = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as DWORD,
@@ -308,7 +309,7 @@ impl SpawnWorker {
         inherited_handles.push(stderr);
 
         let mut size: usize = 0;
-        unsafe {
+        let _ = unsafe {
             InitializeProcThreadAttributeList(
                 LPPROC_THREAD_ATTRIBUTE_LIST(null_mut()),
                 1,
@@ -319,7 +320,7 @@ impl SpawnWorker {
         let mut attribute_list_vec: Vec<u8> = Vec::with_capacity(size);
         let attribute_list =
             LPPROC_THREAD_ATTRIBUTE_LIST(attribute_list_vec.as_mut_ptr() as *mut c_void);
-        unsafe { InitializeProcThreadAttributeList(attribute_list, 1, 0, &mut size) };
+        unsafe { InitializeProcThreadAttributeList(attribute_list, 1, 0, &mut size).unwrap() };
         unsafe {
             UpdateProcThreadAttribute(
                 attribute_list,
@@ -330,7 +331,8 @@ impl SpawnWorker {
                 None,
                 None,
             )
-        };
+        }
+        .unwrap();
 
         let mut pi = Self::zeroed_process_information();
         let mut si = STARTUPINFOEXW {
@@ -371,7 +373,7 @@ impl SpawnWorker {
         program.extend(path.as_os_str().encode_wide());
         program.push(0);
 
-        if unsafe {
+        unsafe {
             CreateProcessW(
                 PCWSTR(program.as_ptr()),
                 PWSTR(cmd.as_mut_ptr()),
@@ -389,14 +391,14 @@ impl SpawnWorker {
                 &mut pi,
             )
         }
-        .0 == 0
-        {
-            return Err(io::Error::last_os_error()).context(format!(
+        .map_err(|e| {
+            let e: anyhow::Error = e.into();
+            e.context(format!(
                 "Tried to spawn {} with args {}",
                 path.display(),
                 args.join(", ")
-            ));
-        }
+            ))
+        })?;
 
         unsafe {
             Ok(Child {
@@ -420,11 +422,8 @@ fn get_module_file_name(h: HMODULE) -> anyhow::Result<String> {
     loop {
         let read: usize = unsafe { GetModuleFileNameW(h, &mut buf) } as usize;
         if read == 0 {
-            return Err(unsafe { GetLastError() }
-                .ok()
-                .err()
-                .map(|e| e.into())
-                .unwrap_or_else(|| anyhow::anyhow!("unknown error getting module name")));
+            unsafe { GetLastError() }?;
+            anyhow::bail!("unknown error getting module name");
         }
 
         if read == buf.len() {
@@ -443,8 +442,7 @@ pub fn get_trampoline_target_data(f: *const u8) -> anyhow::Result<String> {
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
             PCSTR::from_raw(f),
             &mut h as *mut HMODULE,
-        )
-        .ok()?
+        )?
     };
 
     get_module_file_name(h)
@@ -460,12 +458,10 @@ impl Child {
         unsafe {
             let res = WaitForSingleObject(self.handle.as_raw_handle(), INFINITE);
             let mut status = 0;
-            if res != WAIT_OBJECT_0
-                || GetExitCodeProcess(HANDLE(self.handle.as_raw_handle() as isize), &mut status).0
-                    == 0
-            {
+            if res != WAIT_OBJECT_0 {
                 return Err(io::Error::last_os_error());
             }
+            GetExitCodeProcess(HANDLE(self.handle.as_raw_handle() as isize), &mut status)?;
             Ok(ExitStatus::from_raw(status))
         }
     }

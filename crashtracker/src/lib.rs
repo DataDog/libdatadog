@@ -9,26 +9,24 @@
 //!    associated with a crash, and and collects information about the state of
 //!    the program at crash time.  The signal handler runs under a constrained
 //!    environment where many standard operations are illegal.
-//!    https://man7.org/linux/man-pages/man7/signal-safety.7.html
-//!    In particular, memory allocation, and synchronization such as mutexes are
+//!    <https://man7.org/linux/man-pages/man7/signal-safety.7.html>
+//!    In particular, memory allocation, and synchronization such as mutexes, are
 //!    potentially UB.  The signal handler therefore does as little as possible
-//!    in process, and instead writes data across a pipe to a separate receiver
+//!    in process, and instead writes data across a socket to a separate receiver
 //!    process.
-//!    The signal handler then restores the previous signal handler, and waits
-//!    for the receiver process to exit.  Keeping the crashing process alive
-//!    until the receiver has completed increases the chances that the container
-//!    will survive long enough to upload the report; otherwise, there is a
-//!    chance that the container will be killed when the crashing process dies
-//!    and no telemetry will get out.
+//!    The signal handler then waits for the receiver process to exit in order to reap its exit
+//!    status (otherwise, upon the termination of the crashing process the child will be
+//!    re-parented to PID 1 in the current PID namespace, which can be problematic for some user
+//!    applications) and restores the previous signal handler.
 //!    Once the receiver has completed, the crash-handler returns, allowing the
 //!    previous crash handler (if any) to execute, maintaining the customer
 //!    experience as much as possible.
-//! 2. The receiver process runs in the background, listening on `stdin`, which is connected by a
-//!    pipe to the parent process.  When a crash occurs, the receiver gathers the information from
-//!    the pipe, adds additional data about the system state (e.g. /proc/cpuinfo and /proc/meminfo),
-//!    formats it into a crash report, uploads it to the backend, and then exits. The receiver also
-//!    exits if the pipe is closed without a crash report, to avoid leaving a zombie process if the
-//!    parent exits normally.
+//! 2. The receiver process, which is spawned by the signal handler.  It is connected by an
+//!    anynomous AF_UNIX `socketpair()` to the parent process. When a crash occurs, the receiver
+//!    gathers the information from the pipe, adds additional data about the system state (e.g.
+//!    /proc/cpuinfo and /proc/meminfo), formats it into a crash report, uploads it to the backend,
+//!    and then exits. The signal handler must wait for the receiver in order to reap its exit
+//!    status.
 //!
 //! Data collected:
 //! 1. The data collected by the crash-handler includes:
@@ -56,15 +54,18 @@ mod shared;
 
 #[cfg(all(unix, feature = "collector"))]
 pub use collector::{
-    begin_op, clear_spans, clear_traces, end_op, init_with_receiver, init_with_unix_socket,
-    insert_span, insert_trace, on_fork, remove_span, remove_trace, reset_counters,
-    shutdown_crash_handler, update_config, update_metadata, OpTypes,
+    begin_op, clear_spans, clear_traces, end_op, init, insert_span, insert_trace, on_fork,
+    remove_span, remove_trace, reset_counters, shutdown_crash_handler, update_config,
+    update_metadata, OpTypes,
 };
 
 pub use crash_info::*;
 
 #[cfg(all(unix, feature = "receiver"))]
-pub use receiver::{receiver_entry_point_stdin, reciever_entry_point_unix_socket};
+pub use receiver::{
+    async_receiver_entry_point_unix_socket, receiver_entry_point_stdin,
+    receiver_entry_point_unix_socket,
+};
 
 #[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
 pub use shared::configuration::{

@@ -5,6 +5,8 @@ pub mod retry_strategy;
 pub mod send_data_result;
 
 pub use crate::send_data::retry_strategy::{RetryBackoffType, RetryStrategy};
+#[cfg(feature = "proxy")]
+use ddcommon::connector::Connector;
 
 use crate::trace_utils::{SendDataResult, TracerHeaderTags};
 use crate::tracer_payload::TracerPayloadCollection;
@@ -16,6 +18,8 @@ use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hyper::header::HeaderValue;
 use hyper::{Body, Client, HeaderMap, Method, Response};
+#[cfg(feature = "proxy")]
+use hyper_proxy::{Intercept, Proxy, ProxyConnector};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -67,6 +71,13 @@ pub(crate) enum RequestResult {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(feature = "proxy")]
+pub enum ClientWrapper {
+    Direct(Client<Connector>),
+    Proxy(Client<ProxyConnector<Connector>>),
+}
+
+#[derive(Debug, Clone)]
 /// `SendData` is a structure that holds the data to be sent to a target endpoint.
 /// It includes the payloads to be sent, the size of the data, the target endpoint,
 /// headers for the request, and a retry strategy for sending the data.
@@ -91,7 +102,7 @@ pub(crate) enum RequestResult {
 ///     let tracer_header_tags = TracerHeaderTags::default(); // Replace with actual header tags
 ///     let target = Endpoint::default(); // Replace with actual endpoint
 ///
-///     let mut send_data = SendData::new(size, tracer_payload, tracer_header_tags, &target);
+///     let mut send_data = SendData::new(size, tracer_payload, tracer_header_tags, &target, None);
 ///
 ///     // Set a custom retry strategy
 ///     let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
@@ -108,6 +119,22 @@ pub struct SendData {
     target: Endpoint,
     headers: HashMap<&'static str, String>,
     retry_strategy: RetryStrategy,
+    #[cfg(feature = "proxy")]
+    client: ClientWrapper,
+}
+
+#[cfg(feature = "proxy")]
+pub fn build_client(http_proxy: Option<String>) -> ClientWrapper {
+    let builder = Client::builder();
+
+    if let Some(proxy) = http_proxy {
+        let proxy = Proxy::new(Intercept::Https, proxy.parse().unwrap());
+        let proxy_connector =
+            ProxyConnector::from_proxy(connector::Connector::default(), proxy).unwrap();
+        ClientWrapper::Proxy(builder.build(proxy_connector))
+    } else {
+        ClientWrapper::Direct(builder.build(connector::Connector::default()))
+    }
 }
 
 impl SendData {
@@ -123,17 +150,25 @@ impl SendData {
     /// # Returns
     ///
     /// A new `SendData` instance.
+    #[allow(unused_variables)]
     pub fn new(
         size: usize,
         tracer_payload: TracerPayloadCollection,
         tracer_header_tags: TracerHeaderTags,
         target: &Endpoint,
+        http_proxy: Option<String>,
     ) -> SendData {
-        let headers = if let Some(api_key) = &target.api_key {
+        let mut headers = if let Some(api_key) = &target.api_key {
             HashMap::from([(DD_API_KEY, api_key.as_ref().to_string())])
         } else {
             tracer_header_tags.into()
         };
+        if let Some(token) = &target.test_token {
+            headers.insert("x-datadog-test-session-token", token.to_string());
+        }
+
+        #[cfg(feature = "proxy")]
+        let client = build_client(http_proxy);
 
         SendData {
             tracer_payloads: tracer_payload,
@@ -141,6 +176,8 @@ impl SendData {
             target: target.clone(),
             headers,
             retry_strategy: RetryStrategy::default(),
+            #[cfg(feature = "proxy")]
+            client,
         }
     }
 
@@ -214,6 +251,12 @@ impl SendData {
 
         match tokio::time::timeout(
             Duration::from_millis(self.target.timeout_ms),
+            #[cfg(feature = "proxy")]
+            match &self.client {
+                ClientWrapper::Direct(client) => client.request(req),
+                ClientWrapper::Proxy(client) => client.request(req),
+            },
+            #[cfg(not(feature = "proxy"))]
             Client::builder()
                 .build(connector::Connector::default())
                 .request(req),
@@ -462,7 +505,7 @@ mod tests {
     use super::*;
     use crate::send_data::retry_strategy::RetryBackoffType;
     use crate::send_data::retry_strategy::RetryStrategy;
-    use crate::test_utils::{create_send_data, create_test_span, poll_for_mock_hit};
+    use crate::test_utils::{create_send_data, create_test_no_alloc_span, poll_for_mock_hit};
     use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, RootSpanTags};
     use crate::tracer_header_tags::TracerHeaderTags;
     use datadog_trace_protobuf::pb::Span;
@@ -481,6 +524,8 @@ mod tests {
         container_id: "id",
         client_computed_top_level: false,
         client_computed_stats: false,
+        dropped_p0_traces: 0,
+        dropped_p0_spans: 0,
     };
 
     fn setup_payload(header_tags: &TracerHeaderTags) -> TracerPayload {
@@ -564,7 +609,9 @@ mod tests {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
                 url: "/foo/bar?baz".parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
+            None,
         );
 
         assert_eq!(data.size, 100);
@@ -588,7 +635,9 @@ mod tests {
                 api_key: None,
                 url: "/foo/bar?baz".parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
+            None,
         );
 
         assert_eq!(data.size, 100);
@@ -625,7 +674,9 @@ mod tests {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
+            None,
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
@@ -668,7 +719,9 @@ mod tests {
                 api_key: Some(std::borrow::Cow::Borrowed("TEST-KEY")),
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
+            None,
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
@@ -703,7 +756,10 @@ mod tests {
                         header_tags.lang_interpreter,
                     )
                     .header("datadog-meta-lang-version", header_tags.lang_version)
-                    .header("datadog-meta-lang-vendor", header_tags.lang_vendor)
+                    .header(
+                        "datadog-meta-lang-interpreter-vendor",
+                        header_tags.lang_vendor,
+                    )
                     .header("datadog-meta-tracer-version", header_tags.tracer_version)
                     .header("datadog-container-id", header_tags.container_id)
                     .path("/");
@@ -722,7 +778,9 @@ mod tests {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
+            None,
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
@@ -757,7 +815,10 @@ mod tests {
                         header_tags.lang_interpreter,
                     )
                     .header("datadog-meta-lang-version", header_tags.lang_version)
-                    .header("datadog-meta-lang-vendor", header_tags.lang_vendor)
+                    .header(
+                        "datadog-meta-lang-interpreter-vendor",
+                        header_tags.lang_vendor,
+                    )
                     .header("datadog-meta-tracer-version", header_tags.tracer_version)
                     .header("datadog-container-id", header_tags.container_id)
                     .path("/");
@@ -767,7 +828,7 @@ mod tests {
 
         let header_tags = HEADER_TAGS;
 
-        let trace = vec![create_test_span(1234, 12342, 12341, 1, false)];
+        let trace = vec![create_test_no_alloc_span(1234, 12342, 12341, 1, false)];
         let data = SendData::new(
             100,
             TracerPayloadCollection::V04(vec![trace.clone()]),
@@ -776,7 +837,9 @@ mod tests {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
+            None,
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
@@ -819,7 +882,9 @@ mod tests {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
+            None,
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
@@ -860,7 +925,9 @@ mod tests {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
+            None,
         );
 
         let res = data.send().await;
@@ -890,7 +957,9 @@ mod tests {
                 api_key: None,
                 url: "http://127.0.0.1:4321/".parse::<hyper::Uri>().unwrap(),
                 timeout_ms: ONE_SECOND,
+                ..Endpoint::default()
             },
+            None,
         );
 
         let res = data.send().await;
@@ -934,7 +1003,10 @@ mod tests {
                         header_tags.lang_interpreter,
                     )
                     .header("datadog-meta-lang-version", header_tags.lang_version)
-                    .header("datadog-meta-lang-vendor", header_tags.lang_vendor)
+                    .header(
+                        "datadog-meta-lang-interpreter-vendor",
+                        header_tags.lang_vendor,
+                    )
                     .header("datadog-meta-tracer-version", header_tags.tracer_version)
                     .header("datadog-container-id", header_tags.container_id)
                     .path("/");
@@ -944,7 +1016,7 @@ mod tests {
 
         let header_tags = HEADER_TAGS;
 
-        let trace = vec![create_test_span(1234, 12342, 12341, 1, false)];
+        let trace = vec![create_test_no_alloc_span(1234, 12342, 12341, 1, false)];
         let data = SendData::new(
             100,
             TracerPayloadCollection::V04(vec![trace.clone(), trace.clone()]),
@@ -953,7 +1025,9 @@ mod tests {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: 200,
+                ..Endpoint::default()
             },
+            None,
         );
 
         let res = data.send().await;
@@ -994,7 +1068,9 @@ mod tests {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
                 timeout_ms: 200,
+                ..Endpoint::default()
             },
+            None,
         );
 
         let res = data.send().await;

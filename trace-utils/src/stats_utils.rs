@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use flate2::{write::GzEncoder, Compression};
+use hyper::body::HttpBody;
 use hyper::{body::Buf, Body, Client, Method, Request, StatusCode};
 use log::debug;
 use std::io::Write;
@@ -11,7 +12,7 @@ use ddcommon::connector::Connector;
 use ddcommon::Endpoint;
 
 pub async fn get_stats_from_request_body(body: Body) -> anyhow::Result<pb::ClientStatsPayload> {
-    let buffer = hyper::body::aggregate(body).await?;
+    let buffer = body.collect().await?.aggregate();
 
     let client_stats_payload: pb::ClientStatsPayload = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
@@ -64,7 +65,7 @@ pub async fn send_stats_payload(
     match client.request(req).await {
         Ok(response) => {
             if response.status() != StatusCode::ACCEPTED {
-                let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+                let body_bytes = response.into_body().collect().await?.to_bytes();
                 let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
                 anyhow::bail!("Server did not accept trace stats: {response_body}");
             }

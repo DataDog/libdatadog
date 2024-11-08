@@ -1,0 +1,15 @@
+FROM ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main-centos
+
+# CentOS 7 is EOL
+# Find and replace mirror.centos.org with vault.centos.org
+# Remove the # sign at the beginning of lines containing baseurl=http to enable baseurl usage instead of disabling it
+# Add a # sign to the beginning of lines containing mirrorlist=http to disable the use of mirrorlist
+RUN sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo \
+    && sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/*.repo \
+    && sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/*.repo
+
+RUN yum update -y \
+    && yum install -y unzip
+
+COPY ./scripts/install-protoc.sh .
+RUN chmod +x ./install-protoc.sh && ./install-protoc.sh usr/local

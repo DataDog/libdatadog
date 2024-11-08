@@ -45,9 +45,18 @@ int main(int argc, char *argv[]) {
 
 #ifndef _WIN32
     void **handles = NULL;
+#ifdef __GLIBC__
+    void *librt_handle = NULL;
+#endif
 
     if (additional_shared_libraries_args > 0) {
       handles = calloc(additional_shared_libraries_args, sizeof(void *));
+
+#ifdef __GLIBC__
+      // appsec needs librt for shm_open, but doesn't declare needing it for compat with musl.
+      // RTDL_LAZY has no effect because of the elf flag BIND_NOW
+      librt_handle = dlopen("librt.so.1", RTLD_LAZY | RTLD_GLOBAL);
+#endif
     }
 
     int additional_shared_libraries_count = 0;
@@ -58,6 +67,16 @@ int main(int argc, char *argv[]) {
           unlink_next = true;
           continue;
       }
+#ifndef _WIN32
+      char buf[30];
+      // Redirect the symlinked /proc/self/X to the actual /proc/<pid>/X - as otherwise debugging tooling may try to read it
+      // And reading /proc/self from the debugging tooling will usually lead to it reading from itself, which may be flatly wrong
+      // E.g. gdb will just hang up for e.g. /proc/self/fd/4, which is an open pipe...
+      if (strncmp(lib_path, "/proc/self/", strlen("/proc/self/")) == 0 && strlen(lib_path) < 20) {
+        sprintf(buf, "/proc/%d/%s", getpid(), lib_path + strlen("/proc/self/"));
+        lib_path = buf;
+      }
+#endif
       if (!(handles[additional_shared_libraries_count++] = dlopen(lib_path, RTLD_LAZY | RTLD_GLOBAL))) {
           fputs(dlerror(), error_fd());
           return 9;
@@ -68,7 +87,7 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    void *handle = dlopen(library_path, RTLD_LAZY);
+    void *handle = dlopen(library_path, RTLD_LAZY | RTLD_GLOBAL);
     if (!handle) {
       fputs(dlerror(), error_fd());
       return 10;
@@ -93,6 +112,11 @@ int main(int argc, char *argv[]) {
       }
       free(handles);
     }
+#ifdef __GLIBC__
+    if (librt_handle) {
+      dlclose(librt_handle);
+    }
+#endif
 #else
     for (int i = 0; i < additional_shared_libraries_args; i++) {
         const char *lib_path = argv[3 + i];

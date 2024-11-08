@@ -8,7 +8,7 @@ use ddcommon_ffi::{
     slice::{AsBytes, ByteSlice},
     CharSlice, MaybeError,
 };
-use std::{ffi::c_char, ptr::NonNull};
+use std::{ffi::c_char, ptr::NonNull, time::Duration};
 
 /// Create a new TraceExporter instance.
 ///
@@ -20,6 +20,10 @@ use std::{ffi::c_char, ptr::NonNull};
 /// * `language` - The language of the client library.
 /// * `language_version` - The version of the language of the client library.
 /// * `language_interpreter` - The interpreter of the language of the client library.
+/// * `hostname` - The hostname of the application, used for stats aggregation
+/// * `env` - The environment of the application, used for stats aggregation
+/// * `version` - The version of the application, used for stats aggregation
+/// * `service` - The service name of the application, used for stats aggregation
 /// * `input_format` - The input format of the traces. Setting this to Proxy will send the trace
 ///   data to the Datadog Agent as is.
 /// * `output_format` - The output format of the traces to send to the Datadog Agent. If using the
@@ -35,25 +39,38 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
     language: CharSlice,
     language_version: CharSlice,
     language_interpreter: CharSlice,
+    hostname: CharSlice,
+    env: CharSlice,
+    version: CharSlice,
+    service: CharSlice,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
+    compute_stats: bool,
     agent_response_callback: extern "C" fn(*const c_char),
 ) -> MaybeError {
     let callback_wrapper = ResponseCallbackWrapper {
         response_callback: agent_response_callback,
     };
     // TODO - handle errors - https://datadoghq.atlassian.net/browse/APMSP-1095
-    let exporter = TraceExporter::builder()
+    let mut builder = TraceExporter::builder()
         .set_url(url.to_utf8_lossy().as_ref())
         .set_tracer_version(tracer_version.to_utf8_lossy().as_ref())
         .set_language(language.to_utf8_lossy().as_ref())
         .set_language_version(language_version.to_utf8_lossy().as_ref())
         .set_language_interpreter(language_interpreter.to_utf8_lossy().as_ref())
+        .set_hostname(hostname.to_utf8_lossy().as_ref())
+        .set_env(env.to_utf8_lossy().as_ref())
+        .set_app_version(version.to_utf8_lossy().as_ref())
+        .set_service(service.to_utf8_lossy().as_ref())
         .set_input_format(input_format)
         .set_output_format(output_format)
-        .set_response_callback(Box::new(callback_wrapper))
-        .build()
-        .unwrap();
+        .set_response_callback(Box::new(callback_wrapper));
+    if compute_stats {
+        builder = builder.enable_stats(Duration::from_secs(10))
+        // TODO: APMSP-1317 Enable peer tags aggregation and stats by span_kind based on agent
+        // configuration
+    }
+    let exporter = builder.build().unwrap();
     out_handle.as_ptr().write(Box::new(exporter));
     MaybeError::None
 }

@@ -119,6 +119,10 @@ impl Default for SharedDirLiaison {
 }
 
 #[cfg(target_os = "linux")]
+// Important note:
+// Never put any runtime data which both the sidecar and the client processes must see onto disk.
+// In particular, when using different mount namespaces, but a shared network namespace, the
+// processes don't necessarily see the same things.
 mod linux {
     use std::{io, os::unix::net::UnixListener, path::PathBuf};
 

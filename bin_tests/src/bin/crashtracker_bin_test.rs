@@ -12,14 +12,17 @@ fn main() -> anyhow::Result<()> {
 #[cfg(unix)]
 mod unix {
     use anyhow::Context;
-    use bin_tests::ReceiverType;
-    use std::{env, fs::File, str::FromStr};
+    use bin_tests::modes::behavior::get_behavior;
+    use std::env;
+    use std::path::Path;
 
     use datadog_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerMetadata,
         CrashtrackerReceiverConfig,
     };
     use ddcommon::{tag, Endpoint};
+
+    const TEST_COLLECTOR_TIMEOUT_MS: u32 = 10_000;
 
     #[inline(never)]
     unsafe fn deref_ptr(p: *mut u8) {
@@ -28,16 +31,15 @@ mod unix {
 
     pub fn main() -> anyhow::Result<()> {
         let mut args = env::args().skip(1);
-        let mode = args.next().context("Unexpected number of arguments")?;
         let output_url = args.next().context("Unexpected number of arguments")?;
         let receiver_binary = args.next().context("Unexpected number of arguments")?;
-        let unix_socket_reciever_binary = args.next().context("Unexpected number of arguments")?;
-        let stderr_filename = args.next().context("Unexpected number of arguments")?;
-        let stdout_filename = args.next().context("Unexpected number of arguments")?;
-        let socket_path = args.next().context("Unexpected number of arguments")?;
+        let output_dir = args.next().context("Unexpected number of arguments")?;
+        let mode_str = args.next().context("Unexpected number of arguments")?;
         anyhow::ensure!(args.next().is_none(), "unexpected extra arguments");
 
-        let wait_for_receiver = true;
+        let stderr_filename = format!("{output_dir}/out.stderr");
+        let stdout_filename = format!("{output_dir}/out.stdout");
+        let output_dir: &Path = output_dir.as_ref();
 
         let endpoint = if output_url.is_empty() {
             None
@@ -45,12 +47,16 @@ mod unix {
             Some(Endpoint::from_slice(&output_url))
         };
 
-        let config = CrashtrackerConfiguration {
+        // The configuration can be modified by a Behavior (testing plan), so it is mut here.
+        // Unlike a normal harness, in this harness tests are run in individual processes, so race
+        // issues are avoided.
+        let mut config = CrashtrackerConfiguration {
             additional_files: vec![],
             create_alt_stack: true,
+            use_alt_stack: true,
             resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
             endpoint,
-            wait_for_receiver,
+            timeout_ms: TEST_COLLECTOR_TIMEOUT_MS,
         };
 
         let metadata = CrashtrackerMetadata {
@@ -64,44 +70,33 @@ mod unix {
                 tag!("language", "native"),
             ],
         };
-        match ReceiverType::from_str(&mode)? {
-            ReceiverType::ChildProcessStdin => {
-                crashtracker::init_with_receiver(
-                    config,
-                    CrashtrackerReceiverConfig::new(
-                        vec![],
-                        env::vars().collect(),
-                        receiver_binary,
-                        Some(stderr_filename),
-                        Some(stdout_filename),
-                    )?,
-                    metadata,
-                )?;
-            }
-            ReceiverType::UnixSocket => {
-                // Fork a unix socket receiver
-                // For now, this exits when a single message is received.
-                // When the listener is updated, we'll need to keep the handle and kill the receiver
-                // to avoid leaking a process.
-                std::process::Command::new(unix_socket_reciever_binary)
-                    .stderr(File::create(stderr_filename)?)
-                    .stdout(File::create(stdout_filename)?)
-                    .arg(&socket_path)
-                    .spawn()
-                    .context("failed to spawn unix receiver")?;
 
-                // Wait long enough for the receiver to establish the socket
-                std::thread::sleep(std::time::Duration::from_secs(1));
+        // Set the behavior of the test, run setup, and do the pre-init test
+        let behavior = get_behavior(&mode_str);
+        behavior.setup(output_dir, &mut config)?;
+        behavior.pre(output_dir)?;
 
-                crashtracker::init_with_unix_socket(config, &socket_path, metadata)?;
-            }
-        }
+        crashtracker::init(
+            config,
+            CrashtrackerReceiverConfig::new(
+                vec![],
+                env::vars().collect(),
+                receiver_binary,
+                Some(stderr_filename),
+                Some(stdout_filename),
+            )?,
+            metadata,
+        )?;
+
+        // Conduct the post-init test
+        behavior.post(output_dir)?;
 
         crashtracker::begin_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
         unsafe {
             deref_ptr(std::ptr::null_mut::<u8>());
         }
         crashtracker::end_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
+
         Ok(())
     }
 }

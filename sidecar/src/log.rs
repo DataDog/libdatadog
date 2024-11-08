@@ -129,7 +129,7 @@ where
     map: &'a TemporarilyRetainedMap<K, V>,
 }
 
-impl<'a, K, V> Drop for TemporarilyRetainedMapGuard<'a, K, V>
+impl<K, V> Drop for TemporarilyRetainedMapGuard<'_, K, V>
 where
     K: TemporarilyRetainedKeyParser<V> + Clone + Eq + Hash,
 {
@@ -381,7 +381,11 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
         MULTI_LOG_FILTER.add(env); // this also immediately drops it, but will retain it for few
                                    // seconds during startup
     }
-    MULTI_LOG_WRITER.add(config::Config::get().log_method); // same than MULTI_LOG_FILTER
+    let config = config::Config::get();
+    if !config.log_level.is_empty() {
+        MULTI_LOG_FILTER.add(config.log_level.clone());
+    }
+    MULTI_LOG_WRITER.add(config.log_method); // same than MULTI_LOG_FILTER
 
     LogTracer::init()?;
 

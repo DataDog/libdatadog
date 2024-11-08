@@ -4,6 +4,7 @@
 [workspace]
 members = [
   "alloc",
+  "builder",
   "crashtracker",
   "crashtracker-ffi",
   "profiling",
@@ -13,9 +14,13 @@ members = [
   "ddcommon-ffi",
   "ddtelemetry",
   "ddtelemetry-ffi",
+  "dogstatsd",
   "tools",
   "ipc",
   "ipc/macros",
+  "live-debugger",
+  "live-debugger-ffi",
+  "remote-config",
   "sidecar",
   "sidecar/macros",
   "sidecar-ffi",
@@ -31,7 +36,10 @@ members = [
   "data-pipeline",
   "data-pipeline-ffi",
   "ddsketch",
+  "tinybytes",
+  "dogstatsd-client",
 ]
+
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
 resolver = "2"
 
@@ -39,9 +47,9 @@ resolver = "2"
 # serverless packages wanted to maintain their own version numbers. Some of
 # their depenencies also remain under their own versioning.
 [workspace.package]
-rust-version = "1.71.1"
+rust-version = "1.76.0"
 edition = "2021"
-version = "12.0.0"
+version = "14.1.0"
 license = "Apache-2.0"
 
 [profile.dev]
@@ -62,3 +70,9 @@ inherits = "dev"
 opt-level = 3
 incremental = false
 codegen-units = 1
+
+[patch.crates-io]
+# proptest pulls in a dependency on libm, which changes the runtime of some math functions
+# so benchmarks are not measuring the same thing as the release build. This patch removes
+# the default dependency on libm. A PR will be opened to proptest to make this optional.
+proptest = { git = 'https://github.com/bantonsson/proptest.git', branch = "ban/avoid-libm-in-std"}

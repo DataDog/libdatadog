@@ -103,7 +103,7 @@ pub struct Label<'a> {
     pub num_unit: Option<&'a str>,
 }
 
-impl<'a> Label<'a> {
+impl Label<'_> {
     pub fn uses_at_most_one_of_str_and_num(&self) -> bool {
         self.str.is_none() || (self.num == 0 && self.num_unit.is_none())
     }

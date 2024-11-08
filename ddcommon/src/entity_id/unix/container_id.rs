@@ -51,6 +51,7 @@ mod tests {
     use super::*;
     use maplit::hashmap;
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_container_id_line_parsing() {
         let test_lines = hashmap! {
@@ -92,6 +93,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_container_id_file_parsing() {
         let test_root_dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests"));

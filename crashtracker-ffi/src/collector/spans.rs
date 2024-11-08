@@ -52,7 +52,7 @@ pub unsafe extern "C" fn ddog_crasht_clear_trace_ids() -> Result {
 ///
 /// Note: 128 bit ints in FFI were not stabilized until Rust 1.77
 /// https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
-/// We're currently locked into 1.71, have to do an ugly workaround involving 2 64 bit ints
+/// We're currently locked into 1.76.0, have to do an ugly workaround involving 2 64 bit ints
 /// until we can upgrade.
 ///
 /// # Safety
@@ -80,9 +80,8 @@ pub unsafe extern "C" fn ddog_crasht_insert_trace_id(id_high: u64, id_low: u64) 
 ///
 /// Note: 128 bit ints in FFI were not stabilized until Rust 1.77
 /// https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
-/// We're currently locked into 1.71, have to do an ugly workaround involving 2 64 bit ints
+/// We're currently locked into 1.76.0, have to do an ugly workaround involving 2 64 bit ints
 /// until we can upgrade.
-
 ///
 /// # Safety
 /// No safety concerns.
@@ -110,7 +109,7 @@ pub unsafe extern "C" fn ddog_crasht_insert_span_id(id_high: u64, id_low: u64) -
 ///
 /// Note: 128 bit ints in FFI were not stabilized until Rust 1.77
 /// https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
-/// We're currently locked into 1.71, have to do an ugly workaround involving 2 64 bit ints
+/// We're currently locked into 1.76.0, have to do an ugly workaround involving 2 64 bit ints
 /// until we can upgrade.
 ///
 /// # Safety
@@ -143,7 +142,7 @@ pub unsafe extern "C" fn ddog_crasht_remove_span_id(
 ///
 /// Note: 128 bit ints in FFI were not stabilized until Rust 1.77
 /// https://blog.rust-lang.org/2024/03/30/i128-layout-update.html
-/// We're currently locked into 1.71, have to do an ugly workaround involving 2 64 bit ints
+/// We're currently locked into 1.76.0, have to do an ugly workaround involving 2 64 bit ints
 /// until we can upgrade.
 ///
 /// # Safety

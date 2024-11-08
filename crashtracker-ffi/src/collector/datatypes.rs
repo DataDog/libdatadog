@@ -61,12 +61,15 @@ impl<'a> TryFrom<ReceiverConfig<'a>> for datadog_crashtracker::CrashtrackerRecei
 pub struct Config<'a> {
     pub additional_files: Slice<'a, CharSlice<'a>>,
     pub create_alt_stack: bool,
+    pub use_alt_stack: bool,
     /// The endpoint to send the crash report to (can be a file://).
     /// If None, the crashtracker will infer the agent host from env variables.
     pub endpoint: Option<&'a Endpoint>,
     pub resolve_frames: StacktraceCollection,
-    pub timeout_secs: u64,
-    pub wait_for_receiver: bool,
+    /// Timeout in milliseconds before the signal handler starts tearing things down to return.
+    /// This is given as a uint32_t, but the actual timeout needs to fit inside of an i32 (max
+    /// 2^31-1). This is a limitation of the various interfaces used to guarantee the timeout.
+    pub timeout_ms: u32,
 }
 
 impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration {
@@ -80,15 +83,17 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
             vec
         };
         let create_alt_stack = value.create_alt_stack;
+        let use_alt_stack = value.use_alt_stack;
         let endpoint = value.endpoint.cloned();
         let resolve_frames = value.resolve_frames;
-        let wait_for_receiver = value.wait_for_receiver;
+        let timeout_ms = value.timeout_ms;
         Self::new(
             additional_files,
             create_alt_stack,
+            use_alt_stack,
             endpoint,
             resolve_frames,
-            wait_for_receiver,
+            timeout_ms,
         )
     }
 }

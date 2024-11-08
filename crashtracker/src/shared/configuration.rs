@@ -1,5 +1,6 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+use crate::shared::constants;
 use ddcommon::Endpoint;
 use serde::{Deserialize, Serialize};
 
@@ -23,9 +24,10 @@ pub struct CrashtrackerConfiguration {
     // Paths to any additional files to track, if any
     pub additional_files: Vec<String>,
     pub create_alt_stack: bool,
+    pub use_alt_stack: bool,
     pub endpoint: Option<Endpoint>,
     pub resolve_frames: StacktraceCollection,
-    pub wait_for_receiver: bool,
+    pub timeout_ms: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -70,16 +72,30 @@ impl CrashtrackerConfiguration {
     pub fn new(
         additional_files: Vec<String>,
         create_alt_stack: bool,
+        use_alt_stack: bool,
         endpoint: Option<Endpoint>,
         resolve_frames: StacktraceCollection,
-        wait_for_receiver: bool,
+        timeout_ms: u32,
     ) -> anyhow::Result<Self> {
+        // Requesting to create, but not use, the altstack is considered paradoxical.
+        anyhow::ensure!(
+            !create_alt_stack || use_alt_stack,
+            "Cannot create an altstack without using it"
+        );
+        let timeout_ms = if timeout_ms == 0 {
+            constants::DD_CRASHTRACK_DEFAULT_TIMEOUT_MS
+        } else if timeout_ms > i32::MAX as u32 {
+            anyhow::bail!("Timeout must be less than i32::MAX")
+        } else {
+            timeout_ms
+        };
         Ok(Self {
             additional_files,
             create_alt_stack,
+            use_alt_stack,
             endpoint,
             resolve_frames,
-            wait_for_receiver,
+            timeout_ms,
         })
     }
 }

@@ -2,15 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(test)]
-
 mod tracing_integration_tests {
-
     use datadog_trace_utils::send_data::SendData;
-    use datadog_trace_utils::test_utils::create_test_span;
+    use datadog_trace_utils::test_utils::create_test_no_alloc_span;
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use datadog_trace_utils::trace_utils::TracerHeaderTags;
     use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
     use ddcommon::Endpoint;
+    use tinybytes::BytesString;
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
@@ -25,8 +24,7 @@ mod tracing_integration_tests {
             lang_vendor: "vendor",
             tracer_version: "1.0",
             container_id: "id",
-            client_computed_top_level: false,
-            client_computed_stats: false,
+            ..Default::default()
         };
 
         let endpoint = Endpoint::from_url(
@@ -35,14 +33,20 @@ mod tracing_integration_tests {
                 .await,
         );
 
-        let mut span_1 = create_test_span(1234, 12342, 12341, 1, false);
-        span_1.metrics.insert("_dd_metric1".to_string(), 1.0);
-        span_1.metrics.insert("_dd_metric2".to_string(), 2.0);
+        let mut span_1 = create_test_no_alloc_span(1234, 12342, 12341, 1, false);
+        span_1.metrics.insert(
+            BytesString::from_slice("_dd_metric1".as_ref()).unwrap(),
+            1.0,
+        );
+        span_1.metrics.insert(
+            BytesString::from_slice("_dd_metric2".as_ref()).unwrap(),
+            2.0,
+        );
 
-        let span_2 = create_test_span(1234, 12343, 12341, 1, false);
+        let span_2 = create_test_no_alloc_span(1234, 12343, 12341, 1, false);
 
-        let mut root_span = create_test_span(1234, 12341, 0, 0, true);
-        root_span.r#type = "web".to_string();
+        let mut root_span = create_test_no_alloc_span(1234, 12341, 0, 0, true);
+        root_span.r#type = BytesString::from_slice("web".as_ref()).unwrap();
 
         let trace = vec![span_1, span_2, root_span];
 
@@ -51,6 +55,7 @@ mod tracing_integration_tests {
             TracerPayloadCollection::V04(vec![trace.clone()]),
             header_tags,
             &endpoint,
+            None,
         );
 
         let _result = data.send().await;

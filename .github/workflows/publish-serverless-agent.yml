@@ -11,12 +11,16 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Install Protoc Binary
+        shell: bash
+        run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
       - name: Install musl dependencies
         run: rustup target add x86_64-unknown-linux-musl && sudo apt-get install musl-tools
       - name: Build project
+        shell: bash
         run: cargo build --release -p datadog-serverless-trace-mini-agent --target x86_64-unknown-linux-musl
       - name: Upload artifacts for release step
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: datadog-serverless-agent-linux-amd64
           path: target/x86_64-unknown-linux-musl/release/datadog-serverless-trace-mini-agent
@@ -26,10 +30,14 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Install Protoc Binary
+        shell: bash
+        run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
       - name: Build project
+        shell: bash
         run: cargo build --release -p datadog-serverless-trace-mini-agent
       - name: Upload artifacts for release step
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: datadog-serverless-agent-windows-amd64
           path: target/release/datadog-serverless-trace-mini-agent.exe
@@ -37,11 +45,13 @@ jobs:
     name: Zip and Release
     needs: [build-windows, build-linux-musl]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Download artifacts from build step
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: target/release/binaries
       - name: UPX compress binaries

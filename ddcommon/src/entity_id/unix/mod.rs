@@ -59,6 +59,7 @@ fn compute_entity_id(
 
 fn get_cgroup_path() -> &'static str {
     // Safety: we assume set_cgroup_file is not called when it shouldn't
+    #[allow(static_mut_refs)]
     unsafe {
         TESTING_CGROUP_PATH
             .as_deref()
@@ -68,6 +69,7 @@ fn get_cgroup_path() -> &'static str {
 
 fn get_cgroup_mount_path() -> &'static str {
     // Safety: we assume set_cgroup_file is not called when it shouldn't
+    #[allow(static_mut_refs)]
     unsafe {
         TESTING_CGROUP_MOUNT_PATH
             .as_deref()
@@ -149,21 +151,25 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_v2() {
         test_entity_id("cgroup.v2", Some(&IN_REGEX))
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_v1() {
         test_entity_id("cgroup.linux", Some(&IN_REGEX))
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_container_id() {
         test_entity_id("cgroup.docker", Some(&CI_REGEX))
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_no_id() {
         test_entity_id("cgroup.no_memory", None)

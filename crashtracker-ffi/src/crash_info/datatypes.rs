@@ -69,12 +69,14 @@ pub enum NormalizedAddressTypes {
     // Make None 0 so that default construction gives none
     None = 0,
     Elf,
+    Pdb,
 }
 
 #[repr(C)]
 pub struct NormalizedAddress<'a> {
     file_offset: u64,
     build_id: ByteSlice<'a>,
+    age: u64,
     path: CharSlice<'a>,
     typ: NormalizedAddressTypes,
 }
@@ -111,15 +113,28 @@ impl<'a> TryFrom<&NormalizedAddress<'a>> for datadog_crashtracker::NormalizedAdd
     type Error = anyhow::Error;
 
     fn try_from(value: &NormalizedAddress<'a>) -> Result<Self, Self::Error> {
+        let to_opt_bytes = |v: ByteSlice| {
+            if v.is_empty() {
+                None
+            } else {
+                Some(Vec::from(v.as_bytes()))
+            }
+        };
         match &value.typ {
             NormalizedAddressTypes::Elf => {
-                let build_id = if value.build_id.is_empty() {
-                    None
-                } else {
-                    Some(Vec::from(value.build_id.as_bytes()))
-                };
+                let build_id = to_opt_bytes(value.build_id);
                 let path = value.path.try_to_utf8()?.into();
                 let meta = datadog_crashtracker::NormalizedAddressMeta::Elf { build_id, path };
+                Ok(Self {
+                    file_offset: value.file_offset,
+                    meta,
+                })
+            }
+            NormalizedAddressTypes::Pdb => {
+                let guid = to_opt_bytes(value.build_id);
+                let path = value.path.try_to_utf8()?.into();
+                let age = value.age;
+                let meta = datadog_crashtracker::NormalizedAddressMeta::Pdb { path, guid, age };
                 Ok(Self {
                     file_offset: value.file_offset,
                     meta,
@@ -222,7 +237,12 @@ impl<'a> TryFrom<SigInfo<'a>> for datadog_crashtracker::SigInfo {
     fn try_from(value: SigInfo<'a>) -> Result<Self, Self::Error> {
         let signum = value.signum;
         let signame = option_from_char_slice(value.signame)?;
-        Ok(Self { signum, signame })
+        let faulting_address = None; // TODO: Expose this to FFI
+        Ok(Self {
+            signum,
+            signame,
+            faulting_address,
+        })
     }
 }
 

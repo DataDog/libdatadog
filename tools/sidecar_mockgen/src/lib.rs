@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use object::{File, Object, ObjectSymbol, SymbolKind};
+use object::{File, Object, ObjectSymbol, Symbol, SymbolFlags, SymbolKind};
 use std::collections::HashSet;
 use std::fmt::Write;
 use std::path::Path;
@@ -42,16 +42,33 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
         }
     }
 
+    fn sym_is_definition(sym: &Symbol) -> bool {
+        if sym.is_definition() {
+            return true;
+        }
+        match sym.flags() {
+            // 10 == STT_GNU_IFUNC for ELF files
+            SymbolFlags::Elf { st_info, .. } => st_info & 0xf == 10,
+            _ => false,
+        }
+    }
+
     let mut generated = String::new();
     for sym in so_file.symbols().chain(so_file.dynamic_symbols()) {
-        if sym.is_definition() {
+        if sym_is_definition(&sym) {
             if let Ok(name) = sym.name() {
                 if missing_symbols.remove(name) {
                     // strip leading underscore
                     #[cfg(target_os = "macos")]
                     let name = &name[1..];
                     _ = match sym.kind() {
-                        SymbolKind::Text => writeln!(generated, "void {}() {{}}", name),
+                        SymbolKind::Text => {
+                            if !sym.is_weak() {
+                                writeln!(generated, "void {}() {{}}", name)
+                            } else {
+                                Ok(())
+                            }
+                        }
                         // Ignore symbols of size 0, like _GLOBAL_OFFSET_TABLE_ on alpine
                         SymbolKind::Data | SymbolKind::Unknown => {
                             if sym.size() > 0 {

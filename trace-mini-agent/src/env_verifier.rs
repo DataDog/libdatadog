@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
+use hyper::body::HttpBody;
 use hyper::{Body, Client, Method, Request, Response};
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs;
 use std::path::Path;
 use std::process;
@@ -113,6 +115,9 @@ impl ServerlessEnvVerifier {
             }
         };
         trace_utils::MiniAgentMetadata {
+            azure_spring_app_hostname: trace_utils::MiniAgentMetadata::default()
+                .azure_spring_app_hostname,
+            azure_spring_app_name: trace_utils::MiniAgentMetadata::default().azure_spring_app_name,
             gcp_project_id: Some(gcp_metadata.project.project_id),
             gcp_region: Some(get_region_from_gcp_region_string(
                 gcp_metadata.instance.region,
@@ -140,9 +145,13 @@ impl EnvVerifier for ServerlessEnvVerifier {
                     .verify_gcp_environment_or_exit(verify_env_timeout)
                     .await;
             }
-            trace_utils::EnvironmentType::AzureSpringApp => {
-                trace_utils::MiniAgentMetadata::default()
-            }
+            trace_utils::EnvironmentType::AzureSpringApp => trace_utils::MiniAgentMetadata {
+                azure_spring_app_hostname: env::var("HOSTNAME").ok(),
+                azure_spring_app_name: env::var("ASCSVCRT_SPRING__APPLICATION__NAME").ok(),
+                gcp_project_id: trace_utils::MiniAgentMetadata::default().gcp_project_id,
+                gcp_region: trace_utils::MiniAgentMetadata::default().gcp_region,
+                version: trace_utils::MiniAgentMetadata::default().version,
+            },
             trace_utils::EnvironmentType::LambdaFunction => {
                 trace_utils::MiniAgentMetadata::default()
             }
@@ -225,7 +234,7 @@ async fn ensure_gcp_function_environment(
 }
 
 async fn get_gcp_metadata_from_body(body: hyper::Body) -> anyhow::Result<GCPMetadata> {
-    let bytes = hyper::body::to_bytes(body).await?;
+    let bytes = body.collect().await?.to_bytes();
     let body_str = String::from_utf8(bytes.to_vec())?;
     let gcp_metadata: GCPMetadata = serde_json::from_str(&body_str)?;
     Ok(gcp_metadata)
@@ -468,6 +477,8 @@ mod tests {
         assert_eq!(
             res,
             trace_utils::MiniAgentMetadata {
+                azure_spring_app_hostname: None,
+                azure_spring_app_name: None,
                 gcp_project_id: Some("unknown".to_string()),
                 gcp_region: Some("unknown".to_string()),
                 version: None

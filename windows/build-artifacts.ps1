@@ -22,10 +22,10 @@ Write-Host "Building project into $($output_dir)" -ForegroundColor Magenta
 
 # build inside the crate to use the config.toml file
 pushd profiling-ffi
-Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi --target i686-pc-windows-msvc --release --target-dir $output_dir }
-Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi --target i686-pc-windows-msvc --target-dir $output_dir }
-Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi --target x86_64-pc-windows-msvc --release --target-dir $output_dir }
-Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi --target x86_64-pc-windows-msvc --target-dir $output_dir }
+Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target i686-pc-windows-msvc --release --target-dir $output_dir }
+Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target i686-pc-windows-msvc --target-dir $output_dir }
+Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target x86_64-pc-windows-msvc --release --target-dir $output_dir }
+Invoke-Call -ScriptBlock { cargo build --features datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/crashtracker-receiver,datadog-profiling-ffi/crashtracker-collector,datadog-profiling-ffi/demangler --target x86_64-pc-windows-msvc --target-dir $output_dir }
 popd
 
 Write-Host "Building tools" -ForegroundColor Magenta
@@ -38,6 +38,7 @@ Invoke-Call -ScriptBlock { cbindgen --crate ddcommon-ffi --config ddcommon-ffi/c
 Invoke-Call -ScriptBlock { cbindgen --crate datadog-profiling-ffi --config profiling-ffi/cbindgen.toml --output $output_dir\profiling.h }
 Invoke-Call -ScriptBlock { cbindgen --crate ddtelemetry-ffi --config ddtelemetry-ffi/cbindgen.toml --output $output_dir\telemetry.h }
 Invoke-Call -ScriptBlock { cbindgen --crate data-pipeline-ffi --config data-pipeline-ffi/cbindgen.toml --output $output_dir"\data-pipeline.h" }
-Invoke-Call -ScriptBlock { .\target\release\dedup_headers $output_dir"\common.h"  $output_dir"\profiling.h" $output_dir"\telemetry.h" $output_dir"\data-pipeline.h" }
+Invoke-Call -ScriptBlock { cbindgen --crate datadog-crashtracker-ffi --config crashtracker-ffi/cbindgen.toml --output $output_dir"\crashtracker.h" }
+Invoke-Call -ScriptBlock { .\target\release\dedup_headers $output_dir"\common.h"  $output_dir"\profiling.h" $output_dir"\telemetry.h" $output_dir"\data-pipeline.h" $output_dir"\crashtracker.h"}
 
 Write-Host "Build finished"  -ForegroundColor Magenta

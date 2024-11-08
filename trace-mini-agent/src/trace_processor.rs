@@ -12,8 +12,7 @@ use datadog_trace_obfuscation::obfuscate::obfuscate_span;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::trace_utils::{self};
-use datadog_trace_utils::tracer_payload::TraceChunkProcessor;
-use datadog_trace_utils::tracer_payload::TraceEncoding;
+use datadog_trace_utils::tracer_payload::{TraceChunkProcessor, TraceCollection};
 
 use crate::{
     config::Config,
@@ -42,12 +41,12 @@ impl TraceChunkProcessor for ChunkProcessor {
     fn process(&mut self, chunk: &mut pb::TraceChunk, root_span_index: usize) {
         trace_utils::set_serverless_root_span_tags(
             &mut chunk.spans[root_span_index],
-            self.config.function_name.clone(),
+            self.config.app_name.clone(),
             &self.config.env_type,
         );
         for span in chunk.spans.iter_mut() {
             trace_utils::enrich_span_with_mini_agent_metadata(span, &self.mini_agent_metadata);
-            trace_utils::enrich_span_with_azure_metadata(span);
+            trace_utils::enrich_span_with_azure_function_metadata(span);
             obfuscate_span(span, &self.config.obfuscation_config);
         }
     }
@@ -90,17 +89,22 @@ impl TraceProcessor for ServerlessTraceProcessor {
         };
 
         let payload = trace_utils::collect_trace_chunks(
-            traces,
+            TraceCollection::V07(traces),
             &tracer_header_tags,
             &mut ChunkProcessor {
                 config: config.clone(),
                 mini_agent_metadata: mini_agent_metadata.clone(),
             },
             true, // In mini agent, we always send agentless
-            TraceEncoding::V07,
         );
 
-        let send_data = SendData::new(body_size, payload, tracer_header_tags, &config.trace_intake);
+        let send_data = SendData::new(
+            body_size,
+            payload,
+            tracer_header_tags,
+            &config.trace_intake,
+            config.proxy_url.clone(),
+        );
 
         // send trace payload to our trace flusher
         match tx.send(send_data).await {
@@ -152,7 +156,7 @@ mod tests {
 
     fn create_test_config() -> Config {
         Config {
-            function_name: Some("dummy_function_name".to_string()),
+            app_name: Some("dummy_function_name".to_string()),
             max_request_content_length: 10 * 1024 * 1024,
             trace_flush_interval: 3,
             stats_flush_interval: 3,
@@ -168,9 +172,11 @@ mod tests {
                 ..Default::default()
             },
             dd_site: "datadoghq.com".to_string(),
+            dd_dogstatsd_port: 8125,
             env_type: trace_utils::EnvironmentType::CloudFunction,
             os: "linux".to_string(),
             obfuscation_config: ObfuscationConfig::new().unwrap(),
+            proxy_url: None,
         }
     }
 

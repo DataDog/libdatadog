@@ -3,6 +3,7 @@
 
 use anyhow::anyhow;
 use bytes::buf::Reader;
+use hyper::body::HttpBody;
 use hyper::{body::Buf, Body};
 use log::error;
 use rmp::decode::read_array_len;
@@ -16,7 +17,7 @@ pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
 pub use crate::tracer_header_tags::TracerHeaderTags;
 use crate::tracer_payload;
-use crate::tracer_payload::{TraceEncoding, TracerPayloadCollection};
+use crate::tracer_payload::{TraceCollection, TracerPayloadCollection};
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
 use ddcommon::azure_app_services;
@@ -25,6 +26,8 @@ use ddcommon::azure_app_services;
 const TOP_LEVEL_KEY: &str = "_top_level";
 /// Span metric the tracer sets to denote a top level span
 const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
+const MEASURED_KEY: &str = "_dd.measured";
+const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
 const MAX_PAYLOAD_SIZE: usize = 50 * 1024 * 1024;
 const MAX_STRING_DICT_SIZE: u32 = 25_000_000;
@@ -34,7 +37,7 @@ const SPAN_ELEMENT_COUNT: usize = 12;
 pub async fn get_traces_from_request_body(
     body: Body,
 ) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
-    let buffer = hyper::body::aggregate(body).await?;
+    let buffer = body.collect().await?.aggregate();
     let size = buffer.remaining();
 
     let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_read(buffer.reader()) {
@@ -228,7 +231,7 @@ fn get_v05_string(
 pub async fn get_v05_traces_from_request_body(
     body: Body,
 ) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
-    let buffer = hyper::body::aggregate(body).await?;
+    let buffer = body.collect().await?.aggregate();
     let body_size = buffer.remaining();
     let mut reader = buffer.reader();
     let wrapper_size = read_array_len(&mut reader)?;
@@ -312,9 +315,12 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
             .url
             .to_string()
             .cmp(&b.get_target().url.to_string())
+            .then(a.get_target().test_token.cmp(&b.get_target().test_token))
     });
     data.dedup_by(|a, b| {
-        if a.get_target().url == b.get_target().url {
+        if a.get_target().url == b.get_target().url
+            && a.get_target().test_token == b.get_target().test_token
+        {
             // Size is only an approximation. In practice it won't vary much, but be safe here.
             // We also don't care about the exact maximum size, like two 25 MB or one 50 MB request
             // has similar results. The primary goal here is avoiding many small requests.
@@ -410,6 +416,14 @@ pub fn compute_top_level_span(trace: &mut [pb::Span]) {
     }
 }
 
+/// Return true if the span has a top level key set
+pub fn has_top_level(span: &pb::Span) -> bool {
+    span.metrics
+        .get(TRACER_TOP_LEVEL_KEY)
+        .is_some_and(|v| *v == 1.0)
+        || span.metrics.get(TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0)
+}
+
 fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
     if !is_top_level {
         if span.metrics.contains_key(TOP_LEVEL_KEY) {
@@ -422,7 +436,7 @@ fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
 
 pub fn set_serverless_root_span_tags(
     span: &mut pb::Span,
-    function_name: Option<String>,
+    app_name: Option<String>,
     env_type: &EnvironmentType,
 ) {
     span.r#type = "serverless".to_string();
@@ -437,8 +451,15 @@ pub fn set_serverless_root_span_tags(
     span.meta
         .insert("origin".to_string(), origin_tag.to_string());
 
-    if let Some(function_name) = function_name {
-        span.meta.insert("functionname".to_string(), function_name);
+    if let Some(function_name) = app_name {
+        match env_type {
+            EnvironmentType::CloudFunction
+            | EnvironmentType::AzureFunction
+            | EnvironmentType::LambdaFunction => {
+                span.meta.insert("functionname".to_string(), function_name);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -458,6 +479,8 @@ pub enum EnvironmentType {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MiniAgentMetadata {
+    pub azure_spring_app_hostname: Option<String>,
+    pub azure_spring_app_name: Option<String>,
     pub gcp_project_id: Option<String>,
     pub gcp_region: Option<String>,
     pub version: Option<String>,
@@ -466,6 +489,8 @@ pub struct MiniAgentMetadata {
 impl Default for MiniAgentMetadata {
     fn default() -> Self {
         MiniAgentMetadata {
+            azure_spring_app_hostname: Default::default(),
+            azure_spring_app_name: Default::default(),
             gcp_project_id: Default::default(),
             gcp_region: Default::default(),
             version: env::var("DD_MINI_AGENT_VERSION").ok(),
@@ -477,13 +502,23 @@ pub fn enrich_span_with_mini_agent_metadata(
     span: &mut pb::Span,
     mini_agent_metadata: &MiniAgentMetadata,
 ) {
+    if let Some(azure_spring_app_hostname) = &mini_agent_metadata.azure_spring_app_hostname {
+        span.meta.insert(
+            "asa.hostname".to_string(),
+            azure_spring_app_hostname.to_string(),
+        );
+    }
+    if let Some(azure_spring_app_name) = &mini_agent_metadata.azure_spring_app_name {
+        span.meta
+            .insert("asa.name".to_string(), azure_spring_app_name.to_string());
+    }
     if let Some(gcp_project_id) = &mini_agent_metadata.gcp_project_id {
         span.meta
-            .insert("project_id".to_string(), gcp_project_id.to_string());
+            .insert("gcrfx.project_id".to_string(), gcp_project_id.to_string());
     }
     if let Some(gcp_region) = &mini_agent_metadata.gcp_region {
         span.meta
-            .insert("location".to_string(), gcp_region.to_string());
+            .insert("gcrfx.location".to_string(), gcp_region.to_string());
     }
     if let Some(mini_agent_version) = &mini_agent_metadata.version {
         span.meta.insert(
@@ -493,7 +528,7 @@ pub fn enrich_span_with_mini_agent_metadata(
     }
 }
 
-pub fn enrich_span_with_azure_metadata(span: &mut pb::Span) {
+pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
     if let Some(aas_metadata) = azure_app_services::get_function_metadata() {
         let aas_tags = [
             ("aas.resource.id", aas_metadata.get_resource_id()),
@@ -542,15 +577,14 @@ macro_rules! parse_root_span_tags {
 }
 
 pub fn collect_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
-    mut traces: Vec<Vec<pb::Span>>,
+    traces: TraceCollection,
     tracer_header_tags: &TracerHeaderTags,
     process_chunk: &mut T,
     is_agentless: bool,
-    encoding_type: TraceEncoding,
 ) -> TracerPayloadCollection {
-    match encoding_type {
-        TraceEncoding::V04 => TracerPayloadCollection::V04(traces),
-        TraceEncoding::V07 => {
+    match traces {
+        TraceCollection::V04(traces) => TracerPayloadCollection::V04(traces),
+        TraceCollection::V07(mut traces) => {
             let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
 
             // We'll skip setting the global metadata and rely on the agent to unpack these
@@ -617,6 +651,22 @@ pub fn collect_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
     }
 }
 
+// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
+pub fn is_measured(span: &pb::Span) -> bool {
+    span.metrics.get(MEASURED_KEY).is_some_and(|v| *v == 1.0)
+}
+
+/// Returns true if the span is a partial snapshot.
+/// This kind of spans are partial images of long-running spans.
+/// When incomplete, a partial snapshot has a metric _dd.partial_version which is a positive
+/// integer. The metric usually increases each time a new version of the same span is sent by the
+/// tracer
+pub fn is_partial_snapshot(span: &pb::Span) -> bool {
+    span.metrics
+        .get(PARTIAL_VERSION_KEY)
+        .is_some_and(|v| *v >= 0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use hyper::Request;
@@ -624,7 +674,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{get_root_span_index, set_serverless_root_span_tags};
-    use crate::trace_utils::{TracerHeaderTags, MAX_PAYLOAD_SIZE};
+    use crate::trace_utils::{has_top_level, TracerHeaderTags, MAX_PAYLOAD_SIZE};
     use crate::tracer_payload::TracerPayloadCollection;
     use crate::{
         test_utils::create_test_span,
@@ -658,6 +708,7 @@ mod tests {
             }]),
             TracerHeaderTags::default(),
             &Endpoint::default(),
+            None,
         );
         let coalesced = trace_utils::coalesce_send_data(vec![
             dummy.clone(),
@@ -923,5 +974,13 @@ mod tests {
             ]),
         );
         assert_eq!(span.r#type, "serverless".to_string())
+    }
+
+    #[test]
+    fn test_has_top_level() {
+        let top_level_span = create_test_span(123, 1234, 12, 1, true);
+        let not_top_level_span = create_test_span(123, 1234, 12, 1, false);
+        assert!(has_top_level(&top_level_span));
+        assert!(!has_top_level(&not_top_level_span));
     }
 }

@@ -21,8 +21,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Cache
         uses: ./.github/actions/cache
-      - name: Install latest nightly toolchain and rustfmt
-        run: rustup update nightly && rustup default nightly && rustup component add rustfmt
+      - name: Install nightly-2024-10-21 toolchain and rustfmt
+        run: rustup install nightly-2024-10-21 && rustup default nightly-2024-10-21 && rustup component add rustfmt
       - run: cargo fmt --all -- --check
   clippy:
     name: "clippy #${{ matrix.platform }} ${{ matrix.rust_version }}"
@@ -30,8 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Ignore nightly for now, it fails too often
-        rust_version: ["1.71.1", "stable"]
+        rust_version: ["1.76.0", "stable", "nightly-2024-10-21"]
         platform: [windows-latest, ubuntu-latest]
     steps:
       - name: Checkout sources
@@ -42,9 +41,14 @@ jobs:
           rust_version: ${{ matrix.rust_version }}
       - name: Install ${{ matrix.rust_version }} toolchain and clippy
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
+      - name: Install Protoc Binary
+        shell: bash
+        run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
       - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }} 
         shell: bash
-        run: cargo clippy --all-targets --all-features -- -D warnings "$([ ${{ matrix.rust_version }} = 1.71.1 ] && echo -Aunknown-lints)"
+        run: |
+          # shellcheck disable=SC2046
+          cargo clippy --workspace --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.76.0 ] || [ ${{ matrix.rust_version }} = stable ] && echo -Aunknown-lints -Ainvalid_reference_casting -Aclippy::redundant-closure-call)
   licensecheck:
     runs-on: ubuntu-latest
     name: "Presence of licence headers"

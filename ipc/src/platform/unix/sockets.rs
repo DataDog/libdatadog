@@ -14,7 +14,7 @@ mod linux {
         io,
         os::unix::{
             net::{UnixListener, UnixStream},
-            prelude::{AsRawFd, FromRawFd, OsStrExt},
+            prelude::{AsRawFd, OsStrExt},
         },
         path::Path,
     };
@@ -24,15 +24,13 @@ mod linux {
         bind, connect, listen, socket, AddressFamily, SockFlag, SockType, UnixAddr,
     };
 
-    fn socket_stream() -> io::Result<OwnedFd> {
-        let fd = socket(
+    fn socket_stream() -> nix::Result<OwnedFd> {
+        socket(
             AddressFamily::Unix,
             SockType::Stream,
             SockFlag::SOCK_CLOEXEC,
             None,
-        )?;
-
-        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+        )
     }
 
     pub fn connect_abstract<P: AsRef<Path>>(path: P) -> io::Result<UnixStream> {
@@ -46,7 +44,7 @@ mod linux {
         let sock = socket_stream()?;
         let addr = UnixAddr::new_abstract(path.as_ref().as_os_str().as_bytes())?;
         bind(sock.as_raw_fd(), &addr)?;
-        listen(sock.as_raw_fd(), 128)?;
+        listen(&sock, 128)?;
         Ok(sock.into())
     }
 }

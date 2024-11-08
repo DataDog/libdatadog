@@ -4,6 +4,7 @@
 // imports for structs defined in this file
 use crate::config;
 use crate::service::telemetry::enqueued_telemetry_data::EnqueuedTelemetryData;
+use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddtelemetry::metrics::MetricContext;
@@ -26,9 +27,12 @@ use runtime_info::RuntimeInfo;
 use session_info::SessionInfo;
 use sidecar_interface::{SidecarInterface, SidecarInterfaceRequest, SidecarInterfaceResponse};
 
+pub mod agent_info;
 pub mod blocking;
+pub mod exception_hash_rate_limiter;
 mod instance_id;
 mod queue_id;
+mod remote_configs;
 mod request_identification;
 mod runtime_info;
 mod runtime_metadata;
@@ -43,12 +47,17 @@ pub(crate) mod tracing;
 pub struct SessionConfig {
     pub endpoint: Endpoint,
     pub dogstatsd_endpoint: Endpoint,
+    pub language: String,
+    pub tracer_version: String,
     pub flush_interval: Duration,
+    pub remote_config_poll_interval: Duration,
     pub telemetry_heartbeat_interval: Duration,
     pub force_flush_size: usize,
     pub force_drop_size: usize,
     pub log_level: String,
     pub log_file: config::LogMethod,
+    pub remote_config_products: Vec<RemoteConfigProduct>,
+    pub remote_config_capabilities: Vec<RemoteConfigCapabilities>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

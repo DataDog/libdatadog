@@ -10,52 +10,72 @@ use std::process;
 use std::{fs, path::PathBuf};
 
 use anyhow::Context;
-use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile, ReceiverType};
+use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_debug_stdin() {
-    test_crash_tracking_bin(BuildProfile::Debug, ReceiverType::ChildProcessStdin);
+fn test_crash_tracking_bin_debug() {
+    test_crash_tracking_bin(BuildProfile::Debug, "donothing");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_debug_unix_socket() {
-    test_crash_tracking_bin(BuildProfile::Debug, ReceiverType::UnixSocket);
+fn test_crash_tracking_bin_sigpipe() {
+    test_crash_tracking_bin(BuildProfile::Debug, "sigpipe");
 }
 
 #[test]
-#[ignore] // This test is slow, only run it if explicitly opted in
-fn test_crash_tracking_bin_release_stdin() {
-    test_crash_tracking_bin(BuildProfile::Release, ReceiverType::ChildProcessStdin);
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_sigchld() {
+    test_crash_tracking_bin(BuildProfile::Debug, "sigchld");
 }
 
 #[test]
-#[ignore] // This test is slow, only run it if explicitly opted in
-fn test_crash_tracking_bin_release_unix_socket() {
-    test_crash_tracking_bin(BuildProfile::Release, ReceiverType::UnixSocket);
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_sigchld_exec() {
+    test_crash_tracking_bin(BuildProfile::Debug, "sigchld_exec");
 }
 
-fn test_crash_tracking_bin(
-    crash_tracking_receiver_profile: BuildProfile,
-    receiver_type: ReceiverType,
-) {
-    let (crashtracker_bin, crashtracker_receiver, crashtracker_unix_socket_receiver) =
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_sigstack() {
+    test_crash_tracking_bin(BuildProfile::Release, "donothing_sigstack");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_sigpipe_sigstack() {
+    test_crash_tracking_bin(BuildProfile::Release, "sigpipe_sigstack");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_sigchld_sigstack() {
+    test_crash_tracking_bin(BuildProfile::Release, "sigchld_sigstack");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_chained() {
+    test_crash_tracking_bin(BuildProfile::Release, "chained");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_fork() {
+    test_crash_tracking_bin(BuildProfile::Release, "fork");
+}
+
+fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: &str) {
+    let (crashtracker_bin, crashtracker_receiver) =
         setup_crashtracking_crates(crash_tracking_receiver_profile);
-    let fixtures = setup_test_fixtures(&[
-        &crashtracker_receiver,
-        &crashtracker_bin,
-        &crashtracker_unix_socket_receiver,
-    ]);
+    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
 
     let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
-        .arg(receiver_type.to_string())
         .arg(format!("file://{}", fixtures.crash_profile_path.display()))
         .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
-        .arg(fixtures.artifacts[&crashtracker_unix_socket_receiver].as_os_str())
-        .arg(&fixtures.stderr_path)
-        .arg(&fixtures.stdout_path)
-        .arg(&fixtures.unix_socket_path)
+        .arg(&fixtures.output_dir)
+        .arg(mode)
         .spawn()
         .unwrap();
     let exit_status = bin_tests::timeit!("exit after signal", {
@@ -63,15 +83,13 @@ fn test_crash_tracking_bin(
         p.wait().unwrap()
     });
     assert!(!exit_status.success());
-    // Sadly this is necessary because in case of partial crash the tracked process
-    // doesn't wait for the crahtracker receiver which causes races, with the test
-    // running before the receiver has a chance to send the report.
-    std::thread::sleep(std::time::Duration::from_millis(100));
 
-    let stderr = fs::read(fixtures.stderr_path)
+    let stderr_path = format!("{0}/out.stderr", fixtures.output_dir.display());
+    let stderr = fs::read(stderr_path)
         .context("reading crashtracker stderr")
         .unwrap();
-    let stdout = fs::read(fixtures.stdout_path)
+    let stdout_path = format!("{0}/out.stdout", fixtures.output_dir.display());
+    let stdout = fs::read(stdout_path)
         .context("reading crashtracker stdout")
         .unwrap();
     let s = String::from_utf8(stderr);
@@ -104,7 +122,8 @@ fn test_crash_tracking_bin(
     assert_eq!(
         serde_json::json!({
           "signum": 11,
-          "signame": "SIGSEGV"
+          "signame": "SIGSEGV",
+          "faulting_address": 0,
         }),
         crash_payload["siginfo"]
     );
@@ -113,6 +132,19 @@ fn test_crash_tracking_bin(
         .context("reading crashtracker telemetry payload")
         .unwrap();
     assert_telemetry_message(&crash_telemetry);
+
+    // Crashtracking signal handler chaining tests, as well as other tests, might only be able to
+    // influence system state after the main application has crashed, and has therefore lost the
+    // ability to influence the outcome of the test.  Those tests should create an "INVALID" file
+    // in the output directory.
+    // - If the file exists and contains only a single 'O' character, the test passes
+    // - Likewise, if the file does not exist, the test passes
+    // - Tests are free to output additional information in the file in case of a failure; it'll be
+    //   read here
+    let invalid_path = format!("{0}/INVALID", fixtures.output_dir.display());
+    if let Ok(invalid) = fs::read(invalid_path) {
+        assert_eq!(invalid, b"O");
+    }
 }
 
 fn assert_telemetry_message(crash_telemetry: &[u8]) {
@@ -146,7 +178,8 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
             "profiler_collecting_sample:1",
             "profiler_inactive:0",
             "profiler_serializing:0",
-            "signame:SIGSEGV"
+            "signame:SIGSEGV",
+            "faulting_address:0x0000000000000000",
         ]),
         tags
     );
@@ -156,41 +189,22 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
 #[test]
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
-fn crash_tracking_empty_endpoint_unix_socket() {
-    crash_tracking_empty_endpoint_inner(ReceiverType::UnixSocket)
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-#[cfg(unix)]
-fn crash_tracking_empty_endpoint_stdin() {
-    crash_tracking_empty_endpoint_inner(ReceiverType::ChildProcessStdin)
-}
-
-#[cfg(unix)]
-fn crash_tracking_empty_endpoint_inner(receiver_type: ReceiverType) {
+#[allow(clippy::zombie_processes)]
+fn crash_tracking_empty_endpoint() {
     use std::os::unix::net::UnixListener;
 
-    let (crashtracker_bin, crashtracker_receiver, crashtracker_unix_socket_receiver) =
-        setup_crashtracking_crates(BuildProfile::Debug);
-    let fixtures = setup_test_fixtures(&[
-        &crashtracker_receiver,
-        &crashtracker_bin,
-        &crashtracker_unix_socket_receiver,
-    ]);
+    let (crashtracker_bin, crashtracker_receiver) = setup_crashtracking_crates(BuildProfile::Debug);
+    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
 
     let socket_path = extend_path(fixtures.tmpdir.path(), "trace_agent.socket");
     let listener = UnixListener::bind(&socket_path).unwrap();
 
     process::Command::new(&fixtures.artifacts[&crashtracker_bin])
         // empty url, endpoint will be set to none
-        .arg(receiver_type.to_string())
         .arg("")
         .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
-        .arg(fixtures.artifacts[&crashtracker_unix_socket_receiver].as_os_str())
-        .arg(&fixtures.stderr_path)
-        .arg(&fixtures.stdout_path)
-        .arg(&fixtures.unix_socket_path)
+        .arg(&fixtures.output_dir)
+        .arg("donothing")
         .env(
             "DD_TRACE_AGENT_URL",
             format!("unix://{}", socket_path.display()),
@@ -215,9 +229,7 @@ struct TestFixtures<'a> {
     tmpdir: tempfile::TempDir,
     crash_profile_path: PathBuf,
     crash_telemetry_path: PathBuf,
-    stdout_path: PathBuf,
-    stderr_path: PathBuf,
-    unix_socket_path: PathBuf,
+    output_dir: PathBuf,
 
     artifacts: HashMap<&'a ArtifactsBuild, PathBuf>,
 }
@@ -230,9 +242,7 @@ fn setup_test_fixtures<'a>(crates: &[&'a ArtifactsBuild]) -> TestFixtures<'a> {
     TestFixtures {
         crash_profile_path: extend_path(dirpath, "crash"),
         crash_telemetry_path: extend_path(dirpath, "crash.telemetry"),
-        stdout_path: extend_path(dirpath, "out.stdout"),
-        stderr_path: extend_path(dirpath, "out.stderr"),
-        unix_socket_path: extend_path(dirpath, "crashtracker.socket"),
+        output_dir: dirpath.to_path_buf(),
 
         artifacts,
         tmpdir,
@@ -241,7 +251,7 @@ fn setup_test_fixtures<'a>(crates: &[&'a ArtifactsBuild]) -> TestFixtures<'a> {
 
 fn setup_crashtracking_crates(
     crash_tracking_receiver_profile: BuildProfile,
-) -> (ArtifactsBuild, ArtifactsBuild, ArtifactsBuild) {
+) -> (ArtifactsBuild, ArtifactsBuild) {
     let crashtracker_bin = ArtifactsBuild {
         name: "crashtracker_bin_test".to_owned(),
         build_profile: crash_tracking_receiver_profile,
@@ -254,17 +264,7 @@ fn setup_crashtracking_crates(
         artifact_type: ArtifactType::Bin,
         triple_target: None,
     };
-    let crashtracker_unix_socket_receiver = ArtifactsBuild {
-        name: "crashtracker_unix_socket_receiver".to_owned(),
-        build_profile: crash_tracking_receiver_profile,
-        artifact_type: ArtifactType::Bin,
-        triple_target: None,
-    };
-    (
-        crashtracker_bin,
-        crashtracker_receiver,
-        crashtracker_unix_socket_receiver,
-    )
+    (crashtracker_bin, crashtracker_receiver)
 }
 
 fn extend_path<T: AsRef<Path>>(parent: &Path, path: T) -> PathBuf {

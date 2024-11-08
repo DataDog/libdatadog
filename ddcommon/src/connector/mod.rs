@@ -10,9 +10,6 @@ use hyper_rustls::ConfigBuilderExt;
 
 use lazy_static::lazy_static;
 
-#[cfg(not(feature = "use_webpki_roots"))]
-use rustls::pki_types::CertificateDer;
-
 use rustls::ClientConfig;
 use std::future::Future;
 use std::pin::Pin;
@@ -36,6 +33,19 @@ pub enum Connector {
 
 lazy_static! {
     static ref DEFAULT_CONNECTOR: Connector = Connector::new();
+}
+
+// When using aws-lc-rs, rustls needs to be initialized with the default CryptoProvider; sometimes
+// this is done as a side-effect of other operations, but we need to ensure it happens here.  On
+// non-unix platforms, ddcommon uses `ring` instead, which handles this at rustls initialization.
+#[cfg(feature = "use_webpki_roots")]
+lazy_static! {
+    static ref INIT_CRYPTO_PROVIDER: () = {
+        #[cfg(unix)]
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .expect("Failed to install default CryptoProvider");
+    };
 }
 
 impl Default for Connector {
@@ -99,6 +109,8 @@ fn build_https_connector(
 fn build_https_connector_with_webpki_roots(
 ) -> anyhow::Result<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>>
 {
+    *INIT_CRYPTO_PROVIDER; // One-time initialization of a crypto provider if needed
+
     let client_config = ClientConfig::builder()
         .with_webpki_roots()
         .with_no_client_auth();
@@ -114,8 +126,6 @@ fn load_root_certs() -> anyhow::Result<rustls::RootCertStore> {
     let mut roots = rustls::RootCertStore::empty();
 
     for cert in rustls_native_certs::load_native_certs()? {
-        let cert = CertificateDer::from(cert.0);
-
         //TODO: log when invalid cert is loaded
         roots.add(cert).ok();
     }

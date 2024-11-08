@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::atomic::AtomicI32;
+use std::time::Duration;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, MutexGuard},
@@ -8,26 +10,58 @@ use std::{
 
 use futures::future;
 
-use tracing::{enabled, info, Level};
+use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
+use datadog_remote_config::fetch::ConfigInvariants;
+use tracing::log::warn;
+use tracing::{debug, error, info, trace};
 
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
-use crate::{dogstatsd, tracer};
+use crate::{spawn_map_err, tracer};
 
-use crate::service::{InstanceId, RuntimeInfo};
+use crate::service::agent_info::AgentInfoGuard;
+use crate::service::{InstanceId, QueueId, RuntimeInfo};
+
 /// `SessionInfo` holds information about a session.
 ///
 /// It contains a list of runtimes, session configuration, tracer configuration, and log guards.
 /// It also has methods to manage the runtimes and configurations.
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub(crate) struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     pub(crate) session_config: Arc<Mutex<Option<ddtelemetry::config::Config>>>,
+    debugger_config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
-    dogstatsd: Arc<Mutex<dogstatsd::Flusher>>,
+    dogstatsd: Arc<Mutex<Option<dogstatsd_client::Client>>>,
+    remote_config_invariants: Arc<Mutex<Option<ConfigInvariants>>>,
+    pub(crate) agent_infos: Arc<Mutex<Option<AgentInfoGuard>>>,
+    pub(crate) remote_config_interval: Arc<Mutex<Duration>>,
+    #[cfg(windows)]
+    pub(crate) remote_config_notify_function:
+        Arc<Mutex<crate::service::remote_configs::RemoteConfigNotifyFunction>>,
     pub(crate) log_guard:
         Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
-    #[cfg(feature = "tracing")]
     pub(crate) session_id: String,
+    pub(crate) pid: Arc<AtomicI32>,
+}
+
+impl Clone for SessionInfo {
+    fn clone(&self) -> Self {
+        SessionInfo {
+            runtimes: self.runtimes.clone(),
+            session_config: self.session_config.clone(),
+            debugger_config: self.debugger_config.clone(),
+            tracer_config: self.tracer_config.clone(),
+            dogstatsd: self.dogstatsd.clone(),
+            remote_config_invariants: self.remote_config_invariants.clone(),
+            agent_infos: self.agent_infos.clone(),
+            remote_config_interval: self.remote_config_interval.clone(),
+            #[cfg(windows)]
+            remote_config_notify_function: self.remote_config_notify_function.clone(),
+            log_guard: self.log_guard.clone(),
+            session_id: self.session_id.clone(),
+            pid: self.pid.clone(),
+        }
+    }
 }
 
 impl SessionInfo {
@@ -46,18 +80,15 @@ impl SessionInfo {
             Some(runtime) => runtime.clone(),
             None => {
                 let mut runtime = RuntimeInfo::default();
+                runtime.instance_id = InstanceId {
+                    session_id: self.session_id.clone(),
+                    runtime_id: runtime_id.clone(),
+                };
                 runtimes.insert(runtime_id.clone(), runtime.clone());
-                #[cfg(feature = "tracing")]
-                if enabled!(Level::INFO) {
-                    runtime.instance_id = InstanceId {
-                        session_id: self.session_id.clone(),
-                        runtime_id: runtime_id.clone(),
-                    };
-                    info!(
-                        "Registering runtime_id {} for session {}",
-                        runtime_id, self.session_id
-                    );
-                }
+                info!(
+                    "Registering runtime_id {} for session {}",
+                    runtime_id, self.session_id
+                );
                 runtime
             }
         }
@@ -125,9 +156,9 @@ impl SessionInfo {
         cfg
     }
 
-    pub(crate) fn modify_telemetry_config<F>(&self, mut f: F)
+    pub(crate) fn modify_telemetry_config<F>(&self, f: F)
     where
-        F: FnMut(&mut ddtelemetry::config::Config),
+        F: FnOnce(&mut ddtelemetry::config::Config),
     {
         if let Some(cfg) = &mut *self.get_telemetry_config() {
             f(cfg)
@@ -138,24 +169,140 @@ impl SessionInfo {
         self.tracer_config.lock().unwrap()
     }
 
-    pub(crate) fn modify_trace_config<F>(&self, mut f: F)
+    pub(crate) fn modify_trace_config<F>(&self, f: F)
     where
-        F: FnMut(&mut tracer::Config),
+        F: FnOnce(&mut tracer::Config),
     {
         f(&mut self.get_trace_config());
     }
 
-    pub(crate) fn get_dogstatsd(&self) -> MutexGuard<dogstatsd::Flusher> {
+    pub(crate) fn get_dogstatsd(&self) -> MutexGuard<Option<dogstatsd_client::Client>> {
         self.dogstatsd.lock().unwrap()
     }
 
-    pub(crate) fn configure_dogstatsd<F>(&self, mut f: F)
+    pub(crate) fn configure_dogstatsd<F>(&self, f: F)
     where
-        F: FnMut(&mut dogstatsd::Flusher),
+        F: FnOnce(&mut Option<dogstatsd_client::Client>),
     {
         f(&mut self.get_dogstatsd());
     }
+
+    pub fn get_debugger_config(&self) -> MutexGuard<datadog_live_debugger::sender::Config> {
+        self.debugger_config.lock().unwrap()
+    }
+
+    pub fn modify_debugger_config<F>(&self, mut f: F)
+    where
+        F: FnMut(&mut datadog_live_debugger::sender::Config),
+    {
+        f(&mut self.get_debugger_config());
+    }
+
+    pub fn set_remote_config_invariants(&self, invariants: ConfigInvariants) {
+        *self.remote_config_invariants.lock().unwrap() = Some(invariants);
+    }
+
+    pub fn get_remote_config_invariants(&self) -> MutexGuard<Option<ConfigInvariants>> {
+        self.remote_config_invariants.lock().unwrap()
+    }
+
+    pub fn send_debugger_data<R: AsRef<[u8]> + Sync + Send + 'static>(
+        &self,
+        debugger_type: DebuggerType,
+        runtime_id: &str,
+        queue_id: QueueId,
+        payload: R,
+    ) {
+        async fn do_send(
+            config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
+            debugger_type: DebuggerType,
+            new_tags: bool,
+            tags: Arc<String>,
+            guard: Arc<tokio::sync::Mutex<Option<PayloadSender>>>,
+            payload: &[u8],
+        ) -> anyhow::Result<()> {
+            async fn finish_sender(debugger_type: DebuggerType, sender: PayloadSender) {
+                match sender.finish().await {
+                    Ok(payloads) => debug!("Successfully sent {payloads} payloads to live debugger {debugger_type:?} endpoint"),
+                    Err(e) => error!("Error sending to live debugger endpoint: {e:?}"),
+                }
+            }
+
+            let mut sender = guard.lock().await;
+            if new_tags {
+                if let Some(sender) = sender.take() {
+                    spawn_map_err!(finish_sender(debugger_type, sender), |e| {
+                        error!("Error sending to live debugger {debugger_type:?} endpoint: {e:?}");
+                    });
+                }
+            }
+            if sender.is_none() {
+                let config = &*config.lock().unwrap();
+                *sender = Some(PayloadSender::new(config, debugger_type, tags.as_str())?);
+                let guard = guard.clone();
+                spawn_map_err!(
+                    async move {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        if let Some(sender) = guard.lock().await.take() {
+                            finish_sender(debugger_type, sender).await;
+                        }
+                    },
+                    |e| error!("Error sending to live debugger {debugger_type:?} endpoint: {e:?}")
+                );
+            }
+            trace!(
+                "Submitting live debugger {debugger_type:?} payload {:?}",
+                String::from_utf8_lossy(payload)
+            );
+            sender.as_mut().unwrap().append(payload).await
+        }
+
+        async fn send<R: AsRef<[u8]> + Sync + Send>(
+            config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
+            debugger_type: DebuggerType,
+            new_tags: bool,
+            tags: Arc<String>,
+            guard: Arc<tokio::sync::Mutex<Option<PayloadSender>>>,
+            payload: R,
+        ) {
+            let payload = payload.as_ref();
+            if let Err(e) = do_send(config, debugger_type, new_tags, tags, guard, payload).await {
+                error!("Error sending to live debugger {debugger_type:?} endpoint: {e:?}");
+                debug!("Attempted to send the following payload: {:?}", payload);
+            }
+        }
+
+        let invariants = self.get_remote_config_invariants();
+        let version = invariants
+            .as_ref()
+            .map(|i| i.tracer_version.as_str())
+            .unwrap_or("0.0.0");
+        if let Some(runtime) = self.lock_runtimes().get(runtime_id) {
+            if let Some(app) = runtime.lock_applications().get_mut(&queue_id) {
+                let (tags, new_tags) = app.get_debugger_tags(&version, runtime_id);
+                let sender = match debugger_type {
+                    DebuggerType::Diagnostics => app.debugger_diagnostics_payload_sender.clone(),
+                    DebuggerType::Logs => app.debugger_logs_payload_sender.clone(),
+                };
+                let config = self.debugger_config.clone();
+                spawn_map_err!(
+                    send(config, debugger_type, new_tags, tags, sender, payload),
+                    |e| {
+                        error!("Error sending to live debugger {debugger_type:?} endpoint: {e:?}");
+                    }
+                );
+            } else {
+                warn!("Did not find queue_id {queue_id:?} for runtime id {runtime_id} of session id {} - skipping live debugger data", self.session_id);
+            }
+        } else {
+            warn!(
+                "Did not find runtime {runtime_id} for session id {} - skipping live debugger data",
+                self.session_id
+            );
+        }
+    }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

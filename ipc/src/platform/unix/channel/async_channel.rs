@@ -109,23 +109,28 @@ impl AsyncRead for AsyncChannel {
         // is negligible - then lets switch to implementation that doesn't use UB.
         unsafe {
             let b = &mut *(buf.unfilled_mut() as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]);
-            match project.inner.recv_with_fd(b, &mut fds) {
-                Ok((bytes_received, descriptors_received)) => {
-                    project
-                        .metadata
-                        .lock()
-                        .unwrap()
-                        .receive_fds(&fds[..descriptors_received]);
+            loop {
+                break match project.inner.recv_with_fd(b, &mut fds) {
+                    Ok((bytes_received, descriptors_received)) => {
+                        project
+                            .metadata
+                            .lock()
+                            .unwrap()
+                            .receive_fds(&fds[..descriptors_received]);
 
-                    buf.assume_init(bytes_received);
-                    buf.advance(bytes_received);
+                        buf.assume_init(bytes_received);
+                        buf.advance(bytes_received);
 
-                    Poll::Ready(Ok(()))
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    project.inner.poll_read_ready(cx)
-                }
-                Err(err) => Poll::Ready(Err(err)),
+                        Poll::Ready(Ok(()))
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        match project.inner.poll_read_ready(cx) {
+                            Poll::Ready(Ok(())) => continue,
+                            poll => poll,
+                        }
+                    }
+                    Err(err) => Poll::Ready(Err(err)),
+                };
             }
         }
     }

@@ -1,0 +1,29 @@
+# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
+# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
+
+[package]
+name = "datadog-live-debugger-ffi"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+bench = false
+
+[dependencies]
+datadog-live-debugger = { path = "../live-debugger" }
+ddcommon = { path = "../ddcommon" }
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+percent-encoding = "2.1"
+uuid = { version = "1.7.0", features = ["v4"] }
+serde_json = "1.0"
+tokio = "1.36.0"
+tokio-util = { version = "0.7", features = ["rt"] }
+log = "0.4.21"
+
+[features]
+default = ["cbindgen"]
+cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+
+[build-dependencies]
+build_common = { path = "../build-common" }

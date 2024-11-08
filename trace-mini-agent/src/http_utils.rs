@@ -99,6 +99,7 @@ pub fn verify_request_content_length(
 
 #[cfg(test)]
 mod tests {
+    use hyper::body::HttpBody;
     use hyper::header;
     use hyper::Body;
     use hyper::HeaderMap;
@@ -115,7 +116,7 @@ mod tests {
 
     async fn get_response_body_as_string(response: Response<Body>) -> String {
         let body = response.into_body();
-        let bytes = hyper::body::to_bytes(body).await.unwrap();
+        let bytes = body.collect().await.unwrap().to_bytes();
         String::from_utf8(bytes.into_iter().collect()).unwrap()
     }
 

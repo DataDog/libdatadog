@@ -29,6 +29,10 @@ int main(int argc, char** argv)
     ddog_CharSlice language = DDOG_CHARSLICE_C("dotnet");
     ddog_CharSlice language_version = DDOG_CHARSLICE_C("10.0");
     ddog_CharSlice language_interpreter = DDOG_CHARSLICE_C("X");
+    ddog_CharSlice hostname = DDOG_CHARSLICE_C("host1");
+    ddog_CharSlice env = DDOG_CHARSLICE_C("staging");
+    ddog_CharSlice version = DDOG_CHARSLICE_C("1.0");
+    ddog_CharSlice service = DDOG_CHARSLICE_C("test_app");
     TRY(ddog_trace_exporter_new(
         &trace_exporter,
         url,
@@ -36,8 +40,13 @@ int main(int argc, char** argv)
         language,
         language_version,
         language_interpreter,
+        hostname,
+        env,
+        version,
+        service,
         DDOG_TRACE_EXPORTER_INPUT_FORMAT_PROXY,
         DDOG_TRACE_EXPORTER_OUTPUT_FORMAT_V04,
+        true,
         &agent_response_callback
         ));
 

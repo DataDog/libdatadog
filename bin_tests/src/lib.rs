@@ -1,14 +1,15 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod modes;
+
 use std::{collections::HashMap, env, ops::DerefMut, path::PathBuf, process, sync::Mutex};
 
 use anyhow::Ok;
 use once_cell::sync::OnceCell;
-use strum::{Display, EnumString};
 
 /// This crate implements an abstraction over compilation with cargo with the purpose
-/// of testing full binaries or dynamic libraries, instead if just rust static libraries.
+/// of testing full binaries or dynamic libraries, instead of just rust static libraries.
 ///
 /// The main entrypoint is `fn build_artifacts` which takes a list of artifacts to build,
 /// either executable crates, cdylib, or extra binaries, invokes cargo and return the path
@@ -26,12 +27,6 @@ pub enum ArtifactType {
     ExecutablePackage,
     CDylib,
     Bin,
-}
-
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy, EnumString, Display)]
-pub enum ReceiverType {
-    ChildProcessStdin,
-    UnixSocket,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]

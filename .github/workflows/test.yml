@@ -1,8 +1,8 @@
 name: Test
 on: [push]
-env: 
+env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.71.1
+  RUST_VERSION: 1.76.0
 
 jobs:
   test:
@@ -10,7 +10,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
     strategy:
       matrix:
-        platform: [windows-latest, ubuntu-latest, macos-12]
+        platform: [windows-latest, ubuntu-latest, macos-13]
         rust_version: [""]
         include:
           - platform: "ubuntu-latest"
@@ -25,7 +25,7 @@ jobs:
           android: true
           dotnet: true
           haskell: true
-          large-packages: false
+          large-packages: true
           docker-images: false
           swap-storage: true
 
@@ -41,32 +41,39 @@ jobs:
       - id: rust-version
         # On Windows run happens in a PowerShell, so start bash explicitly
         run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
+      - name: Install Protoc Binary
+        shell: bash
+        run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
       - name: Install cargo nextest
         uses: taiki-e/install-action@v2
-        with: 
-          tool: nextest@0.9.72
+        with:
+          tool: nextest@0.9.81
       - name: "Remove nextest CI report"
         shell: bash
         run: rm -rf target/nextest/ci/junit.xml
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --verbose"
-        run: cargo build --workspace --verbose
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --profile ci --verbose -E '!test(tracing_integration_tests::)'"
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --exclude builder --verbose"
+        shell: bash
+        run: cargo build --workspace --exclude builder --verbose
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'"
+        shell: bash
         # Run doc tests with cargo test and run tests with nextest and generate junit.xml
-        run: cargo test --workspace --doc --verbose && cargo nextest run --workspace --profile ci --verbose -E '!test(tracing_integration_tests::)'
+        run: cargo test --workspace --exclude builder --doc --verbose && cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
         env:
           RUST_BACKTRACE: 1
-      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --profile ci --verbose -E 'test(tracing_integration_tests::)'"
+      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(tracing_integration_tests::)'"
         if: runner.os == 'Linux'
-        run: cargo nextest run --workspace --profile ci --verbose -E 'test(tracing_integration_tests::)'
+        shell: bash
+        run: cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(tracing_integration_tests::)'
         env:
           RUST_BACKTRACE: 1
       - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'"
+        shell: bash
         run: cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'
         env:
           RUSTFLAGS: "-C prefer-dynamic"
           RUST_BACKTRACE: 1
       - name: Report Test Results
-        if: success() || failure() 
+        if: success() || failure()
         uses: mikepenz/action-junit-report@v4
         with:
           report_paths: "target/nextest/ci/junit.xml"
@@ -78,11 +85,17 @@ jobs:
     runs-on: ${{ matrix.platform }}
     strategy:
       matrix:
-        platform: [windows-latest, ubuntu-latest, macos-12]
+        platform: [windows-latest, ubuntu-latest, macos-13]
         rust_version: [""]
         include:
           - platform: "ubuntu-latest"
             rust_version: "${RUST_VERSION}"
+          - platform: "ubuntu-latest"
+            flags: "-C relocation-model=pic"
+          - platform: "macos-13"
+            flags: "-C relocation-model=pic"
+          - platform: "windows-latest"
+            flags: "-C target-feature=+crt-static"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -94,7 +107,7 @@ jobs:
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
              WORKSPACE_PATH=$(cygpath -ua '${{ github.workspace }}')
           fi
-          echo "OUTPUT_FOLDER=$WORKSPACE_PATH/artifacts" >> $GITHUB_ENV
+          echo "LIBDD_OUTPUT_FOLDER=$WORKSPACE_PATH/artifacts" >> $GITHUB_ENV
 
       - name: Free Disk Space (Ubuntu only)
         if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
@@ -115,9 +128,6 @@ jobs:
           rust_version: ${{ matrix.rust_version }}
           build_profile: "release"
 
-      - name: Install nightly toolchain
-        run: rustup install nightly
-
       - name: Install Rust ${{ matrix.rust_version }}
         if: matrix.rust_version != ''
         run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
@@ -128,13 +138,10 @@ jobs:
 
       - name: "Generate profiling FFI"
         shell: bash
+        env:
+          RUSTFLAGS: "${{ matrix.flags }}"
         run: |
-           ./build-profiling-ffi.sh -f data-pipeline-ffi ${OUTPUT_FOLDER}/profiling
-
-      - name: "Generate Telemetry FFI"
-        shell: bash
-        run: |
-           ./build-telemetry-ffi.sh ${OUTPUT_FOLDER}/telemetry
+           cargo build -p builder --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -vv
 
       - name: 'Publish libdatadog'
         uses: actions/upload-artifact@v4
@@ -151,9 +158,10 @@ jobs:
         shell: bash
         run: |
           set -e
+          rm -rf examples/ffi/build_dll
           mkdir examples/ffi/build_dll
           cd examples/ffi/build_dll
-          cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DVCRUNTIME_LINK_TYPE=DLL
+          cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=DLL
           cmake --build .
 
       - name: "(Windows) Test building Profiling C bindings - static link vc runtime"
@@ -161,9 +169,10 @@ jobs:
         shell: bash
         run: |
           set -e
+          rm -rf examples/ffi/build_static
           mkdir examples/ffi/build_static
           cd examples/ffi/build_static
-          cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DVCRUNTIME_LINK_TYPE=STATIC
+          cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=STATIC
           cmake --build .
 
       - name: "Test building Profiling C bindings"
@@ -175,18 +184,18 @@ jobs:
           cd examples/ffi/build
           # Add BUILD_SYMBOLIZER variable only for Linux platforms
           if [[ "${{ matrix.platform }}" == "ubuntu-latest" ]]; then
-            cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling -DBUILD_SYMBOLIZER=true
-            cmake --build  .
+            cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DBUILD_SYMBOLIZER=true
+            cmake --build .
             ./symbolizer
           else
-            cmake -S .. -DDatadog_ROOT=$OUTPUT_FOLDER/profiling
+            cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER
             cmake --build .
           fi
 
   cross-centos7:
     name: build and test using cross - on centos7
     runs-on: ubuntu-latest
-    concurrency: 
+    concurrency:
       group: ci-${{ github.ref }}-cross-centos7
       cancel-in-progress: true
     steps:
@@ -207,9 +216,9 @@ jobs:
         with:
           rust_version: cross-centos7
       - run: cargo install cross || true
-      - run: cross build --workspace --target x86_64-unknown-linux-gnu
-      - run: cross test --workspace --target x86_64-unknown-linux-gnu -- --skip "::single_threaded_tests::" --skip "tracing_integration_tests::"
-      - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "tracing_integration_tests::"
+      - run: cross build --workspace --target x86_64-unknown-linux-gnu --exclude builder
+      - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude builder  -- --skip "::single_threaded_tests::" --skip "tracing_integration_tests::"
+      - run: cross test --workspace --target x86_64-unknown-linux-gnu --exclude builder --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "tracing_integration_tests::"
 
   ffi_bake:
     strategy:
@@ -217,7 +226,7 @@ jobs:
         target: [alpine-build] # debian-build-aarch64 is oom killed at the moment
     name: "FFI ${{ matrix.target }} via docker bake"
 
-    concurrency: 
+    concurrency:
       group: ci-${{ github.ref }}-${{ matrix.target }}
       cancel-in-progress: true
 
