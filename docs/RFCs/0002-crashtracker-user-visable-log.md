@@ -4,7 +4,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 ## Summary
 
-This document describes version 1 of the crashinfo data format.
+This document describes version 1.0 of the crashinfo data format.
 
 ## Motivation
 
@@ -114,7 +114,7 @@ Consumers MUST accept json with elided optional fields.
 
 Future versions of the crashtracker MAY add additional fields.
 Parsers MUST accept unexpected optional fields, either by ignoring them, or by displaying them as additional data.
-The version number SHOULD be incremented for important optional fields, and MUST be incremented when a required field is added or removed.
+The version number SHOULD follow semver: i.e. increment a minor version number for backwards compatable changes, and increment the major version for non backwards compatible changes.
 
 ### Stacktraces
 
@@ -132,7 +132,8 @@ A stacktrace consists of
   Allows for extensibility to support different stack trace formats.
   The format described below is identfied using the string "CrashTrackerV1"
 - `frames`:
-  An array of `StackFrame`, described below
+  An array of `StackFrame`, described below.
+  Note that each inlined function gets its own stack frame in this schema.
 
 #### StackFrame
 
@@ -156,12 +157,15 @@ NOTE: All of the given fields below are optional.
 - **Relative Addresses**
   Addresses expressed as an offset into a given library or executable.
   Can be used by backend symbolication to generate debug names etc.
-  These follow the [blazezym](https://github.com/libbpf/blazesym) format for normalized addresses.
-  - `file_offset`:
-    The relative offset of the symbol, in the base file
-  - `meta`:
-    Metadata to allow the backend symbolizer to identify the file that symbol is in.
-    Currently, this includes the file type: "Apk", "Elf" or "Unknown", as well as the `path` and `build_id` identifying the file.
+  - `build_id`:
+    A string identifying the build id of the module the address belongs to.
+    For example, GNU build ids are hex strings "9944168df12b0b9b152113c4ad663bc27797fb15".
+    Pdb build ids can be stored as a concatenation of the guid and the age (using a well-known separator).
+  - `build_id_type`:
+    The type of the `build_id`. E.g. "SHA1/GNU/GO/PDB/PE".
+  - `file_type`: The file type of the module containing the symbol, e.g. "ELF", "PDB", etc.
+  - `relative_address`: The relative offset of the symbol in the base file, given as a hexidecimal string.
+  - `path`: The path to the module containing the symbol.
 - **Debug information (e.g. "names")**
   Human readable debug information representing the location of the stack frame in the high-level code.
   Note that this is a best effort collection: for optimized code, it may be difficult to associate a given instruction back to file, line and column.
