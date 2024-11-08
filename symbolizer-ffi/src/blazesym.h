@@ -1,10 +1,10 @@
 // BSD-3-Clause License
 // Synchronized from blazesym repository
-// https://github.com/libbpf/blazesym/blob/capi-v0.1.0-rc.1/capi/include/blazesym.h
+// https://github.com/libbpf/blazesym/blob/capi-v0.1.0-rc.2/capi/include/blazesym.h
 /*
  * Please refer to the documentation hosted at
  *
- *   https://docs.rs/blazesym-c/0.1.0-rc.1
+ *   https://docs.rs/blazesym-c/0.1.0-rc.2
  */
 
 
