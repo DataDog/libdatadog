@@ -187,6 +187,10 @@ impl Profile {
     }
 
     pub fn resolve(&mut self, id: PersistentStringId) -> StringId {
+        if id.value == 0 {
+            return StringId::ZERO;
+        }
+
         self.string_storage
             .as_ref()
             .expect("resolution from id requires managed string storage")
