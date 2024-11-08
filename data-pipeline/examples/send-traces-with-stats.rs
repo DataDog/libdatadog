@@ -34,7 +34,7 @@ fn main() {
         .set_url("http://localhost:8126")
         .set_hostname("test")
         .set_env("testing")
-        .set_version(env!("CARGO_PKG_VERSION"))
+        .set_app_version(env!("CARGO_PKG_VERSION"))
         .set_service("data-pipeline-test")
         .set_tracer_version(env!("CARGO_PKG_VERSION"))
         .set_language("rust")

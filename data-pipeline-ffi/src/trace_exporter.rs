@@ -60,7 +60,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
         .set_language_interpreter(language_interpreter.to_utf8_lossy().as_ref())
         .set_hostname(hostname.to_utf8_lossy().as_ref())
         .set_env(env.to_utf8_lossy().as_ref())
-        .set_version(version.to_utf8_lossy().as_ref())
+        .set_app_version(version.to_utf8_lossy().as_ref())
         .set_service(service.to_utf8_lossy().as_ref())
         .set_input_format(input_format)
         .set_output_format(output_format)
