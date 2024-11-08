@@ -708,8 +708,9 @@ fn test_waitall_nohang() -> anyhow::Result<()> {
                 }
             }
 
-            // Now, do the equivalent of the waitall loop.  One caveat here is that we do not want to hang
-            // the test, so we actually collect child exits in a busy WNOHANG loop.
+            // Now, do the equivalent of the waitall loop.
+            // One caveat is that we do not want to hang the test, so rather than an unbounded
+            // `waitpid()`, use WNOHANG within a timer loop.
             let timeout = std::time::Duration::from_millis(timeout_duration_ms);
             let start_time = std::time::Instant::now();
             loop {
