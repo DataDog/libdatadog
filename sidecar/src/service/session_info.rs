@@ -18,7 +18,9 @@ use tracing::{debug, error, info, trace};
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
 
+use crate::service::agent_info::AgentInfoGuard;
 use crate::service::{InstanceId, QueueId, RuntimeInfo};
+
 /// `SessionInfo` holds information about a session.
 ///
 /// It contains a list of runtimes, session configuration, tracer configuration, and log guards.
@@ -31,6 +33,7 @@ pub(crate) struct SessionInfo {
     tracer_config: Arc<Mutex<tracer::Config>>,
     dogstatsd: Arc<Mutex<Option<dogstatsd_client::Client>>>,
     remote_config_invariants: Arc<Mutex<Option<ConfigInvariants>>>,
+    pub(crate) agent_infos: Arc<Mutex<Option<AgentInfoGuard>>>,
     pub(crate) remote_config_interval: Arc<Mutex<Duration>>,
     #[cfg(windows)]
     pub(crate) remote_config_notify_function:
@@ -50,6 +53,7 @@ impl Clone for SessionInfo {
             tracer_config: self.tracer_config.clone(),
             dogstatsd: self.dogstatsd.clone(),
             remote_config_invariants: self.remote_config_invariants.clone(),
+            agent_infos: self.agent_infos.clone(),
             remote_config_interval: self.remote_config_interval.clone(),
             #[cfg(windows)]
             remote_config_notify_function: self.remote_config_notify_function.clone(),
