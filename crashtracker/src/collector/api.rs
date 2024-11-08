@@ -593,3 +593,157 @@ fn test_altstack_nouse() -> anyhow::Result<()> {
     // OK, we're done
     Ok(())
 }
+
+#[cfg_attr(miri, ignore)]
+#[cfg(target_os = "linux")]
+#[test]
+fn test_waitall_nohang() -> anyhow::Result<()> {
+    // This test checks whether the crashtracking implementation can cause malformed `waitall()`
+    // idioms to hang.
+    // Consider the following code from the Ruby runtime:
+    //
+    //   static VALUE
+    //   proc_waitall(VALUE _)
+    //   {
+    //       VALUE result;
+    //       rb_pid_t pid;
+    //       int status;
+    //
+    //       result = rb_ary_new();
+    //       rb_last_status_clear();
+    //
+    //       for (pid = -1;;) {
+    //           pid = rb_waitpid(-1, &status, 0);
+    //           if (pid == -1) {
+    //               int e = errno;
+    //               if (e == ECHILD)
+    //                   break;
+    //               rb_syserr_fail(e, 0);
+    //           }
+    //           rb_ary_push(result, rb_assoc_new(PIDT2NUM(pid), rb_last_status_get()));
+    //       }
+    //       return result;
+    //   }
+    //
+    // The intent here is to wait for all of one's child processes to exit.  This is a pretty
+    // standard operation in multi-process situations, with one important caveat:  usually you know
+    // your children ahead of time and can wait on them in a controlled, intentional matter.
+    // Previous versions of crashtracking, which spawned long-lived receiver processes, would
+    // interfere with this
+    //
+    // This implements the inner behavior of a test which allows the caller to control which
+    // options are used.
+    use crate::StacktraceCollection;
+    use chrono::Utc;
+    use ddcommon::Endpoint;
+
+    let time = Utc::now().to_rfc3339();
+    let dir = "/tmp/crashreports/";
+    let output_url = format!("file://{dir}{time}.txt");
+
+    let endpoint = Some(Endpoint::from_slice(&output_url));
+
+    let path_to_receiver_binary =
+        "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
+    let create_alt_stack = false;
+    let use_alt_stack = false;
+    let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
+    let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
+    let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
+    let timeout_ms = 10_000;
+    let receiver_config = CrashtrackerReceiverConfig::new(
+        vec![],
+        vec![],
+        path_to_receiver_binary,
+        stderr_filename,
+        stdout_filename,
+    )?;
+    let config = CrashtrackerConfiguration::new(
+        vec![],
+        create_alt_stack,
+        use_alt_stack,
+        endpoint,
+        resolve_frames,
+        timeout_ms,
+    )?;
+
+    let metadata = CrashtrackerMetadata::new(
+        "libname".to_string(),
+        "version".to_string(),
+        "family".to_string(),
+        vec![],
+    );
+
+    // Since this test ultimately mutates process state, it's done inside of a fork just like the
+    // other tests of the same ilk.
+    match unsafe { libc::fork() } {
+        -1 => {
+            panic!("Failed to fork");
+        }
+        0 => {
+            // Child process
+            // This is where the test actually happens!
+            init(config, receiver_config, metadata)?;
+
+            // Now spawn some short-lived child processes.
+            // Note:  it's easy to confirm this test actually works by cranking the sleep duration
+            // up past the timeout duration. At such a point, the test should fail.
+            let mut children = vec![];
+            let sleep_duration_ms = 100;
+            let timeout_duration_ms = 150;
+            for _ in 0..10 {
+                match unsafe { libc::fork() } {
+                    -1 => {
+                        panic!("Failed to fork");
+                    }
+                    0 => {
+                        // Grandchild process
+                        std::thread::sleep(std::time::Duration::from_millis(sleep_duration_ms));
+                        std::process::exit(0); // normal exit, since we're testing waitall
+                    }
+                    pid => {
+                        // Parent process
+                        children.push(pid); // unused in this test
+                    }
+                }
+            }
+
+            // Now, do the equivalent of the waitall loop.  One caveat here is that we do not want to hang
+            // the test, so we actually collect child exits in a busy WNOHANG loop.
+            let timeout = std::time::Duration::from_millis(timeout_duration_ms);
+            let start_time = std::time::Instant::now();
+            loop {
+                if start_time.elapsed() > timeout {
+                    eprintln!("Timed out waiting for children to exit");
+                    std::process::exit(-6);
+                }
+
+                // Call waitpid with WNOHANG
+                let mut status = 0;
+                let pid = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
+                let errno = std::io::Error::last_os_error().raw_os_error().unwrap();
+
+                if pid == -1 && errno == libc::ECHILD {
+                    // No more children!  Done!
+                    std::process::exit(42);
+                }
+            }
+        }
+        pid => {
+            // Parent process
+            let mut status = 0;
+            let _ = unsafe { libc::waitpid(pid, &mut status, 0) };
+
+            // `status` is not the exit code, gotta unwrap some layers
+            if libc::WIFEXITED(status) {
+                let exit_code = libc::WEXITSTATUS(status);
+                assert_eq!(exit_code, 42, "Child process exited with unexpected status");
+            } else {
+                panic!("Child process did not exit normally");
+            }
+        }
+    }
+
+    // Confirmed that we have no children, so we're done.
+    Ok(())
+}
