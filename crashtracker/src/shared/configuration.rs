@@ -37,6 +37,7 @@ pub struct CrashtrackerReceiverConfig {
     pub path_to_receiver_binary: String,
     pub stderr_filename: Option<String>,
     pub stdout_filename: Option<String>,
+    pub unix_socket_path: Option<String>,
 }
 
 impl CrashtrackerReceiverConfig {
@@ -46,7 +47,12 @@ impl CrashtrackerReceiverConfig {
         path_to_receiver_binary: String,
         stderr_filename: Option<String>,
         stdout_filename: Option<String>,
+        unix_socket_path: Option<String>,
     ) -> anyhow::Result<Self> {
+        // Note:  this implementation does not check the receiver socket path until needed.
+        // Because the receiver is not spawned (and thus, will not open the given path)
+        // until a crash has been triggered, it is valid--albeit unsafe--for the caller to
+        // configure crashtracking before creating a unix domain socket.
         anyhow::ensure!(
             !path_to_receiver_binary.is_empty(),
             "Expected a receiver binary"
@@ -64,6 +70,7 @@ impl CrashtrackerReceiverConfig {
             path_to_receiver_binary,
             stderr_filename,
             stdout_filename,
+            unix_socket_path,
         })
     }
 }

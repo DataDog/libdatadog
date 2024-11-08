@@ -84,6 +84,7 @@ mod unix {
                 receiver_binary,
                 Some(stderr_filename),
                 Some(stdout_filename),
+                None,
             )?,
             metadata,
         )?;

@@ -123,6 +123,7 @@ fn test_crash() -> anyhow::Result<()> {
         path_to_receiver_binary,
         stderr_filename,
         stdout_filename,
+        None,
     )?;
     let config = CrashtrackerConfiguration::new(
         vec![],
@@ -245,6 +246,7 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
         path_to_receiver_binary,
         stderr_filename,
         stdout_filename,
+        None,
     )?;
     let config = CrashtrackerConfiguration::new(
         vec![],
@@ -371,6 +373,7 @@ fn test_altstack_use_nocreate() -> anyhow::Result<()> {
         path_to_receiver_binary,
         stderr_filename,
         stdout_filename,
+        None,
     )?;
     let config = CrashtrackerConfiguration::new(
         vec![],
@@ -497,6 +500,7 @@ fn test_altstack_nouse() -> anyhow::Result<()> {
         path_to_receiver_binary,
         stderr_filename,
         stdout_filename,
+        None,
     )?;
     let config = CrashtrackerConfiguration::new(
         vec![],

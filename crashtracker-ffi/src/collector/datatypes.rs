@@ -22,6 +22,8 @@ pub struct ReceiverConfig<'a> {
     pub optional_stderr_filename: CharSlice<'a>,
     /// Optional filename to forward stdout to (useful for logging/debugging)
     pub optional_stdout_filename: CharSlice<'a>,
+    /// Optional filename for a unix domain socket if the receiver is used asynchonously
+    pub optional_unix_socket_filename: CharSlice<'a>,
 }
 
 impl<'a> TryFrom<ReceiverConfig<'a>> for datadog_crashtracker::CrashtrackerReceiverConfig {
@@ -47,12 +49,14 @@ impl<'a> TryFrom<ReceiverConfig<'a>> for datadog_crashtracker::CrashtrackerRecei
         let path_to_receiver_binary = value.path_to_receiver_binary.try_to_utf8()?.to_string();
         let stderr_filename = option_from_char_slice(value.optional_stderr_filename)?;
         let stdout_filename = option_from_char_slice(value.optional_stdout_filename)?;
+        let unix_socket_path = option_from_char_slice(value.optional_unix_socket_filename)?;
         Self::new(
             args,
             env,
             path_to_receiver_binary,
             stderr_filename,
             stdout_filename,
+            unix_socket_path,
         )
     }
 }
