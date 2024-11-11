@@ -205,7 +205,7 @@ pub(crate) fn emit_siginfo(w: &mut impl Write, siginfo: libc::siginfo_t) -> anyh
         write!(w, "\"faulting_address\": {si_addr}, ")?;
     }
     write!(w, "\"si_addr\": {si_addr}")?; // last field, no trailing comma
-    write!(w, "}}")?;
+    writeln!(w, "}}")?;
     writeln!(w, "{DD_CRASHTRACK_END_SIGINFO}")?;
     Ok(())
 }

@@ -121,9 +121,13 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: 
     );
     assert_eq!(
         serde_json::json!({
-          "signum": 11,
-          "signame": "SIGSEGV",
+          "code": 1,
+          "codename": "SEGV_MAPERR",
           "faulting_address": 0,
+          "pid": 0,
+          "si_addr": 0,
+          "signame": "SIGSEGV",
+          "signum": 11,
         }),
         crash_payload["siginfo"]
     );

@@ -1,7 +1,6 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
-use libc;
 
 pub fn get_signal_name(siginfo: &libc::siginfo_t) -> &'static str {
     let signal = siginfo.si_signo;
