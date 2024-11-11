@@ -635,7 +635,7 @@ impl TraceExporter {
                     url: self.output_format.add_path(&self.endpoint.url),
                     ..self.endpoint.clone()
                 };
-                let send_data = SendData::new(size, tracer_payload, header_tags, &endpoint, None);
+                let send_data = SendData::new(size, tracer_payload, header_tags, &endpoint);
                 self.runtime.block_on(async {
                     match send_data.send().await.last_result {
                         Ok(response) => match response.into_body().collect().await {
