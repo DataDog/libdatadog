@@ -63,11 +63,13 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
 
         let string: &str = CStr::from_ptr(string.as_ptr())
             .to_str()
-            .expect("valid utf8 string");
+            .map_err(|_| anyhow::anyhow!("invalid utf8 string"))?;
 
         let string_id = storage
             .write()
-            .expect("acquisition of write lock on string storage should succeed")
+            .map_err(|_| {
+                anyhow::anyhow!("acquisition of write lock on string storage should succeed")
+            })?
             .intern(string);
 
         anyhow::Ok(ManagedStringId { value: string_id })
@@ -87,7 +89,9 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
         let storage = get_inner_string_storage(storage, true)?;
         storage
             .read()
-            .expect("acquisition of read lock on string storage should succeed")
+            .map_err(|_| {
+                anyhow::anyhow!("acquisition of read lock on string storage should succeed")
+            })?
             .unintern(id.value);
         anyhow::Ok(())
     })()
@@ -120,7 +124,9 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
         let storage = get_inner_string_storage(storage, true)?;
         let string: String = (*storage
             .read()
-            .expect("acquisition of read lock on string storage should succeed")
+            .map_err(|_| {
+                anyhow::anyhow!("acquisition of read lock on string storage should succeed")
+            })?
             .get_string(id.value))
         .to_owned();
 
@@ -141,7 +147,9 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_advance_gen(
 
         storage
             .write()
-            .expect("acquisition of write lock on string storage should succeed")
+            .map_err(|_| {
+                anyhow::anyhow!("acquisition of write lock on string storage should succeed")
+            })?
             .advance_gen();
 
         anyhow::Ok(())
