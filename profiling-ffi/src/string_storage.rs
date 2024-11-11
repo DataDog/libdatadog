@@ -12,14 +12,22 @@ pub struct ManagedStringStorage {
                            * opaque RwLock */
 }
 
+#[allow(dead_code)]
+#[repr(C)]
+pub enum ManagedStringStorageNewResult {
+    Ok(ManagedStringStorage),
+    #[allow(dead_code)]
+    Err(Error),
+}
+
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_new() -> ManagedStringStorage {
+pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_new() -> ManagedStringStorageNewResult {
     let storage = InternalManagedStringStorage::new();
 
-    ManagedStringStorage {
+    ManagedStringStorageNewResult::Ok(ManagedStringStorage {
         inner: Rc::into_raw(Rc::new(RwLock::new(storage))) as *const c_void,
-    }
+    })
 }
 
 #[no_mangle]
