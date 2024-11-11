@@ -7,7 +7,7 @@ mod fuzz_tests;
 use self::api::UpscalingInfo;
 use super::*;
 use crate::api;
-use crate::api::PersistentStringId;
+use crate::api::ManagedStringId;
 use crate::collections::identifiable::*;
 use crate::collections::string_storage::ManagedStringStorage;
 use crate::collections::string_table::StringTable;
@@ -186,7 +186,7 @@ impl Profile {
         Ok(())
     }
 
-    pub fn resolve(&mut self, id: PersistentStringId) -> StringId {
+    pub fn resolve(&mut self, id: ManagedStringId) -> StringId {
         if id.value == 0 {
             return StringId::ZERO;
         }
@@ -644,7 +644,7 @@ impl Profile {
         &mut self,
         sample: &api::StringIdSample,
     ) -> anyhow::Result<()> {
-        let mut seen: HashMap<PersistentStringId, &api::StringIdLabel> = HashMap::new();
+        let mut seen: HashMap<ManagedStringId, &api::StringIdLabel> = HashMap::new();
 
         for label in sample.labels.iter() {
             if let Some(duplicate) = seen.insert(label.key, label) {
