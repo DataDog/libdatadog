@@ -3,7 +3,7 @@ use libc::c_void;
 use std::{ffi::CStr, rc::Rc, sync::RwLock};
 
 use datadog_profiling::collections::string_storage::ManagedStringStorage as InternalManagedStringStorage;
-use ddcommon_ffi::{CharSlice, Error, StringWrapper};
+use ddcommon_ffi::{CharSlice, Error, MaybeError, StringWrapper};
 
 #[repr(C)]
 pub struct ManagedStringStorage {
@@ -68,8 +68,8 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
     storage: ManagedStringStorage,
     id: u32,
-) -> ManagedStringStorageResult {
-    (|| {
+) -> MaybeError {
+    let result = (|| {
         let storage = get_inner_string_storage(storage, true)?;
         storage
             .read()
@@ -77,8 +77,12 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
             .unintern(id);
         anyhow::Ok(())
     })()
-    .context("ddog_prof_ManagedStringStorage_unintern failed")
-    .into()
+    .context("ddog_prof_ManagedStringStorage_unintern failed");
+
+    match result {
+        Ok(_) => MaybeError::None,
+        Err(e) => MaybeError::Some(e.into()),
+    }
 }
 
 #[repr(C)]
@@ -108,19 +112,12 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
     .into()
 }
 
-#[repr(C)]
-#[allow(dead_code)]
-pub enum ManagedStringStorageResult {
-    Ok(()),
-    Err(Error),
-}
-
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_advance_gen(
     storage: ManagedStringStorage,
-) -> ManagedStringStorageResult {
-    (|| {
+) -> MaybeError {
+    let result = (|| {
         let storage = get_inner_string_storage(storage, true)?;
 
         storage
@@ -130,8 +127,12 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_advance_gen(
 
         anyhow::Ok(())
     })()
-    .context("ddog_prof_ManagedStringStorage_advance_gen failed")
-    .into()
+    .context("ddog_prof_ManagedStringStorage_advance_gen failed");
+
+    match result {
+        Ok(_) => MaybeError::None,
+        Err(e) => MaybeError::Some(e.into()),
+    }
 }
 
 pub unsafe fn get_inner_string_storage(
@@ -170,15 +171,6 @@ impl From<anyhow::Result<String>> for StringWrapperResult {
     fn from(value: anyhow::Result<String>) -> Self {
         match value {
             Ok(v) => Self::Ok(v.into()),
-            Err(err) => Self::Err(err.into()),
-        }
-    }
-}
-
-impl From<anyhow::Result<()>> for ManagedStringStorageResult {
-    fn from(value: anyhow::Result<()>) -> Self {
-        match value {
-            Ok(v) => Self::Ok(v),
             Err(err) => Self::Err(err.into()),
         }
     }
