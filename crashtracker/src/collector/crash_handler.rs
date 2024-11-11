@@ -539,10 +539,12 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     let _guard = SaGuard::<2>::new(&[signal::SIGCHLD, signal::SIGPIPE])?;
 
     // Optionally, create the receiver.  This all hinges on whether or not the configuration has a
-    // unix domain socket specified.  If it doesn't, then we need to check the receiver
+    // non-null unix domain socket specified.  If it doesn't, then we need to check the receiver
     // configuration.  If it does, then we just connect to the socket.
-    let receiver = if let Some(unix_socket_path) = &config.unix_socket_path {
-        receiver_from_socket(unix_socket_path)?
+    let unix_socket_path = config.unix_socket_path.clone().unwrap_or_default();
+
+    let receiver = if !unix_socket_path.is_empty() {
+        receiver_from_socket(&unix_socket_path)?
     } else {
         let receiver_config = RECEIVER_CONFIG.load(SeqCst);
         if receiver_config.is_null() {

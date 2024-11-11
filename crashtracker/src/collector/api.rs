@@ -79,8 +79,6 @@ pub fn init(
     receiver_config: CrashtrackerReceiverConfig,
     metadata: CrashtrackerMetadata,
 ) -> anyhow::Result<()> {
-    // Setup the receiver first, so that if there is a crash detected it has
-    // somewhere to go.
     update_metadata(metadata)?;
     update_config(config)?;
     configure_receiver(receiver_config);
