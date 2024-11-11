@@ -201,6 +201,12 @@ pub(crate) fn emit_siginfo(w: &mut impl Write, siginfo: libc::siginfo_t) -> anyh
     write!(w, "\"pid\": {si_pid}, ")?;
     write!(w, "\"code\": {si_code}, ")?;
     write!(w, "\"codename\": \"{codename}\", ")?;
+
+    // For now, we'll double-emit data which is backed by `si_addr` because the telemetry backend
+    // won't do anything fancy with this payload, and `faulting_address` has significance to
+    // developers who are querying for specific faults.  However, we should probably decide how
+    // this gets canonized and which component is responsible.
+    // For now, double-ship the address.
     if siginfo.si_signo == libc::SIGSEGV {
         write!(w, "\"faulting_address\": {si_addr}, ")?;
     }
