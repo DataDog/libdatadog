@@ -22,7 +22,7 @@ pub fn get_signal_name(siginfo: &libc::siginfo_t) -> &'static str {
 // comparable way. There's no other reason for this, so it can be replaced as soon as a better
 // solution is found.
 // (this only copies the most common, actionable values)
-pub mod siginfo_code{
+pub mod siginfo_code {
     pub const SI_USER: i32 = 0;
     pub const SI_KERNEL: i32 = 0x80;
     pub const SI_QUEUE: i32 = -1;

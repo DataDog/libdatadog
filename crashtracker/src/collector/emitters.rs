@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::collector::counters::emit_counters;
+use crate::collector::siginfo_strings;
 use crate::collector::spans::emit_spans;
 use crate::collector::spans::emit_traces;
-use crate::collector::siginfo_strings;
 use crate::shared::constants::*;
 use crate::CrashtrackerConfiguration;
 use crate::StacktraceCollection;
@@ -186,10 +186,7 @@ fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
 /// SIGNAL SAFETY:
 ///     This function is careful to only write to the handle, without doing any
 ///     unnecessary mutexes or memory allocation.
-fn emit_siginfo(
-    w: &mut impl Write,
-    siginfo: libc::siginfo_t,
-) -> anyhow::Result<()> {
+pub(crate) fn emit_siginfo(w: &mut impl Write, siginfo: libc::siginfo_t) -> anyhow::Result<()> {
     let signame = siginfo_strings::get_signal_name(&siginfo);
     let codename = siginfo_strings::get_code_name(&siginfo);
     let si_addr = unsafe { siginfo.si_addr() } as usize;
@@ -255,5 +252,64 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     }
     writeln!(w, "\n{DD_CRASHTRACK_END_FILE} \"{path}\"")?;
     w.flush()?;
+    Ok(())
+}
+
+#[cfg(test)]
+struct JsonCaptureWriter {
+    buffer: Vec<u8>,
+}
+
+#[cfg(test)]
+impl JsonCaptureWriter {
+    fn new() -> Self {
+        JsonCaptureWriter { buffer: Vec::new() }
+    }
+
+    pub fn get_json(&self) -> String {
+        use regex::Regex;
+        let output = String::from_utf8_lossy(&self.buffer);
+        let re = Regex::new(r"DD_CRASHTRACK_\w+").unwrap();
+        re.replace_all(&output, "").trim().to_string()
+    }
+}
+
+#[cfg(test)]
+impl Write for JsonCaptureWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.buffer.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        // NOP, but needed for interface
+        Ok(())
+    }
+}
+
+#[test]
+fn test_sigaction_siginfo() -> anyhow::Result<()> {
+    // This is a simple test to make sure that a valid SigInfo can be created from a
+    // libc::siginfo_t on the current platform.
+    use crate::SigInfo;
+    let mut siginfo: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    siginfo.si_signo = libc::SIGSEGV;
+    siginfo.si_code = 1;
+
+    let mut writer = JsonCaptureWriter::new();
+    emit_siginfo(&mut writer, siginfo)?;
+    let siginfo_json_str = writer.get_json();
+
+    // Is it valid JSON?
+    let _: serde_json::Value = serde_json::from_str(&siginfo_json_str)?;
+
+    // Is it a valid SigInfo?
+    let siginfo: SigInfo = serde_json::from_str(&siginfo_json_str)?;
+
+    // Sanity check for the fields
+    assert_eq!(siginfo.signum, libc::SIGSEGV as u64);
+    assert_eq!(siginfo.signame, "SIGSEGV");
+    assert_eq!(siginfo.pid, 0);
+    assert_eq!(siginfo.code, 1);
+    assert_eq!(siginfo.codename, "SEGV_MAPERR");
     Ok(())
 }
