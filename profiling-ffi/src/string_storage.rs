@@ -31,6 +31,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_new() -> ManagedStringSt
 }
 
 #[no_mangle]
+/// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_drop(storage: ManagedStringStorage) {
     if let Ok(storage) = get_inner_string_storage(storage, false) {
         drop(storage);
@@ -48,6 +49,7 @@ pub enum ManagedStringStorageInternResult {
 #[no_mangle]
 /// TODO: Consider having a variant of intern (and unintern?) that takes an array as input, instead
 /// of just a single string at a time.
+/// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
     storage: ManagedStringStorage,
     string: CharSlice,
@@ -72,6 +74,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
 
 #[must_use]
 #[no_mangle]
+/// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
     storage: ManagedStringStorage,
     id: u32,
@@ -104,6 +107,7 @@ pub enum StringWrapperResult {
 /// TODO: @ivoanjo It's not clear to me if the string pointer we return here is the exact one from
 /// the string storage (still managed via string storage), or if we're allocating a copy (would
 /// need a manual drop?).
+/// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
     storage: ManagedStringStorage,
     id: u32,
@@ -124,6 +128,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
 
 #[must_use]
 #[no_mangle]
+/// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_advance_gen(
     storage: ManagedStringStorage,
 ) -> MaybeError {
