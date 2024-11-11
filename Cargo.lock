@@ -759,8 +759,7 @@ dependencies = [
  "anyhow",
  "build_common",
  "cmake",
- "datadog-profiling-ffi",
- "ddcommon-ffi",
+ "pico-args",
  "tar",
  "tools",
 ]
