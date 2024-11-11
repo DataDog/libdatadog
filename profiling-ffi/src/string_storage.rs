@@ -94,6 +94,9 @@ pub enum StringWrapperResult {
 
 #[must_use]
 #[no_mangle]
+/// TODO: @ivoanjo It's not clear to me if the string pointer we return here is the exact one from
+/// the string storage (still managed via string storage), or if we're allocating a copy (would
+/// need a manual drop?).
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
     storage: ManagedStringStorage,
     id: u32,
