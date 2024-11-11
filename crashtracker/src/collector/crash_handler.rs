@@ -382,10 +382,10 @@ pub fn configure_receiver(config: CrashtrackerReceiverConfig) {
     }
 }
 
-extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucontext: *mut c_void) {
+extern "C" fn handle_posix_sigaction(signum: i32, siginfo: *mut siginfo_t, ucontext: *mut c_void) {
     // Handle the signal.  Note this has a guard to ensure that we only generate
     // one crash report per process.
-    let _ = handle_posix_signal_impl(signum, sig_info);
+    let _ = handle_posix_signal_impl(siginfo);
 
     // Once we've handled the signal, chain to any previous handlers.
     // SAFETY: This was created by [register_crash_handlers].  There is a tiny
@@ -430,11 +430,11 @@ extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucon
         }
         SigHandler::SigIgn => (), // Return and ignore the signal.
         SigHandler::Handler(f) => f(signum),
-        SigHandler::SigAction(f) => f(signum, sig_info, ucontext),
+        SigHandler::SigAction(f) => f(signum, siginfo, ucontext),
     };
 }
 
-fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Result<()> {
+fn handle_posix_signal_impl(siginfo: *mut siginfo_t) -> anyhow::Result<()> {
     // If this is a SIGSEGV signal, it could be called due to a stack overflow. In that case, since
     // this signal allocates to the stack and cannot guarantee it is running without SA_NODEFER, it
     // is possible that we will re-emit the signal. Contemporary unices handle this just fine (no
@@ -476,14 +476,6 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     let timeout_ms = config.timeout_ms;
     let start_time = Instant::now(); // This is the time at which the signal was received
 
-    // Derive the faulting address from `sig_info`
-    let faulting_address: Option<usize> =
-        if !sig_info.is_null() && (signum == libc::SIGSEGV || signum == libc::SIGBUS) {
-            unsafe { Some((*sig_info).si_addr() as usize) }
-        } else {
-            None
-        };
-
     // During the execution of this signal handler, block ALL other signals, especially because we
     // cannot control whether or not we run with SA_NODEFER (crashtracker might have been chained).
     // The especially problematic signals are SIGCHLD and SIGPIPE, which are possibly delivered due
@@ -509,8 +501,7 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
         config,
         config_str,
         metadata_string,
-        signum,
-        faulting_address,
+        unsafe { *siginfo },
     );
 
     let _ = unix_stream.flush();

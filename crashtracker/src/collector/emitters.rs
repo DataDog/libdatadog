@@ -4,6 +4,7 @@
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::emit_spans;
 use crate::collector::spans::emit_traces;
+use crate::collector::siginfo_strings;
 use crate::shared::constants::*;
 use crate::CrashtrackerConfiguration;
 use crate::StacktraceCollection;
@@ -100,12 +101,11 @@ pub(crate) fn emit_crashreport(
     config: &CrashtrackerConfiguration,
     config_str: &str,
     metadata_string: &str,
-    signum: i32,
-    faulting_address: Option<usize>,
+    siginfo: libc::siginfo_t,
 ) -> anyhow::Result<()> {
     emit_metadata(pipe, metadata_string)?;
     emit_config(pipe, config_str)?;
-    emit_siginfo(pipe, signum, faulting_address)?;
+    emit_siginfo(pipe, siginfo)?;
     emit_procinfo(pipe)?;
     pipe.flush()?;
     emit_counters(pipe)?;
@@ -164,28 +164,51 @@ fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Serialize a siginfo_t to the given handle.
+///
+/// This function eagerly emits various parts of the siginfo_t, even though some components are
+/// only circumstantially useful.  The kernel generally provides sane defaults to unused
+/// members, and for downstream consumers it is probably easier to present a consistent keyspace
+/// than to conditionally emit fields.
+///
+/// In particular, note that `si_addr` is a repeat of `faulting_address`, the latter of which is
+/// emitted only for `SIGSEGV` signals.  This data layout should be considered unstable until
+/// canonized in a data format RFC.
+///
+/// PRECONDITIONS:
+///     This function assumes that the crash-tracker is initialized.
+/// SAFETY:
+///     Crash-tracking functions are not reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function is not atomic. A crash during its execution may lead to
+///     unexpected crash-handling behaviour.
+/// SIGNAL SAFETY:
+///     This function is careful to only write to the handle, without doing any
+///     unnecessary mutexes or memory allocation.
 fn emit_siginfo(
     w: &mut impl Write,
-    signum: i32,
-    faulting_address: Option<usize>,
+    siginfo: libc::siginfo_t,
 ) -> anyhow::Result<()> {
-    let signame = if signum == libc::SIGSEGV {
-        "SIGSEGV"
-    } else if signum == libc::SIGBUS {
-        "SIGBUS"
-    } else {
-        "UNKNOWN"
-    };
+    let signame = siginfo_strings::get_signal_name(&siginfo);
+    let codename = siginfo_strings::get_code_name(&siginfo);
+    let si_addr = unsafe { siginfo.si_addr() } as usize;
+    let si_signo = siginfo.si_signo;
+    let si_pid = unsafe { siginfo.si_pid() };
+    let si_code = siginfo.si_code;
 
     writeln!(w, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
-    if let Some(addr) = faulting_address {
-        writeln!(
-            w,
-            "{{\"signum\": {signum}, \"signame\": \"{signame}\", \"faulting_address\": {addr}}}"
-        )?;
-    } else {
-        writeln!(w, "{{\"signum\": {signum}, \"signame\": \"{signame}\"}}")?;
-    };
+    write!(w, "{{")?;
+    write!(w, "\"signum\": {si_signo}, ")?;
+    write!(w, "\"signame\": \"{signame}\", ")?;
+    write!(w, "\"pid\": {si_pid}, ")?;
+    write!(w, "\"code\": {si_code}, ")?;
+    write!(w, "\"codename\": \"{codename}\", ")?;
+    if siginfo.si_signo == libc::SIGSEGV {
+        write!(w, "\"faulting_address\": {si_addr}, ")?;
+    }
+    write!(w, "\"si_addr\": {si_addr}")?; // last field, no trailing comma
+    write!(w, "}}")?;
     writeln!(w, "{DD_CRASHTRACK_END_SIGINFO}")?;
     Ok(())
 }
