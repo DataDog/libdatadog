@@ -4,12 +4,15 @@ mod counters;
 mod datatypes;
 mod spans;
 
-use ddcommon_ffi::{Slice,slice::{AsBytes, CharSlice}};
 use super::crash_info::Metadata;
 use crate::Result;
 use anyhow::Context;
 pub use counters::*;
 pub use datatypes::*;
+use ddcommon_ffi::{
+    slice::{AsBytes, CharSlice},
+    Slice,
+};
 pub use spans::*;
 
 #[no_mangle]
