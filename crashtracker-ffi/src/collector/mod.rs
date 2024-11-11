@@ -4,6 +4,7 @@ mod counters;
 mod datatypes;
 mod spans;
 
+use ddcommon_ffi::{Slice,slice::{AsBytes, CharSlice}};
 use super::crash_info::Metadata;
 use crate::Result;
 use anyhow::Context;
@@ -89,6 +90,42 @@ pub unsafe extern "C" fn ddog_crasht_init(
         let config = config.try_into()?;
         let receiver_config = receiver_config.try_into()?;
         let metadata = metadata.try_into()?;
+        datadog_crashtracker::init(config, receiver_config, metadata)
+    })()
+    .context("ddog_crasht_init failed")
+    .into()
+}
+
+#[no_mangle]
+#[must_use]
+/// Initialize the crash-tracking infrastructure, writing to an unix socket in case of crash.
+///
+/// # Preconditions
+///   None.
+/// # Safety
+///   Crash-tracking functions are not reentrant.
+///   No other crash-handler functions should be called concurrently.
+/// # Atomicity
+///   This function is not atomic. A crash during its execution may lead to
+///   unexpected crash-handling behaviour.
+pub unsafe extern "C" fn ddog_crasht_init_with_unix_socket(
+    config: Config,
+    socket_path: CharSlice,
+    metadata: Metadata,
+) -> Result {
+    (|| {
+        let mut config: datadog_crashtracker::CrashtrackerConfiguration = config.try_into()?;
+        let socket_path = socket_path.try_to_utf8()?;
+        config.unix_socket_path = Some(socket_path.to_string());
+        let metadata = metadata.try_into()?;
+        let receiver_config = ReceiverConfig {
+            args: Slice::empty(),
+            env: Slice::empty(),
+            path_to_receiver_binary: CharSlice::empty(),
+            optional_stdout_filename: CharSlice::empty(),
+            optional_stderr_filename: CharSlice::empty(),
+        };
+        let receiver_config = receiver_config.try_into()?;
         datadog_crashtracker::init(config, receiver_config, metadata)
     })()
     .context("ddog_crasht_init failed")

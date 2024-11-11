@@ -123,7 +123,6 @@ fn test_crash() -> anyhow::Result<()> {
         path_to_receiver_binary,
         stderr_filename,
         stdout_filename,
-        None,
     )?;
     let config = CrashtrackerConfiguration::new(
         vec![],
@@ -132,6 +131,7 @@ fn test_crash() -> anyhow::Result<()> {
         endpoint,
         resolve_frames,
         timeout_ms,
+        None,
     )?;
     let metadata = CrashtrackerMetadata::new(
         "libname".to_string(),
@@ -188,6 +188,7 @@ fn test_altstack_paradox() -> anyhow::Result<()> {
         endpoint,
         resolve_frames,
         timeout_ms,
+        None,
     );
 
     // This is slightly over-tuned to the language of the error message, but it'd require some
@@ -246,7 +247,6 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
         path_to_receiver_binary,
         stderr_filename,
         stdout_filename,
-        None,
     )?;
     let config = CrashtrackerConfiguration::new(
         vec![],
@@ -255,6 +255,7 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
         endpoint,
         resolve_frames,
         timeout_ms,
+        None,
     )?;
     let metadata = CrashtrackerMetadata::new(
         "libname".to_string(),
@@ -373,7 +374,6 @@ fn test_altstack_use_nocreate() -> anyhow::Result<()> {
         path_to_receiver_binary,
         stderr_filename,
         stdout_filename,
-        None,
     )?;
     let config = CrashtrackerConfiguration::new(
         vec![],
@@ -382,6 +382,7 @@ fn test_altstack_use_nocreate() -> anyhow::Result<()> {
         endpoint,
         resolve_frames,
         timeout_ms,
+        None,
     )?;
     let metadata = CrashtrackerMetadata::new(
         "libname".to_string(),
@@ -500,7 +501,6 @@ fn test_altstack_nouse() -> anyhow::Result<()> {
         path_to_receiver_binary,
         stderr_filename,
         stdout_filename,
-        None,
     )?;
     let config = CrashtrackerConfiguration::new(
         vec![],
@@ -509,6 +509,7 @@ fn test_altstack_nouse() -> anyhow::Result<()> {
         endpoint,
         resolve_frames,
         timeout_ms,
+        None,
     )?;
     let metadata = CrashtrackerMetadata::new(
         "libname".to_string(),
@@ -669,6 +670,7 @@ fn test_waitall_nohang() -> anyhow::Result<()> {
         endpoint,
         resolve_frames,
         timeout_ms,
+        None,
     )?;
 
     let metadata = CrashtrackerMetadata::new(

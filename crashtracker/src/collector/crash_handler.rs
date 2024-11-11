@@ -436,23 +436,21 @@ extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucon
     };
 }
 
-fn receiver_from_config(config: &CrashtrackerReceiverConfig) -> anyhow::Result<Receiver> {
-    let receiver = match &config.unix_socket_path {
-        Some(uds) => {
-            let socket_path = std::path::Path::new(&uds);
-            let unix_stream =
-                UnixStream::connect(socket_path).context("Failed to connect to receiver")?;
-            let receiver_uds = unix_stream.into_raw_fd();
-
-            Receiver {
-                receiver_uds,
-                receiver_pid: 0,
-                oneshot: false,
-            }
-        }
-        None => make_receiver(config)?,
-    };
-    Ok(receiver)
+fn receiver_from_socket(unix_socket_path: &str) -> anyhow::Result<Receiver> {
+    // Creates a fake "Receiver", which can be waited on like a normal receiver.
+    // This is intended to support configurations where the collector is speaking to a long-lived,
+    // async receiver process.
+    if unix_socket_path.is_empty() {
+        return Err(anyhow::anyhow!("No receiver path provided"));
+    }
+    let socket_path = std::path::Path::new(unix_socket_path);
+    let unix_stream = UnixStream::connect(socket_path).context("Failed to connect to receiver")?;
+    let receiver_uds = unix_stream.into_raw_fd();
+    Ok(Receiver {
+        receiver_uds,
+        receiver_pid: 0,
+        oneshot: false,
+    })
 }
 
 fn receiver_finish(receiver: Receiver, start_time: Instant, timeout_ms: u32) {
@@ -501,6 +499,8 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     // Leak config and metadata to avoid calling `drop` during a crash
     // Note that these operations also replace the global states.  When the one-time guard is
     // passed, all global configuration and metadata becomes invalid.
+    // In a perfet world, we'd also grab the receiver config in this section, but since the
+    // execution forks based on whether or not the receiver is configured, we check that later.
     let config = CONFIG.swap(ptr::null_mut(), SeqCst);
     anyhow::ensure!(!config.is_null(), "No crashtracking config");
     let (config, config_str) = unsafe { config.as_ref().context("No crashtracking receiver")? };
@@ -509,12 +509,10 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     anyhow::ensure!(!metadata_ptr.is_null(), "No crashtracking metadata");
     let (_metadata, metadata_string) = unsafe { metadata_ptr.as_ref().context("metadata ptr")? };
 
-    let receiver_config = RECEIVER_CONFIG.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(
-        !receiver_config.is_null(),
-        "No crashtracking receiver config"
-    );
-    let receiver_config = unsafe { receiver_config.as_ref().context("receiver config")? };
+    let receiver_config = RECEIVER_CONFIG.load(SeqCst);
+    if receiver_config.is_null() {
+        return Err(anyhow::anyhow!("No receiver config"));
+    }
 
     // Since we've gotten this far, we're going to start working on the crash report. This
     // operation needs to be mindful of the total walltime elapsed during handling. This isn't only
@@ -540,8 +538,21 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     // disrupted.
     let _guard = SaGuard::<2>::new(&[signal::SIGCHLD, signal::SIGPIPE])?;
 
-    // Optionally create the receiver, but connect to it either way
-    let receiver = receiver_from_config(receiver_config)?;
+    // Optionally, create the receiver.  This all hinges on whether or not the configuration has a
+    // unix domain socket specified.  If it doesn't, then we need to check the receiver
+    // configuration.  If it does, then we just connect to the socket.
+    let receiver = if let Some(unix_socket_path) = &config.unix_socket_path {
+        receiver_from_socket(unix_socket_path)?
+    } else {
+        let receiver_config = RECEIVER_CONFIG.load(SeqCst);
+        if receiver_config.is_null() {
+            return Err(anyhow::anyhow!("No receiver config"));
+        }
+        let receiver_config = unsafe { receiver_config.as_ref().context("receiver config")? };
+        make_receiver(receiver_config)?
+    };
+
+    // No matter how the receiver was creatd, attach to its stream
     let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.receiver_uds) };
 
     // Currently the emission of the crash report doesn't have a firm time guarantee

@@ -28,6 +28,7 @@ pub struct CrashtrackerConfiguration {
     pub endpoint: Option<Endpoint>,
     pub resolve_frames: StacktraceCollection,
     pub timeout_ms: u32,
+    pub unix_socket_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -37,7 +38,6 @@ pub struct CrashtrackerReceiverConfig {
     pub path_to_receiver_binary: String,
     pub stderr_filename: Option<String>,
     pub stdout_filename: Option<String>,
-    pub unix_socket_path: Option<String>,
 }
 
 impl CrashtrackerReceiverConfig {
@@ -47,12 +47,7 @@ impl CrashtrackerReceiverConfig {
         path_to_receiver_binary: String,
         stderr_filename: Option<String>,
         stdout_filename: Option<String>,
-        unix_socket_path: Option<String>,
     ) -> anyhow::Result<Self> {
-        // Note:  this implementation does not check the receiver socket path until needed.
-        // Because the receiver is not spawned (and thus, will not open the given path)
-        // until a crash has been triggered, it is valid--albeit unsafe--for the caller to
-        // configure crashtracking before creating a unix domain socket.
         anyhow::ensure!(
             !path_to_receiver_binary.is_empty(),
             "Expected a receiver binary"
@@ -70,7 +65,6 @@ impl CrashtrackerReceiverConfig {
             path_to_receiver_binary,
             stderr_filename,
             stdout_filename,
-            unix_socket_path,
         })
     }
 }
@@ -83,6 +77,7 @@ impl CrashtrackerConfiguration {
         endpoint: Option<Endpoint>,
         resolve_frames: StacktraceCollection,
         timeout_ms: u32,
+        unix_socket_path: Option<String>,
     ) -> anyhow::Result<Self> {
         // Requesting to create, but not use, the altstack is considered paradoxical.
         anyhow::ensure!(
@@ -96,6 +91,8 @@ impl CrashtrackerConfiguration {
         } else {
             timeout_ms
         };
+        // Note:  don't check the receiver socket upfront, since a configuration can be interned
+        // before the receiver is started when using an async-receiver.
         Ok(Self {
             additional_files,
             create_alt_stack,
@@ -103,6 +100,7 @@ impl CrashtrackerConfiguration {
             endpoint,
             resolve_frames,
             timeout_ms,
+            unix_socket_path,
         })
     }
 }
