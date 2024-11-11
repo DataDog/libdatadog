@@ -759,8 +759,7 @@ dependencies = [
  "anyhow",
  "build_common",
  "cmake",
- "datadog-profiling-ffi",
- "ddcommon-ffi",
+ "pico-args",
  "tar",
  "tools",
 ]
@@ -1586,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-serverless-trace-mini-agent"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "datadog-trace-mini-agent",
  "datadog-trace-protobuf",
