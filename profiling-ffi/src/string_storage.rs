@@ -1,9 +1,13 @@
 use anyhow::Context;
+use datadog_profiling::collections::string_storage::ManagedStringStorage as InternalManagedStringStorage;
+use ddcommon_ffi::{CharSlice, Error, MaybeError, StringWrapper};
 use libc::c_void;
 use std::{ffi::CStr, rc::Rc, sync::RwLock};
 
-use datadog_profiling::collections::string_storage::ManagedStringStorage as InternalManagedStringStorage;
-use ddcommon_ffi::{CharSlice, Error, MaybeError, StringWrapper};
+#[repr(C)]
+pub struct ManagedStringId {
+    pub value: u32,
+}
 
 #[repr(C)]
 pub struct ManagedStringStorage {
@@ -41,7 +45,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_drop(storage: ManagedStr
 #[repr(C)]
 #[allow(dead_code)]
 pub enum ManagedStringStorageInternResult {
-    Ok(u32),
+    Ok(ManagedStringId),
     Err(Error),
 }
 
@@ -66,7 +70,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
             .expect("acquisition of write lock on string storage should succeed")
             .intern(string);
 
-        anyhow::Ok(string_id)
+        anyhow::Ok(ManagedStringId { value: string_id })
     })()
     .context("ddog_prof_ManagedStringStorage_intern failed")
     .into()
@@ -77,14 +81,14 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
     storage: ManagedStringStorage,
-    id: u32,
+    id: ManagedStringId,
 ) -> MaybeError {
     let result = (|| {
         let storage = get_inner_string_storage(storage, true)?;
         storage
             .read()
             .expect("acquisition of read lock on string storage should succeed")
-            .unintern(id);
+            .unintern(id.value);
         anyhow::Ok(())
     })()
     .context("ddog_prof_ManagedStringStorage_unintern failed");
@@ -110,14 +114,14 @@ pub enum StringWrapperResult {
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
     storage: ManagedStringStorage,
-    id: u32,
+    id: ManagedStringId,
 ) -> StringWrapperResult {
     (|| {
         let storage = get_inner_string_storage(storage, true)?;
         let string: String = (*storage
             .read()
             .expect("acquisition of read lock on string storage should succeed")
-            .get_string(id))
+            .get_string(id.value))
         .to_owned();
 
         anyhow::Ok(string)
@@ -173,8 +177,8 @@ pub unsafe fn get_inner_string_storage(
     ))
 }
 
-impl From<anyhow::Result<u32>> for ManagedStringStorageInternResult {
-    fn from(value: anyhow::Result<u32>) -> Self {
+impl From<anyhow::Result<ManagedStringId>> for ManagedStringStorageInternResult {
+    fn from(value: anyhow::Result<ManagedStringId>) -> Self {
         match value {
             Ok(v) => Self::Ok(v),
             Err(err) => Self::Err(err.into()),
