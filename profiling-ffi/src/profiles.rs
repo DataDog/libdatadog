@@ -5,7 +5,7 @@ use crate::string_storage::get_inner_string_storage;
 use crate::string_storage::ManagedStringStorage;
 use anyhow::Context;
 use datadog_profiling::api;
-use datadog_profiling::api::PersistentStringId;
+use datadog_profiling::api::ManagedStringId;
 use datadog_profiling::internal;
 use datadog_profiling::internal::ProfiledEndpointsStats;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
@@ -249,8 +249,8 @@ impl<'a> TryFrom<&'a Mapping<'a>> for api::StringIdMapping {
     type Error = Utf8Error;
 
     fn try_from(mapping: &'a Mapping<'a>) -> Result<Self, Self::Error> {
-        let filename = PersistentStringId::new(mapping.filename_id);
-        let build_id = PersistentStringId::new(mapping.build_id_id);
+        let filename = ManagedStringId::new(mapping.filename_id);
+        let build_id = ManagedStringId::new(mapping.build_id_id);
         Ok(Self {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
@@ -299,9 +299,9 @@ impl<'a> TryFrom<&'a Function<'a>> for api::StringIdFunction {
     type Error = Utf8Error;
 
     fn try_from(function: &'a Function<'a>) -> Result<Self, Self::Error> {
-        let name = PersistentStringId::new(function.name_id);
-        let system_name = PersistentStringId::new(function.system_name_id);
-        let filename = PersistentStringId::new(function.filename_id);
+        let name = ManagedStringId::new(function.name_id);
+        let system_name = ManagedStringId::new(function.system_name_id);
+        let filename = ManagedStringId::new(function.filename_id);
         Ok(Self {
             name,
             system_name,
@@ -368,18 +368,18 @@ impl<'a> TryFrom<&'a Label<'a>> for api::StringIdLabel {
     type Error = Utf8Error;
 
     fn try_from(label: &'a Label<'a>) -> Result<Self, Self::Error> {
-        let key = PersistentStringId::new(label.key_id);
+        let key = ManagedStringId::new(label.key_id);
         let str = label.str_id;
         let str = if str == 0 {
             None
         } else {
-            Some(PersistentStringId::new(str))
+            Some(ManagedStringId::new(str))
         };
         let num_unit = label.num_unit_id;
         let num_unit = if num_unit == 0 {
             None
         } else {
-            Some(PersistentStringId::new(num_unit))
+            Some(ManagedStringId::new(num_unit))
         };
 
         Ok(Self {

@@ -25,13 +25,13 @@ pub struct Period<'a> {
 }
 
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
-pub struct PersistentStringId {
+pub struct ManagedStringId {
     pub value: u32,
 }
 
-impl PersistentStringId {
+impl ManagedStringId {
     pub fn new(value: u32) -> Self {
-        PersistentStringId { value }
+        ManagedStringId { value }
     }
 }
 
@@ -63,8 +63,8 @@ pub struct StringIdMapping {
     pub memory_start: u64,
     pub memory_limit: u64,
     pub file_offset: u64,
-    pub filename: PersistentStringId,
-    pub build_id: PersistentStringId,
+    pub filename: ManagedStringId,
+    pub build_id: ManagedStringId,
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -86,9 +86,9 @@ pub struct Function<'a> {
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 // Same as Function, but using StringIds
 pub struct StringIdFunction {
-    pub name: PersistentStringId,
-    pub system_name: PersistentStringId,
-    pub filename: PersistentStringId,
+    pub name: ManagedStringId,
+    pub system_name: ManagedStringId,
+    pub filename: ManagedStringId,
     pub start_line: i64,
 }
 
@@ -145,14 +145,14 @@ pub struct Label<'a> {
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 // Same as Label, but using StringIds
 pub struct StringIdLabel {
-    pub key: PersistentStringId,
+    pub key: ManagedStringId,
 
     /// At most one of the following must be present
-    pub str: Option<PersistentStringId>,
+    pub str: Option<ManagedStringId>,
     pub num: i64,
 
     /// Should only be present when num is present.
-    pub num_unit: Option<PersistentStringId>,
+    pub num_unit: Option<ManagedStringId>,
 }
 
 impl Label<'_> {
