@@ -280,7 +280,7 @@ impl SidecarServer {
         payload_params.measure_size(&mut size);
         match payload_params.try_into() {
             Ok(payload) => {
-                let data = SendData::new(size, payload, headers, target, None);
+                let data = SendData::new(size, payload, headers, target);
                 self.trace_flusher.enqueue(data);
             }
             Err(e) => {
