@@ -117,7 +117,7 @@ RUN echo \
     bin_tests/src/bin/crashtracker_receiver.rs \
     bin_tests/src/bin/crashtracker_unix_socket_receiver.rs \
     bin_tests/src/bin/test_the_tests.rs \
-    builder/src/bin/dummy.rs \
+    builder/src/bin/release.rs \
     ddtelemetry/examples/tm-worker-test.rs \
     ipc/benches/ipc.rs \
     ipc/tarpc/tarpc/examples/compression.rs \
@@ -159,7 +159,7 @@ RUN cargo build --lib --workspace --exclude builder
 RUN cargo build --release --lib --workspace --exclude builder
 
 COPY ./ ./
-RUN LIBDD_OUTPUT_FOLDER=/build/output cargo build -p builder --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release 
+RUN cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -- --out /build/output
 
 FROM scratch as ffi_build_output
 
