@@ -40,6 +40,9 @@ use tokio::task::{JoinError, JoinHandle};
 
 use crate::config::get_product_endpoint;
 use crate::service::agent_info::AgentInfos;
+use crate::service::debugger_diagnostics_bookkeeper::{
+    DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
+};
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::runtime_info::ActiveApplication;
@@ -72,6 +75,7 @@ struct SidecarStats {
     enqueued_telemetry_data: EnqueuedTelemetryStats,
     remote_config_clients: u32,
     remote_configs: MultiTargetStats,
+    debugger_diagnostics_bookkeeping: DebuggerDiagnosticsBookkeeperStats,
     telemetry_metrics_contexts: u32,
     telemetry_worker: TelemetryWorkerStats,
     telemetry_worker_errors: u32,
@@ -110,6 +114,8 @@ pub struct SidecarServer {
     pub agent_infos: AgentInfos,
     /// All remote config handling
     remote_configs: RemoteConfigs,
+    /// Diagnostics bookkeeper
+    debugger_diagnostics_bookkeeper: Arc<DebuggerDiagnosticsBookkeeper>,
     /// The ProcessHandle tied to the connection
     #[cfg(windows)]
     process_handle: Option<ProcessHandle>,
@@ -391,6 +397,7 @@ impl SidecarServer {
                 })
                 .sum(),
             remote_configs: self.remote_configs.stats(),
+            debugger_diagnostics_bookkeeping: self.debugger_diagnostics_bookkeeper.stats(),
             telemetry_metrics_contexts: sessions
                 .values()
                 .map(|s| {
@@ -839,6 +846,31 @@ impl SidecarInterface for SidecarServer {
                 );
             }
             Err(e) => error!("Failed mapping shared debugger data memory: {}", e),
+        }
+
+        no_response()
+    }
+
+    type SendDebuggerDiagnosticsFut = NoResponse;
+
+    fn send_debugger_diagnostics(
+        self,
+        _: Context,
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        diagnostics_payload: Vec<u8>,
+    ) -> Self::SendDebuggerDiagnosticsFut {
+        let session = self.get_session(&instance_id.session_id);
+        let payload = serde_json::from_slice(diagnostics_payload.as_slice()).unwrap();
+        // We segregate RC by endpoint.
+        // So we assume that runtime ids are unique per endpoint and we can safely filter globally.
+        if self.debugger_diagnostics_bookkeeper.add_payload(&payload) {
+            session.send_debugger_data(
+                DebuggerType::Diagnostics,
+                &instance_id.runtime_id,
+                queue_id,
+                serde_json::to_vec(&vec![payload]).unwrap(),
+            );
         }
 
         no_response()

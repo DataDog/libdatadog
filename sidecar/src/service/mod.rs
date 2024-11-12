@@ -29,6 +29,7 @@ use sidecar_interface::{SidecarInterface, SidecarInterfaceRequest, SidecarInterf
 
 pub mod agent_info;
 pub mod blocking;
+mod debugger_diagnostics_bookkeeper;
 pub mod exception_hash_rate_limiter;
 mod instance_id;
 mod queue_id;

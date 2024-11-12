@@ -130,6 +130,22 @@ pub trait SidecarInterface {
         debugger_type: DebuggerType,
     );
 
+    /// Submits debugger diagnostics.
+    /// They are small and bounded in size, hence it's fine to send them without shm.
+    /// Also, the sidecar server deserializes them to inspect and filter and avoid sending redundant
+    /// diagnostics payloads.
+    ///
+    /// # Arguments
+    /// * `instance_id` - The ID of the instance.
+    /// * `queue_id` - The unique identifier for the trace context.
+    /// * `diagnostics_payload` - The diagnostics data to send. (Sent as u8 json due to bincode
+    ///   limitations)
+    async fn send_debugger_diagnostics(
+        instance_id: InstanceId,
+        queue_id: QueueId,
+        diagnostics_payload: Vec<u8>,
+    );
+
     /// Acquire an exception hash rate limiter
     ///
     /// # Arguments

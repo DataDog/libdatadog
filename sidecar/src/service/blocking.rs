@@ -7,6 +7,7 @@ use super::{
 };
 use datadog_ipc::platform::{Channel, FileBackedHandle, ShmHandle};
 use datadog_ipc::transport::blocking::BlockingTransport;
+use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_live_debugger::sender::DebuggerType;
 use ddcommon::tag::Tag;
 use dogstatsd_client::DogStatsDActionOwned;
@@ -318,7 +319,7 @@ pub fn send_debugger_data_shm_vec(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
     queue_id: QueueId,
-    payloads: Vec<datadog_live_debugger::debugger_defs::DebuggerPayload>,
+    payloads: Vec<DebuggerPayload>,
 ) -> anyhow::Result<()> {
     if payloads.is_empty() {
         return Ok(());
@@ -350,6 +351,32 @@ pub fn send_debugger_data_shm_vec(
         mapped.into(),
         debugger_type,
     )?)
+}
+
+/// Submits debugger diagnostics.
+///
+/// # Arguments
+///
+/// * `transport` - The transport used for communication.
+/// * `instance_id` - The ID of the instance.
+/// * `queue_id` - The unique identifier for the trace context.
+/// * `handle` - The handle to the shared memory.
+/// * `diagnostics_payload` - The diagnostics data to send.
+///
+/// # Returns
+///
+/// An `io::Result<()>` indicating the result of the operation.
+pub fn send_debugger_diagnostics<'a>(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    queue_id: QueueId,
+    diagnostics_payload: DebuggerPayload<'a>,
+) -> io::Result<()> {
+    transport.send(SidecarInterfaceRequest::SendDebuggerDiagnostics {
+        instance_id: instance_id.clone(),
+        queue_id,
+        diagnostics_payload: serde_json::to_vec(&diagnostics_payload)?,
+    })
 }
 
 /// Acquire an exception hash rate limiter
