@@ -60,7 +60,9 @@ fn generate_trace_chunks(num_chunks: usize, num_spans: usize) -> Vec<Vec<Value>>
 }
 
 pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
-    let data = rmp_serde::to_vec(&generate_trace_chunks(100, 2_500))
+    // Generate roughly 10mb of data. This is the upper bound of payload size before a tracer
+    // flushes
+    let data = rmp_serde::to_vec(&generate_trace_chunks(20, 2_075))
         .expect("Failed to serialize test spans.");
     let data_as_bytes = tinybytes::Bytes::copy_from_slice(&data);
     let tracer_header_tags = &TracerHeaderTags::default();
