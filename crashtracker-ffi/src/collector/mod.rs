@@ -8,8 +8,8 @@ use super::crash_info::Metadata;
 use crate::Result;
 use anyhow::Context;
 pub use counters::*;
+use datadog_crashtracker::CrashtrackerReceiverConfig;
 pub use datatypes::*;
-use ddcommon_ffi::{slice::CharSlice, Slice};
 pub use spans::*;
 
 #[no_mangle]
@@ -127,14 +127,13 @@ pub unsafe extern "C" fn ddog_crasht_init_without_receiver(
         }
 
         // Populate an empty receiver config
-        let receiver_config = ReceiverConfig {
-            args: Slice::empty(),
-            env: Slice::empty(),
-            path_to_receiver_binary: CharSlice::empty(),
-            optional_stdout_filename: CharSlice::empty(),
-            optional_stderr_filename: CharSlice::empty(),
+        let receiver_config = CrashtrackerReceiverConfig {
+            args: vec![],
+            env: vec![],
+            path_to_receiver_binary: "".to_string(),
+            stderr_filename: None,
+            stdout_filename: None,
         };
-        let receiver_config = receiver_config.try_into()?;
         datadog_crashtracker::init(config, receiver_config, metadata)
     })()
     .context("ddog_crasht_init failed")
