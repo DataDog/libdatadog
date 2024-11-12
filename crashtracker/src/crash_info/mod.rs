@@ -20,9 +20,11 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SigInfo {
     pub signum: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub signame: Option<String>,
+    pub signame: String,
+    pub pid: i32,
+    pub code: i32,
+    pub codename: String,
+    pub si_addr: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub faulting_address: Option<usize>,

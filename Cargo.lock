@@ -1357,6 +1357,7 @@ dependencies = [
  "page_size",
  "portable-atomic",
  "rand",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

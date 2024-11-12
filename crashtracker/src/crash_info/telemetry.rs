@@ -188,9 +188,7 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
     write!(&mut tags, "uuid:{}", crash_info.uuid)?;
     if let Some(siginfo) = &crash_info.siginfo {
         write!(&mut tags, ",signum:{}", siginfo.signum)?;
-        if let Some(signame) = &siginfo.signame {
-            write!(&mut tags, ",signame:{}", signame)?;
-        }
+        write!(&mut tags, ",signame:{}", siginfo.signame)?;
         if let Some(faulting_address) = &siginfo.faulting_address {
             write!(&mut tags, ",faulting_address:{:#018x}", faulting_address)?;
         }
@@ -278,7 +276,11 @@ mod tests {
             os_info: os_info::Info::unknown(),
             siginfo: Some(SigInfo {
                 signum: 11,
-                signame: Some("SIGSEGV".to_owned()),
+                signame: "SIGSEGV".to_string(),
+                pid: 1234,
+                code: 1,
+                codename: "SEGV_MAPERR".to_string(),
+                si_addr: 0,
                 faulting_address: Some(0x1234),
             }),
             proc_info: None,

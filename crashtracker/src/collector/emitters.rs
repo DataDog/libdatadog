@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::collector::counters::emit_counters;
+use crate::collector::siginfo_strings;
 use crate::collector::spans::emit_spans;
 use crate::collector::spans::emit_traces;
 use crate::shared::constants::*;
@@ -100,12 +101,11 @@ pub(crate) fn emit_crashreport(
     config: &CrashtrackerConfiguration,
     config_str: &str,
     metadata_string: &str,
-    signum: i32,
-    faulting_address: Option<usize>,
+    siginfo: libc::siginfo_t,
 ) -> anyhow::Result<()> {
     emit_metadata(pipe, metadata_string)?;
     emit_config(pipe, config_str)?;
-    emit_siginfo(pipe, signum, faulting_address)?;
+    emit_siginfo(pipe, siginfo)?;
     emit_procinfo(pipe)?;
     pipe.flush()?;
     emit_counters(pipe)?;
@@ -164,28 +164,54 @@ fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn emit_siginfo(
-    w: &mut impl Write,
-    signum: i32,
-    faulting_address: Option<usize>,
-) -> anyhow::Result<()> {
-    let signame = if signum == libc::SIGSEGV {
-        "SIGSEGV"
-    } else if signum == libc::SIGBUS {
-        "SIGBUS"
-    } else {
-        "UNKNOWN"
-    };
+/// Serialize a siginfo_t to the given handle.
+///
+/// This function eagerly emits various parts of the siginfo_t, even though some components are
+/// only circumstantially useful.  The kernel generally provides sane defaults to unused
+/// members, and for downstream consumers it is probably easier to present a consistent keyspace
+/// than to conditionally emit fields.
+///
+/// In particular, note that `si_addr` is a repeat of `faulting_address`, the latter of which is
+/// emitted only for `SIGSEGV` signals.  This data layout should be considered unstable until
+/// canonized in a data format RFC.
+///
+/// PRECONDITIONS:
+///     This function assumes that the crash-tracker is initialized.
+/// SAFETY:
+///     Crash-tracking functions are not reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function is not atomic. A crash during its execution may lead to
+///     unexpected crash-handling behaviour.
+/// SIGNAL SAFETY:
+///     This function is careful to only write to the handle, without doing any
+///     unnecessary mutexes or memory allocation.
+pub(crate) fn emit_siginfo(w: &mut impl Write, siginfo: libc::siginfo_t) -> anyhow::Result<()> {
+    let signame = siginfo_strings::get_signal_name(&siginfo);
+    let codename = siginfo_strings::get_code_name(&siginfo);
+    let si_addr = unsafe { siginfo.si_addr() } as usize;
+    let si_signo = siginfo.si_signo;
+    let si_pid = unsafe { siginfo.si_pid() };
+    let si_code = siginfo.si_code;
 
     writeln!(w, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
-    if let Some(addr) = faulting_address {
-        writeln!(
-            w,
-            "{{\"signum\": {signum}, \"signame\": \"{signame}\", \"faulting_address\": {addr}}}"
-        )?;
-    } else {
-        writeln!(w, "{{\"signum\": {signum}, \"signame\": \"{signame}\"}}")?;
-    };
+    write!(w, "{{")?;
+    write!(w, "\"signum\": {si_signo}, ")?;
+    write!(w, "\"signame\": \"{signame}\", ")?;
+    write!(w, "\"pid\": {si_pid}, ")?;
+    write!(w, "\"code\": {si_code}, ")?;
+    write!(w, "\"codename\": \"{codename}\", ")?;
+
+    // For now, we'll double-emit data which is backed by `si_addr` because the telemetry backend
+    // won't do anything fancy with this payload, and `faulting_address` has significance to
+    // developers who are querying for specific faults.  However, we should probably decide how
+    // this gets canonized and which component is responsible.
+    // For now, double-ship the address.
+    if siginfo.si_signo == libc::SIGSEGV {
+        write!(w, "\"faulting_address\": {si_addr}, ")?;
+    }
+    write!(w, "\"si_addr\": {si_addr}")?; // last field, no trailing comma
+    writeln!(w, "}}")?;
     writeln!(w, "{DD_CRASHTRACK_END_SIGINFO}")?;
     Ok(())
 }
@@ -232,5 +258,64 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     }
     writeln!(w, "\n{DD_CRASHTRACK_END_FILE} \"{path}\"")?;
     w.flush()?;
+    Ok(())
+}
+
+#[cfg(test)]
+struct JsonCaptureWriter {
+    buffer: Vec<u8>,
+}
+
+#[cfg(test)]
+impl JsonCaptureWriter {
+    fn new() -> Self {
+        JsonCaptureWriter { buffer: Vec::new() }
+    }
+
+    pub fn get_json(&self) -> String {
+        use regex::Regex;
+        let output = String::from_utf8_lossy(&self.buffer);
+        let re = Regex::new(r"DD_CRASHTRACK_\w+").unwrap();
+        re.replace_all(&output, "").trim().to_string()
+    }
+}
+
+#[cfg(test)]
+impl Write for JsonCaptureWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.buffer.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        // NOP, but needed for interface
+        Ok(())
+    }
+}
+
+#[test]
+fn test_sigaction_siginfo() -> anyhow::Result<()> {
+    // This is a simple test to make sure that a valid SigInfo can be created from a
+    // libc::siginfo_t on the current platform.
+    use crate::SigInfo;
+    let mut siginfo: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    siginfo.si_signo = libc::SIGSEGV;
+    siginfo.si_code = 1;
+
+    let mut writer = JsonCaptureWriter::new();
+    emit_siginfo(&mut writer, siginfo)?;
+    let siginfo_json_str = writer.get_json();
+
+    // Is it valid JSON?
+    let _: serde_json::Value = serde_json::from_str(&siginfo_json_str)?;
+
+    // Is it a valid SigInfo?
+    let siginfo: SigInfo = serde_json::from_str(&siginfo_json_str)?;
+
+    // Sanity check for the fields
+    assert_eq!(siginfo.signum, libc::SIGSEGV as u64);
+    assert_eq!(siginfo.signame, "SIGSEGV");
+    assert_eq!(siginfo.pid, 0);
+    assert_eq!(siginfo.code, 1);
+    assert_eq!(siginfo.codename, "SEGV_MAPERR");
     Ok(())
 }

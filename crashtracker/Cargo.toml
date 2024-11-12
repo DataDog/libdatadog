@@ -48,3 +48,4 @@ rand = "0.8.5"
 
 [dev-dependencies]
 tempfile = { version = "3.3" }
+regex = "1.5"

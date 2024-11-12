@@ -396,8 +396,12 @@ mod tests {
         to_socket(
             sender,
             serde_json::to_string(&SigInfo {
-                signame: Some("SIGSEGV".to_string()),
                 signum: 11,
+                signame: "SIGSEGV".to_string(),
+                pid: 0,
+                code: 1,
+                codename: "SEGV_MAPERR".to_string(),
+                si_addr: 0,
                 faulting_address: None,
             })?,
         )

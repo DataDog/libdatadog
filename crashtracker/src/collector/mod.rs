@@ -6,6 +6,7 @@ mod counters;
 mod crash_handler;
 mod emitters;
 mod saguard;
+mod siginfo_strings;
 mod spans;
 
 pub use api::*;
