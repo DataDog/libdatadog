@@ -51,7 +51,7 @@ fn generate_trace_chunks(num_chunks: usize, num_spans: usize) -> Vec<Vec<Value>>
     let mut chunks = Vec::with_capacity(num_chunks);
 
     for i in 0..num_chunks {
-        let trace_id = 100000000000 + i as u64;
+        let trace_id = 100_000_000_000 + i as u64;
         let spans = generate_spans(num_spans, trace_id);
         chunks.push(spans);
     }
