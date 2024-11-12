@@ -141,7 +141,7 @@ jobs:
         env:
           RUSTFLAGS: "${{ matrix.flags }}"
         run: |
-           cargo build -p builder --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -vv
+          cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -- --out $LIBDD_OUTPUT_FOLDER
 
       - name: 'Publish libdatadog'
         uses: actions/upload-artifact@v4
@@ -202,7 +202,7 @@ jobs:
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@v1.3.1
         with:
-          tool-cache: false
+          tool-cache: true
           android: true
           dotnet: true
           haskell: true
