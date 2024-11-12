@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 
 fn generate_spans(num_spans: usize, trace_id: u64) -> Vec<Value> {
     let mut spans = Vec::with_capacity(num_spans);
-    let root_span_id = 100000000000 + (trace_id % 1000000);
+    let root_span_id = 100_000_000_000 + (trace_id % 1_000_000);
 
     for i in 0..num_spans {
         // If it's the first span make it the root
