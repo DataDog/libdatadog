@@ -118,19 +118,19 @@ Parsers SHOULD therefore accept unexpected fields, either by ignoring them, or b
 - `span_ids`: **[optional]**
   A vector representing active span ids at the time of program crash.
   The collector MAY cap the number of spans that it tracks.
-  - `span_id`: **[required]**
+  - `id`: **[required]**
     A string containing the span id.
-  - `thread_id`: **[optional]**
-    A string containing the thread_id for the given span.
+  - `thread_name`: **[optional]**
+    A string containing the thread name for the given span.
 - `timestamp`: **[required]**
   The time at which the crash occurred, in ISO 8601 format.
 - `trace_ids:`: **[optional]**
   A vector representing active span ids at the time of program crash.
   The collector MAY cap the number of spans that it tracks.
-  - `thread_id`: **[optional]**
-    A string containing the thread_id for the given trace.
-  - `trace_id`: **[required]**
+  - `id`: **[required]**
     A string containing the trace id.
+  - `thread name`: **[optional]**
+    A string containing the thread name for the given trace.
 - `uuid`: **[required]**
   A UUID v4 which uniquely identifies the crash.
   This will typically be generated at crash-time, and then associated with the uploaded crash.
