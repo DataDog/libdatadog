@@ -554,7 +554,7 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
         make_receiver(receiver_config)?
     };
 
-    // No matter how the receiver was creatd, attach to its stream
+    // No matter how the receiver was created, attach to its stream
     let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.receiver_uds) };
 
     // Currently the emission of the crash report doesn't have a firm time guarantee
