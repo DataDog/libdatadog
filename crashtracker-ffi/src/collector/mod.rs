@@ -9,10 +9,7 @@ use crate::Result;
 use anyhow::Context;
 pub use counters::*;
 pub use datatypes::*;
-use ddcommon_ffi::{
-    slice::{AsBytes, CharSlice},
-    Slice,
-};
+use ddcommon_ffi::{slice::CharSlice, Slice};
 pub use spans::*;
 
 #[no_mangle]
@@ -101,26 +98,35 @@ pub unsafe extern "C" fn ddog_crasht_init(
 
 #[no_mangle]
 #[must_use]
-/// Initialize the crash-tracking infrastructure, writing to an unix socket in case of crash.
+/// Initialize the crash-tracking infrastructure without launching the receiver.
 ///
 /// # Preconditions
-///   None.
+///   Requires `config` to be given with a `unix_socket_path`, which is normally optional.
 /// # Safety
 ///   Crash-tracking functions are not reentrant.
 ///   No other crash-handler functions should be called concurrently.
 /// # Atomicity
 ///   This function is not atomic. A crash during its execution may lead to
 ///   unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_crasht_init_with_unix_socket(
+pub unsafe extern "C" fn ddog_crasht_init_without_receiver(
     config: Config,
-    socket_path: CharSlice,
     metadata: Metadata,
 ) -> Result {
     (|| {
-        let mut config: datadog_crashtracker::CrashtrackerConfiguration = config.try_into()?;
-        let socket_path = socket_path.try_to_utf8()?;
-        config.unix_socket_path = Some(socket_path.to_string());
+        let config: datadog_crashtracker::CrashtrackerConfiguration = config.try_into()?;
         let metadata = metadata.try_into()?;
+
+        // If the unix domain socket path is not set, then we throw an error--there's currently no
+        // other way to specify communication between an async receiver and a collector, so this
+        // isn't a valid configuration.
+        if config.unix_socket_path.is_none() {
+            return Err(anyhow::anyhow!("config.unix_socket_path must be set"));
+        }
+        if config.unix_socket_path.as_ref().unwrap().is_empty() {
+            return Err(anyhow::anyhow!("config.unix_socket_path can't be empty"));
+        }
+
+        // Populate an empty receiver config
         let receiver_config = ReceiverConfig {
             args: Slice::empty(),
             env: Slice::empty(),
