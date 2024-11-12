@@ -443,9 +443,17 @@ fn receiver_from_socket(unix_socket_path: &str) -> anyhow::Result<Receiver> {
     if unix_socket_path.is_empty() {
         return Err(anyhow::anyhow!("No receiver path provided"));
     }
-    let socket_path = std::path::Path::new(unix_socket_path);
-    let unix_stream = UnixStream::connect(socket_path).context("Failed to connect to receiver")?;
-    let receiver_uds = unix_stream.into_raw_fd();
+    #[cfg(target_os = "linux")]
+    let unix_stream = if unix_socket_path.starts_with(['.', '/']) {
+        UnixStream::connect(unix_socket_path)
+    } else {
+        use std::os::linux::net::SocketAddrExt;
+        let addr = std::os::unix::net::SocketAddr::from_abstract_name(unix_socket_path)?;
+        UnixStream::connect_addr(&addr)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let unix_stream = UnixStream::connect(unix_socket_path);
+    let receiver_uds = unix_stream.context("Failed to connect to receiver")?.into_raw_fd();
     Ok(Receiver {
         receiver_uds,
         receiver_pid: 0,
