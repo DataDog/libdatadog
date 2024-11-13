@@ -59,8 +59,7 @@ Parsers SHOULD therefore accept unexpected fields, either by ignoring them, or b
     Boolean true if the error was a crash, false otherwise.
   - `kind`: **[required]**
     The kind of error that occurred.
-    For a crash, a non-exhaustive set of options include "SigAbort", "SigBus", "SigSegv".
-    This field MAY be extended to include options such at "Panic", "UnhandledException" etc.
+    For example, "Panic", "UnhandledException", "UnixSignal".
   - `message`: **[optional]**
     A human readable string containing an error message associated with the stack trace.
   - `source_type`: **[required]**
