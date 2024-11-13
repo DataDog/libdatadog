@@ -64,7 +64,7 @@ Parsers SHOULD therefore accept unexpected fields, either by ignoring them, or b
   - `message`: **[optional]**
     A human readable string containing an error message associated with the stack trace.
   - `source_type`: **[required]**
-    The string "crashtracking".
+    The string "Crashtracking".
   - `stack`: **[required]**
     This represents the stack of the crashing thread.
     See below for more details on how stacktraces are formatted.
@@ -91,11 +91,16 @@ Parsers SHOULD therefore accept unexpected fields, either by ignoring them, or b
     A set of key:value pairs, representing any tags the crashtracking system wishes to associate with the crash.
     Examples would include "hostname", "service", and any configuration information the system wishes to track.
 - `os_info`: **[required]**
-  The OS + processor architecture on which the crash occurred. TODO: define how these should look with examples.
+  The OS + processor architecture on which the crash occurred.
+  Follows the display format of the [os_info crate](https://crates.io/crates/os_info).
   - `architecture`: **[required]**
+    e.g. "arm64"
   - `bitness`: **[required]**
+    e.g. "64-bit".
   - `os_type`: **[required]**
+    e.g. "Mac OS".
   - `version`: **[required]**
+    e.g. "14.7.0".
 - `proc_info`: **[optional]**
   A place to store information about the crashing process.
   In the future, this may have additional optional fields as more data is collected.

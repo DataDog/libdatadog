@@ -10,6 +10,7 @@
     "os_info",
     "proc_info",
     "sig_info",
+    "timestamp",
     "uuid"
   ],
   "properties": {
@@ -68,6 +69,9 @@
         "$ref": "#/definitions/Span"
       }
     },
+    "timestamp": {
+      "type": "string"
+    },
     "trace_ids": {
       "type": "array",
       "items": {
@@ -111,7 +115,7 @@
           ]
         },
         "source_type": {
-          "type": "string"
+          "$ref": "#/definitions/SourceType"
         },
         "stack": {
           "$ref": "#/definitions/StackTrace"
@@ -127,16 +131,15 @@
     "ErrorKind": {
       "type": "string",
       "enum": [
-        "SigAbort",
-        "SigBus",
-        "SigSegv",
         "Panic",
-        "UnhandledException"
+        "UnhandledException",
+        "UnixSignal"
       ]
     },
     "FileType": {
       "type": "string",
       "enum": [
+        "APK",
         "ELF",
         "PDB"
       ]
@@ -159,8 +162,9 @@
           "type": "string"
         },
         "tags": {
-          "type": "object",
-          "additionalProperties": {
+          "description": "A list of \"key:value\" tuples.",
+          "type": "array",
+          "items": {
             "type": "string"
           }
         }
@@ -243,16 +247,14 @@
         },
         "si_code": {
           "type": "integer",
-          "format": "uint32",
-          "minimum": 0.0
+          "format": "int32"
         },
         "si_code_human_readable": {
           "$ref": "#/definitions/SiCodes"
         },
         "si_signo": {
           "type": "integer",
-          "format": "uint32",
-          "minimum": 0.0
+          "format": "int32"
         },
         "si_signo_human_readable": {
           "$ref": "#/definitions/SignalNames"
@@ -267,6 +269,12 @@
         "SIGBUS",
         "SIGSEGV",
         "SIGSYS"
+      ]
+    },
+    "SourceType": {
+      "type": "string",
+      "enum": [
+        "Crashtracking"
       ]
     },
     "Span": {
@@ -310,7 +318,7 @@
             "integer",
             "null"
           ],
-          "format": "uint64",
+          "format": "uint32",
           "minimum": 0.0
         },
         "file": {
@@ -346,7 +354,7 @@
             "integer",
             "null"
           ],
-          "format": "uint64",
+          "format": "uint32",
           "minimum": 0.0
         },
         "module_base_address": {
