@@ -6,6 +6,7 @@
 
 use super::emitters::emit_crashreport;
 use super::saguard::SaGuard;
+use super::alt_fork::alt_fork;
 use crate::crash_info::CrashtrackerMetadata;
 use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
 use anyhow::Context;
@@ -42,16 +43,6 @@ use std::time::{Duration, Instant};
 // - read
 // - sigaction
 // - write
-
-// The use of fork or vfork is influenced by the availability of the function in the host libc.
-// Macos seems to have deprecated vfork.  The reason to prefer vfork is to suppress atfork
-// handlers.  This is OK because macos is primarily a test platform, and we have system-level
-// testing on Linux in various CI environments.
-#[cfg(target_os = "macos")]
-use libc::fork as vfork;
-
-#[cfg(target_os = "linux")]
-use libc::vfork;
 
 #[derive(Debug)]
 struct OldHandlers {
@@ -257,30 +248,26 @@ static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(p
 static RECEIVER_CONFIG: AtomicPtr<CrashtrackerReceiverConfig> = AtomicPtr::new(ptr::null_mut());
 static RECEIVER_ARGS: AtomicPtr<PreparedExecve> = AtomicPtr::new(ptr::null_mut());
 
+fn make_unix_socket_pair() -> anyhow::Result<(RawFd, RawFd)> {
+    let (sock1, sock2) = socket::socketpair(
+        socket::AddressFamily::Unix,
+        socket::SockType::Stream,
+        None,
+        socket::SockFlag::empty(),
+    ).context("Failed to create Unix domain socket pair")?;
+    Ok((sock1.into_raw_fd(), sock2.into_raw_fd()))
+}
+
 fn make_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<Receiver> {
     let stderr = open_file_or_quiet(config.stderr_filename.as_deref())?;
     let stdout = open_file_or_quiet(config.stdout_filename.as_deref())?;
 
     // Create anonymous Unix domain socket pair for communication
-    let (uds_parent, uds_child) = socket::socketpair(
-        socket::AddressFamily::Unix,
-        socket::SockType::Stream,
-        None,
-        socket::SockFlag::empty(),
-    )
-    .context("Failed to create Unix domain socket pair")
-    .map(|(a, b)| (a.into_raw_fd(), b.into_raw_fd()))?;
+    let (uds_parent, uds_child) = make_unix_socket_pair()?;
 
-    // We need to spawn a process without calling atfork handlers, since this is happening inside
-    // of a signal handler.  Moreover, preference is given to multiplatform-uniform solutions.
-    // Although `vfork()` is deprecated, the alternatives have limitations
-    // * `fork()` calls atfork handlers
-    // * There is no guarantee that `posix_spawn()` will not call `fork()` internally
-    // * `clone()`/`clone3()` are Linux-specific
-    // Accordingly, use `vfork()` for now
-    // NB -- on macos the underlying implementation here is actually `fork()`!  See the top of this
-    // file for details.
-    match unsafe { vfork() } {
+    // This implementation calls `clone()` directly on linux and the libc `fork()` on macos.
+    // This avoids calling the `atfork()` handlers on Linux, but not on mac.
+    match fork_process() {
         0 => {
             // Child (noreturn)
             run_receiver_child(uds_parent, uds_child, stderr, stdout)
@@ -298,6 +285,42 @@ fn make_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<Receiver
             Err(anyhow::anyhow!("Failed to fork receiver process"))
         }
     }
+}
+
+fn make_collector(
+    unix_stream: &mut UnixStream,
+    config: &CrashtrackerConfiguration,
+    config_str: &str,
+    metadata_str: &str,
+    signum: i32,
+    faulting_address: Option<usize>,
+    receiver: Receiver,
+) -> anyhow::Result<()> {
+    let ppid = unsafe { libc::getppid() };
+    let (uds_parent, uds_child) = make_unix_socket_pair()?;
+
+    match fork_process() {
+        0 => {
+            // Child
+            let crash_report = emit_crashreport(
+                config_str,
+                metadata_str,
+                signum,
+                faulting_address,
+                ppid,
+            )?;
+            Ok(())
+        }
+        pid if pid > 0 => {
+            // Parent
+            Ok(())
+        }
+        _ => {
+            // Error
+            Err(anyhow::anyhow!("Failed to fork collector process"))
+        }
+    }
+    Ok(())
 }
 
 /// Updates the crashtracker metadata for this process
@@ -484,6 +507,7 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
             None
         };
 
+
     // During the execution of this signal handler, block ALL other signals, especially because we
     // cannot control whether or not we run with SA_NODEFER (crashtracker might have been chained).
     // The especially problematic signals are SIGCHLD and SIGPIPE, which are possibly delivered due
@@ -492,26 +516,21 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     // disrupted.
     let _guard = SaGuard::<2>::new(&[signal::SIGCHLD, signal::SIGPIPE])?;
 
-    // Even though we just set a guard, we'll have to undo part of it in the receiver process in
-    // order to let it reap its own children properly.  We have to do this anyway, so do it here in
-    // order to ensure that _this_ process has the right flags (especially for SIGCHLD).
+    // Spawn the collector and receiver processes
     let receiver = make_receiver(receiver_config)?;
-
-    // Creating this stream means the underlying RawFD is now owned by the stream, so
-    // we shouldn't close it manually.
-    let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.receiver_uds) };
-
-    // Currently the emission of the crash report doesn't have a firm time guarantee
-    // In a future patch, the timeout parameter should be passed into the IPC loop here and
-    // checked periodically.
-    let res = emit_crashreport(
+    let collector = spawn_collector(
         &mut unix_stream,
         config,
         config_str,
         metadata_string,
         signum,
         faulting_address,
-    );
+        receiver,
+    )?;
+
+    // Creating this stream means the underlying RawFD is now owned by the stream, so
+    // we shouldn't close it manually.
+    let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.receiver_uds) };
 
     let _ = unix_stream.flush();
     unix_stream

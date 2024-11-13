@@ -102,11 +102,12 @@ pub(crate) fn emit_crashreport(
     metadata_string: &str,
     signum: i32,
     faulting_address: Option<usize>,
+    ppid: i32,
 ) -> anyhow::Result<()> {
     emit_metadata(pipe, metadata_string)?;
     emit_config(pipe, config_str)?;
     emit_siginfo(pipe, signum, faulting_address)?;
-    emit_procinfo(pipe)?;
+    emit_procinfo(pipe, ppid)?;
     pipe.flush()?;
     emit_counters(pipe)?;
     pipe.flush()?;
@@ -147,18 +148,17 @@ fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn emit_procinfo(w: &mut impl Write) -> anyhow::Result<()> {
+fn emit_procinfo(w: &mut impl Write, ppid: i32) -> anyhow::Result<()> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
-    let pid = nix::unistd::getpid();
-    writeln!(w, "{{\"pid\": {pid} }}")?;
+    writeln!(w, "{{\"pid\": {ppid} }}")?;
     writeln!(w, "{DD_CRASHTRACK_END_PROCINFO}")?;
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
-/// `/proc/self/maps` is very useful for debugging, and difficult to get from
-/// the child process (permissions issues on Linux).  Emit it directly onto the
-/// pipe to get around this.
+/// `/proc/self/maps` is very useful for debugging, but it isn't guaranteed to be
+/// readable even by same-UID child processes.  However, a fresh fork of a given process has a
+/// memory layout identical to the parent, so we just read it here.
 fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
     emit_text_file(w, "/proc/self/maps")?;
     Ok(())
