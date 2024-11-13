@@ -9,8 +9,8 @@ pub struct SigInfo {
     pub si_addr: Option<String>,
     pub si_code: libc::c_int,
     pub si_code_human_readable: SiCodes,
-    si_signo: libc::c_int,
-    si_signo_human_readable: SignalNames,
+    pub si_signo: libc::c_int,
+    pub si_signo_human_readable: SignalNames,
 }
 
 impl From<crate::SigInfo> for SigInfo {
@@ -42,6 +42,7 @@ pub enum SignalNames {
     SIGSYS,
 }
 
+#[cfg(unix)]
 impl From<libc::c_int> for SignalNames {
     fn from(value: libc::c_int) -> Self {
         match value {
@@ -51,6 +52,13 @@ impl From<libc::c_int> for SignalNames {
             libc::SIGSYS => SignalNames::SIGSYS,
             _ => panic!("Unexpected signal number: {value}"),
         }
+    }
+}
+
+#[cfg(not(unix))]
+impl From<libc::c_int> for SignalNames {
+    fn from(value: libc::c_int) -> Self {
+        unreachable!("Non-unix systems should not have Signals")
     }
 }
 
