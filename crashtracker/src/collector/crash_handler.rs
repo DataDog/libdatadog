@@ -62,6 +62,7 @@ struct OldHandlers {
 struct Receiver {
     receiver_uds: RawFd,
     receiver_pid: i32,
+    oneshot: bool,
 }
 
 // The args_cstrings and env_vars_strings fields are just storage.  Even though they're
@@ -291,6 +292,7 @@ fn make_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<Receiver
             Ok(Receiver {
                 receiver_uds: uds_parent,
                 receiver_pid: pid,
+                oneshot: true,
             })
         }
         _ => {
@@ -434,6 +436,60 @@ extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucon
     };
 }
 
+fn receiver_from_socket(unix_socket_path: &str) -> anyhow::Result<Receiver> {
+    // Creates a fake "Receiver", which can be waited on like a normal receiver.
+    // This is intended to support configurations where the collector is speaking to a long-lived,
+    // async receiver process.
+    if unix_socket_path.is_empty() {
+        return Err(anyhow::anyhow!("No receiver path provided"));
+    }
+    #[cfg(target_os = "linux")]
+    let unix_stream = if unix_socket_path.starts_with(['.', '/']) {
+        UnixStream::connect(unix_socket_path)
+    } else {
+        use std::os::linux::net::SocketAddrExt;
+        let addr = std::os::unix::net::SocketAddr::from_abstract_name(unix_socket_path)?;
+        UnixStream::connect_addr(&addr)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let unix_stream = UnixStream::connect(unix_socket_path);
+    let receiver_uds = unix_stream
+        .context("Failed to connect to receiver")?
+        .into_raw_fd();
+    Ok(Receiver {
+        receiver_uds,
+        receiver_pid: 0,
+        oneshot: false,
+    })
+}
+
+fn receiver_finish(receiver: Receiver, start_time: Instant, timeout_ms: u32) {
+    let pollhup_allowed_ms = timeout_ms
+        .saturating_sub(start_time.elapsed().as_millis() as u32)
+        .min(i32::MAX as u32) as i32;
+    let _ = wait_for_pollhup(receiver.receiver_uds, pollhup_allowed_ms);
+
+    // If this is a oneshot-type receiver (i.e., we spawned it), then we now need to ensure it gets
+    // cleaned up.
+    // We explicitly avoid the case where the receiver PID is 1.  This is unbelievably unlikely, but
+    // should the situation arise we just walk away and let the PID leak.
+    if receiver.oneshot && receiver.receiver_pid > 1 {
+        // Either the receiver is done, it timed out, or something failed.
+        // In any case, can't guarantee that the receiver will exit.
+        // SIGKILL will ensure that the process ends eventually, but there's
+        // no bound on that time.
+        // We emit SIGKILL and try to reap its exit status for the remaining time, then give up.
+        unsafe {
+            libc::kill(receiver.receiver_pid, libc::SIGKILL);
+        }
+
+        let receiver_pid_as_pid = Pid::from_raw(receiver.receiver_pid);
+        let reaping_allowed_ms = timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32);
+
+        let _ = reap_child_non_blocking(receiver_pid_as_pid, reaping_allowed_ms);
+    }
+}
+
 fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Result<()> {
     // If this is a SIGSEGV signal, it could be called due to a stack overflow. In that case, since
     // this signal allocates to the stack and cannot guarantee it is running without SA_NODEFER, it
@@ -453,6 +509,8 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     // Leak config and metadata to avoid calling `drop` during a crash
     // Note that these operations also replace the global states.  When the one-time guard is
     // passed, all global configuration and metadata becomes invalid.
+    // In a perfet world, we'd also grab the receiver config in this section, but since the
+    // execution forks based on whether or not the receiver is configured, we check that later.
     let config = CONFIG.swap(ptr::null_mut(), SeqCst);
     anyhow::ensure!(!config.is_null(), "No crashtracking config");
     let (config, config_str) = unsafe { config.as_ref().context("No crashtracking receiver")? };
@@ -461,12 +519,10 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     anyhow::ensure!(!metadata_ptr.is_null(), "No crashtracking metadata");
     let (_metadata, metadata_string) = unsafe { metadata_ptr.as_ref().context("metadata ptr")? };
 
-    let receiver_config = RECEIVER_CONFIG.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(
-        !receiver_config.is_null(),
-        "No crashtracking receiver config"
-    );
-    let receiver_config = unsafe { receiver_config.as_ref().context("receiver config")? };
+    let receiver_config = RECEIVER_CONFIG.load(SeqCst);
+    if receiver_config.is_null() {
+        return Err(anyhow::anyhow!("No receiver config"));
+    }
 
     // Since we've gotten this far, we're going to start working on the crash report. This
     // operation needs to be mindful of the total walltime elapsed during handling. This isn't only
@@ -492,13 +548,23 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     // disrupted.
     let _guard = SaGuard::<2>::new(&[signal::SIGCHLD, signal::SIGPIPE])?;
 
-    // Even though we just set a guard, we'll have to undo part of it in the receiver process in
-    // order to let it reap its own children properly.  We have to do this anyway, so do it here in
-    // order to ensure that _this_ process has the right flags (especially for SIGCHLD).
-    let receiver = make_receiver(receiver_config)?;
+    // Optionally, create the receiver.  This all hinges on whether or not the configuration has a
+    // non-null unix domain socket specified.  If it doesn't, then we need to check the receiver
+    // configuration.  If it does, then we just connect to the socket.
+    let unix_socket_path = config.unix_socket_path.clone().unwrap_or_default();
 
-    // Creating this stream means the underlying RawFD is now owned by the stream, so
-    // we shouldn't close it manually.
+    let receiver = if !unix_socket_path.is_empty() {
+        receiver_from_socket(&unix_socket_path)?
+    } else {
+        let receiver_config = RECEIVER_CONFIG.load(SeqCst);
+        if receiver_config.is_null() {
+            return Err(anyhow::anyhow!("No receiver config"));
+        }
+        let receiver_config = unsafe { receiver_config.as_ref().context("receiver config")? };
+        make_receiver(receiver_config)?
+    };
+
+    // No matter how the receiver was created, attach to its stream
     let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.receiver_uds) };
 
     // Currently the emission of the crash report doesn't have a firm time guarantee
@@ -518,26 +584,8 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
         .shutdown(std::net::Shutdown::Write)
         .context("Could not shutdown writing on the stream")?;
 
-    // We have to wait for the receiver process and reap its exit status.
-    let pollhup_allowed_ms = timeout_ms
-        .saturating_sub(start_time.elapsed().as_millis() as u32)
-        .min(i32::MAX as u32) as i32;
-    let _ = wait_for_pollhup(receiver.receiver_uds, pollhup_allowed_ms)
-        .context("Failed to wait for pollhup")?;
-
-    // Either the receiver is done, it timed out, or something failed.
-    // In any case, can't guarantee that the receiver will exit.
-    // SIGKILL will ensure that the process ends eventually, but there's
-    // no bound on that time.
-    // We emit SIGKILL and try to reap its exit status for the remaining time, then just give
-    // up.
-    unsafe {
-        libc::kill(receiver.receiver_pid, libc::SIGKILL);
-    }
-    let receiver_pid_as_pid = Pid::from_raw(receiver.receiver_pid);
-    let reaping_allowed_ms = timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32);
-    let _ = reap_child_non_blocking(receiver_pid_as_pid, reaping_allowed_ms)
-        .context("Failed to reap receiver process")?;
+    // We're done. Wrap up our interaction with the receiver.
+    receiver_finish(receiver, start_time, timeout_ms);
 
     res
 }
