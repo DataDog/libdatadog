@@ -49,12 +49,7 @@ impl CrashtrackerReceiverConfig {
         stdout_filename: Option<String>,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
-            !path_to_receiver_binary.is_empty(),
-            "Expected a receiver binary"
-        );
-        anyhow::ensure!(
-            stderr_filename.is_none() && stdout_filename.is_none()
-                || stderr_filename != stdout_filename,
+            stderr_filename.is_some() && stderr_filename != stdout_filename,
             "Can't give the same filename for stderr
         and stdout, they will conflict with each other"
         );

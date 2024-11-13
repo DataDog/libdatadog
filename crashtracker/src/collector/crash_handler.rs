@@ -453,7 +453,9 @@ fn receiver_from_socket(unix_socket_path: &str) -> anyhow::Result<Receiver> {
     };
     #[cfg(not(target_os = "linux"))]
     let unix_stream = UnixStream::connect(unix_socket_path);
-    let receiver_uds = unix_stream.context("Failed to connect to receiver")?.into_raw_fd();
+    let receiver_uds = unix_stream
+        .context("Failed to connect to receiver")?
+        .into_raw_fd();
     Ok(Receiver {
         receiver_uds,
         receiver_pid: 0,
