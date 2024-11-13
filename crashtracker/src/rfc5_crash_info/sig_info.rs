@@ -57,7 +57,7 @@ impl From<libc::c_int> for SignalNames {
 
 #[cfg(not(unix))]
 impl From<libc::c_int> for SignalNames {
-    fn from(value: libc::c_int) -> Self {
+    fn from(_value: libc::c_int) -> Self {
         unreachable!("Non-unix systems should not have Signals")
     }
 }
