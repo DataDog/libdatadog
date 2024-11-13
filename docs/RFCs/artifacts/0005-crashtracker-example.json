@@ -1,0 +1,344 @@
+{
+  "counters": {
+    "profiler_collecting_sample": 1,
+    "profiler_inactive": 0,
+    "profiler_unwinding": 0,
+    "profiler_serializing": 0
+  },
+  "data_schema_version": "1.0",
+  "error": {
+    "is_crash": true,
+    "kind": "UnixSignal",
+    "source_type": "Crashtracking",
+    "stack": {
+      "format": "Datadog Crashtracker 1.0",
+      "frames": [
+        {
+          "ip": "0x100cc8270",
+          "sp": "0x1023370e0",
+          "symbol_address": "0x100cc8270",
+          "column": 5,
+          "file": "/Users/daniel.schwartznarbonne/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.74/src/backtrace/libunwind.rs",
+          "function": "backtrace::backtrace::libunwind::trace::h44cd4fb81cab179c",
+          "line": 116
+        },
+        {
+          "ip": "0x100cc8270",
+          "sp": "0x1023370e0",
+          "symbol_address": "0x100cc8270",
+          "column": 5,
+          "file": "/Users/daniel.schwartznarbonne/.cargo/registry/src/index.crates.io-6f17d22bba15001f/backtrace-0.3.74/src/backtrace/mod.rs",
+          "function": "backtrace::backtrace::trace_unsynchronized::h9864180bb5bf11b8",
+          "line": 66
+        },
+        {
+          "ip": "0x100c52a24",
+          "sp": "0x102337130",
+          "symbol_address": "0x100c52a24",
+          "column": 5,
+          "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/emitters.rs",
+          "function": "datadog_crashtracker::collector::emitters::emit_backtrace_by_frames::hffe0893f890cf311",
+          "line": 34
+        },
+        {
+          "ip": "0x100c53f50",
+          "sp": "0x102337290",
+          "symbol_address": "0x100c53f50",
+          "column": 18,
+          "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/emitters.rs",
+          "function": "datadog_crashtracker::collector::emitters::emit_crashreport::h072d9dec8eb6d587",
+          "line": 128
+        },
+        {
+          "ip": "0x100d00120",
+          "sp": "0x1023374a0",
+          "symbol_address": "0x100d00120",
+          "column": 15,
+          "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/crash_handler.rs",
+          "function": "datadog_crashtracker::collector::crash_handler::handle_posix_signal_impl::ha45884607fab00ab",
+          "line": 507
+        },
+        {
+          "ip": "0x100cff9d0",
+          "sp": "0x102337a20",
+          "symbol_address": "0x100cff9d0",
+          "column": 13,
+          "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/crash_handler.rs",
+          "function": "datadog_crashtracker::collector::crash_handler::handle_posix_sigaction::hfda5a5ec0bcfec82",
+          "line": 388
+        },
+        {
+          "ip": "0x181022584",
+          "sp": "0x102337b80",
+          "symbol_address": "0x181022584",
+          "function": "__simple_esappend"
+        },
+        {
+          "ip": "0x100cdfa4c",
+          "sp": "0x102337bb0",
+          "symbol_address": "0x100cdfa4c",
+          "column": 5,
+          "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/api.rs",
+          "function": "datadog_crashtracker::collector::api::test_crash::h0310ac857cf5687f",
+          "line": 157
+        },
+        {
+          "ip": "0x100c81484",
+          "sp": "0x16f3da7a0",
+          "symbol_address": "0x100c81484",
+          "column": 20,
+          "file": "/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/crashtracker/src/collector/api.rs",
+          "function": "datadog_crashtracker::collector::api::test_crash::{{closure}}::h0b9b36ed20d8a85a",
+          "line": 99
+        },
+        {
+          "ip": "0x100ca9e80",
+          "sp": "0x16f3da7c0",
+          "symbol_address": "0x100ca9e80",
+          "column": 5,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/core/src/ops/function.rs",
+          "function": "core::ops::function::FnOnce::call_once::h77ea56fa2b6e43e3",
+          "line": 250
+        },
+        {
+          "ip": "0x100dca6a0",
+          "sp": "0x16f3da7f0",
+          "symbol_address": "0x100dca6a0",
+          "column": 5,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/core/src/ops/function.rs",
+          "function": "core::ops::function::FnOnce::call_once::hdc78704e3375b6cc",
+          "line": 250
+        },
+        {
+          "ip": "0x100dca6a0",
+          "sp": "0x16f3da7f0",
+          "symbol_address": "0x100dca6a0",
+          "column": 18,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/test/src/lib.rs",
+          "function": "test::__rust_begin_short_backtrace::ha00c83e9361a315d",
+          "line": 621
+        },
+        {
+          "ip": "0x100dc9e18",
+          "sp": "0x16f3da830",
+          "symbol_address": "0x100dc9e18",
+          "column": 60,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/test/src/lib.rs",
+          "function": "test::run_test_in_process::{{closure}}::h049a3922169151a8",
+          "line": 644
+        },
+        {
+          "ip": "0x100dc9e18",
+          "sp": "0x16f3da830",
+          "symbol_address": "0x100dc9e18",
+          "column": 9,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/core/src/panic/unwind_safe.rs",
+          "function": "<core::panic::unwind_safe::AssertUnwindSafe<F> as core::ops::function::FnOnce<()>>::call_once::h59b471ae83578d9f",
+          "line": 272
+        },
+        {
+          "ip": "0x100dc9e18",
+          "sp": "0x16f3da830",
+          "symbol_address": "0x100dc9e18",
+          "column": 40,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panicking.rs",
+          "function": "std::panicking::try::do_call::hdcae0245e55fa0c0",
+          "line": 552
+        },
+        {
+          "ip": "0x100dc9e18",
+          "sp": "0x16f3da830",
+          "symbol_address": "0x100dc9e18",
+          "column": 19,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panicking.rs",
+          "function": "std::panicking::try::h9dc0119b564ac9cf",
+          "line": 516
+        },
+        {
+          "ip": "0x100dc9e18",
+          "sp": "0x16f3da830",
+          "symbol_address": "0x100dc9e18",
+          "column": 14,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panic.rs",
+          "function": "std::panic::catch_unwind::hab329ede8b56df3b",
+          "line": 146
+        },
+        {
+          "ip": "0x100dc9e18",
+          "sp": "0x16f3da830",
+          "symbol_address": "0x100dc9e18",
+          "column": 27,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/test/src/lib.rs",
+          "function": "test::run_test_in_process::h42ddc94bb4665859",
+          "line": 644
+        },
+        {
+          "ip": "0x100dc9e18",
+          "sp": "0x16f3da830",
+          "symbol_address": "0x100dc9e18",
+          "column": 43,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/test/src/lib.rs",
+          "function": "test::run_test::{{closure}}::h5bc06caf086790ae",
+          "line": 567
+        },
+        {
+          "ip": "0x100d9c7d4",
+          "sp": "0x16f3dadb0",
+          "symbol_address": "0x100d9c7d4",
+          "column": 41,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/test/src/lib.rs",
+          "function": "test::run_test::{{closure}}::hf12704d7fb5fe7af",
+          "line": 595
+        },
+        {
+          "ip": "0x100d9c7d4",
+          "sp": "0x16f3dadb0",
+          "symbol_address": "0x100d9c7d4",
+          "column": 18,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/sys_common/backtrace.rs",
+          "function": "std::sys_common::backtrace::__rust_begin_short_backtrace::hf83ba910f7522d55",
+          "line": 155
+        },
+        {
+          "ip": "0x100da0d08",
+          "sp": "0x16f3daf20",
+          "symbol_address": "0x100da0d08",
+          "column": 17,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/thread/mod.rs",
+          "function": "std::thread::Builder::spawn_unchecked_::{{closure}}::{{closure}}::he9daeef7c6950e9b",
+          "line": 528
+        },
+        {
+          "ip": "0x100da0d08",
+          "sp": "0x16f3daf20",
+          "symbol_address": "0x100da0d08",
+          "column": 9,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/core/src/panic/unwind_safe.rs",
+          "function": "<core::panic::unwind_safe::AssertUnwindSafe<F> as core::ops::function::FnOnce<()>>::call_once::h0202fb4f2537b363",
+          "line": 272
+        },
+        {
+          "ip": "0x100da0d08",
+          "sp": "0x16f3daf20",
+          "symbol_address": "0x100da0d08",
+          "column": 40,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panicking.rs",
+          "function": "std::panicking::try::do_call::hbfefa096cde588e7",
+          "line": 552
+        },
+        {
+          "ip": "0x100da0d08",
+          "sp": "0x16f3daf20",
+          "symbol_address": "0x100da0d08",
+          "column": 19,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panicking.rs",
+          "function": "std::panicking::try::hebf8b6694f3819d7",
+          "line": 516
+        },
+        {
+          "ip": "0x100da0d08",
+          "sp": "0x16f3daf20",
+          "symbol_address": "0x100da0d08",
+          "column": 14,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/panic.rs",
+          "function": "std::panic::catch_unwind::h62e366e1b226d45f",
+          "line": 146
+        },
+        {
+          "ip": "0x100da0d08",
+          "sp": "0x16f3daf20",
+          "symbol_address": "0x100da0d08",
+          "column": 30,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/thread/mod.rs",
+          "function": "std::thread::Builder::spawn_unchecked_::{{closure}}::h2dcb575929bd939b",
+          "line": 527
+        },
+        {
+          "ip": "0x100da0d08",
+          "sp": "0x16f3daf20",
+          "symbol_address": "0x100da0d08",
+          "column": 5,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/core/src/ops/function.rs",
+          "function": "core::ops::function::FnOnce::call_once{{vtable.shim}}::h28247bdc23f84175",
+          "line": 250
+        },
+        {
+          "ip": "0x10147da90",
+          "sp": "0x16f3daf80",
+          "symbol_address": "0x10147da90",
+          "column": 9,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/alloc/src/boxed.rs",
+          "function": "<alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once::heeda316fdad4f743",
+          "line": 2020
+        },
+        {
+          "ip": "0x10147da90",
+          "sp": "0x16f3daf80",
+          "symbol_address": "0x10147da90",
+          "column": 9,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/alloc/src/boxed.rs",
+          "function": "<alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once::h0d3160611f7295b1",
+          "line": 2020
+        },
+        {
+          "ip": "0x10147da90",
+          "sp": "0x16f3daf80",
+          "symbol_address": "0x10147da90",
+          "column": 17,
+          "file": "/rustc/9b00956e56009bab2aa15d7bff10916599e3d6d6/library/std/src/sys/pal/unix/thread.rs",
+          "function": "std::sys::pal::unix::thread::Thread::new::thread_start::h9266fbbdd0c3d8be",
+          "line": 108
+        },
+        {
+          "ip": "0x180ff1f94",
+          "sp": "0x16f3dafd0",
+          "symbol_address": "0x180ff1f94",
+          "function": "__pthread_joiner_wake"
+        }
+      ]
+    }
+  },
+  "incomplete": false,
+  "metadata": {
+    "library_name": "libname",
+    "library_version": "version",
+    "family": "family",
+    "tags": [
+      "apple:banana"
+    ]
+  },
+  "os_info": {
+    "architecture": "arm64",
+    "bitness": "64-bit",
+    "os_type": "Mac OS",
+    "version": "14.7.0"
+  },
+  "proc_info": {
+    "pid": 5056
+  },
+  "sig_info": {
+    "si_addr": "0x0000000000000000",
+    "si_code": -1,
+    "si_code_human_readable": "SI_USER",
+    "si_signo": 11,
+    "si_signo_human_readable": "SIGSEGV"
+  },
+  "span_ids": [
+    {
+      "id": "12"
+    },
+    {
+      "id": "42"
+    }
+  ],
+  "timestamp": "2024-11-13 19:28:37.429897 UTC",
+  "trace_ids": [
+    {
+      "id": "99399939399939393993"
+    },
+    {
+      "id": "340282366920938463463374607431768211455"
+    }
+  ],
+  "uuid": "36e6ca52-9aab-46ae-9ba4-caadda7f9fb6"
+}
