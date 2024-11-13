@@ -19,6 +19,13 @@ impl<T> Option<T> {
             Option::None => None,
         }
     }
+
+    pub fn as_mut(&mut self) -> Option<&mut T> {
+        match *self {
+            Option::Some(ref mut x) => Option::Some(x),
+            Option::None => Option::None,
+        }
+    }
 }
 
 impl<T> From<Option<T>> for std::option::Option<T> {
