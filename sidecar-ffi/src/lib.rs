@@ -702,11 +702,11 @@ pub unsafe extern "C" fn ddog_sidecar_send_debugger_datum(
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 #[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
-pub unsafe extern "C" fn ddog_sidecar_send_debugger_diagnostics<'a>(
+pub unsafe extern "C" fn ddog_sidecar_send_debugger_diagnostics(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     queue_id: QueueId,
-    diagnostics_payload: DebuggerPayload<'a>,
+    diagnostics_payload: DebuggerPayload,
 ) -> MaybeError {
     try_c!(blocking::send_debugger_diagnostics(
         transport,

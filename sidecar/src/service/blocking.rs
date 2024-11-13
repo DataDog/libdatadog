@@ -366,11 +366,11 @@ pub fn send_debugger_data_shm_vec(
 /// # Returns
 ///
 /// An `io::Result<()>` indicating the result of the operation.
-pub fn send_debugger_diagnostics<'a>(
+pub fn send_debugger_diagnostics(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
     queue_id: QueueId,
-    diagnostics_payload: DebuggerPayload<'a>,
+    diagnostics_payload: DebuggerPayload,
 ) -> io::Result<()> {
     transport.send(SidecarInterfaceRequest::SendDebuggerDiagnostics {
         instance_id: instance_id.clone(),
