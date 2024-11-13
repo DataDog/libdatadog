@@ -210,8 +210,8 @@ A stacktrace consists of
 
 ## Appendix A: Example output
 
-[Available here](artifacts/0002-crashtracker-example.json)
+[Available here](artifacts/0005-crashtracker-example.json)
 
 ## Appendix B: Json Schema
 
-[Available here](artifacts/0002-crashtracker-schema.json)
+[Available here](artifacts/0005-crashtracker-schema.json)
