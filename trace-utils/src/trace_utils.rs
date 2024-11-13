@@ -504,23 +504,21 @@ pub fn enrich_span_with_mini_agent_metadata(
 ) {
     if let Some(azure_spring_app_hostname) = &mini_agent_metadata.azure_spring_app_hostname {
         span.meta.insert(
-            "azurespringapp.hostname".to_string(),
+            "asa.hostname".to_string(),
             azure_spring_app_hostname.to_string(),
         );
     }
     if let Some(azure_spring_app_name) = &mini_agent_metadata.azure_spring_app_name {
-        span.meta.insert(
-            "azurespringapp.name".to_string(),
-            azure_spring_app_name.to_string(),
-        );
+        span.meta
+            .insert("asa.name".to_string(), azure_spring_app_name.to_string());
     }
     if let Some(gcp_project_id) = &mini_agent_metadata.gcp_project_id {
         span.meta
-            .insert("project_id".to_string(), gcp_project_id.to_string());
+            .insert("gcrfx.project_id".to_string(), gcp_project_id.to_string());
     }
     if let Some(gcp_region) = &mini_agent_metadata.gcp_region {
         span.meta
-            .insert("location".to_string(), gcp_region.to_string());
+            .insert("gcrfx.location".to_string(), gcp_region.to_string());
     }
     if let Some(mini_agent_version) = &mini_agent_metadata.version {
         span.meta.insert(
@@ -710,7 +708,6 @@ mod tests {
             }]),
             TracerHeaderTags::default(),
             &Endpoint::default(),
-            None,
         );
         let coalesced = trace_utils::coalesce_send_data(vec![
             dummy.clone(),

@@ -28,6 +28,7 @@ pub struct CrashtrackerConfiguration {
     pub endpoint: Option<Endpoint>,
     pub resolve_frames: StacktraceCollection,
     pub timeout_ms: u32,
+    pub unix_socket_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -48,12 +49,7 @@ impl CrashtrackerReceiverConfig {
         stdout_filename: Option<String>,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
-            !path_to_receiver_binary.is_empty(),
-            "Expected a receiver binary"
-        );
-        anyhow::ensure!(
-            stderr_filename.is_none() && stdout_filename.is_none()
-                || stderr_filename != stdout_filename,
+            stderr_filename.is_some() && stderr_filename != stdout_filename,
             "Can't give the same filename for stderr
         and stdout, they will conflict with each other"
         );
@@ -76,6 +72,7 @@ impl CrashtrackerConfiguration {
         endpoint: Option<Endpoint>,
         resolve_frames: StacktraceCollection,
         timeout_ms: u32,
+        unix_socket_path: Option<String>,
     ) -> anyhow::Result<Self> {
         // Requesting to create, but not use, the altstack is considered paradoxical.
         anyhow::ensure!(
@@ -89,6 +86,8 @@ impl CrashtrackerConfiguration {
         } else {
             timeout_ms
         };
+        // Note:  don't check the receiver socket upfront, since a configuration can be interned
+        // before the receiver is started when using an async-receiver.
         Ok(Self {
             additional_files,
             create_alt_stack,
@@ -96,6 +95,7 @@ impl CrashtrackerConfiguration {
             endpoint,
             resolve_frames,
             timeout_ms,
+            unix_socket_path,
         })
     }
 }

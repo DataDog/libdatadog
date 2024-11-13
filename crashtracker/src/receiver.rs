@@ -414,6 +414,7 @@ mod tests {
                 None,
                 StacktraceCollection::Disabled,
                 3000,
+                None,
             )?)?,
         )
         .await?;

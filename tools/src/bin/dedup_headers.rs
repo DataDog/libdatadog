@@ -12,5 +12,7 @@ fn main() {
     let args: Vec<_> = std::env::args_os()
         .flat_map(|arg| arg.into_string())
         .collect();
-    dedup_headers(&args[1], &args[2..]);
+    let headers: Vec<&str> = args[2..].iter().map(|i| i.as_str()).collect();
+
+    dedup_headers(&args[1], &headers);
 }

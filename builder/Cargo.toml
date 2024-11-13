@@ -8,22 +8,28 @@ license.workspace = true
 
 [features]
 default = []
-crashtracker = ["datadog-profiling-ffi?/crashtracker-receiver", "datadog-profiling-ffi?/crashtracker-collector", "datadog-profiling-ffi?/demangler"]
-profiling = ["dep:datadog-profiling-ffi"]
-telemetry = ["profiling", "datadog-profiling-ffi?/ddtelemetry-ffi"]
-data-pipeline = ["telemetry", "datadog-profiling-ffi?/data-pipeline-ffi"]
-symbolizer = ["profiling", "datadog-profiling-ffi?/symbolizer"]
+crashtracker = []
+profiling = []
+telemetry = []
+data-pipeline = []
+symbolizer = []
 
-[build-dependencies]
+[lib]
+bench = false
+test = false
+doctest = false
+
+
+[dependencies]
 anyhow = { version = "1.0" }
 build_common = { path = "../build-common", features = ["cbindgen"] }
 cmake = "0.1.50"
-tools = { path = "../tools" }
-ddcommon-ffi = { path = "../ddcommon-ffi" }
-datadog-profiling-ffi = { path = "../profiling-ffi", optional = true, features = ["cbindgen"] }
+pico-args = "0.5.0"
 tar = "0.4.41"
+tools = { path = "../tools" }
 
 [[bin]]
-name = "dummy"
+name = "release"
+path = "src/bin/release.rs"
 test = false
 bench = false
