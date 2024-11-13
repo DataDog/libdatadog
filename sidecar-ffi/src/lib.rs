@@ -23,7 +23,7 @@ use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigRea
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddcommon_ffi as ffi;
-use ddcommon_ffi::MaybeError;
+use ddcommon_ffi::{CharSlice, MaybeError};
 use ddtelemetry::{
     data::{self, Dependency, Integration},
     worker::{LifecycleAction, TelemetryActions},
@@ -90,6 +90,18 @@ pub extern "C" fn ddog_alloc_anon_shm_handle(
     handle: &mut *mut ShmHandle,
 ) -> MaybeError {
     *handle = Box::into_raw(Box::new(try_c!(ShmHandle::new(size))));
+
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_alloc_anon_shm_handle_named(
+    size: usize,
+    handle: &mut *mut ShmHandle,
+    name: CharSlice,
+) -> MaybeError {
+    let name = name.to_utf8_lossy();
+    *handle = Box::into_raw(Box::new(try_c!(ShmHandle::new_named(size, name.as_ref()))));
 
     MaybeError::None
 }

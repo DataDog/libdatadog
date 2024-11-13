@@ -30,3 +30,4 @@ bench = false
 [[bench]]
 name = "trace_obfuscation"
 harness = false
+path = "benches/trace_obfuscation.rs"

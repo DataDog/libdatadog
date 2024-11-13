@@ -57,6 +57,7 @@ mod unix {
             resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
             endpoint,
             timeout_ms: TEST_COLLECTOR_TIMEOUT_MS,
+            unix_socket_path: Some("".to_string()),
         };
 
         let metadata = CrashtrackerMetadata {

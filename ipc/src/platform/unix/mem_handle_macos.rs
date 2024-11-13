@@ -69,7 +69,7 @@ static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 impl ShmHandle {
     pub fn new(size: usize) -> anyhow::Result<ShmHandle> {
         let path = format!(
-            "dd-shm-anon-{}-{}",
+            "ddshm-anon-{}-{}",
             unsafe { libc::getpid() },
             ANON_SHM_ID.fetch_add(1, Ordering::SeqCst)
         );
@@ -84,6 +84,10 @@ impl ShmHandle {
             handle: fd.into(),
             size: size | NOT_COMMITTED,
         })
+    }
+
+    pub fn new_named(size: usize, _name: &str) -> anyhow::Result<ShmHandle> {
+        Self::new(size)
     }
 }
 fn path_slice(path: &CStr) -> &[u8] {
