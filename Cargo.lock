@@ -724,7 +724,7 @@ dependencies = [
  "serde_json",
  "serde_repr",
  "serde_urlencoded",
- "thiserror",
+ "thiserror 1.0.68",
  "tokio",
  "tokio-util",
  "tower-service",
@@ -823,7 +823,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.68",
 ]
 
 [[package]]
@@ -1001,18 +1001,17 @@ checksum = "5b63caa9aa9397e2d9480a9b13673856c78d8ac123288526c37d7839f2a86990"
 
 [[package]]
 name = "common-multipart-rfc7578"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22328b3864f1d8dbe7036f3f2fdfdcb1f367af43dca418943d396fbf8c4b8021"
+version = "0.6.0"
+source = "git+https://github.com/jothan/rust-hyper-multipart-rfc7578.git?rev=4d3064a7a8c0062b485d50e4460cb7ad71c83d35#4d3064a7a8c0062b485d50e4460cb7ad71c83d35"
 dependencies = [
  "bytes",
  "futures-core",
  "futures-util",
- "http 0.2.12",
+ "http 1.1.0",
  "mime",
  "mime_guess",
  "rand",
- "thiserror",
+ "thiserror 1.0.68",
 ]
 
 [[package]]
@@ -1488,14 +1487,9 @@ dependencies = [
  "criterion",
  "datadog-alloc",
  "ddcommon",
+ "ddcommon-net",
  "derivative",
- "futures",
- "futures-core",
- "futures-util",
  "hashbrown 0.14.5",
- "http 0.2.12",
- "http-body 0.4.6",
- "hyper 0.14.31",
  "hyper-multipart-rfc7578",
  "indexmap 2.6.0",
  "libc",
@@ -1837,6 +1831,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ddcommon-net"
+version = "14.1.0"
+dependencies = [
+ "ddcommon",
+ "hex",
+ "http 1.1.0",
+ "hyper 1.5.0",
+ "hyper-util",
+ "hyperlocal",
+ "serde",
+ "thiserror 2.0.3",
+ "tokio",
+ "tokio-rustls 0.26.0",
+ "tokio-util",
+]
+
+[[package]]
 name = "ddsketch-agent"
 version = "0.1.0"
 source = "git+https://github.com/DataDog/saluki-backport/?rev=3c5d87ab82dea4a1a98ef0c60fb3659ca35c2751#3c5d87ab82dea4a1a98ef0c60fb3659ca35c2751"
@@ -2012,7 +2023,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.68",
  "tokio",
  "tokio-util",
  "tracing",
@@ -2713,15 +2724,14 @@ dependencies = [
 
 [[package]]
 name = "hyper-multipart-rfc7578"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63ca8108ac0ae98d310d41cddb11c6b822e8aca865dbe421366934e6f7f72e10"
+version = "0.8.0"
+source = "git+https://github.com/jothan/rust-hyper-multipart-rfc7578.git?rev=4d3064a7a8c0062b485d50e4460cb7ad71c83d35#4d3064a7a8c0062b485d50e4460cb7ad71c83d35"
 dependencies = [
  "bytes",
  "common-multipart-rfc7578",
  "futures-core",
- "http 0.2.12",
- "hyper 0.14.31",
+ "http 1.1.0",
+ "hyper 1.5.0",
 ]
 
 [[package]]
@@ -2842,6 +2852,21 @@ dependencies = [
  "tokio",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "hyperlocal"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "986c5ce3b994526b3cd75578e62554abd09f0899d6206de48b3e96ab34ccc8c7"
+dependencies = [
+ "hex",
+ "http-body-util",
+ "hyper 1.5.0",
+ "hyper-util",
+ "pin-project-lite",
+ "tokio",
+ "tower-service",
 ]
 
 [[package]]
@@ -3625,7 +3650,7 @@ dependencies = [
  "percent-encoding",
  "pin-project",
  "rand",
- "thiserror",
+ "thiserror 1.0.68",
  "tokio",
  "tokio-stream",
 ]
@@ -3640,7 +3665,7 @@ dependencies = [
  "lazy_static",
  "opentelemetry",
  "opentelemetry-semantic-conventions",
- "thiserror",
+ "thiserror 1.0.68",
  "thrift",
  "tokio",
 ]
@@ -4170,7 +4195,7 @@ dependencies = [
  "bytes",
  "once_cell",
  "protobuf-support",
- "thiserror",
+ "thiserror 1.0.68",
 ]
 
 [[package]]
@@ -4185,7 +4210,7 @@ dependencies = [
  "protobuf-parse",
  "regex",
  "tempfile",
- "thiserror",
+ "thiserror 1.0.68",
 ]
 
 [[package]]
@@ -4200,7 +4225,7 @@ dependencies = [
  "protobuf",
  "protobuf-support",
  "tempfile",
- "thiserror",
+ "thiserror 1.0.68",
  "which",
 ]
 
@@ -4210,7 +4235,7 @@ version = "3.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b088fd20b938a875ea00843b6faf48579462630015c3788d397ad6a786663252"
 dependencies = [
- "thiserror",
+ "thiserror 1.0.68",
 ]
 
 [[package]]
@@ -4289,7 +4314,7 @@ dependencies = [
  "rustc-hash 2.0.0",
  "rustls 0.23.16",
  "socket2",
- "thiserror",
+ "thiserror 1.0.68",
  "tokio",
  "tracing",
 ]
@@ -4306,7 +4331,7 @@ dependencies = [
  "rustc-hash 2.0.0",
  "rustls 0.23.16",
  "slab",
- "thiserror",
+ "thiserror 1.0.68",
  "tinyvec",
  "tracing",
 ]
@@ -4410,7 +4435,7 @@ checksum = "ba009ff324d1fc1b900bd1fdb31564febe58a8ccc8a6fdbb93b543d33b13ca43"
 dependencies = [
  "getrandom",
  "libredox",
- "thiserror",
+ "thiserror 1.0.68",
 ]
 
 [[package]]
@@ -4656,6 +4681,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eee87ff5d9b36712a58574e12e9f0ea80f915a5b0ac518d322b24a465617925e"
 dependencies = [
  "aws-lc-rs",
+ "log",
  "once_cell",
  "ring 0.17.8",
  "rustls-pki-types",
@@ -4754,7 +4780,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a15e661f0f9dac21f3494fe5d23a6338c0ac116a2d22c2b63010acd89467ffe"
 dependencies = [
  "byteorder",
- "thiserror",
+ "thiserror 1.0.68",
  "twox-hash",
 ]
 
@@ -5384,7 +5410,7 @@ dependencies = [
  "serde_bytes",
  "static_assertions",
  "tarpc-plugins",
- "thiserror",
+ "thiserror 1.0.68",
  "tokio",
  "tokio-serde",
  "tokio-util",
@@ -5492,7 +5518,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror",
+ "thiserror 1.0.68",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -5505,7 +5531,16 @@ version = "1.0.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "02dd99dc800bbb97186339685293e1cc5d9df1f8fae2d0aecd9ff1c77efea892"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 1.0.68",
+]
+
+[[package]]
+name = "thiserror"
+version = "2.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c006c85c7651b3cf2ada4584faa36773bd07bac24acfb39f3c431b36d7e667aa"
+dependencies = [
+ "thiserror-impl 2.0.3",
 ]
 
 [[package]]
@@ -5513,6 +5548,17 @@ name = "thiserror-impl"
 version = "1.0.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7c61ec9a6f64d2793d8a45faba21efbe3ced62a886d44c36a009b2b519b4c7e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f077553d607adc1caf65430528a576c757a71ed73944b66ebb58ef2bbd243568"
 dependencies = [
  "proc-macro2",
  "quote",
