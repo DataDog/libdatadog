@@ -41,7 +41,7 @@ impl From<Vec<crate::StackFrame>> for StackTrace {
                     ),
                     crate::NormalizedAddressMeta::Pdb { path, guid, age } => (
                         Some(format!(
-                            "{}:{age}",
+                            "{}{age}",
                             byte_vec_as_hex(guid).unwrap_or_default()
                         )),
                         Some(BuildIdType::PDB),
