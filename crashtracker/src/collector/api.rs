@@ -200,6 +200,7 @@ fn test_altstack_paradox() -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
+#[cfg(target_os = "linux")]
 fn get_sigaltstack() -> Option<libc::stack_t> {
     let mut sigaltstack = libc::stack_t {
         ss_sp: std::ptr::null_mut(),

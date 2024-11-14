@@ -85,3 +85,16 @@ pub enum SiCodes {
     SI_USER,
     SYS_SECCOMP,
 }
+
+#[cfg(test)]
+impl SigInfo {
+    pub fn test_instance(_seed: u64) -> Self {
+        Self {
+            si_addr: Some("0x0000000000001234".to_string()),
+            si_code: 1,
+            si_code_human_readable: SiCodes::SEGV_BNDERR,
+            si_signo: 11,
+            si_signo_human_readable: SignalNames::SIGSEGV,
+        }
+    }
+}
