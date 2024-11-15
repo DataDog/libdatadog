@@ -53,14 +53,16 @@ jobs:
           rustup target add ${{ matrix.target }}
         shell: bash
 
-      - name: Build
+      - name: Build on Windows
+        if: matrix.os == 'windows-latest'
+        run: .\windows\build\build.ps1 -output_dir .\bin
+        shell: pwsh
+
+      - name: Build on macOS
+        if: matrix.os == 'macos-latest'
         run: |
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            .\windows\build\build.ps1 -output_dir .\bin
-          else
-            chmod +x ./windows/build/build.sh
-            ./windows/build/build.sh -o ./bin
-          fi
+          chmod +x ./windows/build/build.sh
+          ./windows/build/build.sh -o ./bin
         shell: bash
 
       - name: Upload artifacts
