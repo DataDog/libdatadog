@@ -6,7 +6,7 @@ on:
     branches:
       - main
 
-name: Build and Pack
+name: .NET
 
 jobs:
   build:
@@ -55,14 +55,14 @@ jobs:
 
       - name: Build on Windows
         if: matrix.os == 'windows-latest'
-        run: .\windows\build\build.ps1 -output_dir .\bin
+        run: .\windows\build\build.ps1 -output_dir .\bin -targets ${{ matrix.target }}
         shell: pwsh
 
       - name: Build on macOS
         if: matrix.os == 'macos-latest'
         run: |
           chmod +x ./windows/build/build.sh
-          ./windows/build/build.sh -o ./bin
+          ./windows/build/build.sh -o ./bin -t ${{ matrix.target }}
         shell: bash
 
       - name: Upload artifacts
