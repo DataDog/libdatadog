@@ -70,6 +70,8 @@ pub struct Config<'a> {
     /// This is given as a uint32_t, but the actual timeout needs to fit inside of an i32 (max
     /// 2^31-1). This is a limitation of the various interfaces used to guarantee the timeout.
     pub timeout_ms: u32,
+    /// Optional filename for a unix domain socket if the receiver is used asynchonously
+    pub optional_unix_socket_filename: CharSlice<'a>,
 }
 
 impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration {
@@ -87,6 +89,7 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
         let endpoint = value.endpoint.cloned();
         let resolve_frames = value.resolve_frames;
         let timeout_ms = value.timeout_ms;
+        let unix_socket_path = option_from_char_slice(value.optional_unix_socket_filename)?;
         Self::new(
             additional_files,
             create_alt_stack,
@@ -94,6 +97,7 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
             endpoint,
             resolve_frames,
             timeout_ms,
+            unix_socket_path,
         )
     }
 }

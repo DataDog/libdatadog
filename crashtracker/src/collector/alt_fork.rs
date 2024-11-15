@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-use anyhow;
 use libc::pid_t;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};

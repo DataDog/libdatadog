@@ -5,7 +5,6 @@ mod api;
 mod counters;
 mod crash_handler;
 mod emitters;
-mod saguard;
 mod spans;
 mod alt_fork;
 
