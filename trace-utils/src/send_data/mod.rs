@@ -28,6 +28,10 @@ const HEADER_HTTP_CTYPE: &str = "Content-Type";
 const HEADER_CTYPE_MSGPACK: &str = "application/msgpack";
 const HEADER_CTYPE_PROTOBUF: &str = "application/x-protobuf";
 
+/// HEADER_REAL_HTTP_STATUS signals to the agent to send 429 responses when a payload is dropped
+/// If this is not set then the agent will always return a 200 regardless if the payload is dropped.
+const HEADER_REAL_HTTP_STATUS: &str = "Datadog-Send-Real-Http-Status";
+
 type BytesSent = u64;
 type ChunksSent = u64;
 type ChunksDropped = u64;
@@ -282,6 +286,7 @@ impl SendData {
 
         let mut headers = HeaderMap::new();
         headers.insert(HEADER_HTTP_CTYPE, HeaderValue::from_static(content_type));
+        headers.insert(HEADER_REAL_HTTP_STATUS, HeaderValue::from_static("1"));
 
         if let Some(additional_payload_headers) = &additional_payload_headers {
             for (key, value) in additional_payload_headers {
@@ -750,6 +755,7 @@ mod tests {
                     )
                     .header("datadog-meta-tracer-version", header_tags.tracer_version)
                     .header("datadog-container-id", header_tags.container_id)
+                    .header("Datadog-Send-Real-Http-Status", "1")
                     .path("/");
                 then.status(200).body("");
             })
