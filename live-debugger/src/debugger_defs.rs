@@ -5,16 +5,16 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DebuggerPayload<'a> {
     pub service: Cow<'a, str>,
-    pub ddsource: &'static str,
+    pub ddsource: Cow<'static, str>,
     pub timestamp: u64,
     pub debugger: DebuggerData<'a>,
     pub message: Option<Cow<'a, str>>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(clippy::large_enum_variant)]
 pub enum DebuggerData<'a> {
@@ -22,7 +22,7 @@ pub enum DebuggerData<'a> {
     Diagnostics(Diagnostics<'a>),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ProbeMetadataLocation<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub method: Option<Cow<'a, str>>,
@@ -30,7 +30,7 @@ pub struct ProbeMetadataLocation<'a> {
     pub r#type: Option<Cow<'a, str>>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ProbeMetadata<'a> {
     pub id: Cow<'a, str>,
     pub location: ProbeMetadataLocation<'a>,
@@ -42,13 +42,13 @@ pub struct SnapshotEvaluationError {
     pub message: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SnapshotStackFrame {
     pub expr: String,
     pub message: String,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot<'a> {
     pub language: Cow<'a, str>,
@@ -70,7 +70,7 @@ pub struct Snapshot<'a> {
     pub stack: Vec<SnapshotStackFrame>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Captures<'a> {
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub lines: HashMap<u32, Capture<'a>>,
@@ -81,7 +81,7 @@ pub struct Captures<'a> {
 }
 
 pub type Fields<'a> = HashMap<Cow<'a, str>, Value<'a>>;
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Capture<'a> {
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     #[serde(rename = "staticFields")]
@@ -94,10 +94,10 @@ pub struct Capture<'a> {
     pub throwable: Option<Value<'a>>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Entry<'a>(pub Value<'a>, pub Value<'a>);
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Value<'a> {
     pub r#type: Cow<'a, str>,
@@ -119,7 +119,7 @@ pub struct Value<'a> {
     pub size: Option<Cow<'a, str>>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Diagnostics<'a> {
     pub probe_id: Cow<'a, str>,
@@ -134,7 +134,7 @@ pub struct Diagnostics<'a> {
     pub details: Option<Cow<'a, str>>,
 }
 
-#[derive(Serialize, Deserialize, Default, Copy, Clone)]
+#[derive(Serialize, Deserialize, Debug, Default, Copy, Clone, Eq, PartialEq)]
 #[serde(rename_all = "UPPERCASE")]
 #[repr(C)]
 pub enum ProbeStatus {
@@ -147,7 +147,7 @@ pub enum ProbeStatus {
     Warning,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosticsError<'a> {
     pub r#type: Cow<'a, str>,

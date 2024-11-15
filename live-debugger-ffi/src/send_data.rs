@@ -100,7 +100,7 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
 ) -> *mut DebuggerCapture<'a> {
     let snapshot = DebuggerPayload {
         service: service.to_utf8_lossy(),
-        ddsource: "dd_debugger",
+        ddsource: Cow::Borrowed("dd_debugger"),
         timestamp,
         message: None,
         debugger: DebuggerData::Snapshot(Snapshot {
@@ -159,7 +159,7 @@ pub extern "C" fn ddog_create_log_probe_snapshot<'a>(
 ) -> Box<DebuggerPayload<'a>> {
     Box::new(DebuggerPayload {
         service: service.to_utf8_lossy(),
-        ddsource: "dd_debugger",
+        ddsource: Cow::Borrowed("dd_debugger"),
         timestamp,
         message: message.map(|m| m.to_utf8_lossy()),
         debugger: DebuggerData::Snapshot(Snapshot {
@@ -334,7 +334,7 @@ pub extern "C" fn ddog_evaluation_error_snapshot<'a>(
 ) -> Box<DebuggerPayload<'a>> {
     Box::new(DebuggerPayload {
         service: service.to_utf8_lossy(),
-        ddsource: "dd_debugger",
+        ddsource: Cow::Borrowed("dd_debugger"),
         timestamp,
         message: Some(Cow::Owned(format!(
             "Evaluation errors for probe id {}",
@@ -397,7 +397,7 @@ pub fn ddog_debugger_diagnostics_create_unboxed<'a>(
     }
     DebuggerPayload {
         service,
-        ddsource: "dd_debugger",
+        ddsource: Cow::Borrowed("dd_debugger"),
         timestamp,
         message: Some(if probe.diagnostic_msg.len() > 0 {
             probe.diagnostic_msg.to_utf8_lossy()
