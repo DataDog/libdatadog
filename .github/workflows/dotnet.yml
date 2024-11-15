@@ -3,98 +3,108 @@ on:
     branches:
       - main
   pull_request:
+    branches:
+      - main
 
-name: .NET
+name: Build and Pack
 
 jobs:
-  windows-build:
-    runs-on: windows-latest
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+        target: [
+          x86_64-pc-windows-msvc,
+          i686-pc-windows-msvc,
+          x86_64-apple-darwin,
+          aarch64-apple-darwin
+        ]
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+
     steps:
-      - name: checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install rustup using win.rustup.rs
+      - name: Install rustup
+        if: matrix.os == 'windows-latest'
         run: |
-          # disable download progress bar
           $ProgressPreference = "SilentlyContinue"
           Invoke-WebRequest https://win.rustup.rs/ -OutFile rustup-init.exe
-          .\rustup-init.exe -y --default-host=x86_64-pc-windows-msvc --default-toolchain=none
+          .\rustup-init.exe -y --default-host=${{ matrix.target }} --default-toolchain=none
           del rustup-init.exe
-          rustup target add x86_64-pc-windows-msvc
-          rustup target add i686-pc-windows-msvc
+          rustup target add ${{ matrix.target }}
         shell: powershell
 
-      - name: build
-        run: |
-          .\windows\build\build.ps1 -output_dir .\bin
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-bin
-          path: |
-            bin/x86_64-pc-windows-msvc/*/datadog_profiling_ffi.dll
-            bin/x86_64-pc-windows-msvc/*/datadog_profiling_ffi.lib
-            bin/x86_64-pc-windows-msvc/*/datadog_profiling_ffi.pdb
-            bin/i686-pc-windows-msvc/*/datadog_profiling_ffi.dll
-            bin/i686-pc-windows-msvc/*/datadog_profiling_ffi.lib
-            bin/i686-pc-windows-msvc/*/datadog_profiling_ffi.pdb
-          if-no-files-found: error
-
-  macos-build:
-    runs-on: macos-latest
-    steps:
-      - name: checkout
-        uses: actions/checkout@v4
-
-      - name: Install rustup using rustup.rs
+      - name: Install rustup
+        if: matrix.os == 'macos-latest'
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           source $HOME/.cargo/env
-          rustup target add x86_64-apple-darwin
-          rustup target add aarch64-apple-darwin
+          rustup target add ${{ matrix.target }}
         shell: bash
 
-      - name: build
+      - name: Build
         run: |
-          chmod +x ./windows/build/build.sh
-          ./windows/build/build.sh -o ./bin
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            .\windows\build\build.ps1 -output_dir .\bin
+          else
+            chmod +x ./windows/build/build.sh
+            ./windows/build/build.sh -o ./bin
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: macos-bin
+          name: ${{ matrix.os }}-bin-${{ matrix.target }}
           path: |
-            bin/x86_64-apple-darwin/*/libdatadog_profiling_ffi.dylib
-            bin/x86_64-apple-darwin/*/libdatadog_profiling_ffi.a
-            bin/aarch64-apple-darwin/*/libdatadog_profiling_ffi.dylib
-            bin/aarch64-apple-darwin/*/libdatadog_profiling_ffi.a
-          if-no-files-found: error
+            bin/${{ matrix.target }}/*
 
   pack:
     runs-on: windows-latest
-    needs: [windows-build, macos-build]
+    needs: build
     steps:
-      - name: checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
-          name: windows-bin
+          name: windows-latest-bin-x86_64-pc-windows-msvc
           path: bin
 
-      - name: Download mac artifacts
+      - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
-          name: macos-bin
+          name: windows-latest-bin-i686-pc-windows-msvc
           path: bin
 
-      - name: pack
+      - name: Download Mac artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-latest-bin-x86_64-apple-darwin
+          path: bin
+
+      - name: Download Mac artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-latest-bin-aarch64-apple-darwin
+          path: bin
+
+      - name: Pack
         run: |
           dotnet pack .\windows\libdatadog.csproj -p:LibDatadogBinariesOutputDir=..\bin -p:LibDatadogVersion="42.0.0" -o .nuget\packages\
 
-      - name: store artifacts
+      - name: Store artifacts
         uses: actions/upload-artifact@v4
         with:
           name: packages
