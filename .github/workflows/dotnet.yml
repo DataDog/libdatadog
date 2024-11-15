@@ -21,15 +21,15 @@ jobs:
           x86_64-apple-darwin,
           aarch64-apple-darwin
         ]
-        include:
+        exclude:
           - os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - os: windows-latest
-            target: i686-pc-windows-msvc
-          - os: macos-latest
             target: x86_64-apple-darwin
-          - os: macos-latest
+          - os: windows-latest
             target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: i686-pc-windows-msvc
 
     steps:
       - name: Checkout code
@@ -55,12 +55,13 @@ jobs:
 
       - name: Build
         run: |
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             .\windows\build\build.ps1 -output_dir .\bin
           else
             chmod +x ./windows/build/build.sh
             ./windows/build/build.sh -o ./bin
           fi
+        shell: bash
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
