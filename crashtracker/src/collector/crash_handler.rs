@@ -4,8 +4,8 @@
 #![cfg(unix)]
 #![allow(deprecated)]
 
-use super::emitters::emit_crashreport;
 use super::alt_fork::alt_fork;
+use super::emitters::emit_crashreport;
 use crate::crash_info::CrashtrackerMetadata;
 use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
 use crate::shared::constants::*;
@@ -139,9 +139,10 @@ fn open_file_or_quiet(filename: Option<&str>) -> anyhow::Result<RawFd> {
 // Note: some resources indicate it is unsafe to call `waitpid` from a signal handler, especially
 //       on macos, where the OS will terminate an offending process.  This appears to be untrue
 //       and `waitpid()` is characterized as async-signal safe by POSIX.
-fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
+fn reap_child_non_blocking(pid: libc::pid_t, timeout_ms: u32) -> anyhow::Result<bool> {
     let timeout = Duration::from_millis(timeout_ms as u64);
     let start_time = Instant::now();
+    let pid = Pid::from_raw(pid);
 
     loop {
         match waitpid(pid, Some(WaitPidFlag::WNOHANG)) {
@@ -230,7 +231,7 @@ fn run_collector_child(
     // this:
     // - Reuse the stdio files used for the receiver
     //   + con: we don't controll flushes to stdio, so the writes from the two processes may
-    //          interleave parts of a single message
+    //     interleave parts of a single message
     // - Create two new stdio files for the collector
     //   + con: that's _another_ two options to fill out in the config
     let _ = unsafe { libc::close(0) };
@@ -243,10 +244,7 @@ fn run_collector_child(
     let _ = unsafe {
         signal::sigaction(
             signal::SIGPIPE,
-            &SigAction::new(
-                SigHandler::SigIgn,
-                SaFlags::empty(),
-                SigSet::empty()),
+            &SigAction::new(SigHandler::SigIgn, SaFlags::empty(), SigSet::empty()),
         )
     };
 
@@ -322,7 +320,8 @@ fn make_unix_socket_pair() -> anyhow::Result<(RawFd, RawFd)> {
         socket::SockType::Stream,
         None,
         socket::SockFlag::empty(),
-    ).context("Failed to create Unix domain socket pair")?;
+    )
+    .context("Failed to create Unix domain socket pair")?;
     Ok((sock1.into_raw_fd(), sock2.into_raw_fd()))
 }
 
@@ -352,9 +351,7 @@ fn receiver_from_socket(unix_socket_path: Option<String>) -> anyhow::Result<Watc
     })
 }
 
-fn receiver_from_config(
-    config: &CrashtrackerReceiverConfig,
-) -> anyhow::Result<WatchedProcess> {
+fn receiver_from_config(config: &CrashtrackerReceiverConfig) -> anyhow::Result<WatchedProcess> {
     // Create anonymous Unix domain socket pair for communication
     let (uds_parent, uds_child) = make_unix_socket_pair()?;
 
@@ -391,8 +388,7 @@ fn make_receiver(
     unix_socket_path: Option<String>,
 ) -> anyhow::Result<WatchedProcess> {
     // Try to create a receiver from the socket path, fallback to config on failure
-    receiver_from_socket(unix_socket_path)
-        .or_else(|_| {receiver_from_config(config)})
+    receiver_from_socket(unix_socket_path).or_else(|_| receiver_from_config(config))
 }
 
 fn make_collector(
@@ -566,17 +562,17 @@ extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucon
     };
 }
 
-fn finish_watched_process(receiver: WatchedProcess, start_time: Instant, timeout_ms: u32) {
+fn finish_watched_process(proc: WatchedProcess, start_time: Instant, timeout_ms: u32) {
     let pollhup_allowed_ms = timeout_ms
         .saturating_sub(start_time.elapsed().as_millis() as u32)
         .min(i32::MAX as u32) as i32;
-    let _ = wait_for_pollhup(receiver.fd, pollhup_allowed_ms);
+    let _ = wait_for_pollhup(proc.fd, pollhup_allowed_ms);
 
     // We cleanup oneshot receivers now.
-    if receiver.oneshot {
+    if proc.oneshot {
         //
         unsafe {
-            libc::kill(receiver.pid, libc::SIGKILL);
+            libc::kill(proc.pid, libc::SIGKILL);
         }
 
         // If we have less than the minimum amount of time, give ourselves a few scheduler slices
@@ -585,9 +581,7 @@ fn finish_watched_process(receiver: WatchedProcess, start_time: Instant, timeout
             timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32),
             DD_CRASHTRACK_MINIMUM_REAP_TIME_MS,
         );
-        let receiver_pid_as_pid = Pid::from_raw(receiver.pid);
-
-        let _ = reap_child_non_blocking(receiver_pid_as_pid, reaping_allowed_ms);
+        let _ = reap_child_non_blocking(proc.pid, reaping_allowed_ms);
     }
 }
 
@@ -615,6 +609,7 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     let (_metadata, metadata_string) = unsafe { &*metadata_ptr };
 
     let receiver_config = RECEIVER_CONFIG.load(SeqCst);
+
     anyhow::ensure!(!receiver_config.is_null(), "No receiver config");
     let receiver_config = unsafe { &*receiver_config };
 
@@ -629,7 +624,7 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     // Keep to a strict deadline, so set timeouts early.
     let timeout_ms = config.timeout_ms;
     let start_time = Instant::now(); // This is the time at which the signal was received
-    
+
     // Creating the receiver will either spawn a new process or merely attach to an existing async
     // receiver
     let receiver = make_receiver(receiver_config, config.unix_socket_path.clone())?;
