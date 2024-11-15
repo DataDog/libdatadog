@@ -16,4 +16,4 @@ bench = false
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 # Should be kept in sync with the libdatadog crashtracker crate (also using blasesym)
-blazesym-c = "0.1.0-rc.1"
+blazesym-c = "0.1.0-rc.2"

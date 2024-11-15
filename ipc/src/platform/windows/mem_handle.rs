@@ -91,12 +91,16 @@ static ANON_HANDLE_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 impl ShmHandle {
     pub fn new(size: usize) -> anyhow::Result<ShmHandle> {
+        Self::new_named(size, "shm-handle")
+    }
+
+    pub fn new_named(size: usize, name: &str) -> anyhow::Result<ShmHandle> {
         // If one uses null_mut() for the name, DuplicateHandle will emit a very
         // confusing "The system cannot find the file specified. (os error 2)".
         // It seems like DuplicateHandle requires a name to re-open the FileMapping
         // within another process. Oh well. Let's generate an unique one.
         let name = CString::new(format!(
-            "libdatadog-anon-{}-{}",
+            "libdatadog-anon-{name}-{}-{}",
             unsafe { libc::getpid() },
             ANON_HANDLE_COUNTER.fetch_add(1, Ordering::SeqCst)
         ))

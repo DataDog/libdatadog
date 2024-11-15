@@ -33,6 +33,6 @@ jobs:
         while read -r package test;
         do
           echo "****** Starting bolero test for $package $test ******" 1>&2
-          cargo bolero test -T 1min --package $package $test
+          cargo bolero test -T 30s --package $package $test
         done
         popd

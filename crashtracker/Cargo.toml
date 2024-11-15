@@ -25,7 +25,7 @@ receiver = []
 
 [target.'cfg(unix)'.dependencies]
 # Should be kept in sync with the libdatadog symbolizer crate (also using blasesym)
-blazesym = "0.2.0-rc.0"
+blazesym = "0.2.0-rc.2"
 
 [dependencies]
 anyhow = "1.0"
@@ -45,6 +45,7 @@ tokio = { version = "1.23", features = ["rt", "macros", "io-std", "io-util"] }
 http = "0.2"
 portable-atomic = { version = "1.6.0", features = ["serde"] }
 rand = "0.8.5"
+schemars = "0.8.21"
 
 [dev-dependencies]
 tempfile = { version = "3.3" }

@@ -1,0 +1,436 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CrashInfo",
+  "type": "object",
+  "required": [
+    "data_schema_version",
+    "error",
+    "incomplete",
+    "metadata",
+    "os_info",
+    "proc_info",
+    "sig_info",
+    "timestamp",
+    "uuid"
+  ],
+  "properties": {
+    "counters": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "format": "int64"
+      }
+    },
+    "data_schema_version": {
+      "type": "string"
+    },
+    "error": {
+      "$ref": "#/definitions/ErrorData"
+    },
+    "files": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "fingerprint": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "incomplete": {
+      "type": "boolean"
+    },
+    "log_messages": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "metadata": {
+      "$ref": "#/definitions/Metadata"
+    },
+    "os_info": {
+      "$ref": "#/definitions/OsInfo"
+    },
+    "proc_info": {
+      "$ref": "#/definitions/ProcInfo"
+    },
+    "sig_info": {
+      "$ref": "#/definitions/SigInfo"
+    },
+    "span_ids": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Span"
+      }
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "trace_ids": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Span"
+      }
+    },
+    "uuid": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "BuildIdType": {
+      "type": "string",
+      "enum": [
+        "GNU",
+        "GO",
+        "PDB",
+        "PE",
+        "SHA1"
+      ]
+    },
+    "ErrorData": {
+      "type": "object",
+      "required": [
+        "is_crash",
+        "kind",
+        "source_type",
+        "stack"
+      ],
+      "properties": {
+        "is_crash": {
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/definitions/ErrorKind"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_type": {
+          "$ref": "#/definitions/SourceType"
+        },
+        "stack": {
+          "$ref": "#/definitions/StackTrace"
+        },
+        "threads": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ThreadData"
+          }
+        }
+      }
+    },
+    "ErrorKind": {
+      "type": "string",
+      "enum": [
+        "Panic",
+        "UnhandledException",
+        "UnixSignal"
+      ]
+    },
+    "FileType": {
+      "type": "string",
+      "enum": [
+        "APK",
+        "ELF",
+        "PDB"
+      ]
+    },
+    "Metadata": {
+      "type": "object",
+      "required": [
+        "family",
+        "library_name",
+        "library_version"
+      ],
+      "properties": {
+        "family": {
+          "type": "string"
+        },
+        "library_name": {
+          "type": "string"
+        },
+        "library_version": {
+          "type": "string"
+        },
+        "tags": {
+          "description": "A list of \"key:value\" tuples.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "OsInfo": {
+      "type": "object",
+      "required": [
+        "architecture",
+        "bitness",
+        "os_type",
+        "version"
+      ],
+      "properties": {
+        "architecture": {
+          "type": "string"
+        },
+        "bitness": {
+          "type": "string"
+        },
+        "os_type": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      }
+    },
+    "ProcInfo": {
+      "type": "object",
+      "required": [
+        "pid"
+      ],
+      "properties": {
+        "pid": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "SiCodes": {
+      "description": "See https://man7.org/linux/man-pages/man2/sigaction.2.html",
+      "type": "string",
+      "enum": [
+        "BUS_ADRALN",
+        "BUS_ADRERR",
+        "BUS_MCEERR_AO",
+        "BUS_MCEERR_AR",
+        "BUS_OBJERR",
+        "SEGV_ACCERR",
+        "SEGV_BNDERR",
+        "SEGV_MAPERR",
+        "SEGV_PKUERR",
+        "SI_ASYNCIO",
+        "SI_KERNEL",
+        "SI_MESGQ",
+        "SI_QUEUE",
+        "SI_SIGIO",
+        "SI_TIMER",
+        "SI_TKILL",
+        "SI_USER",
+        "SYS_SECCOMP"
+      ]
+    },
+    "SigInfo": {
+      "type": "object",
+      "required": [
+        "si_code",
+        "si_code_human_readable",
+        "si_signo",
+        "si_signo_human_readable"
+      ],
+      "properties": {
+        "si_addr": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "si_code": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "si_code_human_readable": {
+          "$ref": "#/definitions/SiCodes"
+        },
+        "si_signo": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "si_signo_human_readable": {
+          "$ref": "#/definitions/SignalNames"
+        }
+      }
+    },
+    "SignalNames": {
+      "description": "See https://man7.org/linux/man-pages/man7/signal.7.html",
+      "type": "string",
+      "enum": [
+        "SIGABRT",
+        "SIGBUS",
+        "SIGSEGV",
+        "SIGSYS"
+      ]
+    },
+    "SourceType": {
+      "type": "string",
+      "enum": [
+        "Crashtracking"
+      ]
+    },
+    "Span": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "thread_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "StackFrame": {
+      "type": "object",
+      "properties": {
+        "build_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "build_id_type": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BuildIdType"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "column": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "file_type": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FileType"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "function": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "module_base_address": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "relative_address": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sp": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "symbol_address": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "StackTrace": {
+      "type": "object",
+      "required": [
+        "format",
+        "frames"
+      ],
+      "properties": {
+        "format": {
+          "type": "string"
+        },
+        "frames": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/StackFrame"
+          }
+        }
+      }
+    },
+    "ThreadData": {
+      "type": "object",
+      "required": [
+        "crashed",
+        "name",
+        "stack"
+      ],
+      "properties": {
+        "crashed": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "stack": {
+          "$ref": "#/definitions/StackTrace"
+        },
+        "state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}
