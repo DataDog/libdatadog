@@ -442,6 +442,14 @@ impl SidecarInterface for SidecarServer {
         queue_id: QueueId,
         actions: Vec<SidecarAction>,
     ) -> Self::EnqueueActionsFut {
+        fn is_stop_actions(actions: &[SidecarAction]) -> bool {
+            actions.len() == 1
+                && matches!(
+                    actions[0],
+                    SidecarAction::Telemetry(TelemetryActions::Lifecycle(LifecycleAction::Stop))
+                )
+        }
+
         let rt_info = self.get_runtime(&instance_id);
         let mut applications = rt_info.lock_applications();
         match applications.entry(queue_id) {
@@ -449,8 +457,12 @@ impl SidecarInterface for SidecarServer {
                 let value = entry.get_mut();
                 match value.app_or_actions {
                     AppOrQueue::Inactive => {
-                        value.app_or_actions =
-                            AppOrQueue::Queue(EnqueuedTelemetryData::processed(actions));
+                        if is_stop_actions(&actions) {
+                            entry.remove();
+                        } else {
+                            value.app_or_actions =
+                                AppOrQueue::Queue(EnqueuedTelemetryData::processed(actions));
+                        }
                     }
                     AppOrQueue::Queue(ref mut data) => {
                         data.process(actions);
@@ -491,14 +503,7 @@ impl SidecarInterface for SidecarServer {
                 }
             }
             Entry::Vacant(entry) => {
-                if actions.len() != 1
-                    || !matches!(
-                        actions[0],
-                        SidecarAction::Telemetry(TelemetryActions::Lifecycle(
-                            LifecycleAction::Stop
-                        ))
-                    )
-                {
+                if !is_stop_actions(&actions) {
                     entry.insert(ActiveApplication {
                         app_or_actions: AppOrQueue::Queue(EnqueuedTelemetryData::processed(
                             actions,
