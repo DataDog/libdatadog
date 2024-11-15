@@ -33,9 +33,10 @@ use std::time::{Duration, Instant};
 // Note that this file makes use the following async-signal safe functions in a signal handler.
 // <https://man7.org/linux/man-pages/man7/signal-safety.7.html>
 // - clock_gettime
+// - clone (only ony Linux, guaranteed not to call `atfork()` handlers)
 // - close
 // - dup2
-// - fork (but specifically only because it does so without calling atfork handlers)
+// - fork (only on MacOS--no guarantee that `atfork()` handlers are suppressed)
 // - kill
 // - poll
 // - raise
