@@ -270,6 +270,9 @@ impl CrashInfo {
                 let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
                     .context("crash output file was not correctly formatted")?;
                 self.to_file(&path)?;
+                let new_path = path.with_extension("rfc5.json");
+                let rfc5: crate::rfc5_crash_info::CrashInfo = self.clone().into();
+                rfc5.to_file(&new_path)?;
             }
         }
 
