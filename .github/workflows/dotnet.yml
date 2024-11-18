@@ -112,7 +112,12 @@ jobs:
 
       - name: Pack
         run: |
-          dotnet pack .\windows\libdatadog.csproj -p:LibDatadogBinariesOutputDir=..\bin -p:LibDatadogVersion="42.0.0" -p:RepositoryBranch=$env:BRANCH -p:RepositoryCommit=$env:COMMIT_SHA -o .nuget\packages\
+            dotnet pack .\windows\libdatadog.csproj `
+            -p:LibDatadogBinariesOutputDir=..\bin `
+            -p:LibDatadogVersion=$([System.DateTime]::Now.ToString("yyyy.MM.dd.HHmmss")) `
+            -p:RepositoryBranch=$env:BRANCH `
+            -p:RepositoryCommit=$env:COMMIT_SHA `
+            -o .nuget\packages\
 
       - name: Store artifacts
         uses: actions/upload-artifact@v4
