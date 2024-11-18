@@ -129,6 +129,6 @@ jobs:
       - name: Store artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: packages-$env:VERSION
+          name: packages
           path: .nuget/packages/*
           if-no-files-found: error
