@@ -82,6 +82,8 @@ jobs:
   pack:
     runs-on: windows-latest
     needs: build
+    env:
+      VERSION: $([System.DateTime]::Now.ToString("yyyy.MM.dd.HHmmss"))
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -114,7 +116,7 @@ jobs:
         run: |
             dotnet pack .\windows\libdatadog.csproj `
             -p:LibDatadogBinariesOutputDir=..\bin `
-            -p:LibDatadogVersion=$([System.DateTime]::Now.ToString("yyyy.MM.dd.HHmmss")) `
+            -p:LibDatadogVersion=$env:VERSION `
             -p:RepositoryBranch=$env:BRANCH `
             -p:RepositoryCommit=$env:COMMIT_SHA `
             -o .nuget\packages\
@@ -122,6 +124,6 @@ jobs:
       - name: Store artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: packages
+          name: packages-$env:VERSION
           path: .nuget/packages/*
           if-no-files-found: error
