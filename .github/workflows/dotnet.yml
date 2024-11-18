@@ -61,7 +61,6 @@ jobs:
       - name: Build on macOS
         if: matrix.os == 'macos-latest'
         run: |
-          chmod +x ./windows/build/build.sh
           ./windows/build/build.sh -o ./bin -t ${{ matrix.target }}
         shell: bash
 
@@ -70,7 +69,7 @@ jobs:
         with:
           name: ${{ matrix.os }}-bin-${{ matrix.target }}
           path: |
-            bin/${{ matrix.target }}/*
+            bin/*
 
   pack:
     runs-on: windows-latest
