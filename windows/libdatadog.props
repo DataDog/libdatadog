@@ -7,10 +7,12 @@
   </PropertyGroup>
   <ItemGroup>
   <LibDatadogStaticLibs Include="$(MSBuildThisFileDirectory)..\..\build\native\lib\$(LIBDATADOG-PLATFORM)\$(Configuration)\static\*.lib" />
-  <LibDatadogDynLibs Include="$(MSBuildThisFileDirectory)..\..\build\native\lib\$(LIBDATADOG-PLATFORM)\$(Configuration)\*.dll.lib" />
+  <LibDatadogDynLibs Include="$(MSBuildThisFileDirectory)..\..\build\native\lib\$(LIBDATADOG-PLATFORM)\$(Configuration)\*.lib" />
   </ItemGroup>
   <PropertyGroup>
     <!-- Expland the items to a property -->
+    <LibdatadogStaticLibraries>@(LibDatadogStaticLibs)</LibdatadogStaticLibraries>
+    <LibdatadogDynLibraries>@(LibDatadogDynLibs)</LibdatadogDynLibraries>
     <LibdatadogDependencies>PowrProf.lib;NtDll.lib;UserEnv.lib;Bcrypt.lib;crypt32.lib;wsock32.lib;ws2_32.lib;shlwapi.lib;Secur32.lib;Ncrypt.lib</LibdatadogDependencies>
   </PropertyGroup>
   <ItemDefinitionGroup>
