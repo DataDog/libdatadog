@@ -82,8 +82,6 @@ jobs:
   pack:
     runs-on: windows-latest
     needs: build
-    env:
-      VERSION: $([System.DateTime]::Now.ToString("yyyy.MM.dd.HHmmss"))
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -111,6 +109,13 @@ jobs:
         with:
           name: macos-latest-bin-aarch64-apple-darwin
           path: bin
+
+      - name: Set version
+        run: |
+          # 13.1.0-preview.{epoch} format
+          $epoch = [math]::Floor((Get-Date).Subtract([datetime]'1970-01-01').TotalSeconds)
+          $env:VERSION = "13.1.0-preview.$epoch"
+          echo "Version: $env:VERSION"
 
       - name: Pack
         run: |
