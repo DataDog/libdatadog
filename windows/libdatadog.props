@@ -6,11 +6,11 @@
     <LIBDATADOG-PLATFORM Condition="'$(Platform)'=='Win32' OR '$(Platform)'=='x86'">x86</LIBDATADOG-PLATFORM>
   </PropertyGroup>
   <ItemGroup>
-  <LibdatadogLibs Include="$(MSBuildThisFileDirectory)..\..\build\native\lib\$(LIBDATADOG-PLATFORM)\$(Configuration)\*.lib" />
+  <LibDatadogStaticLibs Include="$(MSBuildThisFileDirectory)..\..\build\native\lib\$(LIBDATADOG-PLATFORM)\$(Configuration)\static\*.lib" />
+  <LibDatadogDynLibs Include="$(MSBuildThisFileDirectory)..\..\build\native\lib\$(LIBDATADOG-PLATFORM)\$(Configuration)\*.dll.lib" />
   </ItemGroup>
   <PropertyGroup>
     <!-- Expland the items to a property -->
-    <LibdatadogLibraries>@(LibdatadogLibs)</LibdatadogLibraries>
     <LibdatadogDependencies>PowrProf.lib;NtDll.lib;UserEnv.lib;Bcrypt.lib;crypt32.lib;wsock32.lib;ws2_32.lib;shlwapi.lib;Secur32.lib;Ncrypt.lib</LibdatadogDependencies>
   </PropertyGroup>
   <ItemDefinitionGroup>
@@ -18,7 +18,7 @@
       <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..\..\include\native;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>$(LibdatadogLibraries);$(LibdatadogDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(LibdatadogDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
 </Project>
