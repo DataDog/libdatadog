@@ -8,6 +8,10 @@ on:
 
 name: .NET
 
+env:
+  BRANCH: ${{ github.head_ref || github.ref_name }}
+  COMMIT_SHA: ${{ github.sha }}
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
@@ -108,7 +112,7 @@ jobs:
 
       - name: Pack
         run: |
-          dotnet pack .\windows\libdatadog.csproj -p:LibDatadogBinariesOutputDir=..\bin -p:LibDatadogVersion="42.0.0" -o .nuget\packages\
+          dotnet pack .\windows\libdatadog.csproj -p:LibDatadogBinariesOutputDir=..\bin -p:LibDatadogVersion="42.0.0" -p:RepositoryBranch=$env:BRANCH -p:RepositoryCommit=$env:COMMIT_SHA -o .nuget\packages\
 
       - name: Store artifacts
         uses: actions/upload-artifact@v4

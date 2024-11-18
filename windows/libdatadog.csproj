@@ -18,6 +18,9 @@
     <PackageReleaseNotes>Release of libdatadog</PackageReleaseNotes>
     <Copyright>Copyright 2022 Datadog, Inc.</Copyright>
     <PackageTags>Datadog;native;</PackageTags>
+    <RepositoryUrl>https://github.com/DataDog/libdatadog</RepositoryUrl>
+    <RepositoryBranch>$(RepositoryBranch)</RepositoryBranch>
+    <RepositoryCommit>$(RepositoryCommit)</RepositoryCommit>
     <RepositoryType>git</RepositoryType>
     <!-- <CodeAnalysisRuleSet Condition="'$(CodeAnalysisRuleSet)' == ''">$(SolutionDir)CustomizedAllRules.ruleset</CodeAnalysisRuleSet> -->
 
