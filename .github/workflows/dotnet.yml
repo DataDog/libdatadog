@@ -110,18 +110,14 @@ jobs:
           name: macos-latest-bin-aarch64-apple-darwin
           path: bin
 
-      - name: Set version
+      - name: Pack
         run: |
           # 13.1.0-preview.{epoch} format
           $epoch = [math]::Floor((Get-Date).Subtract([datetime]'1970-01-01').TotalSeconds)
-          $env:VERSION = "13.1.0-preview.$epoch"
-          echo "Version: $env:VERSION"
-
-      - name: Pack
-        run: |
-            dotnet pack .\windows\libdatadog.csproj `
+          $version = "13.1.0-preview.$epoch"
+          dotnet pack .\windows\libdatadog.csproj `
             -p:LibDatadogBinariesOutputDir=..\bin `
-            -p:LibDatadogVersion=$env:VERSION `
+            -p:LibDatadogVersion=$version `
             -p:RepositoryBranch=$env:BRANCH `
             -p:RepositoryCommit=$env:COMMIT_SHA `
             -o .nuget\packages\
