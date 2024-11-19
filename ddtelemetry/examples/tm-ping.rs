@@ -38,6 +38,7 @@ fn build_request<'a>(
             .unwrap_or(0),
         runtime_id: "runtime_id",
         seq_id: seq_id(),
+        origin: "tm-ping",
         application,
         host,
         payload,

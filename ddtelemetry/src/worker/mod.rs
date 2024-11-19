@@ -638,6 +638,7 @@ impl TelemetryWorker {
             runtime_id: &self.runtime_id,
             seq_id,
             host: &self.data.host,
+            origin: "unknown",
             application: &self.data.app,
             payload,
         };

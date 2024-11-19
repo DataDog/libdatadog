@@ -30,6 +30,7 @@ pub struct Telemetry<'a> {
     pub seq_id: u64,
     pub application: &'a Application,
     pub host: &'a Host,
+    pub origin: &'a str,
     #[serde(flatten)]
     pub payload: &'a Payload,
 }
