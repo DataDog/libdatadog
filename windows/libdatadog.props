@@ -6,19 +6,48 @@
     <LIBDATADOG-PLATFORM Condition="'$(Platform)'=='Win32' OR '$(Platform)'=='x86'">x86</LIBDATADOG-PLATFORM>
   </PropertyGroup>
   <ItemGroup>
-  <LibdatadogLibs Include="$(MSBuildThisFileDirectory)..\..\build\native\lib\$(LIBDATADOG-PLATFORM)\$(Configuration)\*.lib" />
+  <LibDatadogStaticLibs Include="$(MSBuildThisFileDirectory)..\..\build\native\lib\$(LIBDATADOG-PLATFORM)\$(Configuration)\static\*.lib" />
+  <LibDatadogDynLibs Include="$(MSBuildThisFileDirectory)..\..\build\native\lib\$(LIBDATADOG-PLATFORM)\$(Configuration)\*.lib" />
+  <LibDatadogDlls Include="$(MSBuildThisFileDirectory)..\..\build\native\lib\$(LIBDATADOG-PLATFORM)\$(Configuration)\*.dll" />
+  <LibDatadogPdbs Include="$(MSBuildThisFileDirectory)..\..\build\native\lib\$(LIBDATADOG-PLATFORM)\$(Configuration)\*.pdb" />
   </ItemGroup>
   <PropertyGroup>
     <!-- Expland the items to a property -->
-    <LibdatadogLibraries>@(LibdatadogLibs)</LibdatadogLibraries>
-    <LibdatadogDependencies>PowrProf.lib;NtDll.lib;UserEnv.lib;Bcrypt.lib;crypt32.lib;wsock32.lib;ws2_32.lib;shlwapi.lib;Secur32.lib;Ncrypt.lib</LibdatadogDependencies>
+    <LibDatadogStaticLibraries>@(LibDatadogStaticLibs)</LibDatadogStaticLibraries>
+    <LibDatadogDynLibraries>@(LibDatadogDynLibs)</LibDatadogDynLibraries>
+    <LibDatadogDependencies>PowrProf.lib;NtDll.lib;UserEnv.lib;Bcrypt.lib;crypt32.lib;wsock32.lib;ws2_32.lib;shlwapi.lib;Secur32.lib;Ncrypt.lib</LibDatadogDependencies>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>$(MSBuildThisFileDirectory)..\..\include\native;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>$(LibdatadogLibraries);$(LibdatadogDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies Condition="'$(LibDatadogDynamicLink)' == 'true' OR '$(LibDatadogDynamicLink)' == ''">$(LibDatadogDynLibraries);$(LibDatadogDependencies);%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies Condition="'$(LibDatadogDynamicLink)' == 'false'">$(LibDatadogStaticLibraries);$(LibDatadogDependencies);%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
+  <ItemGroup>
+     <LibDatadogFiles Include="@(LibDatadogDlls)" />
+     <LibDatadogFiles Include="@(LibDatadogPdbs)" />
+  </ItemGroup>
+  <Target Name="CopyLibDatadogDlls" AfterTargets="Build" Condition="'$(LibDatadogDynamicLink)' == 'true' OR '$(LibDatadogDynamicLink)' == ''">
+    <Copy
+      SourceFiles="@(LibDatadogFiles)"
+      DestinationFolder="$(OutDir)"
+      SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="RemoveLibDatadogDlls" AfterTargets="Clean">
+    <ItemGroup>
+      <FilesToDelete Include="@(LibDatadogFiles->'$(OutDir)%(Filename)%(Extension)')" />
+    </ItemGroup>
+    <Delete Files="@(FilesToDelete)"
+            TreatErrorsAsWarnings="true"
+            ContinueOnError="true">
+      <Output TaskParameter="DeletedFiles" ItemName="RemoveLibDatadogDlls" />
+    </Delete>
+
+    <Message Text="Deleted files: @(FilesToDelete)"
+             Importance="high"
+             Condition="'@(FilesToDelete)' != ''" />
+  </Target>
 </Project>
