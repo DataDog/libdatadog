@@ -196,15 +196,15 @@ impl super::test_utils::TestInstance for StackFrame {
         let sp = None;
         let symbol_address = None;
 
-        let build_id = Some("abcde{seed:#x}}".to_string());
+        let build_id = Some(format!("abcde{seed:#x}"));
         let build_id_type = Some(BuildIdType::GNU);
         let file_type = Some(FileType::ELF);
-        let path = Some("/usr/bin/foo{x}".to_string());
+        let path = Some(format!("/usr/bin/foo{seed}"));
         let relative_address = None;
 
         let column = Some(2 * seed as u32);
-        let file = Some("banana{seed}.rs".to_string());
-        let function = Some("Bar::baz{seed}".to_string());
+        let file = Some(format!("banana{seed}.rs"));
+        let function = Some(format!("Bar::baz{seed}"));
         let line = Some((2 * seed + 1) as u32);
         Self {
             ip,

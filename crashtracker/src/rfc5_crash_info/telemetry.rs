@@ -200,8 +200,7 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::TelemetryCrashUploader;
-    use crate::rfc5_crash_info::test_utils::TestInstance;
-    use crate::rfc5_crash_info::Metadata;
+    use crate::rfc5_crash_info::{test_utils::TestInstance, CrashInfo, Metadata, StackTrace};
     use ddcommon::Endpoint;
     use std::{collections::HashSet, fs};
 
@@ -283,12 +282,10 @@ mod tests {
         );
         assert_eq!(payload["payload"][0]["is_sensitive"], true);
         assert_eq!(payload["payload"][0]["level"], "ERROR");
-        // TODO, update once an actual stack trace is in place.
-        assert_eq!(
-            payload["payload"][0]["stack_trace"],
-            "{\"format\":\"Datadog Crashtracker 1.0\",\"frames\":[]}"
-        );
-        let body: crate::rfc5_crash_info::CrashInfo =
+        let stack_trace: StackTrace =
+            serde_json::from_str(payload["payload"][0]["stack_trace"].as_str().unwrap())?;
+        assert_eq!(stack_trace, test_instance.error.stack);
+        let body: CrashInfo =
             serde_json::from_str(payload["payload"][0]["message"].as_str().unwrap())?;
         assert_eq!(body, test_instance);
         Ok(())
