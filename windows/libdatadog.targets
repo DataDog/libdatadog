@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0"
+    xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup Condition="($(RuntimeIdentifier) == '' and $([MSBuild]::IsOSPlatform('Linux'))) or $(RuntimeIdentifier.StartsWith('linux'))">
+        <IsLinux>true</IsLinux>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="($(RuntimeIdentifier) == '' and $([MSBuild]::IsOSPlatform('Windows'))) or $(RuntimeIdentifier.StartsWith('win'))">
+        <IsWindows>true</IsWindows>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="($(RuntimeIdentifier) == '' and $([MSBuild]::IsOSPlatform('OSX'))) or $(RuntimeIdentifier.StartsWith('osx'))">
+        <IsMacOS>true</IsMacOS>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="($(RuntimeIdentifier) == '' and $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) == 'x86') or $(RuntimeIdentifier.EndsWith('x86'))">
+        <PlatformTarget>x86</PlatformTarget>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="($(RuntimeIdentifier) == '' and $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) == 'x64') or $(RuntimeIdentifier.EndsWith('x64'))">
+        <PlatformTarget>x64</PlatformTarget>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="($(RuntimeIdentifier) == '' and $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) == 'Arm64') or $(RuntimeIdentifier.EndsWith('arm64'))">
+        <PlatformTarget>ARM64</PlatformTarget>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="($(RuntimeIdentifier) == '' and $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) == 'Arm') or $(RuntimeIdentifier.EndsWith('arm'))">
+        <PlatformTarget>ARM</PlatformTarget>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Content Include="$(MSBuildThisFileDirectory)..\..\build\native\lib\win-x64\$(Configuration)\datadog_profiling_ffi.dll" Condition="'$(IsWindows)' == 'true' and '$(PlatformTarget)' == 'x64'">
+            <Link>datadog_profiling_ffi.dll</Link>
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </Content>
+    </ItemGroup>
+
+    <ItemGroup>
+        <Content Include="$(MSBuildThisFileDirectory)..\..\build\native\lib\win-x86\$(Configuration)\datadog_profiling_ffi.dll" Condition="'$(IsWindows)' == 'true' and '$(PlatformTarget)' == 'x86'">
+            <Link>datadog_profiling_ffi.dll</Link>
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </Content>
+    </ItemGroup>
+
+    <ItemGroup>
+        <Content Include="$(MSBuildThisFileDirectory)..\..\build\native\lib\osx-x64\$(Configuration)\datadog_profiling_ffi.dylib" Condition="'$(IsMacOS)' == 'true' and '$(PlatformTarget)' == 'x64'">
+            <Link>datadog_profiling_ffi.dylib</Link>
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </Content>
+    </ItemGroup>
+
+    <ItemGroup>
+        <Content Include="$(MSBuildThisFileDirectory)..\..\build\native\lib\osx-arm64\$(Configuration)\datadog_profiling_ffi.dylib" Condition="'$(IsMacOS)' == 'true' and '$(PlatformTarget)' == 'ARM64'">
+            <Link>datadog_profiling_ffi.dylib</Link>
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </Content>
+    </ItemGroup>
+</Project>
