@@ -46,3 +46,5 @@ tokio-util = "0.7.1"
 bolero = "0.10.1"
 bolero-generator = "0.10.2"
 criterion = "0.5.1"
+futures = { version = "0.3", default-features = false }
+http-body-util = "0.1"
