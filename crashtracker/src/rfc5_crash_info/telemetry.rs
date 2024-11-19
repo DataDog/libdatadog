@@ -1,3 +1,5 @@
+// Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 use std::{fmt::Write, time::SystemTime};
 
 use super::{CrashInfo, Metadata};
