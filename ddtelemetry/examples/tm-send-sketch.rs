@@ -30,10 +30,7 @@ fn build_request<'a>(
 ) -> data::Telemetry<'a> {
     data::Telemetry {
         api_version: data::ApiVersion::V1,
-        tracer_time: SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
+        tracer_time: SystemTime::UNIX_EPOCH.elapsed().map_or(0, |d| d.as_secs()),
         runtime_id: "runtime_id",
         seq_id: seq_id(),
         application,
