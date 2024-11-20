@@ -8,8 +8,8 @@ use crate::NormalizedAddress;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StackTrace {
-    format: String,
-    frames: Vec<StackFrame>,
+    pub format: String,
+    pub frames: Vec<StackFrame>,
 }
 
 impl From<Vec<crate::StackFrame>> for StackTrace {

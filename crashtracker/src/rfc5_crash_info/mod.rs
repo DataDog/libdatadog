@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod builder;
 mod error_data;
 mod metadata;
 mod os_info;
@@ -8,6 +9,9 @@ mod proc_info;
 mod sig_info;
 mod spans;
 mod stacktrace;
+mod unknown_value;
+
+pub use builder::*;
 
 use anyhow::Context;
 use error_data::{thread_data_from_additional_stacktraces, ErrorData, ErrorKind, SourceType};
@@ -35,8 +39,8 @@ pub struct CrashInfo {
     pub log_messages: Vec<String>,
     pub metadata: Metadata,
     pub os_info: OsInfo,
-    pub proc_info: ProcInfo,
-    pub sig_info: SigInfo,
+    pub proc_info: Option<ProcInfo>, //TODO, update the schema
+    pub sig_info: Option<SigInfo>,   //TODO, update the schema
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub span_ids: Vec<Span>,
     pub timestamp: String,
@@ -45,10 +49,16 @@ pub struct CrashInfo {
     pub uuid: String,
 }
 
+impl CrashInfo {
+    pub fn current_schema_version() -> String {
+        "1.0".to_string()
+    }
+}
+
 impl From<crate::crash_info::CrashInfo> for CrashInfo {
     fn from(value: crate::crash_info::CrashInfo) -> Self {
         let counters = value.counters;
-        let data_schema_version = String::from("1.0");
+        let data_schema_version = CrashInfo::current_schema_version();
         let error = {
             let is_crash = true;
             let kind = ErrorKind::UnixSignal;
@@ -71,8 +81,8 @@ impl From<crate::crash_info::CrashInfo> for CrashInfo {
         let log_messages = vec![];
         let metadata = value.metadata.unwrap().into();
         let os_info = value.os_info.into();
-        let proc_info = value.proc_info.unwrap().into();
-        let sig_info = value.siginfo.unwrap().into();
+        let proc_info = value.proc_info.map(ProcInfo::from);
+        let sig_info = value.siginfo.map(SigInfo::from);
         let span_ids = value
             .span_ids
             .into_iter()

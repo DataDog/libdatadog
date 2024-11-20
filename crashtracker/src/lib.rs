@@ -49,7 +49,7 @@ mod collector;
 mod crash_info;
 #[cfg(all(unix, feature = "receiver"))]
 mod receiver;
-mod rfc5_crash_info;
+pub mod rfc5_crash_info;
 #[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
 mod shared;
 
