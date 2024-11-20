@@ -13,7 +13,7 @@ macro_rules! timeit {
     ($op_name:literal, $op:block) => {{
         let start = std::time::Instant::now();
         let res = $op;
-        let delta = std::time::Instant::now().duration_since(start);
+        let delta = start.elapsed();
         println!(
             concat!($op_name, " took {} ms"),
             delta.as_secs_f64() * 1000.0
