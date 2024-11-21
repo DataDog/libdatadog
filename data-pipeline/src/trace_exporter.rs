@@ -11,8 +11,8 @@ use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils::{
     self, compute_top_level_span, has_top_level, SendData, TracerHeaderTags,
 };
-use datadog_trace_utils::{msgpack_decoder, tracer_payload};
 use datadog_trace_utils::tracer_payload::TraceCollection;
+use datadog_trace_utils::{msgpack_decoder, tracer_payload};
 use ddcommon::tag::Tag;
 use ddcommon::{connector, tag, Endpoint};
 use dogstatsd_client::{new_flusher, Client, DogStatsDAction};
@@ -254,7 +254,9 @@ impl TraceExporter {
         self.check_agent_info();
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data, trace_count),
-            TraceExporterInputFormat::V04 => self.send_deser_ser(tinybytes::Bytes::copy_from_slice(data)), //todo do we want to copy?
+            TraceExporterInputFormat::V04 => {
+                self.send_deser_ser(tinybytes::Bytes::copy_from_slice(data))
+            } //todo do we want to copy?
         }
     }
 
@@ -632,31 +634,35 @@ impl TraceExporter {
                                 None,
                             );
                             match response.into_body().collect().await {
-                            Ok(body) => Ok(String::from_utf8_lossy(&body.to_bytes()).to_string()),
-                            Err(err) => {
-                                error!("Error reading agent response body: {err}");
-                                self.emit_metric(
-                                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                                    None,
-                                );
-                                Ok(String::from("{}"))
-                            }
-                        }},
-                        Err(err) => {
-                            error!("Error sending traces: {err}");
+                                Ok(body) => {
+                                    Ok(String::from_utf8_lossy(&body.to_bytes()).to_string())
+                                }
+                                Err(err) => {
+                                    error!("Error reading agent response body: {err}");
                                     self.emit_metric(
                                         HealthMetric::Count(
                                             health_metrics::STAT_SEND_TRACES_ERRORS,
                                             1,
                                         ),
-                                        None);
+                                        None,
+                                    );
+                                    Ok(String::from("{}"))
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            error!("Error sending traces: {err}");
+                            self.emit_metric(
+                                HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                                None,
+                            );
                             Ok(String::from("{}"))
                         }
                     }
                 })
             }
 
-            TraceExporterOutputFormat::V07 => todo!("We don't support translating to v07 yet")
+            TraceExporterOutputFormat::V07 => todo!("We don't support translating to v07 yet"),
         }
     }
 }
@@ -897,15 +903,15 @@ pub trait ResponseCallback {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datadog_trace_utils::span_v04::Span;
     use httpmock::prelude::*;
     use httpmock::MockServer;
+    use serde::Serialize;
     use std::collections::HashMap;
     use std::net;
     use std::time::Duration;
-    use serde::Serialize;
-    use tokio::time::sleep;
-    use datadog_trace_utils::span_v04::Span;
     use tinybytes::BytesString;
+    use tokio::time::sleep;
 
     #[test]
     fn new() {
@@ -1352,7 +1358,14 @@ mod tests {
             &read(&stats_socket)
         );
         // todo: support health metrics from within send data?
-        //assert_eq!(&format!("datadog.libdatadog.send.traces.errors:1|c|#libdatadog_version:{},response_code:400", env!("CARGO_PKG_VERSION")), &read(&stats_socket));
-        assert_eq!(&format!("datadog.libdatadog.send.traces.errors:1|c|#libdatadog_version:{}", env!("CARGO_PKG_VERSION")), &read(&stats_socket));
+        //assert_eq!(&format!("datadog.libdatadog.send.traces.errors:1|c|#libdatadog_version:{},
+        // response_code:400", env!("CARGO_PKG_VERSION")), &read(&stats_socket));
+        assert_eq!(
+            &format!(
+                "datadog.libdatadog.send.traces.errors:1|c|#libdatadog_version:{}",
+                env!("CARGO_PKG_VERSION")
+            ),
+            &read(&stats_socket)
+        );
     }
 }
