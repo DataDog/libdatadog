@@ -122,11 +122,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
 mod tests {
     use datadog_trace_obfuscation::obfuscation_config::ObfuscationConfig;
     use hyper::Request;
-    use std::{
-        collections::HashMap,
-        sync::Arc,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::{collections::HashMap, sync::Arc, time::UNIX_EPOCH};
     use tokio::sync::mpsc::{self, Receiver, Sender};
 
     use crate::{
@@ -142,10 +138,7 @@ mod tests {
     use ddcommon::Endpoint;
 
     fn get_current_timestamp_nanos() -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as i64
+        UNIX_EPOCH.elapsed().unwrap().as_nanos() as i64
     }
 
     fn create_test_config() -> Config {

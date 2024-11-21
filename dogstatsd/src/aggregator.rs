@@ -117,8 +117,8 @@ impl Aggregator {
 
     #[must_use]
     pub fn distributions_to_protobuf(&self) -> SketchPayload {
-        let now = time::SystemTime::now()
-            .duration_since(time::UNIX_EPOCH)
+        let now = time::UNIX_EPOCH
+            .elapsed()
             .expect("unable to poll clock, unrecoverable")
             .as_secs()
             .try_into()
@@ -138,8 +138,8 @@ impl Aggregator {
 
     #[must_use]
     pub fn consume_distributions(&mut self) -> Vec<SketchPayload> {
-        let now = time::SystemTime::now()
-            .duration_since(time::UNIX_EPOCH)
+        let now = time::UNIX_EPOCH
+            .elapsed()
             .expect("unable to poll clock, unrecoverable")
             .as_secs()
             .try_into()
@@ -286,8 +286,8 @@ fn build_metric(entry: &Metric, mut base_tag_vec: SortedTags) -> Option<MetricTo
     let point = datadog::Point {
         value: entry.value.get_value()?,
         // TODO(astuyve) allow user to specify timestamp
-        timestamp: time::SystemTime::now()
-            .duration_since(time::UNIX_EPOCH)
+        timestamp: time::UNIX_EPOCH
+            .elapsed()
             .expect("unable to poll clock, unrecoverable")
             .as_secs(),
     };

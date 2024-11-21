@@ -136,8 +136,8 @@ impl TelemetryCrashUploader {
 
         let tracer_time = match &crash_info.timestamp {
             Some(ts) => ts.timestamp() as u64,
-            None => SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
+            None => SystemTime::UNIX_EPOCH
+                .elapsed()
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
         };

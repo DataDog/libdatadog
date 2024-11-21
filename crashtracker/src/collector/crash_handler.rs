@@ -155,7 +155,7 @@ fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
     loop {
         match waitpid(pid, Some(WaitPidFlag::WNOHANG)) {
             Ok(WaitStatus::StillAlive) => {
-                if Instant::now().duration_since(start_time) > timeout {
+                if start_time.elapsed() > timeout {
                     return Err(anyhow::anyhow!("Timeout waiting for child process to exit"));
                 }
             }

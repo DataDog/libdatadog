@@ -532,9 +532,7 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
     let start = Instant::now();
     transport.call(SidecarInterfaceRequest::Ping {})?;
 
-    Ok(Instant::now()
-        .checked_duration_since(start)
-        .unwrap_or_default())
+    Ok(start.elapsed())
 }
 
 #[cfg(test)]

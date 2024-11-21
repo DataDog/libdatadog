@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use async_trait::async_trait;
 use hyper::{http, Body, Request, Response, StatusCode};
@@ -63,11 +63,7 @@ impl StatsProcessor for ServerlessStatsProcessor {
             };
 
         if !stats.stats.is_empty() {
-            let start = SystemTime::now();
-            let timestamp = start
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos();
+            let timestamp = UNIX_EPOCH.elapsed().unwrap_or_default().as_nanos();
             stats.stats[0].start = timestamp as u64;
         }
 

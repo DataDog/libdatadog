@@ -47,9 +47,8 @@ const CONTINUE: ControlFlow<()> = ControlFlow::Continue(());
 const BREAK: ControlFlow<()> = ControlFlow::Break(());
 
 fn time_now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .ok()
+    std::time::SystemTime::UNIX_EPOCH
+        .elapsed()
         .unwrap_or_default()
         .as_secs_f64()
 }
@@ -631,10 +630,9 @@ impl TelemetryWorker {
         let seq_id = self.next_seq_id();
         let tel = Telemetry {
             api_version: data::ApiVersion::V2,
-            tracer_time: time::SystemTime::now()
-                .duration_since(time::SystemTime::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
+            tracer_time: time::SystemTime::UNIX_EPOCH
+                .elapsed()
+                .map_or(0, |d| d.as_secs()),
             runtime_id: &self.runtime_id,
             seq_id,
             host: &self.data.host,
