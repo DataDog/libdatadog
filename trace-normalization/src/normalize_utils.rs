@@ -61,12 +61,10 @@ pub fn normalize_span_start_duration(start: &mut i64, duration: &mut i64) {
     }
 
     if *start < YEAR_2000_NANOSEC_TS {
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map_or_else(
-                |e| -(e.duration().as_nanos() as i64),
-                |t| t.as_nanos() as i64,
-            );
+        let now = SystemTime::UNIX_EPOCH.elapsed().map_or_else(
+            |e| -(e.duration().as_nanos() as i64),
+            |t| t.as_nanos() as i64,
+        );
         *start = now - *duration;
         if *start < 0 {
             *start = now;

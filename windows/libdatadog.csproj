@@ -39,6 +39,8 @@
       PackagePath="include\native\datadog\data-pipeline.h" />
 
     <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\debug\datadog_profiling_ffi.lib"
+      Pack="true" PackagePath="build\native\lib\x64\debug\static\datadog_profiling_ffi.lib" />
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\debug\datadog_profiling_ffi.dll.lib"
       Pack="true" PackagePath="build\native\lib\x64\debug\datadog_profiling_ffi.lib" />
     <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\debug\datadog_profiling_ffi.dll"
       Pack="true" PackagePath="build\native\lib\x64\debug\datadog_profiling_ffi.dll" />
@@ -46,6 +48,8 @@
       Pack="true" PackagePath="build\native\lib\x64\debug\datadog_profiling_ffi.pdb" />
 
     <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\release\datadog_profiling_ffi.lib"
+      Pack="true" PackagePath="build\native\lib\x64\release\static\datadog_profiling_ffi.lib" />
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\release\datadog_profiling_ffi.dll.lib"
       Pack="true" PackagePath="build\native\lib\x64\release\datadog_profiling_ffi.lib" />
     <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\release\datadog_profiling_ffi.dll"
       Pack="true" PackagePath="build\native\lib\x64\release\datadog_profiling_ffi.dll" />
@@ -53,6 +57,8 @@
       Pack="true" PackagePath="build\native\lib\x64\release\datadog_profiling_ffi.pdb" />
 
     <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\debug\datadog_profiling_ffi.lib"
+      Pack="true" PackagePath="build\native\lib\x86\debug\static\datadog_profiling_ffi.lib" />
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\debug\datadog_profiling_ffi.dll.lib"
       Pack="true" PackagePath="build\native\lib\x86\debug\datadog_profiling_ffi.lib" />
     <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\debug\datadog_profiling_ffi.dll"
       Pack="true" PackagePath="build\native\lib\x86\debug\datadog_profiling_ffi.dll" />
@@ -60,6 +66,8 @@
       Pack="true" PackagePath="build\native\lib\x86\debug\datadog_profiling_ffi.pdb" />
 
     <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\datadog_profiling_ffi.lib"
+      Pack="true" PackagePath="build\native\lib\x86\release\static\datadog_profiling_ffi.lib" />
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\datadog_profiling_ffi.dll.lib"
       Pack="true" PackagePath="build\native\lib\x86\release\datadog_profiling_ffi.lib" />
     <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\datadog_profiling_ffi.dll"
       Pack="true" PackagePath="build\native\lib\x86\release\datadog_profiling_ffi.dll" />
