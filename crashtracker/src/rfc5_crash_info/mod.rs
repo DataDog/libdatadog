@@ -8,16 +8,22 @@ mod proc_info;
 mod sig_info;
 mod spans;
 mod stacktrace;
+mod telemetry;
+mod test_utils;
+
+pub use error_data::{ErrorData, ErrorKind, SourceType};
+pub use metadata::Metadata;
+pub use os_info::OsInfo;
+pub use proc_info::ProcInfo;
+pub use sig_info::{SiCodes, SigInfo, SignalNames};
+pub use spans::Span;
+pub use stacktrace::{BuildIdType, FileType, StackFrame, StackTrace};
+pub use telemetry::TelemetryCrashUploader;
 
 use anyhow::Context;
-use error_data::{thread_data_from_additional_stacktraces, ErrorData, ErrorKind, SourceType};
-use metadata::Metadata;
-use os_info::OsInfo;
-use proc_info::ProcInfo;
+use error_data::thread_data_from_additional_stacktraces;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sig_info::SigInfo;
-use spans::Span;
 use std::{collections::HashMap, fs::File, path::Path};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -36,7 +42,8 @@ pub struct CrashInfo {
     pub metadata: Metadata,
     pub os_info: OsInfo,
     pub proc_info: ProcInfo,
-    pub sig_info: SigInfo,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sig_info: Option<SigInfo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub span_ids: Vec<Span>,
     pub timestamp: String,
@@ -72,7 +79,7 @@ impl From<crate::crash_info::CrashInfo> for CrashInfo {
         let metadata = value.metadata.unwrap().into();
         let os_info = value.os_info.into();
         let proc_info = value.proc_info.unwrap().into();
-        let sig_info = value.siginfo.unwrap().into();
+        let sig_info = value.siginfo.map(SigInfo::from);
         let span_ids = value
             .span_ids
             .into_iter()
@@ -134,5 +141,55 @@ mod tests {
     fn print_schema() {
         let schema = schemars::schema_for!(CrashInfo);
         println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+    }
+
+    impl test_utils::TestInstance for CrashInfo {
+        fn test_instance(seed: u64) -> Self {
+            let mut counters = HashMap::new();
+            counters.insert("collecting_sample".to_owned(), 1);
+            counters.insert("not_profiling".to_owned(), 0);
+
+            let span_ids = vec![
+                Span {
+                    id: "42".to_string(),
+                    thread_name: Some("thread1".to_string()),
+                },
+                Span {
+                    id: "24".to_string(),
+                    thread_name: Some("thread2".to_string()),
+                },
+            ];
+
+            let trace_ids = vec![
+                Span {
+                    id: "345".to_string(),
+                    thread_name: Some("thread111".to_string()),
+                },
+                Span {
+                    id: "666".to_string(),
+                    thread_name: Some("thread222".to_string()),
+                },
+            ];
+
+            Self {
+                counters,
+                data_schema_version: "1.0".to_string(),
+                error: ErrorData::test_instance(seed),
+                files: HashMap::new(),
+                fingerprint: None,
+                incomplete: true,
+                log_messages: vec![],
+                metadata: Metadata::test_instance(seed),
+                os_info: ::os_info::Info::unknown().into(),
+                proc_info: ProcInfo::test_instance(seed),
+                sig_info: Some(SigInfo::test_instance(seed)),
+                span_ids,
+                timestamp: chrono::DateTime::from_timestamp(1568898000 /* Datadog IPO */, 0)
+                    .unwrap()
+                    .to_string(),
+                trace_ids,
+                uuid: uuid::uuid!("1d6b97cb-968c-40c9-af6e-e4b4d71e8781").to_string(),
+            }
+        }
     }
 }

@@ -13,3 +13,10 @@ impl From<crate::crash_info::ProcessInfo> for ProcInfo {
         Self { pid: value.pid }
     }
 }
+
+#[cfg(test)]
+impl super::test_utils::TestInstance for ProcInfo {
+    fn test_instance(seed: u64) -> Self {
+        Self { pid: seed as u32 }
+    }
+}
