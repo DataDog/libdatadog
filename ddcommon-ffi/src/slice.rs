@@ -10,6 +10,7 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::os::raw::c_char;
 use std::str::Utf8Error;
+use tinybytes::UnderlyingBytes;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -52,6 +53,20 @@ pub type CharSlice<'a> = Slice<'a, c_char>;
 
 /// Use to represent bytes -- does not need to be valid UTF-8.
 pub type ByteSlice<'a> = Slice<'a, u8>;
+
+// Send, Sync, UnderlyingBytes, and AsRef<[u8]> are all implemented to support using ByteSlice as
+// the underlying type for tinybytes::Bytes without copying the data.
+unsafe impl Send for ByteSlice<'static> {}
+unsafe impl Sync for ByteSlice<'static> {}
+impl UnderlyingBytes for ByteSlice<'static> {}
+
+
+impl AsRef<[u8]> for ByteSlice<'static> {
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
 
 /// This exists as an intrinsic, but it is private.
 pub fn is_aligned_and_not_null<T>(ptr: *const T) -> bool {

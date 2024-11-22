@@ -55,6 +55,6 @@ fn main() {
         traces.push(trace);
     }
     let data = rmp_serde::to_vec_named(&traces).unwrap();
-    exporter.send(&data, 100).unwrap();
+    exporter.send(tinybytes::Bytes::from(data), 100).unwrap();
     exporter.shutdown(None).unwrap();
 }
