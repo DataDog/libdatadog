@@ -8,6 +8,7 @@ use super::emitters::emit_crashreport;
 use super::saguard::SaGuard;
 use crate::crash_info::CrashtrackerMetadata;
 use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
+use crate::shared::constants::*;
 use anyhow::Context;
 use libc::{
     c_void, execve, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE,
@@ -493,7 +494,10 @@ fn receiver_finish(receiver: Receiver, start_time: Instant, timeout_ms: u32) {
         }
 
         let receiver_pid_as_pid = Pid::from_raw(receiver.receiver_pid);
-        let reaping_allowed_ms = timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32);
+        let reaping_allowed_ms = std::cmp::min(
+            timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32),
+            DD_CRASHTRACK_MINIMUM_REAP_TIME_MS,
+        );
 
         let _ = reap_child_non_blocking(receiver_pid_as_pid, reaping_allowed_ms);
     }
