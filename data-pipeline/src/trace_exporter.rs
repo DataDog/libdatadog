@@ -7,7 +7,6 @@ use crate::{
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
-// use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils::{self, SendData, TracerHeaderTags};
 use datadog_trace_utils::tracer_payload::TraceCollection;
 use datadog_trace_utils::{msgpack_decoder, tracer_payload};
@@ -97,59 +96,61 @@ fn add_path(url: &Uri, path: &str) -> Uri {
     Uri::from_parts(parts).unwrap()
 }
 
-// struct DroppedP0Counts {
-//     pub dropped_p0_traces: usize,
-//     pub dropped_p0_spans: usize,
-// }
+/* TODO (APMSP-1583) re-enable client side stats
+struct DroppedP0Counts {
+    pub dropped_p0_traces: usize,
+    pub dropped_p0_spans: usize,
+}
 
-/// Remove spans and chunks only keeping the ones that may be sampled by the agent
-// fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) -> DroppedP0Counts {
-//     let mut dropped_p0_traces = 0;
-//     let mut dropped_p0_spans = 0;
-//     traces.retain_mut(|chunk| {
-//         // List of spans to keep even if the chunk is dropped
-//         let mut sampled_indexes = Vec::new();
-//         for (index, span) in chunk.iter().enumerate() {
-//             // ErrorSampler
-//             if span.error == 1 {
-//                 // We send chunks containing an error
-//                 return true;
-//             }
-//             // PrioritySampler and NoPrioritySampler
-//             let priority = span.metrics.get(SAMPLING_PRIORITY_KEY);
-//             if has_top_level(span) && (priority.is_none() || priority.is_some_and(|p| *p > 0.0))
-// {                 // We send chunks with positive priority or no priority
-//                 return true;
-//             }
-//             // SingleSpanSampler and AnalyzedSpansSampler
-//             else if span
-//                 .metrics
-//                 .get(SAMPLING_SINGLE_SPAN_MECHANISM)
-//                 .is_some_and(|m| *m == 8.0)
-//                 || span.metrics.contains_key(SAMPLING_ANALYTICS_RATE_KEY)
-//             {
-//                 // We send spans sampled by single-span sampling or analyzed spans
-//                 sampled_indexes.push(index);
-//             }
-//         }
-//         dropped_p0_spans += chunk.len() - sampled_indexes.len();
-//         if sampled_indexes.is_empty() {
-//             // If no spans were sampled we can drop the whole chunk
-//             dropped_p0_traces += 1;
-//             return false;
-//         }
-//         let sampled_spans = sampled_indexes
-//             .iter()
-//             .map(|i| std::mem::take(&mut chunk[*i]))
-//             .collect();
-//         *chunk = sampled_spans;
-//         true
-//     });
-//     DroppedP0Counts {
-//         dropped_p0_traces,
-//         dropped_p0_spans,
-//     }
-// }
+Remove spans and chunks only keeping the ones that may be sampled by the agent
+fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) -> DroppedP0Counts {
+    let mut dropped_p0_traces = 0;
+    let mut dropped_p0_spans = 0;
+    traces.retain_mut(|chunk| {
+        // List of spans to keep even if the chunk is dropped
+        let mut sampled_indexes = Vec::new();
+        for (index, span) in chunk.iter().enumerate() {
+            // ErrorSampler
+            if span.error == 1 {
+                // We send chunks containing an error
+                return true;
+            }
+            // PrioritySampler and NoPrioritySampler
+            let priority = span.metrics.get(SAMPLING_PRIORITY_KEY);
+            if has_top_level(span) && (priority.is_none() || priority.is_some_and(|p| *p > 0.0))
+{                 // We send chunks with positive priority or no priority
+                return true;
+            }
+            // SingleSpanSampler and AnalyzedSpansSampler
+            else if span
+                .metrics
+                .get(SAMPLING_SINGLE_SPAN_MECHANISM)
+                .is_some_and(|m| *m == 8.0)
+                || span.metrics.contains_key(SAMPLING_ANALYTICS_RATE_KEY)
+            {
+                // We send spans sampled by single-span sampling or analyzed spans
+                sampled_indexes.push(index);
+            }
+        }
+        dropped_p0_spans += chunk.len() - sampled_indexes.len();
+        if sampled_indexes.is_empty() {
+            // If no spans were sampled we can drop the whole chunk
+            dropped_p0_traces += 1;
+            return false;
+        }
+        let sampled_spans = sampled_indexes
+            .iter()
+            .map(|i| std::mem::take(&mut chunk[*i]))
+            .collect();
+        *chunk = sampled_spans;
+        true
+    });
+    DroppedP0Counts {
+        dropped_p0_traces,
+        dropped_p0_spans,
+    }
+}
+ */
 
 #[derive(Clone, Default, Debug)]
 pub struct TracerMetadata {
@@ -1195,68 +1196,69 @@ mod tests {
         //mock_stats.assert();
     }
 
-    // TODO: bring this test back with client side stats
-    // #[cfg_attr(miri, ignore)]
-    // #[test]
-    // fn test_shutdown_with_timeout() {
-    //     let server = MockServer::start();
-    //
-    //     let mock_traces = server.mock(|when, then| {
-    //         when.method(POST)
-    //             .header("Content-type", "application/msgpack")
-    //             .path("/v0.4/traces");
-    //         then.status(200).body("");
-    //     });
-    //
-    //     // let _mock_stats = server.mock(|when, then| {
-    //     //     when.method(POST)
-    //     //         .header("Content-type", "application/msgpack")
-    //     //         .path("/v0.6/stats");
-    //     //     then.delay(Duration::from_secs(10)).status(200).body("");
-    //     // });
-    //
-    //     let mock_info = server.mock(|when, then| {
-    //         when.method(GET).path("/info");
-    //         then.status(200)
-    //             .header("content-type", "application/json")
-    //             .header("datadog-agent-state", "1")
-    //             .body(r#"{"version":"1","client_drop_p0s":true}"#);
-    //     });
-    //
-    //     let builder = TraceExporterBuilder::default();
-    //     let exporter = builder
-    //         .set_url(&server.url("/"))
-    //         .set_tracer_version("v0.1")
-    //         .set_language("nodejs")
-    //         .set_language_version("1.0")
-    //         .set_language_interpreter("v8")
-    //         .set_input_format(TraceExporterInputFormat::V04)
-    //         .set_output_format(TraceExporterOutputFormat::V04)
-    //         .enable_stats(Duration::from_secs(10))
-    //         .build()
-    //         .unwrap();
-    //
-    //     let trace_chunk = vec![Span {
-    //         duration: 10,
-    //         ..Default::default()
-    //     }];
-    //
-    //     let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
-    //
-    //     // Wait for the info fetcher to get the config
-    //     while mock_info.hits() == 0 {
-    //         exporter.runtime.block_on(async {
-    //             sleep(Duration::from_millis(100)).await;
-    //         })
-    //     }
-    //
-    //     exporter.send(data.as_slice(), 1).unwrap();
-    //     exporter
-    //         .shutdown(Some(Duration::from_millis(500)))
-    //         .unwrap_err(); // The shutdown should timeout
-    //
-    //     mock_traces.assert();
-    // }
+    /* TODO (APMSP-1583) Re-enable with client stats
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_shutdown_with_timeout() {
+        let server = MockServer::start();
+
+        let mock_traces = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.4/traces");
+            then.status(200).body("");
+        });
+
+        // let _mock_stats = server.mock(|when, then| {
+        //     when.method(POST)
+        //         .header("Content-type", "application/msgpack")
+        //         .path("/v0.6/stats");
+        //     then.delay(Duration::from_secs(10)).status(200).body("");
+        // });
+
+        let mock_info = server.mock(|when, then| {
+            when.method(GET).path("/info");
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-agent-state", "1")
+                .body(r#"{"version":"1","client_drop_p0s":true}"#);
+        });
+
+        let builder = TraceExporterBuilder::default();
+        let exporter = builder
+            .set_url(&server.url("/"))
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .enable_stats(Duration::from_secs(10))
+            .build()
+            .unwrap();
+
+        let trace_chunk = vec![Span {
+            duration: 10,
+            ..Default::default()
+        }];
+
+        let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
+
+        // Wait for the info fetcher to get the config
+        while mock_info.hits() == 0 {
+            exporter.runtime.block_on(async {
+                sleep(Duration::from_millis(100)).await;
+            })
+        }
+
+        exporter.send(data.as_slice(), 1).unwrap();
+        exporter
+            .shutdown(Some(Duration::from_millis(500)))
+            .unwrap_err(); // The shutdown should timeout
+
+        mock_traces.assert();
+    }
+     */
 
     fn read(socket: &net::UdpSocket) -> String {
         let mut buf = [0; 1_000];
