@@ -7,10 +7,8 @@ use crate::{
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
-use datadog_trace_protobuf::pb;
-use datadog_trace_utils::trace_utils::{
-    self, compute_top_level_span, has_top_level, SendData, TracerHeaderTags,
-};
+// use datadog_trace_protobuf::pb;
+use datadog_trace_utils::trace_utils::{self, SendData, TracerHeaderTags};
 use datadog_trace_utils::tracer_payload::TraceCollection;
 use datadog_trace_utils::{msgpack_decoder, tracer_payload};
 use ddcommon::tag::Tag;
@@ -32,9 +30,9 @@ const STATS_ENDPOINT: &str = "/v0.6/stats";
 const INFO_ENDPOINT: &str = "/info";
 
 // Keys used for sampling
-const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
-const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
-const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
+// const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
+// const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
+// const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
@@ -99,59 +97,59 @@ fn add_path(url: &Uri, path: &str) -> Uri {
     Uri::from_parts(parts).unwrap()
 }
 
-struct DroppedP0Counts {
-    pub dropped_p0_traces: usize,
-    pub dropped_p0_spans: usize,
-}
+// struct DroppedP0Counts {
+//     pub dropped_p0_traces: usize,
+//     pub dropped_p0_spans: usize,
+// }
 
 /// Remove spans and chunks only keeping the ones that may be sampled by the agent
-fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) -> DroppedP0Counts {
-    let mut dropped_p0_traces = 0;
-    let mut dropped_p0_spans = 0;
-    traces.retain_mut(|chunk| {
-        // List of spans to keep even if the chunk is dropped
-        let mut sampled_indexes = Vec::new();
-        for (index, span) in chunk.iter().enumerate() {
-            // ErrorSampler
-            if span.error == 1 {
-                // We send chunks containing an error
-                return true;
-            }
-            // PrioritySampler and NoPrioritySampler
-            let priority = span.metrics.get(SAMPLING_PRIORITY_KEY);
-            if has_top_level(span) && (priority.is_none() || priority.is_some_and(|p| *p > 0.0)) {
-                // We send chunks with positive priority or no priority
-                return true;
-            }
-            // SingleSpanSampler and AnalyzedSpansSampler
-            else if span
-                .metrics
-                .get(SAMPLING_SINGLE_SPAN_MECHANISM)
-                .is_some_and(|m| *m == 8.0)
-                || span.metrics.contains_key(SAMPLING_ANALYTICS_RATE_KEY)
-            {
-                // We send spans sampled by single-span sampling or analyzed spans
-                sampled_indexes.push(index);
-            }
-        }
-        dropped_p0_spans += chunk.len() - sampled_indexes.len();
-        if sampled_indexes.is_empty() {
-            // If no spans were sampled we can drop the whole chunk
-            dropped_p0_traces += 1;
-            return false;
-        }
-        let sampled_spans = sampled_indexes
-            .iter()
-            .map(|i| std::mem::take(&mut chunk[*i]))
-            .collect();
-        *chunk = sampled_spans;
-        true
-    });
-    DroppedP0Counts {
-        dropped_p0_traces,
-        dropped_p0_spans,
-    }
-}
+// fn drop_chunks(traces: &mut Vec<Vec<pb::Span>>) -> DroppedP0Counts {
+//     let mut dropped_p0_traces = 0;
+//     let mut dropped_p0_spans = 0;
+//     traces.retain_mut(|chunk| {
+//         // List of spans to keep even if the chunk is dropped
+//         let mut sampled_indexes = Vec::new();
+//         for (index, span) in chunk.iter().enumerate() {
+//             // ErrorSampler
+//             if span.error == 1 {
+//                 // We send chunks containing an error
+//                 return true;
+//             }
+//             // PrioritySampler and NoPrioritySampler
+//             let priority = span.metrics.get(SAMPLING_PRIORITY_KEY);
+//             if has_top_level(span) && (priority.is_none() || priority.is_some_and(|p| *p > 0.0))
+// {                 // We send chunks with positive priority or no priority
+//                 return true;
+//             }
+//             // SingleSpanSampler and AnalyzedSpansSampler
+//             else if span
+//                 .metrics
+//                 .get(SAMPLING_SINGLE_SPAN_MECHANISM)
+//                 .is_some_and(|m| *m == 8.0)
+//                 || span.metrics.contains_key(SAMPLING_ANALYTICS_RATE_KEY)
+//             {
+//                 // We send spans sampled by single-span sampling or analyzed spans
+//                 sampled_indexes.push(index);
+//             }
+//         }
+//         dropped_p0_spans += chunk.len() - sampled_indexes.len();
+//         if sampled_indexes.is_empty() {
+//             // If no spans were sampled we can drop the whole chunk
+//             dropped_p0_traces += 1;
+//             return false;
+//         }
+//         let sampled_spans = sampled_indexes
+//             .iter()
+//             .map(|i| std::mem::take(&mut chunk[*i]))
+//             .collect();
+//         *chunk = sampled_spans;
+//         true
+//     });
+//     DroppedP0Counts {
+//         dropped_p0_traces,
+//         dropped_p0_spans,
+//     }
+// }
 
 #[derive(Clone, Default, Debug)]
 pub struct TracerMetadata {
@@ -236,6 +234,7 @@ pub struct TraceExporter {
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
+    #[allow(dead_code)]
     client_computed_top_level: bool,
     client_side_stats: ArcSwap<StatsComputationStatus>,
     agent_info: AgentInfoArc,
@@ -549,24 +548,24 @@ impl TraceExporter {
     /// Add all spans from the given iterator into the stats concentrator
     /// # Panic
     /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
-    fn add_spans_to_stats<'a>(&self, spans: impl Iterator<Item = &'a pb::Span>) {
-        if let StatsComputationStatus::Enabled {
-            stats_concentrator,
-            cancellation_token: _,
-            exporter_handle: _,
-        } = &**self.client_side_stats.load()
-        {
-            let mut stats_concentrator = stats_concentrator.lock().unwrap();
-            for span in spans {
-                stats_concentrator.add_span(span);
-            }
-        }
-    }
+    // fn add_spans_to_stats<'a>(&self, spans: impl Iterator<Item = &'a pb::Span>) {
+    //     if let StatsComputationStatus::Enabled {
+    //         stats_concentrator,
+    //         cancellation_token: _,
+    //         exporter_handle: _,
+    //     } = &**self.client_side_stats.load()
+    //     {
+    //         let mut stats_concentrator = stats_concentrator.lock().unwrap();
+    //         for span in spans {
+    //             stats_concentrator.add_span(span);
+    //         }
+    //     }
+    // }
 
     fn send_deser_ser(&self, data: tinybytes::Bytes) -> Result<String, String> {
         // let size = data.len();
         // TODO base on input format
-        let (mut traces, size) = match msgpack_decoder::v04::decoder::from_slice(data) {
+        let (traces, size) = match msgpack_decoder::v04::decoder::from_slice(data) {
             Ok(res) => res,
             Err(err) => {
                 error!("Error deserializing trace from request body: {err}");
@@ -1021,119 +1020,119 @@ mod tests {
         assert!(hashmap.contains_key("datadog-client-computed-stats"));
         assert!(hashmap.contains_key("datadog-client-computed-top-level"));
     }
-
-    #[test]
-    fn test_drop_chunks() {
-        let chunk_with_priority = vec![
-            pb::Span {
-                span_id: 1,
-                metrics: HashMap::from([
-                    (SAMPLING_PRIORITY_KEY.to_string(), 1.0),
-                    ("_dd.top_level".to_string(), 1.0),
-                ]),
-                ..Default::default()
-            },
-            pb::Span {
-                span_id: 2,
-                parent_id: 1,
-                ..Default::default()
-            },
-        ];
-        let chunk_with_null_priority = vec![
-            pb::Span {
-                span_id: 1,
-                metrics: HashMap::from([
-                    (SAMPLING_PRIORITY_KEY.to_string(), 0.0),
-                    ("_dd.top_level".to_string(), 1.0),
-                ]),
-                ..Default::default()
-            },
-            pb::Span {
-                span_id: 2,
-                parent_id: 1,
-                ..Default::default()
-            },
-        ];
-        let chunk_without_priority = vec![
-            pb::Span {
-                span_id: 1,
-                metrics: HashMap::from([("_dd.top_level".to_string(), 1.0)]),
-                ..Default::default()
-            },
-            pb::Span {
-                span_id: 2,
-                parent_id: 1,
-                ..Default::default()
-            },
-        ];
-        let chunk_with_error = vec![
-            pb::Span {
-                span_id: 1,
-                error: 1,
-                metrics: HashMap::from([
-                    (SAMPLING_PRIORITY_KEY.to_string(), 0.0),
-                    ("_dd.top_level".to_string(), 1.0),
-                ]),
-                ..Default::default()
-            },
-            pb::Span {
-                span_id: 2,
-                parent_id: 1,
-                ..Default::default()
-            },
-        ];
-        let chunk_with_a_single_span = vec![
-            pb::Span {
-                span_id: 1,
-                metrics: HashMap::from([
-                    (SAMPLING_PRIORITY_KEY.to_string(), 0.0),
-                    ("_dd.top_level".to_string(), 1.0),
-                ]),
-                ..Default::default()
-            },
-            pb::Span {
-                span_id: 2,
-                parent_id: 1,
-                metrics: HashMap::from([(SAMPLING_SINGLE_SPAN_MECHANISM.to_string(), 8.0)]),
-                ..Default::default()
-            },
-        ];
-        let chunk_with_analyzed_span = vec![
-            pb::Span {
-                span_id: 1,
-                metrics: HashMap::from([
-                    (SAMPLING_PRIORITY_KEY.to_string(), 0.0),
-                    ("_dd.top_level".to_string(), 1.0),
-                ]),
-                ..Default::default()
-            },
-            pb::Span {
-                span_id: 2,
-                parent_id: 1,
-                metrics: HashMap::from([(SAMPLING_ANALYTICS_RATE_KEY.to_string(), 1.0)]),
-                ..Default::default()
-            },
-        ];
-
-        let chunks_and_expected_sampled_spans = vec![
-            (chunk_with_priority, 2),
-            (chunk_with_null_priority, 0),
-            (chunk_without_priority, 2),
-            (chunk_with_error, 2),
-            (chunk_with_a_single_span, 1),
-            (chunk_with_analyzed_span, 1),
-        ];
-
-        for (chunk, expected_count) in chunks_and_expected_sampled_spans.into_iter() {
-            let mut traces = vec![chunk];
-            drop_chunks(&mut traces);
-            if expected_count == 0 {
-                assert!(traces.is_empty());
-            } else {
-                assert_eq!(traces[0].len(), expected_count);
-            }
-        }
-    }
+    //
+    // #[test]
+    // fn test_drop_chunks() {
+    //     let chunk_with_priority = vec![
+    //         pb::Span {
+    //             span_id: 1,
+    //             metrics: HashMap::from([
+    //                 (SAMPLING_PRIORITY_KEY.to_string(), 1.0),
+    //                 ("_dd.top_level".to_string(), 1.0),
+    //             ]),
+    //             ..Default::default()
+    //         },
+    //         pb::Span {
+    //             span_id: 2,
+    //             parent_id: 1,
+    //             ..Default::default()
+    //         },
+    //     ];
+    //     let chunk_with_null_priority = vec![
+    //         pb::Span {
+    //             span_id: 1,
+    //             metrics: HashMap::from([
+    //                 (SAMPLING_PRIORITY_KEY.to_string(), 0.0),
+    //                 ("_dd.top_level".to_string(), 1.0),
+    //             ]),
+    //             ..Default::default()
+    //         },
+    //         pb::Span {
+    //             span_id: 2,
+    //             parent_id: 1,
+    //             ..Default::default()
+    //         },
+    //     ];
+    //     let chunk_without_priority = vec![
+    //         pb::Span {
+    //             span_id: 1,
+    //             metrics: HashMap::from([("_dd.top_level".to_string(), 1.0)]),
+    //             ..Default::default()
+    //         },
+    //         pb::Span {
+    //             span_id: 2,
+    //             parent_id: 1,
+    //             ..Default::default()
+    //         },
+    //     ];
+    //     let chunk_with_error = vec![
+    //         pb::Span {
+    //             span_id: 1,
+    //             error: 1,
+    //             metrics: HashMap::from([
+    //                 (SAMPLING_PRIORITY_KEY.to_string(), 0.0),
+    //                 ("_dd.top_level".to_string(), 1.0),
+    //             ]),
+    //             ..Default::default()
+    //         },
+    //         pb::Span {
+    //             span_id: 2,
+    //             parent_id: 1,
+    //             ..Default::default()
+    //         },
+    //     ];
+    //     let chunk_with_a_single_span = vec![
+    //         pb::Span {
+    //             span_id: 1,
+    //             metrics: HashMap::from([
+    //                 (SAMPLING_PRIORITY_KEY.to_string(), 0.0),
+    //                 ("_dd.top_level".to_string(), 1.0),
+    //             ]),
+    //             ..Default::default()
+    //         },
+    //         pb::Span {
+    //             span_id: 2,
+    //             parent_id: 1,
+    //             metrics: HashMap::from([(SAMPLING_SINGLE_SPAN_MECHANISM.to_string(), 8.0)]),
+    //             ..Default::default()
+    //         },
+    //     ];
+    //     let chunk_with_analyzed_span = vec![
+    //         pb::Span {
+    //             span_id: 1,
+    //             metrics: HashMap::from([
+    //                 (SAMPLING_PRIORITY_KEY.to_string(), 0.0),
+    //                 ("_dd.top_level".to_string(), 1.0),
+    //             ]),
+    //             ..Default::default()
+    //         },
+    //         pb::Span {
+    //             span_id: 2,
+    //             parent_id: 1,
+    //             metrics: HashMap::from([(SAMPLING_ANALYTICS_RATE_KEY.to_string(), 1.0)]),
+    //             ..Default::default()
+    //         },
+    //     ];
+    //
+    //     let chunks_and_expected_sampled_spans = vec![
+    //         (chunk_with_priority, 2),
+    //         (chunk_with_null_priority, 0),
+    //         (chunk_without_priority, 2),
+    //         (chunk_with_error, 2),
+    //         (chunk_with_a_single_span, 1),
+    //         (chunk_with_analyzed_span, 1),
+    //     ];
+    //
+    //     for (chunk, expected_count) in chunks_and_expected_sampled_spans.into_iter() {
+    //         let mut traces = vec![chunk];
+    //         drop_chunks(&mut traces);
+    //         if expected_count == 0 {
+    //             assert!(traces.is_empty());
+    //         } else {
+    //             assert_eq!(traces[0].len(), expected_count);
+    //         }
+    //     }
+    // }
 
     #[cfg_attr(miri, ignore)]
     #[test]
