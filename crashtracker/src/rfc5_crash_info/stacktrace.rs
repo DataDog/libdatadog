@@ -110,7 +110,7 @@ impl From<Vec<crate::StackFrame>> for StackTrace {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Default)]
 pub struct StackFrame {
     // Absolute addresses
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -147,6 +147,7 @@ pub struct StackFrame {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::upper_case_acronyms)]
+#[repr(C)]
 pub enum BuildIdType {
     GNU,
     GO,
@@ -157,6 +158,7 @@ pub enum BuildIdType {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::upper_case_acronyms)]
+#[repr(C)]
 pub enum FileType {
     APK,
     ELF,

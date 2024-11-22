@@ -12,6 +12,7 @@ mod stacktrace;
 mod unknown_value;
 
 pub use builder::*;
+pub use stacktrace::*;
 
 use anyhow::Context;
 use error_data::{thread_data_from_additional_stacktraces, ErrorData, ErrorKind, SourceType};

@@ -139,14 +139,17 @@ impl CrashInfoBuilder {
         self.files = Some(files);
         self
     }
+
     pub fn with_fingerprint(&mut self, fingerprint: String) -> &mut Self {
         self.fingerprint = Some(fingerprint);
         self
     }
+
     pub fn with_incomplete(&mut self, incomplete: bool) -> &mut Self {
         self.incomplete = Some(incomplete);
         self
     }
+
     pub fn with_log_messages(&mut self, log_messages: Vec<String>) -> &mut Self {
         self.log_messages = Some(log_messages);
         self

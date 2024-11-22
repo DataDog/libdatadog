@@ -3,6 +3,9 @@
 
 mod datatypes;
 pub use datatypes::*;
+mod stacktrace;
+pub use stacktrace::*;
+pub mod to_inner;
 
 use crate::{option_from_char_slice, Result};
 use anyhow::Context;
@@ -175,7 +178,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_set_siginfo(
 pub unsafe extern "C" fn ddog_crasht_CrashInfo_set_stacktrace(
     crashinfo: *mut CrashInfo,
     thread_id: CharSlice,
-    stacktrace: Slice<StackFrame>,
+    stacktrace: Slice<StackFrameOld>,
 ) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;

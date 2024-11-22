@@ -62,6 +62,18 @@ impl Drop for StackFrame {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                              FFI API                                           //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Wraps a C-FFI function in standard form
+/// Expects the function to return a result type that implements into
+/// and to be decorated with #[named].
+macro_rules! wrap {
+    ($body:expr) => {
+        (|| $body)()
+            .context(concat!(function_name!(), " failed"))
+            .into()
+    };
+}
+
 /// Returned by [ddog_prof_Profile_new].
 #[repr(C)]
 pub enum StackFrameNewResult {
@@ -98,18 +110,17 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_drop(frame: *mut StackFrame) {
 /// which has not previously been dropped.
 /// The CharSlice must be valid.
 #[no_mangle]
+#[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_ip(
     mut frame: *mut StackFrame,
     ip: CharSlice,
 ) -> Result {
-    (|| {
+    wrap!({
         let frame = frame.to_inner_mut()?;
         frame.ip = option_from_char_slice(ip)?;
         anyhow::Ok(())
-    })()
-    .context(concat!(function_name!(), " failed"))
-    .into()
+    })
 }
 
 /// # Safety
@@ -117,18 +128,17 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_ip(
 /// which has not previously been dropped.
 /// The CharSlice must be valid.
 #[no_mangle]
+#[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_module_base_address(
     mut frame: *mut StackFrame,
     module_base_address: CharSlice,
 ) -> Result {
-    (|| {
+    wrap!({
         let frame = frame.to_inner_mut()?;
         frame.module_base_address = option_from_char_slice(module_base_address)?;
         anyhow::Ok(())
-    })()
-    .context(concat!(function_name!(), " failed"))
-    .into()
+    })
 }
 
 /// # Safety
@@ -136,18 +146,17 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_module_base_address(
 /// which has not previously been dropped.
 /// The CharSlice must be valid.
 #[no_mangle]
+#[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_sp(
     mut frame: *mut StackFrame,
     sp: CharSlice,
 ) -> Result {
-    (|| {
+    wrap!({
         let frame = frame.to_inner_mut()?;
         frame.sp = option_from_char_slice(sp)?;
         anyhow::Ok(())
-    })()
-    .context(concat!(function_name!(), " failed"))
-    .into()
+    })
 }
 
 /// # Safety
@@ -155,18 +164,17 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_sp(
 /// which has not previously been dropped.
 /// The CharSlice must be valid.
 #[no_mangle]
+#[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_symbol_address(
     mut frame: *mut StackFrame,
     symbol_address: CharSlice,
 ) -> Result {
-    (|| {
+    wrap!({
         let frame = frame.to_inner_mut()?;
         frame.symbol_address = option_from_char_slice(symbol_address)?;
         anyhow::Ok(())
-    })()
-    .context(concat!(function_name!(), " failed"))
-    .into()
+    })
 }
 
 /// # Safety
@@ -174,18 +182,17 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_symbol_address(
 /// which has not previously been dropped.
 /// The CharSlice must be valid.
 #[no_mangle]
+#[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_build_id(
     mut frame: *mut StackFrame,
     build_id: CharSlice,
 ) -> Result {
-    (|| {
+    wrap!({
         let frame = frame.to_inner_mut()?;
         frame.build_id = option_from_char_slice(build_id)?;
         anyhow::Ok(())
-    })()
-    .context(concat!(function_name!(), " failed"))
-    .into()
+    })
 }
 
 /// # Safety
@@ -193,18 +200,17 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_build_id(
 /// which has not previously been dropped.
 /// The CharSlice must be valid.
 #[no_mangle]
+#[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_path(
     mut frame: *mut StackFrame,
     path: CharSlice,
 ) -> Result {
-    (|| {
+    wrap!({
         let frame = frame.to_inner_mut()?;
         frame.path = option_from_char_slice(path)?;
         anyhow::Ok(())
-    })()
-    .context(concat!(function_name!(), " failed"))
-    .into()
+    })
 }
 
 /// # Safety
@@ -212,18 +218,17 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_path(
 /// which has not previously been dropped.
 /// The CharSlice must be valid.
 #[no_mangle]
+#[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_relative_address(
     mut frame: *mut StackFrame,
     relative_address: CharSlice,
 ) -> Result {
-    (|| {
+    wrap!({
         let frame = frame.to_inner_mut()?;
         frame.relative_address = option_from_char_slice(relative_address)?;
         anyhow::Ok(())
-    })()
-    .context(concat!(function_name!(), " failed"))
-    .into()
+    })
 }
 
 /// # Safety
@@ -231,32 +236,26 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_relative_address(
 /// which has not previously been dropped.
 /// The CharSlice must be valid.
 #[no_mangle]
+#[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_file(
     mut frame: *mut StackFrame,
     file: CharSlice,
 ) -> Result {
-    (|| {
+    wrap!({
         let frame = frame.to_inner_mut()?;
         frame.file = option_from_char_slice(file)?;
         anyhow::Ok(())
-    })()
-    .context(concat!(function_name!(), " failed"))
-    .into()
+    })
 }
-macro_rules! wrap {
-    ($body:expr) => {
-        (|| $body)()
-            .context(concat!(function_name!(), " failed"))
-            .into()
-    };
-}
+
 
 /// # Safety
 /// The `frame` can be null, but if non-null it must point to a Frame made by this module,
 /// which has not previously been dropped.
 /// The CharSlice must be valid.
 #[no_mangle]
+#[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_function(
     mut frame: *mut StackFrame,

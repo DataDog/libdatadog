@@ -179,7 +179,7 @@ impl<'a> TryFrom<&StackFrameNames<'a>> for datadog_crashtracker::StackFrameNames
 }
 
 #[repr(C)]
-pub struct StackFrame<'a> {
+pub struct StackFrameOld<'a> {
     build_id: CharSlice<'a>,
     ip: usize,
     module_base_address: usize,
@@ -189,10 +189,10 @@ pub struct StackFrame<'a> {
     symbol_address: usize,
 }
 
-impl<'a> TryFrom<&StackFrame<'a>> for datadog_crashtracker::StackFrame {
+impl<'a> TryFrom<&StackFrameOld<'a>> for datadog_crashtracker::StackFrame {
     type Error = anyhow::Error;
 
-    fn try_from(value: &StackFrame<'a>) -> Result<Self, Self::Error> {
+    fn try_from(value: &StackFrameOld<'a>) -> Result<Self, Self::Error> {
         fn to_hex(v: usize) -> Option<String> {
             if v == 0 {
                 None
