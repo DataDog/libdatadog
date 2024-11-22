@@ -255,8 +255,11 @@ impl TraceExporter {
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data, trace_count),
             TraceExporterInputFormat::V04 => {
-// TODO: APMSP-1582 - Refactor data-pipeline-ffi so we can leverage a type that implements tinybytes::UnderlyingBytes trait to avoid copying                self.send_deser_ser(tinybytes::Bytes::copy_from_slice(data))
-            } 
+                self.send_deser_ser(tinybytes::Bytes::copy_from_slice(data))
+                // TODO: APMSP-1582 - Refactor data-pipeline-ffi so we can leverage a type that
+                // implements tinybytes::UnderlyingBytes trait to avoid copying
+                // self.send_deser_ser(tinybytes::Bytes::copy_from_slice(data))
+            }
         }
     }
 
