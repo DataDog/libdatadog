@@ -29,9 +29,12 @@ const STATS_ENDPOINT: &str = "/v0.6/stats";
 const INFO_ENDPOINT: &str = "/info";
 
 // Keys used for sampling
-// const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
-// const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
-// const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
+#[allow(dead_code)] // TODO (APMSP-1583) these will be used with client side stats
+const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
+#[allow(dead_code)] // TODO (APMSP-1584) these will be used with client side stats
+const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
+#[allow(dead_code)] // TODO (APMSP-1584) these will be used with client side stats
+const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
