@@ -3,6 +3,8 @@
 
 mod datatypes;
 pub use datatypes::*;
+mod stackframe;
+pub use stackframe::*;
 mod stacktrace;
 pub use stacktrace::*;
 pub mod to_inner;

@@ -12,6 +12,21 @@ pub struct StackTrace {
     pub frames: Vec<StackFrame>,
 }
 
+impl StackTrace {
+    pub fn new() -> Self {
+        Self {
+            format: "Datadog Crashtracker 1.0".to_string(),
+            frames: vec![],
+        }
+    }
+}
+
+impl Default for StackTrace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl From<Vec<crate::StackFrame>> for StackTrace {
     fn from(value: Vec<crate::StackFrame>) -> Self {
         #[allow(clippy::type_complexity)]
