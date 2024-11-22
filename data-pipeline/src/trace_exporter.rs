@@ -261,7 +261,6 @@ impl TraceExporter {
                 self.send_deser_ser(tinybytes::Bytes::copy_from_slice(data))
                 // TODO: APMSP-1582 - Refactor data-pipeline-ffi so we can leverage a type that
                 // implements tinybytes::UnderlyingBytes trait to avoid copying
-                // self.send_deser_ser(tinybytes::Bytes::copy_from_slice(data))
             }
         }
     }
