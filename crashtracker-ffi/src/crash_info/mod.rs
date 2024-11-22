@@ -9,7 +9,7 @@ mod stacktrace;
 pub use stacktrace::*;
 pub mod to_inner;
 
-use crate::{option_from_char_slice, Result};
+use crate::{Result};
 use anyhow::Context;
 use ddcommon::Endpoint;
 use ddcommon_ffi::{slice::AsBytes, CharSlice, Slice, Timespec};
@@ -184,7 +184,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_set_stacktrace(
 ) -> Result {
     (|| {
         let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
-        let thread_id = option_from_char_slice(thread_id)?;
+        let thread_id = thread_id.try_to_string_option()?;
         let mut stacktrace_vec = Vec::with_capacity(stacktrace.len());
         for s in stacktrace.iter() {
             stacktrace_vec.push(s.try_into()?)

@@ -1,7 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::option_from_char_slice;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::{
     slice::{AsBytes, ByteSlice},
@@ -166,9 +165,9 @@ impl<'a> TryFrom<&StackFrameNames<'a>> for datadog_crashtracker::StackFrameNames
 
     fn try_from(value: &StackFrameNames<'a>) -> Result<Self, Self::Error> {
         let colno = (&value.colno).into();
-        let filename = option_from_char_slice(value.filename)?;
+        let filename = value.filename.try_to_string_option()?;
         let lineno = (&value.lineno).into();
-        let name = option_from_char_slice(value.name)?;
+        let name = value.name.try_to_string_option()?;
         Ok(Self {
             colno,
             filename,
@@ -236,7 +235,7 @@ impl<'a> TryFrom<SigInfo<'a>> for datadog_crashtracker::SigInfo {
 
     fn try_from(value: SigInfo<'a>) -> Result<Self, Self::Error> {
         let signum = value.signum;
-        let signame = option_from_char_slice(value.signame)?;
+        let signame = value.signame.try_to_string_option()?;
         let faulting_address = None; // TODO: Expose this to FFI
         Ok(Self {
             signum,

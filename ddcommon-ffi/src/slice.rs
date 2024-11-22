@@ -73,6 +73,16 @@ pub trait AsBytes<'a> {
     }
 
     #[inline]
+    fn try_to_string_option(&self) -> Result<Option<String>, Utf8Error> {
+        let s = std::str::from_utf8(self.as_bytes())?.to_string();
+        if s.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(s))
+        }
+    } 
+
+    #[inline]
     fn to_utf8_lossy(&self) -> Cow<'a, str> {
         String::from_utf8_lossy(self.as_bytes())
     }
