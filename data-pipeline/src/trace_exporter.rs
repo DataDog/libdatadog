@@ -905,7 +905,7 @@ mod tests {
     use datadog_trace_utils::span_v04::Span;
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    use serde::Serialize;
+    // use serde::Serialize;
     use std::collections::HashMap;
     use std::net;
     use std::time::Duration;
