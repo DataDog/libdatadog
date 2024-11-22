@@ -1326,6 +1326,32 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    fn invalid_traces() {
+        let stats_socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
+        let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
+
+        let fake_agent = MockServer::start();
+
+        let exporter = build_test_exporter(
+            fake_agent.url("/v0.4/traces"),
+            stats_socket.local_addr().unwrap().to_string(),
+        );
+
+        let _result = exporter
+            .send(b"some_bad_payload", 1)
+            .expect("failed to send trace");
+
+        assert_eq!(
+            &format!(
+                "datadog.libdatadog.deser_traces.errors:1|c|#libdatadog_version:{}",
+                env!("CARGO_PKG_VERSION")
+            ),
+            &read(&stats_socket)
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
     fn health_metrics_error() {
         let stats_socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
         let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
