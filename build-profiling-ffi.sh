@@ -136,17 +136,27 @@ cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
 
 datadog_profiling_ffi="datadog-profiling-ffi"
-FEATURES="--features crashtracker-collector,crashtracker-receiver,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/demangler"
+FEATURES=(
+    "cbindgen"
+    "crashtracker-collector"
+    "crashtracker-receiver"
+    "data-pipeline-ffi"
+    "datadog-profiling-ffi/ddtelemetry-ffi"
+    "datadog-profiling-ffi/demangler"
+)
 if [[ "$symbolizer" -eq 1 ]]; then
-    FEATURES="--features crashtracker-collector,crashtracker-receiver,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,cbindgen,datadog-profiling-ffi/ddtelemetry-ffi,datadog-profiling-ffi/demangler,symbolizer"
+    FEATURES+=("symbolizer")
 fi
 
 if [[ ! -z ${ARG_FEATURES} ]]; then
-    FEATURES="$FEATURES,$ARG_FEATURES"
+    FEATURES+=($ARG_FEATURES)
 fi
 
+FEATURES=$(IFS=, ; echo "${FEATURES[*]}")
+echo "Building for features: $FEATURES"
+
 # build inside the crate to use the config.toml file
-( cd profiling-ffi && DESTDIR="$destdir" cargo build ${FEATURES} --release --target "${target}")
+( cd profiling-ffi && DESTDIR="$destdir" cargo build --features $FEATURES --release --target "${target}" )
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
