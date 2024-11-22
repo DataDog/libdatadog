@@ -545,9 +545,9 @@ impl TraceExporter {
         }
     }
 
-    /// Add all spans from the given iterator into the stats concentrator
-    /// # Panic
-    /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
+    // /// Add all spans from the given iterator into the stats concentrator
+    // /// # Panic
+    // /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
     // fn add_spans_to_stats<'a>(&self, spans: impl Iterator<Item = &'a pb::Span>) {
     //     if let StatsComputationStatus::Enabled {
     //         stats_concentrator,
