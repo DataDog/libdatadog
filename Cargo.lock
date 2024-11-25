@@ -1520,11 +1520,8 @@ dependencies = [
  "ddcommon-ffi",
  "ddtelemetry-ffi",
  "futures",
- "hyper 0.14.31",
- "libc",
+ "http-body-util",
  "serde_json",
- "symbolic-common",
- "symbolic-demangle",
  "symbolizer-ffi",
  "tokio-util",
 ]

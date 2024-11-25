@@ -69,10 +69,7 @@ impl Endpoint {
     /// - User agent
     /// - Api key
     /// - Container Id/Entity Id
-    pub fn into_request_builder(
-        &self,
-        user_agent: &str,
-    ) -> Result<HttpRequestBuilder, http::Error> {
+    pub fn to_request_builder(&self, user_agent: &str) -> Result<HttpRequestBuilder, http::Error> {
         let mut builder = hyper::Request::builder()
             .uri(self.url.clone())
             .header(hyper::header::USER_AGENT, user_agent);
@@ -114,7 +111,7 @@ impl From<Uri> for Endpoint {
         Self {
             url: uri,
             api_key: None,
-            timeout_ms: 0,
+            timeout_ms: Endpoint::DEFAULT_TIMEOUT,
             test_token: None,
         }
     }

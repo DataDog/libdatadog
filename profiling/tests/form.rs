@@ -59,7 +59,7 @@ fn multipart(
 #[cfg(test)]
 mod tests {
     use crate::multipart;
-    use datadog_profiling::exporter::config::ProfilingEndpoint;
+    use datadog_profiling::exporter::config::EndpointExt;
     use datadog_profiling::exporter::*;
     use ddcommon::tag;
     use serde_json::json;
@@ -217,8 +217,7 @@ mod tests {
         let profiling_library_version = "1.2.3";
         let site = "datadoghq.com";
         let api_key = "1234567890123456789012";
-        let endpoint =
-            Endpoint::profiling_agentless(site, api_key.into()).expect("endpoint to construct");
+        let endpoint = Endpoint::profiling_agentless(site, api_key).expect("endpoint to construct");
         let mut exporter = ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,

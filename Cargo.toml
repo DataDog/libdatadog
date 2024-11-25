@@ -12,6 +12,7 @@ members = [
   "profiling-replayer",
   "ddcommon",
   "ddcommon-ffi",
+  "ddcommon-net",
   "ddtelemetry",
   "ddtelemetry-ffi",
   "dogstatsd",
@@ -37,7 +38,7 @@ members = [
   "data-pipeline-ffi",
   "ddsketch",
   "tinybytes",
-  "dogstatsd-client", "ddcommon-net",
+  "dogstatsd-client",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
