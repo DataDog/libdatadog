@@ -31,6 +31,7 @@ dogstatsd-client = { path = "../dogstatsd-client"}
 datadog-trace-obfuscation = { path = "../trace-obfuscation" }
 uuid = { version = "1.10.0", features = ["v4"] }
 tokio-util = "0.7.11"
+tinybytes =  { path = "../tinybytes", features = ["bytes_string", "serialization"] }
 
 [lib]
 bench = false
