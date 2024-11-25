@@ -247,6 +247,20 @@ impl<'a> TryFrom<SigInfo<'a>> for datadog_crashtracker::SigInfo {
 }
 
 #[repr(C)]
+pub struct ProcInfo {
+    pub pid: u32,
+}
+
+impl TryFrom<ProcInfo> for datadog_crashtracker::ProcessInfo {
+    type Error = anyhow::Error;
+
+    fn try_from(value: ProcInfo) -> anyhow::Result<Self> {
+        let pid = value.pid;
+        Ok(Self { pid })
+    }
+}
+
+#[repr(C)]
 pub struct Metadata<'a> {
     pub library_name: CharSlice<'a>,
     pub library_version: CharSlice<'a>,

@@ -225,6 +225,25 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_set_timestamp_to_now(
     .into()
 }
 
+/// Sets crashinfo procinfo
+///
+/// # Safety
+/// `crashinfo` must be a valid pointer to a `CrashInfo` object.
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_set_procinfo(
+    crashinfo: *mut CrashInfo,
+    procinfo: ProcInfo,
+) -> Result {
+    (|| {
+        let crashinfo = crashinfo_ptr_to_inner(crashinfo)?;
+        let procinfo = procinfo.try_into()?;
+        crashinfo.set_procinfo(procinfo)
+    })()
+    .context("ddog_crasht_CrashInfo_set_procinfo failed")
+    .into()
+}
+
 /// Exports `crashinfo` to the backend at `endpoint`
 /// Note that we support the "file://" endpoint for local file output.
 /// # Safety
