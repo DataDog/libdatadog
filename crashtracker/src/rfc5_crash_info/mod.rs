@@ -12,11 +12,11 @@ mod stacktrace;
 mod unknown_value;
 
 pub use builder::*;
+pub use error_data::*;
+pub use metadata::Metadata;
 pub use stacktrace::*;
 
 use anyhow::Context;
-use error_data::{thread_data_from_additional_stacktraces, ErrorData, ErrorKind, SourceType};
-use metadata::Metadata;
 use os_info::OsInfo;
 use proc_info::ProcInfo;
 use schemars::JsonSchema;

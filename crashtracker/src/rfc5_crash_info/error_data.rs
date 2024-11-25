@@ -23,6 +23,7 @@ pub enum SourceType {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[repr(C)]
 pub enum ErrorKind {
     Panic,
     UnhandledException,

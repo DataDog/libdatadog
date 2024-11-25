@@ -2,12 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::to_inner::ToInner;
-use crate::Result;
 use crate::StackFrame;
 use ::function_name::named;
 use anyhow::Context;
-use ddcommon_ffi::wrap_with_ffi_result;
-use ddcommon_ffi::Error;
+use ddcommon_ffi::{wrap_with_ffi_result, Result, VoidResult};
 
 /// Represents a StackTrace. Do not access its member for any reason, only use
 /// the C API functions on this struct.
@@ -56,14 +54,6 @@ impl Drop for StackTrace {
     }
 }
 
-/// Returned by [ddog_prof_Profile_new].
-#[repr(C)]
-pub enum StackTraceNewResult {
-    Ok(StackTrace),
-    #[allow(dead_code)]
-    Err(Error),
-}
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                              FFI API                                           //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -73,10 +63,11 @@ pub enum StackTraceNewResult {
 /// No safety issues.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crasht_StackTrace_new() -> StackTraceNewResult {
-    StackTraceNewResult::Ok(StackTrace::new(
+pub unsafe extern "C" fn ddog_crasht_StackTrace_new() -> Result<StackTrace> {
+    Ok(StackTrace::new(
         datadog_crashtracker::rfc5_crash_info::StackTrace::new(),
     ))
+    .into()
 }
 
 /// # Safety
@@ -102,7 +93,7 @@ pub unsafe extern "C" fn ddog_crasht_StackTrace_drop(trace: *mut StackTrace) {
 pub unsafe extern "C" fn ddog_crasht_StackTrace_push_frame(
     mut trace: *mut StackTrace,
     frame: *mut StackFrame,
-) -> Result {
+) -> VoidResult {
     wrap_with_ffi_result!({
         let trace = trace.to_inner_mut()?;
         let frame = *frame

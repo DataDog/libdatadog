@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::to_inner::ToInner;
-use crate::Result;
 use ::function_name::named;
 use anyhow::Context;
-use ddcommon_ffi::{slice::AsBytes, wrap_with_ffi_result, CharSlice, Error};
+use ddcommon_ffi::{slice::AsBytes, wrap_with_ffi_result, CharSlice, Result, VoidResult};
 
 /// Represents a StackFrame. Do not access its member for any reason, only use
 /// the C API functions on this struct.
@@ -56,14 +55,6 @@ impl Drop for StackFrame {
     }
 }
 
-/// Returned by [ddog_prof_Profile_new].
-#[repr(C)]
-pub enum StackFrameNewResult {
-    Ok(StackFrame),
-    #[allow(dead_code)]
-    Err(Error),
-}
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                              FFI API                                           //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -73,8 +64,8 @@ pub enum StackFrameNewResult {
 /// No safety issues.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crasht_StackFrame_new() -> StackFrameNewResult {
-    StackFrameNewResult::Ok(StackFrame::new())
+pub unsafe extern "C" fn ddog_crasht_StackFrame_new() -> Result<StackFrame> {
+    Ok(StackFrame::new()).into()
 }
 
 /// # Safety
@@ -99,7 +90,7 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_drop(frame: *mut StackFrame) {
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_ip(
     mut frame: *mut StackFrame,
     ip: CharSlice,
-) -> Result {
+) -> VoidResult {
     wrap_with_ffi_result!({
         let frame = frame.to_inner_mut()?;
         frame.ip = ip.try_to_string_option()?;
@@ -117,7 +108,7 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_ip(
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_module_base_address(
     mut frame: *mut StackFrame,
     module_base_address: CharSlice,
-) -> Result {
+) -> VoidResult {
     wrap_with_ffi_result!({
         let frame = frame.to_inner_mut()?;
         frame.module_base_address = module_base_address.try_to_string_option()?;
@@ -135,7 +126,7 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_module_base_address(
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_sp(
     mut frame: *mut StackFrame,
     sp: CharSlice,
-) -> Result {
+) -> VoidResult {
     wrap_with_ffi_result!({
         let frame = frame.to_inner_mut()?;
         frame.sp = sp.try_to_string_option()?;
@@ -153,7 +144,7 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_sp(
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_symbol_address(
     mut frame: *mut StackFrame,
     symbol_address: CharSlice,
-) -> Result {
+) -> VoidResult {
     wrap_with_ffi_result!({
         let frame = frame.to_inner_mut()?;
         frame.symbol_address = symbol_address.try_to_string_option()?;
@@ -171,7 +162,7 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_symbol_address(
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_build_id(
     mut frame: *mut StackFrame,
     build_id: CharSlice,
-) -> Result {
+) -> VoidResult {
     wrap_with_ffi_result!({
         let frame = frame.to_inner_mut()?;
         frame.build_id = build_id.try_to_string_option()?;
@@ -189,7 +180,7 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_build_id(
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_path(
     mut frame: *mut StackFrame,
     path: CharSlice,
-) -> Result {
+) -> VoidResult {
     wrap_with_ffi_result!({
         let frame = frame.to_inner_mut()?;
         frame.path = path.try_to_string_option()?;
@@ -207,7 +198,7 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_path(
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_relative_address(
     mut frame: *mut StackFrame,
     relative_address: CharSlice,
-) -> Result {
+) -> VoidResult {
     wrap_with_ffi_result!({
         let frame = frame.to_inner_mut()?;
         frame.relative_address = relative_address.try_to_string_option()?;
@@ -225,7 +216,7 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_relative_address(
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_file(
     mut frame: *mut StackFrame,
     file: CharSlice,
-) -> Result {
+) -> VoidResult {
     wrap_with_ffi_result!({
         let frame = frame.to_inner_mut()?;
         frame.file = file.try_to_string_option()?;
@@ -243,7 +234,7 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_file(
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_function(
     mut frame: *mut StackFrame,
     function: CharSlice,
-) -> Result {
+) -> VoidResult {
     wrap_with_ffi_result!({
         let frame = frame.to_inner_mut()?;
         frame.function = function.try_to_string_option()?;

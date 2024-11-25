@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::datatypes::OpTypes;
-use crate::Result;
 use anyhow::Context;
+use ddcommon_ffi::VoidResult;
 
 /// Resets all counters to 0.
 /// Expected to be used after a fork, to reset the counters on the child
@@ -15,7 +15,7 @@ use anyhow::Context;
 /// No safety concerns.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crasht_reset_counters() -> Result {
+pub unsafe extern "C" fn ddog_crasht_reset_counters() -> VoidResult {
     datadog_crashtracker::reset_counters()
         .context("ddog_crasht_reset_counters failed")
         .into()
@@ -28,7 +28,7 @@ pub unsafe extern "C" fn ddog_crasht_reset_counters() -> Result {
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_crasht_begin_op(op: OpTypes) -> Result {
+pub unsafe extern "C" fn ddog_crasht_begin_op(op: OpTypes) -> VoidResult {
     datadog_crashtracker::begin_op(op)
         .context("ddog_crasht_begin_op failed")
         .into()
@@ -41,7 +41,7 @@ pub unsafe extern "C" fn ddog_crasht_begin_op(op: OpTypes) -> Result {
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_crasht_end_op(op: OpTypes) -> Result {
+pub unsafe extern "C" fn ddog_crasht_end_op(op: OpTypes) -> VoidResult {
     datadog_crashtracker::end_op(op)
         .context("ddog_crasht_end_op failed")
         .into()

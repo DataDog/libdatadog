@@ -133,7 +133,7 @@ impl CrashInfoBuilder {
         } else {
             self.counters = Some(HashMap::from([(name, value)]));
         }
-        self
+        Ok(self)
     }
 
     pub fn with_counters(&mut self, counters: HashMap<String, i64>) -> &mut Self {
@@ -141,9 +141,9 @@ impl CrashInfoBuilder {
         self
     }
 
-    pub fn with_kind(&mut self, kind: ErrorKind) -> &mut Self {
+    pub fn with_kind(&mut self, kind: ErrorKind) -> anyhow::Result<&mut Self> {
         self.error.with_kind(kind);
-        self
+        Ok(self)
     }
 
     /// Appends the given file to the current set of files in the builder.
@@ -162,14 +162,25 @@ impl CrashInfoBuilder {
         self
     }
 
-    pub fn with_fingerprint(&mut self, fingerprint: String) -> &mut Self {
+    pub fn with_fingerprint(&mut self, fingerprint: String) -> anyhow::Result<&mut Self> {
+        anyhow::ensure!(!fingerprint.is_empty(), "Expect non-empty fingerprint");
         self.fingerprint = Some(fingerprint);
-        self
+        Ok(self)
     }
 
     pub fn with_incomplete(&mut self, incomplete: bool) -> &mut Self {
         self.incomplete = Some(incomplete);
         self
+    }
+
+    /// Appends the given message to the current set of messages in the builder.
+    pub fn with_log_message(&mut self, message: String) -> anyhow::Result<&mut Self> {
+        if let Some(ref mut messages) = &mut self.log_messages {
+            messages.push(message);
+        } else {
+            self.log_messages = Some(vec![message]);
+        }
+        Ok(self)
     }
 
     pub fn with_log_messages(&mut self, log_messages: Vec<String>) -> &mut Self {
