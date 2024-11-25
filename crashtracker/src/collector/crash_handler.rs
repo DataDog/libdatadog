@@ -4,25 +4,25 @@
 #![cfg(unix)]
 #![allow(deprecated)]
 
+use super::alt_fork::alt_fork;
 use super::emitters::emit_crashreport;
-use super::saguard::SaGuard;
 use crate::crash_info::CrashtrackerMetadata;
 use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
+use crate::shared::constants::*;
 use anyhow::Context;
 use libc::{
     c_void, execve, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE,
     PROT_READ, PROT_WRITE, SIGSTKSZ,
 };
-use nix::poll::{poll, PollFd, PollFlags};
+use libc::{poll, pollfd, POLLHUP};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use nix::sys::socket;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-use nix::unistd::{close, Pid};
+use nix::unistd::Pid;
 use std::ffi::CString;
 use std::fs::{File, OpenOptions};
-use std::io::Write;
 use std::os::unix::{
-    io::{BorrowedFd, FromRawFd, IntoRawFd, RawFd},
+    io::{FromRawFd, IntoRawFd, RawFd},
     net::UnixStream,
 };
 use std::ptr;
@@ -33,9 +33,10 @@ use std::time::{Duration, Instant};
 // Note that this file makes use the following async-signal safe functions in a signal handler.
 // <https://man7.org/linux/man-pages/man7/signal-safety.7.html>
 // - clock_gettime
-// - close (although Rust may call `free` because we call the higher-level nix interface)
+// - clone (only ony Linux, guaranteed not to call `atfork()` handlers)
+// - close
 // - dup2
-// - fork (but specifically only because it does so without calling atfork handlers)
+// - fork (only on MacOS--no guarantee that `atfork()` handlers are suppressed)
 // - kill
 // - poll
 // - raise
@@ -43,25 +44,16 @@ use std::time::{Duration, Instant};
 // - sigaction
 // - write
 
-// The use of fork or vfork is influenced by the availability of the function in the host libc.
-// Macos seems to have deprecated vfork.  The reason to prefer vfork is to suppress atfork
-// handlers.  This is OK because macos is primarily a test platform, and we have system-level
-// testing on Linux in various CI environments.
-#[cfg(target_os = "macos")]
-use libc::fork as vfork;
-
-#[cfg(target_os = "linux")]
-use libc::vfork;
-
 #[derive(Debug)]
 struct OldHandlers {
     pub sigbus: SigAction,
     pub sigsegv: SigAction,
 }
 
-struct Receiver {
-    receiver_uds: RawFd,
-    receiver_pid: i32,
+#[derive(Clone, Debug)]
+struct WatchedProcess {
+    fd: RawFd,
+    pid: libc::pid_t,
     oneshot: bool,
 }
 
@@ -148,9 +140,10 @@ fn open_file_or_quiet(filename: Option<&str>) -> anyhow::Result<RawFd> {
 // Note: some resources indicate it is unsafe to call `waitpid` from a signal handler, especially
 //       on macos, where the OS will terminate an offending process.  This appears to be untrue
 //       and `waitpid()` is characterized as async-signal safe by POSIX.
-fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
+fn reap_child_non_blocking(pid: libc::pid_t, timeout_ms: u32) -> anyhow::Result<bool> {
     let timeout = Duration::from_millis(timeout_ms as u64);
     let start_time = Instant::now();
+    let pid = Pid::from_raw(pid);
 
     loop {
         match waitpid(pid, Some(WaitPidFlag::WNOHANG)) {
@@ -176,7 +169,7 @@ fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
 }
 
 /// Wrapper around the child process that will run the crash receiver
-fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout: RawFd) -> ! {
+fn run_receiver_child(uds_child: RawFd, stderr: RawFd, stdout: RawFd) -> ! {
     // File descriptor management
     unsafe {
         let _ = libc::dup2(uds_child, 0);
@@ -185,10 +178,9 @@ fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout
     }
 
     // Close unused file descriptors
-    let _ = close(uds_parent);
-    let _ = close(uds_child);
-    let _ = close(stderr);
-    let _ = close(stdout);
+    let _ = unsafe { libc::close(uds_child) };
+    let _ = unsafe { libc::close(stderr) };
+    let _ = unsafe { libc::close(stdout) };
 
     // We've already prepared the arguments and environment variable
     // If we've reached this point, it means we've prepared the arguments and environment variables
@@ -227,21 +219,86 @@ fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout
     }
 }
 
-fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
-    // Need to convert the RawFd into a BorrowedFd to satisfy the PollFd prototype
-    let target_fd = unsafe { BorrowedFd::borrow_raw(target_fd) };
-    let poll_fd = PollFd::new(&target_fd, PollFlags::POLLHUP);
+fn run_collector_child(
+    config: &CrashtrackerConfiguration,
+    config_str: &str,
+    metadata_str: &str,
+    signum: i32,
+    faulting_address: Option<usize>,
+    receiver: &WatchedProcess,
+    ppid: libc::pid_t,
+) -> ! {
+    // The collector process currently runs without access to stdio.  There are two ways to resolve
+    // this:
+    // - Reuse the stdio files used for the receiver
+    //   + con: we don't controll flushes to stdio, so the writes from the two processes may
+    //     interleave parts of a single message
+    // - Create two new stdio files for the collector
+    //   + con: that's _another_ two options to fill out in the config
+    let _ = unsafe { libc::close(0) };
+    let _ = unsafe { libc::close(1) };
+    let _ = unsafe { libc::close(2) };
 
-    match poll(&mut [poll_fd], timeout_ms)? {
-        -1 => Err(anyhow::anyhow!("poll failed")),
-        0 => Ok(false),
-        _ => match poll_fd
-            .revents()
-            .ok_or_else(|| anyhow::anyhow!("No revents found"))?
-        {
-            revents if revents.contains(PollFlags::POLLHUP) => Ok(true),
-            _ => Err(anyhow::anyhow!("poll returned unexpected result")),
-        },
+    // Before we start reading or writing to the socket, we need to disable SIGPIPE because we
+    // don't control the emission implementation enough to send MSG_NOSIGNAL.
+    // NB - collector is running in its own process, so this doesn't affect the watchdog process
+    let _ = unsafe {
+        signal::sigaction(
+            signal::SIGPIPE,
+            &SigAction::new(SigHandler::SigIgn, SaFlags::empty(), SigSet::empty()),
+        )
+    };
+
+    // We're ready to emit the crashreport
+    let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.fd) };
+
+    let report = emit_crashreport(
+        &mut unix_stream,
+        config,
+        config_str,
+        metadata_str,
+        signum,
+        faulting_address,
+        ppid,
+    );
+    if let Err(e) = report {
+        eprintln!("Failed to flush crash report: {e}");
+        unsafe { libc::_exit(-1) };
+    }
+
+    // If we reach this point, then we exit.  We're done.
+    // Note that since we're a forked process, we call `_exiit` in favor of:
+    // - `exit()`, because calling the atexit handlers might mutate shared state
+    // - `abort()`, because raising SIGABRT might cause other problems
+    unsafe { libc::_exit(0) };
+}
+
+fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
+    // NB - This implementation uses the libc interface to `poll`, since the `nix` interface has
+    // some ownership semantics which can apparently panic in certain cases.
+    let mut poll_fds = [pollfd {
+        fd: target_fd,
+        events: POLLHUP,
+        revents: 0,
+    }];
+
+    match unsafe { poll(poll_fds.as_mut_ptr(), 1, timeout_ms) } {
+        -1 => Err(anyhow::anyhow!(
+            "poll failed with errno: {}",
+            std::io::Error::last_os_error()
+        )),
+        0 => Ok(false), // Timeout occurred
+        _ => {
+            let revents = poll_fds[0].revents;
+            if revents & POLLHUP != 0 {
+                Ok(true) // POLLHUP detected
+            } else {
+                Err(anyhow::anyhow!(
+                    "poll returned unexpected result: revents = {}",
+                    revents
+                ))
+            }
+        }
     }
 }
 
@@ -258,46 +315,116 @@ static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(p
 static RECEIVER_CONFIG: AtomicPtr<CrashtrackerReceiverConfig> = AtomicPtr::new(ptr::null_mut());
 static RECEIVER_ARGS: AtomicPtr<PreparedExecve> = AtomicPtr::new(ptr::null_mut());
 
-fn make_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<Receiver> {
-    let stderr = open_file_or_quiet(config.stderr_filename.as_deref())?;
-    let stdout = open_file_or_quiet(config.stdout_filename.as_deref())?;
-
-    // Create anonymous Unix domain socket pair for communication
-    let (uds_parent, uds_child) = socket::socketpair(
+fn make_unix_socket_pair() -> anyhow::Result<(RawFd, RawFd)> {
+    let (sock1, sock2) = socket::socketpair(
         socket::AddressFamily::Unix,
         socket::SockType::Stream,
         None,
         socket::SockFlag::empty(),
     )
-    .context("Failed to create Unix domain socket pair")
-    .map(|(a, b)| (a.into_raw_fd(), b.into_raw_fd()))?;
+    .context("Failed to create Unix domain socket pair")?;
+    Ok((sock1.into_raw_fd(), sock2.into_raw_fd()))
+}
 
-    // We need to spawn a process without calling atfork handlers, since this is happening inside
-    // of a signal handler.  Moreover, preference is given to multiplatform-uniform solutions.
-    // Although `vfork()` is deprecated, the alternatives have limitations
-    // * `fork()` calls atfork handlers
-    // * There is no guarantee that `posix_spawn()` will not call `fork()` internally
-    // * `clone()`/`clone3()` are Linux-specific
-    // Accordingly, use `vfork()` for now
-    // NB -- on macos the underlying implementation here is actually `fork()`!  See the top of this
-    // file for details.
-    match unsafe { vfork() } {
+fn receiver_from_socket(unix_socket_path: Option<String>) -> anyhow::Result<WatchedProcess> {
+    let unix_socket_path = unix_socket_path.unwrap_or_default();
+    if unix_socket_path.is_empty() {
+        return Err(anyhow::anyhow!("No receiver path provided"));
+    }
+
+    #[cfg(target_os = "linux")]
+    let unix_stream = if unix_socket_path.starts_with(['.', '/']) {
+        UnixStream::connect(unix_socket_path)?
+    } else {
+        use std::os::linux::net::SocketAddrExt;
+        let addr = std::os::unix::net::SocketAddr::from_abstract_name(unix_socket_path)?;
+        UnixStream::connect_addr(&addr)?
+    };
+
+    #[cfg(not(target_os = "linux"))]
+    let unix_stream = UnixStream::connect(unix_socket_path)?;
+
+    let fd = unix_stream.into_raw_fd();
+    Ok(WatchedProcess {
+        fd,
+        pid: 0,
+        oneshot: false,
+    })
+}
+
+fn receiver_from_config(config: &CrashtrackerReceiverConfig) -> anyhow::Result<WatchedProcess> {
+    // Create anonymous Unix domain socket pair for communication
+    let (uds_parent, uds_child) = make_unix_socket_pair()?;
+
+    // Create stdio file descriptors
+    let stderr = open_file_or_quiet(config.stderr_filename.as_deref())?;
+    let stdout = open_file_or_quiet(config.stdout_filename.as_deref())?;
+
+    // This implementation calls `clone()` directly on linux and the libc `fork()` on macos.
+    // This avoids calling the `atfork()` handlers on Linux, but not on mac.
+    match alt_fork() {
         0 => {
             // Child (noreturn)
-            run_receiver_child(uds_parent, uds_child, stderr, stdout)
+            let _ = unsafe { libc::close(uds_parent) }; // close parent end in child
+            run_receiver_child(uds_child, stderr, stdout);
         }
         pid if pid > 0 => {
             // Parent
-            let _ = close(uds_child);
-            Ok(Receiver {
-                receiver_uds: uds_parent,
-                receiver_pid: pid,
+            let _ = unsafe { libc::close(uds_child) }; // close child end in parent
+            Ok(WatchedProcess {
+                fd: uds_parent,
+                pid,
                 oneshot: true,
             })
         }
         _ => {
             // Error
             Err(anyhow::anyhow!("Failed to fork receiver process"))
+        }
+    }
+}
+
+fn make_receiver(
+    config: &CrashtrackerReceiverConfig,
+    unix_socket_path: Option<String>,
+) -> anyhow::Result<WatchedProcess> {
+    // Try to create a receiver from the socket path, fallback to config on failure
+    receiver_from_socket(unix_socket_path).or_else(|_| receiver_from_config(config))
+}
+
+fn make_collector(
+    config: &CrashtrackerConfiguration,
+    config_str: &str,
+    metadata_str: &str,
+    signum: i32,
+    faulting_address: Option<usize>,
+    receiver: &WatchedProcess,
+) -> anyhow::Result<WatchedProcess> {
+    let ppid = unsafe { libc::getppid() };
+
+    match alt_fork() {
+        0 => {
+            // Child (does not exit from this function)
+            run_collector_child(
+                config,
+                config_str,
+                metadata_str,
+                signum,
+                faulting_address,
+                receiver,
+                ppid,
+            );
+        }
+        pid if pid > 0 => {
+            Ok(WatchedProcess {
+                fd: receiver.fd, // TODO - Is this what we want here?
+                pid,
+                oneshot: true,
+            })
+        }
+        _ => {
+            // Error
+            Err(anyhow::anyhow!("Failed to fork collector process"))
         }
     }
 }
@@ -436,67 +563,33 @@ extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucon
     };
 }
 
-fn receiver_from_socket(unix_socket_path: &str) -> anyhow::Result<Receiver> {
-    // Creates a fake "Receiver", which can be waited on like a normal receiver.
-    // This is intended to support configurations where the collector is speaking to a long-lived,
-    // async receiver process.
-    if unix_socket_path.is_empty() {
-        return Err(anyhow::anyhow!("No receiver path provided"));
-    }
-    #[cfg(target_os = "linux")]
-    let unix_stream = if unix_socket_path.starts_with(['.', '/']) {
-        UnixStream::connect(unix_socket_path)
-    } else {
-        use std::os::linux::net::SocketAddrExt;
-        let addr = std::os::unix::net::SocketAddr::from_abstract_name(unix_socket_path)?;
-        UnixStream::connect_addr(&addr)
-    };
-    #[cfg(not(target_os = "linux"))]
-    let unix_stream = UnixStream::connect(unix_socket_path);
-    let receiver_uds = unix_stream
-        .context("Failed to connect to receiver")?
-        .into_raw_fd();
-    Ok(Receiver {
-        receiver_uds,
-        receiver_pid: 0,
-        oneshot: false,
-    })
-}
-
-fn receiver_finish(receiver: Receiver, start_time: Instant, timeout_ms: u32) {
+fn finish_watched_process(proc: WatchedProcess, start_time: Instant, timeout_ms: u32) {
     let pollhup_allowed_ms = timeout_ms
         .saturating_sub(start_time.elapsed().as_millis() as u32)
         .min(i32::MAX as u32) as i32;
-    let _ = wait_for_pollhup(receiver.receiver_uds, pollhup_allowed_ms);
+    let _ = wait_for_pollhup(proc.fd, pollhup_allowed_ms);
 
-    // If this is a oneshot-type receiver (i.e., we spawned it), then we now need to ensure it gets
-    // cleaned up.
-    // We explicitly avoid the case where the receiver PID is 1.  This is unbelievably unlikely, but
-    // should the situation arise we just walk away and let the PID leak.
-    if receiver.oneshot && receiver.receiver_pid > 1 {
-        // Either the receiver is done, it timed out, or something failed.
-        // In any case, can't guarantee that the receiver will exit.
-        // SIGKILL will ensure that the process ends eventually, but there's
-        // no bound on that time.
-        // We emit SIGKILL and try to reap its exit status for the remaining time, then give up.
+    // We cleanup oneshot receivers now.
+    if proc.oneshot {
+        //
         unsafe {
-            libc::kill(receiver.receiver_pid, libc::SIGKILL);
+            libc::kill(proc.pid, libc::SIGKILL);
         }
 
-        let receiver_pid_as_pid = Pid::from_raw(receiver.receiver_pid);
-        let reaping_allowed_ms = timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32);
-
-        let _ = reap_child_non_blocking(receiver_pid_as_pid, reaping_allowed_ms);
+        // If we have less than the minimum amount of time, give ourselves a few scheduler slices
+        // worth of headroom to help guarantee that we don't leak a zombie process.
+        let reaping_allowed_ms = std::cmp::min(
+            timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32),
+            DD_CRASHTRACK_MINIMUM_REAP_TIME_MS,
+        );
+        let _ = reap_child_non_blocking(proc.pid, reaping_allowed_ms);
     }
 }
 
 fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Result<()> {
-    // If this is a SIGSEGV signal, it could be called due to a stack overflow. In that case, since
-    // this signal allocates to the stack and cannot guarantee it is running without SA_NODEFER, it
-    // is possible that we will re-emit the signal. Contemporary unices handle this just fine (no
-    // deadlock), but it does mean we will fail.  Currently this situation is not detected.
-    // In general, handlers do not know their own stack usage requirements in advance and are
-    // incapable of guaranteeing that they will not overflow the stack.
+    // NB - stack overflow may result in a segfault, which will cause the signal to be re-emitted.
+    //      The guard below combined with our signal disarming logic in the caller should prevent
+    //      that situation from causing a deadlock.
 
     // One-time guard to guarantee at most one crash per process
     static NUM_TIMES_CALLED: AtomicU64 = AtomicU64::new(0);
@@ -506,31 +599,20 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
         return Ok(());
     }
 
-    // Leak config and metadata to avoid calling `drop` during a crash
-    // Note that these operations also replace the global states.  When the one-time guard is
-    // passed, all global configuration and metadata becomes invalid.
-    // In a perfet world, we'd also grab the receiver config in this section, but since the
-    // execution forks based on whether or not the receiver is configured, we check that later.
-    let config = CONFIG.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(!config.is_null(), "No crashtracking config");
-    let (config, config_str) = unsafe { config.as_ref().context("No crashtracking receiver")? };
+    // Get references to the configs.  Rather than copying the structs, keep them as references.
+    // NB: this clears the global variables, so they can't be used again.
+    let config_ptr = CONFIG.swap(ptr::null_mut(), SeqCst);
+    anyhow::ensure!(!config_ptr.is_null(), "No crashtracking config");
+    let (config, config_str) = unsafe { &*config_ptr };
 
     let metadata_ptr = METADATA.swap(ptr::null_mut(), SeqCst);
     anyhow::ensure!(!metadata_ptr.is_null(), "No crashtracking metadata");
-    let (_metadata, metadata_string) = unsafe { metadata_ptr.as_ref().context("metadata ptr")? };
+    let (_metadata, metadata_string) = unsafe { &*metadata_ptr };
 
     let receiver_config = RECEIVER_CONFIG.load(SeqCst);
-    if receiver_config.is_null() {
-        return Err(anyhow::anyhow!("No receiver config"));
-    }
 
-    // Since we've gotten this far, we're going to start working on the crash report. This
-    // operation needs to be mindful of the total walltime elapsed during handling. This isn't only
-    // to prevent hanging, but also because services capable of restarting after a crash experience
-    // crashes as probabalistic queue-holding events, and so crash handling represents dead time
-    // which makes the overall service increasingly incompetent at handling load.
-    let timeout_ms = config.timeout_ms;
-    let start_time = Instant::now(); // This is the time at which the signal was received
+    anyhow::ensure!(!receiver_config.is_null(), "No receiver config");
+    let receiver_config = unsafe { &*receiver_config };
 
     // Derive the faulting address from `sig_info`
     let faulting_address: Option<usize> =
@@ -540,54 +622,31 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
             None
         };
 
-    // During the execution of this signal handler, block ALL other signals, especially because we
-    // cannot control whether or not we run with SA_NODEFER (crashtracker might have been chained).
-    // The especially problematic signals are SIGCHLD and SIGPIPE, which are possibly delivered due
-    // to the execution of this handler.
-    // SaGuard ensures that signals are restored to their original state even if control flow is
-    // disrupted.
-    let _guard = SaGuard::<2>::new(&[signal::SIGCHLD, signal::SIGPIPE])?;
+    // Keep to a strict deadline, so set timeouts early.
+    let timeout_ms = config.timeout_ms;
+    let start_time = Instant::now(); // This is the time at which the signal was received
 
-    // Optionally, create the receiver.  This all hinges on whether or not the configuration has a
-    // non-null unix domain socket specified.  If it doesn't, then we need to check the receiver
-    // configuration.  If it does, then we just connect to the socket.
-    let unix_socket_path = config.unix_socket_path.clone().unwrap_or_default();
+    // Creating the receiver will either spawn a new process or merely attach to an existing async
+    // receiver
+    let receiver = make_receiver(receiver_config, config.unix_socket_path.clone())?;
 
-    let receiver = if !unix_socket_path.is_empty() {
-        receiver_from_socket(&unix_socket_path)?
-    } else {
-        let receiver_config = RECEIVER_CONFIG.load(SeqCst);
-        if receiver_config.is_null() {
-            return Err(anyhow::anyhow!("No receiver config"));
-        }
-        let receiver_config = unsafe { receiver_config.as_ref().context("receiver config")? };
-        make_receiver(receiver_config)?
-    };
-
-    // No matter how the receiver was created, attach to its stream
-    let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.receiver_uds) };
-
-    // Currently the emission of the crash report doesn't have a firm time guarantee
-    // In a future patch, the timeout parameter should be passed into the IPC loop here and
-    // checked periodically.
-    let res = emit_crashreport(
-        &mut unix_stream,
+    // Create the collector.  This will fork.
+    let collector = make_collector(
         config,
         config_str,
         metadata_string,
         signum,
         faulting_address,
-    );
+        &receiver,
+    )?;
 
-    let _ = unix_stream.flush();
-    unix_stream
-        .shutdown(std::net::Shutdown::Write)
-        .context("Could not shutdown writing on the stream")?;
+    // Now the watchdog (this process) can wait for the collector and receiver to finish.
+    // We wait on the collector first, since that gives the receiver a little bit of time
+    // to finish up if the collector had gotten stuck.
+    finish_watched_process(collector, start_time, timeout_ms);
+    finish_watched_process(receiver, start_time, timeout_ms);
 
-    // We're done. Wrap up our interaction with the receiver.
-    receiver_finish(receiver, start_time, timeout_ms);
-
-    res
+    Ok(())
 }
 
 /// Registers UNIX signal handlers to detect program crashes.

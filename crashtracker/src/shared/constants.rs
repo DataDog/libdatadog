@@ -21,3 +21,5 @@ pub const DD_CRASHTRACK_END_SPAN_IDS: &str = "DD_CRASHTRACK_END_SPAN_IDS";
 pub const DD_CRASHTRACK_END_STACKTRACE: &str = "DD_CRASHTRACK_END_STACKTRACE";
 pub const DD_CRASHTRACK_END_TRACE_IDS: &str = "DD_CRASHTRACK_END_TRACE_IDS";
 pub const DD_CRASHTRACK_DEFAULT_TIMEOUT_MS: u32 = 5_000;
+pub const DD_CRASHTRACK_MINIMUM_REAP_TIME_MS: u32 = 160; // 4ms per sched slice, give ~4x10 slices
+                                                         // for safety

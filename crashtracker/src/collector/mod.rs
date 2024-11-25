@@ -1,11 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
+mod alt_fork;
 mod api;
 mod counters;
 mod crash_handler;
 mod emitters;
-mod saguard;
 mod spans;
 
 pub use api::*;
