@@ -23,35 +23,39 @@ pub trait UriExt {
 }
 
 impl UriExt for Uri {
+    /// Encode the [path::Path] into a URI with the provided scheme. Since file
+    /// system paths are not valid "authority"s in URIs, the path is
+    /// hex-encoded.
     fn from_path<S, P>(scheme: S, path: P) -> http::Result<Uri>
     where
         http::uri::Scheme: TryFrom<S>,
         <http::uri::Scheme as TryFrom<S>>::Error: Into<http::Error>,
         P: AsRef<path::Path>,
     {
+        let path = path.as_ref();
         let hex_encoded_path = {
-            let path = path.as_ref();
+            // On Unix we can convert the Path's OsStr into &[u8] using a
+            // trait from the prelude. This is possible because OsStr on Unix
+            // are basically just byte strings anyway.
             #[cfg(unix)]
             {
                 use std::os::unix::prelude::*;
                 hex::encode(path.as_os_str().as_bytes())
             }
+
             #[cfg(not(unix))]
+            // But on other platforms, notably Windows, there is not an API
+            // for this. So we have to either convert it to UTF lossily, or
+            // panic, or handle in some other way the conversion.
+            // This chooses to panic because that's what the implementation in
+            // ddcommon did.
             {
-                hex::encode(path.to_string_lossy())
+                hex::encode(path.to_str().unwrap().as_bytes())
             }
         };
         Uri::builder()
             .scheme(scheme)
             .authority(hex_encoded_path)
-            .build()
-    }
-
-    #[cfg(not(unix))]
-    fn from_unix_path(path: &path::Path) -> http::Result<Uri> {
-        Uri::builder()
-            .scheme("unix")
-            .authority(path.to_string_lossy())
             .build()
     }
 }

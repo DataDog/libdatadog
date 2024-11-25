@@ -3,7 +3,7 @@
 
 use crate::exporter::Uri;
 use ddcommon_net::compat::Endpoint;
-use ddcommon_net::dep::{hex, http};
+use ddcommon_net::{dep::http, http::UriExt};
 use std::borrow::Cow;
 use std::path::Path;
 use std::str::FromStr;
@@ -61,16 +61,10 @@ impl EndpointExt for Endpoint {
 /// Creates a new Uri, with the `unix` scheme, and the path to the socket
 /// encoded as a hex string, to prevent special characters in the url authority
 pub fn try_socket_path_to_uri(path: &Path) -> http::Result<Uri> {
-    use std::os::unix::prelude::*;
-
-    let path = hex::encode(path.as_os_str().as_bytes());
-    Uri::builder()
-        .scheme("unix")
-        .authority(path)
-        .path_and_query("")
-        .build()
+    Uri::from_path("unix", path)
 }
 
+#[cfg(windows)]
 /// Windows Named Pipe
 /// https://docs.microsoft.com/en-us/windows/win32/ipc/named-pipes
 ///
@@ -82,10 +76,5 @@ pub fn try_socket_path_to_uri(path: &Path) -> http::Result<Uri> {
 /// Build a URI from a Path representing a named pipe
 /// `path` - named pipe path. ex: \\.\pipe\pipename
 pub fn try_named_pipe_path_to_uri(path: &Path) -> http::Result<Uri> {
-    let path = hex::encode(path.as_os_str().to_str().unwrap());
-    Uri::builder()
-        .scheme("windows")
-        .authority(path)
-        .path_and_query("")
-        .build()
+    Uri::from_path("windows", path)
 }
