@@ -8,12 +8,13 @@ use super::emitters::emit_crashreport;
 use super::saguard::SaGuard;
 use crate::crash_info::CrashtrackerMetadata;
 use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
+use crate::shared::constants::*;
 use anyhow::Context;
 use libc::{
     c_void, execve, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE,
     PROT_READ, PROT_WRITE, SIGSTKSZ,
 };
-use nix::poll::{poll, PollFd, PollFlags};
+use libc::{poll, pollfd, POLLHUP};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use nix::sys::socket;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
@@ -22,7 +23,7 @@ use std::ffi::CString;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::unix::{
-    io::{BorrowedFd, FromRawFd, IntoRawFd, RawFd},
+    io::{FromRawFd, IntoRawFd, RawFd},
     net::UnixStream,
 };
 use std::ptr;
@@ -228,20 +229,29 @@ fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout
 }
 
 fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
-    // Need to convert the RawFd into a BorrowedFd to satisfy the PollFd prototype
-    let target_fd = unsafe { BorrowedFd::borrow_raw(target_fd) };
-    let poll_fd = PollFd::new(&target_fd, PollFlags::POLLHUP);
+    let mut poll_fds = [pollfd {
+        fd: target_fd,
+        events: POLLHUP,
+        revents: 0,
+    }];
 
-    match poll(&mut [poll_fd], timeout_ms)? {
-        -1 => Err(anyhow::anyhow!("poll failed")),
-        0 => Ok(false),
-        _ => match poll_fd
-            .revents()
-            .ok_or_else(|| anyhow::anyhow!("No revents found"))?
-        {
-            revents if revents.contains(PollFlags::POLLHUP) => Ok(true),
-            _ => Err(anyhow::anyhow!("poll returned unexpected result")),
-        },
+    match unsafe { poll(poll_fds.as_mut_ptr(), 1, timeout_ms) } {
+        -1 => Err(anyhow::anyhow!(
+            "poll failed with errno: {}",
+            std::io::Error::last_os_error()
+        )),
+        0 => Ok(false), // Timeout occurred
+        _ => {
+            let revents = poll_fds[0].revents;
+            if revents & POLLHUP != 0 {
+                Ok(true) // POLLHUP detected
+            } else {
+                Err(anyhow::anyhow!(
+                    "poll returned unexpected result: revents = {}",
+                    revents
+                ))
+            }
+        }
     }
 }
 
@@ -484,7 +494,10 @@ fn receiver_finish(receiver: Receiver, start_time: Instant, timeout_ms: u32) {
         }
 
         let receiver_pid_as_pid = Pid::from_raw(receiver.receiver_pid);
-        let reaping_allowed_ms = timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32);
+        let reaping_allowed_ms = std::cmp::min(
+            timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32),
+            DD_CRASHTRACK_MINIMUM_REAP_TIME_MS,
+        );
 
         let _ = reap_child_non_blocking(receiver_pid_as_pid, reaping_allowed_ms);
     }
