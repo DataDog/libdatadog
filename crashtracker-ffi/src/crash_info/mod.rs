@@ -7,9 +7,11 @@ mod stackframe;
 pub use stackframe::*;
 mod stacktrace;
 pub use stacktrace::*;
+mod builder;
 pub mod to_inner;
+pub use builder::*;
 
-use crate::{Result};
+use crate::Result;
 use anyhow::Context;
 use ddcommon::Endpoint;
 use ddcommon_ffi::{slice::AsBytes, CharSlice, Slice, Timespec};

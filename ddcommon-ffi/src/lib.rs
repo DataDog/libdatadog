@@ -10,6 +10,7 @@ pub mod slice;
 pub mod string;
 pub mod tags;
 pub mod timespec;
+pub mod utils;
 pub mod vec;
 
 pub use error::*;

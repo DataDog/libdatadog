@@ -125,6 +125,17 @@ impl CrashInfoBuilder {
         Self::default()
     }
 
+    /// Inserts the given counter to the current set of counters in the builder.
+    pub fn with_counter(&mut self, name: String, value: i64) -> anyhow::Result<&mut Self> {
+        anyhow::ensure!(!name.is_empty(), "Empty counter name not allowed");
+        if let Some(ref mut counters) = &mut self.counters {
+            counters.insert(name, value);
+        } else {
+            self.counters = Some(HashMap::from([(name, value)]));
+        }
+        self
+    }
+
     pub fn with_counters(&mut self, counters: HashMap<String, i64>) -> &mut Self {
         self.counters = Some(counters);
         self
@@ -135,6 +146,17 @@ impl CrashInfoBuilder {
         self
     }
 
+    /// Appends the given file to the current set of files in the builder.
+    pub fn with_file(&mut self, filename: String, contents: Vec<String>) -> &mut Self {
+        if let Some(ref mut files) = &mut self.files {
+            files.insert(filename, contents);
+        } else {
+            self.files = Some(HashMap::from([(filename, contents)]));
+        }
+        self
+    }
+
+    /// Sets the current set of files in the builder.
     pub fn with_files(&mut self, files: HashMap<String, Vec<String>>) -> &mut Self {
         self.files = Some(files);
         self

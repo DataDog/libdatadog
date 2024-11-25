@@ -80,7 +80,7 @@ pub trait AsBytes<'a> {
         } else {
             Ok(Some(s))
         }
-    } 
+    }
 
     #[inline]
     fn to_utf8_lossy(&self) -> Cow<'a, str> {

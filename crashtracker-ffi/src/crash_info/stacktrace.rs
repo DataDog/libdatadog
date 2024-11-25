@@ -6,6 +6,7 @@ use crate::Result;
 use crate::StackFrame;
 use ::function_name::named;
 use anyhow::Context;
+use ddcommon_ffi::wrap_with_ffi_result;
 use ddcommon_ffi::Error;
 
 /// Represents a StackTrace. Do not access its member for any reason, only use
@@ -67,17 +68,6 @@ pub enum StackTraceNewResult {
 //                                              FFI API                                           //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// Wraps a C-FFI function in standard form
-/// Expects the function to return a result type that implements into
-/// and to be decorated with #[named].
-macro_rules! wrap {
-    ($body:expr) => {
-        (|| $body)()
-            .context(concat!(function_name!(), " failed"))
-            .into()
-    };
-}
-
 /// Create a new StackTrace, and returns an opaque reference to it.
 /// # Safety
 /// No safety issues.
@@ -113,7 +103,7 @@ pub unsafe extern "C" fn ddog_crasht_StackTrace_push_frame(
     mut trace: *mut StackTrace,
     frame: *mut StackFrame,
 ) -> Result {
-    wrap!({
+    wrap_with_ffi_result!({
         let trace = trace.to_inner_mut()?;
         let frame = *frame
             .as_mut()

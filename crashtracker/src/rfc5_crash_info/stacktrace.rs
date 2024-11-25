@@ -160,6 +160,12 @@ pub struct StackFrame {
     pub line: Option<u32>,
 }
 
+impl StackFrame {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::upper_case_acronyms)]
 #[repr(C)]
