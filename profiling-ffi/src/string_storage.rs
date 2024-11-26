@@ -85,6 +85,10 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
     storage: ManagedStringStorage,
     id: ManagedStringId,
 ) -> MaybeError {
+    if id.value == 0 {
+        return MaybeError::None;
+    }
+
     let result = (|| {
         let storage = get_inner_string_storage(storage, true)?;
         storage
