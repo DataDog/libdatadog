@@ -11,7 +11,7 @@ use crate::tracer_payload::TracerPayloadCollection;
 use anyhow::{anyhow, Context};
 use bytes::Bytes;
 use datadog_trace_protobuf::pb::{AgentPayload, TracerPayload};
-use ddcommon::{connector, Endpoint, HttpRequestBuilder};
+use ddcommon_net1::{connector, Endpoint, HttpRequestBuilder};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hyper::header::HeaderValue;
@@ -86,7 +86,7 @@ pub(crate) enum RequestResult {
 /// };
 /// use datadog_trace_utils::trace_utils::TracerHeaderTags;
 /// use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
-/// use ddcommon::Endpoint;
+/// use ddcommon_net1::Endpoint;
 ///
 /// #[cfg_attr(miri, ignore)]
 /// async fn update_send_results_example() {
@@ -506,7 +506,7 @@ mod tests {
     use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, RootSpanTags};
     use crate::tracer_header_tags::TracerHeaderTags;
     use datadog_trace_protobuf::pb::Span;
-    use ddcommon::Endpoint;
+    use ddcommon_net1::Endpoint;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::collections::HashMap;

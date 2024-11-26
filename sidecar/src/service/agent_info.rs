@@ -15,7 +15,7 @@ use base64::Engine;
 use data_pipeline::agent_info::schema::AgentInfoStruct;
 use data_pipeline::agent_info::{fetch_info_with_state, FetchInfoStatus};
 use datadog_ipc::platform::NamedShmHandle;
-use ddcommon::Endpoint;
+use ddcommon_net1::Endpoint;
 use futures::future::Shared;
 use futures::FutureExt;
 use http::uri::PathAndQuery;
@@ -197,6 +197,7 @@ impl AgentInfoReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ddcommon_net1::Endpoint;
     use httpmock::prelude::*;
 
     const TEST_INFO: &str = r#"{

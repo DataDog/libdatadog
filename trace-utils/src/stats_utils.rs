@@ -8,8 +8,7 @@ use log::debug;
 use std::io::Write;
 
 use datadog_trace_protobuf::pb;
-use ddcommon::connector::Connector;
-use ddcommon::Endpoint;
+use ddcommon_net1::{connector::Connector, Endpoint};
 
 pub async fn get_stats_from_request_body(body: Body) -> anyhow::Result<pb::ClientStatsPayload> {
     let buffer = body.collect().await?.aggregate();

@@ -14,7 +14,7 @@ mod test_utils;
 mod unknown_value;
 
 pub use builder::*;
-use ddcommon::Endpoint;
+use ddcommon_net1::{decode_uri_path_in_authority, Endpoint};
 pub use error_data::*;
 pub use metadata::Metadata;
 pub use os_info::*;
@@ -167,7 +167,7 @@ impl CrashInfo {
         // If we're debugging to a file, dump the actual crashinfo into a json
         if let Some(endpoint) = endpoint {
             if Some("file") == endpoint.url.scheme_str() {
-                let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
+                let path = decode_uri_path_in_authority(&endpoint.url)
                     .context("crash output file path was not correctly formatted")?;
                 self.to_file(&path)?;
             }

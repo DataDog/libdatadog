@@ -3,8 +3,8 @@
 
 pub use macros::*;
 mod macros {
-    use ddcommon::Endpoint;
     use ddcommon_ffi as ffi;
+    use ddcommon_net1::Endpoint;
     use ddtelemetry::worker::TelemetryWorkerBuilder;
     use ffi::slice::AsBytes;
     #[no_mangle]

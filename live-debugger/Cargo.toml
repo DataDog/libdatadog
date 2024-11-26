@@ -7,6 +7,7 @@ version = "0.0.1"
 [dependencies]
 anyhow = "1.0"
 ddcommon = { path = "../ddcommon" }
+ddcommon-net1 = { path = "../ddcommon-net1" }
 lazy_static = "1.4"
 hyper = { version = "0.14", features = ["client", "backports", "deprecated"] }
 regex = "1.9.3"

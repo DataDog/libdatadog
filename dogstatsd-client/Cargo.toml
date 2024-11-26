@@ -11,6 +11,7 @@ bench = false
 
 [dependencies]
 ddcommon = { path = "../ddcommon" }
+ddcommon-net1 = { path = "../ddcommon-net1" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-normalization = { path = "../trace-normalization" }
 datadog-ddsketch = { path = "../ddsketch"}

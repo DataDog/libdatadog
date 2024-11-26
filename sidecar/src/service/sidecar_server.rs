@@ -18,7 +18,7 @@ use datadog_ipc::transport::Transport;
 use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::tracer_payload;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
-use ddcommon::Endpoint;
+use ddcommon_net1::Endpoint;
 use ddtelemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerStats,
 };

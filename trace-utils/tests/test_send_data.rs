@@ -8,7 +8,7 @@ mod tracing_integration_tests {
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use datadog_trace_utils::trace_utils::TracerHeaderTags;
     use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
-    use ddcommon::Endpoint;
+    use ddcommon_net1::Endpoint;
     use tinybytes::BytesString;
 
     #[cfg_attr(miri, ignore)]

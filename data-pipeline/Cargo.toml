@@ -23,6 +23,7 @@ either = "1.13.0"
 tokio = { version = "1.23", features = ["rt", "test-util", "time"], default-features = false }
 
 ddcommon = { path = "../ddcommon" }
+ddcommon-net1 = { path = "../ddcommon-net1" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils" }
 datadog-trace-normalization = { path = "../trace-normalization" }

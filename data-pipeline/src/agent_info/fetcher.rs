@@ -6,7 +6,7 @@
 use super::{schema::AgentInfo, AgentInfoArc};
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwapOption;
-use ddcommon::{connector::Connector, Endpoint};
+use ddcommon_net1::{connector::Connector, Endpoint};
 use hyper::body::HttpBody;
 use hyper::{self, body::Buf, header::HeaderName};
 use log::{error, info};
@@ -69,7 +69,7 @@ pub async fn fetch_info_with_state(
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
-/// let endpoint = ddcommon::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
+/// let endpoint = ddcommon_net1::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Fetch the info
 /// let agent_info = data_pipeline::agent_info::fetch_info(&endpoint)
 ///     .await
@@ -98,7 +98,7 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
-/// let endpoint = ddcommon::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
+/// let endpoint = ddcommon_net1::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Create the fetcher
 /// let fetcher = data_pipeline::agent_info::AgentInfoFetcher::new(
 ///     endpoint,
@@ -174,6 +174,7 @@ impl AgentInfoFetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ddcommon_net1::Endpoint;
     use httpmock::prelude::*;
 
     const TEST_INFO: &str = r#"{

@@ -20,7 +20,8 @@ mod unix {
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerMetadata,
         CrashtrackerReceiverConfig,
     };
-    use ddcommon::{tag, Endpoint};
+    use ddcommon::tag;
+    use ddcommon_net1::Endpoint;
 
     const TEST_COLLECTOR_TIMEOUT_MS: u32 = 10_000;
 

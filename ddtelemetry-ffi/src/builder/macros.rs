@@ -9,8 +9,8 @@
 //   sed 's/::alloc::fmt::format/std::fmt::format/' >> $EXPANDED && cargo fmt
 // ```
 
-use ddcommon::Endpoint;
 use ddcommon_ffi as ffi;
+use ddcommon_net1::Endpoint;
 use ddtelemetry::worker::TelemetryWorkerBuilder;
 use ffi::slice::AsBytes;
 

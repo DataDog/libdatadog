@@ -10,6 +10,7 @@ test = []
 [dependencies]
 anyhow = { version = "1.0" }
 ddcommon = { path = "../ddcommon" }
+ddcommon-net1 = { path = "../ddcommon-net1" }
 datadog-dynamic-configuration = { path = "../dynamic-configuration" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-live-debugger = { path = "../live-debugger" }

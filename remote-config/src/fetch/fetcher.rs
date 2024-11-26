@@ -11,7 +11,7 @@ use datadog_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
     TargetFileHash, TargetFileMeta,
 };
-use ddcommon::{connector, Endpoint};
+use ddcommon_net1::{connector, Endpoint};
 use http::uri::Scheme;
 use hyper::body::HttpBody;
 use hyper::http::uri::PathAndQuery;
@@ -308,7 +308,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
             .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,
-                ddcommon::header::APPLICATION_JSON,
+                ddcommon_net1::header::APPLICATION_JSON,
             )
             .body(serde_json::to_string(&config_req)?)?;
         let response = tokio::time::timeout(

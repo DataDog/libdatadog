@@ -17,8 +17,9 @@ use datadog_trace_utils::span_v04::{
 use datadog_trace_utils::trace_utils::{self, SendData, TracerHeaderTags};
 use datadog_trace_utils::tracer_payload::TraceCollection;
 use datadog_trace_utils::{msgpack_decoder, tracer_payload};
+use ddcommon::tag;
 use ddcommon::tag::Tag;
-use ddcommon::{connector, tag, Endpoint};
+use ddcommon_net1::{connector, Endpoint};
 use dogstatsd_client::{new_flusher, Client, DogStatsDAction};
 use either::Either;
 use hyper::body::HttpBody;

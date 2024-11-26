@@ -8,7 +8,7 @@ use base64::Engine;
 use datadog_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, File,
 };
-use ddcommon::Endpoint;
+use ddcommon_net1::Endpoint;
 use http::{Request, Response};
 use hyper::body::HttpBody;
 use hyper::service::{make_service_fn, service_fn};

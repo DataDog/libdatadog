@@ -3,9 +3,8 @@
 
 use crate::debugger_defs::{DebuggerData, DebuggerPayload};
 use constcat::concat;
-use ddcommon::connector::Connector;
 use ddcommon::tag::Tag;
-use ddcommon::Endpoint;
+use ddcommon_net1::{connector::Connector, Endpoint};
 use hyper::body::{Bytes, HttpBody, Sender};
 use hyper::client::ResponseFuture;
 use hyper::http::uri::PathAndQuery;
