@@ -39,6 +39,7 @@ ddcommon = { path = "../ddcommon"}
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
 futures = { version = "0.3", default-features = false }
+libc = "0.2"
 serde_json = { version = "1.0" }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
 tokio-util = "0.7.1"

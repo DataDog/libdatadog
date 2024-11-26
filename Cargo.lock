@@ -1522,6 +1522,7 @@ dependencies = [
  "ddtelemetry-ffi",
  "futures",
  "http-body-util",
+ "libc",
  "serde_json",
  "symbolizer-ffi",
  "tokio-util",
