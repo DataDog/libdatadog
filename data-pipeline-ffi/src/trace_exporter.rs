@@ -111,11 +111,13 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
     trace_count: usize,
 ) -> MaybeError {
     // TODO - handle errors - https://datadoghq.atlassian.net/browse/APMSP-1095
+
+    // necessary that the trace be static for the life of the handle. Memory should be freed when
+    // the handle is dropped.
     let static_trace: ByteSlice<'static> = std::mem::transmute(trace);
-    let tinybytes_trace = tinybytes::Bytes::from(static_trace);
 
     handle
-        .send(tinybytes_trace, trace_count)
+        .send(static_trace, trace_count)
         .unwrap_or(String::from(""));
     MaybeError::None
 }

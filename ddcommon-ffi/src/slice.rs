@@ -60,7 +60,6 @@ unsafe impl Send for ByteSlice<'static> {}
 unsafe impl Sync for ByteSlice<'static> {}
 impl UnderlyingBytes for ByteSlice<'static> {}
 
-
 impl AsRef<[u8]> for ByteSlice<'static> {
     #[inline]
     fn as_ref(&self) -> &[u8] {
