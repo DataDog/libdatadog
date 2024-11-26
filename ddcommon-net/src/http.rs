@@ -176,11 +176,16 @@ where
 {
     // This _should_ be a redundant check, caller should only call this if
     // they expect it's an http connection to begin with.
-    if request.uri().scheme_str() != Some("http") {
-        return Err(Error::Io(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "URI scheme must be http",
-        )));
+    let scheme_str = request.uri().scheme_str();
+    if scheme_str != Some("http") {
+        let base = "URI scheme must be http";
+        let msg = if let Some(scheme) = scheme_str {
+            format!("{base}, given {scheme}")
+        } else {
+            format!("{base}, empty scheme found")
+        };
+        let err = io::Error::new(io::ErrorKind::InvalidInput, msg);
+        return Err(Error::from(err));
     }
 
     let authority = request
@@ -207,11 +212,16 @@ where
 
     // This _should_ be a redundant check, caller should only call this if
     // they expect it's an https connection to begin with.
-    if uri.scheme_str() != Some("https") {
-        return Err(Error::Io(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "URI scheme must be https",
-        )));
+    let scheme_str = request.uri().scheme_str();
+    if scheme_str != Some("https") {
+        let base = "URI scheme must be https";
+        let msg = if let Some(scheme) = scheme_str {
+            format!("{base}, given {scheme}")
+        } else {
+            format!("{base}, empty scheme found")
+        };
+        let err = io::Error::new(io::ErrorKind::InvalidInput, msg);
+        return Err(Error::from(err));
     }
 
     let server_name = ServerName::try_from(uri.to_string())?;
@@ -258,11 +268,15 @@ where
 pub fn parse_path_from_uri(uri: &Uri) -> io::Result<path::PathBuf> {
     // This _should_ be a redundant check, caller should only call this if
     // they expect it's a unix domain socket or windows named pipe.
-    if uri.scheme_str() != Some("unix") || uri.scheme_str() != Some("windows") {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "URI scheme must be unix or windows",
-        ));
+    let scheme_str = uri.scheme_str();
+    if scheme_str != Some("unix") || scheme_str != Some("windows") {
+        let base = "URI scheme must be unix or windows";
+        let msg = if let Some(scheme) = scheme_str {
+            format!("{base}, given {scheme}")
+        } else {
+            format!("{base}, empty scheme found")
+        };
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, msg));
     }
 
     if let Some(host) = uri.host() {
