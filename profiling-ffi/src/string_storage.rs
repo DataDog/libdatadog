@@ -1,3 +1,6 @@
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use anyhow::Context;
 use datadog_profiling::collections::string_storage::ManagedStringStorage as InternalManagedStringStorage;
 use ddcommon_ffi::{CharSlice, Error, MaybeError, StringWrapper};
