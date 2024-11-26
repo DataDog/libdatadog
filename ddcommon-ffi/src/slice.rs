@@ -313,4 +313,44 @@ mod tests {
         };
         _ = dangerous.as_slice();
     }
+
+    #[test]
+    fn test_byte_slice_as_ref() {
+        let raw: &[u8] = b"_ZN9wikipedia7article6formatE";
+        let slice: ByteSlice = ByteSlice::from(raw);
+        let as_ref: &[u8] = slice.as_ref();
+
+        assert_eq!(as_ref, raw);
+    }
+
+    #[test]
+    fn test_byte_slice_as_ref_empty() {
+        let raw: &[u8] = b"";
+        let slice: ByteSlice = ByteSlice::from(raw);
+        let as_ref: &[u8] = slice.as_ref();
+
+        assert_eq!(as_ref, raw);
+        assert_eq!(as_ref.len(), 0);
+    }
+
+    #[test]
+    fn test_byte_slice_underlying_bytes() {
+        let raw: &[u8] = b"_ZN9wikipedia7article6formatE";
+        let slice: ByteSlice = ByteSlice::from(raw);
+        let static_slice: ByteSlice<'static> = unsafe { std::mem::transmute(slice) };
+        let bytes = tinybytes::Bytes::from(static_slice);
+
+        assert_eq!(bytes.as_ref(), raw);
+    }
+
+    #[test]
+    fn test_byte_slice_underlying_bytes_empty() {
+        let raw: &[u8] = b"";
+        let slice: ByteSlice = ByteSlice::from(raw);
+        let static_slice: ByteSlice<'static> = unsafe { std::mem::transmute(slice) };
+        let bytes = tinybytes::Bytes::from(static_slice);
+
+        assert!(bytes.is_empty());
+        assert_eq!(bytes.as_ref(), raw);
+    }
 }
