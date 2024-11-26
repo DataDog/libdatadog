@@ -171,6 +171,10 @@ impl ManagedStringStorage {
     }
 
     pub fn get_seq_num(&self, id: u32, profile_strings: &mut StringTable) -> StringId {
+        if id == 0 {
+            panic!("For performance reasons, get_set_num should not be called with id == 0. Please hardcode a fast path check in the caller to avoid this call")
+        }
+
         let data = self.get_data(id);
 
         let profile_strings_pointer = ptr::addr_of!(*profile_strings);
