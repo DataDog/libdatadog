@@ -104,11 +104,10 @@ where
 {
     runtime.block_on(async move {
         tokio::select! {
-            result = async {
-                Ok(match timeout {
-                    Some(t) => tokio::time::timeout(t, send_and_infer_connector(request)).await?,
-                    None => send_and_infer_connector(request).await,
-                }?)}
+            result = async { match timeout {
+                Some(t) => tokio::time::timeout(t, send_and_infer_connector(request)).await?,
+                None => send_and_infer_connector(request).await,
+            }}
             => result,
             _ = async { match cancel {
                     Some(token) => token.cancelled().await,
@@ -150,7 +149,7 @@ where
     B::Data: Send,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    let path = parse_path_from_uri(&request.uri())?;
+    let path = parse_path_from_uri(request.uri())?;
     let unix_stream = tokio::net::UnixStream::connect(path).await?;
     let hyper_wrapper = TokioIo::new(unix_stream);
 
@@ -260,7 +259,7 @@ where
     // The docs say we need to poll this to drive it to completion, but they
     // never directly use the return type or anything:
     // https://hyper.rs/guides/1/client/basic/
-    let _todo = tokio::spawn(async move { connection.await });
+    let _todo = tokio::spawn(connection);
 
     sender.send_request(request).await
 }
