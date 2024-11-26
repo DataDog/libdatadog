@@ -1,3 +1,6 @@
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
