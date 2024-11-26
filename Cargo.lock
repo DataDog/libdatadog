@@ -1832,7 +1832,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-net"
-version = "14.1.0"
+version = "14.2.0"
 dependencies = [
  "ddcommon",
  "hex",
