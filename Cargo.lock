@@ -1524,6 +1524,8 @@ dependencies = [
  "http-body-util",
  "libc",
  "serde_json",
+ "symbolic-common",
+ "symbolic-demangle",
  "symbolizer-ffi",
  "tokio-util",
 ]
