@@ -270,10 +270,7 @@ mod tests {
     }
 
     fn get_current_time() -> i64 {
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as i64
+        SystemTime::UNIX_EPOCH.elapsed().unwrap().as_nanos() as i64
     }
 
     #[test]

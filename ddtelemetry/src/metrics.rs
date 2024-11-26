@@ -14,10 +14,9 @@ use serde::{Deserialize, Serialize};
 use crate::data::{self, metrics};
 
 fn unix_timestamp_now() -> u64 {
-    time::SystemTime::now()
-        .duration_since(time::SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    time::SystemTime::UNIX_EPOCH
+        .elapsed()
+        .map_or(0, |d| d.as_secs())
 }
 
 #[derive(Debug)]

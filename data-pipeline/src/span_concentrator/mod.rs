@@ -14,10 +14,8 @@ mod aggregation;
 /// Return a Duration between t and the unix epoch
 /// If t is before the unix epoch return 0
 fn system_time_to_unix_duration(t: SystemTime) -> Duration {
-    match t.duration_since(time::UNIX_EPOCH) {
-        Err(_) => Duration::from_nanos(0),
-        Ok(d) => d,
-    }
+    t.duration_since(time::UNIX_EPOCH)
+        .unwrap_or(Duration::from_nanos(0))
 }
 
 /// Align a timestamp on the start of a bucket
