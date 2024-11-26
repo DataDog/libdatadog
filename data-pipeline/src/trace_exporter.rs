@@ -261,11 +261,7 @@ impl TraceExporter {
         self.check_agent_info();
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
-            TraceExporterInputFormat::V04 => {
-                self.send_deser_ser(tinybytes::Bytes::from(data))
-                // TODO: APMSP-1582 - Refactor data-pipeline-ffi so we can leverage a type that
-                // implements tinybytes::UnderlyingBytes trait to avoid copying
-            }
+            TraceExporterInputFormat::V04 => self.send_deser_ser(tinybytes::Bytes::from(data)),
         }
     }
 
