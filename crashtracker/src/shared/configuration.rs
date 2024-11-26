@@ -49,9 +49,10 @@ impl CrashtrackerReceiverConfig {
         stdout_filename: Option<String>,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
-            stderr_filename.is_some() && stderr_filename != stdout_filename,
-            "Can't give the same filename for stderr
-        and stdout, they will conflict with each other"
+            stderr_filename.is_none() && stdout_filename.is_none()
+                || stderr_filename != stdout_filename,
+            "Can't give the same filename for stderr ({stderr_filename:?})
+        and stdout ({stdout_filename:?}), they will conflict with each other"
         );
 
         Ok(Self {
@@ -97,5 +98,92 @@ impl CrashtrackerConfiguration {
             timeout_ms,
             unix_socket_path,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CrashtrackerReceiverConfig;
+
+    #[test]
+    fn test_receiver_config_new() -> anyhow::Result<()> {
+        let args = vec!["foo".to_string()];
+        let env = vec![
+            ("bar".to_string(), "baz".to_string()),
+            ("apple".to_string(), "banana".to_string()),
+        ];
+        let path_to_receiver_binary = "/tmp/crashtracker-receiver-binary".to_string();
+        let stderr_filename = None;
+        let stdout_filename = None;
+
+        let config = CrashtrackerReceiverConfig::new(
+            args.clone(),
+            env.clone(),
+            path_to_receiver_binary.clone(),
+            stderr_filename.clone(),
+            stdout_filename.clone(),
+        )?;
+        assert_eq!(config.args, args);
+        assert_eq!(config.env, env);
+        assert_eq!(config.path_to_receiver_binary, path_to_receiver_binary);
+        assert_eq!(config.stderr_filename, stderr_filename);
+        assert_eq!(config.stdout_filename, stdout_filename);
+
+        let stderr_filename = None;
+        let stdout_filename = Some("/tmp/stdout.txt".to_string());
+        let config = CrashtrackerReceiverConfig::new(
+            args.clone(),
+            env.clone(),
+            path_to_receiver_binary.clone(),
+            stderr_filename.clone(),
+            stdout_filename.clone(),
+        )?;
+        assert_eq!(config.args, args);
+        assert_eq!(config.env, env);
+        assert_eq!(config.path_to_receiver_binary, path_to_receiver_binary);
+        assert_eq!(config.stderr_filename, stderr_filename);
+        assert_eq!(config.stdout_filename, stdout_filename);
+
+        let stderr_filename = Some("/tmp/stderr.txt".to_string());
+        let stdout_filename = None;
+        let config = CrashtrackerReceiverConfig::new(
+            args.clone(),
+            env.clone(),
+            path_to_receiver_binary.clone(),
+            stderr_filename.clone(),
+            stdout_filename.clone(),
+        )?;
+        assert_eq!(config.args, args);
+        assert_eq!(config.env, env);
+        assert_eq!(config.path_to_receiver_binary, path_to_receiver_binary);
+        assert_eq!(config.stderr_filename, stderr_filename);
+        assert_eq!(config.stdout_filename, stdout_filename);
+
+        let stderr_filename = Some("/tmp/stderr.txt".to_string());
+        let stdout_filename = Some("/tmp/stdout.txt".to_string());
+        let config = CrashtrackerReceiverConfig::new(
+            args.clone(),
+            env.clone(),
+            path_to_receiver_binary.clone(),
+            stderr_filename.clone(),
+            stdout_filename.clone(),
+        )?;
+        assert_eq!(config.args, args);
+        assert_eq!(config.env, env);
+        assert_eq!(config.path_to_receiver_binary, path_to_receiver_binary);
+        assert_eq!(config.stderr_filename, stderr_filename);
+        assert_eq!(config.stdout_filename, stdout_filename);
+
+        let stderr_filename = Some("/tmp/shared.txt".to_string());
+        let stdout_filename = Some("/tmp/shared.txt".to_string());
+        CrashtrackerReceiverConfig::new(
+            args.clone(),
+            env.clone(),
+            path_to_receiver_binary.clone(),
+            stderr_filename.clone(),
+            stdout_filename.clone(),
+        )
+        .unwrap_err();
+        Ok(())
     }
 }
