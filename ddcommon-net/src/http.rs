@@ -163,7 +163,7 @@ where
     B::Data: Send,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    let _path = parse_path_from_uri(&request.uri())?;
+    let _path = parse_path_from_uri(request.uri())?;
     todo!("re-implement named pipes on Windows")
 }
 
