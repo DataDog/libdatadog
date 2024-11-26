@@ -11,7 +11,7 @@ pub struct ManagedStringId {
 
 #[repr(C)]
 pub struct ManagedStringStorage {
-    // This may be null, but if not it will point to a valid Profile.
+    // This may be null, but if not it will point to a valid InternalManagedStringStorage.
     inner: *const c_void, /* Actually *RwLock<InternalManagedStringStorage> but cbindgen doesn't
                            * opaque RwLock */
 }
