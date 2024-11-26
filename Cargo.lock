@@ -1324,11 +1324,8 @@ name = "data-pipeline-ffi"
 version = "14.3.1"
 dependencies = [
  "build_common",
- "bytes",
  "data-pipeline",
  "ddcommon-ffi",
- "libc",
- "tinybytes",
 ]
 
 [[package]]
