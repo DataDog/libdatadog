@@ -4,10 +4,9 @@
 use crate::Bytes;
 #[cfg(feature = "serde")]
 use serde::ser::{Serialize, Serializer};
-use std::borrow::Borrow;
-use std::str::Utf8Error;
+use std::{borrow::Borrow, hash, str::Utf8Error};
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BytesString {
     bytes: Bytes,
 }
@@ -122,6 +121,14 @@ impl Default for BytesString {
 impl Borrow<str> for BytesString {
     fn borrow(&self) -> &str {
         self.as_str()
+    }
+}
+
+// We can't derive Hash from Bytes as [u8] and str do not provide the same hash
+impl hash::Hash for BytesString {
+    #[inline]
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
     }
 }
 
