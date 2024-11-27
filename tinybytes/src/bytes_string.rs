@@ -122,6 +122,26 @@ impl Borrow<str> for BytesString {
     }
 }
 
+impl AsRef<str> for BytesString {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl From<String> for BytesString {
+    fn from(value: String) -> Self {
+        // SAFETY: This is safe as a String is always a valid UTF-8 slice.
+        unsafe { Self::from_bytes_unchecked(Bytes::from_underlying(value)) }
+    }
+}
+
+impl From<&'static str> for BytesString {
+    fn from(value: &'static str) -> Self {
+        // SAFETY: This is safe as a str is always a valid UTF-8 slice.
+        unsafe { Self::from_bytes_unchecked(Bytes::from_static(value.as_bytes())) }
+    }
+}
+
 // We can't derive Hash from Bytes as [u8] and str do not provide the same hash
 impl hash::Hash for BytesString {
     #[inline]
