@@ -47,6 +47,7 @@ impl TraceChunkProcessor for ChunkProcessor {
         for span in chunk.spans.iter_mut() {
             trace_utils::enrich_span_with_mini_agent_metadata(span, &self.mini_agent_metadata);
             trace_utils::enrich_span_with_azure_function_metadata(span);
+            trace_utils::enrich_span_with_google_cloud_function_metadata(span, &self.config.env_type);
             obfuscate_span(span, &self.config.obfuscation_config);
         }
     }
