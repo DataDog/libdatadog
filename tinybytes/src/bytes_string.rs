@@ -153,6 +153,7 @@ impl hash::Hash for BytesString {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::hash::{DefaultHasher, Hash, Hasher};
 
     #[test]
     fn test_from_slice() {
@@ -214,5 +215,31 @@ mod tests {
         let bytes_string = BytesString::from_slice(b"borrow").unwrap();
         let borrowed: &str = bytes_string.borrow();
         assert_eq!(borrowed, "borrow");
+    }
+
+    #[test]
+    fn from_string() {
+        let string = String::from("hello");
+        let bytes_string = BytesString::from(string);
+        assert_eq!(bytes_string.as_str(), "hello")
+    }
+
+    #[test]
+    fn from_static_str() {
+        let static_str = "hello";
+        let bytes_string = BytesString::from(static_str);
+        assert_eq!(bytes_string.as_str(), "hello")
+    }
+
+    fn calculate_hash<T: Hash>(t: &T) -> u64 {
+        let mut s = DefaultHasher::new();
+        t.hash(&mut s);
+        s.finish()
+    }
+
+    #[test]
+    fn hash() {
+        let bytes_string = BytesString::from_slice(b"test hash").unwrap();
+        assert_eq!(calculate_hash(&bytes_string), calculate_hash(&"test hash"));
     }
 }
