@@ -1326,6 +1326,7 @@ dependencies = [
  "build_common",
  "data-pipeline",
  "ddcommon-ffi",
+ "tinybytes",
 ]
 
 [[package]]
@@ -1833,7 +1834,6 @@ dependencies = [
  "ddcommon",
  "hyper 0.14.31",
  "serde",
- "tinybytes",
 ]
 
 [[package]]
