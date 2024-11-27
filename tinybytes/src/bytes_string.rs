@@ -39,9 +39,9 @@ impl BytesString {
     /// # Errors
     ///
     /// Returns a `Utf8Error` if the bytes are not valid UTF-8.
-    pub fn from_slice(slice: &[u8]) -> Result<BytesString, Utf8Error> {
+    pub fn from_slice(slice: &[u8]) -> Result<Self, Utf8Error> {
         std::str::from_utf8(slice)?;
-        Ok(BytesString {
+        Ok(Self {
             bytes: Bytes::copy_from_slice(slice),
         })
     }
@@ -63,9 +63,9 @@ impl BytesString {
     /// # Errors
     ///
     /// Returns a `Utf8Error` if the bytes are not valid UTF-8.
-    pub fn from_bytes(bytes: Bytes) -> Result<BytesString, Utf8Error> {
+    pub fn from_bytes(bytes: Bytes) -> Result<Self, Utf8Error> {
         std::str::from_utf8(&bytes)?;
-        Ok(BytesString { bytes })
+        Ok(Self { bytes })
     }
 
     /// Creates a `BytesString` from a string slice within the given buffer.
@@ -74,12 +74,10 @@ impl BytesString {
     ///
     /// * `bytes` - A `tinybytes::Bytes` instance that will be converted into a `BytesString`.
     /// * `slice` - The string slice pointing into the given bytes that will form the `BytesString`.
-    pub fn from_bytes_slice(bytes: &Bytes, slice: &str) -> BytesString {
+    pub fn from_bytes_slice(bytes: &Bytes, slice: &str) -> Self {
         // SAFETY: This is safe as a str slice is definitely a valid UTF-8 slice.
         unsafe {
-            BytesString::from_bytes_unchecked(
-                bytes.slice_ref(slice.as_bytes()).expect("Invalid slice"),
-            )
+            Self::from_bytes_unchecked(bytes.slice_ref(slice.as_bytes()).expect("Invalid slice"))
         }
     }
 
@@ -96,8 +94,8 @@ impl BytesString {
     ///
     /// This function is unsafe because it assumes the bytes are valid UTF-8. If the bytes are not
     /// valid UTF-8, the behavior is undefined.
-    pub unsafe fn from_bytes_unchecked(bytes: Bytes) -> BytesString {
-        BytesString { bytes }
+    pub unsafe fn from_bytes_unchecked(bytes: Bytes) -> Self {
+        Self { bytes }
     }
 
     /// Returns the string slice representation of the `BytesString` (without validating the bytes).
@@ -112,7 +110,7 @@ impl BytesString {
 
 impl Default for BytesString {
     fn default() -> Self {
-        BytesString {
+        Self {
             bytes: Bytes::empty(),
         }
     }
