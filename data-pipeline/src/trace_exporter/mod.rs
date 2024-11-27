@@ -1,6 +1,9 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+pub mod agent_response;
+pub mod error;
 use crate::agent_info::{AgentInfoArc, AgentInfoFetcher};
+use crate::trace_exporter::error::{RequestError, TraceExporterError};
 use crate::{
     health_metrics, health_metrics::HealthMetric, span_concentrator::SpanConcentrator,
     stats_exporter,
@@ -23,6 +26,8 @@ use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr, time};
 use tokio::{runtime::Runtime, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
+
+use self::agent_response::{AgentResponse, Rates};
 
 const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] = ["client", "server", "producer", "consumer"];
 const STATS_ENDPOINT: &str = "/v0.6/stats";
@@ -193,6 +198,7 @@ impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
     }
 }
 
+#[derive(Debug)]
 enum StatsComputationStatus {
     /// Client-side stats has been disabled by the tracer
     Disabled,
@@ -227,13 +233,13 @@ enum StatsComputationStatus {
 /// another task to send stats when a time bucket expire. When this feature is enabled the
 /// TraceExporter drops all spans that may not be sampled by the agent.
 #[allow(missing_docs)]
+#[derive(Debug)]
 pub struct TraceExporter {
     endpoint: Endpoint,
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
-    _response_callback: Option<Box<dyn ResponseCallback>>,
     runtime: Runtime,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
@@ -253,16 +259,22 @@ impl TraceExporter {
 
     /// Send msgpack serialized traces to the agent
     #[allow(missing_docs)]
-    pub fn send(&self, data: tinybytes::Bytes, trace_count: usize) -> Result<String, String> {
+    pub fn send(&self, data: tinybytes::Bytes, trace_count: usize) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
             TraceExporterInputFormat::V04 => self.send_deser_ser(data),
         }
+        .and_then(|res| {
+            let rates = res.parse::<Rates>()?;
+
+            let rate = rates.get(&self.metadata.service, &self.metadata.env)?;
+            Ok(AgentResponse::from(rate))
+        })
     }
 
     /// Safely shutdown the TraceExporter and all related tasks
-    pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), String> {
+    pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
         if let Some(timeout) = timeout {
             match self.runtime.block_on(async {
                 tokio::time::timeout(timeout, async {
@@ -283,7 +295,7 @@ impl TraceExporter {
                 .await
             }) {
                 Ok(()) => Ok(()),
-                Err(_) => Err("Shutdown timed out".to_string()),
+                Err(e) => Err(TraceExporterError::Io(e.into())),
             }
         } else {
             self.runtime.block_on(async {
@@ -430,7 +442,7 @@ impl TraceExporter {
         }
     }
 
-    fn send_proxy(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
+    fn send_proxy(&self, data: &[u8], trace_count: usize) -> Result<String, TraceExporterError> {
         self.send_data_to_url(
             data,
             trace_count,
@@ -443,93 +455,91 @@ impl TraceExporter {
         data: &[u8],
         trace_count: usize,
         uri: Uri,
-    ) -> Result<String, String> {
-        self.runtime
-            .block_on(async {
-                let mut req_builder = hyper::Request::builder()
-                    .uri(uri)
-                    .header(
-                        hyper::header::USER_AGENT,
-                        concat!("Tracer/", env!("CARGO_PKG_VERSION")),
-                    )
-                    .method(Method::POST);
+    ) -> Result<String, TraceExporterError> {
+        self.runtime.block_on(async {
+            let mut req_builder = hyper::Request::builder()
+                .uri(uri)
+                .header(
+                    hyper::header::USER_AGENT,
+                    concat!("Tracer/", env!("CARGO_PKG_VERSION")),
+                )
+                .method(Method::POST);
 
-                let headers: HashMap<&'static str, String> = self.metadata.borrow().into();
+            let headers: HashMap<&'static str, String> = self.metadata.borrow().into();
 
-                for (key, value) in &headers {
-                    req_builder = req_builder.header(*key, value);
-                }
-                req_builder = req_builder
-                    .header("Content-type", "application/msgpack")
-                    .header("X-Datadog-Trace-Count", trace_count.to_string().as_str());
-                let req = req_builder
-                    .body(Body::from(Bytes::copy_from_slice(data)))
-                    .unwrap();
+            for (key, value) in &headers {
+                req_builder = req_builder.header(*key, value);
+            }
+            req_builder = req_builder
+                .header("Content-type", "application/msgpack")
+                .header("X-Datadog-Trace-Count", trace_count.to_string().as_str());
+            let req = req_builder
+                .body(Body::from(Bytes::copy_from_slice(data)))
+                .unwrap();
 
-                match hyper::Client::builder()
-                    .build(connector::Connector::default())
-                    .request(req)
-                    .await
-                {
-                    Ok(response) => {
-                        let response_status = response.status();
-                        if !response_status.is_success() {
-                            let body_bytes = response.into_body().collect().await?.to_bytes();
-                            let response_body =
-                                String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                            let resp_tag_res = &Tag::new("response_code", response_status.as_str());
-                            match resp_tag_res {
-                                Ok(resp_tag) => {
-                                    self.emit_metric(
-                                        HealthMetric::Count(
-                                            health_metrics::STAT_SEND_TRACES_ERRORS,
-                                            1,
-                                        ),
-                                        Some(vec![&resp_tag]),
-                                    );
-                                }
-                                Err(tag_err) => {
-                                    // This should really never happen as response_status is a
-                                    // `NonZeroU16`, but if the response status or tag requirements
-                                    // ever change in the future we still don't want to panic.
-                                    error!("Failed to serialize response_code to tag {}", tag_err)
-                                }
-                            }
-                            anyhow::bail!("Agent did not accept traces: {response_body}");
-                        }
-                        match response.into_body().collect().await {
-                            Ok(body) => {
-                                self.emit_metric(
-                                    HealthMetric::Count(
-                                        health_metrics::STAT_SEND_TRACES,
-                                        trace_count as i64,
-                                    ),
-                                    None,
-                                );
-                                Ok(String::from_utf8_lossy(&body.to_bytes()).to_string())
-                            }
-                            Err(err) => {
+            match hyper::Client::builder()
+                .build(connector::Connector::default())
+                .request(req)
+                .await
+            {
+                Ok(response) => {
+                    let response_status = response.status();
+                    if !response_status.is_success() {
+                        // TODO: remove unwrap
+                        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+                        let response_body =
+                            String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
+                        let resp_tag_res = &Tag::new("response_code", response_status.as_str());
+                        match resp_tag_res {
+                            Ok(resp_tag) => {
                                 self.emit_metric(
                                     HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                                    None,
+                                    Some(vec![&resp_tag]),
                                 );
-                                anyhow::bail!("Error reading agent response body: {err}");
+                            }
+                            Err(tag_err) => {
+                                // This should really never happen as response_status is a
+                                // `NonZeroU16`, but if the response status or tag requirements
+                                // ever change in the future we still don't want to panic.
+                                error!("Failed to serialize response_code to tag {}", tag_err)
                             }
                         }
+                        return Err(TraceExporterError::Request(RequestError::new(
+                            response_status,
+                            &response_body,
+                        )));
+                        //anyhow::bail!("Agent did not accept traces: {response_body}");
                     }
-                    Err(err) => {
-                        self.emit_metric(
-                            HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                            None,
-                        );
-                        anyhow::bail!("Failed to send traces: {err}")
+                    match response.into_body().collect().await {
+                        Ok(body) => {
+                            self.emit_metric(
+                                HealthMetric::Count(
+                                    health_metrics::STAT_SEND_TRACES,
+                                    trace_count as i64,
+                                ),
+                                None,
+                            );
+                            Ok(String::from_utf8_lossy(&body.to_bytes()).to_string())
+                        }
+                        Err(err) => {
+                            self.emit_metric(
+                                HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                                None,
+                            );
+                            Err(TraceExporterError::from(err))
+                            // anyhow::bail!("Error reading agent response body: {err}");
+                        }
                     }
                 }
-            })
-            .or_else(|err| {
-                error!("Error sending traces: {err}");
-                Ok(String::from("{}"))
-            })
+                Err(err) => {
+                    self.emit_metric(
+                        HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                        None,
+                    );
+                    Err(TraceExporterError::from(err))
+                }
+            }
+        })
     }
 
     /// Emit a health metric to dogstatsd
@@ -564,8 +574,7 @@ impl TraceExporter {
     //     }
     // }
 
-    fn send_deser_ser(&self, data: tinybytes::Bytes) -> Result<String, String> {
-        // let size = data.len();
+    fn send_deser_ser(&self, data: tinybytes::Bytes) -> Result<String, TraceExporterError> {
         // TODO base on input format
         let (traces, size) = match msgpack_decoder::v04::decoder::from_slice(data) {
             Ok(res) => res,
@@ -575,13 +584,16 @@ impl TraceExporter {
                     HealthMetric::Count(health_metrics::STAT_DESER_TRACES_ERRORS, 1),
                     None,
                 );
-                return Ok(String::from("{}"));
+                return Err(TraceExporterError::Deserialization(err));
             }
         };
 
         if traces.is_empty() {
             error!("No traces deserialized from the request body.");
-            return Ok(String::from("{}"));
+            // return Ok(String::from("{}"));
+            return Err(TraceExporterError::Io(std::io::Error::from(
+                std::io::ErrorKind::InvalidInput,
+            )));
         }
 
         let num_traces = traces.len();
@@ -657,7 +669,9 @@ impl TraceExporter {
                                 HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
                                 None,
                             );
-                            Ok(String::from("{}"))
+                            Err(TraceExporterError::Io(std::io::Error::from(
+                                std::io::ErrorKind::Other,
+                            )))
                         }
                     }
                 })
@@ -686,7 +700,6 @@ pub struct TraceExporterBuilder {
     git_commit_sha: String,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
-    response_callback: Option<Box<dyn ResponseCallback>>,
     dogstatsd_url: Option<String>,
     client_computed_stats: bool,
     client_computed_top_level: bool,
@@ -789,12 +802,6 @@ impl TraceExporterBuilder {
         self
     }
 
-    #[allow(missing_docs)]
-    pub fn set_response_callback(mut self, response_callback: Box<dyn ResponseCallback>) -> Self {
-        self.response_callback = Some(response_callback);
-        self
-    }
-
     /// Set the header indicating the tracer has computed the top-level tag
     pub fn set_client_computed_top_level(mut self) -> Self {
         self.client_computed_top_level = true;
@@ -830,7 +837,7 @@ impl TraceExporterBuilder {
     }
 
     #[allow(missing_docs)]
-    pub fn build(self) -> anyhow::Result<TraceExporter> {
+    pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -883,7 +890,6 @@ impl TraceExporterBuilder {
             },
             input_format: self.input_format,
             output_format: self.output_format,
-            _response_callback: self.response_callback,
             client_computed_top_level: self.client_computed_top_level,
             runtime,
             dogstatsd,
@@ -903,11 +909,11 @@ pub trait ResponseCallback {
 
 #[cfg(test)]
 mod tests {
+    use self::error::BuilderErrorKind;
     use super::*;
     use datadog_trace_utils::span_v04::Span;
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    // use serde::Serialize;
     use std::collections::HashMap;
     use std::net;
     use std::time::Duration;
@@ -1168,6 +1174,8 @@ mod tests {
         let builder = TraceExporterBuilder::default();
         let exporter = builder
             .set_url(&server.url("/"))
+            .set_service("test")
+            .set_env("staging")
             .set_tracer_version("v0.1")
             .set_language("nodejs")
             .set_language_version("1.0")
@@ -1192,7 +1200,8 @@ mod tests {
             })
         }
 
-        exporter.send(data, 1).unwrap();
+        let result = exporter.send(data, 1);
+        assert!(result.is_err());
         exporter.shutdown(None).unwrap();
 
         mock_traces.assert();
@@ -1230,6 +1239,8 @@ mod tests {
         let builder = TraceExporterBuilder::default();
         let exporter = builder
             .set_url(&server.url("/"))
+            .set_service("test")
+            .set_env("staging")
             .set_tracer_version("v0.1")
             .set_language("nodejs")
             .set_language_version("1.0")
@@ -1273,6 +1284,8 @@ mod tests {
     fn build_test_exporter(url: String, dogstatsd_url: String) -> TraceExporter {
         TraceExporterBuilder::default()
             .set_url(&url)
+            .set_service("test")
+            .set_env("staging")
             .set_dogstatsd_url(&dogstatsd_url)
             .set_tracer_version("v0.1")
             .set_language("nodejs")
@@ -1292,7 +1305,7 @@ mod tests {
         let _mock_traces = fake_agent.mock(|_, then| {
             then.status(200)
                 .header("content-type", "application/json")
-                .body("{}");
+                .body(r#"{ "rate_by_service": { "service:test,env:staging": 1.0, "service:test,env:prod": 0.3 } }"#);
         });
 
         let exporter = build_test_exporter(
@@ -1345,7 +1358,9 @@ mod tests {
         );
 
         let bad_payload = tinybytes::Bytes::copy_from_slice(b"some_bad_payload".as_ref());
-        let _result = exporter.send(bad_payload, 1).expect("failed to send trace");
+        let result = exporter.send(bad_payload, 1);
+
+        assert!(result.is_err());
 
         assert_eq!(
             &format!(
@@ -1381,7 +1396,8 @@ mod tests {
         let bytes = tinybytes::Bytes::from(
             rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace"),
         );
-        let _result = exporter.send(bytes, 1).expect("failed to send trace");
+        let result = exporter.send(bytes, 1);
+        assert!(result.is_err());
 
         assert_eq!(
             &format!(
@@ -1400,5 +1416,146 @@ mod tests {
             ),
             &read(&stats_socket)
         );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn agent_response_parse() {
+        let server = MockServer::start();
+        let _agent = server.mock(|_, then| {
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                    "rate_by_service": {
+                        "service:test_service,env:testing":0.5,
+                        "service:another_service,env:testing":1
+                    }
+                }"#,
+                );
+        });
+
+        let exporter = TraceExporterBuilder::default()
+            .set_url(&server.url("/"))
+            .set_service("test_service")
+            .set_env("testing")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .build()
+            .unwrap();
+
+        let traces: Vec<Vec<Span>> = vec![vec![Span {
+            name: BytesString::from_slice(b"test").unwrap(),
+            ..Default::default()
+        }]];
+        let bytes = tinybytes::Bytes::from(
+            rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace"),
+        );
+        let result = exporter.send(bytes, 1).unwrap();
+
+        assert_eq!(result, AgentResponse::from(0.5));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn agent_response_parse_default() {
+        let server = MockServer::start();
+        let _agent = server.mock(|_, then| {
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                    "rate_by_service": {
+                        "service:foo,env:staging": 1.0,
+                        "service:,env:": 0.8 
+                    }
+                }"#,
+                );
+        });
+
+        let exporter = TraceExporterBuilder::default()
+            .set_url(&server.url("/"))
+            .set_service("foo")
+            .set_env("foo-env")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .build()
+            .unwrap();
+
+        let traces: Vec<Vec<Span>> = vec![vec![Span {
+            name: BytesString::from_slice(b"test").unwrap(),
+            ..Default::default()
+        }]];
+        let bytes = tinybytes::Bytes::from(
+            rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace"),
+        );
+        let result = exporter.send(bytes, 1).unwrap();
+
+        assert_eq!(result, AgentResponse::from(0.8));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn builder_error() {
+        let exporter = TraceExporterBuilder::default()
+            .set_url("")
+            .set_service("foo")
+            .set_env("foo-env")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .build();
+
+        assert!(exporter.is_err());
+
+        let err = match exporter.unwrap_err() {
+            TraceExporterError::Builder(e) => Some(e),
+            _ => None,
+        }
+        .unwrap();
+
+        assert_eq!(err, BuilderErrorKind::InvalidUri);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn agent_response_error() {
+        let server = MockServer::start();
+        let _agent = server.mock(|_, then| {
+            then.status(500)
+                .header("content-type", "application/json")
+                .body(r#"{ "error": "Unavailable" }"#);
+        });
+
+        let exporter = TraceExporterBuilder::default()
+            .set_url(&server.url("/"))
+            .set_service("foo")
+            .set_env("foo-env")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .build()
+            .unwrap();
+
+        let traces: Vec<Vec<Span>> = vec![vec![Span {
+            name: BytesString::from_slice(b"test").unwrap(),
+            ..Default::default()
+        }]];
+        let bytes = tinybytes::Bytes::from(
+            rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace"),
+        );
+        let code = match exporter.send(bytes, 1).unwrap_err() {
+            TraceExporterError::Request(e) => Some(e.status()),
+            _ => None,
+        }
+        .unwrap();
+
+        assert_eq!(code, 500);
     }
 }
