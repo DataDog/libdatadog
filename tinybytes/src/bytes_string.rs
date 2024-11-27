@@ -4,10 +4,9 @@
 use crate::Bytes;
 #[cfg(feature = "serde")]
 use serde::ser::{Serialize, Serializer};
-use std::borrow::Borrow;
-use std::str::Utf8Error;
+use std::{borrow::Borrow, hash, str::Utf8Error};
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BytesString {
     bytes: Bytes,
 }
@@ -40,9 +39,9 @@ impl BytesString {
     /// # Errors
     ///
     /// Returns a `Utf8Error` if the bytes are not valid UTF-8.
-    pub fn from_slice(slice: &[u8]) -> Result<BytesString, Utf8Error> {
+    pub fn from_slice(slice: &[u8]) -> Result<Self, Utf8Error> {
         std::str::from_utf8(slice)?;
-        Ok(BytesString {
+        Ok(Self {
             bytes: Bytes::copy_from_slice(slice),
         })
     }
@@ -64,9 +63,9 @@ impl BytesString {
     /// # Errors
     ///
     /// Returns a `Utf8Error` if the bytes are not valid UTF-8.
-    pub fn from_bytes(bytes: Bytes) -> Result<BytesString, Utf8Error> {
+    pub fn from_bytes(bytes: Bytes) -> Result<Self, Utf8Error> {
         std::str::from_utf8(&bytes)?;
-        Ok(BytesString { bytes })
+        Ok(Self { bytes })
     }
 
     /// Creates a `BytesString` from a string slice within the given buffer.
@@ -75,12 +74,10 @@ impl BytesString {
     ///
     /// * `bytes` - A `tinybytes::Bytes` instance that will be converted into a `BytesString`.
     /// * `slice` - The string slice pointing into the given bytes that will form the `BytesString`.
-    pub fn from_bytes_slice(bytes: &Bytes, slice: &str) -> BytesString {
+    pub fn from_bytes_slice(bytes: &Bytes, slice: &str) -> Self {
         // SAFETY: This is safe as a str slice is definitely a valid UTF-8 slice.
         unsafe {
-            BytesString::from_bytes_unchecked(
-                bytes.slice_ref(slice.as_bytes()).expect("Invalid slice"),
-            )
+            Self::from_bytes_unchecked(bytes.slice_ref(slice.as_bytes()).expect("Invalid slice"))
         }
     }
 
@@ -97,8 +94,8 @@ impl BytesString {
     ///
     /// This function is unsafe because it assumes the bytes are valid UTF-8. If the bytes are not
     /// valid UTF-8, the behavior is undefined.
-    pub unsafe fn from_bytes_unchecked(bytes: Bytes) -> BytesString {
-        BytesString { bytes }
+    pub unsafe fn from_bytes_unchecked(bytes: Bytes) -> Self {
+        Self { bytes }
     }
 
     /// Returns the string slice representation of the `BytesString` (without validating the bytes).
@@ -113,7 +110,7 @@ impl BytesString {
 
 impl Default for BytesString {
     fn default() -> Self {
-        BytesString {
+        Self {
             bytes: Bytes::empty(),
         }
     }
@@ -125,9 +122,38 @@ impl Borrow<str> for BytesString {
     }
 }
 
+impl AsRef<str> for BytesString {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl From<String> for BytesString {
+    fn from(value: String) -> Self {
+        // SAFETY: This is safe as a String is always a valid UTF-8 slice.
+        unsafe { Self::from_bytes_unchecked(Bytes::from_underlying(value)) }
+    }
+}
+
+impl From<&'static str> for BytesString {
+    fn from(value: &'static str) -> Self {
+        // SAFETY: This is safe as a str is always a valid UTF-8 slice.
+        unsafe { Self::from_bytes_unchecked(Bytes::from_static(value.as_bytes())) }
+    }
+}
+
+// We can't derive Hash from Bytes as [u8] and str do not provide the same hash
+impl hash::Hash for BytesString {
+    #[inline]
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::hash::{DefaultHasher, Hash, Hasher};
 
     #[test]
     fn test_from_slice() {
@@ -189,5 +215,31 @@ mod tests {
         let bytes_string = BytesString::from_slice(b"borrow").unwrap();
         let borrowed: &str = bytes_string.borrow();
         assert_eq!(borrowed, "borrow");
+    }
+
+    #[test]
+    fn from_string() {
+        let string = String::from("hello");
+        let bytes_string = BytesString::from(string);
+        assert_eq!(bytes_string.as_str(), "hello")
+    }
+
+    #[test]
+    fn from_static_str() {
+        let static_str = "hello";
+        let bytes_string = BytesString::from(static_str);
+        assert_eq!(bytes_string.as_str(), "hello")
+    }
+
+    fn calculate_hash<T: Hash>(t: &T) -> u64 {
+        let mut s = DefaultHasher::new();
+        t.hash(&mut s);
+        s.finish()
+    }
+
+    #[test]
+    fn hash() {
+        let bytes_string = BytesString::from_slice(b"test hash").unwrap();
+        assert_eq!(calculate_hash(&bytes_string), calculate_hash(&"test hash"));
     }
 }
