@@ -165,6 +165,13 @@ int main(void) {
   check_result(ddog_crasht_CrashInfo_set_timestamp(crashinfo.get(), timestamp),
                "Failed to set timestamp");
 
+  ddog_crasht_ProcInfo procinfo = {
+    .pid = 42
+  };
+
+  check_result(ddog_crasht_CrashInfo_set_procinfo(crashinfo.get(), procinfo),
+               "Failed to set procinfo");
+
   auto endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/test"));
 
   check_result(ddog_crasht_CrashInfo_upload_to_endpoint(crashinfo.get(), endpoint),

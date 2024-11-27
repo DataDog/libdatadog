@@ -199,3 +199,50 @@ fn byte_vec_as_hex(bv: Option<Vec<u8>>) -> Option<String> {
         None
     }
 }
+
+#[cfg(test)]
+impl super::test_utils::TestInstance for StackTrace {
+    fn test_instance(_seed: u64) -> Self {
+        let frames = (0..10).map(StackFrame::test_instance).collect();
+        Self {
+            format: "Datadog Crashtracker 1.0".to_string(),
+            frames,
+        }
+    }
+}
+
+#[cfg(test)]
+impl super::test_utils::TestInstance for StackFrame {
+    fn test_instance(seed: u64) -> Self {
+        let ip = Some(format!("{seed:#x}"));
+        let module_base_address = None;
+        let sp = None;
+        let symbol_address = None;
+
+        let build_id = Some(format!("abcde{seed:#x}"));
+        let build_id_type = Some(BuildIdType::GNU);
+        let file_type = Some(FileType::ELF);
+        let path = Some(format!("/usr/bin/foo{seed}"));
+        let relative_address = None;
+
+        let column = Some(2 * seed as u32);
+        let file = Some(format!("banana{seed}.rs"));
+        let function = Some(format!("Bar::baz{seed}"));
+        let line = Some((2 * seed + 1) as u32);
+        Self {
+            ip,
+            module_base_address,
+            sp,
+            symbol_address,
+            build_id,
+            build_id_type,
+            file_type,
+            path,
+            relative_address,
+            column,
+            file,
+            function,
+            line,
+        }
+    }
+}

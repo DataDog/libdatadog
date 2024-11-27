@@ -41,3 +41,31 @@ impl From<crate::crash_info::CrashtrackerMetadata> for Metadata {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Metadata;
+    use crate::rfc5_crash_info::test_utils::TestInstance;
+
+    macro_rules! tag {
+        ($key:expr, $val:expr) => {
+            format!("{}:{}", $key, $val)
+        };
+    }
+
+    impl TestInstance for Metadata {
+        fn test_instance(seed: u64) -> Self {
+            Self {
+                library_name: "libdatadog".to_owned(),
+                library_version: format!("{}.{}.{}", seed, seed + 1, seed + 2),
+                family: "native".to_owned(),
+                tags: vec![
+                    tag!("service", "foo"),
+                    tag!("service_version", "bar"),
+                    tag!("runtime-id", "xyz"),
+                    tag!("language", "native"),
+                ],
+            }
+        }
+    }
+}

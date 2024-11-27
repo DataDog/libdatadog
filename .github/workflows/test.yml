@@ -187,6 +187,7 @@ jobs:
             cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DBUILD_SYMBOLIZER=true
             cmake --build .
             ./symbolizer
+            ./crashinfo
           else
             cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER
             cmake --build .

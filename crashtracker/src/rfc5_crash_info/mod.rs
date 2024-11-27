@@ -21,8 +21,6 @@ use os_info::OsInfo;
 use proc_info::ProcInfo;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sig_info::SigInfo;
-use spans::Span;
 use std::{collections::HashMap, fs::File, path::Path};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -145,5 +143,55 @@ mod tests {
     fn print_schema() {
         let schema = schemars::schema_for!(CrashInfo);
         println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+    }
+
+    impl test_utils::TestInstance for CrashInfo {
+        fn test_instance(seed: u64) -> Self {
+            let mut counters = HashMap::new();
+            counters.insert("collecting_sample".to_owned(), 1);
+            counters.insert("not_profiling".to_owned(), 0);
+
+            let span_ids = vec![
+                Span {
+                    id: "42".to_string(),
+                    thread_name: Some("thread1".to_string()),
+                },
+                Span {
+                    id: "24".to_string(),
+                    thread_name: Some("thread2".to_string()),
+                },
+            ];
+
+            let trace_ids = vec![
+                Span {
+                    id: "345".to_string(),
+                    thread_name: Some("thread111".to_string()),
+                },
+                Span {
+                    id: "666".to_string(),
+                    thread_name: Some("thread222".to_string()),
+                },
+            ];
+
+            Self {
+                counters,
+                data_schema_version: "1.0".to_string(),
+                error: ErrorData::test_instance(seed),
+                files: HashMap::new(),
+                fingerprint: None,
+                incomplete: true,
+                log_messages: vec![],
+                metadata: Metadata::test_instance(seed),
+                os_info: ::os_info::Info::unknown().into(),
+                proc_info: ProcInfo::test_instance(seed),
+                sig_info: Some(SigInfo::test_instance(seed)),
+                span_ids,
+                timestamp: chrono::DateTime::from_timestamp(1568898000 /* Datadog IPO */, 0)
+                    .unwrap()
+                    .to_string(),
+                trace_ids,
+                uuid: uuid::uuid!("1d6b97cb-968c-40c9-af6e-e4b4d71e8781").to_string(),
+            }
+        }
     }
 }
