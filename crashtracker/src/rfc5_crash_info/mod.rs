@@ -9,13 +9,16 @@ mod proc_info;
 mod sig_info;
 mod spans;
 mod stacktrace;
+mod test_utils;
 mod unknown_value;
 
 pub use builder::*;
 pub use error_data::*;
 pub use metadata::Metadata;
+use sig_info::SigInfo;
 pub use stacktrace::*;
 
+use crate::rfc5_crash_info::spans::Span;
 use anyhow::Context;
 use os_info::OsInfo;
 use proc_info::ProcInfo;
@@ -183,7 +186,7 @@ mod tests {
                 log_messages: vec![],
                 metadata: Metadata::test_instance(seed),
                 os_info: ::os_info::Info::unknown().into(),
-                proc_info: ProcInfo::test_instance(seed),
+                proc_info: Some(ProcInfo::test_instance(seed)),
                 sig_info: Some(SigInfo::test_instance(seed)),
                 span_ids,
                 timestamp: chrono::DateTime::from_timestamp(1568898000 /* Datadog IPO */, 0)
