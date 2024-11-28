@@ -645,17 +645,9 @@ impl TraceExporter {
                     let send_data_result = send_data.send().await;
                     match send_data_result.last_result {
                         Ok(response) => {
-                            self.emit_metric(
-                                HealthMetric::Count(
-                                    health_metrics::STAT_SEND_TRACES,
-                                    num_traces as i64,
-                                ),
-                                None,
-                            );
-                            match response.into_body().collect().await {
-                                Ok(body) => {
-                                    Ok(String::from_utf8_lossy(&body.to_bytes()).to_string())
-                                }
+                            let status = response.status();
+                            let body = match response.into_body().collect().await {
+                                Ok(body) => String::from_utf8_lossy(&body.to_bytes()).to_string(),
                                 Err(err) => {
                                     error!("Error reading agent response body: {err}");
                                     self.emit_metric(
@@ -665,8 +657,27 @@ impl TraceExporter {
                                         ),
                                         None,
                                     );
-                                    Ok(String::from("{}"))
+                                    return Err(TraceExporterError::from(err));
                                 }
+                            };
+
+                            if status.is_success() {
+                                self.emit_metric(
+                                    HealthMetric::Count(
+                                        health_metrics::STAT_SEND_TRACES,
+                                        num_traces as i64,
+                                    ),
+                                    None,
+                                );
+                                Ok(body)
+                            } else {
+                                self.emit_metric(
+                                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                                    None,
+                                );
+                                Err(TraceExporterError::Request(RequestError::new(
+                                    status, &body,
+                                )))
                             }
                         }
                         Err(err) => {
