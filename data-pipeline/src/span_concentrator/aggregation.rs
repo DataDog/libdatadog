@@ -7,7 +7,6 @@ use datadog_trace_protobuf::pb;
 use datadog_trace_utils::span_v04::{trace_utils, Span};
 use ddcommon::tag::Tag;
 use std::collections::HashMap;
-use tinybytes::BytesString;
 
 const TAG_STATUS_CODE: &str = "http.status_code";
 const TAG_SYNTHETICS: &str = "synthetics";
@@ -17,11 +16,11 @@ const TAG_ORIGIN: &str = "_dd.origin";
 /// This struct represent the key used to group spans together to compute stats.
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Default)]
 pub(super) struct AggregationKey {
-    resource_name: BytesString,
-    service_name: BytesString,
-    operation_name: BytesString,
-    span_type: BytesString,
-    span_kind: BytesString,
+    resource_name: String,
+    service_name: String,
+    operation_name: String,
+    span_type: String,
+    span_kind: String,
     http_status_code: u32,
     is_synthetics_request: bool,
     peer_tags: Vec<Tag>,
@@ -34,17 +33,21 @@ impl AggregationKey {
     /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
     /// key.
     pub(super) fn from_span(span: &Span, peer_tag_keys: &[String]) -> Self {
-        let span_kind = span.meta.get(TAG_SPANKIND).cloned().unwrap_or_default();
+        let span_kind = span
+            .meta
+            .get(TAG_SPANKIND)
+            .map(|s| s.copy_to_string())
+            .unwrap_or_default();
         let peer_tags = if client_or_producer(span_kind.as_str()) {
             get_peer_tags(span, peer_tag_keys)
         } else {
             vec![]
         };
         Self {
-            resource_name: span.resource.clone(),
-            service_name: span.service.clone(),
-            operation_name: span.name.clone(),
-            span_type: span.r#type.clone(),
+            resource_name: span.resource.copy_to_string(),
+            service_name: span.service.copy_to_string(),
+            operation_name: span.name.copy_to_string(),
+            span_type: span.r#type.copy_to_string(),
             span_kind,
             http_status_code: get_status_code(span),
             is_synthetics_request: span
@@ -60,11 +63,11 @@ impl AggregationKey {
 impl From<pb::ClientGroupedStats> for AggregationKey {
     fn from(value: pb::ClientGroupedStats) -> Self {
         Self {
-            resource_name: value.resource.into(),
-            service_name: value.service.into(),
-            operation_name: value.name.into(),
-            span_type: value.r#type.into(),
-            span_kind: value.span_kind.into(),
+            resource_name: value.resource,
+            service_name: value.service,
+            operation_name: value.name,
+            span_type: value.r#type,
+            span_kind: value.span_kind,
             http_status_code: value.http_status_code,
             is_synthetics_request: value.synthetics,
             peer_tags: value
@@ -174,11 +177,11 @@ impl StatsBucket {
 /// Create a ClientGroupedStats struct based on the given AggregationKey and GroupedStats
 fn encode_grouped_stats(key: AggregationKey, group: GroupedStats) -> pb::ClientGroupedStats {
     pb::ClientGroupedStats {
-        service: key.service_name.as_str().to_owned(),
-        name: key.operation_name.as_str().to_owned(),
-        resource: key.resource_name.as_str().to_owned(),
+        service: key.service_name,
+        name: key.operation_name,
+        resource: key.resource_name,
         http_status_code: key.http_status_code,
-        r#type: key.span_type.as_str().to_owned(),
+        r#type: key.span_type,
         db_type: String::new(), // db_type is not used yet (see proto definition)
 
         hits: group.hits,
@@ -189,7 +192,7 @@ fn encode_grouped_stats(key: AggregationKey, group: GroupedStats) -> pb::ClientG
         error_summary: group.error_summary.encode_to_vec(),
         synthetics: key.is_synthetics_request,
         top_level_hits: group.top_level_hits,
-        span_kind: key.span_kind.as_str().to_owned(),
+        span_kind: key.span_kind,
 
         peer_tags: key.peer_tags.into_iter().map(|t| t.to_string()).collect(),
         is_trace_root: if key.is_trace_root {

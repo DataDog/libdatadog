@@ -106,6 +106,13 @@ impl BytesString {
         // SAFETY: We assume all BytesStrings are valid UTF-8.
         unsafe { std::str::from_utf8_unchecked(&self.bytes) }
     }
+
+    /// Returns a `String` with a copy of the `BytesString`.
+    /// This is typically useful when you need to hold the content of a slice for a long time and
+    /// don't want to prevent the buffer from being dropped earlier.
+    pub fn copy_to_string(&self) -> String {
+        self.as_str().to_string()
+    }
 }
 
 impl Default for BytesString {
