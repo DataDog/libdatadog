@@ -23,7 +23,7 @@
     <IsPackable>true</IsPackable>
   </PropertyGroup>
   <ItemGroup>
-    <None Include="..\README.md" Pack="true" PackagePath="\" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
     <None Include="..\LICENSE" Pack="true" PackagePath="\" />
     <None Include="libdatadog.props" Pack="true" PackagePath="build\native\libdatadog.props" />
 
@@ -74,4 +74,21 @@
     <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\datadog_profiling_ffi.pdb"
       Pack="true" PackagePath="build\native\lib\x86\release\datadog_profiling_ffi.pdb" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- build assets -->
+    <None Include="netstandard2.0\libdatadog.props" Pack="true" PackagePath="build\netstandard2.0\libdatadog.props" />
+
+    <!-- runtime shared libraries and pdbs -->
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\release\datadog_profiling_ffi.dll"
+       Pack="true" PackagePath="runtimes\win-x64\native\datadog_profiling_ffi.dll" />
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\release\datadog_profiling_ffi.pdb"
+      Pack="true" PackagePath="runtimes\win-x64\native\datadog_profiling_ffi.pdb" />
+
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\datadog_profiling_ffi.dll"
+      Pack="true" PackagePath="runtimes\win-x86\native\datadog_profiling_ffi.dll" />
+    <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\datadog_profiling_ffi.pdb"
+      Pack="true" PackagePath="runtimes\win-x86\native\datadog_profiling_ffi.pdb" />
+  </ItemGroup>
+
 </Project>

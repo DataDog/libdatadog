@@ -1,0 +1,130 @@
+name: .NET
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  OUTPUT_DIR: bin
+  PACKAGES_DIR: packages
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+          # TODO: add more targets
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4
+
+      - name: Install rustup
+        if: matrix.os == 'windows-latest'
+        run: |
+          $ProgressPreference = "SilentlyContinue"
+          Invoke-WebRequest https://win.rustup.rs/ -OutFile rustup-init.exe
+          .\rustup-init.exe -y --default-host=${{ matrix.target }} --default-toolchain stable --profile minimal
+          del rustup-init.exe
+          rustup target add ${{ matrix.target }}
+        shell: powershell
+
+      - name: Build
+        run:  ./windows/build-artifacts.ps1 ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
+        shell: pwsh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 #v4
+        with:
+          name: ${{ env.OUTPUT_DIR }}-${{ matrix.target }}
+          path: |
+            bin/*
+            !bin/*/*/build
+            !bin/*/*/deps
+            !bin/*/*/examples
+            !bin/*/*/incremental
+            !bin/*/*/.fingerprint
+            !bin/debug
+            !bin/release
+
+  pack:
+    runs-on: windows-latest
+    needs: build
+    outputs:
+      NUGET_VERSION: ${{ steps.dotnet-pack.outputs.NUGET_VERSION }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4
+
+      - name: Download x86_64-pc-windows-msvc
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 #v4
+        with:
+          name: ${{ env.OUTPUT_DIR }}-x86_64-pc-windows-msvc
+          path: bin
+
+      - name: Download i686-pc-windows-msvc
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 #v4
+        with:
+          name: ${{ env.OUTPUT_DIR }}-i686-pc-windows-msvc
+          path: bin
+
+      - name: dotnet pack
+        id: dotnet-pack
+        run: | 
+          $cargo_content=Get-Content Cargo.toml -Raw
+          $cargo_content -match '(?m)^version += +"([^"]+)"'
+          $current_version=$Matches[1]
+          $version_suffix="ci.${{ github.event.number }}.${{ github.run_number }}"
+          $version="$current_version-$version_suffix"
+          echo "NUGET_VERSION=$version" >> $env:GITHUB_OUTPUT
+          dotnet pack windows/libdatadog.csproj -p:LibDatadogBinariesOutputDir=../${{ env.OUTPUT_DIR }} -p:LibDatadogVersion=$version -o ${{ env.PACKAGES_DIR }}
+
+      - name: Upload package
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
+        with:
+          name: ${{ env.PACKAGES_DIR }}
+          path: ${{ env.PACKAGES_DIR }}
+
+  test:
+    runs-on: ${{ matrix.os }}
+    needs: pack
+
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4
+
+      - name: Download package
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 #v4
+        with:
+          name: ${{ env.PACKAGES_DIR }}
+          path: ${{ env.PACKAGES_DIR }}
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 #v4
+        with:
+          dotnet-version: 7.0.X
+
+      - name: Run
+        run: |
+          cd tests/nuget_package
+          dotnet add nuget_package.csproj package libdatadog --version ${{ needs.pack.outputs.NUGET_VERSION }}
+          dotnet run
