@@ -9,12 +9,14 @@ use std::io::ErrorKind as IoErrorKind;
 use crate::trace_exporter::error::TraceExporterError;
 use std::{f64, str::FromStr};
 
+/// `Rates` contains all service's sampling rates returned by the agent.
 #[derive(Debug, Deserialize)]
 pub struct Rates {
     rate_by_service: Map<String, Value>,
 }
 
 impl Rates {
+    /// Get the sampling rate for a service and evironment pair.
     pub fn get(&self, service: &str, env: &str) -> Result<f64, IoError> {
         for (id, value) in &self.rate_by_service {
             let mut it = id
@@ -48,13 +50,17 @@ impl FromStr for Rates {
     }
 }
 
+/// `AgentResponse` structure holds agent response information upon successful request.
 #[derive(Debug, PartialEq)]
 #[repr(C)]
-pub struct AgentResponse(f64);
+pub struct AgentResponse {
+    /// Sampling rate for the current service.
+    rate: f64,
+}
 
 impl From<f64> for AgentResponse {
     fn from(value: f64) -> Self {
-        AgentResponse(value)
+        AgentResponse { rate: value }
     }
 }
 
