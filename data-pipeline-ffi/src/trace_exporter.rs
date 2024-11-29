@@ -16,6 +16,9 @@ use ddcommon_ffi::{
 use std::io::ErrorKind as IoErrorKind;
 use std::{ptr::NonNull, time::Duration};
 
+/// The TraceExporterConfig object will hold the configuration properties for the TraceExporter.
+/// Once the configuration is passed to the TraceExporter constructor the config is no longer
+/// needed by the handle and it can be freed.
 #[derive(Default, PartialEq)]
 pub struct TraceExporterConfig {
     url: Option<String>,
@@ -33,6 +36,22 @@ pub struct TraceExporterConfig {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_new(
+    out_handle: NonNull<Box<TraceExporterConfig>>,
+) {
+    out_handle
+        .as_ptr()
+        .write(Box::<TraceExporterConfig>::default());
+}
+
+/// Frees TraceExporterConfig handle internal resources.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_free(handle: Box<TraceExporterConfig>) {
+    drop(handle);
+}
+
+/// Sets traces destination.
+#[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_url(
     config: ddcommon_ffi::Option<&mut TraceExporterConfig>,
     url: CharSlice,
@@ -45,6 +64,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_url(
     }
 }
 
+/// Sets tracer's version to be included in the headers request.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_tracer_version(
     config: ddcommon_ffi::Option<&mut TraceExporterConfig>,
@@ -58,6 +78,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_tracer_version(
     }
 }
 
+/// Sets tracer's language to be included in the headers request.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_language(
     config: ddcommon_ffi::Option<&mut TraceExporterConfig>,
@@ -71,6 +92,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_language(
     }
 }
 
+/// Sets tracer's language version to be included in the headers request.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_lang_version(
     config: ddcommon_ffi::Option<&mut TraceExporterConfig>,
@@ -84,6 +106,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_lang_version(
     }
 }
 
+/// Sets tracer's language interpreter to be included in the headers request.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_lang_interpreter(
     config: ddcommon_ffi::Option<&mut TraceExporterConfig>,
@@ -97,6 +120,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_lang_interpreter(
     }
 }
 
+/// Sets hostname information to be included in the headers request.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_hostname(
     config: ddcommon_ffi::Option<&mut TraceExporterConfig>,
@@ -110,6 +134,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_hostname(
     }
 }
 
+/// Sets environmet information to be included in the headers request.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_env(
     config: ddcommon_ffi::Option<&mut TraceExporterConfig>,
@@ -136,6 +161,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_version(
     }
 }
 
+/// Sets service name to be included in the headers request.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_service(
     config: ddcommon_ffi::Option<&mut TraceExporterConfig>,
@@ -162,15 +188,20 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 ) -> ddcommon_ffi::Option<Error> {
     if let ddcommon_ffi::Option::Some(config) = config {
         let mut builder = TraceExporter::builder()
-            .set_url(config.url.as_ref().unwrap())
-            .set_tracer_version(config.tracer_version.as_ref().unwrap())
-            .set_language(config.language.as_ref().unwrap())
-            .set_language_version(config.language_version.as_ref().unwrap())
-            .set_language_interpreter(config.language_interpreter.as_ref().unwrap())
-            .set_hostname(config.hostname.as_ref().unwrap())
-            .set_env(config.env.as_ref().unwrap())
-            .set_app_version(config.version.as_ref().unwrap())
-            .set_service(config.service.as_ref().unwrap())
+            .set_url(config.url.as_ref().unwrap_or(&"".to_string()))
+            .set_tracer_version(config.tracer_version.as_ref().unwrap_or(&"".to_string()))
+            .set_language(config.language.as_ref().unwrap_or(&"".to_string()))
+            .set_language_version(config.language_version.as_ref().unwrap_or(&"".to_string()))
+            .set_language_interpreter(
+                config
+                    .language_interpreter
+                    .as_ref()
+                    .unwrap_or(&"".to_string()),
+            )
+            .set_hostname(config.hostname.as_ref().unwrap_or(&"".to_string()))
+            .set_env(config.env.as_ref().unwrap_or(&"".to_string()))
+            .set_app_version(config.version.as_ref().unwrap_or(&"".to_string()))
+            .set_service(config.service.as_ref().unwrap_or(&"".to_string()))
             .set_input_format(config.input_format)
             .set_output_format(config.output_format);
         if config.compute_stats {
@@ -210,14 +241,15 @@ pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
 ///   TraceExporter. The memory for the trace must be valid for the life of the call to this
 ///   function.
 /// * `trace_count` - The number of traces to send to the Datadog Agent.
+/// * `response` - Contains the agent response information.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_send(
     handle: &TraceExporter,
     trace: ByteSlice,
     trace_count: usize,
-    agent_resp: ddcommon_ffi::Option<&mut AgentResponse>,
+    response: ddcommon_ffi::Option<&mut AgentResponse>,
 ) -> ddcommon_ffi::Option<Error> {
-    if let ddcommon_ffi::Option::Some(result) = agent_resp {
+    if let ddcommon_ffi::Option::Some(result) = response {
         let static_trace: ByteSlice<'static> = std::mem::transmute(trace);
         match handle .send( tinybytes::Bytes::from_static(static_trace.as_slice()), trace_count,) {
             Ok(resp) => {
@@ -304,6 +336,32 @@ fn trace_exporter_error_to_ffi(err: TraceExporterError) -> ddcommon_ffi::Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::mem::MaybeUninit;
+
+    #[test]
+    fn config_constructor_test() {
+        unsafe {
+            let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
+
+            ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+
+            let cfg = config.assume_init();
+            assert_eq!(cfg.url, None);
+            assert_eq!(cfg.tracer_version, None);
+            assert_eq!(cfg.language, None);
+            assert_eq!(cfg.language_version, None);
+            assert_eq!(cfg.language_interpreter, None);
+            assert_eq!(cfg.env, None);
+            assert_eq!(cfg.hostname, None);
+            assert_eq!(cfg.version, None);
+            assert_eq!(cfg.service, None);
+            assert_eq!(cfg.input_format, TraceExporterInputFormat::V04);
+            assert_eq!(cfg.output_format, TraceExporterOutputFormat::V04);
+            assert!(!cfg.compute_stats);
+
+            ddog_trace_exporter_config_free(cfg);
+        }
+    }
 
     #[test]
     fn config_url_test() {
@@ -538,5 +596,59 @@ mod tests {
             assert_eq!(cfg.service.as_ref().unwrap(), "service");
         }
     }
->>>>>>> 30db5f8f (Add new API and error handling to FFI layer.)
+
+    #[test]
+    fn expoter_constructor_test() {
+        unsafe {
+            let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
+            ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+
+            let mut cfg = config.assume_init();
+            let error = ddog_trace_exporter_config_set_url(
+                ddcommon_ffi::Option::Some(cfg.as_mut()),
+                CharSlice::from("http://localhost"),
+            );
+            assert_eq!(error, ddcommon_ffi::Option::None);
+
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+
+            let ret = ddog_trace_exporter_new(
+                NonNull::new_unchecked(&mut ptr).cast(),
+                ddcommon_ffi::Option::Some(&cfg),
+            );
+            let exporter = ptr.assume_init();
+
+            assert_eq!(ret, ddcommon_ffi::Option::None);
+
+            ddog_trace_exporter_free(exporter);
+            ddog_trace_exporter_config_free(cfg);
+        }
+    }
+
+    #[test]
+    fn expoter_constructor_error_test() {
+        unsafe {
+            let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
+            ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+
+            let mut cfg = config.assume_init();
+            let error = ddog_trace_exporter_config_set_service(
+                ddcommon_ffi::Option::Some(cfg.as_mut()),
+                CharSlice::from("service"),
+            );
+            assert_eq!(error, ddcommon_ffi::Option::None);
+
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+
+            let ret = ddog_trace_exporter_new(
+                NonNull::new_unchecked(&mut ptr).cast(),
+                ddcommon_ffi::Option::Some(&cfg),
+            );
+
+            let error = ret.to_std().unwrap();
+            assert_eq!(error.code, ErrorCode::InvalidUrl);
+
+            ddog_trace_exporter_config_free(cfg);
+        }
+    }
 }

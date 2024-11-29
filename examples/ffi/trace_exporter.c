@@ -33,22 +33,15 @@ int main(int argc, char** argv)
     ddog_CharSlice env = DDOG_CHARSLICE_C("staging");
     ddog_CharSlice version = DDOG_CHARSLICE_C("1.0");
     ddog_CharSlice service = DDOG_CHARSLICE_C("test_app");
-    TRY(ddog_trace_exporter_new(
-        &trace_exporter,
-        url,
-        tracer_version,
-        language,
-        language_version,
-        language_interpreter,
-        hostname,
-        env,
-        version,
-        service,
-        DDOG_TRACE_EXPORTER_INPUT_FORMAT_PROXY,
-        DDOG_TRACE_EXPORTER_OUTPUT_FORMAT_V04,
-        true,
-        &agent_response_callback
-        ));
+
+
+    ddog_TraceExporterConfig *config;
+    ddog_trace_exporter_config_new(&config);
+    ddog_trace_exporter_config_set_url(config, url);
+    ddog_trace_exporter_config_set_tracer_version(config, tracer_version);
+    ddog_trace_exporter_config_set_language(config, language);
+
+    TRY(ddog_trace_exporter_new(&trace_exporter, config));
 
     if (trace_exporter == NULL)
     {
@@ -57,7 +50,9 @@ int main(int argc, char** argv)
     }
 
     ddog_ByteSlice buffer = { .ptr = NULL, .len=0 };
-    TRY(ddog_trace_exporter_send(trace_exporter, buffer, 0));
+    ddog_AgentResponse response;
+
+    TRY(ddog_trace_exporter_send(trace_exporter, buffer, 0, &response));
 
     ddog_trace_exporter_free(trace_exporter);
 
