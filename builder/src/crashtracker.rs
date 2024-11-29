@@ -22,11 +22,15 @@ pub struct CrashTracker {
 impl CrashTracker {
     fn gen_binaries(&self) -> Result<()> {
         if arch::BUILD_CRASHTRACKER {
+            let mut datadog_root = project_root();
+            datadog_root.push(self.target_dir.as_ref());
+            println!("ROOT: {}", datadog_root.to_str().unwrap());
+
             let mut crashtracker_dir = project_root();
             crashtracker_dir.push("crashtracker");
             let _dst = cmake::Config::new(crashtracker_dir.to_str().unwrap())
-                .define("Datadog_ROOT", self.target_dir.as_ref())
-                .define("CMAKE_INSTALL_PREFIX", self.target_dir.as_ref())
+                .define("Datadog_ROOT", datadog_root.to_str().unwrap())
+                .define("CMAKE_INSTALL_PREFIX", self.target_dir.to_string())
                 .build();
         }
 
