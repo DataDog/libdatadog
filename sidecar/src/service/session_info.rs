@@ -308,6 +308,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     async fn test_get_runtime() {
         let session_info = SessionInfo::default();
         let runtime_id = "runtime1".to_string();
