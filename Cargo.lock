@@ -2006,7 +2006,6 @@ dependencies = [
  "fnv",
  "hashbrown 0.14.5",
  "lazy_static",
- "log",
  "mockito",
  "proptest",
  "protobuf",

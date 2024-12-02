@@ -92,9 +92,9 @@ impl DogStatsD {
             .filter_map(|m| match parse(m.as_str()) {
                 Ok(metric) => Some(metric),
                 Err(e) => {
-                    if let UnsupportedType() = e {
-                        debug!("Unsupported metric type");
-                    } else {
+                    // unsupported type is quite common with dd_trace metrics. Avoid perf issue and
+                    // log spam in that case
+                    if !matches!(e, UnsupportedType()) {
                         error!("Failed to parse metric {}: {}", m, e);
                     }
                     None
