@@ -12,7 +12,7 @@ license.workspace = true
 bench = false
 
 [features]
-default = []
+default = ["hyper-rustls/rustls-native-certs"]
 use_webpki_roots = ["hyper-rustls/webpki-roots"]
 
 [dependencies]
