@@ -25,7 +25,10 @@ jobs:
             target: x86_64-pc-windows-msvc
           - os: windows-latest
             target: i686-pc-windows-msvc
-          # TODO: add more targets
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4
@@ -39,6 +42,14 @@ jobs:
           del rustup-init.exe
           rustup target add ${{ matrix.target }}
         shell: powershell
+
+      - name: Install rustup
+        if: matrix.os == 'macos-latest' || matrix.os == 'ubuntu-latest'
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+          rustup target add ${{ matrix.target }}
+        shell: bash
 
       - name: Build
         run:  ./windows/build-artifacts.ps1 ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
@@ -77,6 +88,18 @@ jobs:
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 #v4
         with:
           name: ${{ env.OUTPUT_DIR }}-i686-pc-windows-msvc
+          path: bin
+
+      - name: Download x86_64-unknown-linux-gnu
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 #v4
+        with:
+          name: ${{ env.OUTPUT_DIR }}-x86_64-unknown-linux-gnu
+          path: bin
+
+      - name: Download aarch64-apple-darwin
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 #v4
+        with:
+          name: ${{ env.OUTPUT_DIR }}-aarch64-apple-darwin
           path: bin
 
       - name: dotnet pack
