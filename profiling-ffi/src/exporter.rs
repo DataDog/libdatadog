@@ -4,15 +4,15 @@
 #![allow(renamed_and_removed_lints)]
 #![allow(clippy::box_vec)]
 
-use datadog_profiling::exporter;
-use datadog_profiling::exporter::{ProfileExporter, Request};
+use datadog_profiling::exporter::config::{self, EndpointExt};
+use datadog_profiling::exporter::{self, Client, Endpoint, ProfileExporter, Request, Uri};
 use datadog_profiling::internal::ProfiledEndpointsStats;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use ddcommon_ffi::{Error, MaybeError, Timespec};
-use std::borrow::Cow;
 use std::ptr::NonNull;
 use std::str::FromStr;
+use std::sync::{Arc, OnceLock};
 
 #[allow(dead_code)]
 #[repr(C)]
@@ -93,40 +93,39 @@ pub extern "C" fn ddog_prof_Endpoint_agentless<'a>(
 pub extern "C" fn endpoint_file(filename: CharSlice) -> ProfilingEndpoint {
     ProfilingEndpoint::File(filename)
 }
-unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
+
+unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<Uri> {
     let str: &str = slice.try_to_utf8()?;
     #[cfg(unix)]
     if let Some(path) = str.strip_prefix("unix://") {
-        return Ok(exporter::socket_path_to_uri(path.as_ref())?);
+        return Ok(config::try_socket_path_to_uri(path.as_ref())?);
     }
     #[cfg(windows)]
     if let Some(path) = str.strip_prefix("windows:") {
-        return Ok(exporter::named_pipe_path_to_uri(path.as_ref())?);
+        return Ok(config::try_named_pipe_path_to_uri(path.as_ref())?);
     }
-    Ok(hyper::Uri::from_str(str)?)
+    Ok(Uri::from_str(str)?)
 }
 
-pub unsafe fn try_to_endpoint(
-    endpoint: ProfilingEndpoint,
-) -> anyhow::Result<ddcommon_net1::Endpoint> {
+pub unsafe fn try_to_endpoint(endpoint: ProfilingEndpoint) -> anyhow::Result<Endpoint> {
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {
         ProfilingEndpoint::Agent(url) => {
             let base_url = try_to_url(url)?;
-            exporter::config::agent(base_url)
+            Ok(Endpoint::profiling_agent(base_url)?)
         }
         ProfilingEndpoint::Agentless(site, api_key) => {
             let site_str = site.try_to_utf8()?;
             let api_key_str = api_key.try_to_utf8()?;
-            exporter::config::agentless(
-                Cow::Owned(site_str.to_owned()),
-                Cow::Owned(api_key_str.to_owned()),
-            )
+            Ok(Endpoint::profiling_agentless(
+                site_str,
+                api_key_str.to_owned(),
+            )?)
         }
         ProfilingEndpoint::File(filename) => {
             let filename = filename.try_to_utf8()?;
-            exporter::config::file(filename)
+            Ok(Endpoint::profiling_file(filename)?)
         }
     }
 }
@@ -168,7 +167,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_new(
             let ptr = NonNull::new_unchecked(Box::into_raw(Box::new(exporter)));
             ExporterNewResult::Ok(ptr)
         }
-        Err(err) => ExporterNewResult::Err(err.into()),
+        Err(err) => ExporterNewResult::Err(err.context("ddog_prof_Exporter_new failed").into()),
     }
 }
 
@@ -179,12 +178,32 @@ fn ddog_prof_exporter_new_impl(
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: ProfilingEndpoint,
 ) -> anyhow::Result<ProfileExporter> {
+    // Cache the client because client config can be expensive to create.
+    // The client should probably be exposed to the user over FFI so that:
+    //  1. They can choose which cert provider to use (webpki or native).
+    //  2. The client can actually be freed properly if needed as this will leak some memory. The
+    //     previous implementation also leaked memory in this area, so this is not a new leak.
+    //  3. I don't like hidden locks.
+    static CLIENT: OnceLock<Result<Arc<Client>, exporter::Error>> = OnceLock::new();
+    let client_result = CLIENT.get_or_init(|| -> Result<Arc<Client>, exporter::Error> {
+        let client = Client::use_native_roots_on_current_thread()?;
+        Ok(Arc::new(client))
+    });
+
+    let client = match client_result {
+        Ok(c) => c.clone(),
+        Err(err) => {
+            return Err(anyhow::Error::from(err).context("failed to create HTTP client"));
+        }
+    };
+
     let library_name = profiling_library_name.to_utf8_lossy().into_owned();
     let library_version = profiling_library_version.to_utf8_lossy().into_owned();
     let family = family.to_utf8_lossy().into_owned();
     let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
     let tags = tags.map(|tags| tags.iter().cloned().collect());
     ProfileExporter::new(
+        client,
         library_name,
         library_version,
         family,
@@ -483,7 +502,7 @@ mod tests {
     use super::*;
     use ddcommon::tag;
     use ddcommon_ffi::Slice;
-    use hyper::body::HttpBody;
+    use http_body_util::BodyExt;
     use serde_json::json;
 
     fn profiling_library_name() -> CharSlice<'static> {
@@ -514,6 +533,7 @@ mod tests {
         // alternative. If you do figure out a better way, there's another copy of this code
         // in the profiling tests, please update there too :)
         let body = request.body();
+
         let body_bytes: String = String::from_utf8_lossy(
             &futures::executor::block_on(body.collect())
                 .unwrap()
@@ -970,7 +990,10 @@ mod tests {
         };
 
         let build_result = Result::from(build_result);
-        build_result.unwrap_err();
+        assert!(
+            build_result.is_err(),
+            "ddog_prof_Exporter_Request_build returned Ok when it should have errored"
+        );
     }
 
     #[test]

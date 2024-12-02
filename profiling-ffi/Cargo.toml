@@ -34,6 +34,7 @@ build_common = { path = "../build-common" }
 anyhow = "1.0"
 datadog-crashtracker-ffi = { path = "../crashtracker-ffi", default-features = false, optional = true}
 datadog-profiling = { path = "../profiling" }
+futures = { version = "0.3", default-features = false }
 hyper = { version = "0.14", features = ["backports", "deprecated"], default-features = false }
 ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
@@ -42,8 +43,10 @@ ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optio
 libc = "0.2"
 tokio-util = "0.7.1"
 serde_json = { version = "1.0" }
-futures = { version = "0.3", default-features = false }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
 symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"] }
 symbolic-common = "12.8.0"
 data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
+
+[dev-dependencies]
+http-body-util = "0.1"
