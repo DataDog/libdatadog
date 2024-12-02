@@ -61,3 +61,17 @@ pub fn thread_data_from_additional_stacktraces(
         .map(|x| x.into())
         .collect()
 }
+
+#[cfg(test)]
+impl super::test_utils::TestInstance for ErrorData {
+    fn test_instance(seed: u64) -> Self {
+        Self {
+            is_crash: true,
+            kind: ErrorKind::UnixSignal,
+            message: None,
+            source_type: SourceType::Crashtracking,
+            stack: StackTrace::test_instance(seed),
+            threads: vec![],
+        }
+    }
+}
