@@ -8,7 +8,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="libdatadog" Version="1.0.0-ci.1.1" />
   </ItemGroup>
 
 </Project>
