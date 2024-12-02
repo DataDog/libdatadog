@@ -21,6 +21,8 @@ renaming_overrides_prefixing = true
 "Slice_CChar" = "ddog_Slice_CChar"
 "Error" = "ddog_Error"
 "AgentResponse" = "ddog_AgentResponse"
+"ExporterErrorCode" = "ddog_TraceExporterErrorCode"
+"ExporterError" = "ddog_TraceExporterError"
 
 [export.mangle]
 rename_types = "PascalCase"
