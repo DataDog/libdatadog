@@ -5,10 +5,10 @@ use std::net::SocketAddr;
 use std::str::Split;
 use std::sync::{Arc, Mutex};
 
-use tracing::{debug, error};
-
 use crate::aggregator::Aggregator;
+use crate::errors::ParseError::UnsupportedType;
 use crate::metric::{parse, Metric};
+use tracing::{debug, error};
 
 pub struct DogStatsD {
     cancel_token: tokio_util::sync::CancellationToken,
@@ -92,7 +92,11 @@ impl DogStatsD {
             .filter_map(|m| match parse(m.as_str()) {
                 Ok(metric) => Some(metric),
                 Err(e) => {
-                    error!("Failed to parse metric {}: {}", m, e);
+                    if let UnsupportedType() = e {
+                        debug!("Unsupported metric type");
+                    } else {
+                        error!("Failed to parse metric {}: {}", m, e);
+                    }
                     None
                 }
             })
