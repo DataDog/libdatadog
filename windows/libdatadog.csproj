@@ -25,7 +25,8 @@
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
     <None Include="..\LICENSE" Pack="true" PackagePath="\" />
-    <None Include="libdatadog.props" Pack="true" PackagePath="build\native\libdatadog.props" />
+    <!-- disable native support -->
+    <!-- <None Include="libdatadog.props" Pack="true" PackagePath="build\native\libdatadog.props" /> -->
 
     <None Include="$(LibDatadogBinariesOutputDir)\common.h" Pack="true"
       PackagePath="include\native\datadog\common.h" />
@@ -38,7 +39,7 @@
     <None Include="$(LibDatadogBinariesOutputDir)\data-pipeline.h" Pack="true"
       PackagePath="include\native\datadog\data-pipeline.h" />
 
-    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\debug\datadog_profiling_ffi.lib"
+    <!-- <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\debug\datadog_profiling_ffi.lib"
       Pack="true" PackagePath="build\native\lib\x64\debug\static\datadog_profiling_ffi.lib" />
     <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\debug\datadog_profiling_ffi.dll.lib"
       Pack="true" PackagePath="build\native\lib\x64\debug\datadog_profiling_ffi.lib" />
@@ -72,7 +73,7 @@
     <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\datadog_profiling_ffi.dll"
       Pack="true" PackagePath="build\native\lib\x86\release\datadog_profiling_ffi.dll" />
     <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\datadog_profiling_ffi.pdb"
-      Pack="true" PackagePath="build\native\lib\x86\release\datadog_profiling_ffi.pdb" />
+      Pack="true" PackagePath="build\native\lib\x86\release\datadog_profiling_ffi.pdb" /> -->
   </ItemGroup>
 
   <ItemGroup>
@@ -89,6 +90,25 @@
       Pack="true" PackagePath="runtimes\win-x86\native\datadog_profiling_ffi.dll" />
     <None Include="$(LibDatadogBinariesOutputDir)\i686-pc-windows-msvc\release\datadog_profiling_ffi.pdb"
       Pack="true" PackagePath="runtimes\win-x86\native\datadog_profiling_ffi.pdb" />
+
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-unknown-linux-gnu\release\libdatadog_profiling_ffi.so"
+      Pack="true" PackagePath="runtimes\linux-x64\native\datadog_profiling_ffi.so" />
+
+    <None Include="$(LibDatadogBinariesOutputDir)\aarch64-unknown-linux-gnu\release\libdatadog_profiling_ffi.so"
+      Pack="true" PackagePath="runtimes\linux-arm64\native\datadog_profiling_ffi.so" />
+
+    <!-- musl corss compiling has issues in CI  -->
+    <!-- <None Include="$(LibDatadogBinariesOutputDir)\x86_64-unknown-linux-musl\release\libdatadog_profiling_ffi.so"
+      Pack="true" PackagePath="runtimes\linux-musl-x64\native\datadog_profiling_ffi.so" />
+
+    <None Include="$(LibDatadogBinariesOutputDir)\aarch64-unknown-linux-musl\release\libdatadog_profiling_ffi.so"
+      Pack="true" PackagePath="runtimes\linux-musl-arm64\native\datadog_profiling_ffi.so" /> -->
+
+    <None Include="$(LibDatadogBinariesOutputDir)\aarch64-apple-darwin\release\libdatadog_profiling_ffi.dylib"
+      Pack="true" PackagePath="runtimes\osx-arm64\native\datadog_profiling_ffi.dylib" />
+
+      <None Include="$(LibDatadogBinariesOutputDir)\x86_64-apple-darwin\release\libdatadog_profiling_ffi.dylib"
+      Pack="true" PackagePath="runtimes\osx-x64\native\datadog_profiling_ffi.dylib" />
   </ItemGroup>
 
 </Project>

@@ -13,10 +13,14 @@ permissions:
 env:
   OUTPUT_DIR: bin
   PACKAGES_DIR: packages
+  NUGET_NAME: ganeshnj.libdatadog
 
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+
+    # only set container for linux builds
+    container: ${{ matrix.container }}
 
     strategy:
       matrix:
@@ -25,10 +29,23 @@ jobs:
             target: x86_64-pc-windows-msvc
           - os: windows-latest
             target: i686-pc-windows-msvc
-          # TODO: add more targets
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            container: centos:7
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            container: centos:7
+          # - os: ubuntu-latest
+          #   target: x86_64-unknown-linux-musl
+          # - os: ubuntu-latest
+          #   target: aarch64-unknown-linux-musl
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4
+        uses: actions/checkout@v1
 
       - name: Install rustup
         if: matrix.os == 'windows-latest'
@@ -40,12 +57,85 @@ jobs:
           rustup target add ${{ matrix.target }}
         shell: powershell
 
+      - name: Install rustup
+        if: matrix.os == 'macos-latest'
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+          rustup target add ${{ matrix.target }}
+          cargo install --force cbindgen
+        shell: bash
+
+      - name: Prepare toolset
+        if: matrix.container == 'centos:7'
+        run: |
+          sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
+          sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
+
+          yum install epel-release -y
+
+          yum clean all -y && yum makecache -y && yum update -y
+
+          yum install -y centos-release-scl \
+            && sed -i s/mirror.centos.org/buildlogs.centos.org/g /etc/yum.repos.d/CentOS-SCLo-*.repo \
+            && sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/CentOS-SCLo-*.repo \
+            && sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/CentOS-SCLo-*.repo \
+            && yum install -y --setopt=tsflags=nodocs --nogpgcheck \
+            curl \
+            devtoolset-9 \
+            git \
+            make \
+            pkg-config \
+            unzip \
+            strace \
+            zlib-devel \
+            jq \
+            && yum clean all --enablerepo='*' \
+
+          scl enable devtoolset-9 bash
+          gcc --version
+
+      - name: Install rustup
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+          rustup target add ${{ matrix.target }}
+          cargo install --force cbindgen
+        shell: bash
+
+      - name: Install linux aarch64 dependencies
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          cat .cargo/config.github >> .cargo/config
+
+      # - name: Install musl x86_64 dependencies
+      #   if: matrix.target == 'x86_64-unknown-linux-musl'
+      #   run: sudo apt-get install musl-tools
+
+      # - name: Install musl aarch64 dependencies
+      #   if: matrix.target == 'aarch64-unknown-linux-musl'
+      #   run: |
+      #     mkdir -p $HOME/.local
+      #     curl -o /tmp/musl.tgz https://musl.cc/aarch64-linux-musl-cross.tgz
+      #     tar -xzf /tmp/musl.tgz -C $HOME/.local
+      #     echo "$HOME/.local/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
+      #     cat .cargo/config.github >> .cargo/config
+
       - name: Build
         run:  ./windows/build-artifacts.ps1 ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
+        if : matrix.os == 'windows-latest'
         shell: pwsh
 
+      - name: Build
+        run: |
+          source $HOME/.cargo/env
+          ./windows/build-artifacts.sh ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
+        if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
+        shell: bash
+
       - name: Upload artifacts
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 #v4
+        uses: actions/upload-artifact@v3
         with:
           name: ${{ env.OUTPUT_DIR }}-${{ matrix.target }}
           path: |
@@ -65,30 +155,66 @@ jobs:
       NUGET_VERSION: ${{ steps.dotnet-pack.outputs.NUGET_VERSION }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4
+        uses: actions/checkout@v1
 
       - name: Download x86_64-pc-windows-msvc
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 #v4
+        uses: actions/download-artifact@v1
         with:
           name: ${{ env.OUTPUT_DIR }}-x86_64-pc-windows-msvc
           path: bin
 
       - name: Download i686-pc-windows-msvc
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 #v4
+        uses: actions/download-artifact@v1
         with:
           name: ${{ env.OUTPUT_DIR }}-i686-pc-windows-msvc
           path: bin
 
+      - name: Download x86_64-unknown-linux-gnu
+        uses: actions/download-artifact@v1
+        with:
+          name: ${{ env.OUTPUT_DIR }}-x86_64-unknown-linux-gnu
+          path: bin
+
+      - name: Download aarch64-unknown-linux-gnu
+        uses: actions/download-artifact@v1
+        with:
+          name: ${{ env.OUTPUT_DIR }}-aarch64-unknown-linux-gnu
+          path: bin
+
+      # - name: Download x86_64-unknown-linux-musl
+      #   uses: actions/download-artifact@v1
+      #   with:
+      #     name: ${{ env.OUTPUT_DIR }}-x86_64-unknown-linux-musl
+      #     path: bin
+
+      # - name: Download aarch64-unknown-linux-musl
+      #   uses: actions/download-artifact@v1
+      #   with:
+      #     name: ${{ env.OUTPUT_DIR }}-aarch64-unknown-linux-musl
+      #     path: bin
+
+      - name: Download aarch64-apple-darwin
+        uses: actions/download-artifact@v1
+        with:
+          name: ${{ env.OUTPUT_DIR }}-aarch64-apple-darwin
+          path: bin
+
+      - name: Download x86_64-apple-darwin
+        uses: actions/download-artifact@v1
+        with:
+          name: ${{ env.OUTPUT_DIR }}-x86_64-apple-darwin
+          path: bin
+
       - name: dotnet pack
         id: dotnet-pack
-        run: | 
+        run: |
           $cargo_content=Get-Content Cargo.toml -Raw
           $cargo_content -match '(?m)^version += +"([^"]+)"'
           $current_version=$Matches[1]
           $version_suffix="ci.${{ github.event.number }}.${{ github.run_number }}"
           $version="$current_version-$version_suffix"
           echo "NUGET_VERSION=$version" >> $env:GITHUB_OUTPUT
-          dotnet pack windows/libdatadog.csproj -p:LibDatadogBinariesOutputDir=../${{ env.OUTPUT_DIR }} -p:LibDatadogVersion=$version -o ${{ env.PACKAGES_DIR }}
+          dotnet pack windows/libdatadog.csproj -p:LibDatadogBinariesOutputDir=../${{ env.OUTPUT_DIR }} -p:LibDatadogVersion=$version -p:PackageID=${{ env.NUGET_NAME }} -o ${{ env.PACKAGES_DIR }}
 
       - name: Upload package
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
@@ -104,16 +230,15 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - os: windows-latest
-            target: i686-pc-windows-msvc
+          - os: ubuntu-latest
+          - os: macos-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4
+        uses: actions/checkout@v1
 
       - name: Download package
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 #v4
+        uses: actions/download-artifact@v1
         with:
           name: ${{ env.PACKAGES_DIR }}
           path: ${{ env.PACKAGES_DIR }}
@@ -121,10 +246,34 @@ jobs:
       - name: Install .NET SDK
         uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 #v4
         with:
-          dotnet-version: 7.0.X
+          dotnet-version: 6.0.X
 
-      - name: Run
+      - name: Test
         run: |
           cd tests/nuget_package
-          dotnet add nuget_package.csproj package libdatadog --version ${{ needs.pack.outputs.NUGET_VERSION }}
+          dotnet add nuget_package.csproj package ${{ env.NUGET_NAME }} --version ${{ needs.pack.outputs.NUGET_VERSION }}
+
           dotnet run
+
+  nuget-push:
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v1
+
+      - name: Download package
+        uses: actions/download-artifact@v1
+        with:
+          name: ${{ env.PACKAGES_DIR }}
+          path: ${{ env.PACKAGES_DIR }}
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 #v4
+        with:
+          dotnet-version: 6.0.X
+
+      - name: NuGet push
+        run: |
+          cd ${{ env.PACKAGES_DIR }}
+          dotnet nuget push *.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate

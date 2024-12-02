@@ -17,18 +17,20 @@ set -eu
 
 ARG_FEATURES=""
 run_tests=true
+target=""
 
 usage() {
-    echo "Usage: `basename "$0"` [-h] [-f FEATURES] [-T] dest-dir"
+    echo "Usage: `basename "$0"` [-h] [-f FEATURES] [-T] [-t TARGET] dest-dir"
     echo
     echo "Options:"
     echo "  -h          This help text"
     echo "  -f FEATURES Enable specified features (comma separated if more than one)"
     echo "  -T          Skip checks after building"
+    echo "  -t TARGET   Specify the target platform"
     exit $1
 }
 
-while getopts f:hT flag
+while getopts f:hTt: flag
 do
     case "${flag}" in
         f)
@@ -41,6 +43,11 @@ do
             ;;
         T)
             run_tests=false
+            shift
+            ;;
+        t)
+            target=${OPTARG}
+            shift
             shift
             ;;
     esac
@@ -59,7 +66,10 @@ fi
 mkdir -v -p "$destdir/include/datadog" "$destdir/lib/pkgconfig" "$destdir/cmake"
 
 version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < profiling-ffi/Cargo.toml)
-target="$(rustc -vV | awk '/^host:/ { print $2 }')"
+if [ -z "${target:-}" ]; then
+    target="$(rustc -vV | awk '/^host:/ { print $2 }')"
+fi
+echo "Building for target: $target"
 shared_library_suffix=".so"
 static_library_suffix=".a"
 library_prefix="lib"
@@ -77,7 +87,7 @@ symbolizer=0
 # provided. At least on Alpine, libgcc_s may not even exist in the users'
 # images, so -static-libgcc is recommended there.
 case "$target" in
-    "x86_64-alpine-linux-musl"|"aarch64-alpine-linux-musl")
+    "x86_64-alpine-linux-musl"|"aarch64-alpine-linux-musl"|"x86_64-unknown-linux-musl"|"aarch64-unknown-linux-musl")
         expected_native_static_libs=" -lssp_nonshared -lgcc_s -lc"
         native_static_libs=" -lssp_nonshared -lc"
         # on alpine musl, Rust adds some weird runpath to cdylibs
