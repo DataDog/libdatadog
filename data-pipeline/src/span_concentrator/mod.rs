@@ -124,7 +124,11 @@ impl SpanConcentrator {
                 bucket_timestamp = self.oldest_timestamp;
             }
 
-            let agg_key = AggregationKey::from_span(span, &self.peer_tag_keys);
+            let temp_field_should_not_be_commited: Vec<&str> =
+                self.peer_tag_keys.iter().map(|s| s as &str).collect();
+
+            let agg_key =
+                AggregationKey::from_span(span, temp_field_should_not_be_commited.as_slice());
 
             self.buckets
                 .entry(bucket_timestamp)
