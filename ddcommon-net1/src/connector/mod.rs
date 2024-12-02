@@ -48,6 +48,16 @@ lazy_static! {
     };
 }
 
+#[cfg(not(feature = "use_webpki_roots"))]
+lazy_static! {
+    static ref INIT_CRYPTO_PROVIDER: () = {
+        #[cfg(unix)]
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .expect("Failed to install default CryptoProvider");
+    };
+}
+
 impl Default for Connector {
     fn default() -> Self {
         DEFAULT_CONNECTOR.clone()
@@ -123,6 +133,7 @@ fn build_https_connector_with_webpki_roots(
 
 #[cfg(not(feature = "use_webpki_roots"))]
 fn load_root_certs() -> anyhow::Result<rustls::RootCertStore> {
+    *INIT_CRYPTO_PROVIDER; // One-time initialization of a crypto provider if needed
     let mut roots = rustls::RootCertStore::empty();
 
     for cert in rustls_native_certs::load_native_certs()? {

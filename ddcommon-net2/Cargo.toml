@@ -1,0 +1,30 @@
+# Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "ddcommon-net2"
+rust-version.workspace = true
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+bench = false
+
+[features]
+default = []
+use_native_roots = ["rustls-native-certs", "tokio-rustls/ring"]
+use_webpki_roots = ["webpki-roots" ,"tokio-rustls/aws-lc-rs"]
+
+[dependencies]
+ddcommon = { path = "../ddcommon" }
+hex = { version = "0.4" }
+hyper = { version = "1", default-features = false }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
+rustls-native-certs = { version = "0.8", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = { version = "2" }
+tokio = { version = "1.41" }
+tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "tls12"] }
+tokio-util = { version = "0.7" }
+webpki-roots = { version = "0.26", optional = true }

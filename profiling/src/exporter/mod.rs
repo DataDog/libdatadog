@@ -2,39 +2,30 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod config;
-
 mod errors;
 
-use bytes::Bytes;
+use crate::internal::ProfiledEndpointsStats;
+use ddcommon::azure_app_services;
+use ddcommon_net2::dep::{http, hyper};
+use hyper::body::Incoming;
 use hyper_multipart_rfc7578::client::multipart;
 use lz4_flex::frame::FrameEncoder;
 use serde_json::json;
 use std::borrow::Cow;
-use std::future;
 use std::io::{Cursor, Write};
-use tokio::runtime::Runtime;
+use std::sync;
 use tokio_util::sync::CancellationToken;
-
-use crate::internal::ProfiledEndpointsStats;
-use ddcommon::azure_app_services;
-use ddcommon_net1::{connector, Endpoint, HttpClient, HttpResponse};
 
 pub use chrono::{DateTime, Utc};
 pub use ddcommon::tag::Tag;
-pub use hyper::Uri;
-
-#[cfg(unix)]
-pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
-
-#[cfg(windows)]
-pub use connector::named_pipe::{named_pipe_path_from_uri, named_pipe_path_to_uri};
+pub use ddcommon_net2::compat::Endpoint;
+pub use ddcommon_net2::crytpo::Provider as CryptoProvider;
+pub use ddcommon_net2::dep::tokio_rustls::rustls;
+pub use ddcommon_net2::http::{Client, Error};
+pub use ddcommon_net2::rt;
+pub use http::Uri;
 
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
-
-pub struct Exporter {
-    client: HttpClient,
-    runtime: Runtime,
-}
 
 pub struct Fields {
     pub start: DateTime<Utc>,
@@ -42,7 +33,7 @@ pub struct Fields {
 }
 
 pub struct ProfileExporter {
-    exporter: Exporter,
+    http_client: sync::Arc<Client>,
     endpoint: Endpoint,
     family: Cow<'static, str>,
     profiling_library_name: Cow<'static, str>,
@@ -55,14 +46,13 @@ pub struct File<'a> {
     pub bytes: &'a [u8],
 }
 
-#[derive(Debug)]
 pub struct Request {
     timeout: Option<std::time::Duration>,
-    req: hyper::Request<hyper::Body>,
+    req: hyper::Request<multipart::Body>,
 }
 
-impl From<hyper::Request<hyper::Body>> for Request {
-    fn from(req: hyper::Request<hyper::Body>) -> Self {
+impl From<hyper::Request<multipart::Body>> for Request {
+    fn from(req: hyper::Request<multipart::Body>) -> Self {
         Self { req, timeout: None }
     }
 }
@@ -81,7 +71,7 @@ impl Request {
         &self.timeout
     }
 
-    pub fn uri(&self) -> &hyper::Uri {
+    pub fn uri(&self) -> &Uri {
         self.req.uri()
     }
 
@@ -89,31 +79,8 @@ impl Request {
         self.req.headers()
     }
 
-    pub fn body(self) -> hyper::Body {
+    pub fn body(self) -> multipart::Body {
         self.req.into_body()
-    }
-
-    async fn send(
-        self,
-        client: &HttpClient,
-        cancel: Option<&CancellationToken>,
-    ) -> anyhow::Result<hyper::Response<hyper::Body>> {
-        tokio::select! {
-            _ = async { match cancel {
-                    Some(cancellation_token) => cancellation_token.cancelled().await,
-                    // If no token is provided, future::pending() provides a no-op future that never resolves
-                    None => future::pending().await,
-                }}
-            => Err(crate::exporter::errors::Error::UserRequestedCancellation.into()),
-            result = async {
-                Ok(match self.timeout {
-                    Some(t) => tokio::time::timeout(t, client.request(self.req))
-                        .await
-                        .map_err(|_| crate::exporter::errors::Error::OperationTimedOut)?,
-                    None => client.request(self.req).await,
-                }?)}
-            => result,
-        }
     }
 }
 
@@ -130,6 +97,7 @@ impl ProfileExporter {
     ///   to include profile-specific tags, see `additional_tags` on `build`.
     /// * `endpoint` - Configuration for reporting data
     pub fn new<F, N, V>(
+        http_client: sync::Arc<Client>,
         profiling_library_name: N,
         profiling_library_version: V,
         family: F,
@@ -142,7 +110,7 @@ impl ProfileExporter {
         V: Into<Cow<'static, str>>,
     {
         Ok(Self {
-            exporter: Exporter::new()?,
+            http_client,
             endpoint,
             family: family.into(),
             profiling_library_name: profiling_library_name.into(),
@@ -274,66 +242,33 @@ impl ProfileExporter {
 
         let builder = self
             .endpoint
-            .into_request_builder(concat!("DDProf/", env!("CARGO_PKG_VERSION")))?
-            .method(http::Method::POST)
-            .header("Connection", "close")
+            .to_request_builder(concat!("DDProf/", env!("CARGO_PKG_VERSION")))?
+            .method(http::Method::POST.as_str())
+            .header(http::header::CONNECTION.as_str(), "close")
             .header("DD-EVP-ORIGIN", self.profiling_library_name.as_ref())
             .header(
                 "DD-EVP-ORIGIN-VERSION",
                 self.profiling_library_version.as_ref(),
             );
 
-        Ok(
-            Request::from(form.set_body_convert::<hyper::Body, multipart::Body>(builder)?)
-                .with_timeout(std::time::Duration::from_millis(self.endpoint.timeout_ms)),
-        )
+        let request = form.set_body::<multipart::Body>(builder)?;
+
+        Ok(Request::from(request)
+            .with_timeout(std::time::Duration::from_millis(self.endpoint.timeout_ms)))
     }
 
     pub fn send(
         &self,
         request: Request,
         cancel: Option<&CancellationToken>,
-    ) -> anyhow::Result<HttpResponse> {
-        self.exporter
-            .runtime
-            .block_on(request.send(&self.exporter.client, cancel))
+    ) -> anyhow::Result<http::Response<Incoming>> {
+        let response = self
+            .http_client
+            .send(request.req, cancel, request.timeout)?;
+        Ok(response)
     }
 
     pub fn set_timeout(&mut self, timeout_ms: u64) {
         self.endpoint.timeout_ms = timeout_ms;
-    }
-}
-
-impl Exporter {
-    /// Creates a new Exporter, initializing the TLS stack.
-    pub fn new() -> anyhow::Result<Self> {
-        // Set idle to 0, which prevents the pipe being broken every 2nd request
-        let client = hyper::Client::builder()
-            .pool_max_idle_per_host(0)
-            .build(connector::Connector::default());
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        Ok(Self { client, runtime })
-    }
-
-    pub fn send(
-        &self,
-        http_method: http::Method,
-        url: &str,
-        mut headers: hyper::header::HeaderMap,
-        body: &[u8],
-        timeout: std::time::Duration,
-    ) -> anyhow::Result<hyper::Response<hyper::Body>> {
-        self.runtime.block_on(async {
-            let mut request = hyper::Request::builder()
-                .method(http_method)
-                .uri(url)
-                .body(hyper::Body::from(Bytes::copy_from_slice(body)))?;
-            std::mem::swap(request.headers_mut(), &mut headers);
-
-            let request: Request = request.into();
-            request.with_timeout(timeout).send(&self.client, None).await
-        })
     }
 }

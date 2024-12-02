@@ -37,8 +37,8 @@ LIBDD_OUTPUT_FOLDER=/opt/release cargo build -p builder --features profiling,tel
 ```
 
 #### Build scripts
-This is the non-prefered way of building a release, it's use is discouraged and it will be soon deprecated in favour of
-using the builder crate.
+This is the non-preferred way of building a release, it's use is discouraged and it will be soon deprecated in favour
+of using the builder crate.
 
 To package a release with the generated ffi header and CMake module, use the `build-profiling-ffi.sh` / `build-telemetry-ffi.sh` helper scripts.
 Here's an example of using on of these scripts, placing the output inside `/opt/libdatadog`:

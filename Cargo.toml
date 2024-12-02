@@ -13,6 +13,7 @@ members = [
   "ddcommon",
   "ddcommon-ffi",
   "ddcommon-net1",
+  "ddcommon-net2",
   "ddtelemetry",
   "ddtelemetry-ffi",
   "dogstatsd",

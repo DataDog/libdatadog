@@ -38,7 +38,6 @@ datadog-profiling = { path = "../profiling" }
 hyper = { version = "0.14", features = ["backports", "deprecated"], default-features = false }
 ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
-ddcommon-net1 = { path = "../ddcommon-net1" }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
 libc = "0.2"
 tokio-util = "0.7.1"
@@ -49,3 +48,6 @@ symbolic-demangle = { version = "12.8.0", default-features = false, features = [
 symbolic-common = "12.8.0"
 data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
 datadog-library-config-ffi = {  path = "../library-config-ffi", default-features = false, optional = true }
+
+[dev-dependencies]
+http-body-util = "0.1"
