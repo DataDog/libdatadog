@@ -24,7 +24,6 @@ impl CrashTracker {
         if arch::BUILD_CRASHTRACKER {
             let mut datadog_root = project_root();
             datadog_root.push(self.target_dir.as_ref());
-            println!("ROOT: {}", datadog_root.to_str().unwrap());
 
             let mut crashtracker_dir = project_root();
             crashtracker_dir.push("crashtracker");
