@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{to_inner::ToInner, Metadata, OsInfo, ProcInfo, SigInfo, StackTrace, ThreadData};
+use super::{to_inner::ToInner, Metadata, OsInfo, ProcInfo, SigInfo, Span, StackTrace, ThreadData};
 use ::function_name::named;
 use anyhow::Context;
 use datadog_crashtracker::rfc5_crash_info::ErrorKind;
@@ -295,6 +295,23 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_sig_info(
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
 /// All arguments must be valid.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_span_id(
+    mut builder: *mut CrashInfoBuilder,
+    span_id: Span,
+) -> VoidResult {
+    wrap_with_ffi_result!({
+        builder.to_inner_mut()?.with_span_id(span_id.try_into()?)?;
+        anyhow::Ok(())
+    })
+}
+
+/// # Safety
+/// The `builder` can be null, but if non-null it must point to a Builder made by this module,
+/// which has not previously been dropped.
+/// All arguments must be valid.
 /// Consumes the stack argument.
 #[no_mangle]
 #[must_use]
@@ -365,6 +382,25 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_timestamp_now(
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
+/// All arguments must be valid.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_trace_id(
+    mut builder: *mut CrashInfoBuilder,
+    trace_id: Span,
+) -> VoidResult {
+    wrap_with_ffi_result!({
+        builder
+            .to_inner_mut()?
+            .with_trace_id(trace_id.try_into()?)?;
+        anyhow::Ok(())
+    })
+}
+
+/// # Safety
+/// The `builder` can be null, but if non-null it must point to a Builder made by this module,
+/// which has not previously been dropped.
 /// The CharSlice must be valid.
 #[no_mangle]
 #[must_use]
@@ -398,7 +434,3 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_uuid_random(
         anyhow::Ok(())
     })
 }
-
-// with_sig_info
-// with_span_ids
-// with_trace_ids

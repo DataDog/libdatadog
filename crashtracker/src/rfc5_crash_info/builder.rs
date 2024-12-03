@@ -217,6 +217,15 @@ impl CrashInfoBuilder {
         self
     }
 
+    pub fn with_span_id(&mut self, span_id: Span) -> anyhow::Result<&mut Self> {
+        if let Some(ref mut span_ids) = &mut self.span_ids {
+            span_ids.push(span_id);
+        } else {
+            self.span_ids = Some(vec![span_id]);
+        }
+        Ok(self)
+    }
+
     pub fn with_span_ids(&mut self, span_ids: Vec<Span>) -> &mut Self {
         self.span_ids = Some(span_ids);
         self
@@ -248,6 +257,15 @@ impl CrashInfoBuilder {
 
     pub fn with_timestamp_now(&mut self) -> &mut Self {
         self.with_timestamp(Utc::now())
+    }
+
+    pub fn with_trace_id(&mut self, trace_id: Span) -> anyhow::Result<&mut Self> {
+        if let Some(ref mut trace_ids) = &mut self.trace_ids {
+            trace_ids.push(trace_id);
+        } else {
+            self.trace_ids = Some(vec![trace_id]);
+        }
+        Ok(self)
     }
 
     pub fn with_trace_ids(&mut self, trace_ids: Vec<Span>) -> &mut Self {

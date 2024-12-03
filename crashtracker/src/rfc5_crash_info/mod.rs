@@ -18,9 +18,9 @@ pub use metadata::Metadata;
 pub use os_info::*;
 pub use proc_info::*;
 pub use sig_info::*;
+pub use spans::*;
 pub use stacktrace::*;
 
-use crate::rfc5_crash_info::spans::Span;
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
