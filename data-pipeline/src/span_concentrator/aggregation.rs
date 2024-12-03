@@ -28,6 +28,7 @@ pub(super) struct AggregationKey<'a> {
     is_trace_root: bool,
 }
 
+/// Common representation of AggregationKey used to compare AggregationKey with different lifetimes
 #[derive(Clone, Hash, PartialEq, Eq)]
 pub(super) struct BorrowedAggregationKey<'a> {
     resource_name: &'a str,
@@ -41,11 +42,18 @@ pub(super) struct BorrowedAggregationKey<'a> {
     is_trace_root: bool,
 }
 
-trait BorrowedAggregationKeyHelper {
+/// Trait used to define a common type (`dyn BorrowableAggregationKey`) for all AggregationKey
+/// regardless of lifetime.
+/// This allows an hashmap with `AggregationKey<'static>` keys to lookup an entry with a
+/// `AggregationKey<'a>`.
+/// This is required because the `get_mut` method of Hashmap requires an input type `Q` such that
+/// the key type `K` implements `Borrow<Q>`. Since `AggregationKey<'static>` cannot implement
+/// `Borrow<AggregationKey<'a>>` we use `dyn BorrowableAggregationKey` as a placeholder.
+trait BorrowableAggregationKey {
     fn borrowed_aggregation_key(&self) -> BorrowedAggregationKey;
 }
 
-impl BorrowedAggregationKeyHelper for AggregationKey<'_> {
+impl BorrowableAggregationKey for AggregationKey<'_> {
     fn borrowed_aggregation_key(&self) -> BorrowedAggregationKey {
         BorrowedAggregationKey {
             resource_name: self.resource_name.borrow(),
@@ -65,31 +73,31 @@ impl BorrowedAggregationKeyHelper for AggregationKey<'_> {
     }
 }
 
-impl BorrowedAggregationKeyHelper for BorrowedAggregationKey<'_> {
+impl BorrowableAggregationKey for BorrowedAggregationKey<'_> {
     fn borrowed_aggregation_key(&self) -> BorrowedAggregationKey {
         self.clone()
     }
 }
 
-impl<'a, 'b> Borrow<dyn BorrowedAggregationKeyHelper + 'b> for AggregationKey<'a>
+impl<'a, 'b> Borrow<dyn BorrowableAggregationKey + 'b> for AggregationKey<'a>
 where
     'a: 'b,
 {
-    fn borrow(&self) -> &(dyn BorrowedAggregationKeyHelper + 'b) {
+    fn borrow(&self) -> &(dyn BorrowableAggregationKey + 'b) {
         self
     }
 }
 
-impl Eq for (dyn BorrowedAggregationKeyHelper + '_) {}
+impl Eq for (dyn BorrowableAggregationKey + '_) {}
 
-impl PartialEq for (dyn BorrowedAggregationKeyHelper + '_) {
-    fn eq(&self, other: &dyn BorrowedAggregationKeyHelper) -> bool {
+impl PartialEq for (dyn BorrowableAggregationKey + '_) {
+    fn eq(&self, other: &dyn BorrowableAggregationKey) -> bool {
         self.borrowed_aggregation_key()
             .eq(&other.borrowed_aggregation_key())
     }
 }
 
-impl<'a> std::hash::Hash for (dyn BorrowedAggregationKeyHelper + 'a) {
+impl std::hash::Hash for (dyn BorrowableAggregationKey + '_) {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.borrowed_aggregation_key().hash(state)
     }
@@ -100,7 +108,7 @@ impl<'a> AggregationKey<'a> {
     ///
     /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
     /// key.
-    pub(super) fn from_span(span: &'a Span, peer_tag_keys: &'a [&'a str]) -> Self {
+    pub(super) fn from_span(span: &'a Span, peer_tag_keys: &'a [String]) -> Self {
         let span_kind = span
             .meta
             .get(TAG_SPANKIND)
@@ -130,7 +138,9 @@ impl<'a> AggregationKey<'a> {
         }
     }
 
-    pub(super) fn to_static_key(self) -> AggregationKey<'static> {
+    /// Clone the fields of an AggregationKey to produce a static version of the key which is
+    /// not tied to the lifetime of a span.
+    pub(super) fn into_static_key(self) -> AggregationKey<'static> {
         AggregationKey {
             resource_name: Cow::Owned(self.resource_name.into_owned()),
             service_name: Cow::Owned(self.service_name.into_owned()),
@@ -163,7 +173,7 @@ impl From<pb::ClientGroupedStats> for AggregationKey<'static> {
                 .peer_tags
                 .into_iter()
                 .filter_map(|t| {
-                    let (key, value) = t.split_once(":")?;
+                    let (key, value) = t.split_once(':')?;
                     Some((key.to_string().into(), value.to_string().into()))
                 })
                 .collect(),
@@ -190,10 +200,10 @@ fn client_or_producer(span_kind: &str) -> bool {
 
 /// Parse the meta tags of a span and return a list of the peer tags based on the list of
 /// `peer_tag_keys`
-fn get_peer_tags<'k, 'v>(span: &'v Span, peer_tag_keys: &'k [&'k str]) -> Vec<(&'k str, &'v str)> {
+fn get_peer_tags<'k, 'v>(span: &'v Span, peer_tag_keys: &'k [String]) -> Vec<(&'k str, &'v str)> {
     peer_tag_keys
         .iter()
-        .filter_map(|key| Some((*key, span.meta.get(*key)?.as_str())))
+        .filter_map(|key| Some((key.as_str(), span.meta.get(key.as_str())?.as_str())))
         .collect()
 }
 
@@ -246,12 +256,12 @@ impl StatsBucket {
     /// Insert a value as stats in the group corresponding to the aggregation key, if it does
     /// not exist it creates it.
     pub(super) fn insert(&mut self, key: AggregationKey<'_>, value: &Span) {
-        if let Some(grouped_stats) = self.data.get_mut(&key as &dyn BorrowedAggregationKeyHelper) {
+        if let Some(grouped_stats) = self.data.get_mut(&key as &dyn BorrowableAggregationKey) {
             grouped_stats.insert(value);
         } else {
             let mut grouped_stats = GroupedStats::default();
             grouped_stats.insert(value);
-            self.data.insert(key.to_static_key(), grouped_stats);
+            self.data.insert(key.into_static_key(), grouped_stats);
         }
     }
 
@@ -508,7 +518,11 @@ mod tests {
             ),
         ];
 
-        let test_peer_tags = vec!["aws.s3.bucket", "db.instance", "db.system"];
+        let test_peer_tags = vec![
+            "aws.s3.bucket".to_string(),
+            "db.instance".to_string(),
+            "db.system".to_string(),
+        ];
 
         let test_cases_with_peer_tags: Vec<(Span, AggregationKey)> = vec![
             // Span with peer tags with peertags aggregation enabled
@@ -599,7 +613,7 @@ mod tests {
 
         for (span, expected_key) in test_cases_with_peer_tags {
             assert_eq!(
-                AggregationKey::from_span(&span, &test_peer_tags),
+                AggregationKey::from_span(&span, test_peer_tags.as_slice()),
                 expected_key
             );
         }

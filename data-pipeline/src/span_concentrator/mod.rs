@@ -124,11 +124,7 @@ impl SpanConcentrator {
                 bucket_timestamp = self.oldest_timestamp;
             }
 
-            let temp_field_should_not_be_commited: Vec<&str> =
-                self.peer_tag_keys.iter().map(|s| s as &str).collect();
-
-            let agg_key =
-                AggregationKey::from_span(span, temp_field_should_not_be_commited.as_slice());
+            let agg_key = AggregationKey::from_span(span, self.peer_tag_keys.as_slice());
 
             self.buckets
                 .entry(bucket_timestamp)
@@ -140,7 +136,7 @@ impl SpanConcentrator {
     /// Flush all stats bucket except for the `buffer_len` most recent. If `force` is true, flush
     /// all buckets.
     pub fn flush(&mut self, now: SystemTime, force: bool) -> Vec<pb::ClientStatsBucket> {
-        // TODO: Use drain filter from hashbrown to avoid removing current buckets
+        // TODO: Wait for HashMap::extract_if to be stabilized to avoid a full drain
         let now_timestamp = system_time_to_unix_duration(now).as_nanos() as u64;
         let buckets: Vec<(u64, StatsBucket)> = self.buckets.drain().collect();
         self.oldest_timestamp = if force {
