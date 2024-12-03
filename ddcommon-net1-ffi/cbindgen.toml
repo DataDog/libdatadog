@@ -15,13 +15,15 @@ no_includes = true
 sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
 
 [export]
-prefix = "ddog_net1"
+prefix = "ddog_net1_"
 renaming_overrides_prefixing = true
 
 [export.mangle]
 rename_types = "PascalCase"
 
 [export.rename]
+"CharSlice" = "ddog_CharSlice"
+"Error" = "ddog_Error"
 
 
 [enum]
@@ -33,3 +35,4 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
+include = ["ddcommon-net1"]

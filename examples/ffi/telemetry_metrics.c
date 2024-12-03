@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <datadog/common.h>
+#include <datadog/common_net1.h>
 #include <datadog/telemetry.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -48,7 +49,7 @@ int main(void) {
   TRY(ddog_telemetry_builder_instantiate(&builder, service, lang, lang_version, tracer_version));
 
   ddog_CharSlice endpoint_char = DDOG_CHARSLICE_C("file://./examples_telemetry_metrics.out");
-  struct ddog_Endpoint *endpoint = ddog_endpoint_from_url(endpoint_char);
+  struct ddog_net1_Endpoint *endpoint = ddog_endpoint_from_url(endpoint_char);
   TRY(ddog_telemetry_builder_with_endpoint_config_endpoint(builder, endpoint));
   ddog_endpoint_drop(endpoint);
 

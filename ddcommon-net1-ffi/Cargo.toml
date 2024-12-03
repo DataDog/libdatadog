@@ -8,6 +8,13 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+bench = false
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
 [dependencies]
 ddcommon-ffi = { path = "../ddcommon-ffi" }
 ddcommon-net1 = { path = "../ddcommon-net1" }

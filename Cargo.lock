@@ -1535,7 +1535,7 @@ dependencies = [
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
- "ddcommon-net1",
+ "ddcommon-net1-ffi",
  "ddtelemetry-ffi",
  "futures",
  "http-body-util",
@@ -1870,6 +1870,7 @@ dependencies = [
 name = "ddcommon-net1-ffi"
 version = "14.3.1"
 dependencies = [
+ "build_common",
  "ddcommon-ffi",
  "ddcommon-net1",
 ]
@@ -1936,7 +1937,6 @@ dependencies = [
  "build_common",
  "ddcommon",
  "ddcommon-ffi",
- "ddcommon-net1",
  "ddcommon-net1-ffi",
  "ddtelemetry",
  "libc",

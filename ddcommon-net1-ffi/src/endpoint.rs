@@ -9,6 +9,17 @@ use std::str::FromStr;
 
 use http::uri::{Authority, Parts};
 
+// Bindgen doesn't understand modules, this is the same type as far as bindgen
+// is concerned. Using a transparent repr is important here.
+mod bindgen {
+    // Create a wrapper struct for FFI, since bindgen doesn't forward declare
+    // the struct without it.
+    #[allow(dead_code)]
+    #[repr(transparent)]
+    #[derive(Clone, PartialEq, Eq, Hash, Debug)]
+    pub struct Endpoint(ddcommon_net1::Endpoint);
+}
+
 pub type Endpoint = ddcommon_net1::Endpoint;
 
 #[no_mangle]

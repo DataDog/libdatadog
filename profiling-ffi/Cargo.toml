@@ -17,6 +17,7 @@ bench = false
 [features]
 default = []
 cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+ddcommon-net1-ffi = ["dep:ddcommon-net1-ffi"]
 ddtelemetry-ffi = ["dep:ddtelemetry-ffi"]
 symbolizer = ["symbolizer-ffi"]
 data-pipeline-ffi = ["dep:data-pipeline-ffi"]
@@ -38,7 +39,7 @@ futures = { version = "0.3", default-features = false }
 hyper = { version = "0.14", features = ["backports", "deprecated"], default-features = false }
 ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
-ddcommon-net1 = { path = "../ddcommon-net1" }
+ddcommon-net1-ffi = { path = "../ddcommon-net1-ffi", optional = true }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
 libc = "0.2"
 tokio-util = "0.7.1"

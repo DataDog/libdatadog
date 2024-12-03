@@ -10,7 +10,7 @@
 // ```
 
 use ddcommon_ffi as ffi;
-use ddcommon_net1::Endpoint;
+use ddcommon_net1_ffi::Endpoint;
 use ddtelemetry::worker::TelemetryWorkerBuilder;
 use ffi::slice::AsBytes;
 

@@ -8,6 +8,7 @@ license.workspace = true
 
 [features]
 default = []
+common-net1 = []
 crashtracker = []
 profiling = []
 telemetry = []
