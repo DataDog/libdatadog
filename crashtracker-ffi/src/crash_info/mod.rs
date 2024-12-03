@@ -16,6 +16,8 @@ mod os_info;
 pub use os_info::*;
 mod proc_info;
 pub use proc_info::*;
+mod thread_data;
+pub use thread_data::*;
 
 use anyhow::Context;
 use ddcommon::Endpoint;

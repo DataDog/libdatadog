@@ -227,9 +227,18 @@ impl CrashInfoBuilder {
         self
     }
 
-    pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> &mut Self {
+    pub fn with_thread(&mut self, thread: ThreadData) -> anyhow::Result<&mut Self> {
+        if let Some(ref mut threads) = &mut self.error.threads {
+            threads.push(thread);
+        } else {
+            self.error.threads = Some(vec![thread]);
+        }
+        Ok(self)
+    }
+
+    pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<&mut Self> {
         self.error.with_threads(threads);
-        self
+        Ok(self)
     }
 
     pub fn with_timestamp(&mut self, timestamp: DateTime<Utc>) -> &mut Self {

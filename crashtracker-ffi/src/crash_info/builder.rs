@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{to_inner::ToInner, Metadata, OsInfo, ProcInfo, StackTrace};
+use super::{to_inner::ToInner, Metadata, OsInfo, ProcInfo, StackTrace, ThreadData};
 use ::function_name::named;
 use anyhow::Context;
 use datadog_crashtracker::rfc5_crash_info::ErrorKind;
@@ -297,6 +297,24 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_stack(
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
+/// All arguments must be valid.
+/// Consumes the stack argument.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_thread(
+    mut builder: *mut CrashInfoBuilder,
+    thread: ThreadData,
+) -> VoidResult {
+    wrap_with_ffi_result!({
+        builder.to_inner_mut()?.with_thread(thread.try_into()?)?;
+        anyhow::Ok(())
+    })
+}
+
+/// # Safety
+/// The `builder` can be null, but if non-null it must point to a Builder made by this module,
+/// which has not previously been dropped.
 /// The CharSlice must be valid.
 #[no_mangle]
 #[must_use]
@@ -364,9 +382,6 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_uuid_random(
     })
 }
 
-// with_proc_info
 // with_sig_info
 // with_span_ids
-// with_stack
-// with_threads
 // with_trace_ids
