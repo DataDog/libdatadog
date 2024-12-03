@@ -13,6 +13,10 @@ use std::str::FromStr;
 
 pub mod connector;
 
+pub mod dep {
+    pub use http;
+}
+
 pub type HttpClient = hyper::Client<connector::Connector, hyper::Body>;
 pub type HttpResponse = hyper::Response<hyper::Body>;
 pub type HttpRequestBuilder = hyper::http::request::Builder;
@@ -133,6 +137,7 @@ pub fn decode_uri_path_in_authority(uri: &hyper::Uri) -> anyhow::Result<PathBuf>
 
 impl Endpoint {
     /// Default value for the timeout field in milliseconds.
+    /// Sync with ddog_Endpoint's default manually.
     pub const DEFAULT_TIMEOUT: u64 = 3_000;
 
     /// Return a request builder with the following headers:

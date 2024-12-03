@@ -8,7 +8,7 @@ use datadog_live_debugger::sender::{generate_tags, Config, DebuggerType};
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::AsBytes;
 use ddcommon_ffi::{CharSlice, MaybeError};
-use ddcommon_net1::Endpoint;
+use ddcommon_net1_ffi::Endpoint;
 use log::{debug, warn};
 use percent_encoding::{percent_encode, CONTROLS};
 use std::sync::Arc;
