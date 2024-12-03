@@ -12,6 +12,10 @@ pub mod to_inner;
 pub use builder::*;
 mod metadata;
 pub use metadata::*;
+mod os_info;
+pub use os_info::*;
+mod proc_info;
+pub use proc_info::*;
 
 use anyhow::Context;
 use ddcommon::Endpoint;

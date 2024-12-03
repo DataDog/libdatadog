@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{to_inner::ToInner, Metadata, StackTrace};
+use super::{to_inner::ToInner, Metadata, OsInfo, ProcInfo, StackTrace};
 use ::function_name::named;
 use anyhow::Context;
 use datadog_crashtracker::rfc5_crash_info::ErrorKind;
@@ -226,6 +226,58 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_metadata(
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
 /// All arguments must be valid.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_os_info(
+    mut builder: *mut CrashInfoBuilder,
+    os_info: OsInfo,
+) -> VoidResult {
+    wrap_with_ffi_result!({
+        builder.to_inner_mut()?.with_os_info(os_info.try_into()?);
+        anyhow::Ok(())
+    })
+}
+
+/// # Safety
+/// The `builder` can be null, but if non-null it must point to a Builder made by this module,
+/// which has not previously been dropped.
+/// All arguments must be valid.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_os_info_this_machine(
+    mut builder: *mut CrashInfoBuilder,
+) -> VoidResult {
+    wrap_with_ffi_result!({
+        builder.to_inner_mut()?.with_os_info_this_machine();
+        anyhow::Ok(())
+    })
+}
+
+/// # Safety
+/// The `builder` can be null, but if non-null it must point to a Builder made by this module,
+/// which has not previously been dropped.
+/// All arguments must be valid.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_proc_info(
+    mut builder: *mut CrashInfoBuilder,
+    proc_info: ProcInfo,
+) -> VoidResult {
+    wrap_with_ffi_result!({
+        builder
+            .to_inner_mut()?
+            .with_proc_info(proc_info.try_into()?);
+        anyhow::Ok(())
+    })
+}
+
+/// # Safety
+/// The `builder` can be null, but if non-null it must point to a Builder made by this module,
+/// which has not previously been dropped.
+/// All arguments must be valid.
 /// Consumes the stack argument.
 #[no_mangle]
 #[must_use]
@@ -312,8 +364,6 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_uuid_random(
     })
 }
 
-// with_os_info
-// with_os_info_this_machine
 // with_proc_info
 // with_sig_info
 // with_span_ids

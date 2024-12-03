@@ -15,13 +15,13 @@ mod unknown_value;
 pub use builder::*;
 pub use error_data::*;
 pub use metadata::Metadata;
+pub use os_info::*;
+pub use proc_info::*;
 use sig_info::SigInfo;
 pub use stacktrace::*;
 
 use crate::rfc5_crash_info::spans::Span;
 use anyhow::Context;
-use os_info::OsInfo;
-use proc_info::ProcInfo;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs::File, path::Path};
