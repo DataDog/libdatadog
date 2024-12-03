@@ -32,3 +32,4 @@ hyper = {version = "0.14", features = ["backports", "deprecated"], default-featu
 symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"], optional = true }
 symbolic-common = { version = "12.8.0", default-features = false, optional = true }
 function_name = "0.3.0"
+libc = "0.2.167"

@@ -18,6 +18,8 @@ mod proc_info;
 pub use proc_info::*;
 mod thread_data;
 pub use thread_data::*;
+mod sig_info;
+pub use sig_info::*;
 
 use anyhow::Context;
 use ddcommon::Endpoint;

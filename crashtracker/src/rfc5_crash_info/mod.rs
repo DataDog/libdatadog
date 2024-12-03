@@ -17,7 +17,7 @@ pub use error_data::*;
 pub use metadata::Metadata;
 pub use os_info::*;
 pub use proc_info::*;
-use sig_info::SigInfo;
+pub use sig_info::*;
 pub use stacktrace::*;
 
 use crate::rfc5_crash_info::spans::Span;

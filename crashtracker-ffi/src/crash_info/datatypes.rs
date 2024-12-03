@@ -222,24 +222,3 @@ impl<'a> TryFrom<&StackFrameOld<'a>> for datadog_crashtracker::StackFrame {
         })
     }
 }
-
-#[repr(C)]
-pub struct SigInfo<'a> {
-    pub signum: u64,
-    pub signame: CharSlice<'a>,
-}
-
-impl<'a> TryFrom<SigInfo<'a>> for datadog_crashtracker::SigInfo {
-    type Error = anyhow::Error;
-
-    fn try_from(value: SigInfo<'a>) -> Result<Self, Self::Error> {
-        let signum = value.signum;
-        let signame = value.signame.try_to_string_option()?;
-        let faulting_address = None; // TODO: Expose this to FFI
-        Ok(Self {
-            signum,
-            signame,
-            faulting_address,
-        })
-    }
-}

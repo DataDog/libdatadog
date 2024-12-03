@@ -1377,6 +1377,7 @@ dependencies = [
  "ddcommon-ffi",
  "function_name",
  "hyper 0.14.31",
+ "libc",
  "symbolic-common",
  "symbolic-demangle",
 ]
@@ -3242,9 +3243,9 @@ checksum = "db13adb97ab515a3691f56e4dbab09283d0b86cb45abd991d8634a9d6f501760"
 
 [[package]]
 name = "libc"
-version = "0.2.161"
+version = "0.2.167"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e9489c2807c139ffd9c1794f4af0ebe86a828db53ecdc7fea2111d0fed085d1"
+checksum = "09d6582e104315a817dff97f75133544b2e094ee22447d2acf4a74e189ba06fc"
 
 [[package]]
 name = "libloading"
