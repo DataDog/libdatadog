@@ -12,7 +12,6 @@ mod stackframe;
 mod stacktrace;
 mod thread_data;
 
-pub mod to_inner;
 pub use builder::*;
 pub use datatypes::*;
 pub use metadata::*;

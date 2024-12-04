@@ -5,6 +5,7 @@ mod error;
 
 pub mod array_queue;
 pub mod endpoint;
+pub mod handle;
 pub mod option;
 pub mod result;
 pub mod slice;
@@ -15,6 +16,7 @@ pub mod utils;
 pub mod vec;
 
 pub use error::*;
+pub use handle::*;
 pub use option::*;
 pub use result::*;
 pub use slice::{CharSlice, Slice};

@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
-use ddcommon_ffi::{slice::AsBytes, CharSlice};
+use ddcommon_ffi::{slice::AsBytes, CharSlice, Handle};
 
-use super::StackTrace;
+use datadog_crashtracker::rfc5_crash_info::StackTrace;
 
 #[repr(C)]
 pub struct ThreadData<'a> {
     pub crashed: bool,
     pub name: CharSlice<'a>,
-    pub stack: StackTrace,
+    pub stack: Handle<StackTrace>,
     pub state: CharSlice<'a>,
 }
 
