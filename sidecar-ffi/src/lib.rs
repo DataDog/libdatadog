@@ -23,7 +23,7 @@ use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigRea
 use ddcommon::tag::Tag;
 use ddcommon_ffi as ffi;
 use ddcommon_ffi::{CharSlice, MaybeError};
-use ddcommon_net1_ffi::Endpoint;
+use ddcommon_net1::Endpoint;
 use ddtelemetry::{
     data::{self, Dependency, Integration},
     worker::{LifecycleAction, TelemetryActions},

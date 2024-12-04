@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <datadog/common.h>
-#include <datadog/common-net1.h>
 #include <datadog/crashtracker.h>
 #include <signal.h>
 #include <stdio.h>
@@ -50,10 +49,10 @@ int main(int argc, char **argv) {
       .optional_stdout_filename = DDOG_CHARSLICE_C("/tmp/crashreports/stdout.txt"),
   };
 
-  struct ddog_net1_Endpoint *endpoint =
+  struct ddog_Endpoint *endpoint =
       ddog_endpoint_from_filename(DDOG_CHARSLICE_C("/tmp/crashreports/crashreport.json"));
   // Alternatively:
-  //  struct ddog_net1_Endpoint * endpoint =
+  //  struct ddog_Endpoint * endpoint =
   //      ddog_endpoint_from_url(DDOG_CHARSLICE_C("http://localhost:8126"));
 
   ddog_crasht_Config config = {

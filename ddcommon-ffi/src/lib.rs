@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod endpoint;
 mod error;
 
 pub mod array_queue;
@@ -11,6 +12,7 @@ pub mod tags;
 pub mod timespec;
 pub mod vec;
 
+pub use endpoint::*;
 pub use error::*;
 pub use option::*;
 pub use slice::{CharSlice, Slice};

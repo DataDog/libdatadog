@@ -61,8 +61,6 @@ pub fn main() {
     let features = {
         #[allow(unused_mut)]
         let mut f: Vec<String> = vec![];
-        #[cfg(feature = "common-net1")]
-        f.push("ddcommon-net1-ffi".to_string());
         #[cfg(feature = "telemetry")]
         f.push("ddtelemetry-ffi".to_string());
         #[cfg(feature = "data-pipeline")]
