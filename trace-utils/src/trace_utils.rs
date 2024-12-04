@@ -743,6 +743,7 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::type_complexity)]
+    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     async fn get_v05_traces_from_request_body() {
         let data: (
             Vec<String>,

@@ -102,7 +102,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
 ///
 /// * `handle` - The handle to the TraceExporter instance.
 /// * `trace` - The traces to send to the Datadog Agent in the input format used to create the
-///   TraceExporter.
+///   TraceExporter. The memory for the trace must be valid for the life of the call to this
+///   function.
 /// * `trace_count` - The number of traces to send to the Datadog Agent.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_send(
@@ -110,9 +111,18 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
     trace: ByteSlice,
     trace_count: usize,
 ) -> MaybeError {
-    // TODO - handle errors - https://datadoghq.atlassian.net/browse/APMSP-1095
+    // necessary that the trace be static for the life of the FFI function call as the caller
+    // currently owns the memory.
+    //APMSP-1621 - Properly fix this sharp-edge by allocating memory on the Rust side
+    let static_trace: ByteSlice<'static> = std::mem::transmute(trace);
+
+    // TODO: APMSP-1095 - properly handle errors from the send call
     handle
-        .send(trace.as_bytes(), trace_count)
+        .send(
+            tinybytes::Bytes::from_static(static_trace.as_slice()),
+            trace_count,
+        )
         .unwrap_or(String::from(""));
+
     MaybeError::None
 }

@@ -251,15 +251,11 @@ impl TraceExporter {
 
     /// Send msgpack serialized traces to the agent
     #[allow(missing_docs)]
-    pub fn send(&self, data: &[u8], trace_count: usize) -> Result<String, String> {
+    pub fn send(&self, data: tinybytes::Bytes, trace_count: usize) -> Result<String, String> {
         self.check_agent_info();
         match self.input_format {
-            TraceExporterInputFormat::Proxy => self.send_proxy(data, trace_count),
-            TraceExporterInputFormat::V04 => {
-                self.send_deser_ser(tinybytes::Bytes::copy_from_slice(data))
-                // TODO: APMSP-1582 - Refactor data-pipeline-ffi so we can leverage a type that
-                // implements tinybytes::UnderlyingBytes trait to avoid copying
-            }
+            TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
+            TraceExporterInputFormat::V04 => self.send_deser_ser(data),
         }
     }
 
@@ -921,6 +917,7 @@ mod tests {
 
     const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 
+    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     #[test]
     fn new() {
         let builder = TraceExporterBuilder::default();
@@ -954,6 +951,7 @@ mod tests {
         assert!(!exporter.metadata.client_computed_stats);
     }
 
+    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     #[test]
     fn new_defaults() {
         let builder = TraceExporterBuilder::default();
@@ -1188,7 +1186,7 @@ mod tests {
             ..Default::default()
         }];
 
-        let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
+        let data = tinybytes::Bytes::from(rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap());
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {
@@ -1197,7 +1195,7 @@ mod tests {
             })
         }
 
-        exporter.send(data.as_slice(), 1).unwrap();
+        exporter.send(data, 1).unwrap();
         exporter.shutdown(None).unwrap();
 
         mock_traces.assert();
@@ -1313,8 +1311,10 @@ mod tests {
                 ..Default::default()
             }],
         ];
-        let bytes = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
-        let _result = exporter.send(&bytes, 1).expect("failed to send trace");
+        let bytes = tinybytes::Bytes::from(
+            rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace"),
+        );
+        let _result = exporter.send(bytes, 1).expect("failed to send trace");
 
         assert_eq!(
             &format!(
@@ -1345,9 +1345,8 @@ mod tests {
             stats_socket.local_addr().unwrap().to_string(),
         );
 
-        let _result = exporter
-            .send(b"some_bad_payload", 1)
-            .expect("failed to send trace");
+        let bad_payload = tinybytes::Bytes::copy_from_slice(b"some_bad_payload".as_ref());
+        let _result = exporter.send(bad_payload, 1).expect("failed to send trace");
 
         assert_eq!(
             &format!(
@@ -1380,8 +1379,10 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let bytes = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
-        let _result = exporter.send(&bytes, 1).expect("failed to send trace");
+        let bytes = tinybytes::Bytes::from(
+            rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace"),
+        );
+        let _result = exporter.send(bytes, 1).expect("failed to send trace");
 
         assert_eq!(
             &format!(
