@@ -13,6 +13,9 @@ use rmp::{decode, decode::RmpRead, Marker};
 use std::{collections::HashMap, f64};
 use tinybytes::{Bytes, BytesString};
 
+// https://docs.rs/rmp/latest/rmp/enum.Marker.html#variant.Null (0xc0 == 192)
+const NULL_MARKER: &u8 = &0xc0;
+
 /// Decodes a slice of bytes into a vector of `TracerPayloadV04` objects.
 ///
 ///
@@ -132,21 +135,40 @@ fn read_string_bytes(buf: &mut Bytes) -> Result<BytesString, DecodeError> {
 }
 
 #[inline]
+fn read_nullable_string_bytes(buf: &mut Bytes) -> Result<BytesString, DecodeError> {
+    if let Some(empty_string) = handle_null_marker(buf, BytesString::from_bytes_slice(buf, "")) {
+        Ok(empty_string)
+    } else {
+        read_string_bytes(buf)
+    }
+}
+
+#[inline]
 // Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
 // BytesStrings.
 fn read_str_map_to_bytes_strings(
-    buf_wrapper: &mut Bytes,
+    buf: &mut Bytes,
 ) -> Result<HashMap<BytesString, BytesString>, DecodeError> {
-    let len = decode::read_map_len(unsafe { buf_wrapper.as_mut_slice() })
+    let len = decode::read_map_len(unsafe { buf.as_mut_slice() })
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
 
     let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
     for _ in 0..len {
-        let key = read_string_bytes(buf_wrapper)?;
-        let value = read_string_bytes(buf_wrapper)?;
+        let key = read_string_bytes(buf)?;
+        let value = read_string_bytes(buf)?;
         map.insert(key, value);
     }
     Ok(map)
+}
+
+fn read_nullable_str_map_to_bytes_strings(
+    buf: &mut Bytes,
+) -> Result<HashMap<BytesString, BytesString>, DecodeError> {
+    if let Some(empty_map) = handle_null_marker(buf, HashMap::default()) {
+        return Ok(empty_map);
+    }
+
+    read_str_map_to_bytes_strings(buf)
 }
 
 #[inline]
@@ -157,11 +179,20 @@ fn read_metric_pair(buf: &mut Bytes) -> Result<(BytesString, f64), DecodeError> 
     Ok((key, v))
 }
 fn read_metrics(buf: &mut Bytes) -> Result<HashMap<BytesString, f64>, DecodeError> {
+    if let Some(empty_map) = handle_null_marker(buf, HashMap::default()) {
+        return Ok(empty_map);
+    }
+
     let len = read_map_len(unsafe { buf.as_mut_slice() })?;
+
     read_map(len, buf, read_metric_pair)
 }
 
 fn read_meta_struct(buf: &mut Bytes) -> Result<HashMap<BytesString, Vec<u8>>, DecodeError> {
+    if let Some(empty_map) = handle_null_marker(buf, HashMap::default()) {
+        return Ok(empty_map);
+    }
+
     fn read_meta_struct_pair(buf: &mut Bytes) -> Result<(BytesString, Vec<u8>), DecodeError> {
         let key = read_string_bytes(buf)?;
         let array_len = decode::read_array_len(unsafe { buf.as_mut_slice() }).map_err(|_| {
@@ -244,6 +275,19 @@ fn read_map_len(buf: &mut &[u8]) -> Result<usize, DecodeError> {
     }
 }
 
+/// When you want to "peek" if the next value is a null marker, and only advance the buffer if it is
+/// null and return the default value. If it is not null, you can continue to decode as expected.
+fn handle_null_marker<T>(buf: &mut Bytes, default: T) -> Option<T> {
+    let slice = unsafe { buf.as_mut_slice() };
+
+    if slice.first() == Some(NULL_MARKER) {
+        *slice = &slice[1..];
+        Some(default)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,23 +315,96 @@ mod tests {
     }
 
     #[test]
-    fn decoder_read_string_success() {
+    fn test_decoder_size() {
+        let span = Span {
+            name: BytesString::from_slice("span_name".as_ref()).unwrap(),
+            ..Default::default()
+        };
+        let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        let expected_size = encoded_data.len() - 1; // rmp_serde adds additional 0 byte
+        encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
+        let (_decoded_traces, decoded_size) =
+            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+
+        assert_eq!(expected_size, decoded_size);
+    }
+
+    #[test]
+    fn test_decoder_read_string_success() {
         let expected_string = "test-service-name";
         let span = Span {
             name: BytesString::from_slice(expected_string.as_ref()).unwrap(),
             ..Default::default()
         };
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let expected_size = encoded_data.len() - 1; // rmp_serde adds additional 0 byte
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
-        let (decoded_traces, decoded_size) =
+        let (decoded_traces, _) =
             from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
-        assert_eq!(expected_size, decoded_size);
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
         assert_eq!(expected_string, decoded_span.name.as_str());
+    }
+
+    #[test]
+    fn test_decoder_read_null_string_success() {
+        let mut span = create_test_json_span(1, 2, 0, 0);
+        span["name"] = json!(null);
+        let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
+        let (decoded_traces, _) =
+            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+
+        assert_eq!(1, decoded_traces.len());
+        assert_eq!(1, decoded_traces[0].len());
+        let decoded_span = &decoded_traces[0][0];
+        assert_eq!("", decoded_span.name.as_str());
+    }
+
+    #[test]
+    fn test_decoder_read_number_success() {
+        let span = create_test_json_span(1, 2, 0, 0);
+        let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
+        let (decoded_traces, _) =
+            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+
+        assert_eq!(1, decoded_traces.len());
+        assert_eq!(1, decoded_traces[0].len());
+        let decoded_span = &decoded_traces[0][0];
+        assert_eq!(1, decoded_span.trace_id);
+    }
+
+    #[test]
+    fn test_decoder_read_null_number_success() {
+        let mut span = create_test_json_span(1, 2, 0, 0);
+        span["trace_id"] = json!(null);
+        let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
+        let (decoded_traces, _) =
+            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+
+        assert_eq!(1, decoded_traces.len());
+        assert_eq!(1, decoded_traces[0].len());
+        let decoded_span = &decoded_traces[0][0];
+        assert_eq!(0, decoded_span.trace_id);
+    }
+
+    #[test]
+    fn test_decoder_meta_struct_null_map_success() {
+        let mut span = create_test_json_span(1, 2, 0, 0);
+        span["meta_struct"] = json!(null);
+
+        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        let (decoded_traces, _) =
+            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+
+        assert_eq!(1, decoded_traces.len());
+        assert_eq!(1, decoded_traces[0].len());
+        let decoded_span = &decoded_traces[0][0];
+
+        assert!(decoded_span.meta_struct.is_empty());
     }
 
     #[test]
@@ -367,6 +484,22 @@ mod tests {
     }
 
     #[test]
+    fn test_decoder_meta_null_map_success() {
+        let mut span = create_test_json_span(1, 2, 0, 0);
+        span["meta"] = json!(null);
+
+        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        let (decoded_traces, _) =
+            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+
+        assert_eq!(1, decoded_traces.len());
+        assert_eq!(1, decoded_traces[0].len());
+        let decoded_span = &decoded_traces[0][0];
+
+        assert!(decoded_span.meta.is_empty());
+    }
+
+    #[test]
     fn test_decoder_meta_map_16_success() {
         let expected_meta: HashMap<String, String> = (0..20)
             .map(|i| {
@@ -443,6 +576,20 @@ mod tests {
     }
 
     #[test]
+    fn test_decoder_metrics_null_success() {
+        let mut span = create_test_json_span(1, 2, 0, 0);
+        span["metrics"] = json!(null);
+        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        let (decoded_traces, _) =
+            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+
+        assert_eq!(1, decoded_traces.len());
+        assert_eq!(1, decoded_traces[0].len());
+        let decoded_span = &decoded_traces[0][0];
+        assert!(decoded_span.metrics.is_empty());
+    }
+
+    #[test]
     fn test_decoder_span_link_success() {
         let expected_span_link = json!({
             "trace_id": 1,
@@ -499,6 +646,22 @@ mod tests {
                 [&BytesString::from_slice("attr2".as_ref()).unwrap()]
                 .as_str()
         );
+    }
+
+    #[test]
+    fn test_decoder_null_span_link_success() {
+        let mut span = create_test_json_span(1, 2, 0, 0);
+        span["span_links"] = json!(null);
+
+        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        let (decoded_traces, _) =
+            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+
+        assert_eq!(1, decoded_traces.len());
+        assert_eq!(1, decoded_traces[0].len());
+        let decoded_span = &decoded_traces[0][0];
+
+        assert!(decoded_span.span_links.is_empty());
     }
 
     #[test]
