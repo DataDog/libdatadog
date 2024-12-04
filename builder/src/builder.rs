@@ -139,7 +139,12 @@ impl Builder {
 
     pub fn add_cmake(&self) {
         let libs = arch::NATIVE_LIBS.to_owned();
-        let cmake_path: PathBuf = [&self.target_dir, "DatadogConfig.cmake"].iter().collect();
+        let cmake_dir: PathBuf = [&self.target_dir, "cmake"].iter().collect();
+        fs::create_dir_all(cmake_dir).expect("Failed to create cmake dir");
+
+        let cmake_path: PathBuf = [&self.target_dir, "cmake", "DatadogConfig.cmake"]
+            .iter()
+            .collect();
         let mut origin = project_root();
         origin.push("cmake");
         origin.push("DatadogConfig.cmake.in");
