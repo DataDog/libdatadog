@@ -41,16 +41,10 @@ pub unsafe extern "C" fn ddog_crasht_StackTrace_drop(trace: *mut Handle<StackTra
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackTrace_push_frame(
     mut trace: *mut Handle<StackTrace>,
-    frame: *mut Handle<StackFrame>,
+    mut frame: *mut Handle<StackFrame>,
 ) -> VoidResult {
     wrap_with_ffi_result!({
-        let trace = trace.to_inner_mut()?;
-        let frame = *frame
-            .as_mut()
-            .context("Null frame pointer")?
-            .take()
-            .context("Frame had null inner pointer.  Use after free?")?;
-        trace.frames.push(frame);
+        trace.to_inner_mut()?.frames.push(*frame.take()?);
         anyhow::Ok(())
     })
 }

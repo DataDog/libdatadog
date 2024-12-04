@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
-use ddcommon_ffi::{slice::AsBytes, CharSlice, Handle};
+use ddcommon_ffi::{slice::AsBytes, CharSlice, Handle, ToInner};
 
 use datadog_crashtracker::rfc5_crash_info::StackTrace;
 
@@ -22,10 +22,8 @@ impl<'a> TryFrom<ThreadData<'a>> for datadog_crashtracker::rfc5_crash_info::Thre
             .name
             .try_to_string_option()?
             .context("Name cannot be empty")?;
-        let stack = *value
-            .stack
-            .take()
-            .context("missing stack, use after free?")?;
+        // Safety: Handles should only be created using functions that leave them in a valid state.
+        let stack = unsafe { *value.stack.take()? };
         let state = value.state.try_to_string_option()?;
 
         Ok(Self {

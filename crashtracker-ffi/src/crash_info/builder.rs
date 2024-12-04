@@ -4,7 +4,7 @@
 use super::{Metadata, OsInfo, ProcInfo, SigInfo, Span, ThreadData};
 use ::function_name::named;
 use anyhow::Context;
-use datadog_crashtracker::rfc5_crash_info::{CrashInfoBuilder, ErrorKind, StackTrace};
+use datadog_crashtracker::rfc5_crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, StackTrace};
 use ddcommon_ffi::{
     slice::AsBytes, wrap_with_ffi_result, CharSlice, Handle, Result, Slice, Timespec, ToInner,
     VoidResult,
@@ -33,6 +33,21 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_drop(builder: *mut Handle<
     if !builder.is_null() {
         drop((*builder).take())
     }
+}
+
+/// # Safety
+/// The `builder` can be null, but if non-null it must point to a Builder made by this module,
+/// which has not previously been dropped.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_build(
+    mut builder: *mut Handle<CrashInfoBuilder>,
+) -> Result<Handle<CrashInfo>> {
+    wrap_with_ffi_result!({
+        anyhow::ensure!(!builder.is_null());
+        Ok(builder.take()?.build()?.into())
+    })
 }
 
 /// # Safety
@@ -270,12 +285,10 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_span_id(
 #[named]
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_stack(
     mut builder: *mut Handle<CrashInfoBuilder>,
-    mut stack: Handle<StackTrace>,
+    mut stack: *mut Handle<StackTrace>,
 ) -> VoidResult {
     wrap_with_ffi_result!({
-        builder
-            .to_inner_mut()?
-            .with_stack(*stack.take().context("Stack was empty. Use after free?")?);
+        builder.to_inner_mut()?.with_stack(*stack.take()?);
         anyhow::Ok(())
     })
 }

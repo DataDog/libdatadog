@@ -15,11 +15,18 @@ pub trait ToInner<T> {
     /// # Safety
     /// The Handle must hold a valid `inner` which has been allocated and not freed.
     unsafe fn to_inner_mut(&mut self) -> anyhow::Result<&mut T>;
+    /// # Safety
+    /// The Handle must hold a valid `inner` [return OK(inner)], or null [returns Error].
+    unsafe fn take(&mut self) -> anyhow::Result<Box<T>>;
 }
 
 impl<T> ToInner<T> for *mut Handle<T> {
     unsafe fn to_inner_mut(&mut self) -> anyhow::Result<&mut T> {
         self.as_mut().context("Null pointer")?.to_inner_mut()
+    }
+
+    unsafe fn take(&mut self) -> anyhow::Result<Box<T>> {
+        self.as_mut().context("Null pointer")?.take()
     }
 }
 
@@ -29,19 +36,16 @@ impl<T> ToInner<T> for Handle<T> {
             .as_mut()
             .context("inner pointer was null, indicates use after free")
     }
-}
 
-impl<T> Handle<T> {
-    pub fn take(&mut self) -> Option<Box<T>> {
+    unsafe fn take(&mut self) -> anyhow::Result<Box<T>> {
         // Leaving a null will help with double-free issues that can arise in C.
         // Of course, it's best to never get there in the first place!
         let raw = std::mem::replace(&mut self.inner, std::ptr::null_mut());
-
-        if raw.is_null() {
-            None
-        } else {
-            Some(unsafe { Box::from_raw(raw) })
-        }
+        anyhow::ensure!(
+            !raw.is_null(),
+            "inner pointer was null, indicates use after free"
+        );
+        Ok(Box::from_raw(raw))
     }
 }
 
@@ -55,6 +59,6 @@ impl<T> From<T> for Handle<T> {
 
 impl<T> Drop for Handle<T> {
     fn drop(&mut self) {
-        drop(self.take())
+        drop(unsafe { self.take() })
     }
 }
