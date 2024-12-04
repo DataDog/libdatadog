@@ -116,16 +116,25 @@ impl From<TraceExporterError> for ExporterError {
     }
 }
 
+impl Drop for ExporterError {
+    fn drop(&mut self) {
+        if !self.msg.is_null() {
+            // SAFETY: `the caller must ensure that `ExporterError` has been created through its
+            // `new` method which ensures that `msg` property is originated from
+            // `Cstring::into_raw` call. Any other posibility could lead to UB.
+            unsafe {
+                drop(CString::from_raw(self.msg));
+                self.msg = std::ptr::null_mut();
+            }
+        }
+    }
+}
+
 /// Free
 #[no_mangle]
-pub unsafe extern "C" fn ddog_trace_exporter_error_free(
-    error: ddcommon_ffi::Option<&mut ExporterError>,
-) {
-    if let ddcommon_ffi::Option::Some(error) = error {
-        if !error.msg.is_null() {
-            drop(CString::from_raw(error.msg));
-            error.msg = std::ptr::null_mut();
-        }
+pub unsafe extern "C" fn ddog_trace_exporter_error_free(error: Option<Box<ExporterError>>) {
+    if let Some(error) = error {
+        drop(error)
     }
 }
 
@@ -133,29 +142,26 @@ pub unsafe extern "C" fn ddog_trace_exporter_error_free(
 mod tests {
     use super::*;
     use std::ffi::CStr;
-    use std::ffi::CString;
 
     #[test]
     fn constructor_test() {
         let code = ExporterErrorCode::InvalidArgument;
-        let error = ExporterError::new(code, &code.to_string());
+        let error = Box::new(ExporterError::new(code, &code.to_string()));
 
         assert_eq!(error.code, ExporterErrorCode::InvalidArgument);
-        let msg = unsafe { CString::from_raw(error.msg).into_string().unwrap() };
+        let msg = unsafe { CStr::from_ptr(error.msg).to_string_lossy() };
         assert_eq!(msg, ExporterErrorCode::InvalidArgument.to_string());
     }
 
     #[test]
     fn destructor_test() {
         let code = ExporterErrorCode::InvalidArgument;
-        let mut error = ExporterError::new(code, &code.to_string());
+        let error = Box::new(ExporterError::new(code, &code.to_string()));
 
         assert_eq!(error.code, ExporterErrorCode::InvalidArgument);
         let msg = unsafe { CStr::from_ptr(error.msg).to_string_lossy() };
         assert_eq!(msg, ExporterErrorCode::InvalidArgument.to_string());
 
-        unsafe { ddog_trace_exporter_error_free(ddcommon_ffi::Option::Some(&mut error)) };
-
-        assert_eq!(error.msg, std::ptr::null_mut());
+        unsafe { ddog_trace_exporter_error_free(Some(error)) };
     }
 }
