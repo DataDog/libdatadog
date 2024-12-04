@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use ::function_name::named;
-use anyhow::Context;
 use datadog_crashtracker::rfc5_crash_info::{StackFrame, StackTrace};
-use ddcommon_ffi::{wrap_with_ffi_result, Handle, Result, ToInner, VoidResult};
+use ddcommon_ffi::{wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResult};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                              FFI API                                           //
@@ -43,8 +42,7 @@ pub unsafe extern "C" fn ddog_crasht_StackTrace_push_frame(
     mut trace: *mut Handle<StackTrace>,
     mut frame: *mut Handle<StackFrame>,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         trace.to_inner_mut()?.frames.push(*frame.take()?);
-        anyhow::Ok(())
     })
 }

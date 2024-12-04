@@ -3,11 +3,10 @@
 
 use super::{Metadata, OsInfo, ProcInfo, SigInfo, Span, ThreadData};
 use ::function_name::named;
-use anyhow::Context;
 use datadog_crashtracker::rfc5_crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, StackTrace};
 use ddcommon_ffi::{
-    slice::AsBytes, wrap_with_ffi_result, CharSlice, Handle, Result, Slice, Timespec, ToInner,
-    VoidResult,
+    slice::AsBytes, wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, Handle, Result,
+    Slice, Timespec, ToInner, VoidResult,
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -62,11 +61,10 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_counter(
     name: CharSlice,
     value: i64,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder
             .to_inner_mut()?
             .with_counter(name.try_to_utf8()?.to_string(), value)?;
-        anyhow::Ok(())
     })
 }
 
@@ -81,9 +79,8 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_kind(
     mut builder: *mut Handle<CrashInfoBuilder>,
     kind: ErrorKind,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder.to_inner_mut()?.with_kind(kind)?;
-        anyhow::Ok(())
     })
 }
 
@@ -99,7 +96,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_file(
     filename: CharSlice,
     contents: Slice<CharSlice>,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         let filename = filename
             .try_to_string_option()?
             .context("filename cannot be empty string")?;
@@ -113,7 +110,6 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_file(
         };
 
         builder.to_inner_mut()?.with_file(filename, contents);
-        anyhow::Ok(())
     })
 }
 
@@ -128,11 +124,10 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_fingerprint(
     mut builder: *mut Handle<CrashInfoBuilder>,
     fingerprint: CharSlice,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder
             .to_inner_mut()?
             .with_fingerprint(fingerprint.try_to_utf8()?.to_string())?;
-        anyhow::Ok(())
     })
 }
 
@@ -147,9 +142,8 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_incomplete(
     mut builder: *mut Handle<CrashInfoBuilder>,
     incomplete: bool,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder.to_inner_mut()?.with_incomplete(incomplete);
-        anyhow::Ok(())
     })
 }
 
@@ -164,11 +158,10 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_log_message(
     mut builder: *mut Handle<CrashInfoBuilder>,
     message: CharSlice,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder
             .to_inner_mut()?
             .with_log_message(message.try_to_utf8()?.to_string())?;
-        anyhow::Ok(())
     })
 }
 
@@ -183,9 +176,8 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_metadata(
     mut builder: *mut Handle<CrashInfoBuilder>,
     metadata: Metadata,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder.to_inner_mut()?.with_metadata(metadata.try_into()?);
-        anyhow::Ok(())
     })
 }
 
@@ -200,9 +192,8 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_os_info(
     mut builder: *mut Handle<CrashInfoBuilder>,
     os_info: OsInfo,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder.to_inner_mut()?.with_os_info(os_info.try_into()?);
-        anyhow::Ok(())
     })
 }
 
@@ -216,9 +207,8 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_os_info(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_os_info_this_machine(
     mut builder: *mut Handle<CrashInfoBuilder>,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder.to_inner_mut()?.with_os_info_this_machine();
-        anyhow::Ok(())
     })
 }
 
@@ -233,11 +223,10 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_proc_info(
     mut builder: *mut Handle<CrashInfoBuilder>,
     proc_info: ProcInfo,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder
             .to_inner_mut()?
             .with_proc_info(proc_info.try_into()?);
-        anyhow::Ok(())
     })
 }
 
@@ -252,9 +241,8 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_sig_info(
     mut builder: *mut Handle<CrashInfoBuilder>,
     sig_info: SigInfo,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder.to_inner_mut()?.with_sig_info(sig_info.try_into()?);
-        anyhow::Ok(())
     })
 }
 
@@ -269,9 +257,8 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_span_id(
     mut builder: *mut Handle<CrashInfoBuilder>,
     span_id: Span,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder.to_inner_mut()?.with_span_id(span_id.try_into()?)?;
-        anyhow::Ok(())
     })
 }
 
@@ -287,9 +274,8 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_stack(
     mut builder: *mut Handle<CrashInfoBuilder>,
     mut stack: *mut Handle<StackTrace>,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder.to_inner_mut()?.with_stack(*stack.take()?);
-        anyhow::Ok(())
     })
 }
 
@@ -305,9 +291,8 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_thread(
     mut builder: *mut Handle<CrashInfoBuilder>,
     thread: ThreadData,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder.to_inner_mut()?.with_thread(thread.try_into()?)?;
-        anyhow::Ok(())
     })
 }
 
@@ -322,9 +307,8 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_timestamp(
     mut builder: *mut Handle<CrashInfoBuilder>,
     ts: Timespec,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder.to_inner_mut()?.with_timestamp(ts.into());
-        anyhow::Ok(())
     })
 }
 
@@ -338,9 +322,8 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_timestamp(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_timestamp_now(
     mut builder: *mut Handle<CrashInfoBuilder>,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder.to_inner_mut()?.with_timestamp_now();
-        anyhow::Ok(())
     })
 }
 
@@ -355,11 +338,10 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_trace_id(
     mut builder: *mut Handle<CrashInfoBuilder>,
     trace_id: Span,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder
             .to_inner_mut()?
             .with_trace_id(trace_id.try_into()?)?;
-        anyhow::Ok(())
     })
 }
 
@@ -374,13 +356,12 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_uuid(
     mut builder: *mut Handle<CrashInfoBuilder>,
     uuid: CharSlice,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         let builder = builder.to_inner_mut()?;
         let uuid = uuid
             .try_to_string_option()?
             .context("UUID cannot be empty string")?;
         builder.with_uuid(uuid);
-        anyhow::Ok(())
     })
 }
 
@@ -394,8 +375,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_uuid(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_uuid_random(
     mut builder: *mut Handle<CrashInfoBuilder>,
 ) -> VoidResult {
-    wrap_with_ffi_result!({
+    wrap_with_void_ffi_result!({
         builder.to_inner_mut()?.with_uuid_random();
-        anyhow::Ok(())
     })
 }
