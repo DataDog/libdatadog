@@ -58,6 +58,10 @@ impl CrashInfo {
     pub fn current_schema_version() -> String {
         "1.0".to_string()
     }
+
+    pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
+        self.error.normalize_ips(pid)
+    }
 }
 
 impl From<crate::crash_info::CrashInfo> for CrashInfo {
@@ -155,11 +159,8 @@ impl CrashInfo {
         if let Some(endpoint) = endpoint {
             if Some("file") == endpoint.url.scheme_str() {
                 let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
-                    .context("crash output file was not correctly formatted")?;
+                    .context("crash output file path was not correctly formatted")?;
                 self.to_file(&path)?;
-                let new_path = path.with_extension("rfc5.json");
-                let rfc5: crate::rfc5_crash_info::CrashInfo = self.clone().into();
-                rfc5.to_file(&new_path)?;
             }
         }
 

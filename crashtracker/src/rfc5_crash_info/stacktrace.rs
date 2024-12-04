@@ -1,6 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use anyhow::Context;
+use blazesym::{helper::ElfResolver, normalize::Normalizer, symbolize::TranslateFileOffset, Pid};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +20,14 @@ impl StackTrace {
             format: "Datadog Crashtracker 1.0".to_string(),
             frames: vec![],
         }
+    }
+
+    pub fn normalize_ips(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
+        for frame in &mut self.frames {
+            // TODO: Should this keep going on failure, and report at the end?
+            frame.normalize_ip(normalizer, pid)?;
+        }
+        Ok(())
     }
 }
 
@@ -164,6 +174,29 @@ impl StackFrame {
     pub fn new() -> Self {
         Self::default()
     }
+
+    pub fn normalize_ip(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
+        if let Some(ip) = &self.ip {
+            let ip = ip.trim_start_matches("0x");
+            let ip = u64::from_str_radix(ip, 16)?;
+            let normed = normalizer.normalize_user_addrs(pid, &[ip])?;
+            anyhow::ensure!(normed.outputs.len() == 1);
+            let (file_offset, meta_idx) = normed.outputs[0];
+            let meta = &normed.meta[meta_idx];
+            let elf = meta.as_elf().context("Not elf")?;
+            let resolver = ElfResolver::open(&elf.path)?;
+            let virt_address = resolver
+                .file_offset_to_virt_offset(file_offset)?
+                .context("No matching segment found")?;
+
+            self.build_id = elf.build_id.as_ref().map(|x| byte_slice_as_hex(x.as_ref()));
+            self.build_id_type = Some(BuildIdType::GNU);
+            self.file_type = Some(FileType::ELF);
+            self.path = Some(elf.path.to_string_lossy().to_string());
+            self.relative_address = Some(format!("{virt_address:#018x}"));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -198,6 +231,16 @@ fn byte_vec_as_hex(bv: Option<Vec<u8>>) -> Option<String> {
     } else {
         None
     }
+}
+
+fn byte_slice_as_hex(bv: &[u8]) -> String {
+    use std::fmt::Write;
+
+    let mut s = String::new();
+    for byte in bv {
+        let _ = write!(&mut s, "{byte:X}");
+    }
+    s
 }
 
 #[cfg(test)]

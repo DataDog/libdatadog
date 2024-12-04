@@ -17,6 +17,19 @@ pub struct ErrorData {
     pub threads: Vec<ThreadData>,
 }
 
+impl ErrorData {
+    pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
+        let normalizer = blazesym::normalize::Normalizer::new();
+        let pid = pid.into();
+        // TODO, should we continue after error or just exit?
+        self.stack.normalize_ips(&normalizer, pid)?;
+        for thread in &mut self.threads {
+            thread.stack.normalize_ips(&normalizer, pid)?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum SourceType {
     Crashtracking,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_crashtracker::rfc5_crash_info::CrashInfo;
+use ddcommon::Endpoint;
 use ddcommon_ffi::{wrap_with_void_ffi_result, Handle, ToInner, VoidResult};
 use function_name::named;
 
@@ -18,16 +19,34 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_drop(builder: *mut Handle<CrashIn
 }
 
 /// # Safety
-/// The `builder` can be null, but if non-null it must point to a Builder made by this module,
+/// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,
+/// which has not previously been dropped.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_normalize_ips(
+    mut crash_info: *mut Handle<CrashInfo>,
+    pid: u32,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        crash_info.to_inner_mut()?.normalize_ips(pid)?;
+    })
+}
+
+/// # Safety
+/// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
 /// The CharSlice must be valid.
 #[no_mangle]
 #[must_use]
 #[named]
-pub unsafe extern "C" fn ddog_crasht_CrashInfo_upload_to_telemetry(
-    mut info: *mut Handle<CrashInfo>,
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_upload_to_endpoint(
+    mut crash_info: *mut Handle<CrashInfo>,
+    endpoint: Option<&Endpoint>,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        let _info = info.to_inner_mut()?;
+        crash_info
+            .to_inner_mut()?
+            .upload_to_endpoint(&endpoint.cloned())?;
     })
 }
