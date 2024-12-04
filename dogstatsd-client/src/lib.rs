@@ -5,20 +5,20 @@
 //! dogstatsd-client implements a client to emit metrics to a dogstatsd server.
 //! This is made use of in at least the data-pipeline and sidecar crates.
 
-use ddcommon::tag::Tag;
-use ddcommon::Endpoint;
-use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
-use tracing::{debug, error, info};
-
 use anyhow::anyhow;
 use cadence::prelude::*;
+use cadence::{Metric, MetricBuilder, QueuingMetricSink, StatsdClient, UdpMetricSink};
+use ddcommon::tag::Tag;
+use ddcommon_net1::Endpoint;
+use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
+use std::net::{ToSocketAddrs, UdpSocket};
+use tracing::{debug, error, info};
+
 #[cfg(unix)]
 use cadence::UnixMetricSink;
-use cadence::{Metric, MetricBuilder, QueuingMetricSink, StatsdClient, UdpMetricSink};
 #[cfg(unix)]
-use ddcommon::connector::uds::socket_path_from_uri;
-use std::net::{ToSocketAddrs, UdpSocket};
+use ddcommon_net1::connector::uds::socket_path_from_uri;
 #[cfg(unix)]
 use std::os::unix::net::UnixDatagram;
 
@@ -227,15 +227,17 @@ fn create_client(endpoint: &Endpoint) -> anyhow::Result<StatsdClient> {
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use crate::DogStatsDAction::{Count, Distribution, Gauge, Histogram, Set};
     use crate::{create_client, new_flusher, DogStatsDActionOwned};
-    #[cfg(unix)]
-    use ddcommon::connector::uds::socket_path_to_uri;
-    use ddcommon::{tag, Endpoint};
-    #[cfg(unix)]
-    use http::Uri;
+    use ddcommon::tag;
     use std::net;
     use std::time::Duration;
+
+    #[cfg(unix)]
+    use ddcommon_net1::connector::uds::socket_path_to_uri;
+    #[cfg(unix)]
+    use http::Uri;
 
     #[test]
     #[cfg_attr(miri, ignore)]

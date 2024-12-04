@@ -35,8 +35,9 @@ anyhow = "1.0"
 datadog-crashtracker-ffi = { path = "../crashtracker-ffi", default-features = false, optional = true}
 datadog-profiling = { path = "../profiling" }
 hyper = { version = "0.14", features = ["backports", "deprecated"], default-features = false }
-ddcommon = { path = "../ddcommon"}
+ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+ddcommon-net1 = { path = "../ddcommon-net1" }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
 libc = "0.2"
 tokio-util = "0.7.1"

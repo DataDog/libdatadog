@@ -11,13 +11,12 @@ use std::{
     time,
 };
 
+use crate::{span_concentrator::SpanConcentrator, trace_exporter::TracerMetadata};
 use datadog_trace_protobuf::pb;
-use ddcommon::{connector, Endpoint};
+use ddcommon_net1::{connector, Endpoint};
 use hyper;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
-
-use crate::{span_concentrator::SpanConcentrator, trace_exporter::TracerMetadata};
 
 const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
 
@@ -29,7 +28,7 @@ pub struct StatsExporter {
     endpoint: Endpoint,
     meta: TracerMetadata,
     sequence_id: AtomicU64,
-    client: ddcommon::HttpClient,
+    client: ddcommon_net1::HttpClient,
     cancellation_token: CancellationToken,
 }
 
@@ -89,7 +88,7 @@ impl StatsExporter {
             .into_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
             .header(
                 hyper::header::CONTENT_TYPE,
-                ddcommon::header::APPLICATION_MSGPACK,
+                ddcommon_net1::header::APPLICATION_MSGPACK,
             )
             .method(hyper::Method::POST);
 
@@ -188,6 +187,7 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<hyper::Uri> {
 mod tests {
     use super::*;
     use datadog_trace_utils::trace_utils;
+    use ddcommon_net1::Endpoint;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use time::Duration;

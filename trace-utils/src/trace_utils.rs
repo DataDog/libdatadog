@@ -682,7 +682,7 @@ mod tests {
     };
     use datadog_trace_protobuf::pb::TraceChunk;
     use datadog_trace_protobuf::pb::{Span, TracerPayload};
-    use ddcommon::Endpoint;
+    use ddcommon_net1::Endpoint;
 
     #[test]
     fn test_coalescing_does_not_exceed_max_size() {

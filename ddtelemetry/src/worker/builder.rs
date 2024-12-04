@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use crate::config::Config;
-use ddcommon::Endpoint;
+use ddcommon_net1::Endpoint;
 
 #[derive(Default, Debug)]
 pub struct ConfigBuilder {

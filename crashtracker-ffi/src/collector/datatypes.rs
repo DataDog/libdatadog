@@ -3,9 +3,9 @@
 
 use crate::option_from_char_slice;
 pub use datadog_crashtracker::{OpTypes, StacktraceCollection};
-use ddcommon::Endpoint;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use ddcommon_ffi::{Error, Slice};
+use ddcommon_net1::Endpoint;
 
 #[repr(C)]
 pub struct EnvVar<'a> {

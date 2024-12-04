@@ -24,6 +24,7 @@ build_common = { path = "../build-common" }
 ddtelemetry = { path = "../ddtelemetry" }
 ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+ddcommon-net1 = { path = "../ddcommon-net1" }
 paste = "1"
 libc = "0.2"
 

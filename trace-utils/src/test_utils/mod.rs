@@ -11,7 +11,7 @@ use crate::span_v04::Span;
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use datadog_trace_protobuf::pb;
-use ddcommon::Endpoint;
+use ddcommon_net1::Endpoint;
 use httpmock::Mock;
 use serde_json::json;
 use tinybytes::BytesString;
@@ -235,7 +235,7 @@ pub async fn poll_for_mock_hit(
 ///
 /// ```
 /// use datadog_trace_utils::test_utils::create_send_data;
-/// use ddcommon::Endpoint;
+/// use ddcommon_net1::Endpoint;
 ///
 /// let size = 512;
 /// let target_endpoint = Endpoint {

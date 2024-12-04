@@ -107,8 +107,8 @@ pub(crate) use c_setters;
 #[cfg(test)]
 mod tests {
     use crate::{builder::*, worker_handle::*};
-    use ddcommon::Endpoint;
     use ddcommon_ffi as ffi;
+    use ddcommon_net1::Endpoint;
     use ddtelemetry::{
         data::metrics::{MetricNamespace, MetricType},
         worker::{TelemetryWorkerBuilder, TelemetryWorkerHandle},

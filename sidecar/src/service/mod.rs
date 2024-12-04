@@ -6,7 +6,7 @@ use crate::config;
 use crate::service::telemetry::enqueued_telemetry_data::EnqueuedTelemetryData;
 use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use ddcommon::tag::Tag;
-use ddcommon::Endpoint;
+use ddcommon_net1::Endpoint;
 use ddtelemetry::metrics::MetricContext;
 use ddtelemetry::worker::TelemetryActions;
 use serde::{Deserialize, Serialize};

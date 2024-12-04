@@ -1,32 +1,33 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::borrow::Cow;
-use std::future;
-use std::io::{Cursor, Write};
+pub mod config;
+
+mod errors;
 
 use bytes::Bytes;
-pub use chrono::{DateTime, Utc};
-pub use ddcommon::tag::Tag;
-pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
 use lz4_flex::frame::FrameEncoder;
 use serde_json::json;
+use std::borrow::Cow;
+use std::future;
+use std::io::{Cursor, Write};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
-use ddcommon::{azure_app_services, connector, Endpoint, HttpClient, HttpResponse};
+use crate::internal::ProfiledEndpointsStats;
+use ddcommon::azure_app_services;
+use ddcommon_net1::{connector, Endpoint, HttpClient, HttpResponse};
 
-pub mod config;
-mod errors;
+pub use chrono::{DateTime, Utc};
+pub use ddcommon::tag::Tag;
+pub use hyper::Uri;
 
 #[cfg(unix)]
 pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
 
 #[cfg(windows)]
 pub use connector::named_pipe::{named_pipe_path_from_uri, named_pipe_path_to_uri};
-
-use crate::internal::ProfiledEndpointsStats;
 
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 

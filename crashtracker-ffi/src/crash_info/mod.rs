@@ -6,8 +6,8 @@ pub use datatypes::*;
 
 use crate::{option_from_char_slice, Result};
 use anyhow::Context;
-use ddcommon::Endpoint;
 use ddcommon_ffi::{slice::AsBytes, CharSlice, Slice, Timespec};
+use ddcommon_net1::Endpoint;
 
 /// Create a new crashinfo, and returns an opaque reference to it.
 /// # Safety

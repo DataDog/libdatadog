@@ -19,6 +19,7 @@ log = "0.4"
 serde = { version = "1.0.145", features = ["derive"] }
 serde_json = "1.0"
 ddcommon = { path = "../ddcommon" }
+ddcommon-net1 = { path = "../ddcommon-net1" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils", features = ["proxy"] }
 datadog-trace-normalization = { path = "../trace-normalization" }

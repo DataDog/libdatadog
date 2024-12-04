@@ -15,6 +15,7 @@ current_platform = "0.2.0"
 datadog-profiling = { path = "../profiling" }
 datadog-crashtracker = { path = "../crashtracker" }
 ddcommon = { path = "../ddcommon" }
+ddcommon-net1 = { path = "../ddcommon-net1" }
 tempfile = "3.3"
 serde_json = { version = "1.0" }
 strum = { version = "0.26.2", features = ["derive"] }

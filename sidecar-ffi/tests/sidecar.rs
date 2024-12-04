@@ -11,7 +11,7 @@ macro_rules! assert_maybe_no_error {
     };
 }
 
-use ddcommon::Endpoint;
+use ddcommon_net1::Endpoint;
 use std::ptr::{null, null_mut};
 use std::time::Duration;
 #[cfg(unix)]

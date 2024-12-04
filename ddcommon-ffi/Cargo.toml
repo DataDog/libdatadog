@@ -23,6 +23,7 @@ anyhow = "1.0"
 chrono = { version = "0.4.38", features = ["std"] }
 crossbeam-queue = "0.3.11"
 ddcommon = { path = "../ddcommon" }
+ddcommon-net1 = { path = "../ddcommon-net1" }
 hyper = {version = "0.14", features = ["backports", "deprecated"], default-features = false}
 serde = "1.0"
 

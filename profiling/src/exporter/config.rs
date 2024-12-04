@@ -1,16 +1,17 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(unix)]
-use ddcommon::connector::uds;
-use ddcommon::Endpoint;
-
-#[cfg(windows)]
-use ddcommon::connector::named_pipe;
-
 use http::Uri;
 use std::borrow::Cow;
 use std::str::FromStr;
+
+use ddcommon_net1::Endpoint;
+
+#[cfg(unix)]
+use ddcommon_net1::connector::uds;
+
+#[cfg(windows)]
+use ddcommon_net1::connector::named_pipe;
 
 /// Creates an Endpoint for talking to the Datadog agent.
 ///

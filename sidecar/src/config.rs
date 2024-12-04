@@ -5,7 +5,7 @@ use http::uri::{PathAndQuery, Scheme};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
-use ddcommon::Endpoint;
+use ddcommon_net1::Endpoint;
 use spawn_worker::LibDependency;
 
 const ENV_SIDECAR_IPC_MODE: &str = "_DD_DEBUG_SIDECAR_IPC_MODE";
