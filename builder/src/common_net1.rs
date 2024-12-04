@@ -30,14 +30,14 @@ impl Module for CommonNet1 {
     }
 
     fn install(&self) -> Result<()> {
-        let target_path: PathBuf = [self.target_include.as_ref(), "common_net1.h"]
+        let target_path: PathBuf = [self.target_include.as_ref(), "common-net1.h"]
             .iter()
             .collect();
 
-        let origin_path: PathBuf = [self.source_include.as_ref(), "common_net1.h"]
+        let origin_path: PathBuf = [self.source_include.as_ref(), "common-net1.h"]
             .iter()
             .collect();
-        fs::copy(origin_path, target_path).expect("Failed to copy common_net1.h");
+        fs::copy(origin_path, target_path).expect("Failed to copy common-net1.h");
         Ok(())
     }
 }

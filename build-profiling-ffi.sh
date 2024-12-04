@@ -143,6 +143,7 @@ FEATURES=(
     "data-pipeline-ffi"
     "datadog-profiling-ffi/ddtelemetry-ffi"
     "datadog-profiling-ffi/demangler"
+    "ddcommon-net1-ffi"
 )
 if [[ "$symbolizer" -eq 1 ]]; then
     FEATURES+=("symbolizer")
@@ -229,6 +230,9 @@ HEADERS="$destdir/include/datadog/common.h $destdir/include/datadog/profiling.h 
 case $ARG_FEATURES in
     *data-pipeline-ffi*)
         HEADERS="$HEADERS $destdir/include/datadog/data-pipeline.h"
+        ;;
+    *ddcommon-net1-ffi*)
+        HEADERS="$HEADERS $destdir/include/datadog/common-net1.h"
         ;;
 esac
 

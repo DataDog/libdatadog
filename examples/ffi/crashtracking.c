@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <datadog/common.h>
-#include <datadog/common_net1.h>
+#include <datadog/common-net1.h>
 #include <datadog/crashtracker.h>
 #include <signal.h>
 #include <stdio.h>

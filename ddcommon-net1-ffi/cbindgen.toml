@@ -13,6 +13,7 @@ pragma_once = true
 
 no_includes = true
 sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
+includes = ["common.h"]
 
 [export]
 prefix = "ddog_net1_"

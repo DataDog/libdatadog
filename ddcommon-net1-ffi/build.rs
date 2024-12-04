@@ -5,6 +5,6 @@ extern crate build_common;
 use build_common::generate_and_configure_header;
 
 fn main() {
-    let header_name = "common_net1.h";
+    let header_name = "common-net1.h";
     generate_and_configure_header(header_name);
 }
