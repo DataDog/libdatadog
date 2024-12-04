@@ -33,11 +33,8 @@ const STATS_ENDPOINT: &str = "/v0.6/stats";
 const INFO_ENDPOINT: &str = "/info";
 
 // Keys used for sampling
-#[allow(dead_code)] // TODO (APMSP-1583) these will be used with client side stats
 const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
-#[allow(dead_code)] // TODO (APMSP-1584) these will be used with client side stats
 const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
-#[allow(dead_code)] // TODO (APMSP-1584) these will be used with client side stats
 const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 
 /// TraceExporterInputFormat represents the format of the input traces.
@@ -240,7 +237,6 @@ pub struct TraceExporter {
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
-    #[allow(dead_code)]
     client_computed_top_level: bool,
     client_side_stats: ArcSwap<StatsComputationStatus>,
     agent_info: AgentInfoArc,
@@ -923,6 +919,8 @@ mod tests {
     use tinybytes::BytesString;
     use tokio::time::sleep;
 
+    const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
+
     #[test]
     fn new() {
         let builder = TraceExporterBuilder::default();
@@ -1039,7 +1037,7 @@ mod tests {
                 span_id: 1,
                 metrics: HashMap::from([
                     (SAMPLING_PRIORITY_KEY.into(), 1.0),
-                    ("_dd.top_level".into(), 1.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
                 ]),
                 ..Default::default()
             },
@@ -1054,7 +1052,7 @@ mod tests {
                 span_id: 1,
                 metrics: HashMap::from([
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
-                    ("_dd.top_level".into(), 1.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
                 ]),
                 ..Default::default()
             },
@@ -1067,7 +1065,7 @@ mod tests {
         let chunk_without_priority = vec![
             Span {
                 span_id: 1,
-                metrics: HashMap::from([("_dd.top_level".into(), 1.0)]),
+                metrics: HashMap::from([(TRACER_TOP_LEVEL_KEY.into(), 1.0)]),
                 ..Default::default()
             },
             Span {
@@ -1082,7 +1080,7 @@ mod tests {
                 error: 1,
                 metrics: HashMap::from([
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
-                    ("_dd.top_level".into(), 1.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
                 ]),
                 ..Default::default()
             },
@@ -1097,7 +1095,7 @@ mod tests {
                 span_id: 1,
                 metrics: HashMap::from([
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
-                    ("_dd.top_level".into(), 1.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
                 ]),
                 ..Default::default()
             },
@@ -1113,7 +1111,7 @@ mod tests {
                 span_id: 1,
                 metrics: HashMap::from([
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
-                    ("_dd.top_level".into(), 1.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
                 ]),
                 ..Default::default()
             },
