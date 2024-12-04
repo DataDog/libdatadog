@@ -25,7 +25,6 @@ use hyper::body::HttpBody;
 use hyper::http::uri::PathAndQuery;
 use hyper::{Body, Method, Uri};
 use log::{error, info};
-use std::process::Termination;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr, time};
@@ -1468,8 +1467,10 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let bytes = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
-        let result = exporter.send(&bytes, 1).unwrap();
+        let bytes = tinybytes::Bytes::from(
+            rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace"),
+        );
+        let result = exporter.send(bytes, 1).unwrap();
 
         assert_eq!(result, AgentResponse::from(0.5));
     }
@@ -1506,8 +1507,10 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let bytes = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
-        let result = exporter.send(&bytes, 1).unwrap();
+        let bytes = tinybytes::Bytes::from(
+            rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace"),
+        );
+        let result = exporter.send(bytes, 1).unwrap();
 
         assert_eq!(result, AgentResponse::from(0.8));
     }
@@ -1561,8 +1564,10 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let bytes = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
-        let code = match exporter.send(&bytes, 1).unwrap_err() {
+        let bytes = tinybytes::Bytes::from(
+            rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace"),
+        );
+        let code = match exporter.send(bytes, 1).unwrap_err() {
             TraceExporterError::Request(e) => Some(e.status()),
             _ => None,
         }

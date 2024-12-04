@@ -55,7 +55,7 @@ impl FromStr for Rates {
 #[repr(C)]
 pub struct AgentResponse {
     /// Sampling rate for the current service.
-    rate: f64,
+    pub rate: f64,
 }
 
 impl From<f64> for AgentResponse {
