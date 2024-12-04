@@ -78,7 +78,7 @@ where
                 }
                 Err(e) => {
                     // TODO: should we log something in case we drop the request on the floor?
-                    return Poll::Ready(Err(e.into()));
+                    return Poll::Ready(Err(anyhow::Error::from(e).context("polling inflight requests from tarrpc")));
                 }
             }
         }
