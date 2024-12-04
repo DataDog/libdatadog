@@ -9,10 +9,12 @@ mod proc_info;
 mod sig_info;
 mod spans;
 mod stacktrace;
+mod telemetry;
 mod test_utils;
 mod unknown_value;
 
 pub use builder::*;
+use ddcommon::Endpoint;
 pub use error_data::*;
 pub use metadata::Metadata;
 pub use os_info::*;
@@ -20,6 +22,7 @@ pub use proc_info::*;
 pub use sig_info::*;
 pub use spans::*;
 pub use stacktrace::*;
+pub use telemetry::*;
 
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -133,6 +136,39 @@ impl CrashInfo {
             .with_context(|| format!("Failed to create {}", path.display()))?;
         serde_json::to_writer_pretty(file, self)
             .with_context(|| format!("Failed to write json to {}", path.display()))?;
+        Ok(())
+    }
+
+    pub fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
+        rt.block_on(async { self.async_upload_to_endpoint(endpoint).await })
+    }
+
+    pub async fn async_upload_to_endpoint(
+        &self,
+        endpoint: &Option<Endpoint>,
+    ) -> anyhow::Result<()> {
+        // If we're debugging to a file, dump the actual crashinfo into a json
+        if let Some(endpoint) = endpoint {
+            if Some("file") == endpoint.url.scheme_str() {
+                let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
+                    .context("crash output file was not correctly formatted")?;
+                self.to_file(&path)?;
+                let new_path = path.with_extension("rfc5.json");
+                let rfc5: crate::rfc5_crash_info::CrashInfo = self.clone().into();
+                rfc5.to_file(&new_path)?;
+            }
+        }
+
+        self.upload_to_telemetry(endpoint).await
+    }
+
+    async fn upload_to_telemetry(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+        let uploader = TelemetryCrashUploader::new(&self.metadata, endpoint)?;
+        uploader.upload_to_telemetry(self).await?;
         Ok(())
     }
 }

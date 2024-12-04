@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod api;
 mod builder;
 mod datatypes;
 mod metadata;
@@ -12,6 +13,7 @@ mod stackframe;
 mod stacktrace;
 mod thread_data;
 
+pub use api::*;
 pub use builder::*;
 pub use datatypes::*;
 pub use metadata::*;

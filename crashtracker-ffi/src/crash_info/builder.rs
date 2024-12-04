@@ -43,10 +43,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_drop(builder: *mut Handle<
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_build(
     mut builder: *mut Handle<CrashInfoBuilder>,
 ) -> Result<Handle<CrashInfo>> {
-    wrap_with_ffi_result!({
-        anyhow::ensure!(!builder.is_null());
-        Ok(builder.take()?.build()?.into())
-    })
+    wrap_with_ffi_result!({ anyhow::Ok(builder.take()?.build()?.into()) })
 }
 
 /// # Safety
@@ -357,11 +354,10 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_uuid(
     uuid: CharSlice,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        let builder = builder.to_inner_mut()?;
         let uuid = uuid
             .try_to_string_option()?
             .context("UUID cannot be empty string")?;
-        builder.with_uuid(uuid);
+        builder.to_inner_mut()?.with_uuid(uuid);
     })
 }
 
