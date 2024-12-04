@@ -150,7 +150,7 @@ impl TryFrom<Number> for f64 {
     }
 }
 
-pub fn read_number(buf: &mut &[u8]) -> Result<Number, DecodeError> {
+fn read_number(buf: &mut &[u8], allow_null: bool) -> Result<Number, DecodeError> {
     match rmp::decode::read_marker(buf)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for number".to_owned()))?
     {
@@ -186,6 +186,13 @@ pub fn read_number(buf: &mut &[u8]) -> Result<Number, DecodeError> {
         Marker::F64 => Ok(Number::Float(
             buf.read_data_f64().map_err(|_| DecodeError::IOError)?,
         )),
+        Marker::Null => {
+            if allow_null {
+                Ok(Number::Unsigned(0))
+            } else {
+                Err(DecodeError::InvalidType("Invalid number type".to_owned()))
+            }
+        }
         _ => Err(DecodeError::InvalidType("Invalid number type".to_owned())),
     }
 }
@@ -193,13 +200,98 @@ pub fn read_number(buf: &mut &[u8]) -> Result<Number, DecodeError> {
 pub fn read_number_bytes<T: TryFrom<Number, Error = DecodeError>>(
     buf: &mut Bytes,
 ) -> Result<T, DecodeError> {
-    read_number(unsafe { buf.as_mut_slice() })?.try_into()
+    read_number(unsafe { buf.as_mut_slice() }, false)?.try_into()
+}
+
+pub fn read_nullable_number_bytes<T: TryFrom<Number, Error = DecodeError>>(
+    buf: &mut Bytes,
+) -> Result<T, DecodeError> {
+    read_number(unsafe { buf.as_mut_slice() }, true)?.try_into()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::f64;
+
+    #[test]
+    fn test_decoding_not_nullable_bytes_to_unsigned() {
+        let mut buf = Vec::new();
+        let expected_value = 42;
+        let val = json!(expected_value);
+        rmp_serde::encode::write_named(&mut buf, &val).unwrap();
+        let mut bytes = Bytes::from(buf.clone());
+        let result: u8 = read_number_bytes(&mut bytes).unwrap();
+        assert_eq!(result, expected_value);
+    }
+
+    #[test]
+    fn test_decoding_not_nullable_bytes_to_signed() {
+        let mut buf = Vec::new();
+        let expected_value = 42;
+        let val = json!(expected_value);
+        rmp_serde::encode::write_named(&mut buf, &val).unwrap();
+        let mut bytes = Bytes::from(buf.clone());
+        let result: i8 = read_number_bytes(&mut bytes).unwrap();
+        assert_eq!(result, expected_value);
+    }
+
+    #[test]
+    fn test_decoding_not_nullable_bytes_to_float() {
+        let mut buf = Vec::new();
+        let expected_value = 42.98;
+        let val = json!(expected_value);
+        rmp_serde::encode::write_named(&mut buf, &val).unwrap();
+        let mut bytes = Bytes::from(buf.clone());
+        let result: f64 = read_number_bytes(&mut bytes).unwrap();
+        assert_eq!(result, expected_value);
+    }
+
+    #[test]
+    fn test_decoding_null_through_read_number_bytes_raises_exception() {
+        let mut buf = Vec::new();
+        let val = json!(null);
+        rmp_serde::encode::write_named(&mut buf, &val).unwrap();
+        let mut bytes = Bytes::from(buf.clone());
+        let result: Result<u8, DecodeError> = read_number_bytes(&mut bytes);
+        assert!(matches!(result, Err(DecodeError::InvalidType(_))));
+
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Invalid type encountered: Invalid number type".to_owned()
+        );
+    }
+
+    #[test]
+    fn test_decoding_null_bytes_to_unsigned() {
+        let mut buf = Vec::new();
+        let val = json!(null);
+        rmp_serde::encode::write_named(&mut buf, &val).unwrap();
+        let mut bytes = Bytes::from(buf.clone());
+        let result: u8 = read_nullable_number_bytes(&mut bytes).unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_decoding_null_bytes_to_signed() {
+        let mut buf = Vec::new();
+        let val = json!(null);
+        rmp_serde::encode::write_named(&mut buf, &val).unwrap();
+        let mut bytes = Bytes::from(buf.clone());
+        let result: i8 = read_nullable_number_bytes(&mut bytes).unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_decoding_null_bytes_to_float() {
+        let mut buf = Vec::new();
+        let val = json!(null);
+        rmp_serde::encode::write_named(&mut buf, &val).unwrap();
+        let mut bytes = Bytes::from(buf.clone());
+        let result: f64 = read_nullable_number_bytes(&mut bytes).unwrap();
+        assert_eq!(result, 0.0);
+    }
 
     #[test]
     fn test_i64_conversions() {
@@ -293,6 +385,66 @@ mod tests {
                 invalid_signed_lower
             ))),
             TryInto::<i32>::try_into(invalid_signed_number_lower)
+        );
+    }
+
+    #[test]
+    fn test_i8_null_conversions() {
+        let valid_signed_upper = i8::MAX;
+        let valid_unsigned_number = Number::Unsigned(valid_signed_upper as u64);
+        let zero_unsigned = Number::Unsigned(0u64);
+        let zero_signed = Number::Unsigned(0u64);
+        let valid_signed_number_upper = Number::Signed(valid_signed_upper as i64);
+        let valid_signed_lower = i8::MIN;
+        let valid_signed_number_lower = Number::Signed(valid_signed_lower as i64);
+        let invalid_float_number = Number::Float(4.14);
+        let invalid_unsigned = u8::MAX;
+        let invalid_unsigned_number = Number::Unsigned(invalid_unsigned as u64);
+        let invalid_signed_upper = i8::MAX as i64 + 1;
+        let invalid_signed_number_upper = Number::Signed(invalid_signed_upper);
+        let invalid_signed_lower = i8::MIN as i64 - 1;
+        let invalid_signed_number_lower = Number::Signed(invalid_signed_lower);
+
+        assert_eq!(
+            valid_signed_upper,
+            TryInto::<i8>::try_into(valid_unsigned_number).unwrap()
+        );
+        assert_eq!(
+            valid_signed_upper,
+            TryInto::<i8>::try_into(valid_signed_number_upper).unwrap()
+        );
+        assert_eq!(
+            valid_signed_lower,
+            TryInto::<i8>::try_into(valid_signed_number_lower).unwrap()
+        );
+        assert_eq!(0, TryInto::<i8>::try_into(zero_signed).unwrap());
+        assert_eq!(0, TryInto::<i8>::try_into(zero_unsigned).unwrap());
+        assert_eq!(
+            Err(DecodeError::InvalidConversion(
+                "Cannot convert float to int".to_owned()
+            )),
+            TryInto::<i8>::try_into(invalid_float_number)
+        );
+        assert_eq!(
+            Err(DecodeError::InvalidConversion(format!(
+                "{} is out of bounds for conversion",
+                invalid_unsigned
+            ))),
+            TryInto::<i8>::try_into(invalid_unsigned_number)
+        );
+        assert_eq!(
+            Err(DecodeError::InvalidConversion(format!(
+                "{} is out of bounds for conversion",
+                invalid_signed_upper
+            ))),
+            TryInto::<i8>::try_into(invalid_signed_number_upper)
+        );
+        assert_eq!(
+            Err(DecodeError::InvalidConversion(format!(
+                "{} is out of bounds for conversion",
+                invalid_signed_lower
+            ))),
+            TryInto::<i8>::try_into(invalid_signed_number_lower)
         );
     }
 
