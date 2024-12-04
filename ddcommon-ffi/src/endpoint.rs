@@ -3,12 +3,13 @@
 
 use crate::slice::AsBytes;
 use crate::Error;
-use hyper::http::uri::{Authority, Parts};
+use ddcommon_net1 as net;
+use ddcommon_net1::dep::http;
+
+use http::uri::{Authority, Parts};
+use net::parse_uri;
 use std::borrow::Cow;
 use std::str::FromStr;
-
-use ddcommon_net1 as net;
-use net::parse_uri;
 
 /// Wrapper type to generate the correct FFI name.
 pub struct Endpoint(net::Endpoint);
@@ -49,7 +50,7 @@ pub extern "C" fn ddog_endpoint_from_api_key(api_key: crate::CharSlice) -> Box<E
     parts.authority = Some(Authority::from_static("datadoghq.com"));
     Box::new(
         net::Endpoint {
-            url: hyper::Uri::from_parts(parts).unwrap(),
+            url: http::Uri::from_parts(parts).unwrap(),
             api_key: Some(api_key.to_utf8_lossy().to_string().into()),
             ..Default::default()
         }
@@ -73,7 +74,7 @@ pub extern "C" fn ddog_endpoint_from_api_key_and_site(
     });
     *endpoint = Box::into_raw(Box::new(
         net::Endpoint {
-            url: hyper::Uri::from_parts(parts).unwrap(),
+            url: http::Uri::from_parts(parts).unwrap(),
             api_key: Some(api_key.to_utf8_lossy().to_string().into()),
             ..Default::default()
         }

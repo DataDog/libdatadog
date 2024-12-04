@@ -15,17 +15,20 @@ pub const REMOVE_RPATH: bool = true;
 pub const BUILD_CRASHTRACKER: bool = true;
 pub const RUSTFLAGS: [&str; 2] = ["-C", "relocation-model=pic"];
 
-#[allow(clippy::zombie_processes)]
 pub fn fix_rpath(lib_path: &str) {
     if REMOVE_RPATH {
         let lib_name = lib_path.split('/').last().unwrap();
 
-        Command::new("install_name_tool")
+        let status = Command::new("install_name_tool")
             .arg("-id")
             .arg("@rpath/".to_string() + lib_name)
             .arg(lib_path)
-            .spawn()
+            .status()
             .expect("Failed to fix rpath");
+
+        if !status.success() {
+            panic!("Failed to fix rpath: {status}");
+        }
     }
 }
 
