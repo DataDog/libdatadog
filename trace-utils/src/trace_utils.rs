@@ -12,7 +12,7 @@ use rmpv::{Integer, Value};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
-
+use std::ops::Not;
 pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
 pub use crate::tracer_header_tags::TracerHeaderTags;
@@ -525,6 +525,18 @@ pub fn enrich_span_with_mini_agent_metadata(
             "_dd.mini_agent_version".to_string(),
             mini_agent_version.to_string(),
         );
+    }
+}
+
+pub fn enrich_span_with_google_cloud_function_metadata(span: &mut pb::Span, env_type: &EnvironmentType) {
+    if let EnvironmentType::CloudFunction = env_type {
+        let function = span.meta.get("functionname");
+        let region = span.meta.get("gcrfx.location");
+        let project = span.meta.get("gcrfx.project_id");
+        if function.is_none().not() && region.is_none().not() && project.is_none() {
+            let resource_name = format!("projects/{}/locations/{}/functions/{}", project.unwrap(), region.unwrap(), function.unwrap());
+            span.meta.insert("_dd.gcrfx.resource_name".to_string(), resource_name.to_string());
+        }
     }
 }
 
