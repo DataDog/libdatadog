@@ -204,12 +204,6 @@ where
     pub fn len_stored(&self) -> usize {
         self.items.len()
     }
-
-    pub fn drain_unflushed(&mut self) -> impl Iterator<Item = &T> {
-        self.unflushed
-            .drain(..)
-            .flat_map(|i| self.items.get_idx(i).map(|(k, _)| k))
-    }
 }
 
 impl<T> Extend<T> for Store<T>
