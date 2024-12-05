@@ -1247,7 +1247,7 @@ mod tests {
             ..Default::default()
         }];
 
-        let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
+        let data = tinybytes::Bytes::from(rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap());
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {
@@ -1256,7 +1256,7 @@ mod tests {
             })
         }
 
-        exporter.send(data.as_slice(), 1).unwrap();
+        exporter.send(data, 1).unwrap();
         exporter
             .shutdown(Some(Duration::from_millis(500)))
             .unwrap_err(); // The shutdown should timeout

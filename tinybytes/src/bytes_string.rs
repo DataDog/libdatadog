@@ -249,4 +249,10 @@ mod tests {
         let bytes_string = BytesString::from_slice(b"test hash").unwrap();
         assert_eq!(calculate_hash(&bytes_string), calculate_hash(&"test hash"));
     }
+
+    #[test]
+    fn copy_to_string() {
+        let bytes_string = BytesString::from("hello");
+        assert_eq!(bytes_string.copy_to_string(), "hello")
+    }
 }
