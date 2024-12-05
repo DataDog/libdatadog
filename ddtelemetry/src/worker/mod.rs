@@ -429,40 +429,36 @@ impl TelemetryWorker {
 
                 let obsevability_events = self.build_observability_batch();
 
-                future::join_all(
-                    [
-                        Some(self.build_request(&data::Payload::MessageBatch(app_events))),
-                        if obsevability_events.is_empty() {
-                            None
-                        } else {
-                            Some(
-                                self.build_request(&data::Payload::MessageBatch(
-                                    obsevability_events,
-                                )),
-                            )
-                        },
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|r| match r {
-                        Ok(r) => Some(r),
-                        Err(e) => {
-                            self.log_err(&e);
-                            None
-                        }
-                    })
-                    .map(|r| async {
-                        if let Err(e) = self.send_request(r).await {
-                            self.log_err(&e);
-                        }
-                    }),
-                )
-                .await;
-
-                self.data.started = false;
-                if !self.config.restartable {
-                    self.deadlines.clear_pending();
+                let mut payloads = vec![data::Payload::MessageBatch(app_events)];
+                if !obsevability_events.is_empty() {
+                    payloads.push(data::Payload::MessageBatch(obsevability_events));
                 }
+
+                let self_arc = Arc::new(tokio::sync::RwLock::new(self));
+                let futures = payloads.into_iter().map(|payload| {
+                    let self_arc = self_arc.clone();
+                    async move {
+                        // This is different from the non-functional:
+                        // match self_arc.read().await.send_payload(&payload).await { ... }
+                        // presumably because the temp read guard would live till end of match
+                        let res = {
+                            let self_rguard = self_arc.read().await;
+                            self_rguard.send_payload(&payload).await
+                        };
+                        match res {
+                            Ok(()) => self_arc.write().await.payload_sent_success(&payload),
+                            Err(err) => self_arc.read().await.log_err(&err),
+                        }
+                    }
+                });
+                future::join_all(futures).await;
+
+                let mut self_lock = self_arc.write().await;
+                self_lock.data.started = false;
+                if !self_lock.config.restartable {
+                    self_lock.deadlines.clear_pending();
+                }
+
                 return BREAK;
             }
             CollectStats(stats_sender) => {
@@ -480,26 +476,21 @@ impl TelemetryWorker {
         if self.data.dependencies.flush_not_empty() {
             payloads.push(data::Payload::AppDependenciesLoaded(
                 data::AppDependenciesLoaded {
-                    dependencies: self.data.dependencies.drain_unflushed().cloned().collect(),
+                    dependencies: self.data.dependencies.unflushed().cloned().collect(),
                 },
             ))
         }
         if self.data.integrations.flush_not_empty() {
             payloads.push(data::Payload::AppIntegrationsChange(
                 data::AppIntegrationsChange {
-                    integrations: self.data.integrations.drain_unflushed().cloned().collect(),
+                    integrations: self.data.integrations.unflushed().cloned().collect(),
                 },
             ))
         }
         if self.data.configurations.flush_not_empty() {
             payloads.push(data::Payload::AppClientConfigurationChange(
                 data::AppClientConfigurationChange {
-                    configuration: self
-                        .data
-                        .configurations
-                        .drain_unflushed()
-                        .cloned()
-                        .collect(),
+                    configuration: self.data.configurations.unflushed().cloned().collect(),
                 },
             ))
         }
