@@ -474,27 +474,32 @@ impl TelemetryWorker {
     }
 
     // Builds telemetry payloads containing lifecycle events
-    fn build_app_events_batch(&self) -> Vec<Payload> {
+    fn build_app_events_batch(&mut self) -> Vec<Payload> {
         let mut payloads = Vec::new();
 
         if self.data.dependencies.flush_not_empty() {
             payloads.push(data::Payload::AppDependenciesLoaded(
                 data::AppDependenciesLoaded {
-                    dependencies: self.data.dependencies.unflushed().cloned().collect(),
+                    dependencies: self.data.dependencies.drain_unflushed().cloned().collect(),
                 },
             ))
         }
         if self.data.integrations.flush_not_empty() {
             payloads.push(data::Payload::AppIntegrationsChange(
                 data::AppIntegrationsChange {
-                    integrations: self.data.integrations.unflushed().cloned().collect(),
+                    integrations: self.data.integrations.drain_unflushed().cloned().collect(),
                 },
             ))
         }
         if self.data.configurations.flush_not_empty() {
             payloads.push(data::Payload::AppClientConfigurationChange(
                 data::AppClientConfigurationChange {
-                    configuration: self.data.configurations.unflushed().cloned().collect(),
+                    configuration: self
+                        .data
+                        .configurations
+                        .drain_unflushed()
+                        .cloned()
+                        .collect(),
                 },
             ))
         }
