@@ -62,6 +62,10 @@ impl CrashInfo {
     pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
         self.error.normalize_ips(pid)
     }
+
+    pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {
+        self.error.resolve_names(pid)
+    }
 }
 
 impl From<crate::crash_info::CrashInfo> for CrashInfo {

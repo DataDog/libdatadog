@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
-use blazesym::{helper::ElfResolver, normalize::Normalizer, symbolize::TranslateFileOffset, Pid};
+use blazesym::{
+    helper::ElfResolver,
+    normalize::Normalizer,
+    symbolize::{Input, Source, Symbolized, Symbolizer, TranslateFileOffset},
+    Pid,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -26,6 +31,14 @@ impl StackTrace {
         for frame in &mut self.frames {
             // TODO: Should this keep going on failure, and report at the end?
             frame.normalize_ip(normalizer, pid)?;
+        }
+        Ok(())
+    }
+
+    pub fn resolve_names(&mut self, src: &Source, symbolizer: &Symbolizer) -> anyhow::Result<()> {
+        for frame in &mut self.frames {
+            // TODO: Should this keep going on failure, and report at the end?
+            frame.resolve_names(src, symbolizer)?;
         }
         Ok(())
     }
@@ -194,6 +207,28 @@ impl StackFrame {
             self.file_type = Some(FileType::ELF);
             self.path = Some(elf.path.to_string_lossy().to_string());
             self.relative_address = Some(format!("{virt_address:#018x}"));
+        }
+        Ok(())
+    }
+
+    pub fn resolve_names(&mut self, src: &Source, symbolizer: &Symbolizer) -> anyhow::Result<()> {
+        if let Some(ip) = &self.ip {
+            let ip = ip.trim_start_matches("0x");
+            let ip = u64::from_str_radix(ip, 16)?;
+            let input = Input::AbsAddr(ip);
+            match symbolizer.symbolize_single(src, input)? {
+                Symbolized::Sym(s) => {
+                    if let Some(c) = s.code_info {
+                        self.column = c.column.map(u32::from);
+                        self.file = Some(c.to_path().display().to_string());
+                        self.line = c.line;
+                    }
+                    self.function = Some(s.name.into_owned());
+                }
+                Symbolized::Unknown(reason) => {
+                    anyhow::bail!("Couldn't symbolize {ip}: {reason}");
+                }
+            }
         }
         Ok(())
     }

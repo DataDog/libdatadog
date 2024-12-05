@@ -28,6 +28,20 @@ impl ErrorData {
         }
         Ok(())
     }
+
+    pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {
+        let mut process = blazesym::symbolize::Process::new(pid.into());
+        // https://github.com/libbpf/blazesym/issues/518
+        process.map_files = false;
+        let src = blazesym::symbolize::Source::Process(process);
+        let symbolizer = blazesym::symbolize::Symbolizer::new();
+        self.stack.resolve_names(&src, &symbolizer)?;
+
+        for thread in &mut self.threads {
+            thread.stack.resolve_names(&src, &symbolizer)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
