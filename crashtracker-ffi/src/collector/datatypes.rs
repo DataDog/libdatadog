@@ -29,21 +29,18 @@ impl<'a> TryFrom<ReceiverConfig<'a>> for datadog_crashtracker::CrashtrackerRecei
         let args = {
             let mut vec = Vec::with_capacity(value.args.len());
             for x in value.args.iter() {
-                vec.push(x.try_to_utf8()?.to_string());
+                vec.push(x.try_to_string()?);
             }
             vec
         };
         let env = {
             let mut vec = Vec::with_capacity(value.env.len());
             for x in value.env.iter() {
-                vec.push((
-                    x.key.try_to_utf8()?.to_string(),
-                    x.val.try_to_utf8()?.to_string(),
-                ));
+                vec.push((x.key.try_to_string()?, x.val.try_to_string()?));
             }
             vec
         };
-        let path_to_receiver_binary = value.path_to_receiver_binary.try_to_utf8()?.to_string();
+        let path_to_receiver_binary = value.path_to_receiver_binary.try_to_string()?;
         let stderr_filename = value.optional_stderr_filename.try_to_string_option()?;
         let stdout_filename = value.optional_stdout_filename.try_to_string_option()?;
         Self::new(
@@ -79,7 +76,7 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
         let additional_files = {
             let mut vec = Vec::with_capacity(value.additional_files.len());
             for x in value.additional_files.iter() {
-                vec.push(x.try_to_utf8()?.to_string());
+                vec.push(x.try_to_string()?);
             }
             vec
         };

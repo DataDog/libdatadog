@@ -46,24 +46,24 @@ impl ErrorDataBuilder {
         Self::default()
     }
 
-    pub fn with_kind(&mut self, kind: ErrorKind) -> &mut Self {
+    pub fn with_kind(&mut self, kind: ErrorKind) -> anyhow::Result<&mut Self> {
         self.kind = Some(kind);
-        self
+        Ok(self)
     }
 
-    pub fn with_message(&mut self, message: String) -> &mut Self {
+    pub fn with_message(&mut self, message: String) -> anyhow::Result<&mut Self> {
         self.message = Some(message);
-        self
+        Ok(self)
     }
 
-    pub fn with_stack(&mut self, stack: StackTrace) -> &mut Self {
+    pub fn with_stack(&mut self, stack: StackTrace) -> anyhow::Result<&mut Self> {
         self.stack = Some(stack);
-        self
+        Ok(self)
     }
 
-    pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> &mut Self {
+    pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<&mut Self> {
         self.threads = Some(threads);
-        self
+        Ok(self)
     }
 }
 
@@ -136,30 +136,34 @@ impl CrashInfoBuilder {
         Ok(self)
     }
 
-    pub fn with_counters(&mut self, counters: HashMap<String, i64>) -> &mut Self {
+    pub fn with_counters(&mut self, counters: HashMap<String, i64>) -> anyhow::Result<&mut Self> {
         self.counters = Some(counters);
-        self
+        Ok(self)
     }
 
     pub fn with_kind(&mut self, kind: ErrorKind) -> anyhow::Result<&mut Self> {
-        self.error.with_kind(kind);
+        self.error.with_kind(kind)?;
         Ok(self)
     }
 
     /// Appends the given file to the current set of files in the builder.
-    pub fn with_file(&mut self, filename: String, contents: Vec<String>) -> &mut Self {
+    pub fn with_file(
+        &mut self,
+        filename: String,
+        contents: Vec<String>,
+    ) -> anyhow::Result<&mut Self> {
         if let Some(ref mut files) = &mut self.files {
             files.insert(filename, contents);
         } else {
             self.files = Some(HashMap::from([(filename, contents)]));
         }
-        self
+        Ok(self)
     }
 
     /// Sets the current set of files in the builder.
-    pub fn with_files(&mut self, files: HashMap<String, Vec<String>>) -> &mut Self {
+    pub fn with_files(&mut self, files: HashMap<String, Vec<String>>) -> anyhow::Result<&mut Self> {
         self.files = Some(files);
-        self
+        Ok(self)
     }
 
     pub fn with_fingerprint(&mut self, fingerprint: String) -> anyhow::Result<&mut Self> {
@@ -168,9 +172,9 @@ impl CrashInfoBuilder {
         Ok(self)
     }
 
-    pub fn with_incomplete(&mut self, incomplete: bool) -> &mut Self {
+    pub fn with_incomplete(&mut self, incomplete: bool) -> anyhow::Result<&mut Self> {
         self.incomplete = Some(incomplete);
-        self
+        Ok(self)
     }
 
     /// Appends the given message to the current set of messages in the builder.
@@ -183,38 +187,38 @@ impl CrashInfoBuilder {
         Ok(self)
     }
 
-    pub fn with_log_messages(&mut self, log_messages: Vec<String>) -> &mut Self {
+    pub fn with_log_messages(&mut self, log_messages: Vec<String>) -> anyhow::Result<&mut Self> {
         self.log_messages = Some(log_messages);
-        self
+        Ok(self)
     }
 
-    pub fn with_message(&mut self, message: String) -> &mut Self {
-        self.error.with_message(message);
-        self
+    pub fn with_message(&mut self, message: String) -> anyhow::Result<&mut Self> {
+        self.error.with_message(message)?;
+        Ok(self)
     }
 
-    pub fn with_metadata(&mut self, metadata: Metadata) -> &mut Self {
+    pub fn with_metadata(&mut self, metadata: Metadata) -> anyhow::Result<&mut Self> {
         self.metadata = Some(metadata);
-        self
+        Ok(self)
     }
 
-    pub fn with_os_info(&mut self, os_info: OsInfo) -> &mut Self {
+    pub fn with_os_info(&mut self, os_info: OsInfo) -> anyhow::Result<&mut Self> {
         self.os_info = Some(os_info);
-        self
+        Ok(self)
     }
 
-    pub fn with_os_info_this_machine(&mut self) -> &mut Self {
+    pub fn with_os_info_this_machine(&mut self) -> anyhow::Result<&mut Self> {
         self.with_os_info(::os_info::get().into())
     }
 
-    pub fn with_proc_info(&mut self, proc_info: ProcInfo) -> &mut Self {
+    pub fn with_proc_info(&mut self, proc_info: ProcInfo) -> anyhow::Result<&mut Self> {
         self.proc_info = Some(proc_info);
-        self
+        Ok(self)
     }
 
-    pub fn with_sig_info(&mut self, sig_info: SigInfo) -> &mut Self {
+    pub fn with_sig_info(&mut self, sig_info: SigInfo) -> anyhow::Result<&mut Self> {
         self.sig_info = Some(sig_info);
-        self
+        Ok(self)
     }
 
     pub fn with_span_id(&mut self, span_id: Span) -> anyhow::Result<&mut Self> {
@@ -226,14 +230,14 @@ impl CrashInfoBuilder {
         Ok(self)
     }
 
-    pub fn with_span_ids(&mut self, span_ids: Vec<Span>) -> &mut Self {
+    pub fn with_span_ids(&mut self, span_ids: Vec<Span>) -> anyhow::Result<&mut Self> {
         self.span_ids = Some(span_ids);
-        self
+        Ok(self)
     }
 
-    pub fn with_stack(&mut self, stack: StackTrace) -> &mut Self {
-        self.error.with_stack(stack);
-        self
+    pub fn with_stack(&mut self, stack: StackTrace) -> anyhow::Result<&mut Self> {
+        self.error.with_stack(stack)?;
+        Ok(self)
     }
 
     pub fn with_thread(&mut self, thread: ThreadData) -> anyhow::Result<&mut Self> {
@@ -246,16 +250,16 @@ impl CrashInfoBuilder {
     }
 
     pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<&mut Self> {
-        self.error.with_threads(threads);
+        self.error.with_threads(threads)?;
         Ok(self)
     }
 
-    pub fn with_timestamp(&mut self, timestamp: DateTime<Utc>) -> &mut Self {
+    pub fn with_timestamp(&mut self, timestamp: DateTime<Utc>) -> anyhow::Result<&mut Self> {
         self.timestamp = Some(timestamp);
-        self
+        Ok(self)
     }
 
-    pub fn with_timestamp_now(&mut self) -> &mut Self {
+    pub fn with_timestamp_now(&mut self) -> anyhow::Result<&mut Self> {
         self.with_timestamp(Utc::now())
     }
 
@@ -268,17 +272,17 @@ impl CrashInfoBuilder {
         Ok(self)
     }
 
-    pub fn with_trace_ids(&mut self, trace_ids: Vec<Span>) -> &mut Self {
+    pub fn with_trace_ids(&mut self, trace_ids: Vec<Span>) -> anyhow::Result<&mut Self> {
         self.trace_ids = Some(trace_ids);
-        self
+        Ok(self)
     }
 
-    pub fn with_uuid(&mut self, uuid: String) -> &mut Self {
+    pub fn with_uuid(&mut self, uuid: String) -> anyhow::Result<&mut Self> {
         self.uuid = Some(uuid);
-        self
+        Ok(self)
     }
 
-    pub fn with_uuid_random(&mut self) -> &mut Self {
+    pub fn with_uuid_random(&mut self) -> anyhow::Result<&mut Self> {
         self.with_uuid(Uuid::new_v4().to_string())
     }
 }

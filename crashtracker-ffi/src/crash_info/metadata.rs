@@ -13,9 +13,9 @@ pub struct Metadata<'a> {
 impl<'a> TryFrom<Metadata<'a>> for datadog_crashtracker::rfc5_crash_info::Metadata {
     type Error = anyhow::Error;
     fn try_from(value: Metadata<'a>) -> anyhow::Result<Self> {
-        let library_name = value.library_name.try_to_utf8()?.to_string();
-        let library_version = value.library_version.try_to_utf8()?.to_string();
-        let family = value.family.try_to_utf8()?.to_string();
+        let library_name = value.library_name.try_to_string()?;
+        let library_version = value.library_version.try_to_string()?;
+        let family = value.family.try_to_string()?;
         let tags = if let Some(tags) = value.tags {
             tags.into_iter().map(|t| t.to_string()).collect()
         } else {
@@ -33,9 +33,9 @@ impl<'a> TryFrom<Metadata<'a>> for datadog_crashtracker::rfc5_crash_info::Metada
 impl<'a> TryFrom<Metadata<'a>> for datadog_crashtracker::CrashtrackerMetadata {
     type Error = anyhow::Error;
     fn try_from(value: Metadata<'a>) -> anyhow::Result<Self> {
-        let library_name = value.library_name.try_to_utf8()?.to_string();
-        let library_version = value.library_version.try_to_utf8()?.to_string();
-        let family = value.family.try_to_utf8()?.to_string();
+        let library_name = value.library_name.try_to_string()?;
+        let library_version = value.library_version.try_to_string()?;
+        let family = value.family.try_to_string()?;
         let tags = value
             .tags
             .map(|tags| tags.iter().cloned().collect())

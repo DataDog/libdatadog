@@ -61,7 +61,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_counter(
     wrap_with_void_ffi_result!({
         builder
             .to_inner_mut()?
-            .with_counter(name.try_to_utf8()?.to_string(), value)?;
+            .with_counter(name.try_to_string()?, value)?;
     })
 }
 
@@ -100,13 +100,13 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_file(
         let contents = {
             let mut accum = Vec::with_capacity(contents.len());
             for line in contents.iter() {
-                let line = line.try_to_utf8()?.to_string();
+                let line = line.try_to_string()?;
                 accum.push(line);
             }
             accum
         };
 
-        builder.to_inner_mut()?.with_file(filename, contents);
+        builder.to_inner_mut()?.with_file(filename, contents)?;
     })
 }
 
@@ -124,7 +124,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_fingerprint(
     wrap_with_void_ffi_result!({
         builder
             .to_inner_mut()?
-            .with_fingerprint(fingerprint.try_to_utf8()?.to_string())?;
+            .with_fingerprint(fingerprint.try_to_string()?)?;
     })
 }
 
@@ -140,7 +140,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_incomplete(
     incomplete: bool,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_incomplete(incomplete);
+        builder.to_inner_mut()?.with_incomplete(incomplete)?;
     })
 }
 
@@ -158,7 +158,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_log_message(
     wrap_with_void_ffi_result!({
         builder
             .to_inner_mut()?
-            .with_log_message(message.try_to_utf8()?.to_string())?;
+            .with_log_message(message.try_to_string()?)?;
     })
 }
 
@@ -174,7 +174,9 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_metadata(
     metadata: Metadata,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_metadata(metadata.try_into()?);
+        builder
+            .to_inner_mut()?
+            .with_metadata(metadata.try_into()?)?;
     })
 }
 
@@ -190,7 +192,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_os_info(
     os_info: OsInfo,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_os_info(os_info.try_into()?);
+        builder.to_inner_mut()?.with_os_info(os_info.try_into()?)?;
     })
 }
 
@@ -205,7 +207,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_os_info_this_machine(
     mut builder: *mut Handle<CrashInfoBuilder>,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_os_info_this_machine();
+        builder.to_inner_mut()?.with_os_info_this_machine()?;
     })
 }
 
@@ -223,7 +225,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_proc_info(
     wrap_with_void_ffi_result!({
         builder
             .to_inner_mut()?
-            .with_proc_info(proc_info.try_into()?);
+            .with_proc_info(proc_info.try_into()?)?;
     })
 }
 
@@ -239,7 +241,9 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_sig_info(
     sig_info: SigInfo,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_sig_info(sig_info.try_into()?);
+        builder
+            .to_inner_mut()?
+            .with_sig_info(sig_info.try_into()?)?;
     })
 }
 
@@ -272,7 +276,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_stack(
     mut stack: *mut Handle<StackTrace>,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_stack(*stack.take()?);
+        builder.to_inner_mut()?.with_stack(*stack.take()?)?;
     })
 }
 
@@ -305,7 +309,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_timestamp(
     ts: Timespec,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_timestamp(ts.into());
+        builder.to_inner_mut()?.with_timestamp(ts.into())?;
     })
 }
 
@@ -320,7 +324,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_timestamp_now(
     mut builder: *mut Handle<CrashInfoBuilder>,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_timestamp_now();
+        builder.to_inner_mut()?.with_timestamp_now()?;
     })
 }
 
@@ -357,7 +361,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_uuid(
         let uuid = uuid
             .try_to_string_option()?
             .context("UUID cannot be empty string")?;
-        builder.to_inner_mut()?.with_uuid(uuid);
+        builder.to_inner_mut()?.with_uuid(uuid)?;
     })
 }
 
@@ -372,6 +376,6 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_uuid_random(
     mut builder: *mut Handle<CrashInfoBuilder>,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_uuid_random();
+        builder.to_inner_mut()?.with_uuid_random()?;
     })
 }
