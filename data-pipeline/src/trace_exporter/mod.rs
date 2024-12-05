@@ -1219,7 +1219,9 @@ mod tests {
         }
 
         let result = exporter.send(data, 1);
+        // Error received because server is returning an empty body.
         assert!(result.is_err());
+
         exporter.shutdown(None).unwrap();
 
         mock_traces.assert();
@@ -1235,7 +1237,14 @@ mod tests {
             when.method(POST)
                 .header("Content-type", "application/msgpack")
                 .path("/v0.4/traces");
-            then.status(200).body("");
+            then.status(200).body(
+                r#"{
+                    "rate_by_service": {
+                        "service:foo,env:staging": 1.0,
+                        "service:,env:": 0.8 
+                    }
+                }"#,
+            );
         });
 
         let _mock_stats = server.mock(|when, then| {
@@ -1269,11 +1278,15 @@ mod tests {
             .unwrap();
 
         let trace_chunk = vec![Span {
+            service: "test".into(),
+            name: "test".into(),
+            resource: "test".into(),
+            r#type: "test".into(),
             duration: 10,
             ..Default::default()
         }];
 
-        let data = tinybytes::Bytes::from(rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap());
+        let bytes = tinybytes::Bytes::from(rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap());
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {
@@ -1282,7 +1295,10 @@ mod tests {
             })
         }
 
-        exporter.send(data, 1).unwrap();
+        let result = exporter.send(bytes, 1).unwrap();
+
+        assert_eq!(result.rate, 0.8);
+
         exporter
             .shutdown(Some(Duration::from_millis(500)))
             .unwrap_err(); // The shutdown should timeout
