@@ -345,6 +345,7 @@ impl TelemetryWorker {
                     self.deadlines
                         .schedule_event(LifecycleAction::FlushMetricAggr)
                         .unwrap();
+                    // flush data should be last to previously flushed metrics are sent
                     self.deadlines
                         .schedule_event(LifecycleAction::FlushData)
                         .unwrap();
