@@ -21,6 +21,7 @@ pub enum ExporterErrorCode {
     HttpClient,
     HttpParse,
     HttpServer,
+    HttpUnknown,
     HttpWrongStatus,
     InvalidArgument,
     InvalidData,
@@ -45,6 +46,7 @@ impl Display for ExporterErrorCode {
             Self::HttpParse => write!(f, "Error while parsing HTTP message"),
             Self::HttpServer => write!(f, "HTTP error orgininated by server"),
             Self::HttpWrongStatus => write!(f, "HTTP wrong status number"),
+            Self::HttpUnknown => write!(f, "HTTP unknown error"),
             Self::InvalidArgument => write!(f, "Invalid argument provided"),
             Self::InvalidData => write!(f, "Invalid data payload"),
             Self::InvalidInput => write!(f, "Invalid input"),
@@ -75,7 +77,6 @@ impl ExporterError {
 }
 
 impl From<TraceExporterError> for ExporterError {
-    // add code here
     fn from(value: TraceExporterError) -> Self {
         let code = match &value {
             TraceExporterError::Builder(e) => match e {
@@ -104,10 +105,12 @@ impl From<TraceExporterError> for ExporterError {
             },
             TraceExporterError::Request(e) => {
                 let status: u16 = e.status().into();
-                if (400..500).contains(&status) {
+                if (400..499).contains(&status) {
                     ExporterErrorCode::HttpClient
-                } else {
+                } else if status >= 500 {
                     ExporterErrorCode::HttpServer
+                } else {
+                    ExporterErrorCode::HttpUnknown
                 }
             }
             TraceExporterError::Serde(_) => ExporterErrorCode::Serde,
@@ -130,7 +133,8 @@ impl Drop for ExporterError {
     }
 }
 
-/// Free
+/// Frees `error` and all its contents. After being called error will not point to a valid memory
+/// address so any further actions on it could lead to undefined behavior.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_error_free(error: Option<Box<ExporterError>>) {
     if let Some(error) = error {

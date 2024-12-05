@@ -90,7 +90,7 @@ impl RequestError {
     }
 }
 
-/// TraceExporterError holds different types of errors occurred when handling traces.
+/// TraceExporterError holds different types of errors that occur when handling traces.
 #[derive(Debug)]
 pub enum TraceExporterError {
     Builder(BuilderErrorKind),

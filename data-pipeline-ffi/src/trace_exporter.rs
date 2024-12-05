@@ -18,6 +18,17 @@ macro_rules! gen_error {
     };
 }
 
+#[inline]
+fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
+    match str.try_to_utf8() {
+        Ok(s) => Ok(s.to_string()),
+        Err(_) => Err(Box::new(ExporterError::new(
+            ErrorCode::InvalidInput,
+            &ErrorCode::InvalidInput.to_string(),
+        ))),
+    }
+}
+
 /// The TraceExporterConfig object will hold the configuration properties for the TraceExporter.
 /// Once the configuration is passed to the TraceExporter constructor the config is no longer
 /// needed by the handle and it can be freed.
@@ -59,7 +70,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_url(
     url: CharSlice,
 ) -> Option<Box<ExporterError>> {
     if let Some(handle) = config {
-        handle.url = Some(url.to_utf8_lossy().to_string());
+        handle.url = match sanitize_string(url) {
+            Ok(s) => Some(s),
+            Err(e) => return Some(e),
+        };
         None
     } else {
         gen_error!(ErrorCode::InvalidArgument)
@@ -73,7 +87,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_tracer_version(
     version: CharSlice,
 ) -> Option<Box<ExporterError>> {
     if let Option::Some(handle) = config {
-        handle.tracer_version = Some(version.to_utf8_lossy().to_string());
+        handle.tracer_version = match sanitize_string(version) {
+            Ok(s) => Some(s),
+            Err(e) => return Some(e),
+        };
         None
     } else {
         gen_error!(ErrorCode::InvalidArgument)
@@ -87,7 +104,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_language(
     lang: CharSlice,
 ) -> Option<Box<ExporterError>> {
     if let Option::Some(handle) = config {
-        handle.language = Some(lang.to_utf8_lossy().to_string());
+        handle.language = match sanitize_string(lang) {
+            Ok(s) => Some(s),
+            Err(e) => return Some(e),
+        };
         None
     } else {
         gen_error!(ErrorCode::InvalidArgument)
@@ -101,7 +121,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_lang_version(
     version: CharSlice,
 ) -> Option<Box<ExporterError>> {
     if let Option::Some(handle) = config {
-        handle.language_version = Some(version.to_utf8_lossy().to_string());
+        handle.language_version = match sanitize_string(version) {
+            Ok(s) => Some(s),
+            Err(e) => return Some(e),
+        };
         None
     } else {
         gen_error!(ErrorCode::InvalidArgument)
@@ -115,7 +138,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_lang_interpreter(
     interpreter: CharSlice,
 ) -> Option<Box<ExporterError>> {
     if let Option::Some(handle) = config {
-        handle.language_interpreter = Some(interpreter.to_utf8_lossy().to_string());
+        handle.language_interpreter = match sanitize_string(interpreter) {
+            Ok(s) => Some(s),
+            Err(e) => return Some(e),
+        };
         None
     } else {
         gen_error!(ErrorCode::InvalidArgument)
@@ -129,7 +155,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_hostname(
     hostname: CharSlice,
 ) -> Option<Box<ExporterError>> {
     if let Option::Some(handle) = config {
-        handle.hostname = Some(hostname.to_utf8_lossy().to_string());
+        handle.hostname = match sanitize_string(hostname) {
+            Ok(s) => Some(s),
+            Err(e) => return Some(e),
+        };
         None
     } else {
         gen_error!(ErrorCode::InvalidArgument)
@@ -143,7 +172,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_env(
     env: CharSlice,
 ) -> Option<Box<ExporterError>> {
     if let Option::Some(handle) = config {
-        handle.env = Some(env.to_utf8_lossy().to_string());
+        handle.env = match sanitize_string(env) {
+            Ok(s) => Some(s),
+            Err(e) => return Some(e),
+        };
         None
     } else {
         gen_error!(ErrorCode::InvalidArgument)
@@ -156,7 +188,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_version(
     version: CharSlice,
 ) -> Option<Box<ExporterError>> {
     if let Option::Some(handle) = config {
-        handle.version = Some(version.to_utf8_lossy().to_string());
+        handle.version = match sanitize_string(version) {
+            Ok(s) => Some(s),
+            Err(e) => return Some(e),
+        };
         None
     } else {
         gen_error!(ErrorCode::InvalidArgument)
@@ -170,7 +205,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_service(
     service: CharSlice,
 ) -> Option<Box<ExporterError>> {
     if let Option::Some(handle) = config {
-        handle.service = Some(service.to_utf8_lossy().to_string());
+        handle.service = match sanitize_string(service) {
+            Ok(s) => Some(s),
+            Err(e) => return Some(e),
+        };
         None
     } else {
         gen_error!(ErrorCode::InvalidArgument)
@@ -554,6 +592,18 @@ mod tests {
 
             assert!(ret.is_some());
             assert_eq!(ret.unwrap().code, ErrorCode::InvalidArgument);
+        }
+    }
+
+    #[test]
+    fn config_invalid_input_test() {
+        unsafe {
+            let mut config = Some(TraceExporterConfig::default());
+            let invalid: [i8; 2] = [0x80u8 as i8, 0xFFu8 as i8];
+            let error =
+                ddog_trace_exporter_config_set_service(config.as_mut(), CharSlice::new(&invalid));
+
+            assert_eq!(error.unwrap().code, ErrorCode::InvalidInput);
         }
     }
 }
