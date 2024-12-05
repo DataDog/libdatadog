@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use datadog_trace_utils::trace_utils::compute_top_level_span;
+use datadog_trace_utils::span_v04::trace_utils::compute_top_level_span;
 use rand::{thread_rng, Rng};
 
 const BUCKET_SIZE: u64 = Duration::from_secs(2).as_nanos() as u64;
@@ -32,21 +32,21 @@ fn get_test_span(
     service: &str,
     resource: &str,
     error: i32,
-) -> pb::Span {
+) -> Span {
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
         BUCKET_SIZE,
     );
-    pb::Span {
+    Span {
         span_id,
         parent_id,
         duration,
         start: get_timestamp_in_bucket(aligned_now, BUCKET_SIZE, offset) as i64 - duration,
-        service: service.to_string(),
-        name: "query".to_string(),
-        resource: resource.to_string(),
+        service: service.to_string().into(),
+        name: "query".into(),
+        resource: resource.to_string().into(),
         error,
-        r#type: "db".to_string(),
+        r#type: "db".into(),
         ..Default::default()
     }
 }
@@ -63,16 +63,16 @@ fn get_test_span_with_meta(
     error: i32,
     meta: &[(&str, &str)],
     metrics: &[(&str, f64)],
-) -> pb::Span {
+) -> Span {
     let mut span = get_test_span(
         now, span_id, parent_id, duration, offset, service, resource, error,
     );
     for (k, v) in meta {
-        span.meta.insert(k.to_string(), v.to_string());
+        span.meta.insert(k.to_string().into(), v.to_string().into());
     }
     span.metrics = HashMap::new();
     for (k, v) in metrics {
-        span.metrics.insert(k.to_string(), *v);
+        span.metrics.insert(k.to_string().into(), *v);
     }
     span
 }
@@ -647,7 +647,7 @@ fn test_ignore_partial_spans() {
         .get_mut(0)
         .unwrap()
         .metrics
-        .insert("_dd.partial_version".to_string(), 830604.0);
+        .insert("_dd.partial_version".into(), 830604.0);
     compute_top_level_span(spans.as_mut_slice());
     let mut concentrator = SpanConcentrator::new(
         Duration::from_nanos(BUCKET_SIZE),
@@ -877,121 +877,121 @@ fn test_peer_tags_aggregation() {
 
 #[test]
 fn test_compute_stats_for_span_kind() {
-    let test_cases: Vec<(pb::Span, bool)> = vec![
+    let test_cases: Vec<(Span, bool)> = vec![
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "server".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "server".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "consumer".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "consumer".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "client".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "client".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "producer".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "producer".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "internal".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "internal".into())]),
                 ..Default::default()
             },
             false,
         ),
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "SERVER".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "SERVER".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "CONSUMER".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "CONSUMER".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "CLIENT".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "CLIENT".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "PRODUCER".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "PRODUCER".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "INTERNAL".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "INTERNAL".into())]),
                 ..Default::default()
             },
             false,
         ),
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "SerVER".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "SerVER".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "ConSUMeR".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "ConSUMeR".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "CLiENT".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "CLiENT".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "PROducER".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "PROducER".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "INtERNAL".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "INtERNAL".into())]),
                 ..Default::default()
             },
             false,
         ),
         (
-            pb::Span {
-                meta: HashMap::from([("span.kind".to_string(), "".to_string())]),
+            Span {
+                meta: HashMap::from([("span.kind".into(), "".into())]),
                 ..Default::default()
             },
             false,
         ),
         (
-            pb::Span {
+            Span {
                 meta: HashMap::from([]),
                 ..Default::default()
             },
