@@ -182,8 +182,8 @@ int main(void) {
 
   auto crashinfo = extract_result(ddog_crasht_CrashInfoBuilder_build(builder.release()),
                                   "failed to build CrashInfo");
-  auto endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/test"));
-  check_result(ddog_crasht_CrashInfo_upload_to_endpoint(crashinfo.get(), endpoint),
-               "Failed to export to file");
-  ddog_endpoint_drop(endpoint);
+  // auto endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/test"));
+  // check_result(ddog_crasht_CrashInfo_upload_to_endpoint(crashinfo.get(), endpoint),
+  //              "Failed to export to file");
+  // ddog_endpoint_drop(endpoint);
 }
