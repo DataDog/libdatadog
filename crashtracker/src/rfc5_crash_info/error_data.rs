@@ -17,6 +17,7 @@ pub struct ErrorData {
     pub threads: Vec<ThreadData>,
 }
 
+#[cfg(unix)]
 impl ErrorData {
     pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
         let normalizer = blazesym::normalize::Normalizer::new();

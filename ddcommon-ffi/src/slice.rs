@@ -78,12 +78,7 @@ pub trait AsBytes<'a> {
 
     #[inline]
     fn try_to_string_option(&self) -> Result<Option<String>, Utf8Error> {
-        let s = std::str::from_utf8(self.as_bytes())?.to_string();
-        if s.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(s))
-        }
+        Ok(Some(self.try_to_string()?).filter(|x| !x.is_empty()))
     }
 
     #[inline]

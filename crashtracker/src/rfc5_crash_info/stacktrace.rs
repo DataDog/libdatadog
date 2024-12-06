@@ -1,7 +1,9 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::NormalizedAddress;
 use anyhow::Context;
+#[cfg(unix)]
 use blazesym::{
     helper::ElfResolver,
     normalize::Normalizer,
@@ -10,8 +12,6 @@ use blazesym::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-
-use crate::NormalizedAddress;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StackTrace {
@@ -187,7 +187,10 @@ impl StackFrame {
     pub fn new() -> Self {
         Self::default()
     }
+}
 
+#[cfg(unix)]
+impl StackFrame {
     pub fn normalize_ip(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
         if let Some(ip) = &self.ip {
             let ip = ip.trim_start_matches("0x");
