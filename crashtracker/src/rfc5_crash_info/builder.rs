@@ -4,6 +4,7 @@
 use chrono::{DateTime, Utc};
 use error_data::ThreadData;
 use stacktrace::StackTrace;
+use std::io::{BufRead, BufReader};
 use unknown_value::UnknownValue;
 use uuid::Uuid;
 
@@ -146,8 +147,14 @@ impl CrashInfoBuilder {
         Ok(self)
     }
 
+    pub fn with_file(&mut self, filename: String) -> anyhow::Result<&mut Self> {
+        let file = File::open(&filename).with_context(|| format!("filename: {filename}"))?;
+        let lines: std::io::Result<Vec<_>> = BufReader::new(file).lines().collect();
+        self.with_file_and_contents(filename, lines?)
+    }
+
     /// Appends the given file to the current set of files in the builder.
-    pub fn with_file(
+    pub fn with_file_and_contents(
         &mut self,
         filename: String,
         contents: Vec<String>,

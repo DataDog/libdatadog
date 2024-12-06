@@ -91,6 +91,26 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_kind(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_file(
     mut builder: *mut Handle<CrashInfoBuilder>,
     filename: CharSlice,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        builder.to_inner_mut()?.with_file(
+            filename
+                .try_to_string_option()?
+                .context("filename cannot be empty string")?,
+        )?;
+    })
+}
+
+/// # Safety
+/// The `builder` can be null, but if non-null it must point to a Builder made by this module,
+/// which has not previously been dropped.
+/// The CharSlice must be valid.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_file_and_contents(
+    mut builder: *mut Handle<CrashInfoBuilder>,
+    filename: CharSlice,
     contents: Slice<CharSlice>,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
@@ -106,7 +126,9 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_file(
             accum
         };
 
-        builder.to_inner_mut()?.with_file(filename, contents)?;
+        builder
+            .to_inner_mut()?
+            .with_file_and_contents(filename, contents)?;
     })
 }
 
