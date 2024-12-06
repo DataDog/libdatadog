@@ -29,7 +29,7 @@ use tinybytes::Bytes;
 /// - Any `SpanLink` cannot be decoded.
 /// ```
 pub(crate) fn read_span_links(buf: &mut Bytes) -> Result<Vec<SpanLink>, DecodeError> {
-    if let Some(empty_vec) = handle_null_marker(buf, Vec::new()) {
+    if let Some(empty_vec) = handle_null_marker(buf, &|| Vec::default()) {
         return Ok(empty_vec);
     }
 

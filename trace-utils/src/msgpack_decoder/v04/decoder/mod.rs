@@ -136,7 +136,7 @@ fn read_string_bytes(buf: &mut Bytes) -> Result<BytesString, DecodeError> {
 
 #[inline]
 fn read_nullable_string_bytes(buf: &mut Bytes) -> Result<BytesString, DecodeError> {
-    if let Some(empty_string) = handle_null_marker(buf, BytesString::from_bytes_slice(buf, "")) {
+    if let Some(empty_string) = handle_null_marker(buf, &|| BytesString::default()) {
         Ok(empty_string)
     } else {
         read_string_bytes(buf)
@@ -164,7 +164,7 @@ fn read_str_map_to_bytes_strings(
 fn read_nullable_str_map_to_bytes_strings(
     buf: &mut Bytes,
 ) -> Result<HashMap<BytesString, BytesString>, DecodeError> {
-    if let Some(empty_map) = handle_null_marker(buf, HashMap::default()) {
+    if let Some(empty_map) = handle_null_marker(buf, &|| HashMap::default()) {
         return Ok(empty_map);
     }
 
@@ -179,7 +179,7 @@ fn read_metric_pair(buf: &mut Bytes) -> Result<(BytesString, f64), DecodeError> 
     Ok((key, v))
 }
 fn read_metrics(buf: &mut Bytes) -> Result<HashMap<BytesString, f64>, DecodeError> {
-    if let Some(empty_map) = handle_null_marker(buf, HashMap::default()) {
+    if let Some(empty_map) = handle_null_marker(buf, &|| HashMap::default()) {
         return Ok(empty_map);
     }
 
@@ -189,7 +189,7 @@ fn read_metrics(buf: &mut Bytes) -> Result<HashMap<BytesString, f64>, DecodeErro
 }
 
 fn read_meta_struct(buf: &mut Bytes) -> Result<HashMap<BytesString, Vec<u8>>, DecodeError> {
-    if let Some(empty_map) = handle_null_marker(buf, HashMap::default()) {
+    if let Some(empty_map) = handle_null_marker(buf, &|| HashMap::default()) {
         return Ok(empty_map);
     }
 
@@ -277,12 +277,12 @@ fn read_map_len(buf: &mut &[u8]) -> Result<usize, DecodeError> {
 
 /// When you want to "peek" if the next value is a null marker, and only advance the buffer if it is
 /// null and return the default value. If it is not null, you can continue to decode as expected.
-fn handle_null_marker<T>(buf: &mut Bytes, default: T) -> Option<T> {
+fn handle_null_marker<T>(buf: &mut Bytes, default: &dyn Fn() -> T) -> Option<T> {
     let slice = unsafe { buf.as_mut_slice() };
 
     if slice.first() == Some(NULL_MARKER) {
         *slice = &slice[1..];
-        Some(default)
+        Some(default())
     } else {
         None
     }
