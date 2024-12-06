@@ -60,8 +60,6 @@ impl CrashInfo {
     pub fn current_schema_version() -> String {
         "1.0".to_string()
     }
-
-
 }
 
 #[cfg(unix)]
