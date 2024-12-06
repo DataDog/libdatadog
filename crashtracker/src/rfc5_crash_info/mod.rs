@@ -61,6 +61,11 @@ impl CrashInfo {
         "1.0".to_string()
     }
 
+
+}
+
+#[cfg(unix)]
+impl CrashInfo {
     pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
         self.error.normalize_ips(pid)
     }

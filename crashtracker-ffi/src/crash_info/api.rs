@@ -24,6 +24,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_drop(builder: *mut Handle<CrashIn
 #[no_mangle]
 #[must_use]
 #[named]
+#[cfg(unix)]
 pub unsafe extern "C" fn ddog_crasht_CrashInfo_normalize_ips(
     mut crash_info: *mut Handle<CrashInfo>,
     pid: u32,
@@ -39,6 +40,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_normalize_ips(
 #[no_mangle]
 #[must_use]
 #[named]
+#[cfg(unix)]
 pub unsafe extern "C" fn ddog_crasht_CrashInfo_resolve_names(
     mut crash_info: *mut Handle<CrashInfo>,
     pid: u32,
