@@ -122,6 +122,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_error_if_no_api_key_env_var() {
+        env::remove_var("DD_API_KEY");
         let config = config::Config::new();
         assert!(config.is_err());
         assert_eq!(

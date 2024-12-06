@@ -288,10 +288,9 @@ impl<A: Allocator + Clone> Drop for ChainAllocator<A> {
                     // moved to the stack before the chunk is dropped, so it's
                     // alive and valid after the chunk is dropped below.
                     chain_node_ptr = unsafe {
-                        core::ptr::addr_of!((*non_null.as_ptr()).prev)
-                            .read()
-                            .get()
-                            .read()
+                        // Save to variable to avoid a dangling temporary.
+                        let unsafe_cell = core::ptr::addr_of!((*non_null.as_ptr()).prev).read();
+                        unsafe_cell.get().read()
                     };
 
                     // SAFETY: the chunk hasn't been dropped yet, and the

@@ -149,6 +149,7 @@ impl TelemetryCrashUploader {
             seq_id: 1,
             application: &metadata.application,
             host: &metadata.host,
+            origin: Some("Crashtracker"),
             payload: &data::Payload::Logs(vec![data::Log {
                 message,
                 level: LogLevel::Error,

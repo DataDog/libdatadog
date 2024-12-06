@@ -644,6 +644,13 @@ impl SidecarInterface for SidecarServer {
                     }
 
                     app.telemetry.send_msgs(actions).await.ok();
+
+                    let mut extracted_actions: Vec<TelemetryActions> = vec![];
+                    enqueued_data
+                        .extract_telemetry_actions(&mut extracted_actions)
+                        .await;
+                    app.telemetry.send_msgs(extracted_actions).await.ok();
+
                     // Ok, we dequeued all messages, now new enqueue_actions calls can handle it
                     completer.complete((service_name, env_name)).await;
                 }
