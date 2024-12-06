@@ -274,6 +274,7 @@ fn byte_vec_as_hex(bv: Option<Vec<u8>>) -> Option<String> {
     }
 }
 
+#[cfg(unix)]
 fn byte_slice_as_hex(bv: &[u8]) -> String {
     use std::fmt::Write;
 
