@@ -16,13 +16,11 @@ const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
 fn set_top_level_span(span: &mut Span, is_top_level: bool) {
-    if !is_top_level {
-        if span.metrics.contains_key(TOP_LEVEL_KEY) {
-            span.metrics.remove(TOP_LEVEL_KEY);
-        }
-        return;
+    if is_top_level {
+        span.metrics.insert(TOP_LEVEL_KEY.into(), 1.0);
+    } else {
+        span.metrics.remove(TOP_LEVEL_KEY);
     }
-    span.metrics.insert(TOP_LEVEL_KEY.into(), 1.0);
 }
 
 /// Updates all the spans top-level attribute.
@@ -64,7 +62,7 @@ pub fn has_top_level(span: &Span) -> bool {
         || span.metrics.get(TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0)
 }
 
-// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
+/// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
 pub fn is_measured(span: &Span) -> bool {
     span.metrics.get(MEASURED_KEY).is_some_and(|v| *v == 1.0)
 }
@@ -78,4 +76,97 @@ pub fn is_partial_snapshot(span: &Span) -> bool {
     span.metrics
         .get(PARTIAL_VERSION_KEY)
         .is_some_and(|v| *v >= 0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_span(
+        trace_id: u64,
+        span_id: u64,
+        parent_id: u64,
+        start: i64,
+        is_top_level: bool,
+    ) -> Span {
+        let mut span = Span {
+            trace_id,
+            span_id,
+            service: "test-service".into(),
+            name: "test_name".into(),
+            resource: "test-resource".into(),
+            parent_id,
+            start,
+            duration: 5,
+            error: 0,
+            meta: HashMap::from([
+                ("service".into(), "test-service".into()),
+                ("env".into(), "test-env".into()),
+                ("runtime-id".into(), "test-runtime-id-value".into()),
+            ]),
+            metrics: HashMap::new(),
+            r#type: "".into(),
+            meta_struct: HashMap::new(),
+            span_links: vec![],
+        };
+        if is_top_level {
+            span.metrics.insert("_top_level".into(), 1.0);
+            span.meta
+                .insert("_dd.origin".into(), "cloudfunction".into());
+            span.meta.insert("origin".into(), "cloudfunction".into());
+            span.meta
+                .insert("functionname".into(), "dummy_function_name".into());
+            span.r#type = "serverless".into();
+        }
+        span
+    }
+
+    #[test]
+    fn test_has_top_level() {
+        let top_level_span = create_test_span(123, 1234, 12, 1, true);
+        let not_top_level_span = create_test_span(123, 1234, 12, 1, false);
+        assert!(has_top_level(&top_level_span));
+        assert!(!has_top_level(&not_top_level_span));
+    }
+
+    #[test]
+    fn test_is_measured() {
+        let mut measured_span = create_test_span(123, 1234, 12, 1, true);
+        measured_span.metrics.insert(MEASURED_KEY.into(), 1.0);
+        let not_measured_span = create_test_span(123, 1234, 12, 1, true);
+        assert!(is_measured(&measured_span));
+        assert!(!is_measured(&not_measured_span));
+    }
+
+    #[test]
+    fn test_compute_top_level() {
+        let mut span_with_different_service = create_test_span(123, 5, 2, 1, false);
+        span_with_different_service.service = "another_service".into();
+        let mut trace = vec![
+            // Root span, should be marked as top-level
+            create_test_span(123, 1, 0, 1, false),
+            // Should not be marked as top-level
+            create_test_span(123, 2, 1, 1, false),
+            // No parent in local trace, should be marked as
+            // top-level
+            create_test_span(123, 4, 3, 1, false),
+            // Parent belongs to another service, should be marked
+            // as top-level
+            span_with_different_service,
+        ];
+
+        compute_top_level_span(trace.as_mut_slice());
+
+        let spans_marked_as_top_level: Vec<u64> = trace
+            .iter()
+            .filter_map(|span| {
+                if has_top_level(span) {
+                    Some(span.span_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(spans_marked_as_top_level, [1, 4, 5])
+    }
 }
