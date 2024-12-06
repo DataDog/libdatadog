@@ -667,34 +667,23 @@ pub fn is_partial_snapshot(span: &pb::Span) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::test_utils::create_test_span;
+    use ddcommon::Endpoint;
     use hyper::Request;
     use serde_json::json;
-    use std::collections::HashMap;
-
-    use super::{compute_top_level_span, get_root_span_index, set_serverless_root_span_tags};
-    use crate::trace_utils::{
-        has_top_level, is_measured, TracerHeaderTags, MAX_PAYLOAD_SIZE, MEASURED_KEY,
-    };
-    use crate::tracer_payload::TracerPayloadCollection;
-    use crate::{
-        test_utils::create_test_span,
-        trace_utils::{self, SendData},
-    };
-    use datadog_trace_protobuf::pb::TraceChunk;
-    use datadog_trace_protobuf::pb::{Span, TracerPayload};
-    use ddcommon::Endpoint;
 
     #[test]
     fn test_coalescing_does_not_exceed_max_size() {
         let dummy = SendData::new(
             MAX_PAYLOAD_SIZE / 5 + 1,
-            TracerPayloadCollection::V07(vec![TracerPayload {
+            TracerPayloadCollection::V07(vec![pb::TracerPayload {
                 container_id: "".to_string(),
                 language_name: "".to_string(),
                 language_version: "".to_string(),
                 tracer_version: "".to_string(),
                 runtime_id: "".to_string(),
-                chunks: vec![TraceChunk {
+                chunks: vec![pb::TraceChunk {
                     priority: 0,
                     origin: "".to_string(),
                     spans: vec![],
@@ -709,7 +698,7 @@ mod tests {
             TracerHeaderTags::default(),
             &Endpoint::default(),
         );
-        let coalesced = trace_utils::coalesce_send_data(vec![
+        let coalesced = coalesce_send_data(vec![
             dummy.clone(),
             dummy.clone(),
             dummy.clone(),
@@ -744,7 +733,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::type_complexity)]
     #[cfg_attr(all(miri, target_os = "macos"), ignore)]
-    async fn get_v05_traces_from_request_body() {
+    async fn test_get_v05_traces_from_request_body() {
         let data: (
             Vec<String>,
             Vec<
@@ -793,12 +782,11 @@ mod tests {
             )]],
         );
         let bytes = rmp_serde::to_vec(&data).unwrap();
-        let res =
-            trace_utils::get_v05_traces_from_request_body(hyper::body::Body::from(bytes)).await;
+        let res = get_v05_traces_from_request_body(hyper::body::Body::from(bytes)).await;
         assert!(res.is_ok());
         let (_, traces) = res.unwrap();
         let span = traces[0][0].clone();
-        let test_span = Span {
+        let test_span = pb::Span {
             service: "my-service".to_string(),
             name: "my-name".to_string(),
             resource: "my-resource".to_string(),
@@ -842,7 +830,7 @@ mod tests {
                     "meta": {},
                     "metrics": {},
                 }]),
-                vec![vec![Span {
+                vec![vec![pb::Span {
                     service: "test-service".to_string(),
                     name: "test-service-name".to_string(),
                     resource: "test-service-resource".to_string(),
@@ -869,7 +857,7 @@ mod tests {
                     "duration": 5,
                     "meta": {},
                 }]),
-                vec![vec![Span {
+                vec![vec![pb::Span {
                     service: "".to_string(),
                     name: "test-service-name".to_string(),
                     resource: "test-service-resource".to_string(),
@@ -893,7 +881,7 @@ mod tests {
             let request = Request::builder()
                 .body(hyper::body::Body::from(bytes))
                 .unwrap();
-            let res = trace_utils::get_traces_from_request_body(request.into_body()).await;
+            let res = get_traces_from_request_body(request.into_body()).await;
             assert!(res.is_ok());
             assert_eq!(res.unwrap().1, output);
         }
@@ -932,7 +920,7 @@ mod tests {
         set_serverless_root_span_tags(
             &mut span,
             Some("test_function".to_string()),
-            &trace_utils::EnvironmentType::AzureFunction,
+            &EnvironmentType::AzureFunction,
         );
         assert_eq!(
             span.meta,
@@ -957,7 +945,7 @@ mod tests {
         set_serverless_root_span_tags(
             &mut span,
             Some("test_function".to_string()),
-            &trace_utils::EnvironmentType::CloudFunction,
+            &EnvironmentType::CloudFunction,
         );
         assert_eq!(
             span.meta,
