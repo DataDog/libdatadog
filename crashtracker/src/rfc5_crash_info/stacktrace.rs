@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::NormalizedAddress;
-use anyhow::Context;
 #[cfg(unix)]
 use blazesym::{
     helper::ElfResolver,
@@ -195,6 +194,7 @@ impl StackFrame {
 #[cfg(unix)]
 impl StackFrame {
     pub fn normalize_ip(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
+        use anyhow::Context;
         if let Some(ip) = &self.ip {
             let ip = ip.trim_start_matches("0x");
             let ip = u64::from_str_radix(ip, 16)?;
