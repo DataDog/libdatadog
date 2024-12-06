@@ -257,7 +257,7 @@ pub async fn get_v05_traces_from_request_body(
     Ok((body_size, traces))
 }
 
-// Tags gathered from a trace's root span
+/// Tags gathered from a trace's root span
 #[derive(Default)]
 pub struct RootSpanTags<'a> {
     pub env: &'a str,
@@ -425,13 +425,11 @@ pub fn has_top_level(span: &pb::Span) -> bool {
 }
 
 fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
-    if !is_top_level {
-        if span.metrics.contains_key(TOP_LEVEL_KEY) {
-            span.metrics.remove(TOP_LEVEL_KEY);
-        }
-        return;
+    if is_top_level {
+        span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
+    } else {
+        span.metrics.remove(TOP_LEVEL_KEY);
     }
-    span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
 }
 
 pub fn set_serverless_root_span_tags(
@@ -651,7 +649,7 @@ pub fn collect_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
     }
 }
 
-// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
+/// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
 pub fn is_measured(span: &pb::Span) -> bool {
     span.metrics.get(MEASURED_KEY).is_some_and(|v| *v == 1.0)
 }

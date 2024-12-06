@@ -16,13 +16,11 @@ const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
 fn set_top_level_span(span: &mut Span, is_top_level: bool) {
-    if !is_top_level {
-        if span.metrics.contains_key(TOP_LEVEL_KEY) {
-            span.metrics.remove(TOP_LEVEL_KEY);
-        }
-        return;
+    if is_top_level {
+        span.metrics.insert(TOP_LEVEL_KEY.into(), 1.0);
+    } else {
+        span.metrics.remove(TOP_LEVEL_KEY);
     }
-    span.metrics.insert(TOP_LEVEL_KEY.into(), 1.0);
 }
 
 /// Updates all the spans top-level attribute.
@@ -64,7 +62,7 @@ pub fn has_top_level(span: &Span) -> bool {
         || span.metrics.get(TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0)
 }
 
-// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
+/// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
 pub fn is_measured(span: &Span) -> bool {
     span.metrics.get(MEASURED_KEY).is_some_and(|v| *v == 1.0)
 }
