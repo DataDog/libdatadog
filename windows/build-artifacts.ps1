@@ -9,9 +9,15 @@ function Invoke-Call {
 }
 
 $output_dir = $args[0]
+$target = $args[1]
 
 if ([string]::IsNullOrEmpty($output_dir)) {
     throw "You must specify an output directory. Ex: $($myInvocation.InvocationName) my_rust_project/ bin"
+}
+
+$targets = @("i686-pc-windows-msvc", "x86_64-pc-windows-msvc")
+if (![string]::IsNullOrEmpty($target)) {
+    $targets = @($target)
 }
 
 if (![System.IO.Path]::IsPathRooted($output_dir)) {
@@ -32,10 +38,10 @@ $features = @(
 Write-Host "Building for features: $features" -ForegroundColor Magenta
 
 pushd profiling-ffi
-Invoke-Call -ScriptBlock { cargo build --features $features --target i686-pc-windows-msvc --release --target-dir $output_dir }
-Invoke-Call -ScriptBlock { cargo build --features $features --target i686-pc-windows-msvc --target-dir $output_dir }
-Invoke-Call -ScriptBlock { cargo build --features $features --target x86_64-pc-windows-msvc --release --target-dir $output_dir }
-Invoke-Call -ScriptBlock { cargo build --features $features --target x86_64-pc-windows-msvc --target-dir $output_dir }
+foreach ($target in $targets) {
+    Invoke-Call -ScriptBlock { cargo build --features $features --target $target --release --target-dir $output_dir }
+    Invoke-Call -ScriptBlock { cargo build --features $features --target $target --target-dir $output_dir }
+}
 popd
 
 Write-Host "Building tools" -ForegroundColor Magenta
