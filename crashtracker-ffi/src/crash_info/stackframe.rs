@@ -112,6 +112,9 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_build_id(
     })
 }
 
+// TODO the rest of the types here
+
+
 /// # Safety
 /// The `frame` can be null, but if non-null it must point to a Frame made by this module,
 /// which has not previously been dropped.

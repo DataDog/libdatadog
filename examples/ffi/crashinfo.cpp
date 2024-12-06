@@ -43,8 +43,8 @@ CHECK_RESULT(ddog_Vec_Tag_PushResult, DDOG_VEC_TAG_PUSH_RESULT_OK)
   struct typ##Deleter {                                                                            \
     void operator()(ddog_crasht_Handle_##typ *object) { ddog_crasht_##typ##_drop(object); }        \
   };                                                                                               \
-  std::unique_ptr<ddog_crasht_Handle_##typ, typ##Deleter>                                          \
-  extract_result(ddog_crasht_Result_Handle##typ result, const char *msg) {                         \
+  std::unique_ptr<ddog_crasht_Handle_##typ, typ##Deleter> extract_result(                          \
+      ddog_crasht_Result_Handle##typ result, const char *msg) {                                    \
     if (result.tag != ok_tag) {                                                                    \
       print_error(msg, result.err);                                                                \
       ddog_Error_drop(&result.err);                                                                \
@@ -57,14 +57,26 @@ CHECK_RESULT(ddog_Vec_Tag_PushResult, DDOG_VEC_TAG_PUSH_RESULT_OK)
 EXTRACT_RESULT(CrashInfoBuilder,
                DDOG_CRASHT_RESULT_HANDLE_CRASH_INFO_BUILDER_OK_HANDLE_CRASH_INFO_BUILDER)
 EXTRACT_RESULT(CrashInfo, DDOG_CRASHT_RESULT_HANDLE_CRASH_INFO_OK_HANDLE_CRASH_INFO)
+EXTRACT_RESULT(StackTrace, DDOG_CRASHT_RESULT_HANDLE_STACK_TRACE_OK_HANDLE_STACK_TRACE)
+EXTRACT_RESULT(StackFrame, DDOG_CRASHT_RESULT_HANDLE_STACK_FRAME_OK_HANDLE_STACK_FRAME)
 
-void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *crashinfo) {
+void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
   constexpr std::size_t nb_elements = 20;
-  auto trace_new = ddog_crasht_StackTrace_new();
+  auto stacktrace = extract_result(ddog_crasht_StackTrace_new(), "failed to make new StackTrace");
 
   for (uintptr_t i = 0; i < nb_elements; ++i) {
-    auto new_frame = ddog_crasht_StackFrame_new();
+    auto new_frame = extract_result(ddog_crasht_StackFrame_new(), "failed to make StackFrame");
+    std::string name = "func_" + std::to_string(i);
+    check_result(ddog_crasht_StackFrame_with_function(new_frame.get(), to_slice_string(name)),
+                 "failed to add function");
+    std::string filename = "/path/to/code/file_" + std::to_string(i);
+    check_result(ddog_crasht_StackFrame_with_file(new_frame.get(), to_slice_string(filename)),
+                 "failed to add filename");
+    check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), new_frame.get()),
+                 "failed to add filename");
   }
+  check_result(ddog_crasht_CrashInfoBuilder_with_stack(builder, stacktrace.get()),
+               "failed to add stacktrace");
 }
 // void add_stacktrace(std::unique_ptr<ddog_crasht_Handle_CrashInfoBuilder, Deleter> &crashinfo) {
 
@@ -177,7 +189,7 @@ int main(void) {
   check_result(ddog_crasht_CrashInfoBuilder_with_kind(builder.get(), DDOG_CRASHT_ERROR_KIND_PANIC),
                "Failed to set error kind");
 
-  //  add_stacktrace(crashinfo);
+  add_stacktrace(builder.get());
 
   // Datadog IPO at 2019-09-19T13:30:00Z = 1568899800 unix
   ddog_Timespec timestamp = {.seconds = 1568899800, .nanoseconds = 0};
@@ -188,7 +200,8 @@ int main(void) {
   check_result(ddog_crasht_CrashInfoBuilder_with_proc_info(builder.get(), procinfo),
                "Failed to set procinfo");
 
-  auto crashinfo = extract_result(ddog_crasht_CrashInfoBuilder_build(builder.release()), "failed to build CrashInfo");
+  auto crashinfo = extract_result(ddog_crasht_CrashInfoBuilder_build(builder.release()),
+                                  "failed to build CrashInfo");
   auto endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/test"));
   check_result(ddog_crasht_CrashInfo_upload_to_endpoint(crashinfo.get(), endpoint),
                "Failed to export to file");
