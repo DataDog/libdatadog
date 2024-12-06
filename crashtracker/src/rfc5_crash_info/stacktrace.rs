@@ -26,7 +26,10 @@ impl StackTrace {
             frames: vec![],
         }
     }
+}
 
+#[cfg(unix)]
+impl StackTrace {
     pub fn normalize_ips(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
         for frame in &mut self.frames {
             // TODO: Should this keep going on failure, and report at the end?
