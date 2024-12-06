@@ -139,46 +139,46 @@ void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
 
 int main(void) {
   auto builder = extract_result(ddog_crasht_CrashInfoBuilder_new(), "failed to make builder");
-  check_result(ddog_crasht_CrashInfoBuilder_with_counter(builder.get(),
-                                                         to_slice_c_char("my_amazing_counter"), 3),
-               "Failed to add counter");
+  // check_result(ddog_crasht_CrashInfoBuilder_with_counter(builder.get(),
+  //                                                        to_slice_c_char("my_amazing_counter"), 3),
+  //              "Failed to add counter");
 
-  auto tags = ddog_Vec_Tag_new();
-  check_result(
-      ddog_Vec_Tag_push(&tags, to_slice_c_char("best-hockey-team"), to_slice_c_char("Habs")),
-      "failed to add tag");
-  const ddog_crasht_Metadata metadata = {
-      .library_name = to_slice_c_char("libdatadog"),
-      .library_version = to_slice_c_char("42"),
-      .family = to_slice_c_char("rust"),
-      .tags = &tags,
-  };
+  // auto tags = ddog_Vec_Tag_new();
+  // check_result(
+  //     ddog_Vec_Tag_push(&tags, to_slice_c_char("best-hockey-team"), to_slice_c_char("Habs")),
+  //     "failed to add tag");
+  // const ddog_crasht_Metadata metadata = {
+  //     .library_name = to_slice_c_char("libdatadog"),
+  //     .library_version = to_slice_c_char("42"),
+  //     .family = to_slice_c_char("rust"),
+  //     .tags = &tags,
+  // };
 
-  check_result(ddog_crasht_CrashInfoBuilder_with_metadata(builder.get(), metadata),
-               "Failed to add metadata");
-  ddog_Vec_Tag_drop(tags);
+  // check_result(ddog_crasht_CrashInfoBuilder_with_metadata(builder.get(), metadata),
+  //              "Failed to add metadata");
+  // ddog_Vec_Tag_drop(tags);
 
-  // This API allows one to capture useful files (e.g. /proc/pid/maps)
-  // For testing purposes, use `/etc/hosts` which should exist on any reasonable UNIX system
-  check_result(ddog_crasht_CrashInfoBuilder_with_file(builder.get(), to_slice_c_char("/etc/hosts")),
-               "Failed to add file");
+  // // This API allows one to capture useful files (e.g. /proc/pid/maps)
+  // // For testing purposes, use `/etc/hosts` which should exist on any reasonable UNIX system
+  // check_result(ddog_crasht_CrashInfoBuilder_with_file(builder.get(), to_slice_c_char("/etc/hosts")),
+  //              "Failed to add file");
 
-  check_result(ddog_crasht_CrashInfoBuilder_with_kind(builder.get(), DDOG_CRASHT_ERROR_KIND_PANIC),
-               "Failed to set error kind");
+  // check_result(ddog_crasht_CrashInfoBuilder_with_kind(builder.get(), DDOG_CRASHT_ERROR_KIND_PANIC),
+  //              "Failed to set error kind");
 
-  add_stacktrace(builder.get());
+  // add_stacktrace(builder.get());
 
-  // Datadog IPO at 2019-09-19T13:30:00Z = 1568899800 unix
-  ddog_Timespec timestamp = {.seconds = 1568899800, .nanoseconds = 0};
-  check_result(ddog_crasht_CrashInfoBuilder_with_timestamp(builder.get(), timestamp),
-               "Failed to set timestamp");
+  // // Datadog IPO at 2019-09-19T13:30:00Z = 1568899800 unix
+  // ddog_Timespec timestamp = {.seconds = 1568899800, .nanoseconds = 0};
+  // check_result(ddog_crasht_CrashInfoBuilder_with_timestamp(builder.get(), timestamp),
+  //              "Failed to set timestamp");
 
-  ddog_crasht_ProcInfo procinfo = {.pid = 42};
-  check_result(ddog_crasht_CrashInfoBuilder_with_proc_info(builder.get(), procinfo),
-               "Failed to set procinfo");
+  // ddog_crasht_ProcInfo procinfo = {.pid = 42};
+  // check_result(ddog_crasht_CrashInfoBuilder_with_proc_info(builder.get(), procinfo),
+  //              "Failed to set procinfo");
 
-  check_result(ddog_crasht_CrashInfoBuilder_with_os_info_this_machine(builder.get()),
-               "Failed to set os_info");
+  // check_result(ddog_crasht_CrashInfoBuilder_with_os_info_this_machine(builder.get()),
+  //              "Failed to set os_info");
 
   auto crashinfo = extract_result(ddog_crasht_CrashInfoBuilder_build(builder.release()),
                                   "failed to build CrashInfo");
