@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use ::function_name::named;
-use datadog_crashtracker::rfc5_crash_info::StackFrame;
+use datadog_crashtracker::rfc5_crash_info::{BuildIdType, FileType, StackFrame};
 use ddcommon_ffi::{
     slice::AsBytes, wrap_with_void_ffi_result, CharSlice, Handle, Result, ToInner, VoidResult,
 };
@@ -112,8 +112,37 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_build_id(
     })
 }
 
-// TODO the rest of the types here
+/// # Safety
+/// The `frame` can be null, but if non-null it must point to a Frame made by this module,
+/// which has not previously been dropped.
+/// The BuildIdType must be valid.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_StackFrame_with_build_id_type(
+    mut frame: *mut Handle<StackFrame>,
+    build_id_type: BuildIdType,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        frame.to_inner_mut()?.build_id_type = Some(build_id_type);
+    })
+}
 
+/// # Safety
+/// The `frame` can be null, but if non-null it must point to a Frame made by this module,
+/// which has not previously been dropped.
+/// The FileType must be valid.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_StackFrame_with_file_type(
+    mut frame: *mut Handle<StackFrame>,
+    file_type: FileType,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        frame.to_inner_mut()?.file_type = Some(file_type);
+    })
+}
 
 /// # Safety
 /// The `frame` can be null, but if non-null it must point to a Frame made by this module,
@@ -150,6 +179,21 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_relative_address(
 /// # Safety
 /// The `frame` can be null, but if non-null it must point to a Frame made by this module,
 /// which has not previously been dropped.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_StackFrame_with_column(
+    mut frame: *mut Handle<StackFrame>,
+    column: u32,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        frame.to_inner_mut()?.column = Some(column);
+    })
+}
+
+/// # Safety
+/// The `frame` can be null, but if non-null it must point to a Frame made by this module,
+/// which has not previously been dropped.
 /// The CharSlice must be valid.
 #[no_mangle]
 #[must_use]
@@ -176,5 +220,20 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_function(
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
         frame.to_inner_mut()?.function = function.try_to_string_option()?;
+    })
+}
+
+/// # Safety
+/// The `frame` can be null, but if non-null it must point to a Frame made by this module,
+/// which has not previously been dropped.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_StackFrame_with_line(
+    mut frame: *mut Handle<StackFrame>,
+    line: u32,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        frame.to_inner_mut()?.line = Some(line);
     })
 }

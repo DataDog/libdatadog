@@ -35,6 +35,7 @@ pub unsafe extern "C" fn ddog_crasht_StackTrace_drop(trace: *mut Handle<StackTra
 /// which has not previously been dropped.
 /// The frame can be non-null, but if non-null it must point to a Frame made by this module,
 /// which has not previously been dropped.
+/// The frame is consumed, and does not need to be dropped after this operation.
 #[no_mangle]
 #[must_use]
 #[named]
