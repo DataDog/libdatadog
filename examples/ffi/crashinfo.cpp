@@ -61,10 +61,9 @@ EXTRACT_RESULT(StackTrace, DDOG_CRASHT_RESULT_HANDLE_STACK_TRACE_OK_HANDLE_STACK
 EXTRACT_RESULT(StackFrame, DDOG_CRASHT_RESULT_HANDLE_STACK_FRAME_OK_HANDLE_STACK_FRAME)
 
 void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
-  constexpr std::size_t nb_elements = 20;
   auto stacktrace = extract_result(ddog_crasht_StackTrace_new(), "failed to make new StackTrace");
 
-  for (uintptr_t i = 0; i < nb_elements; ++i) {
+  for (uintptr_t i = 0; i < 10; ++i) {
     auto new_frame = extract_result(ddog_crasht_StackFrame_new(), "failed to make StackFrame");
     std::string name = "func_" + std::to_string(i);
     check_result(ddog_crasht_StackFrame_with_function(new_frame.get(), to_slice_string(name)),
@@ -177,6 +176,9 @@ int main(void) {
   ddog_crasht_ProcInfo procinfo = {.pid = 42};
   check_result(ddog_crasht_CrashInfoBuilder_with_proc_info(builder.get(), procinfo),
                "Failed to set procinfo");
+
+  check_result(ddog_crasht_CrashInfoBuilder_with_os_info_this_machine(builder.get()),
+               "Failed to set os_info");
 
   auto crashinfo = extract_result(ddog_crasht_CrashInfoBuilder_build(builder.release()),
                                   "failed to build CrashInfo");

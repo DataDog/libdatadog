@@ -44,8 +44,10 @@ pub struct CrashInfo {
     pub log_messages: Vec<String>,
     pub metadata: Metadata,
     pub os_info: OsInfo,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proc_info: Option<ProcInfo>, //TODO, update the schema
-    pub sig_info: Option<SigInfo>,   //TODO, update the schema
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sig_info: Option<SigInfo>, //TODO, update the schema
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub span_ids: Vec<Span>,
     pub timestamp: String,
