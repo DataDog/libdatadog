@@ -592,7 +592,6 @@ impl TraceExporter {
 
         if traces.is_empty() {
             error!("No traces deserialized from the request body.");
-            // return Ok(String::from("{}"));
             return Err(TraceExporterError::Io(std::io::Error::from(
                 std::io::ErrorKind::InvalidInput,
             )));
