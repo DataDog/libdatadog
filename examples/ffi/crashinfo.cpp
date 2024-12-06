@@ -29,33 +29,48 @@ struct BuilderDeleter {
 };
 
 struct CrashinfoDeleter {
-  void operator()(ddog_crasht_Handle_CrashInfo *object) {
-    ddog_crasht_CrashInfo_drop(object);
-  }
+  void operator()(ddog_crasht_Handle_CrashInfo *object) { ddog_crasht_CrashInfo_drop(object); }
 };
-
 
 void print_error(const char *s, const ddog_Error &err) {
   auto charslice = ddog_Error_message(&err);
   printf("%s (%.*s)\n", s, static_cast<int>(charslice.len), charslice.ptr);
 }
 
-void check_result(ddog_VoidResult result, const char *msg) {
-  if (result.tag != DDOG_VOID_RESULT_OK) {
-    print_error(msg, result.err);
-    ddog_Error_drop(&result.err);
-    exit(EXIT_FAILURE);
+#define CHECK_RESULT(typ, ok_tag)                                                                  \
+  void check_result(typ result, const char *msg) {                                                 \
+    if (result.tag != ok_tag) {                                                                    \
+      print_error(msg, result.err);                                                                \
+      ddog_Error_drop(&result.err);                                                                \
+      exit(EXIT_FAILURE);                                                                          \
+    }                                                                                              \
+  }
+
+CHECK_RESULT(ddog_VoidResult, DDOG_VOID_RESULT_OK)
+CHECK_RESULT(ddog_Vec_Tag_PushResult, DDOG_VEC_TAG_PUSH_RESULT_OK)
+
+#define EXTRACT_RESULT(wrapper_typ, ok_tag, inner_typ, deleter)                                    \
+  std::unique_ptr<inner_typ, deleter> extract_result(wrapper_typ result, const char *msg) {        \
+  if (result.tag != ok_tag) {                                                                      \
+      print_error(msg, result.err);                                                    \
+      ddog_Error_drop(&result.err);                                                    \
+      exit(EXIT_FAILURE);                                                                          \
+    }                                                                                              \
+    std::unique_ptr<inner_typ, deleter> rval{&result.ok};                                          \
+    return rval;                                                                                   \
+  }
+
+EXTRACT_RESULT(ddog_crasht_Result_HandleCrashInfoBuilder, DDOG_CRASHT_RESULT_HANDLE_CRASH_INFO_BUILDER_OK_HANDLE_CRASH_INFO_BUILDER, ddog_crasht_Handle_CrashInfoBuilder, BuilderDeleter)
+
+void add_stacktrace(
+    std::unique_ptr<ddog_crasht_Handle_CrashInfoBuilder, BuilderDeleter> &crashinfo) {
+  constexpr std::size_t nb_elements = 20;
+  auto trace_new = ddog_crasht_StackTrace_new();
+
+  for (uintptr_t i = 0; i < nb_elements; ++i) {
+    auto new_frame = ddog_crasht_StackFrame_new();
   }
 }
-
-void check_result(ddog_Vec_Tag_PushResult result, const char *msg) {
-  if (result.tag != DDOG_VEC_TAG_PUSH_RESULT_OK) {
-    print_error(msg, result.err);
-    ddog_Error_drop(&result.err);
-    exit(EXIT_FAILURE);
-  }
-}
-
 // void add_stacktrace(std::unique_ptr<ddog_crasht_Handle_CrashInfoBuilder, Deleter> &crashinfo) {
 
 //   // Collect things into vectors so they stay alive till the function exits
@@ -139,16 +154,7 @@ void check_result(ddog_Vec_Tag_PushResult result, const char *msg) {
 // }
 
 int main(void) {
-  auto builder_new_result = ddog_crasht_CrashInfoBuilder_new();
-  if (builder_new_result.tag !=
-      DDOG_CRASHT_RESULT_HANDLE_CRASH_INFO_BUILDER_OK_HANDLE_CRASH_INFO_BUILDER) {
-    print_error("Failed to make new crashinfo builder: ", builder_new_result.err);
-    ddog_Error_drop(&builder_new_result.err);
-    exit(EXIT_FAILURE);
-  }
-  std::unique_ptr<ddog_crasht_Handle_CrashInfoBuilder, BuilderDeleter> builder{
-      &builder_new_result.ok};
-
+  auto builder = extract_result(ddog_crasht_CrashInfoBuilder_new(), "failed to make builder");
   check_result(ddog_crasht_CrashInfoBuilder_with_counter(builder.get(),
                                                          to_slice_c_char("my_amazing_counter"), 3),
                "Failed to add counter");
@@ -173,7 +179,6 @@ int main(void) {
   check_result(ddog_crasht_CrashInfoBuilder_with_file(builder.get(), to_slice_c_char("/etc/hosts")),
                "Failed to add file");
 
-    
   check_result(ddog_crasht_CrashInfoBuilder_with_kind(builder.get(), DDOG_CRASHT_ERROR_KIND_PANIC),
                "Failed to set error kind");
 
@@ -196,8 +201,7 @@ int main(void) {
     exit(EXIT_FAILURE);
   }
 
-    std::unique_ptr<ddog_crasht_Handle_CrashInfo, CrashinfoDeleter> crashinfo{
-      &crashinfo_result.ok};
+  std::unique_ptr<ddog_crasht_Handle_CrashInfo, CrashinfoDeleter> crashinfo{&crashinfo_result.ok};
 
   auto endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/test"));
   check_result(ddog_crasht_CrashInfo_upload_to_endpoint(crashinfo.get(), endpoint),
