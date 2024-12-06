@@ -1,3 +1,6 @@
+// Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 /// Wraps a C-FFI function in standard form
 /// Expects the function to return a result type that implements into and to be decorated with
 /// #[named].
