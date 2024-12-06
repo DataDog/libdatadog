@@ -22,16 +22,6 @@ static ddog_CharSlice to_slice_string(std::string const &s) {
   return {.ptr = s.data(), .len = s.length()};
 }
 
-struct BuilderDeleter {
-  void operator()(ddog_crasht_Handle_CrashInfoBuilder *object) {
-    ddog_crasht_CrashInfoBuilder_drop(object);
-  }
-};
-
-struct CrashinfoDeleter {
-  void operator()(ddog_crasht_Handle_CrashInfo *object) { ddog_crasht_CrashInfo_drop(object); }
-};
-
 void print_error(const char *s, const ddog_Error &err) {
   auto charslice = ddog_Error_message(&err);
   printf("%s (%.*s)\n", s, static_cast<int>(charslice.len), charslice.ptr);
@@ -49,21 +39,26 @@ void print_error(const char *s, const ddog_Error &err) {
 CHECK_RESULT(ddog_VoidResult, DDOG_VOID_RESULT_OK)
 CHECK_RESULT(ddog_Vec_Tag_PushResult, DDOG_VEC_TAG_PUSH_RESULT_OK)
 
-#define EXTRACT_RESULT(wrapper_typ, ok_tag, inner_typ, deleter)                                    \
-  std::unique_ptr<inner_typ, deleter> extract_result(wrapper_typ result, const char *msg) {        \
-  if (result.tag != ok_tag) {                                                                      \
-      print_error(msg, result.err);                                                    \
-      ddog_Error_drop(&result.err);                                                    \
+#define EXTRACT_RESULT(typ, ok_tag)                                                                \
+  struct typ##Deleter {                                                                            \
+    void operator()(ddog_crasht_Handle_##typ *object) { ddog_crasht_##typ##_drop(object); }        \
+  };                                                                                               \
+  std::unique_ptr<ddog_crasht_Handle_##typ, typ##Deleter>                                          \
+  extract_result(ddog_crasht_Result_Handle##typ result, const char *msg) {                         \
+    if (result.tag != ok_tag) {                                                                    \
+      print_error(msg, result.err);                                                                \
+      ddog_Error_drop(&result.err);                                                                \
       exit(EXIT_FAILURE);                                                                          \
     }                                                                                              \
-    std::unique_ptr<inner_typ, deleter> rval{&result.ok};                                          \
+    std::unique_ptr<ddog_crasht_Handle_##typ, typ##Deleter> rval{&result.ok};                      \
     return rval;                                                                                   \
   }
 
-EXTRACT_RESULT(ddog_crasht_Result_HandleCrashInfoBuilder, DDOG_CRASHT_RESULT_HANDLE_CRASH_INFO_BUILDER_OK_HANDLE_CRASH_INFO_BUILDER, ddog_crasht_Handle_CrashInfoBuilder, BuilderDeleter)
+EXTRACT_RESULT(CrashInfoBuilder,
+               DDOG_CRASHT_RESULT_HANDLE_CRASH_INFO_BUILDER_OK_HANDLE_CRASH_INFO_BUILDER)
+EXTRACT_RESULT(CrashInfo, DDOG_CRASHT_RESULT_HANDLE_CRASH_INFO_OK_HANDLE_CRASH_INFO)
 
-void add_stacktrace(
-    std::unique_ptr<ddog_crasht_Handle_CrashInfoBuilder, BuilderDeleter> &crashinfo) {
+void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *crashinfo) {
   constexpr std::size_t nb_elements = 20;
   auto trace_new = ddog_crasht_StackTrace_new();
 
@@ -193,16 +188,7 @@ int main(void) {
   check_result(ddog_crasht_CrashInfoBuilder_with_proc_info(builder.get(), procinfo),
                "Failed to set procinfo");
 
-  auto crashinfo_result = ddog_crasht_CrashInfoBuilder_build(builder.release());
-  ddog_crasht_Result_HandleCrashInfo d;
-  if (crashinfo_result.tag != DDOG_CRASHT_RESULT_HANDLE_CRASH_INFO_OK_HANDLE_CRASH_INFO) {
-    print_error("Failed to make new crashinfo builder: ", crashinfo_result.err);
-    ddog_Error_drop(&crashinfo_result.err);
-    exit(EXIT_FAILURE);
-  }
-
-  std::unique_ptr<ddog_crasht_Handle_CrashInfo, CrashinfoDeleter> crashinfo{&crashinfo_result.ok};
-
+  auto crashinfo = extract_result(ddog_crasht_CrashInfoBuilder_build(builder.release()), "failed to build CrashInfo");
   auto endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/test"));
   check_result(ddog_crasht_CrashInfo_upload_to_endpoint(crashinfo.get(), endpoint),
                "Failed to export to file");
