@@ -313,6 +313,15 @@ mod tests {
 
         (key, rmp_serde::to_vec_named(&map).unwrap())
     }
+    #[test]
+    fn test_empty_array() {
+        let encoded_data = vec![0x90];
+        let expected_size = encoded_data.len() - 1; // rmp_serde adds additional 0 byte
+        let (_decoded_traces, decoded_size) =
+            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+
+        assert_eq!(expected_size, decoded_size);
+    }
 
     #[test]
     fn test_decoder_size() {
