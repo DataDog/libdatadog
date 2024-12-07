@@ -12,8 +12,8 @@ void example_segfault_handler(int signal) {
   exit(-1);
 }
 
-void handle_result(ddog_crasht_Result result) {
-  if (result.tag == DDOG_CRASHT_RESULT_ERR) {
+void handle_result(ddog_VoidResult result) {
+  if (result.tag == DDOG_VOID_RESULT_ERR) {
     ddog_CharSlice message = ddog_Error_message(&result.err);
     fprintf(stderr, "%.*s\n", (int)message.len, message.ptr);
     ddog_Error_drop(&result.err);
