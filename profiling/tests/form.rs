@@ -59,9 +59,9 @@ fn multipart(
 #[cfg(test)]
 mod tests {
     use crate::multipart;
+    use datadog_profiling::exporter::config::EndpointExt;
     use datadog_profiling::exporter::*;
     use ddcommon::tag;
-    use hyper::body::HttpBody;
     use serde_json::json;
 
     fn default_tags() -> Vec<Tag> {
@@ -69,6 +69,7 @@ mod tests {
     }
 
     fn parsed_event_json(request: Request) -> serde_json::Value {
+        use http_body_util::BodyExt;
         // Really hacky way of getting the event.json file contents, because I didn't want to
         // implement a full multipart parser and didn't find a particularly good
         // alternative. If you do figure out a better way, there's another copy of this code
@@ -96,8 +97,8 @@ mod tests {
     fn multipart_agent() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
-        let base_url = "http://localhost:8126".parse().expect("url to parse");
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
+        let endpoint =
+            Endpoint::profiling_agent("http://localhost:8126").expect("endpoint to construct");
         let mut exporter = ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,
@@ -145,8 +146,8 @@ mod tests {
     fn including_internal_metadata() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
-        let base_url = "http://localhost:8126".parse().expect("url to parse");
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
+        let endpoint =
+            Endpoint::profiling_agent("http://localhost:8126").expect("endpoint to construct");
         let mut exporter = ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,
@@ -174,8 +175,8 @@ mod tests {
     fn including_info() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
-        let base_url = "http://localhost:8126".parse().expect("url to parse");
-        let endpoint = config::agent(base_url).expect("endpoint to construct");
+        let endpoint =
+            Endpoint::profiling_agent("http://localhost:8126").expect("endpoint to construct");
         let mut exporter = ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,
@@ -214,8 +215,9 @@ mod tests {
     fn multipart_agentless() {
         let profiling_library_name = "dd-trace-foo";
         let profiling_library_version = "1.2.3";
+        let site = "datadoghq.com";
         let api_key = "1234567890123456789012";
-        let endpoint = config::agentless("datadoghq.com", api_key).expect("endpoint to construct");
+        let endpoint = Endpoint::profiling_agentless(site, api_key).expect("endpoint to construct");
         let mut exporter = ProfileExporter::new(
             profiling_library_name,
             profiling_library_version,

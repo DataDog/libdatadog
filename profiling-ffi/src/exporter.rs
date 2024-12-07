@@ -4,13 +4,12 @@
 #![allow(renamed_and_removed_lints)]
 #![allow(clippy::box_vec)]
 
-use datadog_profiling::exporter;
-use datadog_profiling::exporter::{ProfileExporter, Request};
+use datadog_profiling::exporter::config::{self, EndpointExt};
+use datadog_profiling::exporter::{self, Endpoint, ProfileExporter, Request, Uri};
 use datadog_profiling::internal::ProfiledEndpointsStats;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use ddcommon_ffi::{Error, MaybeError, Timespec};
-use std::borrow::Cow;
 use std::ptr::NonNull;
 use std::str::FromStr;
 
@@ -93,38 +92,39 @@ pub extern "C" fn ddog_prof_Endpoint_agentless<'a>(
 pub extern "C" fn endpoint_file(filename: CharSlice) -> ProfilingEndpoint {
     ProfilingEndpoint::File(filename)
 }
-unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
+
+unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<Uri> {
     let str: &str = slice.try_to_utf8()?;
     #[cfg(unix)]
     if let Some(path) = str.strip_prefix("unix://") {
-        return Ok(exporter::socket_path_to_uri(path.as_ref())?);
+        return Ok(config::try_socket_path_to_uri(path.as_ref())?);
     }
     #[cfg(windows)]
     if let Some(path) = str.strip_prefix("windows:") {
-        return Ok(exporter::named_pipe_path_to_uri(path.as_ref())?);
+        return Ok(config::try_named_pipe_path_to_uri(path.as_ref())?);
     }
-    Ok(hyper::Uri::from_str(str)?)
+    Ok(Uri::from_str(str)?)
 }
 
-pub unsafe fn try_to_endpoint(endpoint: ProfilingEndpoint) -> anyhow::Result<ddcommon::Endpoint> {
+pub unsafe fn try_to_endpoint(endpoint: ProfilingEndpoint) -> anyhow::Result<Endpoint> {
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {
         ProfilingEndpoint::Agent(url) => {
             let base_url = try_to_url(url)?;
-            exporter::config::agent(base_url)
+            Ok(Endpoint::profiling_agent(base_url)?)
         }
         ProfilingEndpoint::Agentless(site, api_key) => {
             let site_str = site.try_to_utf8()?;
             let api_key_str = api_key.try_to_utf8()?;
-            exporter::config::agentless(
-                Cow::Owned(site_str.to_owned()),
-                Cow::Owned(api_key_str.to_owned()),
-            )
+            Ok(Endpoint::profiling_agentless(
+                site_str,
+                api_key_str.to_owned(),
+            )?)
         }
         ProfilingEndpoint::File(filename) => {
             let filename = filename.try_to_utf8()?;
-            exporter::config::file(filename)
+            Ok(Endpoint::profiling_file(filename)?)
         }
     }
 }
@@ -481,7 +481,7 @@ mod tests {
     use super::*;
     use ddcommon::tag;
     use ddcommon_ffi::Slice;
-    use hyper::body::HttpBody;
+    use http_body_util::BodyExt;
     use serde_json::json;
 
     fn profiling_library_name() -> CharSlice<'static> {
@@ -512,6 +512,7 @@ mod tests {
         // alternative. If you do figure out a better way, there's another copy of this code
         // in the profiling tests, please update there too :)
         let body = request.body();
+
         let body_bytes: String = String::from_utf8_lossy(
             &futures::executor::block_on(body.collect())
                 .unwrap()
@@ -968,7 +969,10 @@ mod tests {
         };
 
         let build_result = Result::from(build_result);
-        build_result.unwrap_err();
+        assert!(
+            build_result.is_err(),
+            "ddog_prof_Exporter_Request_build returned Ok when it should have errored"
+        );
     }
 
     #[test]
