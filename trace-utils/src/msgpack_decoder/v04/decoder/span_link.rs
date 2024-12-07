@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::msgpack_decoder::v04::decoder::{
-    read_str_map_to_bytes_strings, read_string_bytes, read_string_ref,
+    handle_null_marker, read_str_map_to_bytes_strings, read_string_bytes, read_string_ref,
 };
 use crate::msgpack_decoder::v04::error::DecodeError;
 use crate::msgpack_decoder::v04::number::read_number_bytes;
@@ -29,6 +29,10 @@ use tinybytes::Bytes;
 /// - Any `SpanLink` cannot be decoded.
 /// ```
 pub(crate) fn read_span_links(buf: &mut Bytes) -> Result<Vec<SpanLink>, DecodeError> {
+    if let Some(empty_vec) = handle_null_marker(buf, Vec::default) {
+        return Ok(empty_vec);
+    }
+
     match rmp::decode::read_marker(unsafe { buf.as_mut_slice() }).map_err(|_| {
         DecodeError::InvalidFormat("Unable to read marker for span links".to_owned())
     })? {

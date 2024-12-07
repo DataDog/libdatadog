@@ -592,7 +592,6 @@ impl TraceExporter {
 
         if traces.is_empty() {
             error!("No traces deserialized from the request body.");
-            // return Ok(String::from("{}"));
             return Err(TraceExporterError::Io(std::io::Error::from(
                 std::io::ErrorKind::InvalidInput,
             )));
@@ -1358,6 +1357,7 @@ mod tests {
         let bytes = tinybytes::Bytes::from(
             rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace"),
         );
+
         let _result = exporter.send(bytes, 1).expect("failed to send trace");
 
         assert_eq!(
