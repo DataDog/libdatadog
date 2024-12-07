@@ -41,7 +41,10 @@ CHECK_RESULT(ddog_Vec_Tag_PushResult, DDOG_VEC_TAG_PUSH_RESULT_OK)
 
 #define EXTRACT_RESULT(typ, ok_tag)                                                                \
   struct typ##Deleter {                                                                            \
-    void operator()(ddog_crasht_Handle_##typ *object) { ddog_crasht_##typ##_drop(object); }        \
+    void operator()(ddog_crasht_Handle_##typ *object) {                                            \
+      ddog_crasht_##typ##_drop(object);                                                            \
+      delete object;                                                                               \
+    }                                                                                              \
   };                                                                                               \
   std::unique_ptr<ddog_crasht_Handle_##typ, typ##Deleter> extract_result(                          \
       ddog_crasht_Result_Handle##typ result, const char *msg) {                                    \
@@ -50,7 +53,8 @@ CHECK_RESULT(ddog_Vec_Tag_PushResult, DDOG_VEC_TAG_PUSH_RESULT_OK)
       ddog_Error_drop(&result.err);                                                                \
       exit(EXIT_FAILURE);                                                                          \
     }                                                                                              \
-    std::unique_ptr<ddog_crasht_Handle_##typ, typ##Deleter> rval{&result.ok};                      \
+    std::unique_ptr<ddog_crasht_Handle_##typ, typ##Deleter> rval{                                  \
+        new ddog_crasht_Handle_##typ{result.ok}};                                                  \
     return rval;                                                                                   \
   }
 
