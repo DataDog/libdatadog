@@ -82,8 +82,9 @@ impl Liaison for SharedDirLiaison {
     }
 
     fn ipc_per_process() -> Self {
-        //TODO: implement per pid handling
-        Self::new_default_location()
+        let pid = std::process::id();
+        let liason_path= env::temp_dir().join(format!("libdatadog.pid_{pid}"));
+        Self::new(liason_path)
     }
 }
 

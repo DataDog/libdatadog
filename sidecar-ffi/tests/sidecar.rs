@@ -170,3 +170,69 @@ fn test_ddog_sidecar_register_app() {
 
     ddog_sidecar_transport_drop(transport);
 }
+
+#[test]
+fn test_ddog_sidecar_send_log() {
+    // TODO paullgdc: Why do I need to do this to get my logging when I set the config latter??
+    std::env::set_var("DD_TRACE_LOG_LEVEL", "debug");
+    set_sidecar_per_process();
+
+    let mut transport = std::ptr::null_mut();
+    assert_maybe_no_error!(ddog_sidecar_connect(&mut transport));
+    let mut transport = unsafe { Box::from_raw(transport) };
+
+    unsafe {
+        ddog_sidecar_session_set_config(
+            &mut transport,
+            "session_id".into(),
+            &Endpoint {
+                url: hyper::Uri::from_static("http://localhost:8082/"),
+                ..Default::default()
+            },
+            &Endpoint::default(),
+            "".into(),
+            "".into(),
+            1000,
+            1000000,
+            1,
+            10000000,
+            10000000,
+            "".into(),
+            "".into(),
+            null_mut(),
+            null(),
+            0,
+            null(),
+            0,
+        )
+        .unwrap_none();
+        let instance_id: Box<datadog_sidecar::service::InstanceId> =
+            ddog_sidecar_instanceId_build("session_id".into(), "runtime_id".into());
+        let queue_id = ddog_sidecar_queueId_generate();
+
+        use ddtelemetry::data::*;
+        use ddtelemetry::worker::*;
+        datadog_sidecar::service::blocking::enqueue_actions(
+            &mut transport,
+            &instance_id,
+            &queue_id,
+            vec![datadog_sidecar::service::SidecarAction::Telemetry(
+                TelemetryActions::AddLog((
+                    LogIdentifier { indentifier: 1 },
+                    Log {
+                        message: "hey".to_owned(),
+                        count: 1,
+                        level: LogLevel::Error,
+
+                        stack_trace: None,
+                        tags: String::default(),
+                        is_sensitive: false,
+                    },
+                )),
+            )],
+        )
+        .expect("enqueue log action");
+        ddog_sidecar_instanceId_drop(instance_id);
+        ddog_sidecar_transport_drop(transport);
+    };
+}

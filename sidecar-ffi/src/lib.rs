@@ -22,7 +22,7 @@ use datadog_sidecar::service::{
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
-use ddcommon_ffi as ffi;
+use ddcommon_ffi::{self as ffi, Slice};
 use ddcommon_ffi::{CharSlice, MaybeError};
 use ddtelemetry::{
     data::{self, Dependency, Integration},
@@ -290,7 +290,8 @@ pub extern "C" fn ddog_sidecar_transport_drop(_: Box<SidecarTransport>) {}
 /// Caller must ensure the process is safe to fork, at the time when this method is called
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -> MaybeError {
-    let cfg = datadog_sidecar::config::Config::get();
+    let mut cfg: config::Config = datadog_sidecar::config::Config::get();
+    cfg.log_method = LogMethod::File("./sidecar.log".into());
 
     let stream = Box::new(try_c!(datadog_sidecar::start_or_connect_to_sidecar(cfg)));
     *connection = Box::into_raw(stream);
@@ -567,15 +568,17 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             } else {
                 LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
             },
-            remote_config_products: slice::from_raw_parts(
+            remote_config_products: Slice::from_raw_parts(
                 remote_config_products,
                 remote_config_products_count
             )
+            .as_slice()
             .to_vec(),
-            remote_config_capabilities: slice::from_raw_parts(
+            remote_config_capabilities: Slice::from_raw_parts(
                 remote_config_capabilities,
                 remote_config_capabilities_count
             )
+            .as_slice()
             .to_vec(),
         },
     ));

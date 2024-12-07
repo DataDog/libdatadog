@@ -9,6 +9,13 @@ pub enum Option<T> {
 }
 
 impl<T> Option<T> {
+    pub fn unwrap_none(self) {
+        match self {
+            Option::Some(_) => panic!("Called ffi::Option::unwrap_none but option was Some(_)"),
+            Option::None => {}
+        }
+    }
+
     pub fn to_std(self) -> std::option::Option<T> {
         self.into()
     }
