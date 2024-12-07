@@ -180,8 +180,8 @@ int main(void) {
   // check_result(ddog_crasht_CrashInfoBuilder_with_os_info_this_machine(builder.get()),
   //              "Failed to set os_info");
 
-  auto crashinfo = extract_result(ddog_crasht_CrashInfoBuilder_build(builder.release()),
-                                  "failed to build CrashInfo");
+  // auto crashinfo = extract_result(ddog_crasht_CrashInfoBuilder_build(builder.release()),
+  //                                 "failed to build CrashInfo");
   // auto endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/test"));
   // check_result(ddog_crasht_CrashInfo_upload_to_endpoint(crashinfo.get(), endpoint),
   //              "Failed to export to file");
