@@ -6,6 +6,7 @@ pub use symbolizer_ffi::*;
 
 mod exporter;
 mod profiles;
+mod string_storage;
 
 // re-export crashtracker ffi
 #[cfg(feature = "crashtracker-ffi")]
