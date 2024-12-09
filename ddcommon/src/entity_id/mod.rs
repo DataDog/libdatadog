@@ -92,23 +92,3 @@ pub fn get_external_env() -> Option<&'static str> {
     }
     DD_EXTERNAL_ENV.as_deref()
 }
-
-/// Set the path to cgroup file to mock it during tests
-/// # Safety
-/// Must not be called in multi-threaded contexts
-pub unsafe fn set_cgroup_file(_file: String) {
-    #[cfg(unix)]
-    {
-        unix::set_cgroup_file(_file)
-    }
-}
-
-/// Set cgroup mount path to mock during tests
-/// # Safety
-/// Must not be called in multi-threaded contexts
-pub unsafe fn set(_path: String) {
-    #[cfg(unix)]
-    {
-        unix::set_cgroup_mount_path(_path)
-    }
-}
