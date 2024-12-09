@@ -4,6 +4,7 @@
 use crate::aggregator::Aggregator;
 use crate::datadog;
 use std::sync::{Arc, Mutex};
+use tracing::debug;
 
 pub struct Flusher {
     dd_api: datadog::DdApi,
@@ -36,6 +37,12 @@ impl Flusher {
                 aggregator.consume_distributions(),
             )
         };
+
+        let n_series = all_series.len();
+        let n_distributions = all_distributions.len();
+
+        debug!("Flushing {n_series} series and {n_distributions} distributions");
+
         for a_batch in all_series {
             self.dd_api.ship_series(&a_batch).await;
             // TODO(astuyve) retry and do not panic
