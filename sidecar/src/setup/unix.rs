@@ -83,7 +83,7 @@ impl Liaison for SharedDirLiaison {
 
     fn ipc_per_process() -> Self {
         static PROCESS_RANDOM_ID: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-        let random_id = PROCESS_RANDOM_ID.get_or_init(|| rand::random());
+        let random_id = PROCESS_RANDOM_ID.get_or_init(rand::random);
 
         let pid = std::process::id();
         let liason_path =
