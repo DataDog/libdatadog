@@ -68,6 +68,7 @@ fn test_ddog_sidecar_connection() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_ddog_sidecar_register_app() {
     set_sidecar_per_process();
 
