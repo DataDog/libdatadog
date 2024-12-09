@@ -14,8 +14,8 @@ use ustr::Ustr;
 pub const EMPTY_TAGS: SortedTags = SortedTags { values: Vec::new() };
 
 lazy_static! {
-    static ref METRIC_REGEX: regex::Regex = Regex::new(
-        r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[cgd])(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?(?:\|c:(?P<container_id>[^|]+))?$",
+    static ref METRIC_REGEX: Regex = Regex::new(
+        r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[a-zA-Z]+)(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?(?:\|c:(?P<container_id>[^|]+))?$",
     ).expect("Failed to create metric regex");
 }
 
@@ -185,7 +185,8 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
             tags = None;
         }
         let val = first_value(caps.name("values").unwrap().as_str())?;
-        let metric_value = match caps.name("type").unwrap().as_str() {
+        let t = caps.name("type").unwrap().as_str();
+        let metric_value = match t {
             "c" => MetricValue::Count(val),
             "g" => MetricValue::Gauge(val),
             "d" => {
@@ -194,7 +195,7 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
                 MetricValue::Distribution(sketch.to_owned())
             }
             _ => {
-                return Err(ParseError::Raw("Unsupported metric type"));
+                return Err(ParseError::UnsupportedType());
             }
         };
         let name = Ustr::from(caps.name("name").unwrap().as_str());
@@ -409,7 +410,7 @@ mod tests {
 
             assert_eq!(
                 result.unwrap_err(),
-                ParseError::Raw("Invalid metric format")
+                ParseError::UnsupportedType()
             );
         }
 
@@ -476,5 +477,15 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn parse_container_id() {
         assert!(parse("containerid.metric:0|c|#env:dev,client_transport:udp|c:0000000000000000000000000000000000000000000000000000000000000000").is_ok());
+    }
+
+    #[test]
+    fn parse_tracer_metric() {
+        let input = "datadog.tracer.flush_duration:0.785551|ms|#lang:go,lang_version:go1.23.2,env:redacted_env,_dd.origin:lambda,runtime-id:redacted_runtime,tracer_version:v1.70.1,service:redacted_service,env:redacted_env,service:redacted_service,version:redacted_version";
+        if let ParseError::UnsupportedType() = parse(input).unwrap_err() {
+            assert!(true);
+        } else {
+            panic!("Expected UnsupportedType error");
+        }
     }
 }
