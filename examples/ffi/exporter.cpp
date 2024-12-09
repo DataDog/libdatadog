@@ -5,18 +5,54 @@
 #include <datadog/common.h>
 #include <datadog/profiling.h>
 #include <memory>
+#include <string>
 #include <thread>
+#include <vector>
 
 static ddog_CharSlice to_slice_c_char(const char *s) { return {.ptr = s, .len = strlen(s)}; }
-
-struct Deleter {
-  void operator()(ddog_prof_Profile *object) { ddog_prof_Profile_drop(object); }
-};
+static ddog_CharSlice to_slice_c_char(const char *s, std::size_t size) {
+  return {.ptr = s, .len = size};
+}
+static ddog_CharSlice to_slice_string(std::string const &s) {
+  return {.ptr = s.data(), .len = s.length()};
+}
 
 void print_error(const char *s, const ddog_Error &err) {
   auto charslice = ddog_Error_message(&err);
   printf("%s (%.*s)\n", s, static_cast<int>(charslice.len), charslice.ptr);
 }
+
+#define CHECK_RESULT(typ, ok_tag)                                                                  \
+  void check_result(typ result, const char *msg) {                                                 \
+    if (result.tag != ok_tag) {                                                                    \
+      print_error(msg, result.err);                                                                \
+      ddog_Error_drop(&result.err);                                                                \
+      exit(EXIT_FAILURE);                                                                          \
+    }                                                                                              \
+  }
+
+CHECK_RESULT(ddog_VoidResult, DDOG_VOID_RESULT_OK)
+
+#define EXTRACT_RESULT(typ, ok_tag)                                                                \
+  struct typ##Deleter {                                                                            \
+    void operator()(ddog_prof_Handle_##typ *object) {                                              \
+      ddog_prof_##typ##_drop(object);                                                              \
+      delete object;                                                                               \
+    }                                                                                              \
+  };                                                                                               \
+  std::unique_ptr<ddog_prof_Handle_##typ, typ##Deleter> extract_result(                            \
+      ddog_prof_Result_Handle##typ result, const char *msg) {                                      \
+    if (result.tag != ok_tag) {                                                                    \
+      print_error(msg, result.err);                                                                \
+      ddog_Error_drop(&result.err);                                                                \
+      exit(EXIT_FAILURE);                                                                          \
+    }                                                                                              \
+    std::unique_ptr<ddog_prof_Handle_##typ, typ##Deleter> rval{                                    \
+        new ddog_prof_Handle_##typ{result.ok}};                                                    \
+    return rval;                                                                                   \
+  }
+
+EXTRACT_RESULT(Profile, DDOG_PROF_RESULT_HANDLE_PROFILE_OK_HANDLE_PROFILE)
 
 int main(int argc, char *argv[]) {
   if (argc != 2) {
@@ -38,14 +74,8 @@ int main(int argc, char *argv[]) {
 
   const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
   const ddog_prof_Period period = {wall_time, 60};
-  ddog_prof_Profile_NewResult profile_new_result =
-      ddog_prof_Profile_new(sample_types, &period, nullptr);
-  if (profile_new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
-    print_error("Failed to make new profile: ", profile_new_result.err);
-    ddog_Error_drop(&profile_new_result.err);
-    exit(EXIT_FAILURE);
-  }
-  std::unique_ptr<ddog_prof_Profile, Deleter> profile{&profile_new_result.ok};
+  auto profile =
+      extract_result(ddog_prof_Profile_new(sample_types, &period, nullptr), "Can't get profile");
 
   ddog_prof_Location root_location = {
       // yes, a zero-initialized mapping is valid
@@ -67,30 +97,18 @@ int main(int argc, char *argv[]) {
       .values = {&value, 1},
       .labels = {&label, 1},
   };
-  auto add_result = ddog_prof_Profile_add(profile.get(), sample, 0);
-  if (add_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
-    print_error("Failed to add sample to profile: ", add_result.err);
-    ddog_Error_drop(&add_result.err);
-    return 1;
-  }
+  check_result(ddog_prof_Profile_add(profile.get(), sample, 0), "failed to add");
 
   uintptr_t offset[1] = {0};
   ddog_prof_Slice_Usize offsets_slice = {.ptr = offset, .len = 1};
   ddog_CharSlice empty_charslice = DDOG_CHARSLICE_C_BARE("");
 
-  auto upscaling_addresult = ddog_prof_Profile_add_upscaling_rule_proportional(
-      profile.get(), offsets_slice, empty_charslice, empty_charslice, 1, 1);
+  check_result(ddog_prof_Profile_add_upscaling_rule_proportional(
+                   profile.get(), offsets_slice, empty_charslice, empty_charslice, 1, 1),
+               "failed to add upscaling rule");
 
-  if (upscaling_addresult.tag == DDOG_PROF_PROFILE_RESULT_ERR) {
-    print_error("Failed to add an upscaling rule: ", upscaling_addresult.err);
-    ddog_Error_drop(&upscaling_addresult.err);
-    // in this specific case, we want to fail the execution. But in general, we should not
-    return 1;
-  }
-
-  ddog_prof_Profile_SerializeResult serialize_result =
-      ddog_prof_Profile_serialize(profile.get(), nullptr, nullptr, nullptr);
-  if (serialize_result.tag == DDOG_PROF_PROFILE_SERIALIZE_RESULT_ERR) {
+  auto serialize_result = ddog_prof_Profile_serialize(profile.get(), nullptr, nullptr, nullptr);
+  if (serialize_result.tag != DDOG_PROF_RESULT_ENCODED_PROFILE_OK_ENCODED_PROFILE) {
     print_error("Failed to serialize profile: ", serialize_result.err);
     ddog_Error_drop(&serialize_result.err);
     return 1;
@@ -110,9 +128,9 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  ddog_prof_Exporter_NewResult exporter_new_result =
-      ddog_prof_Exporter_new(DDOG_CHARSLICE_C_BARE("exporter-example"), DDOG_CHARSLICE_C_BARE("1.2.3"),
-                             DDOG_CHARSLICE_C_BARE("native"), &tags, endpoint);
+  ddog_prof_Exporter_NewResult exporter_new_result = ddog_prof_Exporter_new(
+      DDOG_CHARSLICE_C_BARE("exporter-example"), DDOG_CHARSLICE_C_BARE("1.2.3"),
+      DDOG_CHARSLICE_C_BARE("native"), &tags, endpoint);
   ddog_Vec_Tag_drop(tags);
 
   if (exporter_new_result.tag == DDOG_PROF_EXPORTER_NEW_RESULT_ERR) {
@@ -137,14 +155,15 @@ int main(int argc, char *argv[]) {
   ddog_CharSlice internal_metadata_example = DDOG_CHARSLICE_C_BARE(
       "{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");
 
-  ddog_CharSlice info_example = DDOG_CHARSLICE_C_BARE(
-      "{\"application\": {\"start_time\": \"2024-01-24T11:17:22+0000\"}, \"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
+  ddog_CharSlice info_example =
+      DDOG_CHARSLICE_C_BARE("{\"application\": {\"start_time\": \"2024-01-24T11:17:22+0000\"}, "
+                            "\"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
 
   auto res = ddog_prof_Exporter_set_timeout(exporter, 30000);
   if (res.tag == DDOG_PROF_OPTION_ERROR_SOME_ERROR) {
-          print_error("Failed to set the timeout", res.some);
-          ddog_Error_drop(&res.some);
-          return 1;
+    print_error("Failed to set the timeout", res.some);
+    ddog_Error_drop(&res.some);
+    return 1;
   }
 
   ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(

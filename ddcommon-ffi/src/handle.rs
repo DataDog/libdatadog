@@ -14,6 +14,9 @@ pub struct Handle<T> {
 pub trait ToInner<T> {
     /// # Safety
     /// The Handle must hold a valid `inner` which has been allocated and not freed.
+    unsafe fn to_inner(&self) -> anyhow::Result<&T>;
+    /// # Safety
+    /// The Handle must hold a valid `inner` which has been allocated and not freed.
     unsafe fn to_inner_mut(&mut self) -> anyhow::Result<&mut T>;
     /// # Safety
     /// The Handle must hold a valid `inner` [return OK(inner)], or null [returns Error].
@@ -21,6 +24,10 @@ pub trait ToInner<T> {
 }
 
 impl<T> ToInner<T> for *mut Handle<T> {
+    unsafe fn to_inner(&self) -> anyhow::Result<&T> {
+        self.as_ref().context("Null pointer")?.to_inner()
+    }
+
     unsafe fn to_inner_mut(&mut self) -> anyhow::Result<&mut T> {
         self.as_mut().context("Null pointer")?.to_inner_mut()
     }
@@ -31,6 +38,12 @@ impl<T> ToInner<T> for *mut Handle<T> {
 }
 
 impl<T> ToInner<T> for Handle<T> {
+    unsafe fn to_inner(&self) -> anyhow::Result<&T> {
+        self.inner
+            .as_ref()
+            .context("inner pointer was null, indicates use after free")
+    }
+
     unsafe fn to_inner_mut(&mut self) -> anyhow::Result<&mut T> {
         self.inner
             .as_mut()
