@@ -47,7 +47,10 @@ impl TraceChunkProcessor for ChunkProcessor {
         for span in chunk.spans.iter_mut() {
             trace_utils::enrich_span_with_mini_agent_metadata(span, &self.mini_agent_metadata);
             trace_utils::enrich_span_with_azure_function_metadata(span);
-            trace_utils::enrich_span_with_google_cloud_function_metadata(span, &self.config.env_type);
+            trace_utils::enrich_span_with_google_cloud_function_metadata(
+                span,
+                &self.config.env_type,
+            );
             obfuscate_span(span, &self.config.obfuscation_config);
         }
     }
@@ -131,6 +134,8 @@ mod tests {
         trace_processor::{self, TraceProcessor},
     };
     use datadog_trace_protobuf::pb;
+    use datadog_trace_utils::test_utils::create_test_gcp_span;
+    use datadog_trace_utils::trace_utils::MiniAgentMetadata;
     use datadog_trace_utils::{
         test_utils::{create_test_json_span, create_test_span},
         trace_utils,
@@ -168,6 +173,16 @@ mod tests {
         }
     }
 
+    fn create_test_metadata() -> MiniAgentMetadata {
+        MiniAgentMetadata {
+            azure_spring_app_hostname: Default::default(),
+            azure_spring_app_name: Default::default(),
+            gcp_project_id: Some("dummy_project_id".to_string()),
+            gcp_region: Some("dummy_region_west".to_string()),
+            version: Some("dummy_version".to_string()),
+        }
+    }
+
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_process_trace() {
@@ -197,7 +212,7 @@ mod tests {
                 Arc::new(create_test_config()),
                 request,
                 tx,
-                Arc::new(trace_utils::MiniAgentMetadata::default()),
+                Arc::new(create_test_metadata()),
             )
             .await;
         assert!(res.is_ok());
@@ -215,7 +230,7 @@ mod tests {
             chunks: vec![pb::TraceChunk {
                 priority: i8::MIN as i32,
                 origin: "".to_string(),
-                spans: vec![create_test_span(11, 222, 333, start, true)],
+                spans: vec![create_test_gcp_span(11, 222, 333, start, true)],
                 tags: HashMap::new(),
                 dropped_trace: false,
             }],

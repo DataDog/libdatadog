@@ -1,8 +1,16 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub use crate::send_data::send_data_result::SendDataResult;
+pub use crate::send_data::SendData;
+pub use crate::tracer_header_tags::TracerHeaderTags;
+use crate::tracer_payload;
+use crate::tracer_payload::{TraceCollection, TracerPayloadCollection};
 use anyhow::anyhow;
 use bytes::buf::Reader;
+use datadog_trace_normalization::normalizer;
+use datadog_trace_protobuf::pb;
+use ddcommon::azure_app_services;
 use hyper::body::HttpBody;
 use hyper::{body::Buf, Body};
 use log::error;
@@ -13,14 +21,6 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::ops::Not;
-pub use crate::send_data::send_data_result::SendDataResult;
-pub use crate::send_data::SendData;
-pub use crate::tracer_header_tags::TracerHeaderTags;
-use crate::tracer_payload;
-use crate::tracer_payload::{TraceCollection, TracerPayloadCollection};
-use datadog_trace_normalization::normalizer;
-use datadog_trace_protobuf::pb;
-use ddcommon::azure_app_services;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -528,15 +528,25 @@ pub fn enrich_span_with_mini_agent_metadata(
     }
 }
 
-pub fn enrich_span_with_google_cloud_function_metadata(span: &mut pb::Span, env_type: &EnvironmentType) {
+pub fn enrich_span_with_google_cloud_function_metadata(
+    span: &mut pb::Span,
+    env_type: &EnvironmentType,
+) {
     if let EnvironmentType::CloudFunction = env_type {
         let function = span.meta.get("functionname");
         let region = span.meta.get("gcrfx.location");
         let project = span.meta.get("gcrfx.project_id");
-        if function.is_none().not() && region.is_none().not() && project.is_none() {
-            let resource_name = format!("projects/{}/locations/{}/functions/{}", project.unwrap(), region.unwrap(), function.unwrap());
-            span.meta.insert("_dd.gcrfx.resource_name".to_string(), resource_name.to_string());
-        }
+        let resource_name = format!(
+            "projects/{}/locations/{}/functions/{}",
+            project.unwrap(),
+            region.unwrap(),
+            function.unwrap()
+        );
+
+        span.meta.insert(
+            "_dd.gcrfx.resource_name".to_string(),
+            resource_name.to_string(),
+        );
     }
 }
 
