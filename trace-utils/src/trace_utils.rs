@@ -20,7 +20,6 @@ use rmpv::{Integer, Value};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::ops::Not;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
