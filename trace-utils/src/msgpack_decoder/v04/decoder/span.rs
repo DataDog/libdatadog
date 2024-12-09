@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{
-    read_meta_struct, read_metrics, read_str_map_to_bytes_strings, read_string_bytes,
-    read_string_ref, span_link::read_span_links,
+    read_meta_struct, read_metrics, read_nullable_str_map_to_bytes_strings,
+    read_nullable_string_bytes, read_string_ref, span_link::read_span_links,
 };
 use crate::msgpack_decoder::v04::error::DecodeError;
-use crate::msgpack_decoder::v04::number::read_number_bytes;
+use crate::msgpack_decoder::v04::number::read_nullable_number_bytes;
 use crate::span_v04::{Span, SpanKey};
 use tinybytes::Bytes;
 
@@ -48,17 +48,17 @@ fn fill_span(span: &mut Span, buf: &mut Bytes) -> Result<(), DecodeError> {
         .map_err(|_| DecodeError::InvalidFormat("Invalid span key".to_owned()))?;
 
     match key {
-        SpanKey::Service => span.service = read_string_bytes(buf)?,
-        SpanKey::Name => span.name = read_string_bytes(buf)?,
-        SpanKey::Resource => span.resource = read_string_bytes(buf)?,
-        SpanKey::TraceId => span.trace_id = read_number_bytes(buf)?,
-        SpanKey::SpanId => span.span_id = read_number_bytes(buf)?,
-        SpanKey::ParentId => span.parent_id = read_number_bytes(buf)?,
-        SpanKey::Start => span.start = read_number_bytes(buf)?,
-        SpanKey::Duration => span.duration = read_number_bytes(buf)?,
-        SpanKey::Error => span.error = read_number_bytes(buf)?,
-        SpanKey::Type => span.r#type = read_string_bytes(buf)?,
-        SpanKey::Meta => span.meta = read_str_map_to_bytes_strings(buf)?,
+        SpanKey::Service => span.service = read_nullable_string_bytes(buf)?,
+        SpanKey::Name => span.name = read_nullable_string_bytes(buf)?,
+        SpanKey::Resource => span.resource = read_nullable_string_bytes(buf)?,
+        SpanKey::TraceId => span.trace_id = read_nullable_number_bytes(buf)?,
+        SpanKey::SpanId => span.span_id = read_nullable_number_bytes(buf)?,
+        SpanKey::ParentId => span.parent_id = read_nullable_number_bytes(buf)?,
+        SpanKey::Start => span.start = read_nullable_number_bytes(buf)?,
+        SpanKey::Duration => span.duration = read_nullable_number_bytes(buf)?,
+        SpanKey::Error => span.error = read_nullable_number_bytes(buf)?,
+        SpanKey::Type => span.r#type = read_nullable_string_bytes(buf)?,
+        SpanKey::Meta => span.meta = read_nullable_str_map_to_bytes_strings(buf)?,
         SpanKey::Metrics => span.metrics = read_metrics(buf)?,
         SpanKey::MetaStruct => span.meta_struct = read_meta_struct(buf)?,
         SpanKey::SpanLinks => span.span_links = read_span_links(buf)?,
