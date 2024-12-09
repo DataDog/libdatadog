@@ -138,7 +138,10 @@ pub fn create_test_gcp_span(
         meta: HashMap::from([
             ("service".to_string(), "test-service".to_string()),
             ("env".to_string(), "test-env".to_string()),
-            ("runtime-id".to_string(), "test-runtime-id-value".to_string()),
+            (
+                "runtime-id".to_string(),
+                "test-runtime-id-value".to_string(),
+            ),
         ]),
         metrics: HashMap::new(),
         r#type: "".to_string(),
@@ -155,10 +158,21 @@ pub fn create_test_gcp_span(
             "functionname".to_string(),
             "dummy_function_name".to_string(),
         );
-        span.meta.insert("gcrfx.project_id".to_string(), "dummy_project_id".to_string());
-        span.meta.insert("gcrfx.location".to_string(), "dummy_region_west".to_string());
-        span.meta.insert("version".to_string(), "dummy_version".to_string());
-        span.meta.insert("_dd.gcrfx.resource_name".to_string(), "projects/dummy_project_id/locations/dummy_region_west/functions/dummy_function_name".to_string());
+        span.meta.insert(
+            "gcrfx.project_id".to_string(),
+            "dummy_project_id".to_string(),
+        );
+        span.meta.insert(
+            "gcrfx.location".to_string(),
+            "dummy_region_west".to_string(),
+        );
+        span.meta
+            .insert("version".to_string(), "dummy_version".to_string());
+        span.meta.insert(
+            "_dd.gcrfx.resource_name".to_string(),
+            "projects/dummy_project_id/locations/dummy_region_west/functions/dummy_function_name"
+                .to_string(),
+        );
         span.r#type = "serverless".to_string();
     }
     span
