@@ -315,7 +315,11 @@ impl SendData {
                         RequestResult::Error(_)
                             if request_attempt < self.retry_strategy.max_retries() =>
                         {
+                            let now = std::time::Instant::now();
+                            println!("Error sending tracer payload, before retrying at {now}");
                             self.retry_strategy.delay(request_attempt).await;
+                            let now = std::time::Instant::now();
+                            println!("Error sending tracer payload, after retrying at {now}");
                             continue;
                         }
                         _ => return request_result,
