@@ -187,7 +187,7 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<hyper::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_trace_utils::trace_utils;
+    use datadog_trace_utils::span_v04::{trace_utils, Span};
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use time::Duration;
@@ -229,8 +229,8 @@ mod tests {
         let mut trace = vec![];
 
         for i in 1..100 {
-            trace.push(pb::Span {
-                service: "libdatadog-test".to_string(),
+            trace.push(Span {
+                service: "libdatadog-test".into(),
                 duration: i,
                 ..Default::default()
             })

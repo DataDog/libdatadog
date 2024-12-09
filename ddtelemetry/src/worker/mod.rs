@@ -241,10 +241,10 @@ impl TelemetryWorker {
             Lifecycle(Start) => {
                 if !self.data.started {
                     self.deadlines
-                        .schedule_event(LifecycleAction::FlushData)
+                        .schedule_event(LifecycleAction::FlushMetricAggr)
                         .unwrap();
                     self.deadlines
-                        .schedule_event(LifecycleAction::FlushMetricAggr)
+                        .schedule_event(LifecycleAction::FlushData)
                         .unwrap();
                     self.data.started = true;
                 }
@@ -265,7 +265,7 @@ impl TelemetryWorker {
                     .unwrap();
             }
             Lifecycle(FlushData) => {
-                if !self.data.started {
+                if !(self.data.started || self.config.restartable) {
                     return CONTINUE;
                 }
                 let batch = self.build_observability_batch();
@@ -296,7 +296,9 @@ impl TelemetryWorker {
                     self.log_err(&e);
                 }
                 self.data.started = false;
-                self.deadlines.clear_pending();
+                if !self.config.restartable {
+                    self.deadlines.clear_pending();
+                }
                 return BREAK;
             }
             CollectStats(stats_sender) => {
@@ -341,10 +343,11 @@ impl TelemetryWorker {
                         Err(err) => self.log_err(&err),
                     }
                     self.deadlines
-                        .schedule_event(LifecycleAction::FlushData)
-                        .unwrap();
-                    self.deadlines
                         .schedule_event(LifecycleAction::FlushMetricAggr)
+                        .unwrap();
+                    // flush data should be last to previously flushed metrics are sent
+                    self.deadlines
+                        .schedule_event(LifecycleAction::FlushData)
                         .unwrap();
                     self.data.started = true;
                 }
@@ -368,7 +371,7 @@ impl TelemetryWorker {
                     .unwrap();
             }
             Lifecycle(FlushData) => {
-                if !self.data.started {
+                if !(self.data.started || self.config.restartable) {
                     return CONTINUE;
                 }
                 let mut batch = self.build_app_events_batch();
@@ -427,38 +430,35 @@ impl TelemetryWorker {
 
                 let obsevability_events = self.build_observability_batch();
 
-                future::join_all(
-                    [
-                        Some(self.build_request(&data::Payload::MessageBatch(app_events))),
-                        if obsevability_events.is_empty() {
-                            None
-                        } else {
-                            Some(
-                                self.build_request(&data::Payload::MessageBatch(
-                                    obsevability_events,
-                                )),
-                            )
-                        },
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|r| match r {
-                        Ok(r) => Some(r),
-                        Err(e) => {
-                            self.log_err(&e);
-                            None
+                let mut payloads = vec![data::Payload::MessageBatch(app_events)];
+                if !obsevability_events.is_empty() {
+                    payloads.push(data::Payload::MessageBatch(obsevability_events));
+                }
+
+                let self_arc = Arc::new(tokio::sync::RwLock::new(&mut *self));
+                let futures = payloads.into_iter().map(|payload| {
+                    let self_arc = self_arc.clone();
+                    async move {
+                        // This is different from the non-functional:
+                        // match self_arc.read().await.send_payload(&payload).await { ... }
+                        // presumably because the temp read guard would live till end of match
+                        let res = {
+                            let self_rguard = self_arc.read().await;
+                            self_rguard.send_payload(&payload).await
+                        };
+                        match res {
+                            Ok(()) => self_arc.write().await.payload_sent_success(&payload),
+                            Err(err) => self_arc.read().await.log_err(&err),
                         }
-                    })
-                    .map(|r| async {
-                        if let Err(e) = self.send_request(r).await {
-                            self.log_err(&e);
-                        }
-                    }),
-                )
-                .await;
+                    }
+                });
+                future::join_all(futures).await;
 
                 self.data.started = false;
-                self.deadlines.clear_pending();
+                if !self.config.restartable {
+                    self.deadlines.clear_pending();
+                }
+
                 return BREAK;
             }
             CollectStats(stats_sender) => {
@@ -470,7 +470,7 @@ impl TelemetryWorker {
     }
 
     // Builds telemetry payloads containing lifecycle events
-    fn build_app_events_batch(&self) -> Vec<Payload> {
+    fn build_app_events_batch(&mut self) -> Vec<Payload> {
         let mut payloads = Vec::new();
 
         if self.data.dependencies.flush_not_empty() {
@@ -636,6 +636,7 @@ impl TelemetryWorker {
             runtime_id: &self.runtime_id,
             seq_id,
             host: &self.data.host,
+            origin: None,
             application: &self.data.app,
             payload,
         };

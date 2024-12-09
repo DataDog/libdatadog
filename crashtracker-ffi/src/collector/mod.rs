@@ -5,11 +5,11 @@ mod datatypes;
 mod spans;
 
 use super::crash_info::Metadata;
-use crate::Result;
 use anyhow::Context;
 pub use counters::*;
 use datadog_crashtracker::CrashtrackerReceiverConfig;
 pub use datatypes::*;
+use ddcommon_ffi::VoidResult;
 pub use spans::*;
 
 #[no_mangle]
@@ -29,7 +29,7 @@ pub use spans::*;
 /// # Atomicity
 ///   This function is not atomic. A crash during its execution may lead to
 ///   unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_crasht_shutdown() -> Result {
+pub unsafe extern "C" fn ddog_crasht_shutdown() -> VoidResult {
     datadog_crashtracker::shutdown_crash_handler()
         .context("ddog_crasht_shutdown failed")
         .into()
@@ -58,7 +58,7 @@ pub unsafe extern "C" fn ddog_crasht_update_on_fork(
     config: Config,
     receiver_config: ReceiverConfig,
     metadata: Metadata,
-) -> Result {
+) -> VoidResult {
     (|| {
         let config = config.try_into()?;
         let receiver_config = receiver_config.try_into()?;
@@ -85,7 +85,7 @@ pub unsafe extern "C" fn ddog_crasht_init(
     config: Config,
     receiver_config: ReceiverConfig,
     metadata: Metadata,
-) -> Result {
+) -> VoidResult {
     (|| {
         let config = config.try_into()?;
         let receiver_config = receiver_config.try_into()?;
@@ -111,7 +111,7 @@ pub unsafe extern "C" fn ddog_crasht_init(
 pub unsafe extern "C" fn ddog_crasht_init_without_receiver(
     config: Config,
     metadata: Metadata,
-) -> Result {
+) -> VoidResult {
     (|| {
         let config: datadog_crashtracker::CrashtrackerConfiguration = config.try_into()?;
         let metadata = metadata.try_into()?;

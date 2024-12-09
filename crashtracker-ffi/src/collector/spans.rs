@@ -1,8 +1,9 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{Result, UsizeResult};
+use crate::UsizeResult;
 use anyhow::Context;
+use ddcommon_ffi::VoidResult;
 
 /// Resets all stored spans to 0.
 /// Expected to be used after a fork, to reset the spans on the child
@@ -14,7 +15,7 @@ use anyhow::Context;
 /// No safety concerns.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crasht_clear_span_ids() -> Result {
+pub unsafe extern "C" fn ddog_crasht_clear_span_ids() -> VoidResult {
     datadog_crashtracker::clear_spans()
         .context("ddog_crasht_clear_span_ids failed")
         .into()
@@ -30,7 +31,7 @@ pub unsafe extern "C" fn ddog_crasht_clear_span_ids() -> Result {
 /// No safety concerns.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crasht_clear_trace_ids() -> Result {
+pub unsafe extern "C" fn ddog_crasht_clear_trace_ids() -> VoidResult {
     datadog_crashtracker::clear_traces()
         .context("ddog_crasht_clear_trace_ids failed")
         .into()
@@ -118,7 +119,7 @@ pub unsafe extern "C" fn ddog_crasht_remove_span_id(
     id_high: u64,
     id_low: u64,
     idx: usize,
-) -> Result {
+) -> VoidResult {
     let id: u128 = (id_high as u128) << 64 | (id_low as u128);
     datadog_crashtracker::remove_span(id, idx)
         .context("ddog_crasht_remove_span_id failed")
@@ -151,7 +152,7 @@ pub unsafe extern "C" fn ddog_crasht_remove_trace_id(
     id_high: u64,
     id_low: u64,
     idx: usize,
-) -> Result {
+) -> VoidResult {
     let id: u128 = (id_high as u128) << 64 | (id_low as u128);
     datadog_crashtracker::remove_trace(id, idx)
         .context("ddog_crasht_remove_trace_id failed")
