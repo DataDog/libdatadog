@@ -300,6 +300,8 @@ impl SendData {
             req.headers_mut()
                 .expect("HttpRequestBuilder unable to get headers for request")
                 .extend(headers.clone());
+            let now = std::time::Instant::now();
+            println!("Loop for traces {now}");
 
             match self.send_request(req, payload.clone(), http_proxy).await {
                 // An Ok response doesn't necessarily mean the request was successful, we need to
