@@ -1,0 +1,21 @@
+# Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "ddcommon-net"
+rust-version.workspace = true
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+ddcommon = { path = "../ddcommon" }
+hex = { version = "0.4" }
+http = { version = "1" }
+hyper = { version = "1", default-features = false }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = { version = "2" }
+tokio = { version = "1.41" }
+tokio-rustls = { version = "0.26" }
+tokio-util = { version = "0.7" }
