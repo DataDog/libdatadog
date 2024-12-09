@@ -82,15 +82,20 @@ impl Liaison for SharedDirLiaison {
     }
 
     fn ipc_per_process() -> Self {
-        //TODO: implement per pid handling
-        Self::new_default_location()
+        static PROCESS_RANDOM_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+        let random_id = PROCESS_RANDOM_ID.get_or_init(rand::random);
+
+        let pid = std::process::id();
+        let liason_path = env::temp_dir().join(format!("libdatadog.{random_id}.{pid}"));
+        Self::new(liason_path)
     }
 }
 
 impl SharedDirLiaison {
     pub fn new<P: AsRef<Path>>(base_dir: P) -> Self {
         let versioned_socket_basename = format!(
-            concat!("libdd.", crate::sidecar_version!(), "@{}.sock"),
+            "libdd.{}@{}.sock",
+            crate::sidecar_version!(),
             primary_sidecar_identifier()
         );
         let base_dir = base_dir.as_ref();
