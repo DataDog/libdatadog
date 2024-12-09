@@ -68,7 +68,6 @@ fn test_ddog_sidecar_connection() {
 }
 
 #[test]
-#[ignore = "TODO: ci-flaky can't reproduce locally"]
 fn test_ddog_sidecar_register_app() {
     set_sidecar_per_process();
 
