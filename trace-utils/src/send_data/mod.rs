@@ -301,7 +301,7 @@ impl SendData {
                 .expect("HttpRequestBuilder unable to get headers for request")
                 .extend(headers.clone());
             let now = std::time::Instant::now();
-            println!("Loop for traces {now}");
+            println!("Loop for traces {:?}", now);
 
             match self.send_request(req, payload.clone(), http_proxy).await {
                 // An Ok response doesn't necessarily mean the request was successful, we need to
@@ -318,10 +318,10 @@ impl SendData {
                             if request_attempt < self.retry_strategy.max_retries() =>
                         {
                             let now = std::time::Instant::now();
-                            println!("Error sending tracer payload, before retrying at {now}");
+                            println!("Error sending tracer payload, before retrying at {:?}", now);
                             self.retry_strategy.delay(request_attempt).await;
                             let now = std::time::Instant::now();
-                            println!("Error sending tracer payload, after retrying at {now}");
+                            println!("Error sending tracer payload, after retrying at {:?}", now);
                             continue;
                         }
                         _ => return request_result,
