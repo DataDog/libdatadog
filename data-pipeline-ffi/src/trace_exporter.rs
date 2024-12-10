@@ -613,6 +613,9 @@ mod tests {
     }
 
     #[test]
+    // Ignore because it seems, at least in the version we're currently using, miri can't emulate
+    // libc::socket function.
+    #[cfg_attr(miri, ignore)]
     fn exporter_send_check_rate_test() {
         unsafe {
             let server = MockServer::start();
@@ -667,6 +670,9 @@ mod tests {
     }
 
     #[test]
+    // Ignore because it seems, at least in the version we're currently using, miri can't emulate
+    // libc::socket function.
+    #[cfg_attr(miri, ignore)]
     fn exporter_send_empty_array_test() {
         // Test added due to ensure the exporter is able to send empty arrays because some tracers
         // (.NET) ping the agent with the aforementioned data type.
