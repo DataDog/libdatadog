@@ -126,8 +126,8 @@ impl TraceProcessor for ServerlessTraceProcessor {
 mod tests {
     use datadog_trace_obfuscation::obfuscation_config::ObfuscationConfig;
     use hyper::Request;
-    use std::{collections::HashMap, sync::Arc, time::UNIX_EPOCH};
     use serde_json::json;
+    use std::{collections::HashMap, sync::Arc, time::UNIX_EPOCH};
     use tokio::sync::mpsc::{self, Receiver, Sender};
 
     use crate::{
@@ -138,9 +138,7 @@ mod tests {
     use datadog_trace_utils::test_utils::create_test_gcp_span;
     use datadog_trace_utils::trace_utils::MiniAgentMetadata;
     use datadog_trace_utils::{
-        test_utils::create_test_json_span,
-        trace_utils,
-        tracer_payload::TracerPayloadCollection,
+        test_utils::create_test_json_span, trace_utils, tracer_payload::TracerPayloadCollection,
     };
     use ddcommon::Endpoint;
 
@@ -155,30 +153,30 @@ mod tests {
         start: i64,
     ) -> serde_json::Value {
         json!(
-        {
-            "trace_id": trace_id,
-            "span_id": span_id,
-            "service": "test-service",
-            "functionname": "dummy_function_name",
-            "name": "test_name",
-            "resource": "test-resource",
-            "parent_id": parent_id,
-            "start": start,
-            "duration": 5,
-            "error": 0,
-            "meta": {
+            {
+                "trace_id": trace_id,
+                "span_id": span_id,
                 "service": "test-service",
-                "env": "test-env",
-                "runtime-id": "test-runtime-id-value",
-                "gcrfx.project_id": "dummy_project_id",
-                "_dd.mini_agent_version": "dummy_version",
-                "_dd.gcrfx.resource_name": "projects/dummy_project_id/locations/dummy_region_west/functions/dummy_function_name",
-                "gcrfx.location": "dummy_region_west"
-            },
-            "metrics": {},
-            "meta_struct": {},
-        }
-    )
+                "functionname": "dummy_function_name",
+                "name": "test_name",
+                "resource": "test-resource",
+                "parent_id": parent_id,
+                "start": start,
+                "duration": 5,
+                "error": 0,
+                "meta": {
+                    "service": "test-service",
+                    "env": "test-env",
+                    "runtime-id": "test-runtime-id-value",
+                    "gcrfx.project_id": "dummy_project_id",
+                    "_dd.mini_agent_version": "dummy_version",
+                    "_dd.gcrfx.resource_name": "projects/dummy_project_id/locations/dummy_region_west/functions/dummy_function_name",
+                    "gcrfx.location": "dummy_region_west"
+                },
+                "metrics": {},
+                "meta_struct": {},
+            }
+        )
     }
 
     fn create_test_config() -> Config {
