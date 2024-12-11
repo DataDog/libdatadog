@@ -134,7 +134,7 @@ mod tests {
         trace_processor::{self, TraceProcessor},
     };
     use datadog_trace_protobuf::pb;
-    use datadog_trace_utils::test_utils::{create_test_gcp_span, create_test_gcp_json_span};
+    use datadog_trace_utils::test_utils::{create_test_gcp_json_span, create_test_gcp_span};
     use datadog_trace_utils::trace_utils::MiniAgentMetadata;
     use datadog_trace_utils::{
         test_utils::create_test_json_span, trace_utils, tracer_payload::TracerPayloadCollection,
