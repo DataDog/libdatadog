@@ -127,6 +127,7 @@ mod tests {
     use datadog_trace_obfuscation::obfuscation_config::ObfuscationConfig;
     use hyper::Request;
     use std::{collections::HashMap, sync::Arc, time::UNIX_EPOCH};
+    use serde_json::json;
     use tokio::sync::mpsc::{self, Receiver, Sender};
 
     use crate::{
@@ -145,6 +146,39 @@ mod tests {
 
     fn get_current_timestamp_nanos() -> i64 {
         UNIX_EPOCH.elapsed().unwrap().as_nanos() as i64
+    }
+
+    pub fn create_test_gcp_json_span(
+        trace_id: u64,
+        span_id: u64,
+        parent_id: u64,
+        start: i64,
+    ) -> serde_json::Value {
+        json!(
+        {
+            "trace_id": trace_id,
+            "span_id": span_id,
+            "service": "test-service",
+            "functionname": "dummy_function_name",
+            "name": "test_name",
+            "resource": "test-resource",
+            "parent_id": parent_id,
+            "start": start,
+            "duration": 5,
+            "error": 0,
+            "meta": {
+                "service": "test-service",
+                "env": "test-env",
+                "runtime-id": "test-runtime-id-value",
+                "gcrfx.project_id": "dummy_project_id",
+                "_dd.mini_agent_version": "dummy_version",
+                "_dd.gcrfx.resource_name": "projects/dummy_project_id/locations/dummy_region_west/functions/dummy_function_name",
+                "gcrfx.location": "dummy_region_west"
+            },
+            "metrics": {},
+            "meta_struct": {},
+        }
+    )
     }
 
     fn create_test_config() -> Config {
@@ -261,7 +295,7 @@ mod tests {
 
         let json_trace = vec![
             create_test_json_span(11, 333, 222, start),
-            create_test_json_span(11, 222, 0, start),
+            create_test_gcp_json_span(11, 222, 0, start),
             create_test_json_span(11, 444, 333, start),
         ];
 

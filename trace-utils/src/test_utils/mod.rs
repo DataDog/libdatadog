@@ -148,6 +148,16 @@ pub fn create_test_gcp_span(
         meta_struct: HashMap::new(),
         span_links: vec![],
     };
+    span.meta
+        .insert("_dd.mini_agent_version".to_string(), "dummy_version".to_string());
+    span.meta.insert(
+        "gcrfx.project_id".to_string(),
+        "dummy_project_id".to_string(),
+    );
+    span.meta.insert(
+        "gcrfx.location".to_string(),
+        "dummy_region_west".to_string(),
+    );
     if is_top_level {
         span.metrics.insert("_top_level".to_string(), 1.0);
         span.meta
@@ -158,16 +168,6 @@ pub fn create_test_gcp_span(
             "functionname".to_string(),
             "dummy_function_name".to_string(),
         );
-        span.meta.insert(
-            "gcrfx.project_id".to_string(),
-            "dummy_project_id".to_string(),
-        );
-        span.meta.insert(
-            "gcrfx.location".to_string(),
-            "dummy_region_west".to_string(),
-        );
-        span.meta
-            .insert("_dd.mini_agent_version".to_string(), "dummy_version".to_string());
         span.meta.insert(
             "_dd.gcrfx.resource_name".to_string(),
             "projects/dummy_project_id/locations/dummy_region_west/functions/dummy_function_name"
