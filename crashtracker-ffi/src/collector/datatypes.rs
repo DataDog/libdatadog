@@ -99,22 +99,6 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
 }
 
 #[repr(C)]
-pub enum UsizeResult {
-    Ok(usize),
-    #[allow(dead_code)]
-    Err(Error),
-}
-
-impl From<anyhow::Result<usize>> for UsizeResult {
-    fn from(value: anyhow::Result<usize>) -> Self {
-        match value {
-            Ok(x) => Self::Ok(x),
-            Err(err) => Self::Err(err.into()),
-        }
-    }
-}
-
-#[repr(C)]
 pub enum CrashtrackerGetCountersResult {
     Ok([i64; OpTypes::SIZE as usize]),
     #[allow(dead_code)]

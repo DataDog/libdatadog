@@ -32,6 +32,15 @@ pub enum Result<T> {
     Err(Error),
 }
 
+impl<T> Result<T> {
+    pub fn unwrap(self) -> T {
+        match self {
+            Self::Ok(v) => v,
+            Self::Err(err) => panic!("{err}"),
+        }
+    }
+}
+
 impl<T> From<anyhow::Result<T>> for Result<T> {
     fn from(value: anyhow::Result<T>) -> Self {
         match value {
