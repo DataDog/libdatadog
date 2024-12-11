@@ -126,7 +126,6 @@ impl TraceProcessor for ServerlessTraceProcessor {
 mod tests {
     use datadog_trace_obfuscation::obfuscation_config::ObfuscationConfig;
     use hyper::Request;
-    use serde_json::json;
     use std::{collections::HashMap, sync::Arc, time::UNIX_EPOCH};
     use tokio::sync::mpsc::{self, Receiver, Sender};
 
