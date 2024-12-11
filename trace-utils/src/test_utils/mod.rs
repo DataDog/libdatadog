@@ -148,8 +148,10 @@ pub fn create_test_gcp_span(
         meta_struct: HashMap::new(),
         span_links: vec![],
     };
-    span.meta
-        .insert("_dd.mini_agent_version".to_string(), "dummy_version".to_string());
+    span.meta.insert(
+        "_dd.mini_agent_version".to_string(),
+        "dummy_version".to_string(),
+    );
     span.meta.insert(
         "gcrfx.project_id".to_string(),
         "dummy_project_id".to_string(),
