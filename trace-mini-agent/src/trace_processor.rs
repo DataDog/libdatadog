@@ -137,7 +137,7 @@ mod tests {
     use datadog_trace_utils::test_utils::create_test_gcp_span;
     use datadog_trace_utils::trace_utils::MiniAgentMetadata;
     use datadog_trace_utils::{
-        test_utils::{create_test_json_span, create_test_span},
+        test_utils::create_test_json_span,
         trace_utils,
         tracer_payload::TracerPayloadCollection,
     };
@@ -246,7 +246,6 @@ mod tests {
             } else {
                 None
             };
-
         assert_eq!(expected_tracer_payload, received_payload.unwrap());
     }
 
@@ -283,7 +282,7 @@ mod tests {
                 Arc::new(create_test_config()),
                 request,
                 tx,
-                Arc::new(trace_utils::MiniAgentMetadata::default()),
+                Arc::new(create_test_metadata()),
             )
             .await;
         assert!(res.is_ok());
@@ -302,9 +301,9 @@ mod tests {
                 priority: i8::MIN as i32,
                 origin: "".to_string(),
                 spans: vec![
-                    create_test_span(11, 333, 222, start, false),
-                    create_test_span(11, 222, 0, start, true),
-                    create_test_span(11, 444, 333, start, false),
+                    create_test_gcp_span(11, 333, 222, start, false),
+                    create_test_gcp_span(11, 222, 0, start, true),
+                    create_test_gcp_span(11, 444, 333, start, false),
                 ],
                 tags: HashMap::new(),
                 dropped_trace: false,

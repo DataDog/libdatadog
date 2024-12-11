@@ -533,17 +533,19 @@ pub fn enrich_span_with_google_cloud_function_metadata(
         let function = span.meta.get("functionname");
         let region = span.meta.get("gcrfx.location");
         let project = span.meta.get("gcrfx.project_id");
-        let resource_name = format!(
-            "projects/{}/locations/{}/functions/{}",
-            project.unwrap(),
-            region.unwrap(),
-            function.unwrap()
-        );
+        if !function.is_none() && !region.is_none() && !project.is_none() {
+            let resource_name = format!(
+                "projects/{}/locations/{}/functions/{}",
+                project.unwrap(),
+                region.unwrap(),
+                function.unwrap()
+            );
 
-        span.meta.insert(
-            "_dd.gcrfx.resource_name".to_string(),
-            resource_name.to_string(),
-        );
+            span.meta.insert(
+                "_dd.gcrfx.resource_name".to_string(),
+                resource_name.to_string(),
+            );
+        }
     }
 }
 

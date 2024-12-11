@@ -167,7 +167,7 @@ pub fn create_test_gcp_span(
             "dummy_region_west".to_string(),
         );
         span.meta
-            .insert("version".to_string(), "dummy_version".to_string());
+            .insert("_dd.mini_agent_version".to_string(), "dummy_version".to_string());
         span.meta.insert(
             "_dd.gcrfx.resource_name".to_string(),
             "projects/dummy_project_id/locations/dummy_region_west/functions/dummy_function_name"
@@ -189,6 +189,7 @@ pub fn create_test_json_span(
             "trace_id": trace_id,
             "span_id": span_id,
             "service": "test-service",
+            "functionname": "dummy_function_name",
             "name": "test_name",
             "resource": "test-resource",
             "parent_id": parent_id,
