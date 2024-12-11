@@ -533,7 +533,7 @@ pub fn enrich_span_with_google_cloud_function_metadata(
         let function = span.meta.get("functionname");
         let region = span.meta.get("gcrfx.location");
         let project = span.meta.get("gcrfx.project_id");
-        if !function.is_none() && !region.is_none() && !project.is_none() {
+        if function.is_some() && region.is_some() && project.is_some() {
             let resource_name = format!(
                 "projects/{}/locations/{}/functions/{}",
                 project.unwrap(),
