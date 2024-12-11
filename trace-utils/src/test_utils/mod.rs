@@ -191,7 +191,6 @@ pub fn create_test_json_span(
             "trace_id": trace_id,
             "span_id": span_id,
             "service": "test-service",
-            "functionname": "dummy_function_name",
             "name": "test_name",
             "resource": "test-resource",
             "parent_id": parent_id,
