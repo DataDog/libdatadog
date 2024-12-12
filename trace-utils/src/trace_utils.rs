@@ -520,10 +520,14 @@ pub fn enrich_span_with_mini_agent_metadata(
 pub fn enrich_span_with_google_cloud_function_metadata(
     span: &mut pb::Span,
     mini_agent_metadata: &MiniAgentMetadata,
-    function: Option<String>
+    function: Option<String>,
 ) {
-    let Some(region) = &mini_agent_metadata.gcp_region else { return; };
-    let Some(project) = &mini_agent_metadata.gcp_project_id else { return; };
+    let Some(region) = &mini_agent_metadata.gcp_region else {
+        return;
+    };
+    let Some(project) = &mini_agent_metadata.gcp_project_id else {
+        return;
+    };
     if function.is_some() && !region.is_empty() && !project.is_empty() {
         let resource_name = format!(
             "projects/{}/locations/{}/functions/{}",
