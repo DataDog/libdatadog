@@ -40,7 +40,10 @@ impl From<pico_args::Arguments> for ReleaseArgs {
 pub fn main() {
     let args: ReleaseArgs = pico_args::Arguments::from_env().into();
 
-    let (_, source_path) = determine_paths();
+    let OutPaths {
+        cargo_target_dir: source_path,
+        ..
+    } = determine_paths();
 
     let profile = env::var("PROFILE").unwrap();
     let version = env::var("CARGO_PKG_VERSION").unwrap();

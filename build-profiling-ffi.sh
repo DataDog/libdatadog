@@ -140,7 +140,6 @@ FEATURES=(
     "cbindgen"
     "crashtracker-collector"
     "crashtracker-receiver"
-    "data-pipeline-ffi"
     "datadog-profiling-ffi/ddtelemetry-ffi"
     "datadog-profiling-ffi/demangler"
 )
@@ -224,15 +223,22 @@ echo "Building tools"
 DESTDIR=$destdir cargo build --package tools --bins
 
 echo "Generating $destdir/include/libdatadog headers..."
-# ADD headers based on selected features.
-HEADERS="$destdir/include/datadog/common.h $destdir/include/datadog/profiling.h $destdir/include/datadog/telemetry.h $destdir/include/datadog/crashtracker.h"
+rm -r $destdir/include/datadog/
+mkdir $destdir/include/datadog/
+
+HEADER_FILES="common.h profiling.h telemetry.h crashtracker.h"
 case $ARG_FEATURES in
     *data-pipeline-ffi*)
-        HEADERS="$HEADERS $destdir/include/datadog/data-pipeline.h"
+        HEADERS="$HEADERS data-pipeline.h"
         ;;
 esac
+DEST_HEADERS=""
+for header in $HEADER_FILES; do
+    cp "$CARGO_TARGET_DIR/include/datadog/$header" "$destdir/include/datadog/$header"
+    DEST_HEADERS="$DEST_HEADERS $destdir/include/datadog/$header"
+done
 
-"$CARGO_TARGET_DIR"/debug/dedup_headers $HEADERS
+"$CARGO_TARGET_DIR"/debug/dedup_headers $DEST_HEADERS
 
 # Don't build the crashtracker on windows
 if [[ "$target" != "x86_64-pc-windows-msvc" ]]; then
