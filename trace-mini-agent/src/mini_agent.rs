@@ -3,7 +3,7 @@
 
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{http, Body, Method, Request, Response, Server, StatusCode};
-use log::{debug, error, info};
+use tracing::{debug, error, info};
 use serde_json::json;
 use std::convert::Infallible;
 use std::net::SocketAddr;

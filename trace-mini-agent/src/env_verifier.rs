@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use hyper::body::HttpBody;
 use hyper::{Body, Client, Method, Request, Response};
-use log::{debug, error};
+use tracing::{debug, error};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;

@@ -6,7 +6,7 @@ use hyper::{
     http::{self, HeaderMap},
     Body, Response, StatusCode,
 };
-use log::{error, info};
+use tracing::{error, info};
 use serde_json::json;
 
 /// Does two things:
