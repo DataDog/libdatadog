@@ -527,8 +527,8 @@ pub fn enrich_span_with_google_cloud_function_metadata(
     if function.is_some() && !region.is_empty() && !project.is_empty() {
         let resource_name = format!(
             "projects/{}/locations/{}/functions/{}",
-            project.to_string(),
-            region.to_string(),
+            project,
+            region,
             function.unwrap()
         );
 
