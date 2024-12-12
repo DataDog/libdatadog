@@ -136,12 +136,8 @@ pub fn generate_header(crate_dir: PathBuf, header_name: &str, output_base_dir: P
 pub fn copy_and_configure_headers() {
     let crate_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let OutPaths {
-        deliverables_dir, ..
+        cargo_target_dir, ..
     } = determine_paths();
-
-    if !deliverables_dir.exists() {
-        fs::create_dir_all(&deliverables_dir).expect("Failed to create deliverables directory");
-    }
 
     let src_dir = crate_dir.join("src");
     if src_dir.is_dir() {
@@ -150,7 +146,7 @@ pub fn copy_and_configure_headers() {
             let path = entry.path();
 
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("h") {
-                copy_header(&path, &deliverables_dir);
+                copy_header(&path, &cargo_target_dir);
             }
         }
     }

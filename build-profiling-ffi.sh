@@ -237,6 +237,9 @@ for header in $HEADER_FILES; do
     cp "$CARGO_TARGET_DIR/include/datadog/$header" "$destdir/include/datadog/$header"
     DEST_HEADERS="$DEST_HEADERS $destdir/include/datadog/$header"
 done
+# Copy the blazesym header separately because they don't need to be duplicated
+cp $CARGO_TARGET_DIR/include/datadog/blazesym.h "$destdir/include/datadog/blazesym.h"
+
 
 "$CARGO_TARGET_DIR"/debug/dedup_headers $DEST_HEADERS
 
