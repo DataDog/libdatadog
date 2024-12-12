@@ -160,21 +160,21 @@ pub fn create_test_gcp_span(
         "gcrfx.location".to_string(),
         "dummy_region_west".to_string(),
     );
+    span.meta.insert(
+        "_dd.gcrfx.resource_name".to_string(),
+        "projects/dummy_project_id/locations/dummy_region_west/functions/dummy_function_name"
+            .to_string(),
+    );
     if is_top_level {
+        span.meta.insert(
+            "functionname".to_string(),
+            "dummy_function_name".to_string(),
+        );
         span.metrics.insert("_top_level".to_string(), 1.0);
         span.meta
             .insert("_dd.origin".to_string(), "cloudfunction".to_string());
         span.meta
             .insert("origin".to_string(), "cloudfunction".to_string());
-        span.meta.insert(
-            "functionname".to_string(),
-            "dummy_function_name".to_string(),
-        );
-        span.meta.insert(
-            "_dd.gcrfx.resource_name".to_string(),
-            "projects/dummy_project_id/locations/dummy_region_west/functions/dummy_function_name"
-                .to_string(),
-        );
         span.r#type = "serverless".to_string();
     }
     span
@@ -191,7 +191,6 @@ pub fn create_test_gcp_json_span(
             "trace_id": trace_id,
             "span_id": span_id,
             "service": "test-service",
-            "functionname": "dummy_function_name",
             "name": "test_name",
             "resource": "test-resource",
             "parent_id": parent_id,

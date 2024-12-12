@@ -10,8 +10,8 @@ use tokio::sync::mpsc::Sender;
 
 use datadog_trace_obfuscation::obfuscate::obfuscate_span;
 use datadog_trace_protobuf::pb;
-use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::trace_utils::{self};
+use datadog_trace_utils::trace_utils::{EnvironmentType, SendData};
 use datadog_trace_utils::tracer_payload::{TraceChunkProcessor, TraceCollection};
 
 use crate::{
@@ -47,10 +47,13 @@ impl TraceChunkProcessor for ChunkProcessor {
         for span in chunk.spans.iter_mut() {
             trace_utils::enrich_span_with_mini_agent_metadata(span, &self.mini_agent_metadata);
             trace_utils::enrich_span_with_azure_function_metadata(span);
-            trace_utils::enrich_span_with_google_cloud_function_metadata(
-                span,
-                &self.config.env_type,
-            );
+            if let EnvironmentType::CloudFunction = &self.config.env_type {
+                trace_utils::enrich_span_with_google_cloud_function_metadata(
+                    span,
+                    &self.mini_agent_metadata,
+                    self.config.app_name.clone(),
+                );
+            }
             obfuscate_span(span, &self.config.obfuscation_config);
         }
     }
@@ -258,9 +261,9 @@ mod tests {
         let start = get_current_timestamp_nanos();
 
         let json_trace = vec![
-            create_test_json_span(11, 333, 222, start),
+            create_test_gcp_json_span(11, 333, 222, start),
             create_test_gcp_json_span(11, 222, 0, start),
-            create_test_json_span(11, 444, 333, start),
+            create_test_gcp_json_span(11, 444, 333, start),
         ];
 
         let bytes = rmp_serde::to_vec(&vec![json_trace]).unwrap();

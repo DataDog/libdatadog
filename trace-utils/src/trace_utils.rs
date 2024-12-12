@@ -509,14 +509,6 @@ pub fn enrich_span_with_mini_agent_metadata(
         span.meta
             .insert("asa.name".to_string(), azure_spring_app_name.to_string());
     }
-    if let Some(gcp_project_id) = &mini_agent_metadata.gcp_project_id {
-        span.meta
-            .insert("gcrfx.project_id".to_string(), gcp_project_id.to_string());
-    }
-    if let Some(gcp_region) = &mini_agent_metadata.gcp_region {
-        span.meta
-            .insert("gcrfx.location".to_string(), gcp_region.to_string());
-    }
     if let Some(mini_agent_version) = &mini_agent_metadata.version {
         span.meta.insert(
             "_dd.mini_agent_version".to_string(),
@@ -527,25 +519,27 @@ pub fn enrich_span_with_mini_agent_metadata(
 
 pub fn enrich_span_with_google_cloud_function_metadata(
     span: &mut pb::Span,
-    env_type: &EnvironmentType,
+    mini_agent_metadata: &MiniAgentMetadata,
+    function: Option<String>
 ) {
-    if let EnvironmentType::CloudFunction = env_type {
-        let function = span.meta.get("functionname");
-        let region = span.meta.get("gcrfx.location");
-        let project = span.meta.get("gcrfx.project_id");
-        if function.is_some() && region.is_some() && project.is_some() {
-            let resource_name = format!(
-                "projects/{}/locations/{}/functions/{}",
-                project.unwrap(),
-                region.unwrap(),
-                function.unwrap()
-            );
+    let Some(region) = &mini_agent_metadata.gcp_region else { return; };
+    let Some(project) = &mini_agent_metadata.gcp_project_id else { return; };
+    if function.is_some() && !region.is_empty() && !project.is_empty() {
+        let resource_name = format!(
+            "projects/{}/locations/{}/functions/{}",
+            project.to_string(),
+            region.to_string(),
+            function.unwrap()
+        );
 
-            span.meta.insert(
-                "_dd.gcrfx.resource_name".to_string(),
-                resource_name.to_string(),
-            );
-        }
+        span.meta
+            .insert("gcrfx.location".to_string(), region.to_string());
+        span.meta
+            .insert("gcrfx.project_id".to_string(), project.to_string());
+        span.meta.insert(
+            "_dd.gcrfx.resource_name".to_string(),
+            resource_name.to_string(),
+        );
     }
 }
 
