@@ -45,6 +45,7 @@ impl Flusher {
 
         debug!("Flushing {n_series} series and {n_distributions} distributions");
 
+        // TODO: client timeout is for each invocation, so NxM times with N time series batches and M distro batches
         for a_batch in all_series {
             self.dd_api.ship_series(&a_batch).await;
             // TODO(astuyve) retry and do not panic
