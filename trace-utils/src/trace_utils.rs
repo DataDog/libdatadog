@@ -540,10 +540,8 @@ pub fn enrich_span_with_google_cloud_function_metadata(
             .insert("gcrfx.location".to_string(), region.to_string());
         span.meta
             .insert("gcrfx.project_id".to_string(), project.to_string());
-        span.meta.insert(
-            "gcrfx.resource_name".to_string(),
-            resource_name.to_string(),
-        );
+        span.meta
+            .insert("gcrfx.resource_name".to_string(), resource_name.to_string());
     }
 }
 
