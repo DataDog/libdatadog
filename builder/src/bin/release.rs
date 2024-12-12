@@ -3,7 +3,7 @@
 
 use std::env;
 
-use build_common::determine_paths;
+use build_common::{determine_paths, OutPaths};
 
 use builder::builder::Builder;
 use builder::common::Common;
