@@ -4,6 +4,7 @@
 use crate::aggregator::Aggregator;
 use crate::datadog;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tracing::debug;
 
 pub struct Flusher {
@@ -24,8 +25,9 @@ impl Flusher {
         aggregator: Arc<Mutex<Aggregator>>,
         site: String,
         https_proxy: Option<String>,
+        timeout: Duration,
     ) -> Self {
-        let dd_api = datadog::DdApi::new(api_key, site, https_proxy);
+        let dd_api = datadog::DdApi::new(api_key, site, https_proxy, timeout);
         Flusher { dd_api, aggregator }
     }
 
