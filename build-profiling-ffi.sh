@@ -140,6 +140,7 @@ FEATURES=(
     "cbindgen"
     "crashtracker-collector"
     "crashtracker-receiver"
+    "data-pipeline-ffi",
     "datadog-profiling-ffi/ddtelemetry-ffi"
     "datadog-profiling-ffi/demangler"
 )
@@ -226,11 +227,9 @@ echo "Generating $destdir/include/libdatadog headers..."
 rm -r $destdir/include/datadog/
 mkdir $destdir/include/datadog/
 
-HEADER_FILES="common.h profiling.h telemetry.h crashtracker.h"
+HEADER_FILES="common.h profiling.h telemetry.h crashtracker.h data-pipeline.h"
+# When optional features are added, don't forget to also include thei headers here
 case $ARG_FEATURES in
-    *data-pipeline-ffi*)
-        HEADERS="$HEADERS data-pipeline.h"
-        ;;
 esac
 DEST_HEADERS=""
 for header in $HEADER_FILES; do
