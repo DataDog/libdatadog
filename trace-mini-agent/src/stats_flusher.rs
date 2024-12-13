@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
-use log::{debug, error, info};
 use std::{sync::Arc, time};
 use tokio::sync::{mpsc::Receiver, Mutex};
+use tracing::{debug, error, info};
 
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::stats_utils;
