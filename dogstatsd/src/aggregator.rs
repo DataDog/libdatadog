@@ -450,7 +450,7 @@ pub mod tests {
     fn to_series() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
-        let metric1 = parse("test:1|c|#k:v").expect("metric parse failed");
+        let metric1 = parse("test:1|c|#k1:v1,k2:v2").expect("metric parse failed");
         let metric2 = parse("foo:1|c|#k:v").expect("metric parse failed");
         let metric3 = parse("bar:1|c|#k:v").expect("metric parse failed");
 
@@ -459,6 +459,7 @@ pub mod tests {
 
         assert_eq!(aggregator.map.len(), 2);
         assert_eq!(aggregator.to_series().len(), 2);
+        // to_series should not mutate the state
         assert_eq!(aggregator.map.len(), 2);
         assert_eq!(aggregator.to_series().len(), 2);
         assert_eq!(aggregator.map.len(), 2);
