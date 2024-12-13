@@ -140,7 +140,7 @@ FEATURES=(
     "cbindgen"
     "crashtracker-collector"
     "crashtracker-receiver"
-    "data-pipeline-ffi",
+    "data-pipeline-ffi"
     "datadog-profiling-ffi/ddtelemetry-ffi"
     "datadog-profiling-ffi/demangler"
 )
