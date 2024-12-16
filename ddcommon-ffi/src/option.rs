@@ -3,6 +3,7 @@
 
 #[repr(C)]
 #[derive(Debug, PartialEq, Eq)]
+#[must_use]
 pub enum Option<T> {
     Some(T),
     None,
@@ -17,6 +18,20 @@ impl<T> Option<T> {
         match self {
             Option::Some(ref s) => Some(s),
             Option::None => None,
+        }
+    }
+
+    pub fn as_mut(&mut self) -> Option<&mut T> {
+        match *self {
+            Option::Some(ref mut x) => Option::Some(x),
+            Option::None => Option::None,
+        }
+    }
+
+    pub fn unwrap_none(self) {
+        match self {
+            Option::Some(_) => panic!("Called ffi::Option::unwrap_none but option was Some(_)"),
+            Option::None => {}
         }
     }
 }
