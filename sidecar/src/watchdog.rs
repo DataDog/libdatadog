@@ -12,6 +12,7 @@ use std::{
     time::Duration,
 };
 
+use data_pipeline::telemetry::CancellationObject;
 use tokio::{select, sync::mpsc::Receiver};
 use tracing::error;
 
@@ -29,6 +30,12 @@ pub struct WatchdogHandle {
 
 impl WatchdogHandle {
     pub async fn wait_for_shutdown(&self) {
+        self.handle.clone().await;
+    }
+}
+
+impl CancellationObject for WatchdogHandle {
+    async fn shutdown(&self) {
         self.handle.clone().await;
     }
 }

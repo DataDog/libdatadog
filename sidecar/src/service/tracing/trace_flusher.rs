@@ -3,10 +3,10 @@
 
 use super::TraceSendData;
 use crate::agent_remote_config::AgentRemoteConfigWriter;
+use data_pipeline::telemetry::Metrics as TraceFlusherMetrics;
 use datadog_ipc::platform::NamedShmHandle;
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::SendData;
-use datadog_trace_utils::trace_utils::SendDataResult;
 use ddcommon::Endpoint;
 use futures::future::join_all;
 use hyper::body::HttpBody;
@@ -53,37 +53,6 @@ struct AgentRemoteConfigs {
 struct TraceFlusherData {
     traces: TraceSendData,
     flusher: Option<JoinHandle<()>>,
-}
-
-#[derive(Default)]
-pub struct TraceFlusherMetrics {
-    pub api_requests: u64,
-    pub api_responses_count_per_code: HashMap<u16, u64>,
-    pub api_errors_timeout: u64,
-    pub api_errors_network: u64,
-    pub api_errors_status_code: u64,
-    pub bytes_sent: u64,
-    pub chunks_sent: u64,
-    pub chunks_dropped: u64,
-}
-
-impl TraceFlusherMetrics {
-    fn update(&mut self, result: &SendDataResult) {
-        self.api_requests += result.requests_count;
-        self.api_errors_timeout += result.errors_timeout;
-        self.api_errors_network += result.errors_network;
-        self.api_errors_status_code += result.errors_status_code;
-        self.bytes_sent += result.bytes_sent;
-        self.chunks_sent += result.chunks_sent;
-        self.chunks_dropped += result.chunks_dropped;
-
-        for (status_code, count) in &result.responses_count_per_code {
-            *self
-                .api_responses_count_per_code
-                .entry(*status_code)
-                .or_default() += count;
-        }
-    }
 }
 
 /// `TraceFlusher` is a structure that manages the flushing of traces.
