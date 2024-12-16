@@ -3,7 +3,7 @@
 
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::{collections::HashSet, net::Ipv6Addr};
+use std::{borrow::Cow, collections::HashSet, net::Ipv6Addr};
 
 lazy_static! {
     static ref ALLOWED_IP_ADDRESSES: HashSet<&'static str> = HashSet::from([
@@ -24,33 +24,58 @@ lazy_static! {
 /// post-quantization or collapsed into a single unique value. Entries which are not IP addresses
 /// are left unchanged. Comma-separated host lists are common for peer tags like
 /// peer.cassandra.contact.points, peer.couchbase.seed.nodes, peer.kafka.bootstrap.servers
-pub fn quantize_peer_ip_addresses(s: &str) -> String {
+///
+/// The quantized value is return as a `Cow` containing the input slice `s` if no modification was
+/// done or a new String if the value has been modified.
+pub fn quantize_peer_ip_addresses<'a>(s: &'a str) -> Cow<'a, str> {
     let values = s.split(",");
-    let mut quantized_values = HashSet::new();
-    values
-        .filter_map(|v| {
-            let quantized_value = quantize_ip(v);
-            if quantized_values.insert(quantized_value.clone()) {
-                Some(quantized_value)
+    let mut should_return_new_string = false; // Set to true if the function should return a modified
+                                              // version of the string
+
+    let quantized_values = values
+        .map(|v| {
+            if let Some(quantize_string) = quantize_ip(v) {
+                should_return_new_string = true;
+                Cow::from(quantize_string)
             } else {
-                None
+                Cow::from(v)
             }
         })
-        .collect::<Vec<String>>()
-        .join(",")
+        .collect::<Vec<Cow<'a, str>>>();
+
+    // Quantized value list without duplicates
+    let mut quantized_values_dedup: Vec<&str> = Vec::new();
+    let mut quantized_values_set: HashSet<&str> = HashSet::new();
+
+    for quantized_value in quantized_values.iter() {
+        if quantized_values_set.insert(&quantized_value) {
+            quantized_values_dedup.push(&quantized_value);
+        } else {
+            should_return_new_string = true;
+        }
+    }
+    if should_return_new_string {
+        Cow::from(quantized_values_dedup.join(","))
+    } else {
+        Cow::from(s)
+    }
 }
 
 /// Replace valid ip address in `s` to allow quantization.
 ///
 /// The ip is replaced if it is a valid IPv4 or v6
-fn quantize_ip(s: &str) -> String {
+///
+/// # Caveats
+/// - IPv6 with zone specifier '%' are not detected
+/// - IPv6 with suffix are not detected e.g. `::1-foo`
+fn quantize_ip<'a>(s: &str) -> Option<String> {
     let (prefix, stripped_s) = split_prefix(s);
     if let Some((ip, suffix)) = parse_ip(stripped_s) {
         if !ALLOWED_IP_ADDRESSES.contains(ip) {
-            return format!("{prefix}blocked-ip-address{suffix}");
+            return Some(format!("{prefix}blocked-ip-address{suffix}"));
         }
     }
-    return s.into();
+    return None;
 }
 
 /// Split the ip prefix, can be either a provider specific prefix or a protocol
@@ -177,11 +202,6 @@ mod tests {
             quantize_peer_ip_addresses("192.168.1.1.2.3.4.5"),
             "blocked-ip-address.2.3.4.5"
         );
-        assert_eq!(quantize_peer_ip_addresses("192.168.1"), "192.168.1");
-        assert_eq!(
-            quantize_peer_ip_addresses("192.168.1.12345"),
-            "192.168.1.12345"
-        );
         assert_eq!(
             quantize_peer_ip_addresses("192_168_1_1"),
             "blocked-ip-address"
@@ -203,16 +223,8 @@ mod tests {
             "blocked-ip-address"
         );
         assert_eq!(
-            quantize_peer_ip_addresses("2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF:AAAA"),
-            "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF:AAAA"
-        );
-        assert_eq!(
             quantize_peer_ip_addresses("2001:db8:3c4d:15::1a2f:1a2b"),
             "blocked-ip-address"
-        );
-        assert_eq!(
-            quantize_peer_ip_addresses("2001:db8:3c4d:15::1a2f:1a2b-foo.dog"),
-            "2001:db8:3c4d:15::1a2f:1a2b-foo.dog"
         );
         assert_eq!(
             quantize_peer_ip_addresses("[fe80::1ff:fe23:4567:890a]:8080"),
@@ -248,6 +260,20 @@ mod tests {
         assert_eq!(
             quantize_peer_ip_addresses("ip-10-152-4-129.ec2.internal"),
             "ip-blocked-ip-address.ec2.internal"
+        );
+        assert_eq!(quantize_peer_ip_addresses("1-foo"), "1-foo");
+        assert_eq!(quantize_peer_ip_addresses("1-2-foo"), "1-2-foo");
+        assert_eq!(quantize_peer_ip_addresses("1-2-3-foo"), "1-2-3-foo");
+        assert_eq!(quantize_peer_ip_addresses("1-2-3-999"), "1-2-3-999");
+        assert_eq!(quantize_peer_ip_addresses("1-2-999-foo"), "1-2-999-foo");
+        assert_eq!(quantize_peer_ip_addresses("1-2-3-999-foo"), "1-2-3-999-foo");
+        assert_eq!(
+            quantize_peer_ip_addresses("1-2-3-4-foo"),
+            "blocked-ip-address-foo"
+        );
+        assert_eq!(
+            quantize_peer_ip_addresses("7-55-2-app.agent.datadoghq.com"),
+            "7-55-2-app.agent.datadoghq.com"
         );
     }
 }

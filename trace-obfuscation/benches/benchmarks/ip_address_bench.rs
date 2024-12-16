@@ -3,6 +3,7 @@
 
 use criterion::{black_box, criterion_group, Criterion};
 use datadog_trace_obfuscation::ip_address;
+use std::borrow::Cow;
 
 fn quantize_peer_ip_address_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("ip_address");
@@ -17,8 +18,8 @@ fn quantize_peer_ip_address_benchmark(c: &mut Criterion) {
     group.bench_function("quantize_peer_ip_address_benchmark", |b| {
         b.iter_batched_ref(
             // Keep the String instances around to avoid measuring the deallocation cost
-            || Vec::with_capacity(cases.len()) as Vec<String>,
-            |res: &mut Vec<String>| {
+            || Vec::with_capacity(cases.len()) as Vec<Cow<'_, str>>,
+            |res: &mut Vec<Cow<'_, str>>| {
                 for c in cases {
                     res.push(black_box(ip_address::quantize_peer_ip_addresses(c)));
                 }
