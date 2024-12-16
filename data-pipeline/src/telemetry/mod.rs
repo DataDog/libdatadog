@@ -169,8 +169,9 @@ impl TelemetryClient {
             self.handle.abort();
         }
     }
+
     /// Shutdowns the telemetry client.
-    pub async fn shutdown(&self) {
+    pub async fn shutdown(self) {
         if let Err(_e) = self
             .worker
             .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop))
@@ -178,6 +179,8 @@ impl TelemetryClient {
         {
             self.handle.abort();
         }
+
+        let _ = self.handle.await;
     }
 }
 
@@ -264,7 +267,6 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -304,7 +306,6 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -344,7 +345,6 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -384,7 +384,6 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -424,7 +423,6 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -464,7 +462,6 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -504,7 +501,6 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -544,7 +540,6 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -577,8 +572,6 @@ mod tests {
 
         client.start().await;
         client.shutdown().await;
-        let _ = client.handle.await;
-
         // Check for 2 hits: app-started and app-closing.
         telemetry_srv.assert_hits_async(2).await;
     }
