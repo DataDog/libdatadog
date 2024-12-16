@@ -1,23 +1,22 @@
 
 # Build FFI examples
-*All the commands in this README are executed at the root level.*
 
 In order to be able to run FFI examples, you need to build the shared library and headers with the command:
-```c
-// (dont worry too much about the fact that this is named "profiling")
-./build-profiling-ffi.sh ./build
-````
+```bash
+cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -- --out
+```
 
 You can then build the examples with:
 
-```c
-cmake -S examples/ffi -B examples/ffi/build -D Datadog_ROOT=./build
+```bash
+# Run the below commands at the root level
+cmake -S examples/ffi -B examples/ffi/build -D Datadog_ROOT=./release
 cmake --build ./examples/ffi/build
-````
+```
 
 # Run FFI examples
 
 The build command will create executables in the examples/ffi/build folder. You can run any of them with:
 ````
-./test-name
+./examples/ffi/build/test-name
 ````
