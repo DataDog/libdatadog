@@ -7,7 +7,7 @@ use std::time::UNIX_EPOCH;
 use async_trait::async_trait;
 use hyper::{http, Body, Request, Response, StatusCode};
 use tokio::sync::mpsc::Sender;
-use tracing::info;
+use tracing::debug;
 
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::stats_utils;
@@ -38,7 +38,7 @@ impl StatsProcessor for ServerlessStatsProcessor {
         req: Request<Body>,
         tx: Sender<pb::ClientStatsPayload>,
     ) -> http::Result<Response<Body>> {
-        info!("Recieved trace stats to process");
+        debug!("Received trace stats to process");
         let (parts, body) = req.into_parts();
 
         if let Some(response) = http_utils::verify_request_content_length(
