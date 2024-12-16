@@ -1303,6 +1303,7 @@ dependencies = [
  "datadog-trace-protobuf",
  "datadog-trace-utils",
  "ddcommon",
+ "ddtelemetry",
  "dogstatsd-client",
  "either",
  "futures",
