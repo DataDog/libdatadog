@@ -4,7 +4,7 @@
 use async_trait::async_trait;
 use std::{sync::Arc, time};
 use tokio::sync::{mpsc::Receiver, Mutex};
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::stats_utils;
@@ -61,7 +61,7 @@ impl StatsFlusher for ServerlessStatsFlusher {
         if stats.is_empty() {
             return;
         }
-        info!("Flushing {} stats", stats.len());
+        debug!("Flushing {} stats", stats.len());
 
         let stats_payload = stats_utils::construct_stats_payload(stats);
 
@@ -82,7 +82,7 @@ impl StatsFlusher for ServerlessStatsFlusher {
         )
         .await
         {
-            Ok(_) => info!("Successfully flushed stats"),
+            Ok(_) => debug!("Successfully flushed stats"),
             Err(e) => {
                 error!("Error sending stats: {e:?}")
             }
