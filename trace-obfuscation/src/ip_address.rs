@@ -28,7 +28,7 @@ lazy_static! {
 /// The quantized value is return as a `Cow` containing the input slice `s` if no modification was
 /// done or a new String if the value has been modified.
 pub fn quantize_peer_ip_addresses<'a>(s: &'a str) -> Cow<'a, str> {
-    let values = s.split(",");
+    let values = s.split(',');
     let mut should_return_new_string = false; // Set to true if the function should return a modified
                                               // version of the string
 
@@ -48,8 +48,8 @@ pub fn quantize_peer_ip_addresses<'a>(s: &'a str) -> Cow<'a, str> {
     let mut quantized_values_set: HashSet<&str> = HashSet::new();
 
     for quantized_value in quantized_values.iter() {
-        if quantized_values_set.insert(&quantized_value) {
-            quantized_values_dedup.push(&quantized_value);
+        if quantized_values_set.insert(quantized_value) {
+            quantized_values_dedup.push(quantized_value);
         } else {
             should_return_new_string = true;
         }
@@ -68,31 +68,31 @@ pub fn quantize_peer_ip_addresses<'a>(s: &'a str) -> Cow<'a, str> {
 /// # Caveats
 /// - IPv6 with zone specifier '%' are not detected
 /// - IPv6 with suffix are not detected e.g. `::1-foo`
-fn quantize_ip<'a>(s: &str) -> Option<String> {
+fn quantize_ip(s: &str) -> Option<String> {
     let (prefix, stripped_s) = split_prefix(s);
     if let Some((ip, suffix)) = parse_ip(stripped_s) {
         if !ALLOWED_IP_ADDRESSES.contains(ip) {
             return Some(format!("{prefix}blocked-ip-address{suffix}"));
         }
     }
-    return None;
+    None
 }
 
 /// Split the ip prefix, can be either a provider specific prefix or a protocol
 fn split_prefix(s: &str) -> (&str, &str) {
     if let Some(tail) = s.strip_prefix("ip-") {
-        return ("ip-", tail);
+        ("ip-", tail)
+    } else if let Some(protocol) = PREFIX_REGEX.find(s) {
+        s.split_at(protocol.end())
+    } else {
+        ("", s)
     }
-    if let Some(protocol) = PREFIX_REGEX.find(s) {
-        return s.split_at(protocol.end());
-    }
-    return ("", s);
 }
 
-/// Check if `s` starts with a valid ip. If it does return Some(ip, suffix), else return None.
+/// Check if `s` starts with a valid ip. If it does return Some((ip, suffix)), else return None.
 fn parse_ip(s: &str) -> Option<(&str, &str)> {
     for ch in s.chars() {
-        // We try to determine the
+        // Determine the version of the ip
         match ch {
             '0'..='9' => continue,
             '.' | '-' | '_' => return parse_ip_v4(s, ch),
@@ -105,7 +105,7 @@ fn parse_ip(s: &str) -> Option<(&str, &str)> {
             }
             '[' => {
                 // Parse IPv6 in [host]:port format
-                if let Some((host, port)) = s[1..].split_once("]") {
+                if let Some((host, port)) = s[1..].split_once(']') {
                     if host.parse::<Ipv6Addr>().is_ok() {
                         return Some((host, port));
                     }
@@ -126,7 +126,7 @@ fn parse_ip_v4(s: &str, sep: char) -> Option<(&str, &str)> {
     let mut current_field = 0;
     let mut last_index = s.len();
     for (i, ch) in s.char_indices() {
-        if matches!(ch, '0'..='9') {
+        if ch.is_ascii_digit() {
             // A field can't have a leading 0
             if field_digits == 1 && field_value == 0 {
                 return None;
@@ -158,9 +158,10 @@ fn parse_ip_v4(s: &str, sep: char) -> Option<(&str, &str)> {
     }
     // Check that we found at 4 fields and that the last one as at least one digit
     if field_digits > 0 && current_field == 3 {
-        return Some(s.split_at(last_index));
+        Some(s.split_at(last_index))
+    } else {
+        None
     }
-    return None;
 }
 
 #[cfg(test)]
