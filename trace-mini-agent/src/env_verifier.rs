@@ -4,7 +4,6 @@
 use async_trait::async_trait;
 use hyper::body::HttpBody;
 use hyper::{Body, Client, Method, Request, Response};
-use log::{debug, error};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
@@ -12,6 +11,7 @@ use std::path::Path;
 use std::process;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tracing::{debug, error};
 
 use datadog_trace_utils::trace_utils;
 

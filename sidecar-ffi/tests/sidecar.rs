@@ -68,7 +68,7 @@ fn test_ddog_sidecar_connection() {
 }
 
 #[test]
-#[ignore = "TODO: ci-flaky can't reproduce locally"]
+#[cfg_attr(miri, ignore)]
 fn test_ddog_sidecar_register_app() {
     set_sidecar_per_process();
 
@@ -105,7 +105,8 @@ fn test_ddog_sidecar_register_app() {
             0,
             null(),
             0,
-        );
+        )
+        .unwrap_none();
 
         let meta = ddog_sidecar_runtimeMeta_build(
             "language_name".into(),
@@ -122,7 +123,8 @@ fn test_ddog_sidecar_register_app() {
             &queue_id,
             "dependency_name".into(),
             "dependency_version".into(),
-        );
+        )
+        .unwrap_none();
 
         // ddog_sidecar_telemetry_addIntegration(&mut transport, instance_id, &queue_id,
         // integration_name, integration_version) TODO add ability to add configuration
@@ -158,7 +160,8 @@ fn test_ddog_sidecar_register_app() {
             0,
             null(),
             0,
-        );
+        )
+        .unwrap_none();
 
         //TODO: Shutdown the service
         // enough case: have C api that shutsdown telemetry worker

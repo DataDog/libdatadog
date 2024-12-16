@@ -435,7 +435,7 @@ impl TelemetryWorker {
                     payloads.push(data::Payload::MessageBatch(obsevability_events));
                 }
 
-                let self_arc = Arc::new(tokio::sync::RwLock::new(self));
+                let self_arc = Arc::new(tokio::sync::RwLock::new(&mut *self));
                 let futures = payloads.into_iter().map(|payload| {
                     let self_arc = self_arc.clone();
                     async move {
@@ -454,10 +454,9 @@ impl TelemetryWorker {
                 });
                 future::join_all(futures).await;
 
-                let mut self_lock = self_arc.write().await;
-                self_lock.data.started = false;
-                if !self_lock.config.restartable {
-                    self_lock.deadlines.clear_pending();
+                self.data.started = false;
+                if !self.config.restartable {
+                    self.deadlines.clear_pending();
                 }
 
                 return BREAK;

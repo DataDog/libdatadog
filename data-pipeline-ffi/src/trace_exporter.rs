@@ -318,6 +318,9 @@ mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;
     use crate::trace_exporter::AgentResponse;
+    use datadog_trace_utils::span_v04::Span;
+    use httpmock::prelude::*;
+    use httpmock::MockServer;
     use std::{borrow::Borrow, mem::MaybeUninit};
 
     #[test]
@@ -606,6 +609,123 @@ mod tests {
                 ddog_trace_exporter_config_set_service(config.as_mut(), CharSlice::new(&invalid));
 
             assert_eq!(error.unwrap().code, ErrorCode::InvalidInput);
+        }
+    }
+
+    #[test]
+    // Ignore because it seems, at least in the version we're currently using, miri can't emulate
+    // libc::socket function.
+    #[cfg_attr(miri, ignore)]
+    fn exporter_send_check_rate_test() {
+        unsafe {
+            let server = MockServer::start();
+
+            let _mock = server.mock(|when, then| {
+                when.method(POST)
+                    .header("Content-type", "application/msgpack")
+                    .path("/v0.4/traces");
+                then.status(200).body(
+                    r#"{
+                    "rate_by_service": {
+                        "service:foo,env:staging": 1.0,
+                        "service:,env:": 0.8 
+                    }
+                }"#,
+                );
+            });
+
+            let cfg = TraceExporterConfig {
+                url: Some(server.url("/")),
+                tracer_version: Some("0.1".to_string()),
+                language: Some("lang".to_string()),
+                language_version: Some("0.1".to_string()),
+                language_interpreter: Some("interpreter".to_string()),
+                hostname: Some("hostname".to_string()),
+                env: Some("env-test".to_string()),
+                version: Some("1.0".to_string()),
+                service: Some("test-service".to_string()),
+                input_format: TraceExporterInputFormat::V04,
+                output_format: TraceExporterOutputFormat::V04,
+                compute_stats: false,
+            };
+
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+            let mut ret =
+                ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
+
+            let exporter = ptr.assume_init();
+
+            assert_eq!(ret, None);
+
+            let data = rmp_serde::to_vec_named::<Vec<Vec<Span>>>(&vec![vec![]]).unwrap();
+            let traces = ByteSlice::new(&data);
+            let mut response = AgentResponse { rate: 0.0 };
+
+            ret = ddog_trace_exporter_send(Some(exporter.as_ref()), traces, 0, Some(&mut response));
+            assert_eq!(ret, None);
+            assert_eq!(response.rate, 0.8);
+
+            ddog_trace_exporter_free(exporter);
+        }
+    }
+
+    #[test]
+    // Ignore because it seems, at least in the version we're currently using, miri can't emulate
+    // libc::socket function.
+    #[cfg_attr(miri, ignore)]
+    fn exporter_send_empty_array_test() {
+        // Test added due to ensure the exporter is able to send empty arrays because some tracers
+        // (.NET) ping the agent with the aforementioned data type.
+        unsafe {
+            let server = MockServer::start();
+
+            let mock_traces = server.mock(|when, then| {
+                when.method(POST)
+                    .header("Content-type", "application/msgpack")
+                    .path("/v0.4/traces");
+                then.status(200).body(
+                    r#"{
+                    "rate_by_service": {
+                        "service:foo,env:staging": 1.0,
+                        "service:,env:": 0.8 
+                    }
+                }"#,
+                );
+            });
+
+            let cfg = TraceExporterConfig {
+                url: Some(server.url("/")),
+                tracer_version: Some("0.1".to_string()),
+                language: Some("lang".to_string()),
+                language_version: Some("0.1".to_string()),
+                language_interpreter: Some("interpreter".to_string()),
+                hostname: Some("hostname".to_string()),
+                env: Some("env-test".to_string()),
+                version: Some("1.0".to_string()),
+                service: Some("test-service".to_string()),
+                input_format: TraceExporterInputFormat::V04,
+                output_format: TraceExporterOutputFormat::V04,
+                compute_stats: false,
+            };
+
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+            let mut ret =
+                ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
+
+            let exporter = ptr.assume_init();
+
+            assert_eq!(ret, None);
+
+            let data = vec![0x90];
+            let traces = ByteSlice::new(&data);
+            let mut response = AgentResponse { rate: 0.0 };
+
+            ret = ddog_trace_exporter_send(Some(exporter.as_ref()), traces, 0, Some(&mut response));
+            mock_traces.assert();
+            assert_eq!(ret, None);
+            assert_eq!(response.rate, 0.8);
+
+            ddog_trace_exporter_free(exporter);
         }
     }
 }

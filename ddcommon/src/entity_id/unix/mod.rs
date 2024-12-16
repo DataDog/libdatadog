@@ -15,11 +15,6 @@ const DEFAULT_CGROUP_MOUNT_PATH: &str = "/sys/fs/cgroup";
 /// the base controller used to identify the cgroup v1 mount point in the cgroupMounts map.
 const CGROUP_V1_BASE_CONTROLLER: &str = "memory";
 
-/// stores overridable cgroup path - used in end-to-end testing to "stub" cgroup values
-static mut TESTING_CGROUP_PATH: Option<String> = None;
-/// stores overridable cgroup mount path     
-static mut TESTING_CGROUP_MOUNT_PATH: Option<String> = None;
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum CgroupFileParsingError {
     ContainerIdNotFound,
@@ -58,37 +53,11 @@ fn compute_entity_id(
 }
 
 fn get_cgroup_path() -> &'static str {
-    // Safety: we assume set_cgroup_file is not called when it shouldn't
-    #[allow(static_mut_refs)]
-    unsafe {
-        TESTING_CGROUP_PATH
-            .as_deref()
-            .unwrap_or(DEFAULT_CGROUP_PATH)
-    }
+    DEFAULT_CGROUP_PATH
 }
 
 fn get_cgroup_mount_path() -> &'static str {
-    // Safety: we assume set_cgroup_file is not called when it shouldn't
-    #[allow(static_mut_refs)]
-    unsafe {
-        TESTING_CGROUP_MOUNT_PATH
-            .as_deref()
-            .unwrap_or(DEFAULT_CGROUP_MOUNT_PATH)
-    }
-}
-
-/// Set the path to cgroup file to mock it during tests
-/// # Safety
-/// Must not be called in multi-threaded contexts
-pub unsafe fn set_cgroup_file(file: String) {
-    TESTING_CGROUP_PATH = Some(file)
-}
-
-/// Set cgroup mount path to mock during tests
-/// # Safety
-/// Must not be called in multi-threaded contexts
-pub unsafe fn set_cgroup_mount_path(path: String) {
-    TESTING_CGROUP_MOUNT_PATH = Some(path)
+    DEFAULT_CGROUP_MOUNT_PATH
 }
 
 /// Returns the `container_id` if available in the cgroup file, otherwise returns `None`

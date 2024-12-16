@@ -46,6 +46,13 @@ resolver = "2"
 # These are used by many packages, but not all. For instance, the sidecar and
 # serverless packages wanted to maintain their own version numbers. Some of
 # their depenencies also remain under their own versioning.
+#
+# When bumping the Rust version, make sure that the version is less than or
+# equal to latest Alpine Linux version, and also the latest RHEL 8.x and 9.x
+# releases (not stream):
+#  - https://rpms.remirepo.net/rpmphp/zoom.php?rpm=rust
+# The RHEL restrictions are for the dd-trace-php repository. Someone in the
+# community, Remi Collet, packages the extension for these systems.
 [workspace.package]
 rust-version = "1.76.0"
 edition = "2021"

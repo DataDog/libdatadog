@@ -590,14 +590,6 @@ impl TraceExporter {
             }
         };
 
-        if traces.is_empty() {
-            error!("No traces deserialized from the request body.");
-            // return Ok(String::from("{}"));
-            return Err(TraceExporterError::Io(std::io::Error::from(
-                std::io::ErrorKind::InvalidInput,
-            )));
-        }
-
         let num_traces = traces.len();
 
         self.emit_metric(
@@ -1358,6 +1350,7 @@ mod tests {
         let bytes = tinybytes::Bytes::from(
             rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace"),
         );
+
         let _result = exporter.send(bytes, 1).expect("failed to send trace");
 
         assert_eq!(
@@ -1526,6 +1519,41 @@ mod tests {
         let bytes = tinybytes::Bytes::from(
             rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace"),
         );
+        let result = exporter.send(bytes, 1).unwrap();
+
+        assert_eq!(result, AgentResponse::from(0.8));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn agent_response_empty_array() {
+        let server = MockServer::start();
+        let _agent = server.mock(|_, then| {
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                    "rate_by_service": {
+                        "service:foo,env:staging": 1.0,
+                        "service:,env:": 0.8 
+                    }
+                }"#,
+                );
+        });
+
+        let exporter = TraceExporterBuilder::default()
+            .set_url(&server.url("/"))
+            .set_service("foo")
+            .set_env("foo-env")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .build()
+            .unwrap();
+
+        let traces = vec![0x90];
+        let bytes = tinybytes::Bytes::from(traces);
         let result = exporter.send(bytes, 1).unwrap();
 
         assert_eq!(result, AgentResponse::from(0.8));
