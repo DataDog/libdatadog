@@ -711,8 +711,9 @@ impl TraceExporter {
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 
 #[derive(Default)]
-struct TelemetryConfig {
-    heartbeat: u64,
+pub struct TelemetryConfig {
+    pub heartbeat: u64,
+    pub runtime_id: Option<String>,
 }
 
 #[allow(missing_docs)]
@@ -869,12 +870,12 @@ impl TraceExporterBuilder {
     }
 
     /// Enables sending telemetry metrics.
-    pub fn enable_telemetry(mut self, heartbeat_ms: Option<u64>) -> Self {
-        let mut config = TelemetryConfig::default();
-        if let Some(interval) = heartbeat_ms {
-            config.heartbeat = interval;
+    pub fn enable_telemetry(mut self, cfg: Option<TelemetryConfig>) -> Self {
+        if let Some(cfg) = cfg {
+            self.telemetry = Some(cfg);
+        } else {
+            self.telemetry = Some(TelemetryConfig::default());
         }
-        self.telemetry = Some(config);
         self
     }
 
@@ -915,18 +916,19 @@ impl TraceExporterBuilder {
         }
 
         let telemetry = if let Some(telemetry_config) = self.telemetry {
-            Some(
-                runtime.block_on(
-                    TelemetryClientBuilder::default()
-                        .set_language(&self.language)
-                        .set_language_version(&self.language_version)
-                        .set_service_name(&self.service)
-                        .set_tracer_version(&self.tracer_version)
-                        .set_hearbeat(telemetry_config.heartbeat)
-                        .set_url(base_url)
-                        .build(),
-                )?,
-            )
+            Some(runtime.block_on(async {
+                let mut builder = TelemetryClientBuilder::default()
+                    .set_language(&self.language)
+                    .set_language_version(&self.language_version)
+                    .set_service_name(&self.service)
+                    .set_tracer_version(&self.tracer_version)
+                    .set_hearbeat(telemetry_config.heartbeat)
+                    .set_url(base_url);
+                if let Some(id) = telemetry_config.runtime_id {
+                    builder = builder.set_runtime_id(&id);
+                }
+                builder.build().await
+            })?)
         } else {
             None
         };
@@ -1003,7 +1005,10 @@ mod tests {
             .set_input_format(TraceExporterInputFormat::Proxy)
             .set_output_format(TraceExporterOutputFormat::V07)
             .set_client_computed_stats()
-            .enable_telemetry(Some(1000))
+            .enable_telemetry(Some(TelemetryConfig {
+                heartbeat: 1000,
+                runtime_id: None,
+            }))
             .build()
             .unwrap();
 
@@ -1749,7 +1754,10 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8")
-            .enable_telemetry(Some(100))
+            .enable_telemetry(Some(TelemetryConfig {
+                heartbeat: 100,
+                ..Default::default()
+            }))
             .build()
             .unwrap();
 
