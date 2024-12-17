@@ -160,6 +160,7 @@ async fn start_dogstatsd(
                 Arc::clone(&metrics_aggr),
                 build_fqdn_metrics(dd_site),
                 https_proxy,
+                Duration::from_secs(5),
             );
             Some(metrics_flusher)
         }
