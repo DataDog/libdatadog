@@ -66,7 +66,7 @@ cargo nextest run
 The simplest way to install [cargo-nextest][nt] is to use `cargo install` like this.
 
 ```bash
-cargo install --locked 'cargo-nextest@0.9.81'
+cargo install --locked 'cargo-nextest@0.9.85'
 ```
 
 #### Skipping tracing integration tests
