@@ -4,6 +4,7 @@
 use lazy_static::lazy_static;
 use std::error;
 use std::fmt;
+use std::ops::Deref;
 use std::path::Path;
 
 mod cgroup_inode;
@@ -11,6 +12,9 @@ mod container_id;
 
 const DEFAULT_CGROUP_PATH: &str = "/proc/self/cgroup";
 const DEFAULT_CGROUP_MOUNT_PATH: &str = "/sys/fs/cgroup";
+
+/// stores overridable cgroup path - used in end-to-end testing to "stub" cgroup values
+static TESTING_CGROUP_PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 /// the base controller used to identify the cgroup v1 mount point in the cgroupMounts map.
 const CGROUP_V1_BASE_CONTROLLER: &str = "memory";
@@ -52,8 +56,18 @@ fn compute_entity_id(
         )
 }
 
+/// Set cgroup mount path to mock during tests
+/// # Safety
+/// Must not be called in multi-threaded contexts
+pub fn set_cgroup_file(path: String) {
+    let _ = TESTING_CGROUP_PATH.set(path);
+}
+
 fn get_cgroup_path() -> &'static str {
-    DEFAULT_CGROUP_PATH
+    TESTING_CGROUP_PATH
+        .get()
+        .map(Deref::deref)
+        .unwrap_or(DEFAULT_CGROUP_PATH)
 }
 
 fn get_cgroup_mount_path() -> &'static str {
