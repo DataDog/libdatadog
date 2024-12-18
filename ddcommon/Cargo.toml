@@ -71,3 +71,5 @@ maplit = "1.0"
 [features]
 default = []
 use_webpki_roots = ["hyper-rustls/webpki-roots"]
+# Enable this feature to enable stubbing of cgroup
+cgroup_testing = []

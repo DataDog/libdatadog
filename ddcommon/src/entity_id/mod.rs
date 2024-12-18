@@ -61,6 +61,7 @@ const EXTERNAL_ENV_ENVIRONMENT_VARIABLE: &str = "DD_EXTERNAL_ENV";
 mod unix;
 
 /// Set the path to cgroup file to mock it during tests
+#[cfg(feature = "cgroup_testing")]
 pub fn set_cgroup_file(_file: String) {
     #[cfg(unix)]
     {
