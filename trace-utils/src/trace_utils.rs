@@ -523,10 +523,10 @@ pub fn enrich_span_with_google_cloud_function_metadata(
     function: Option<String>,
 ) {
     let Some(region) = &mini_agent_metadata.gcp_region else {
-        return;
+        todo!()
     };
     let Some(project) = &mini_agent_metadata.gcp_project_id else {
-        return;
+        todo!()
     };
     if function.is_some() && !region.is_empty() && !project.is_empty() {
         let resource_name = format!(
