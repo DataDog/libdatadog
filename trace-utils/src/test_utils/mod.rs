@@ -118,6 +118,100 @@ pub fn create_test_span(
     span
 }
 
+pub fn create_test_gcp_span(
+    trace_id: u64,
+    span_id: u64,
+    parent_id: u64,
+    start: i64,
+    is_top_level: bool,
+) -> pb::Span {
+    let mut span = pb::Span {
+        trace_id,
+        span_id,
+        service: "test-service".to_string(),
+        name: "test_name".to_string(),
+        resource: "test-resource".to_string(),
+        parent_id,
+        start,
+        duration: 5,
+        error: 0,
+        meta: HashMap::from([
+            ("service".to_string(), "test-service".to_string()),
+            ("env".to_string(), "test-env".to_string()),
+            (
+                "runtime-id".to_string(),
+                "test-runtime-id-value".to_string(),
+            ),
+        ]),
+        metrics: HashMap::new(),
+        r#type: "".to_string(),
+        meta_struct: HashMap::new(),
+        span_links: vec![],
+    };
+    span.meta.insert(
+        "_dd.mini_agent_version".to_string(),
+        "dummy_version".to_string(),
+    );
+    span.meta.insert(
+        "gcrfx.project_id".to_string(),
+        "dummy_project_id".to_string(),
+    );
+    span.meta.insert(
+        "gcrfx.location".to_string(),
+        "dummy_region_west".to_string(),
+    );
+    span.meta.insert(
+        "gcrfx.resource_name".to_string(),
+        "projects/dummy_project_id/locations/dummy_region_west/functions/dummy_function_name"
+            .to_string(),
+    );
+    if is_top_level {
+        span.meta.insert(
+            "functionname".to_string(),
+            "dummy_function_name".to_string(),
+        );
+        span.metrics.insert("_top_level".to_string(), 1.0);
+        span.meta
+            .insert("_dd.origin".to_string(), "cloudfunction".to_string());
+        span.meta
+            .insert("origin".to_string(), "cloudfunction".to_string());
+        span.r#type = "serverless".to_string();
+    }
+    span
+}
+
+pub fn create_test_gcp_json_span(
+    trace_id: u64,
+    span_id: u64,
+    parent_id: u64,
+    start: i64,
+) -> serde_json::Value {
+    json!(
+        {
+            "trace_id": trace_id,
+            "span_id": span_id,
+            "service": "test-service",
+            "name": "test_name",
+            "resource": "test-resource",
+            "parent_id": parent_id,
+            "start": start,
+            "duration": 5,
+            "error": 0,
+            "meta": {
+                "service": "test-service",
+                "env": "test-env",
+                "runtime-id": "test-runtime-id-value",
+                "gcrfx.project_id": "dummy_project_id",
+                "_dd.mini_agent_version": "dummy_version",
+                "gcrfx.resource_name": "projects/dummy_project_id/locations/dummy_region_west/functions/dummy_function_name",
+                "gcrfx.location": "dummy_region_west"
+            },
+            "metrics": {},
+            "meta_struct": {},
+        }
+    )
+}
+
 pub fn create_test_json_span(
     trace_id: u64,
     span_id: u64,
