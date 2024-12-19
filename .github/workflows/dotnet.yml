@@ -47,25 +47,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v1
 
-      - name: Install rustup
-        if: matrix.os == 'windows-latest'
-        run: |
-          $ProgressPreference = "SilentlyContinue"
-          Invoke-WebRequest https://win.rustup.rs/ -OutFile rustup-init.exe
-          .\rustup-init.exe -y --default-host=${{ matrix.target }} --default-toolchain stable --profile minimal
-          del rustup-init.exe
-          rustup target add ${{ matrix.target }}
-        shell: powershell
-
-      - name: Install rustup
-        if: matrix.os == 'macos-latest'
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          source $HOME/.cargo/env
-          rustup target add ${{ matrix.target }}
-          cargo install --force cbindgen
-        shell: bash
-
       - name: Prepare toolset
         if: matrix.container == 'centos:7'
         run: |
@@ -95,6 +76,27 @@ jobs:
           scl enable devtoolset-9 bash
           gcc --version
 
+          yum install -y gcc-aarch64-linux-gnu
+
+      - name: Install rustup
+        if: matrix.os == 'windows-latest'
+        run: |
+          $ProgressPreference = "SilentlyContinue"
+          Invoke-WebRequest https://win.rustup.rs/ -OutFile rustup-init.exe
+          .\rustup-init.exe -y --default-host=${{ matrix.target }} --default-toolchain stable --profile minimal
+          del rustup-init.exe
+          rustup target add ${{ matrix.target }}
+        shell: powershell
+
+      - name: Install rustup
+        if: matrix.os == 'macos-latest'
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+          rustup target add ${{ matrix.target }}
+          cargo install --force cbindgen
+        shell: bash
+
       - name: Install rustup
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -104,7 +106,7 @@ jobs:
           cargo install --force cbindgen
         shell: bash
 
-      - name: Install linux aarch64 dependencies
+      - name: Setup cross-compilation
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           cat .cargo/config.github >> .cargo/config
