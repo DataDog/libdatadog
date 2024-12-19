@@ -41,7 +41,7 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             container: alpine:3.19
-          - os: ubuntu-latest
+          - os: arm-4core-linux-ubuntu24.04
             target: aarch64-unknown-linux-musl
             container: alpine:3.19
           - os: macos-latest
