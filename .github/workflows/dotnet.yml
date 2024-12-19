@@ -80,7 +80,9 @@ jobs:
               jq \
               && yum clean all --enablerepo='*' \
 
-            scl enable devtoolset-9 bash
+            # switch to GCC9 environment for the duration of the script
+            source scl_source enable devtoolset-9
+
             gcc --version
 
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
