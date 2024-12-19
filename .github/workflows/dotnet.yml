@@ -271,7 +271,7 @@ jobs:
           image: ${{ matrix.container }}
           options: -v ${{ github.workspace }}:/workspace
           run: |
-            curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 6.0 --install-dir /usr/share/dotnet
+            curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 3.1 --install-dir /usr/share/dotnet
             source /usr/share/dotnet/dotnet.complete.sh
             cd /workspace/tests/nuget_package
             /usr/share/dotnet/dotnet add nuget_package.csproj package ${{ env.NUGET_NAME }} --version ${{ needs.pack.outputs.NUGET_VERSION }}
@@ -281,7 +281,7 @@ jobs:
         if: matrix.os == 'windows-latest' || matrix.os == 'macos-latest'
         uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 #v4
         with:
-          dotnet-version: 6.0.X
+          dotnet-version: 3.1.X
 
       - name: Test
         if: matrix.os == 'windows-latest' || matrix.os == 'macos-latest'
