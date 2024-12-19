@@ -100,7 +100,7 @@ pub enum LifecycleAction {
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LogIdentifier {
     // Collisions? Never heard of them
-    indentifier: u64,
+    pub indentifier: u64,
 }
 
 // Holds the current state of the telemetry worker

@@ -1325,7 +1325,10 @@ version = "14.3.1"
 dependencies = [
  "build_common",
  "data-pipeline",
+ "datadog-trace-utils",
  "ddcommon-ffi",
+ "httpmock",
+ "rmp-serde",
  "tinybytes",
 ]
 
@@ -1709,13 +1712,13 @@ dependencies = [
  "ddcommon",
  "duplicate",
  "hyper 0.14.31",
- "log",
  "rmp-serde",
  "serde",
  "serde_json",
  "serial_test",
  "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
