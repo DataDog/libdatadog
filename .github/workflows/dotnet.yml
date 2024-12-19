@@ -276,6 +276,7 @@ jobs:
             dotnet --info
 
             cd /workspace/tests/nuget_package
+            export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
             dotnet add nuget_package.csproj package ${{ env.NUGET_NAME }} --version ${{ needs.pack.outputs.NUGET_VERSION }}
             dotnet run
 
