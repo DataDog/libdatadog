@@ -38,12 +38,12 @@ jobs:
           - os: arm-4core-linux-ubuntu24.04
             target: aarch64-unknown-linux-gnu
             container: centos:7
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            container: alpine:3.19
-          - os: arm-4core-linux-ubuntu24.04
-            target: aarch64-unknown-linux-musl
-            container: alpine:3.19
+          # - os: ubuntu-latest
+          #   target: x86_64-unknown-linux-musl
+          #   container: alpine:3.19
+          # - os: arm-4core-linux-ubuntu24.04
+          #   target: aarch64-unknown-linux-musl
+          #   container: alpine:3.19
           - os: macos-latest
             target: aarch64-apple-darwin
           - os: macos-latest
@@ -199,17 +199,17 @@ jobs:
           name: ${{ env.OUTPUT_DIR }}-aarch64-unknown-linux-gnu
           path: bin
 
-      - name: Download x86_64-unknown-linux-musl
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.OUTPUT_DIR }}-x86_64-unknown-linux-musl
-          path: bin
+      # - name: Download x86_64-unknown-linux-musl
+      #   uses: actions/download-artifact@v4
+      #   with:
+      #     name: ${{ env.OUTPUT_DIR }}-x86_64-unknown-linux-musl
+      #     path: bin
 
-      - name: Download aarch64-unknown-linux-musl
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.OUTPUT_DIR }}-aarch64-unknown-linux-musl
-          path: bin
+      # - name: Download aarch64-unknown-linux-musl
+      #   uses: actions/download-artifact@v4
+      #   with:
+      #     name: ${{ env.OUTPUT_DIR }}-aarch64-unknown-linux-musl
+      #     path: bin
 
       - name: Download aarch64-apple-darwin
         uses: actions/download-artifact@v4
@@ -272,9 +272,10 @@ jobs:
           options: -v ${{ github.workspace }}:/workspace
           run: |
             curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 6.0 --install-dir /usr/share/dotnet
+            source /usr/share/dotnet/dotnet.complete.sh
             cd /workspace/tests/nuget_package
-            dotnet add nuget_package.csproj package ${{ env.NUGET_NAME }} --version ${{ needs.pack.outputs.NUGET_VERSION }}
-            dotnet run
+            /usr/share/dotnet/dotnet add nuget_package.csproj package ${{ env.NUGET_NAME }} --version ${{ needs.pack.outputs.NUGET_VERSION }}
+            /usr/share/dotnet/dotnet run
 
       - name: Install .NET SDK
         if: matrix.os == 'windows-latest' || matrix.os == 'macos-latest'
