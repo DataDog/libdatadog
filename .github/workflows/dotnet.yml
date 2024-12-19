@@ -49,7 +49,7 @@ jobs:
             target: x86_64-apple-darwin
     steps:
       - name: Checkout
-        uses: actions/checkout@v1
+        uses: actions/checkout@v3
 
       - name: Prepare toolset
         if: matrix.container == 'centos:7'
@@ -139,7 +139,7 @@ jobs:
         shell: bash
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@6673cd052c4cd6fcf4b4e6e60ea986c889389535
+        uses: actions/upload-artifact@v3.0.0
         with:
           name: ${{ env.OUTPUT_DIR }}-${{ matrix.target }}
           path: |
@@ -159,52 +159,52 @@ jobs:
       NUGET_VERSION: ${{ steps.dotnet-pack.outputs.NUGET_VERSION }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v1
+        uses: actions/checkout@v3
 
       - name: Download x86_64-pc-windows-msvc
-        uses: actions/download-artifact@v1
+        uses: actions/download-artifact@v3
         with:
           name: ${{ env.OUTPUT_DIR }}-x86_64-pc-windows-msvc
           path: bin
 
       - name: Download i686-pc-windows-msvc
-        uses: actions/download-artifact@v1
+        uses: actions/download-artifact@v3
         with:
           name: ${{ env.OUTPUT_DIR }}-i686-pc-windows-msvc
           path: bin
 
       - name: Download x86_64-unknown-linux-gnu
-        uses: actions/download-artifact@v1
+        uses: actions/download-artifact@v3
         with:
           name: ${{ env.OUTPUT_DIR }}-x86_64-unknown-linux-gnu
           path: bin
 
       - name: Download aarch64-unknown-linux-gnu
-        uses: actions/download-artifact@v1
+        uses: actions/download-artifact@v3
         with:
           name: ${{ env.OUTPUT_DIR }}-aarch64-unknown-linux-gnu
           path: bin
 
       # - name: Download x86_64-unknown-linux-musl
-      #   uses: actions/download-artifact@v1
+      #   uses: actions/download-artifact@v3
       #   with:
       #     name: ${{ env.OUTPUT_DIR }}-x86_64-unknown-linux-musl
       #     path: bin
 
       # - name: Download aarch64-unknown-linux-musl
-      #   uses: actions/download-artifact@v1
+      #   uses: actions/download-artifact@v3
       #   with:
       #     name: ${{ env.OUTPUT_DIR }}-aarch64-unknown-linux-musl
       #     path: bin
 
       - name: Download aarch64-apple-darwin
-        uses: actions/download-artifact@v1
+        uses: actions/download-artifact@v3
         with:
           name: ${{ env.OUTPUT_DIR }}-aarch64-apple-darwin
           path: bin
 
       - name: Download x86_64-apple-darwin
-        uses: actions/download-artifact@v1
+        uses: actions/download-artifact@v3
         with:
           name: ${{ env.OUTPUT_DIR }}-x86_64-apple-darwin
           path: bin
@@ -221,7 +221,7 @@ jobs:
           dotnet pack windows/libdatadog.csproj -p:LibDatadogBinariesOutputDir=../${{ env.OUTPUT_DIR }} -p:LibDatadogVersion=$version -p:PackageID=${{ env.NUGET_NAME }} -o ${{ env.PACKAGES_DIR }}
 
       - name: Upload package
-        uses: actions/upload-artifact@6673cd052c4cd6fcf4b4e6e60ea986c889389535 # v4
+        uses: actions/upload-artifact@v3.0.0 # v4
         with:
           name: ${{ env.PACKAGES_DIR }}
           path: ${{ env.PACKAGES_DIR }}
@@ -239,10 +239,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v1
+        uses: actions/checkout@v3
 
       - name: Download package
-        uses: actions/download-artifact@v1
+        uses: actions/download-artifact@v3
         with:
           name: ${{ env.PACKAGES_DIR }}
           path: ${{ env.PACKAGES_DIR }}
@@ -264,10 +264,10 @@ jobs:
     needs: test
     steps:
       - name: Checkout code
-        uses: actions/checkout@v1
+        uses: actions/checkout@v3
 
       - name: Download package
-        uses: actions/download-artifact@v1
+        uses: actions/download-artifact@v3
         with:
           name: ${{ env.PACKAGES_DIR }}
           path: ${{ env.PACKAGES_DIR }}
