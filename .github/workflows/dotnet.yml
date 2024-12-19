@@ -86,6 +86,7 @@ jobs:
             source scl_source enable devtoolset-9
 
             gcc --version
+            ldd --version
 
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
@@ -123,6 +124,9 @@ jobs:
             source $HOME/.cargo/env
             rustup target add ${{ matrix.target }}
             cargo install --force cbindgen
+
+            gcc --version
+            ldd --version
 
             cd /workspace
             ./windows/build-artifacts.sh ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
@@ -245,6 +249,9 @@ jobs:
         include:
           - os: windows-latest
           - os: ubuntu-latest
+            container: centos:7
+          - os: arm-4core-linux-ubuntu24.04
+            container: centos:7
           - os: macos-latest
 
     steps:
@@ -257,12 +264,26 @@ jobs:
           name: ${{ env.PACKAGES_DIR }}
           path: ${{ env.PACKAGES_DIR }}
 
+      - name: ${{ matrix.container }} Test
+        uses: addnab/docker-run-action@v3
+        if: matrix.container == 'centos:7' || matrix.container == 'alpine:3.19'
+        with:
+          image: ${{ matrix.container }}
+          options: -v ${{ github.workspace }}:/workspace
+          run: |
+            curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 6.0 --install-dir /usr/share/dotnet
+            cd /workspace/tests/nuget_package
+            dotnet add nuget_package.csproj package ${{ env.NUGET_NAME }} --version ${{ needs.pack.outputs.NUGET_VERSION }}
+            dotnet run
+
       - name: Install .NET SDK
+        if: matrix.os == 'windows-latest' || matrix.os == 'macos-latest'
         uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 #v4
         with:
           dotnet-version: 6.0.X
 
       - name: Test
+        if: matrix.os == 'windows-latest' || matrix.os == 'macos-latest'
         run: |
           cd tests/nuget_package
           dotnet add nuget_package.csproj package ${{ env.NUGET_NAME }} --version ${{ needs.pack.outputs.NUGET_VERSION }}
