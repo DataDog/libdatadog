@@ -135,7 +135,7 @@ jobs:
         run: |
           source $HOME/.cargo/env
           ./windows/build-artifacts.sh ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
-        if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
+        if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest' || matrix.os == 'arm-4core-linux-ubuntu24.04'
         shell: bash
 
       - name: Upload artifacts
