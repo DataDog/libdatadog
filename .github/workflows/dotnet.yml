@@ -50,7 +50,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - uses: addnab/docker-run-action@v3
+      - name: centos:7
+        uses: addnab/docker-run-action@v3
         if: matrix.container == 'centos:7'
         with:
           image: ${{ matrix.container }}
@@ -101,7 +102,7 @@ jobs:
           ./windows/build-artifacts.ps1 ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
         shell: powershell
 
-      - name: Mac
+      - name: macOS
         if: matrix.os == 'macos-latest'
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
