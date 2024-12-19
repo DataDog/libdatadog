@@ -88,7 +88,7 @@ jobs:
             rustup target add ${{ matrix.target }}
             cargo install --force cbindgen
 
-            source $HOME/.cargo/env
+            cd /workspace
             ./windows/build-artifacts.sh ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
 
       - name: Windows
