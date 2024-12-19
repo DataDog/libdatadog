@@ -57,3 +57,10 @@ data-pipeline:
       'data-pipeline/**/*',
       'data-pipeline-ffi/**/*',
     ]
+
+crashtracker:
+- changed-files:
+  - any-glob-to-any-file: [
+    'crashtracker/**/*',
+    'crashtracker-ffi/**/*',
+  ]

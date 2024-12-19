@@ -42,6 +42,7 @@ async fn dogstatsd_server_ships_series() {
         Arc::clone(&metrics_aggr),
         mock_server.url(),
         None,
+        std::time::Duration::from_secs(5),
     );
 
     let server_address = "127.0.0.1:18125";

@@ -4,6 +4,8 @@
 use crate::aggregator::Aggregator;
 use crate::datadog;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tracing::debug;
 
 pub struct Flusher {
     dd_api: datadog::DdApi,
@@ -23,8 +25,9 @@ impl Flusher {
         aggregator: Arc<Mutex<Aggregator>>,
         site: String,
         https_proxy: Option<String>,
+        timeout: Duration,
     ) -> Self {
-        let dd_api = datadog::DdApi::new(api_key, site, https_proxy);
+        let dd_api = datadog::DdApi::new(api_key, site, https_proxy, timeout);
         Flusher { dd_api, aggregator }
     }
 
@@ -36,6 +39,14 @@ impl Flusher {
                 aggregator.consume_distributions(),
             )
         };
+
+        let n_series = all_series.len();
+        let n_distributions = all_distributions.len();
+
+        debug!("Flushing {n_series} series and {n_distributions} distributions");
+
+        // TODO: client timeout is for each invocation, so NxM times with N time series batches and
+        // M distro batches
         for a_batch in all_series {
             self.dd_api.ship_series(&a_batch).await;
             // TODO(astuyve) retry and do not panic

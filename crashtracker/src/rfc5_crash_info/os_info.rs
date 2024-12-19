@@ -3,12 +3,20 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::unknown_value::UnknownValue;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct OsInfo {
     pub architecture: String,
     pub bitness: String,
     pub os_type: String,
     pub version: String,
+}
+
+impl UnknownValue for OsInfo {
+    fn unknown_value() -> Self {
+        os_info::Info::unknown().into()
+    }
 }
 
 impl From<os_info::Info> for OsInfo {

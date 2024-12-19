@@ -1,9 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{Result, UsizeResult};
-use anyhow::Context;
-
+use ddcommon_ffi::{wrap_with_ffi_result, wrap_with_void_ffi_result, Result, VoidResult};
+use function_name::named;
 /// Resets all stored spans to 0.
 /// Expected to be used after a fork, to reset the spans on the child
 /// ATOMICITY:
@@ -14,10 +13,9 @@ use anyhow::Context;
 /// No safety concerns.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crasht_clear_span_ids() -> Result {
-    datadog_crashtracker::clear_spans()
-        .context("ddog_crasht_clear_span_ids failed")
-        .into()
+#[named]
+pub unsafe extern "C" fn ddog_crasht_clear_span_ids() -> VoidResult {
+    wrap_with_void_ffi_result!({ datadog_crashtracker::clear_spans()? })
 }
 
 /// Resets all stored traces to 0.
@@ -30,14 +28,14 @@ pub unsafe extern "C" fn ddog_crasht_clear_span_ids() -> Result {
 /// No safety concerns.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crasht_clear_trace_ids() -> Result {
-    datadog_crashtracker::clear_traces()
-        .context("ddog_crasht_clear_trace_ids failed")
-        .into()
+#[named]
+pub unsafe extern "C" fn ddog_crasht_clear_trace_ids() -> VoidResult {
+    wrap_with_void_ffi_result!({ datadog_crashtracker::clear_traces()? })
 }
 
 #[no_mangle]
 #[must_use]
+#[named]
 /// Atomically registers an active traceId.
 /// Useful for tracking what operations were occurring when a crash occurred.
 /// 0 is reserved for "NoId"
@@ -57,15 +55,16 @@ pub unsafe extern "C" fn ddog_crasht_clear_trace_ids() -> Result {
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_crasht_insert_trace_id(id_high: u64, id_low: u64) -> UsizeResult {
-    let id: u128 = (id_high as u128) << 64 | (id_low as u128);
-    datadog_crashtracker::insert_trace(id)
-        .context("ddog_crasht_insert_trace_id failed")
-        .into()
+pub unsafe extern "C" fn ddog_crasht_insert_trace_id(id_high: u64, id_low: u64) -> Result<usize> {
+    wrap_with_ffi_result!({
+        let id: u128 = (id_high as u128) << 64 | (id_low as u128);
+        datadog_crashtracker::insert_trace(id)
+    })
 }
 
 #[no_mangle]
 #[must_use]
+#[named]
 /// Atomically registers an active SpanId.
 /// Useful for tracking what operations were occurring when a crash occurred.
 /// 0 is reserved for "NoId".
@@ -85,15 +84,16 @@ pub unsafe extern "C" fn ddog_crasht_insert_trace_id(id_high: u64, id_low: u64) 
 ///
 /// # Safety
 /// No safety concerns.
-pub unsafe extern "C" fn ddog_crasht_insert_span_id(id_high: u64, id_low: u64) -> UsizeResult {
-    let id: u128 = (id_high as u128) << 64 | (id_low as u128);
-    datadog_crashtracker::insert_span(id)
-        .context("ddog_crasht_insert_span_id failed")
-        .into()
+pub unsafe extern "C" fn ddog_crasht_insert_span_id(id_high: u64, id_low: u64) -> Result<usize> {
+    wrap_with_ffi_result!({
+        let id: u128 = (id_high as u128) << 64 | (id_low as u128);
+        datadog_crashtracker::insert_span(id)
+    })
 }
 
 #[no_mangle]
 #[must_use]
+#[named]
 /// Atomically removes a completed SpanId.
 /// Useful for tracking what operations were occurring when a crash occurred.
 /// 0 is reserved for "NoId"
@@ -118,15 +118,16 @@ pub unsafe extern "C" fn ddog_crasht_remove_span_id(
     id_high: u64,
     id_low: u64,
     idx: usize,
-) -> Result {
-    let id: u128 = (id_high as u128) << 64 | (id_low as u128);
-    datadog_crashtracker::remove_span(id, idx)
-        .context("ddog_crasht_remove_span_id failed")
-        .into()
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        let id: u128 = (id_high as u128) << 64 | (id_low as u128);
+        datadog_crashtracker::remove_span(id, idx)?
+    })
 }
 
 #[no_mangle]
 #[must_use]
+#[named]
 /// Atomically removes a completed TraceId.
 /// Useful for tracking what operations were occurring when a crash occurred.
 /// 0 is reserved for "NoId"
@@ -151,9 +152,9 @@ pub unsafe extern "C" fn ddog_crasht_remove_trace_id(
     id_high: u64,
     id_low: u64,
     idx: usize,
-) -> Result {
-    let id: u128 = (id_high as u128) << 64 | (id_low as u128);
-    datadog_crashtracker::remove_trace(id, idx)
-        .context("ddog_crasht_remove_trace_id failed")
-        .into()
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        let id: u128 = (id_high as u128) << 64 | (id_low as u128);
+        datadog_crashtracker::remove_trace(id, idx)?
+    })
 }

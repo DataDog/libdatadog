@@ -11,8 +11,8 @@ use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiv
 use crate::shared::constants::*;
 use anyhow::Context;
 use libc::{
-    c_void, execve, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE,
-    PROT_READ, PROT_WRITE, SIGSTKSZ,
+    c_void, execve, mmap, nfds_t, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE,
+    PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ,
 };
 use libc::{poll, pollfd, POLLHUP};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
@@ -150,28 +150,23 @@ fn open_file_or_quiet(filename: Option<&str>) -> anyhow::Result<RawFd> {
 //       on macos, where the OS will terminate an offending process.  This appears to be untrue
 //       and `waitpid()` is characterized as async-signal safe by POSIX.
 fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
-    let timeout = Duration::from_millis(timeout_ms as u64);
+    let timeout = Duration::from_millis(timeout_ms.into());
     let start_time = Instant::now();
 
     loop {
         match waitpid(pid, Some(WaitPidFlag::WNOHANG)) {
-            Ok(WaitStatus::StillAlive) => {
-                if start_time.elapsed() > timeout {
-                    return Err(anyhow::anyhow!("Timeout waiting for child process to exit"));
-                }
-            }
-            Ok(_status) => {
-                return Ok(true);
-            }
+            Ok(WaitStatus::StillAlive) => anyhow::ensure!(
+                start_time.elapsed() <= timeout,
+                "Timeout waiting for child process to exit"
+            ),
+            Ok(_status) => return Ok(true),
             Err(nix::Error::ECHILD) => {
                 // Non-availability of the specified process is weird, since we should have
                 // exclusive access to reaping its exit, but at the very least means there is
                 // nothing further for us to do.
                 return Ok(true);
             }
-            _ => {
-                return Err(anyhow::anyhow!("Error waiting for child process to exit"));
-            }
+            _ => anyhow::bail!("Error waiting for child process to exit"),
         }
     }
 }
@@ -228,6 +223,7 @@ fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout
     }
 }
 
+/// true if successful wait, false if timeout occurred.
 fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
     let mut poll_fds = [pollfd {
         fd: target_fd,
@@ -235,7 +231,7 @@ fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
         revents: 0,
     }];
 
-    match unsafe { poll(poll_fds.as_mut_ptr(), 1, timeout_ms) } {
+    match unsafe { poll(poll_fds.as_mut_ptr(), poll_fds.len() as nfds_t, timeout_ms) } {
         -1 => Err(anyhow::anyhow!(
             "poll failed with errno: {}",
             std::io::Error::last_os_error()
@@ -243,14 +239,11 @@ fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
         0 => Ok(false), // Timeout occurred
         _ => {
             let revents = poll_fds[0].revents;
-            if revents & POLLHUP != 0 {
-                Ok(true) // POLLHUP detected
-            } else {
-                Err(anyhow::anyhow!(
-                    "poll returned unexpected result: revents = {}",
-                    revents
-                ))
-            }
+            anyhow::ensure!(
+                revents & POLLHUP != 0,
+                "poll returned unexpected result: revents = {revents}"
+            );
+            Ok(true) // POLLHUP detected
         }
     }
 }

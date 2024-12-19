@@ -34,6 +34,7 @@ impl From<crate::SigInfo> for SigInfo {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::upper_case_acronyms, non_camel_case_types)]
+#[repr(C)]
 /// See https://man7.org/linux/man-pages/man7/signal.7.html
 pub enum SignalNames {
     SIGABRT,
@@ -64,6 +65,7 @@ impl From<libc::c_int> for SignalNames {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::upper_case_acronyms, non_camel_case_types)]
+#[repr(C)]
 /// See https://man7.org/linux/man-pages/man2/sigaction.2.html
 pub enum SiCodes {
     BUS_ADRALN,
