@@ -14,7 +14,6 @@ env:
   OUTPUT_DIR: bin
   PACKAGES_DIR: packages
   NUGET_NAME: ganeshnj.libdatadog
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true # https://github.com/actions/checkout/issues/1809
 
 jobs:
   build:
@@ -22,6 +21,11 @@ jobs:
 
     # only set container for linux builds
     container: ${{ matrix.container }}
+
+    env:
+      ACTIONS_RUNNER_FORCED_INTERNAL_NODE_VERSION: node16
+      ACTIONS_RUNNER_FORCE_ACTIONS_NODE_VERSION: node16
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
     strategy:
       matrix:
