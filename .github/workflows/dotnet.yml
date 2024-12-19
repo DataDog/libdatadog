@@ -19,8 +19,7 @@ jobs:
   build:
     runs-on: ${{ matrix.os }}
 
-    # only set container for linux builds
-    container: ${{ matrix.container }}
+    # container: ${{ matrix.container }}
 
     env:
       ACTIONS_RUNNER_FORCE_ACTIONS_NODE_VERSION: node16
@@ -49,38 +48,49 @@ jobs:
             target: x86_64-apple-darwin
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Prepare toolset
+      - uses: addnab/docker-run-action@v3
         if: matrix.container == 'centos:7'
-        run: |
-          sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
-          sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
+        with:
+          image: ${{ matrix.container }}
+          options: -v ${{ github.workspace }}:/workspace
+          run: |
+            sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
+            sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
 
-          yum install epel-release -y
+            yum install epel-release -y
 
-          yum clean all -y && yum makecache -y && yum update -y
+            yum clean all -y && yum makecache -y && yum update -y
 
-          yum install -y centos-release-scl \
-            && sed -i s/mirror.centos.org/buildlogs.centos.org/g /etc/yum.repos.d/CentOS-SCLo-*.repo \
-            && sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/CentOS-SCLo-*.repo \
-            && sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/CentOS-SCLo-*.repo \
-            && yum install -y --setopt=tsflags=nodocs --nogpgcheck \
-            curl \
-            devtoolset-9 \
-            git \
-            make \
-            pkg-config \
-            unzip \
-            strace \
-            zlib-devel \
-            jq \
-            && yum clean all --enablerepo='*' \
+            yum install -y centos-release-scl \
+              && sed -i s/mirror.centos.org/buildlogs.centos.org/g /etc/yum.repos.d/CentOS-SCLo-*.repo \
+              && sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/CentOS-SCLo-*.repo \
+              && sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/CentOS-SCLo-*.repo \
+              && yum install -y --setopt=tsflags=nodocs --nogpgcheck \
+              curl \
+              devtoolset-9 \
+              git \
+              make \
+              pkg-config \
+              unzip \
+              strace \
+              zlib-devel \
+              jq \
+              && yum clean all --enablerepo='*' \
 
-          scl enable devtoolset-9 bash
-          gcc --version
+            scl enable devtoolset-9 bash
+            gcc --version
 
-      - name: Install rustup
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            source $HOME/.cargo/env
+            rustup target add ${{ matrix.target }}
+            cargo install --force cbindgen
+
+            source $HOME/.cargo/env
+            ./windows/build-artifacts.sh ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
+
+      - name: Windows
         if: matrix.os == 'windows-latest'
         run: |
           $ProgressPreference = "SilentlyContinue"
@@ -88,58 +98,21 @@ jobs:
           .\rustup-init.exe -y --default-host=${{ matrix.target }} --default-toolchain stable --profile minimal
           del rustup-init.exe
           rustup target add ${{ matrix.target }}
+          ./windows/build-artifacts.ps1 ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
         shell: powershell
 
-      - name: Install rustup
+      - name: Mac
         if: matrix.os == 'macos-latest'
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           source $HOME/.cargo/env
           rustup target add ${{ matrix.target }}
           cargo install --force cbindgen
-        shell: bash
-
-      - name: Install rustup
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          source $HOME/.cargo/env
-          rustup target add ${{ matrix.target }}
-          cargo install --force cbindgen
-        shell: bash
-
-      - name: Setup cross-compilation
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          cat .cargo/config.github >> .cargo/config
-
-      # - name: Install musl x86_64 dependencies
-      #   if: matrix.target == 'x86_64-unknown-linux-musl'
-      #   run: sudo apt-get install musl-tools
-
-      # - name: Install musl aarch64 dependencies
-      #   if: matrix.target == 'aarch64-unknown-linux-musl'
-      #   run: |
-      #     mkdir -p $HOME/.local
-      #     curl -o /tmp/musl.tgz https://musl.cc/aarch64-linux-musl-cross.tgz
-      #     tar -xzf /tmp/musl.tgz -C $HOME/.local
-      #     echo "$HOME/.local/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
-      #     cat .cargo/config.github >> .cargo/config
-
-      - name: Build
-        run:  ./windows/build-artifacts.ps1 ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
-        if : matrix.os == 'windows-latest'
-        shell: pwsh
-
-      - name: Build
-        run: |
-          source $HOME/.cargo/env
           ./windows/build-artifacts.sh ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
-        if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest' || matrix.os == 'arm-4core-linux-ubuntu24.04'
         shell: bash
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v3.0.0
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ env.OUTPUT_DIR }}-${{ matrix.target }}
           path: |
@@ -159,52 +132,52 @@ jobs:
       NUGET_VERSION: ${{ steps.dotnet-pack.outputs.NUGET_VERSION }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Download x86_64-pc-windows-msvc
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ env.OUTPUT_DIR }}-x86_64-pc-windows-msvc
           path: bin
 
       - name: Download i686-pc-windows-msvc
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ env.OUTPUT_DIR }}-i686-pc-windows-msvc
           path: bin
 
       - name: Download x86_64-unknown-linux-gnu
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ env.OUTPUT_DIR }}-x86_64-unknown-linux-gnu
           path: bin
 
       - name: Download aarch64-unknown-linux-gnu
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ env.OUTPUT_DIR }}-aarch64-unknown-linux-gnu
           path: bin
 
       # - name: Download x86_64-unknown-linux-musl
-      #   uses: actions/download-artifact@v3
+      #   uses: actions/download-artifact@v4
       #   with:
       #     name: ${{ env.OUTPUT_DIR }}-x86_64-unknown-linux-musl
       #     path: bin
 
       # - name: Download aarch64-unknown-linux-musl
-      #   uses: actions/download-artifact@v3
+      #   uses: actions/download-artifact@v4
       #   with:
       #     name: ${{ env.OUTPUT_DIR }}-aarch64-unknown-linux-musl
       #     path: bin
 
       - name: Download aarch64-apple-darwin
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ env.OUTPUT_DIR }}-aarch64-apple-darwin
           path: bin
 
       - name: Download x86_64-apple-darwin
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ env.OUTPUT_DIR }}-x86_64-apple-darwin
           path: bin
@@ -221,7 +194,7 @@ jobs:
           dotnet pack windows/libdatadog.csproj -p:LibDatadogBinariesOutputDir=../${{ env.OUTPUT_DIR }} -p:LibDatadogVersion=$version -p:PackageID=${{ env.NUGET_NAME }} -o ${{ env.PACKAGES_DIR }}
 
       - name: Upload package
-        uses: actions/upload-artifact@v3.0.0 # v4
+        uses: actions/upload-artifact@v4 # v4
         with:
           name: ${{ env.PACKAGES_DIR }}
           path: ${{ env.PACKAGES_DIR }}
@@ -239,10 +212,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Download package
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ env.PACKAGES_DIR }}
           path: ${{ env.PACKAGES_DIR }}
@@ -264,10 +237,10 @@ jobs:
     needs: test
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Download package
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: ${{ env.PACKAGES_DIR }}
           path: ${{ env.PACKAGES_DIR }}
