@@ -97,12 +97,11 @@
     <None Include="$(LibDatadogBinariesOutputDir)\aarch64-unknown-linux-gnu\release\libdatadog_profiling_ffi.so"
       Pack="true" PackagePath="runtimes\linux-arm64\native\datadog_profiling_ffi.so" />
 
-    <!-- musl corss compiling has issues in CI  -->
-    <!-- <None Include="$(LibDatadogBinariesOutputDir)\x86_64-unknown-linux-musl\release\libdatadog_profiling_ffi.so"
+    <None Include="$(LibDatadogBinariesOutputDir)\x86_64-unknown-linux-musl\release\libdatadog_profiling_ffi.so"
       Pack="true" PackagePath="runtimes\linux-musl-x64\native\datadog_profiling_ffi.so" />
 
     <None Include="$(LibDatadogBinariesOutputDir)\aarch64-unknown-linux-musl\release\libdatadog_profiling_ffi.so"
-      Pack="true" PackagePath="runtimes\linux-musl-arm64\native\datadog_profiling_ffi.so" /> -->
+      Pack="true" PackagePath="runtimes\linux-musl-arm64\native\datadog_profiling_ffi.so" />
 
     <None Include="$(LibDatadogBinariesOutputDir)\aarch64-apple-darwin\release\libdatadog_profiling_ffi.dylib"
       Pack="true" PackagePath="runtimes\osx-arm64\native\datadog_profiling_ffi.dylib" />

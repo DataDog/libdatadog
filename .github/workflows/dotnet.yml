@@ -38,10 +38,12 @@ jobs:
           - os: arm-4core-linux-ubuntu24.04
             target: aarch64-unknown-linux-gnu
             container: centos:7
-          # - os: ubuntu-latest
-          #   target: x86_64-unknown-linux-musl
-          # - os: ubuntu-latest
-          #   target: aarch64-unknown-linux-musl
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            container: alpine:3.19
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            container: alpine:3.19
           - os: macos-latest
             target: aarch64-apple-darwin
           - os: macos-latest
@@ -84,6 +86,38 @@ jobs:
             source scl_source enable devtoolset-9
 
             gcc --version
+
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            source $HOME/.cargo/env
+            rustup target add ${{ matrix.target }}
+            cargo install --force cbindgen
+
+            cd /workspace
+            ./windows/build-artifacts.sh ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
+
+      - name: alpine:3.19
+        uses: addnab/docker-run-action@v3
+        if: matrix.container == 'alpine:3.19'
+        with:
+          image: ${{ matrix.container }}
+          options: -v ${{ github.workspace }}:/workspace
+          run: |
+            apk update \
+            && apk add --no-cache \
+              build-base \
+              cargo \
+              cmake \
+              curl \
+              git \
+              make \
+              patchelf \
+              protoc \
+              pkgconf \
+              unzip \
+              bash \
+              jq \
+              clang16-libclang \
+            && mkdir /usr/local/src \
 
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             source $HOME/.cargo/env
@@ -161,17 +195,17 @@ jobs:
           name: ${{ env.OUTPUT_DIR }}-aarch64-unknown-linux-gnu
           path: bin
 
-      # - name: Download x86_64-unknown-linux-musl
-      #   uses: actions/download-artifact@v4
-      #   with:
-      #     name: ${{ env.OUTPUT_DIR }}-x86_64-unknown-linux-musl
-      #     path: bin
+      - name: Download x86_64-unknown-linux-musl
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.OUTPUT_DIR }}-x86_64-unknown-linux-musl
+          path: bin
 
-      # - name: Download aarch64-unknown-linux-musl
-      #   uses: actions/download-artifact@v4
-      #   with:
-      #     name: ${{ env.OUTPUT_DIR }}-aarch64-unknown-linux-musl
-      #     path: bin
+      - name: Download aarch64-unknown-linux-musl
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.OUTPUT_DIR }}-aarch64-unknown-linux-musl
+          path: bin
 
       - name: Download aarch64-apple-darwin
         uses: actions/download-artifact@v4
