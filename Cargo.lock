@@ -1552,7 +1552,7 @@ dependencies = [
 [[package]]
 name = "datadog-protos"
 version = "0.1.0"
-source = "git+https://github.com/DataDog/saluki/?rev=a5b640d1d2ba3a0cd8a32a4137bccba2b648bd00#a5b640d1d2ba3a0cd8a32a4137bccba2b648bd00"
+source = "git+https://github.com/DataDog/saluki/?rev=c89b58e5784b985819baf11f13f7d35876741222#c89b58e5784b985819baf11f13f7d35876741222"
 dependencies = [
  "bytes",
  "prost 0.13.3",
@@ -1844,7 +1844,7 @@ dependencies = [
 [[package]]
 name = "ddsketch-agent"
 version = "0.1.0"
-source = "git+https://github.com/DataDog/saluki/?rev=a5b640d1d2ba3a0cd8a32a4137bccba2b648bd00#a5b640d1d2ba3a0cd8a32a4137bccba2b648bd00"
+source = "git+https://github.com/DataDog/saluki/?rev=c89b58e5784b985819baf11f13f7d35876741222#c89b58e5784b985819baf11f13f7d35876741222"
 dependencies = [
  "datadog-protos",
  "float-cmp",
