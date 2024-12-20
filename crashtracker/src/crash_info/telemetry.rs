@@ -12,6 +12,7 @@ use ddtelemetry::{
     build_host,
     data::{self, Application, LogLevel},
     worker::http_client::request_builder,
+    worker::http_client::header
 };
 
 struct TelemetryMetadata {
@@ -165,6 +166,14 @@ impl TelemetryCrashUploader {
             .header(
                 http::header::CONTENT_TYPE,
                 ddcommon::header::APPLICATION_JSON,
+            )
+            .header(
+                ddtelemetry::worker::http_client::header::API_VERSION,
+                ddtelemetry::data::ApiVersion::V2.to_str()
+            )
+            .header(
+                ddtelemetry::worker::http_client::header::REQUEST_TYPE,
+                "logs"
             )
             .body(serde_json::to_string(&payload)?.into())?;
 

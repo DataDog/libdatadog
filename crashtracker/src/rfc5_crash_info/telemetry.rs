@@ -139,11 +139,19 @@ impl TelemetryCrashUploader {
             origin: Some("Crashtracker"),
         };
         let client = ddtelemetry::worker::http_client::from_config(&self.cfg);
-        let req = request_builder(&self.cfg)?
+        let req = request_buil der(&self.cfg)?
             .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,
                 ddcommon::header::APPLICATION_JSON,
+            )
+            .header(
+                ddtelemetry::worker::http_client::header::API_VERSION,
+                ddtelemetry::data::ApiVersion::V2.to_str()
+            )
+            .header(
+                ddtelemetry::worker::http_client::header::REQUEST_TYPE,
+                "logs"
             )
             .body(serde_json::to_string(&payload)?.into())?;
 
