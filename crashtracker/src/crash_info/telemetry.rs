@@ -12,7 +12,6 @@ use ddtelemetry::{
     build_host,
     data::{self, Application, LogLevel},
     worker::http_client::request_builder,
-    worker::http_client::header
 };
 
 struct TelemetryMetadata {
