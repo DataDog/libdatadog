@@ -147,11 +147,11 @@ impl TelemetryCrashUploader {
             )
             .header(
                 ddtelemetry::worker::http_client::header::API_VERSION,
-                ddtelemetry::data::ApiVersion::V2.to_str()
+                ddtelemetry::data::ApiVersion::V2.to_str(),
             )
             .header(
                 ddtelemetry::worker::http_client::header::REQUEST_TYPE,
-                "logs"
+                "logs",
             )
             .body(serde_json::to_string(&payload)?.into())?;
 
