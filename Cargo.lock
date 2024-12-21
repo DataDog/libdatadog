@@ -1443,6 +1443,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-library-config-ffi"
+version = "0.0.1"
+dependencies = [
+ "build_common",
+ "ddcommon",
+ "ddcommon-ffi",
+]
+
+[[package]]
 name = "datadog-live-debugger"
 version = "0.0.1"
 dependencies = [
