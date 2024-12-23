@@ -9,6 +9,8 @@ pub enum ParseError {
     /// Parse failure given in text
     #[error("parse failure: {0}")]
     Raw(&'static str),
+    #[error("unsupported metric type")]
+    UnsupportedType(),
 }
 
 /// Failure to create a new `Aggregator`
