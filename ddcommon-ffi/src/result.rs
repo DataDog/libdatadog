@@ -24,6 +24,15 @@ impl From<anyhow::Result<()>> for VoidResult {
     }
 }
 
+impl From<VoidResult> for anyhow::Result<()> {
+    fn from(value: VoidResult) -> Self {
+        match value {
+            VoidResult::Ok(_) => Self::Ok(()),
+            VoidResult::Err(err) => Self::Err(err.into()),
+        }
+    }
+}
+
 /// A generic result type for when an operation may fail,
 /// or may return <T> in case of success.
 #[repr(C)]
@@ -46,6 +55,15 @@ impl<T> From<anyhow::Result<T>> for Result<T> {
         match value {
             Ok(v) => Self::Ok(v),
             Err(err) => Self::Err(err.into()),
+        }
+    }
+}
+
+impl<T> From<Result<T>> for anyhow::Result<T> {
+    fn from(value: Result<T>) -> Self {
+        match value {
+            Result::Ok(v) => Self::Ok(v),
+            Result::Err(err) => Self::Err(err.into()),
         }
     }
 }
