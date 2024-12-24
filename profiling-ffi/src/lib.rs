@@ -18,3 +18,7 @@ pub use ddtelemetry_ffi::*;
 #[cfg(feature = "data-pipeline-ffi")]
 #[allow(unused_imports)]
 pub use data_pipeline_ffi::*;
+
+// re-export crashtracker ffi
+#[cfg(feature = "datadog-library-config-ffi")]
+pub use datadog_library_config_ffi::*;
