@@ -1,66 +1,62 @@
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+mod static_config;
+
 use std::path::PathBuf;
 
-use ddcommon_ffi as ffi;
+use ddcommon_ffi::{self as ffi, slice::AsBytes};
+use static_config::{Configurator, LibraryConfig, LibraryConfigName, ProcessInfo};
 
-#[repr(C)]
-pub struct ProcessInfo<'a> {
-    pub args: ffi::Slice<'a, ffi::CharSlice<'a>>,
-    pub envp: ffi::Slice<'a, ffi::CharSlice<'a>>,
-    language: ffi::CharSlice<'a>,
-}
+// TODO: Centos 6 build
+// Trust me it works bro 😉😉😉
+// #[cfg(linux)]
+// std::arch::global_asm!(".symver memcpy,memcpy@GLIBC_2.2.5");
 
-#[repr(C)]
-pub enum Value {
-    NumVal(i64),
-    BoolVal(bool),
-    StrVal(ffi::StringWrapper),
-}
-
-#[repr(C)]
-pub enum ConfigName {
-    DdTraceDebug = 0,
-}
-
-#[repr(C)]
-pub struct Config {
-    pub name: ConfigName,
-    pub value: Value,
-}
-
-#[derive(Debug)]
-pub struct Configurator {
-    debug_logs: bool,
-    #[allow(dead_code)]
-    static_config_file_path: PathBuf,
-}
 
 #[no_mangle]
-pub extern "C" fn ddog_library_config_new(debug_logs: bool) -> Box<Configurator> {
-    Box::new(Configurator {
+pub extern "C" fn ddog_library_configurator_new(debug_logs: bool) -> Box<Configurator> {
+    Box::new(Configurator::new(
         debug_logs,
-        static_config_file_path: PathBuf::from(
-            "/etc/datadog-agent/managed/datadog-apm-libraries/st",
-        ),
-    })
+        PathBuf::from("/etc/datadog-agent/managed/datadog-apm-libraries/static_config.yaml"),
+    ))
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_library_config_drop(_: Box<Configurator>) {}
+/// Sets the path at which we will read the static configuration file.
+/// This should mainly be used for testing
+pub extern "C" fn ddog_library_configurator_with_path(
+    configurator: &mut Configurator,
+    p: ffi::CharSlice,
+) {
+    configurator.static_config_file_path = PathBuf::from(p.to_utf8_lossy().into_owned());
+}
 
 #[no_mangle]
-pub extern "C" fn ddog_library_config_get<'a>(
+pub extern "C" fn ddog_library_configurator_drop(_: Box<Configurator>) {}
+
+#[no_mangle]
+pub extern "C" fn ddog_library_configurator_get<'a>(
     configurator: &'a Configurator,
     process_info: ProcessInfo<'a>,
-) -> ffi::Vec<Config> {
+) -> ffi::Result<ffi::Vec<LibraryConfig>> {
     if configurator.debug_logs {
-        println!("Called library_config_common_component:");
-        println!("\tconfigurator: {:?}", configurator);
-        println!("\tprocess args: {:?}", process_info.args);
+        eprintln!("Called library_config_common_component:");
+        eprintln!("\tconfigurator: {:?}", configurator);
+        eprintln!("\tprocess args: {:?}", process_info.args);
         // TODO: this is for testing purpose, we don't want to log env variables
-        println!("\tprocess envs: {:?}", process_info.args);
+        eprintln!("\tprocess envs: {:?}", process_info.args);
     }
-    ffi::Vec::from(vec![Config {
-        name: ConfigName::DdTraceDebug,
-        value: Value::BoolVal(true),
-    }])
+    configurator
+        .get_configuration(process_info)
+        .map(ffi::Vec::from_std)
+        .into()
 }
+
+#[no_mangle]
+pub extern "C" fn ddog_library_config_name_to_env(name: LibraryConfigName) -> ffi::CStr<'static> {
+    ffi::CStr::from_std(name.to_env_name())
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_library_config_drop(_: ffi::Vec<LibraryConfig>) {}

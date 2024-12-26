@@ -23,3 +23,6 @@ cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
+
+[dev-dependencies]
+tempfile = {version = "3.3"}

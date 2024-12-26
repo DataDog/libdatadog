@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#include <_stdlib.h>
 #include <datadog/common.h>
 #include <datadog/library-config.h>
 #include <stdio.h>
@@ -38,6 +39,8 @@ int main(int argc, const char *const *argv) {
   for (int i = 0; i < configs.len; i++) {
     const ddog_LibraryConfig *cfg = &configs.ptr[i];
     ddog_CStr name = ddog_library_config_name_to_env(cfg->name);
-    printf("%s %s\n", name.ptr, DDOG_VAL_STR_PTR(cfg->value));
+
+    printf("Setting env variable: %s=%s\n", name.ptr, DDOG_VAL_STR_PTR(cfg->value));
+    setenv(name.ptr, DDOG_VAL_STR_PTR(cfg->value), 1);
   }
 }

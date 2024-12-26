@@ -1452,6 +1452,7 @@ dependencies = [
  "ddcommon-ffi",
  "serde",
  "serde_yaml",
+ "tempfile",
 ]
 
 [[package]]
