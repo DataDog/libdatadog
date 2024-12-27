@@ -126,7 +126,7 @@ pub struct LibraryConfig {
 pub struct ProcessInfo<'a> {
     pub args: ffi::Slice<'a, ffi::CharSlice<'a>>,
     pub envp: ffi::Slice<'a, ffi::CharSlice<'a>>,
-    language: ffi::CharSlice<'a>,
+    pub language: ffi::CharSlice<'a>,
 }
 
 impl Configurator {
@@ -154,7 +154,7 @@ impl Configurator {
         };
         let library_config = template_configs(configs, &process_info)?;
         if self.debug_logs {
-            eprintln!("Would apply the following configuration: {library_config:?}");
+            eprintln!("Will apply the following configuration: {library_config:?}");
         }
         Ok(vec![LibraryConfig {
             name: LibraryConfigName::DdTraceDebug,
