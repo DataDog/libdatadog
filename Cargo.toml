@@ -12,6 +12,7 @@ members = [
   "profiling-replayer",
   "ddcommon",
   "ddcommon-ffi",
+  "ddcommon-net",
   "ddtelemetry",
   "ddtelemetry-ffi",
   "dogstatsd",
