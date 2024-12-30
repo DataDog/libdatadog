@@ -11,14 +11,9 @@ use ddtelemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
 };
 use std::collections::HashMap;
-use std::future::Future;
 use std::time::Duration;
 use tokio::select;
 use tokio::task::JoinHandle;
-
-pub trait CancellationObject {
-    fn shutdown(&self) -> impl Future<Output = ()>;
-}
 
 #[derive(Default)]
 pub struct Metrics {
@@ -54,6 +49,7 @@ impl Metrics {
     }
 }
 
+#[derive(Debug, PartialEq)]
 struct SelfMetric(MetricType, MetricNamespace);
 
 #[derive(Default)]
@@ -159,14 +155,13 @@ pub struct TelemetryClient {
 }
 
 impl TelemetryClient {
-    async fn enqueue_point(&self, value: f64, key: ContextKey, tags: Vec<Tag>) {
-        let _ = self
-            .worker
+    async fn enqueue_point(&self, value: f64, key: ContextKey, tags: Vec<Tag>) -> Result<()> {
+        self.worker
             .send_msg(TelemetryActions::AddPoint((value, key, tags)))
-            .await;
+            .await
     }
 
-    pub async fn send(&mut self, metrics: Metrics) {
+    async fn send(&mut self, metrics: Metrics) {
         let mut futures = Vec::new();
         if metrics.active_sessions > 0 {
             let key = self.metrics.get("server.active_sessions").unwrap();
@@ -258,29 +253,189 @@ impl TelemetryClient {
 
     pub async fn run<U, C>(&mut self, mut update: U, cancellation: C)
     where
-        U: FnMut() -> Metrics,
-        C: CancellationObject,
+        U: FnMut() -> Option<Metrics>,
+        C: std::future::Future,
     {
         let _ = self
             .worker
             .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
             .await;
+
+        tokio::pin!(cancellation);
+
         loop {
             select! {
                 _ = self.interval.tick() => {
-                    let metrics = update();
-                    self.send(metrics).await;
-                    let _ = self.worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushMetricAggr)).await;
-                    let _ = self.worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData)).await;
+                    if let Some(metrics) = update() {
+                        self.send(metrics).await;
+                        let _ = self.worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushMetricAggr)).await;
+                        let _ = self.worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData)).await;
+                    }
                 },
-                _ = cancellation.shutdown() => {
-                    let metrics = update();
-                    self.send(metrics).await;
+                _ = &mut cancellation => {
+                    if let Some(metrics) = update() {
+                        // TODO: is this necessary?
+                        self.send(metrics).await;
+                    }
                     let _ = self.worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop)).await;
                     let _ = (&mut self.handle).await;
                     return
                 },
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ddcommon::Endpoint;
+    use ddtelemetry::config::Config;
+    use httpmock::Method::POST;
+    use httpmock::MockServer;
+
+    use super::*;
+
+    #[derive(Debug, Default)]
+    struct MetricBucket {
+        updated: bool,
+        bytes: u64,
+    }
+
+    impl MetricBucket {
+        pub fn update(&mut self, bytes: u64) {
+            self.updated = true;
+            self.bytes += bytes;
+        }
+
+        pub fn get(&mut self) -> Option<Metrics> {
+            if self.updated {
+                self.updated = false;
+                Some(Metrics {
+                    bytes_sent: self.bytes,
+                    ..Default::default()
+                })
+            } else {
+                None
+            }
+        }
+    }
+
+    #[test]
+    fn builder_test() {
+        let config = Config::default();
+
+        let builder = TelemetryClientBuilder::new()
+            .set_service_name("test_service")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_interval(100)
+            .set_config(config)
+            .add_metric("test.foo", MetricType::Count, MetricNamespace::Telemetry)
+            .add_metric(
+                "test.bar",
+                MetricType::Distribution,
+                MetricNamespace::General,
+            );
+
+        assert_eq!(&builder.service_name.unwrap(), "test_service");
+        assert_eq!(&builder.language.unwrap(), "test_language");
+        assert_eq!(&builder.language_version.unwrap(), "test_language_version");
+        assert_eq!(&builder.tracer_version.unwrap(), "test_tracer_version");
+        assert_eq!(builder.interval, 100_u64);
+        assert_eq!(builder.config.endpoint, None);
+        assert!(!builder.config.restartable);
+        assert!(!builder.config.direct_submission_enabled);
+        assert_eq!(
+            builder.config.telemetry_hearbeat_interval,
+            Duration::new(60, 0)
+        );
+        assert!(!builder.config.telemetry_debug_logging_enabled);
+        assert_eq!(
+            *builder.metrics.get("test.foo").unwrap(),
+            SelfMetric(MetricType::Count, MetricNamespace::Telemetry)
+        );
+        assert_eq!(
+            *builder.metrics.get("test.bar").unwrap(),
+            SelfMetric(MetricType::Distribution, MetricNamespace::General)
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn spawn_test() {
+        let config = Config::default();
+
+        let client = TelemetryClientBuilder::new()
+            .set_service_name("test_service")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_interval(100)
+            .set_config(config)
+            .add_metric("test.foo", MetricType::Count, MetricNamespace::Telemetry)
+            .add_metric(
+                "test.bar",
+                MetricType::Distribution,
+                MetricNamespace::General,
+            )
+            .spawn()
+            .await;
+
+        assert!(client.is_ok());
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn run_test() {
+        let server = MockServer::start_async().await;
+
+        let telemetry_srv = server.mock_async(|when, then| {
+            when.method(POST)
+                .body_contains("\"payload\":[{\"request_type\":\"sketches\",\"payload\":{\"series\":[{\"namespace\":\"tracers\",\"metric\":\"trace_api.bytes\",\"tags\":[\"src_library:libdatadog\"]")
+                .path("/telemetry/proxy/api/v2/apmtelemetry");
+            then.status(200).body("");
+        })
+        .await;
+
+        let mut config = Config {
+            telemetry_hearbeat_interval: Duration::from_secs(1),
+            ..Default::default()
+        };
+        let _ = config.set_endpoint(Endpoint::from_url(
+            server.url("/").parse::<hyper::Uri>().unwrap(),
+        ));
+
+        let client = TelemetryClientBuilder::new()
+            .set_service_name("test_service")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_interval(100)
+            .set_config(config)
+            .add_metric(
+                "trace_api.bytes",
+                MetricType::Distribution,
+                MetricNamespace::Tracers,
+            )
+            .spawn()
+            .await;
+
+        assert!(client.is_ok());
+
+        // Ensure metrics are only sent once by just allowing one interval.
+        let cancel_future =
+            tokio::time::sleep_until(tokio::time::Instant::now() + Duration::from_millis(100));
+        // Mock metrics retrieval
+        let mut global_metrics = MetricBucket::default();
+        global_metrics.update(1);
+
+        client
+            .unwrap()
+            .run(|| global_metrics.get(), cancel_future)
+            .await;
+
+        // Assert that just one payload contains the 'trace.api_bytes' metric.
+        telemetry_srv.assert_hits_async(1).await;
     }
 }
