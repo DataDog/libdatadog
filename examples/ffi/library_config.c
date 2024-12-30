@@ -1,7 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#include <_stdlib.h>
 #include <datadog/common.h>
 #include <datadog/library-config.h>
 #include <stdio.h>
