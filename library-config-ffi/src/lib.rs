@@ -13,12 +13,13 @@ use static_config::{Configurator, LibraryConfig, LibraryConfigName, ProcessInfo}
 // #[cfg(linux)]
 // std::arch::global_asm!(".symver memcpy,memcpy@GLIBC_2.2.5");
 
-
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_new(debug_logs: bool) -> Box<Configurator> {
     Box::new(Configurator::new(
         debug_logs,
-        PathBuf::from("/etc/datadog-agent/managed/datadog-apm-libraries/stable/libraries_config.yaml"),
+        PathBuf::from(
+            "/etc/datadog-agent/managed/datadog-apm-libraries/stable/libraries_config.yaml",
+        ),
     ))
 }
 
@@ -43,12 +44,23 @@ pub extern "C" fn ddog_library_configurator_get<'a>(
     if configurator.debug_logs {
         eprintln!("Called library_config_common_component:");
         eprintln!("\tconfigurator: {:?}", configurator);
-        let args: Vec<String> = process_info.args.iter().map(|arg| arg.to_utf8_lossy().into_owned()).collect();
+        let args: Vec<String> = process_info
+            .args
+            .iter()
+            .map(|arg| arg.to_string())
+            .collect();
         eprintln!("\tprocess args: {:?}", args);
         // TODO: this is for testing purpose, we don't want to log env variables
-        let envs: Vec<String> = process_info.envp.iter().map(|env| env.to_utf8_lossy().into_owned()).collect();
+        let envs: Vec<String> = process_info
+            .envp
+            .iter()
+            .map(|env| env.to_string())
+            .collect();
         eprintln!("\tprocess envs: {:?}", envs);
-        eprintln!("\tprocess language: {:?}", process_info.language.to_utf8_lossy().into_owned());
+        eprintln!(
+            "\tprocess language: {:?}",
+            process_info.language.to_string()
+        );
     }
     configurator
         .get_configuration(process_info)

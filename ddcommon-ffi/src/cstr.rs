@@ -60,7 +60,7 @@ impl CString {
         Ok(Self::from_std(std::ffi::CString::new(t)?))
     }
 
-    pub fn as_cstr<'a>(&'a self) -> CStr<'a> {
+    pub fn as_cstr(&self) -> CStr<'_> {
         CStr {
             ptr: self.ptr,
             length: self.length,

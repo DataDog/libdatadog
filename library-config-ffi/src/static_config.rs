@@ -38,15 +38,15 @@ struct StaticConfig {
     rules: Vec<Rule>,
 }
 
-fn find_static_config<'a, 'b>(
+fn find_static_config<'a>(
     cfg: &'a StaticConfig,
-    process_info: &ProcessInfo<'b>,
+    process_info: &ProcessInfo<'_>,
 ) -> Option<&'a HashMap<LibraryConfigName, String>> {
     for rule in &cfg.rules {
         if rule
             .selectors
             .iter()
-            .all(|s| selector_match(&s, process_info))
+            .all(|s| selector_match(s, process_info))
         {
             return Some(&rule.configuration);
         }
@@ -54,9 +54,26 @@ fn find_static_config<'a, 'b>(
     None
 }
 
+// Returns true if the selector matches the process info
+// Any element in the "matches" section of the selector must match, they are ORed,
+// as selectors are ANDed.
 fn selector_match(selector: &Selector, process_info: &ProcessInfo) -> bool {
-    // todo: match selectors
-    true
+    match selector.operator {
+        Operator::Equals => match selector.origin {
+            Origin::Language => selector
+                .matches
+                .iter()
+                .any(|m| m == &process_info.language.to_string()),
+            Origin::ProcessArguments => process_info
+                .args
+                .iter()
+                .any(|arg| selector.matches.iter().any(|m| m == &arg.to_string())),
+            Origin::EnvironmentVariable => process_info
+                .envp
+                .iter()
+                .any(|env| selector.matches.iter().any(|m| m == &env.to_string())),
+        },
+    }
 }
 
 fn template_configs(
@@ -67,7 +84,7 @@ fn template_configs(
         .iter()
         .map(|(&name, v)| {
             Ok(LibraryConfig {
-                name: name,
+                name,
                 value: LibraryConfigValue::StrVal(ffi::CString::new(template_config(
                     v,
                     process_info,
@@ -77,7 +94,7 @@ fn template_configs(
         .collect()
 }
 
-fn template_config(config_val: &str, process_info: &ProcessInfo) -> String {
+fn template_config(config_val: &str, _process_info: &ProcessInfo) -> String {
     // todo: template configuration
     config_val.to_owned()
 }
@@ -92,9 +109,13 @@ pub struct Configurator {
 #[repr(C)]
 #[derive(Clone, Copy, serde::Deserialize, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[allow(clippy::enum_variant_names)]
 pub enum LibraryConfigName {
     DdTraceDebug = 0,
-    DdProfilingEnabled =  1,
+    DdService = 1,
+    DdEnv = 2,
+    DdVersion = 3,
+    DdProfilingEnabled = 4,
 }
 
 impl LibraryConfigName {
@@ -102,6 +123,9 @@ impl LibraryConfigName {
         use LibraryConfigName::*;
         match self {
             DdTraceDebug => cstr!("DD_TRACE_DEBUG"),
+            DdService => cstr!("DD_SERVICE"),
+            DdEnv => cstr!("DD_ENV"),
+            DdVersion => cstr!("DD_VERSION"),
             DdProfilingEnabled => cstr!("DD_PROFILING_ENABLED"),
         }
     }
@@ -109,6 +133,7 @@ impl LibraryConfigName {
 
 #[repr(C)]
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 pub enum LibraryConfigValue {
     NumVal(i64),
     BoolVal(bool),
@@ -137,9 +162,9 @@ impl Configurator {
         }
     }
 
-    pub fn get_configuration<'a>(
+    pub fn get_configuration(
         &self,
-        process_info: ProcessInfo<'a>,
+        process_info: ProcessInfo<'_>,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
         let static_config = self.parse_static_config()?;
         if self.debug_logs {
@@ -156,10 +181,7 @@ impl Configurator {
         if self.debug_logs {
             eprintln!("Will apply the following configuration: {library_config:?}");
         }
-        Ok(vec![LibraryConfig {
-            name: LibraryConfigName::DdTraceDebug,
-            value: LibraryConfigValue::BoolVal(true),
-        }])
+        Ok(library_config)
     }
 
     fn parse_static_config(&self) -> anyhow::Result<StaticConfig> {
@@ -184,9 +206,9 @@ impl Configurator {
 mod tests {
     use std::io::Write;
 
-    use crate::static_config::{LibraryConfigName, Operator, Origin, Rule, Selector, StaticConfig};
-
     use super::Configurator;
+    use crate::static_config::{LibraryConfigName, Operator, Origin, Rule, Selector, StaticConfig};
+    use ddcommon_ffi::{self as ffi};
 
     macro_rules! map {
         ($(($key:expr , $value:expr)),* $(,)?) => {
@@ -214,11 +236,12 @@ rules:
     operator: equals
   configuration:
     DD_PROFILING_ENABLED: true
+    DD_SERVICE: my-service
 ",
             )
             .unwrap();
-        let confgurator = Configurator::new(true, tmp.path().to_path_buf());
-        let cfg = confgurator.parse_static_config().unwrap();
+        let configurator = Configurator::new(true, tmp.path().to_path_buf());
+        let cfg = configurator.parse_static_config().unwrap();
         assert_eq!(
             cfg,
             StaticConfig {
@@ -228,9 +251,50 @@ rules:
                         matches: vec!["java".to_owned()],
                         operator: Operator::Equals,
                     }],
-                    configuration: map![(LibraryConfigName::DdProfilingEnabled, "true".to_owned()),],
+                    configuration: map![
+                        (LibraryConfigName::DdProfilingEnabled, "true".to_owned()),
+                        (LibraryConfigName::DdService, "my-service".to_owned())
+                    ],
                 }]
             }
         )
+    }
+
+    #[test]
+    fn test_selector_match() {
+        let args = vec![ffi::CharSlice::from("-jar HelloWorld.jar")];
+        let envp = vec![ffi::CharSlice::from("ENV=VAR")];
+        let process_info = super::ProcessInfo {
+            args: args.as_slice().into(),
+            envp: envp.as_slice().into(),
+            language: ffi::CharSlice::from("java"),
+        };
+        let selector = Selector {
+            origin: Origin::Language,
+            matches: vec!["java".to_owned()],
+            operator: Operator::Equals,
+        };
+        assert!(super::selector_match(&selector, &process_info));
+
+        let selector = Selector {
+            origin: Origin::ProcessArguments,
+            matches: vec!["-jar HelloWorld.jar".to_owned()],
+            operator: Operator::Equals,
+        };
+        assert!(super::selector_match(&selector, &process_info));
+
+        let selector = Selector {
+            origin: Origin::EnvironmentVariable,
+            matches: vec!["ENV=VAR".to_owned()],
+            operator: Operator::Equals,
+        };
+        assert!(super::selector_match(&selector, &process_info));
+
+        let selector = Selector {
+            origin: Origin::Language,
+            matches: vec!["python".to_owned()],
+            operator: Operator::Equals,
+        };
+        assert!(!super::selector_match(&selector, &process_info));
     }
 }

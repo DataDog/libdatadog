@@ -4,6 +4,7 @@
 mod error;
 
 pub mod array_queue;
+pub mod cstr;
 pub mod endpoint;
 pub mod handle;
 pub mod option;
@@ -14,8 +15,8 @@ pub mod tags;
 pub mod timespec;
 pub mod utils;
 pub mod vec;
-pub mod cstr;
 
+pub use cstr::*;
 pub use error::*;
 pub use handle::*;
 pub use option::*;
@@ -24,4 +25,3 @@ pub use slice::{CharSlice, Slice};
 pub use string::*;
 pub use timespec::*;
 pub use vec::Vec;
-pub use cstr::*;
