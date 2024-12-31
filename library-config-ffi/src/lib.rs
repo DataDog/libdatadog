@@ -41,29 +41,25 @@ pub extern "C" fn ddog_library_configurator_get<'a>(
     configurator: &'a Configurator,
     process_info: ProcessInfo<'a>,
 ) -> ffi::Result<ffi::Vec<LibraryConfig>> {
-    if configurator.debug_logs {
-        eprintln!("Called library_config_common_component:");
-        eprintln!("\tconfigurator: {:?}", configurator);
-        let args: Vec<String> = process_info
-            .args
-            .iter()
-            .map(|arg| arg.to_string())
-            .collect();
-        eprintln!("\tprocess args: {:?}", args);
-        // TODO: this is for testing purpose, we don't want to log env variables
-        let envs: Vec<String> = process_info
-            .envp
-            .iter()
-            .map(|env| env.to_string())
-            .collect();
-        eprintln!("\tprocess envs: {:?}", envs);
-        eprintln!(
-            "\tprocess language: {:?}",
-            process_info.language.to_string()
-        );
-    }
+    configurator.log_process_info(&process_info);
     configurator
         .get_configuration(process_info)
+        .map(ffi::Vec::from_std)
+        .into()
+}
+
+#[no_mangle]
+// In some languages like NodeJS, IO from a shared library is expensive.
+// Thus we provide a way to pass the configuration as a byte array instead,
+// so that the library can do the IO.
+pub extern "C" fn ddog_library_configurator_get_from_bytes<'a>(
+    configurator: &'a Configurator,
+    process_info: ProcessInfo<'a>,
+    config_bytes: ffi::CharSlice<'a>,
+) -> ffi::Result<ffi::Vec<LibraryConfig>> {
+    configurator.log_process_info(&process_info);
+    configurator
+        .get_configuration_from_bytes(process_info, config_bytes)
         .map(ffi::Vec::from_std)
         .into()
 }

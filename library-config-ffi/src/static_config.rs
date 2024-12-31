@@ -184,6 +184,53 @@ impl Configurator {
         Ok(library_config)
     }
 
+    pub fn get_configuration_from_bytes(
+        &self,
+        process_info: ProcessInfo<'_>,
+        config_bytes: ffi::CharSlice<'_>,
+    ) -> anyhow::Result<Vec<LibraryConfig>> {
+        let static_config = serde_yaml::from_str(config_bytes.to_string().as_str())?;
+        if self.debug_logs {
+            eprintln!("Read the following static config: {static_config:?}");
+        }
+
+        let Some(configs) = find_static_config(&static_config, &process_info) else {
+            if self.debug_logs {
+                eprintln!("No selector matched");
+            }
+            return Ok(Vec::new());
+        };
+        let library_config = template_configs(configs, &process_info)?;
+        if self.debug_logs {
+            eprintln!("Will apply the following configuration: {library_config:?}");
+        }
+        Ok(library_config)
+    }
+
+    pub fn log_process_info(&self, process_info: &ProcessInfo) {
+        if self.debug_logs {
+            eprintln!("Called library_config_common_component:");
+            eprintln!("\tconfigurator: {:?}", self);
+            let args: Vec<String> = process_info
+                .args
+                .iter()
+                .map(|arg| arg.to_string())
+                .collect();
+            eprintln!("\tprocess args: {:?}", args);
+            // TODO: this is for testing purpose, we don't want to log env variables
+            let envs: Vec<String> = process_info
+                .envp
+                .iter()
+                .map(|env| env.to_string())
+                .collect();
+            eprintln!("\tprocess envs: {:?}", envs);
+            eprintln!(
+                "\tprocess language: {:?}",
+                process_info.language.to_string()
+            );
+        }
+    }
+
     fn parse_static_config(&self) -> anyhow::Result<StaticConfig> {
         let mut f = match std::fs::File::open(&self.static_config_file_path) {
             Ok(f) => f,
