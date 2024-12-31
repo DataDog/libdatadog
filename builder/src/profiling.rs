@@ -37,6 +37,8 @@ impl Profiling {
         headers.push("data-pipeline.h");
         #[cfg(feature = "symbolizer")]
         headers.push("blazesym.h");
+        #[cfg(feature = "datadog-library-config-ffi")]
+        headers.push("library-config.h");
 
         let mut origin_path: PathBuf = [&self.source_include, "dummy.h"].iter().collect();
         let mut target_path: PathBuf = [&self.target_include, "dummy.h"].iter().collect();

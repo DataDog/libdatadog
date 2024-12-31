@@ -160,7 +160,7 @@ RUN cargo build --lib --workspace --exclude builder
 RUN cargo build --release --lib --workspace --exclude builder
 
 COPY ./ ./
-RUN cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -- --out /build/output
+RUN cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker,datadog-library-config-ffi --release -- --out /build/output
 
 FROM scratch as ffi_build_output
 

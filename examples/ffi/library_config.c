@@ -6,6 +6,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef _WIN32
+// Define setenv for Windows
+#include <windows.h>
+int setenv(const char *name, const char *value, int overwrite) {
+    if (overwrite || getenv(name) == NULL) {
+        return SetEnvironmentVariable(name, value) ? 0 : -1;
+    }
+    return 0;
+}
+#endif
+
 #define DDOG_VAL_STR_PTR(val)                                                                      \
   (val.tag == DDOG_LIBRARY_CONFIG_VALUE_STR_VAL ? val.str_val.ptr : "\0")
 
