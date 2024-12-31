@@ -63,7 +63,7 @@ impl CString {
     pub fn as_cstr(&self) -> CStr<'_> {
         CStr {
             ptr: self.ptr,
-            length: self.length,
+            length: self.length + 1, // +1 for the null terminator
             _lifetime_marker: PhantomData,
         }
     }
