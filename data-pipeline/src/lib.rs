@@ -13,4 +13,6 @@ pub mod span_concentrator;
 #[allow(missing_docs)]
 pub mod stats_exporter;
 #[allow(missing_docs)]
+pub mod telemetry;
+#[allow(missing_docs)]
 pub mod trace_exporter;
