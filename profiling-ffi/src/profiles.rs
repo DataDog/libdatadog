@@ -546,9 +546,10 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
 ) -> ProfileResult {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
-        let uses_string_ids = sample.labels.first().is_some_and(|label| {
-            label.key.is_empty() && label.key_id.value > 0
-        });
+        let uses_string_ids = sample
+            .labels
+            .first()
+            .is_some_and(|label| label.key.is_empty() && label.key_id.value > 0);
 
         if uses_string_ids {
             profile.add_string_id_sample(sample.try_into()?, timestamp)
