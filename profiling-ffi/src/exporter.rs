@@ -11,6 +11,7 @@ use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use ddcommon_ffi::{Error, MaybeError, Timespec};
 use std::borrow::Cow;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::NonNull;
 use std::str::FromStr;
 
@@ -200,11 +201,16 @@ pub unsafe extern "C" fn ddog_prof_Exporter_set_timeout(
     exporter: Option<&mut ProfileExporter>,
     timeout_ms: u64,
 ) -> MaybeError {
-    if let Some(ptr) = exporter {
-        ptr.set_timeout(timeout_ms);
-        MaybeError::None
-    } else {
-        MaybeError::Some(Error::from("Invalid argument"))
+    match catch_unwind(AssertUnwindSafe(|| {
+        if let Some(ptr) = exporter {
+            ptr.set_timeout(timeout_ms);
+            MaybeError::None
+        } else {
+            MaybeError::Some(Error::from("Invalid argument"))
+        }
+    })) {
+        Ok(r) => r,
+        Err(_) => MaybeError::Some(Error::from("oops"))
     }
 }
 
