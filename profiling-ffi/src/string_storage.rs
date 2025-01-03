@@ -81,7 +81,6 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
     .into()
 }
 
-#[must_use]
 #[no_mangle]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
@@ -143,7 +142,6 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
     .into()
 }
 
-#[must_use]
 #[no_mangle]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_advance_gen(
