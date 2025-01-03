@@ -13,6 +13,7 @@ profiling = []
 telemetry = []
 data-pipeline = []
 symbolizer = []
+datadog-library-config-ffi = []
 
 [lib]
 bench = false

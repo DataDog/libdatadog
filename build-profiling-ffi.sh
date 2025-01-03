@@ -230,7 +230,9 @@ mkdir $destdir/include/datadog/
 CBINDGEN_HEADERS="common.h profiling.h telemetry.h crashtracker.h data-pipeline.h"
 # When optional features are added, don't forget to also include thei headers here
 case $ARG_FEATURES in
+    datadog-library-config-ffi) CBINDGEN_HEADERS="$CBINDGEN_HEADERS library-config.h"
 esac
+
 CBINDGEN_HEADERS_DESTS=""
 for header in $CBINDGEN_HEADERS; do
     HEADER_DEST="$destdir/include/datadog/$header"

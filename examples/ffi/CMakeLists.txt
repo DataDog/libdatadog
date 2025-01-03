@@ -66,3 +66,7 @@ add_executable(array_queue array_queue.cpp)
 target_compile_features(array_queue PRIVATE cxx_std_20)
 target_link_libraries(array_queue PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(array_queue ${VCRUNTIME_LINK_TYPE})
+
+add_executable(library_config library_config.c)
+target_link_libraries(library_config PRIVATE Datadog::Profiling)
+set_vcruntime_link_type(library_config ${VCRUNTIME_LINK_TYPE})

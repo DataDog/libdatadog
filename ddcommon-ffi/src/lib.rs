@@ -4,6 +4,7 @@
 mod error;
 
 pub mod array_queue;
+pub mod cstr;
 pub mod endpoint;
 pub mod handle;
 pub mod option;
@@ -15,6 +16,7 @@ pub mod timespec;
 pub mod utils;
 pub mod vec;
 
+pub use cstr::*;
 pub use error::*;
 pub use handle::*;
 pub use option::*;
