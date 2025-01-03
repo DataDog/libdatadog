@@ -21,8 +21,12 @@ cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 [build-dependencies]
 build_common = { path = "../build-common" }
 
+[dev-dependencies]
+httpmock = "0.7.0"
+rmp-serde = "1.1.1"
+datadog-trace-utils = { path = "../trace-utils" }
+
 [dependencies]
 data-pipeline = { path = "../data-pipeline" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
-bytes = "1.4"
-libc = "0.2.153"
+tinybytes = { path = "../tinybytes" }

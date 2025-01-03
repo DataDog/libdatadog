@@ -75,9 +75,9 @@ pub struct Log {
 
     #[serde(default)]
     pub stack_trace: Option<String>,
-    #[serde(skip_serializing_if = "String::is_empty", default)]
+    #[serde(default)]
     pub tags: String,
-    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    #[serde(default)]
     pub is_sensitive: bool,
 }
 

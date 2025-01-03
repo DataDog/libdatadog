@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::os::unix::process::ExitStatusExt;
 use std::process::Command;
 
 use std::ffi::OsStr;
@@ -15,17 +16,33 @@ pub const REMOVE_RPATH: bool = true;
 pub const BUILD_CRASHTRACKER: bool = true;
 pub const RUSTFLAGS: [&str; 2] = ["-C", "relocation-model=pic"];
 
-#[allow(clippy::zombie_processes)]
 pub fn fix_rpath(lib_path: &str) {
     if REMOVE_RPATH {
         let lib_name = lib_path.split('/').last().unwrap();
 
-        Command::new("install_name_tool")
+        let exit_status = Command::new("install_name_tool")
             .arg("-id")
             .arg("@rpath/".to_string() + lib_name)
             .arg(lib_path)
-            .spawn()
-            .expect("Failed to fix rpath");
+            .status()
+            .expect("Failed to fix rpath using install_name_tool");
+        match exit_status.code() {
+            Some(0) => {}
+            Some(rc) => panic!(
+                "Failed to fix rpath using install_name_tool: return code {}",
+                rc
+            ),
+            None => match exit_status.signal() {
+                Some(sig) => panic!(
+                    "Failed to fix rpath using install_name_tool: killed by signal {}",
+                    sig
+                ),
+                None => panic!(
+                    "Failed to fix rpath using install_name_tool: exit status {:?}",
+                    exit_status
+                ),
+            },
+        }
     }
 }
 

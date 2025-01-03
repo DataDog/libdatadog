@@ -143,10 +143,10 @@ impl Liaison for NamedPipeLiaison {
         } {
             INVALID_HANDLE_VALUE => {
                 let error = io::Error::last_os_error();
-                if error
-                    .raw_os_error()
-                    .map_or(true, |r| r as u32 == ERROR_ACCESS_DENIED)
-                {
+                if match error.raw_os_error() {
+                    Some(code) => code as u32 == ERROR_ACCESS_DENIED,
+                    None => true,
+                } {
                     Ok(None)
                 } else {
                     Err(error)

@@ -91,11 +91,17 @@ mod tests {
             ("file:/// file / with/weird chars 🤡", true),
             ("file://./", true),
             ("unix://./", true),
+            ("http://2001:db8:1::2:8126/", false),
+            ("http://[2001:db8:1::2]:8126/", true),
         ];
 
         for (input, expected) in cases {
-            let actual = ddog_endpoint_from_url(CharSlice::from(input)).is_some();
+            let ep = ddog_endpoint_from_url(CharSlice::from(input));
+            let actual = ep.is_some();
             assert_eq!(actual, expected);
+            if actual {
+                ddog_endpoint_drop(ep.unwrap());
+            }
         }
     }
 

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ProcInfo {
-    pid: u32,
+    pub pid: u32,
 }
 
 impl From<crate::crash_info::ProcessInfo> for ProcInfo {

@@ -254,14 +254,16 @@ mod tests {
             ddog_telemetry_builder_with_bool_config_telemetry_debug_logging_enabled(
                 &mut builder,
                 true,
-            );
+            )
+            .unwrap_none();
 
             let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
-            ddog_telemetry_builder_run(builder, NonNull::new(&mut handle).unwrap().cast());
+            ddog_telemetry_builder_run(builder, NonNull::new(&mut handle).unwrap().cast())
+                .unwrap_none();
             let handle = handle.assume_init();
 
-            ddog_telemetry_handle_start(&handle);
-            ddog_telemetry_handle_stop(&handle);
+            ddog_telemetry_handle_start(&handle).unwrap_none();
+            ddog_telemetry_handle_stop(&handle).unwrap_none();
             ddog_telemetry_handle_wait_for_shutdown(handle);
         }
     }
@@ -297,13 +299,15 @@ mod tests {
             ddog_telemetry_builder_with_bool_config_telemetry_debug_logging_enabled(
                 &mut builder,
                 true,
-            );
+            )
+            .unwrap_none();
 
             let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
             ddog_telemetry_builder_run_metric_logs(
                 builder,
                 NonNull::new(&mut handle).unwrap().cast(),
-            );
+            )
+            .unwrap_none();
             let handle = handle.assume_init();
 
             assert!(matches!(
@@ -329,7 +333,7 @@ mod tests {
                 true,
                 MetricNamespace::Apm,
             );
-            ddog_telemetry_handle_add_point(&handle, &context_key, 1.0);
+            ddog_telemetry_handle_add_point(&handle, &context_key, 1.0).unwrap_none();
 
             assert_eq!(ddog_telemetry_handle_stop(&handle), MaybeError::None);
             ddog_telemetry_handle_wait_for_shutdown(handle);

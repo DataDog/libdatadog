@@ -9,12 +9,19 @@ use std::str;
 
 pub const HEADER_PATH: &str = "include/datadog";
 
+pub struct OutPaths {
+    // Path to the default `./target directory where cargo outputs the result of
+    // it's build process `
+    pub cargo_target_dir: PathBuf,
+
+    // Directory identified by the DESTDIR env variable.
+    // It is taken realtive to the cargo project root.
+    // if the env variable is not defined this defaults to cargo_target_dir
+    pub deliverables_dir: PathBuf,
+}
+
 /// Determines the cargo target directory and deliverables directory.
-///
-/// # Returns
-///
-/// * `(PathBuf, PathBuf)` - The cargo target directory and deliverables directory.
-pub fn determine_paths() -> (PathBuf, PathBuf) {
+pub fn determine_paths() -> OutPaths {
     let cargo_target_dir = match env::var_os("CARGO_TARGET_DIR") {
         Some(dir) => PathBuf::from(dir),
         None => {
@@ -60,8 +67,10 @@ pub fn determine_paths() -> (PathBuf, PathBuf) {
             .expect("CARGO_TARGET_DIR does not have a parent directory, aborting build.");
         deliverables_dir = parent_dir.join(&deliverables_dir);
     }
-
-    (cargo_target_dir, deliverables_dir)
+    OutPaths {
+        cargo_target_dir,
+        deliverables_dir,
+    }
 }
 
 /// Configure the header generation using environment variables.
@@ -78,9 +87,11 @@ pub fn determine_paths() -> (PathBuf, PathBuf) {
 /// * `header_name` - The name of the header file to generate.
 pub fn generate_and_configure_header(header_name: &str) {
     let crate_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let (_, deliverables_dir) = determine_paths();
+    let OutPaths {
+        cargo_target_dir, ..
+    } = determine_paths();
 
-    generate_header(crate_dir, header_name, deliverables_dir);
+    generate_header(crate_dir, header_name, cargo_target_dir);
 }
 
 /// Generates a C header file using `cbindgen` for the specified crate.
@@ -124,11 +135,9 @@ pub fn generate_header(crate_dir: PathBuf, header_name: &str, output_base_dir: P
 /// This behaves in a similar way as `generate_and_configure_header`.
 pub fn copy_and_configure_headers() {
     let crate_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let (_cargo_target_dir, deliverables_dir) = determine_paths();
-
-    if !deliverables_dir.exists() {
-        fs::create_dir_all(&deliverables_dir).expect("Failed to create deliverables directory");
-    }
+    let OutPaths {
+        cargo_target_dir, ..
+    } = determine_paths();
 
     let src_dir = crate_dir.join("src");
     if src_dir.is_dir() {
@@ -137,7 +146,7 @@ pub fn copy_and_configure_headers() {
             let path = entry.path();
 
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("h") {
-                copy_header(&path, &deliverables_dir);
+                copy_header(&path, &cargo_target_dir);
             }
         }
     }

@@ -1,15 +1,55 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::NormalizedAddress;
+#[cfg(unix)]
+use blazesym::{
+    helper::ElfResolver,
+    normalize::Normalizer,
+    symbolize::{Input, Source, Symbolized, Symbolizer, TranslateFileOffset},
+    Pid,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::NormalizedAddress;
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StackTrace {
-    format: String,
-    frames: Vec<StackFrame>,
+    pub format: String,
+    pub frames: Vec<StackFrame>,
+}
+
+impl StackTrace {
+    pub fn new() -> Self {
+        Self {
+            format: "Datadog Crashtracker 1.0".to_string(),
+            frames: vec![],
+        }
+    }
+}
+
+#[cfg(unix)]
+impl StackTrace {
+    pub fn normalize_ips(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
+        for frame in &mut self.frames {
+            // TODO: Should this keep going on failure, and report at the end?
+            frame.normalize_ip(normalizer, pid)?;
+        }
+        Ok(())
+    }
+
+    pub fn resolve_names(&mut self, src: &Source, symbolizer: &Symbolizer) -> anyhow::Result<()> {
+        for frame in &mut self.frames {
+            // TODO: Should this keep going on failure, and report at the end?
+            frame.resolve_names(src, symbolizer)?;
+        }
+        Ok(())
+    }
+}
+
+impl Default for StackTrace {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl From<Vec<crate::StackFrame>> for StackTrace {
@@ -110,7 +150,7 @@ impl From<Vec<crate::StackFrame>> for StackTrace {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Default)]
 pub struct StackFrame {
     // Absolute addresses
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -145,8 +185,64 @@ pub struct StackFrame {
     pub line: Option<u32>,
 }
 
+impl StackFrame {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[cfg(unix)]
+impl StackFrame {
+    pub fn normalize_ip(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
+        use anyhow::Context;
+        if let Some(ip) = &self.ip {
+            let ip = ip.trim_start_matches("0x");
+            let ip = u64::from_str_radix(ip, 16)?;
+            let normed = normalizer.normalize_user_addrs(pid, &[ip])?;
+            anyhow::ensure!(normed.outputs.len() == 1);
+            let (file_offset, meta_idx) = normed.outputs[0];
+            let meta = &normed.meta[meta_idx];
+            let elf = meta.as_elf().context("Not elf")?;
+            let resolver = ElfResolver::open(&elf.path)?;
+            let virt_address = resolver
+                .file_offset_to_virt_offset(file_offset)?
+                .context("No matching segment found")?;
+
+            self.build_id = elf.build_id.as_ref().map(|x| byte_slice_as_hex(x.as_ref()));
+            self.build_id_type = Some(BuildIdType::GNU);
+            self.file_type = Some(FileType::ELF);
+            self.path = Some(elf.path.to_string_lossy().to_string());
+            self.relative_address = Some(format!("{virt_address:#018x}"));
+        }
+        Ok(())
+    }
+
+    pub fn resolve_names(&mut self, src: &Source, symbolizer: &Symbolizer) -> anyhow::Result<()> {
+        if let Some(ip) = &self.ip {
+            let ip = ip.trim_start_matches("0x");
+            let ip = u64::from_str_radix(ip, 16)?;
+            let input = Input::AbsAddr(ip);
+            match symbolizer.symbolize_single(src, input)? {
+                Symbolized::Sym(s) => {
+                    if let Some(c) = s.code_info {
+                        self.column = c.column.map(u32::from);
+                        self.file = Some(c.to_path().display().to_string());
+                        self.line = c.line;
+                    }
+                    self.function = Some(s.name.into_owned());
+                }
+                Symbolized::Unknown(reason) => {
+                    anyhow::bail!("Couldn't symbolize {ip}: {reason}");
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::upper_case_acronyms)]
+#[repr(C)]
 pub enum BuildIdType {
     GNU,
     GO,
@@ -157,6 +253,7 @@ pub enum BuildIdType {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::upper_case_acronyms)]
+#[repr(C)]
 pub enum FileType {
     APK,
     ELF,
@@ -175,6 +272,17 @@ fn byte_vec_as_hex(bv: Option<Vec<u8>>) -> Option<String> {
     } else {
         None
     }
+}
+
+#[cfg(unix)]
+fn byte_slice_as_hex(bv: &[u8]) -> String {
+    use std::fmt::Write;
+
+    let mut s = String::new();
+    for byte in bv {
+        let _ = write!(&mut s, "{byte:X}");
+    }
+    s
 }
 
 #[cfg(test)]

@@ -3,6 +3,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::unknown_value::UnknownValue;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Metadata {
     pub library_name: String,
@@ -11,6 +13,17 @@ pub struct Metadata {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     /// A list of "key:value" tuples.
     pub tags: Vec<String>,
+}
+
+impl UnknownValue for Metadata {
+    fn unknown_value() -> Self {
+        Self {
+            library_name: "unknown".to_string(),
+            library_version: "unknown".to_string(),
+            family: "unknown".to_string(),
+            tags: vec![],
+        }
+    }
 }
 
 impl From<crate::crash_info::CrashtrackerMetadata> for Metadata {

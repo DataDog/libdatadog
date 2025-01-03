@@ -30,6 +30,8 @@ pub struct Telemetry<'a> {
     pub seq_id: u64,
     pub application: &'a Application,
     pub host: &'a Host,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<&'a str>,
     #[serde(flatten)]
     pub payload: &'a Payload,
 }

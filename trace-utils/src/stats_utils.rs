@@ -85,6 +85,7 @@ mod tests {
     use serde_json::Value;
 
     #[tokio::test]
+    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     async fn test_get_stats_from_request_body() {
         let stats_json = r#"{
             "Hostname": "TestHost",
@@ -188,6 +189,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     async fn test_get_stats_from_request_body_without_stats() {
         let stats_json = r#"{
             "Hostname": "TestHost",
@@ -239,6 +241,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     async fn test_serialize_client_stats_payload_without_stats() {
         let client_stats_payload_without_stats = ClientStatsPayload {
             hostname: "TestHost".to_string(),

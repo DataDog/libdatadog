@@ -19,6 +19,11 @@ fn main() -> Result<()> {
         // compiles the .proto files into rust structs
         generate_protobuf();
     }
+    #[cfg(not(feature = "generate-protobuf"))]
+    {
+        println!("cargo:rerun-if-changed=build.rs");
+    }
+
     Ok(())
 }
 

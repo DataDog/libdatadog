@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod builder;
 mod error_data;
 mod metadata;
 mod os_info;
@@ -10,18 +11,20 @@ mod spans;
 mod stacktrace;
 mod telemetry;
 mod test_utils;
+mod unknown_value;
 
-pub use error_data::{ErrorData, ErrorKind, SourceType};
+pub use builder::*;
+use ddcommon::Endpoint;
+pub use error_data::*;
 pub use metadata::Metadata;
-pub use os_info::OsInfo;
-pub use proc_info::ProcInfo;
-pub use sig_info::{SiCodes, SigInfo, SignalNames};
-pub use spans::Span;
-pub use stacktrace::{BuildIdType, FileType, StackFrame, StackTrace};
-pub use telemetry::TelemetryCrashUploader;
+pub use os_info::*;
+pub use proc_info::*;
+pub use sig_info::*;
+pub use spans::*;
+pub use stacktrace::*;
+pub use telemetry::*;
 
 use anyhow::Context;
-use error_data::thread_data_from_additional_stacktraces;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs::File, path::Path};
@@ -41,9 +44,10 @@ pub struct CrashInfo {
     pub log_messages: Vec<String>,
     pub metadata: Metadata,
     pub os_info: OsInfo,
-    pub proc_info: ProcInfo,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sig_info: Option<SigInfo>,
+    pub proc_info: Option<ProcInfo>, //TODO, update the schema
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sig_info: Option<SigInfo>, //TODO, update the schema
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub span_ids: Vec<Span>,
     pub timestamp: String,
@@ -52,10 +56,27 @@ pub struct CrashInfo {
     pub uuid: String,
 }
 
+impl CrashInfo {
+    pub fn current_schema_version() -> String {
+        "1.0".to_string()
+    }
+}
+
+#[cfg(unix)]
+impl CrashInfo {
+    pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
+        self.error.normalize_ips(pid)
+    }
+
+    pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {
+        self.error.resolve_names(pid)
+    }
+}
+
 impl From<crate::crash_info::CrashInfo> for CrashInfo {
     fn from(value: crate::crash_info::CrashInfo) -> Self {
         let counters = value.counters;
-        let data_schema_version = String::from("1.0");
+        let data_schema_version = CrashInfo::current_schema_version();
         let error = {
             let is_crash = true;
             let kind = ErrorKind::UnixSignal;
@@ -78,7 +99,7 @@ impl From<crate::crash_info::CrashInfo> for CrashInfo {
         let log_messages = vec![];
         let metadata = value.metadata.unwrap().into();
         let os_info = value.os_info.into();
-        let proc_info = value.proc_info.unwrap().into();
+        let proc_info = value.proc_info.map(ProcInfo::from);
         let sig_info = value.siginfo.map(SigInfo::from);
         let span_ids = value
             .span_ids
@@ -128,6 +149,36 @@ impl CrashInfo {
             .with_context(|| format!("Failed to create {}", path.display()))?;
         serde_json::to_writer_pretty(file, self)
             .with_context(|| format!("Failed to write json to {}", path.display()))?;
+        Ok(())
+    }
+
+    pub fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
+        rt.block_on(async { self.async_upload_to_endpoint(endpoint).await })
+    }
+
+    pub async fn async_upload_to_endpoint(
+        &self,
+        endpoint: &Option<Endpoint>,
+    ) -> anyhow::Result<()> {
+        // If we're debugging to a file, dump the actual crashinfo into a json
+        if let Some(endpoint) = endpoint {
+            if Some("file") == endpoint.url.scheme_str() {
+                let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
+                    .context("crash output file path was not correctly formatted")?;
+                self.to_file(&path)?;
+            }
+        }
+
+        self.upload_to_telemetry(endpoint).await
+    }
+
+    async fn upload_to_telemetry(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+        let uploader = TelemetryCrashUploader::new(&self.metadata, endpoint)?;
+        uploader.upload_to_telemetry(self).await?;
         Ok(())
     }
 }
@@ -181,7 +232,7 @@ mod tests {
                 log_messages: vec![],
                 metadata: Metadata::test_instance(seed),
                 os_info: ::os_info::Info::unknown().into(),
-                proc_info: ProcInfo::test_instance(seed),
+                proc_info: Some(ProcInfo::test_instance(seed)),
                 sig_info: Some(SigInfo::test_instance(seed)),
                 span_ids,
                 timestamp: chrono::DateTime::from_timestamp(1568898000 /* Datadog IPO */, 0)

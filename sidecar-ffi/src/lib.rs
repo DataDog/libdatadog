@@ -567,15 +567,17 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             } else {
                 LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
             },
-            remote_config_products: slice::from_raw_parts(
+            remote_config_products: ffi::Slice::from_raw_parts(
                 remote_config_products,
                 remote_config_products_count
             )
+            .as_slice()
             .to_vec(),
-            remote_config_capabilities: slice::from_raw_parts(
+            remote_config_capabilities: ffi::Slice::from_raw_parts(
                 remote_config_capabilities,
                 remote_config_capabilities_count
             )
+            .as_slice()
             .to_vec(),
         },
     ));

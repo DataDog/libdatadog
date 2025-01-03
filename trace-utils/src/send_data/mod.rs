@@ -924,7 +924,8 @@ mod tests {
 
         mock.assert_hits_async(5).await;
 
-        assert!(res.last_result.is_err());
+        assert!(res.last_result.is_ok());
+        assert_eq!(res.last_result.unwrap().status(), 500);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 1);

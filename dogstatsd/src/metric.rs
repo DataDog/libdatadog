@@ -104,10 +104,10 @@ impl SortedTags {
 
     pub(crate) fn to_resources(&self) -> Vec<datadog::Resource> {
         let mut resources = Vec::with_capacity(constants::MAX_TAGS);
-        for (name, kind) in &self.values {
+        for (kind, name) in &self.values {
             let resource = datadog::Resource {
-                name: name.as_str(),
-                kind: kind.as_str(),
+                name: name.as_str(), // val
+                kind: kind.as_str(), // key
             };
             resources.push(resource);
         }
@@ -446,6 +446,21 @@ mod tests {
             let id2 = id(Ustr::from(&name), &Some(SortedTags::parse(&tagset2).unwrap()));
 
             assert_eq!(id1, id2);
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn resources_key_val_order(tags in metric_tags()) {
+            let sorted_tags = SortedTags { values: tags.into_iter()
+                .map(|(kind, name)| (Ustr::from(&kind), Ustr::from(&name)))
+                .collect()  };
+
+            let resources = sorted_tags.to_resources();
+
+            for (i, resource) in resources.iter().enumerate() {
+                assert_eq!(resource.kind, sorted_tags.values[i].0);
+                assert_eq!(resource.name, sorted_tags.values[i].1);
+            }
         }
     }
 

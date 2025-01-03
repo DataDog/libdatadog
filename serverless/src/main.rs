@@ -23,6 +23,7 @@ use dogstatsd::metric::EMPTY_TAGS;
 use tokio_util::sync::CancellationToken;
 
 const DOGSTATSD_FLUSH_INTERVAL: u64 = 10;
+const DOGSTATSD_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 const DEFAULT_DOGSTATSD_PORT: u16 = 8125;
 const AGENT_HOST: &str = "0.0.0.0";
 
@@ -160,6 +161,7 @@ async fn start_dogstatsd(
                 Arc::clone(&metrics_aggr),
                 build_fqdn_metrics(dd_site),
                 https_proxy,
+                DOGSTATSD_TIMEOUT_DURATION,
             );
             Some(metrics_flusher)
         }

@@ -31,7 +31,7 @@ pub struct CrashtrackerConfiguration {
     pub unix_socket_path: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct CrashtrackerReceiverConfig {
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,

@@ -36,6 +36,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         prepend_to_file(HEADER.as_bytes(), &output_path.join("pb.rs"))?;
     }
+    #[cfg(not(feature = "generate-protobuf"))]
+    {
+        println!("cargo:rerun-if-changed=build.rs");
+    }
 
     Ok(())
 }
