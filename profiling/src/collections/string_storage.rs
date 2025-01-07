@@ -15,8 +15,7 @@ use super::string_table::StringTable;
 struct ManagedStringData {
     str: Rc<str>,
     last_usage_gen: Cell<Option<u32>>, // TODO: This is not actually being used; maybe remove?
-    cached_seq_num_for: Cell<Option<*const StringTable>>,
-    cached_seq_num: Cell<Option<StringId>>,
+    cached_seq_num: Cell<Option<(*const StringTable, StringId)>>,
     usage_count: Cell<u32>,
 }
 
@@ -79,7 +78,6 @@ impl ManagedStringStorage {
                 let data = ManagedStringData {
                     str: str.clone(),
                     last_usage_gen: Cell::new(None),
-                    cached_seq_num_for: Cell::new(None),
                     cached_seq_num: Cell::new(None),
                     usage_count: Cell::new(1),
                 };
@@ -108,12 +106,12 @@ impl ManagedStringStorage {
 
         let profile_strings_pointer = ptr::addr_of!(*profile_strings);
 
-        match (data.cached_seq_num.get(), data.cached_seq_num_for.get()) {
-            (Some(seq_num), Some(pointer)) if pointer == profile_strings_pointer => seq_num,
-            (_, _) => {
+        match data.cached_seq_num.get() {
+            Some((pointer, seq_num)) if pointer == profile_strings_pointer => seq_num,
+            _ => {
                 let seq_num = profile_strings.intern(data.str.as_ref());
-                data.cached_seq_num.set(Some(seq_num));
-                data.cached_seq_num_for.set(Some(profile_strings_pointer));
+                data.cached_seq_num
+                    .set(Some((profile_strings_pointer, seq_num)));
                 seq_num
             }
         }
