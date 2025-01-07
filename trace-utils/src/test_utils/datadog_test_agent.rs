@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
@@ -25,6 +26,7 @@ const TEST_AGENT_PORT: u16 = 8126;
 #[derive(Debug)]
 struct DatadogTestAgentContainer {
     mounts: Vec<Mount>,
+    env_vars: HashMap<String, String>
 }
 
 impl Image for DatadogTestAgentContainer {
@@ -54,13 +56,25 @@ impl Image for DatadogTestAgentContainer {
     fn mounts(&self) -> Box<dyn Iterator<Item = &Mount> + '_> {
         Box::new(self.mounts.iter())
     }
+
     fn expose_ports(&self) -> Vec<u16> {
         vec![TEST_AGENT_PORT]
+    }
+
+    fn env_vars(&self) -> Box<dyn Iterator<Item = (&String, &String)> + '_> {
+        Box::new(self.env_vars.iter())
     }
 }
 
 impl DatadogTestAgentContainer {
     fn new(relative_snapshot_path: Option<&str>) -> Self {
+        let mut env_vars = HashMap::new();
+
+        env_vars.insert(
+            "DD_APM_RECEIVER_SOCKET".to_string(),
+            "/src/apm.socket".to_string(),
+        );
+
         if let Some(relative_snapshot_path) = relative_snapshot_path {
             let mount = Mount::bind_mount(
                 DatadogTestAgentContainer::calculate_snapshot_absolute_path(relative_snapshot_path),
@@ -70,9 +84,10 @@ impl DatadogTestAgentContainer {
 
             DatadogTestAgentContainer {
                 mounts: vec![mount],
+                env_vars
             }
         } else {
-            DatadogTestAgentContainer { mounts: vec![] }
+            DatadogTestAgentContainer { mounts: vec![], env_vars }
         }
     }
     // The docker image requires an absolute path when mounting a volume. This function gets the
