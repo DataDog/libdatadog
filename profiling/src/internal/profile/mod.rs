@@ -116,6 +116,11 @@ impl Profile {
         sample: api::StringIdSample,
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.string_storage.is_some(),
+            "Current sample makes use of ManagedStringIds but profile was not created using a managed string table"
+        );
+
         self.validate_string_id_sample_labels(&sample)?;
         let labels: Vec<_> = sample
             .labels
@@ -195,6 +200,8 @@ impl Profile {
 
         self.string_storage
             .as_ref()
+            // Safety: We always get here through a direct or indirect call to add_string_id_sample,
+            // which already ensured that the string storage exists.
             .expect("resolution from id requires managed string storage")
             .read()
             .expect("acquisition of read lock on string storage should succeed")
