@@ -14,7 +14,6 @@ use super::string_table::StringTable;
 #[derive(PartialEq, Debug)]
 struct ManagedStringData {
     str: Rc<str>,
-    last_usage_gen: Cell<Option<u32>>, // TODO: This is not actually being used; maybe remove?
     cached_seq_num: Cell<Option<(*const StringTable, StringId)>>,
     usage_count: Cell<u32>,
 }
@@ -41,21 +40,11 @@ impl ManagedStringStorage {
 
     pub fn advance_gen(&mut self) {
         self.id_to_data.retain(|_, data| {
-            /*let used_in_this_gen = data
-                .last_usage_gen
-                .get()
-                .map_or(false, |last_usage_gen| last_usage_gen == self.current_gen);
-            if used_in_this_gen || *id == 0 {
-                // Empty string (id = 0) or anything that was used in the gen
-                // we are now closing, is kept alive
-                return true;
-            }*/
-            if data.usage_count.get() > 0 {
-                return true;
+            let retain = data.usage_count.get() > 0;
+            if !retain {
+                self.str_to_id.remove_entry(&data.str);
             }
-
-            self.str_to_id.remove_entry(&data.str);
-            false
+            retain
         });
         self.current_gen += 1;
     }
@@ -77,7 +66,6 @@ impl ManagedStringStorage {
                 let str: Rc<str> = item.into();
                 let data = ManagedStringData {
                     str: str.clone(),
-                    last_usage_gen: Cell::new(None),
                     cached_seq_num: Cell::new(None),
                     usage_count: Cell::new(1),
                 };
@@ -131,7 +119,6 @@ impl ManagedStringStorage {
                 panic!("StringId to have a valid interned id");
             }
         };
-        data.last_usage_gen.replace(Some(self.current_gen));
         data
     }
 }
