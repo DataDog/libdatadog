@@ -96,13 +96,10 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
 
     let result = (|| {
         let storage = get_inner_string_storage(storage, true)?;
-        storage
-            .read()
-            .map_err(|_| {
-                anyhow::anyhow!("acquisition of read lock on string storage should succeed")
-            })?
-            .unintern(non_empty_string_id);
-        anyhow::Ok(())
+        let read_locked_storage = storage.read().map_err(|_| {
+            anyhow::anyhow!("acquisition of read lock on string storage should succeed")
+        })?;
+        read_locked_storage.unintern(non_empty_string_id)
     })()
     .context("ddog_prof_ManagedStringStorage_unintern failed");
 
@@ -137,7 +134,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
             .map_err(|_| {
                 anyhow::anyhow!("acquisition of read lock on string storage should succeed")
             })?
-            .get_string(id.value))
+            .get_string(id.value)?)
         .to_owned();
 
         anyhow::Ok(string)
