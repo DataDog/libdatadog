@@ -123,7 +123,7 @@ pub enum StringWrapperResult {
 #[no_mangle]
 /// Returns a string given its id.
 /// This API is mostly for testing, overall you should avoid reading back strings from libdatadog
-/// once they've been interned and you should always operate on the id.
+/// once they've been interned and should instead always operate on the id.
 /// Remember to `ddog_StringWrapper_drop` the string once you're done with it.
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
