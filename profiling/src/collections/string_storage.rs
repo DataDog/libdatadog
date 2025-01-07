@@ -4,6 +4,7 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
+use std::num::NonZeroU32;
 use std::ptr;
 use std::rc::Rc;
 
@@ -92,22 +93,18 @@ impl ManagedStringStorage {
         }
     }
 
-    pub fn unintern(&self, id: u32) {
-        if id == 0 {
-            panic!("For performance reasons, unintern should not be called with id == 0. Please hardcode a fast path check in the caller to avoid this call")
-        }
-
-        let data = self.get_data(id);
+    // Here id is a NonZeroU32 because an id of 0 is the empty string and that can never be
+    // uninterned (and it should be skipped instead in the caller)
+    pub fn unintern(&self, id: NonZeroU32) {
+        let data = self.get_data(id.into());
         let usage_count = &data.usage_count;
         usage_count.set(usage_count.get() - 1);
     }
 
-    pub fn get_seq_num(&self, id: u32, profile_strings: &mut StringTable) -> StringId {
-        if id == 0 {
-            panic!("For performance reasons, get_set_num should not be called with id == 0. Please hardcode a fast path check in the caller to avoid this call")
-        }
-
-        let data = self.get_data(id);
+    // Here id is a NonZeroU32 because an id of 0 which StringTable always maps to 0 as well so this
+    // entire call can be skipped
+    pub fn get_seq_num(&self, id: NonZeroU32, profile_strings: &mut StringTable) -> StringId {
+        let data = self.get_data(id.into());
 
         let profile_strings_pointer = ptr::addr_of!(*profile_strings);
 
