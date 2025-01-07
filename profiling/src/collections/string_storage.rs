@@ -34,7 +34,8 @@ impl ManagedStringStorage {
             current_gen: 0,
         };
         // Ensure empty string gets id 0 and always has usage > 0 so it's always retained
-        storage.intern("");
+        // Safety: On an empty managed string table intern should never fail.
+        storage.intern("").expect("Initialization to succeed");
         storage
     }
 
@@ -49,17 +50,19 @@ impl ManagedStringStorage {
         self.current_gen += 1;
     }
 
-    pub fn intern(&mut self, item: &str) -> u32 {
+    pub fn intern(&mut self, item: &str) -> anyhow::Result<u32> {
         let entry = self.str_to_id.get_key_value(item);
         match entry {
             Some((_, id)) => {
                 let usage_count = &self
                     .id_to_data
                     .get(id)
-                    .expect("id_to_data and str_to_id should be in sync")
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("BUG: id_to_data and str_to_id should be in sync")
+                    })?
                     .usage_count;
                 usage_count.set(usage_count.get() + 1);
-                *id
+                Ok(*id)
             }
             None => {
                 let id = self.next_id;
@@ -69,12 +72,15 @@ impl ManagedStringStorage {
                     cached_seq_num: Cell::new(None),
                     usage_count: Cell::new(1),
                 };
-                self.next_id = self.next_id.checked_add(1).expect("Ran out of string ids!");
+                self.next_id = self
+                    .next_id
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow::anyhow!("Ran out of string ids!"))?;
                 let old_value = self.str_to_id.insert(str.clone(), id);
                 debug_assert_eq!(old_value, None);
                 let old_value = self.id_to_data.insert(id, data);
                 debug_assert_eq!(old_value, None);
-                id
+                Ok(id)
             }
         }
     }
