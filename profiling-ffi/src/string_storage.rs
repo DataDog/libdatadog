@@ -5,6 +5,7 @@ use anyhow::Context;
 use datadog_profiling::collections::string_storage::ManagedStringStorage as InternalManagedStringStorage;
 use ddcommon_ffi::{CharSlice, Error, MaybeError, StringWrapper};
 use libc::c_void;
+use std::num::NonZeroU32;
 use std::{ffi::CStr, rc::Rc, sync::RwLock};
 
 #[repr(C)]
@@ -87,9 +88,11 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
     storage: ManagedStringStorage,
     id: ManagedStringId,
 ) -> MaybeError {
-    if id.value == 0 {
-        return MaybeError::None;
-    }
+    let non_empty_string_id = if let Some(valid_id) = NonZeroU32::new(id.value) {
+        valid_id
+    } else {
+        return MaybeError::None; // Empty string, nothing to do
+    };
 
     let result = (|| {
         let storage = get_inner_string_storage(storage, true)?;
@@ -98,7 +101,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
             .map_err(|_| {
                 anyhow::anyhow!("acquisition of read lock on string storage should succeed")
             })?
-            .unintern(id.value);
+            .unintern(non_empty_string_id);
         anyhow::Ok(())
     })()
     .context("ddog_prof_ManagedStringStorage_unintern failed");

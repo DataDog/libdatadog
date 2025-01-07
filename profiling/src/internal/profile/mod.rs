@@ -187,16 +187,18 @@ impl Profile {
     }
 
     pub fn resolve(&mut self, id: ManagedStringId) -> StringId {
-        if id.value == 0 {
-            return StringId::ZERO;
-        }
+        let non_empty_string_id = if let Some(valid_id) = NonZeroU32::new(id.value) {
+            valid_id
+        } else {
+            return StringId::ZERO; // Both string tables use zero for the empty string
+        };
 
         self.string_storage
             .as_ref()
             .expect("resolution from id requires managed string storage")
             .read()
             .expect("acquisition of read lock on string storage should succeed")
-            .get_seq_num(id.value, &mut self.strings)
+            .get_seq_num(non_empty_string_id, &mut self.strings)
     }
 
     /// Creates a profile with `start_time`.
