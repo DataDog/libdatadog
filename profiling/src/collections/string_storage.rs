@@ -87,45 +87,46 @@ impl ManagedStringStorage {
 
     // Here id is a NonZeroU32 because an id of 0 is the empty string and that can never be
     // uninterned (and it should be skipped instead in the caller)
-    pub fn unintern(&self, id: NonZeroU32) {
-        let data = self.get_data(id.into());
+    pub fn unintern(&self, id: NonZeroU32) -> anyhow::Result<()> {
+        let data = self.get_data(id.into())?;
         let usage_count = &data.usage_count;
         usage_count.set(usage_count.get() - 1);
+        Ok(())
     }
 
     // Here id is a NonZeroU32 because an id of 0 which StringTable always maps to 0 as well so this
     // entire call can be skipped
-    pub fn get_seq_num(&self, id: NonZeroU32, profile_strings: &mut StringTable) -> StringId {
-        let data = self.get_data(id.into());
+    pub fn get_seq_num(
+        &self,
+        id: NonZeroU32,
+        profile_strings: &mut StringTable,
+    ) -> anyhow::Result<StringId> {
+        let data = self.get_data(id.into())?;
 
         let profile_strings_pointer = ptr::addr_of!(*profile_strings);
 
         match data.cached_seq_num.get() {
-            Some((pointer, seq_num)) if pointer == profile_strings_pointer => seq_num,
+            Some((pointer, seq_num)) if pointer == profile_strings_pointer => Ok(seq_num),
             _ => {
                 let seq_num = profile_strings.intern(data.str.as_ref());
                 data.cached_seq_num
                     .set(Some((profile_strings_pointer, seq_num)));
-                seq_num
+                Ok(seq_num)
             }
         }
     }
 
-    pub fn get_string(&self, id: u32) -> Rc<str> {
-        let data = self.get_data(id);
+    pub fn get_string(&self, id: u32) -> anyhow::Result<Rc<str>> {
+        let data = self.get_data(id)?;
 
-        data.str.clone()
+        Ok(data.str.clone())
     }
 
-    fn get_data(&self, id: u32) -> &ManagedStringData {
-        let data = match self.id_to_data.get(&id) {
-            Some(v) => v,
-            None => {
-                println!("{:?} {:?}", id, self.id_to_data);
-                panic!("StringId to have a valid interned id");
-            }
-        };
-        data
+    fn get_data(&self, id: u32) -> anyhow::Result<&ManagedStringData> {
+        match self.id_to_data.get(&id) {
+            Some(v) => Ok(v),
+            None => Err(anyhow::anyhow!("ManagedStringId {} is not valid", id)),
+        }
     }
 }
 

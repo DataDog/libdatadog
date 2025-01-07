@@ -209,7 +209,7 @@ impl Profile {
             // the lock to become poisoned, another unlikely failure already happened
             // before)
             .expect("acquisition of read lock on string storage should succeed")
-            .get_seq_num(non_empty_string_id, &mut self.strings);
+            .get_seq_num(non_empty_string_id, &mut self.strings)?;
 
         Ok(string_id)
     }
