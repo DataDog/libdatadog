@@ -74,7 +74,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
             .map_err(|_| {
                 anyhow::anyhow!("acquisition of write lock on string storage should succeed")
             })?
-            .intern(string);
+            .intern(string)?;
 
         anyhow::Ok(ManagedStringId { value: string_id })
     })()
