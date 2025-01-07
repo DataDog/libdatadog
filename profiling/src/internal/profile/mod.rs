@@ -118,33 +118,34 @@ impl Profile {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.string_storage.is_some(),
-            "Current sample makes use of ManagedStringIds but profile was not created using a managed string table"
+            "Current sample makes use of ManagedStringIds but profile was not created using a string table"
         );
 
         self.validate_string_id_sample_labels(&sample)?;
-        let labels: Vec<_> = sample
-            .labels
-            .iter()
-            .map(|label| {
-                let key = self.resolve(label.key);
-                let internal_label = if let Some(s) = label.str {
-                    let str = self.resolve(s);
-                    Label::str(key, str)
+
+        let mut labels = Vec::with_capacity(sample.labels.len());
+        for label in &sample.labels {
+            let key = self.resolve(label.key)?;
+            let internal_label = if let Some(s) = label.str {
+                let str = self.resolve(s)?;
+                Label::str(key, str)
+            } else {
+                let num = label.num;
+                let num_unit = if let Some(s) = label.num_unit {
+                    Some(self.resolve(s)?)
                 } else {
-                    let num = label.num;
-                    let num_unit = label.num_unit.map(|s| self.resolve(s));
-                    Label::num(key, num, num_unit)
+                    None
                 };
+                Label::num(key, num, num_unit)
+            };
 
-                self.labels.dedup(internal_label)
-            })
-            .collect();
+            labels.push(self.labels.dedup(internal_label));
+        }
 
-        let locations = sample
-            .locations
-            .iter()
-            .map(|l| self.add_string_id_location(l))
-            .collect();
+        let mut locations = Vec::with_capacity(sample.locations.len());
+        for location in &sample.locations {
+            locations.push(self.add_string_id_location(location)?);
+        }
 
         self.add_sample_internal(sample.values, labels, locations, timestamp)
     }
@@ -191,24 +192,26 @@ impl Profile {
         Ok(())
     }
 
-    pub fn resolve(&mut self, id: ManagedStringId) -> StringId {
+    pub fn resolve(&mut self, id: ManagedStringId) -> anyhow::Result<StringId> {
         let non_empty_string_id = if let Some(valid_id) = NonZeroU32::new(id.value) {
             valid_id
         } else {
-            return StringId::ZERO; // Both string tables use zero for the empty string
+            return Ok(StringId::ZERO); // Both string tables use zero for the empty string
         };
 
-        self.string_storage
+        let string_id = self.string_storage
             .as_ref()
             // Safety: We always get here through a direct or indirect call to add_string_id_sample,
             // which already ensured that the string storage exists.
-            .expect("resolution from id requires managed string storage")
+            .ok_or_else(|| anyhow::anyhow!("Current sample makes use of ManagedStringIds but profile was not created using a string table"))?
             .read()
             // Safety: This failure is unlikely as it only happens if the lock is poisoned (and for
             // the lock to become poisoned, another unlikely failure already happened
             // before)
             .expect("acquisition of read lock on string storage should succeed")
-            .get_seq_num(non_empty_string_id, &mut self.strings)
+            .get_seq_num(non_empty_string_id, &mut self.strings);
+
+        Ok(string_id)
     }
 
     /// Creates a profile with `start_time`.
@@ -397,18 +400,21 @@ impl Profile {
         })
     }
 
-    fn add_string_id_function(&mut self, function: &api::StringIdFunction) -> FunctionId {
-        let name = self.resolve(function.name);
-        let system_name = self.resolve(function.system_name);
-        let filename = self.resolve(function.filename);
+    fn add_string_id_function(
+        &mut self,
+        function: &api::StringIdFunction,
+    ) -> anyhow::Result<FunctionId> {
+        let name = self.resolve(function.name)?;
+        let system_name = self.resolve(function.system_name)?;
+        let filename = self.resolve(function.filename)?;
 
         let start_line = function.start_line;
-        self.functions.dedup(Function {
+        Ok(self.functions.dedup(Function {
             name,
             system_name,
             filename,
             start_line,
-        })
+        }))
     }
 
     fn add_location(&mut self, location: &api::Location) -> LocationId {
@@ -422,15 +428,18 @@ impl Profile {
         })
     }
 
-    fn add_string_id_location(&mut self, location: &api::StringIdLocation) -> LocationId {
-        let mapping_id = self.add_string_id_mapping(&location.mapping);
-        let function_id = self.add_string_id_function(&location.function);
-        self.locations.dedup(Location {
+    fn add_string_id_location(
+        &mut self,
+        location: &api::StringIdLocation,
+    ) -> anyhow::Result<LocationId> {
+        let mapping_id = self.add_string_id_mapping(&location.mapping)?;
+        let function_id = self.add_string_id_function(&location.function)?;
+        Ok(self.locations.dedup(Location {
             mapping_id,
             function_id,
             address: location.address,
             line: location.line,
-        })
+        }))
     }
 
     fn add_mapping(&mut self, mapping: &api::Mapping) -> MappingId {
@@ -446,17 +455,20 @@ impl Profile {
         })
     }
 
-    fn add_string_id_mapping(&mut self, mapping: &api::StringIdMapping) -> MappingId {
-        let filename = self.resolve(mapping.filename);
-        let build_id = self.resolve(mapping.build_id);
+    fn add_string_id_mapping(
+        &mut self,
+        mapping: &api::StringIdMapping,
+    ) -> anyhow::Result<MappingId> {
+        let filename = self.resolve(mapping.filename)?;
+        let build_id = self.resolve(mapping.build_id)?;
 
-        self.mappings.dedup(Mapping {
+        Ok(self.mappings.dedup(Mapping {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
             file_offset: mapping.file_offset,
             filename,
             build_id,
-        })
+        }))
     }
 
     fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {
@@ -663,7 +675,7 @@ impl Profile {
                 anyhow::bail!("Duplicate label on sample: {:?} {:?}", duplicate, label);
             }
 
-            let key_id: StringId = self.resolve(label.key);
+            let key_id: StringId = self.resolve(label.key)?;
 
             if key_id == self.endpoints.local_root_span_id_label {
                 anyhow::ensure!(
