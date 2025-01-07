@@ -204,6 +204,9 @@ impl Profile {
             // which already ensured that the string storage exists.
             .expect("resolution from id requires managed string storage")
             .read()
+            // Safety: This failure is unlikely as it only happens if the lock is poisoned (and for
+            // the lock to become poisoned, another unlikely failure already happened
+            // before)
             .expect("acquisition of read lock on string storage should succeed")
             .get_seq_num(non_empty_string_id, &mut self.strings)
     }
