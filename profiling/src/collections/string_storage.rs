@@ -35,7 +35,7 @@ impl ManagedStringStorage {
         };
         // Ensure empty string gets id 0 and always has usage > 0 so it's always retained
         // Safety: On an empty managed string table intern should never fail.
-        storage.intern("").expect("Initialization to succeed");
+        storage.intern_new("").expect("Initialization to succeed");
         storage
     }
 
@@ -51,6 +51,11 @@ impl ManagedStringStorage {
     }
 
     pub fn intern(&mut self, item: &str) -> anyhow::Result<u32> {
+        if item.is_empty() {
+            // We don't increase ref-counts on the empty string
+            return Ok(0);
+        }
+
         let entry = self.str_to_id.get_key_value(item);
         match entry {
             Some((_, id)) => {
@@ -64,25 +69,27 @@ impl ManagedStringStorage {
                 usage_count.set(usage_count.get() + 1);
                 Ok(*id)
             }
-            None => {
-                let id = self.next_id;
-                let str: Rc<str> = item.into();
-                let data = ManagedStringData {
-                    str: str.clone(),
-                    cached_seq_num: Cell::new(None),
-                    usage_count: Cell::new(1),
-                };
-                self.next_id = self
-                    .next_id
-                    .checked_add(1)
-                    .ok_or_else(|| anyhow::anyhow!("Ran out of string ids!"))?;
-                let old_value = self.str_to_id.insert(str.clone(), id);
-                debug_assert_eq!(old_value, None);
-                let old_value = self.id_to_data.insert(id, data);
-                debug_assert_eq!(old_value, None);
-                Ok(id)
-            }
+            None => self.intern_new(item),
         }
+    }
+
+    pub fn intern_new(&mut self, item: &str) -> anyhow::Result<u32> {
+        let id = self.next_id;
+        let str: Rc<str> = item.into();
+        let data = ManagedStringData {
+            str: str.clone(),
+            cached_seq_num: Cell::new(None),
+            usage_count: Cell::new(1),
+        };
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("Ran out of string ids!"))?;
+        let old_value = self.str_to_id.insert(str.clone(), id);
+        debug_assert_eq!(old_value, None);
+        let old_value = self.id_to_data.insert(id, data);
+        debug_assert_eq!(old_value, None);
+        Ok(id)
     }
 
     // Here id is a NonZeroU32 because an id of 0 is the empty string and that can never be
