@@ -32,7 +32,7 @@ struct MetricData<'a> {
     trace_chunks_sent: ContextKey,
     trace_chunks_dropped: ContextKey,
 }
-impl<'a> MetricData<'a> {
+impl MetricData<'_> {
     async fn send(&self, key: ContextKey, value: f64, tags: Vec<Tag>) {
         let _ = self
             .worker

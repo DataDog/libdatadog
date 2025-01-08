@@ -1,8 +1,16 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub use crate::send_data::send_data_result::SendDataResult;
+pub use crate::send_data::SendData;
+pub use crate::tracer_header_tags::TracerHeaderTags;
+use crate::tracer_payload;
+use crate::tracer_payload::{TraceCollection, TracerPayloadCollection};
 use anyhow::anyhow;
 use bytes::buf::Reader;
+use datadog_trace_normalization::normalizer;
+use datadog_trace_protobuf::pb;
+use ddcommon::azure_app_services;
 use hyper::body::HttpBody;
 use hyper::{body::Buf, Body};
 use log::error;
@@ -12,15 +20,6 @@ use rmpv::{Integer, Value};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
-
-pub use crate::send_data::send_data_result::SendDataResult;
-pub use crate::send_data::SendData;
-pub use crate::tracer_header_tags::TracerHeaderTags;
-use crate::tracer_payload;
-use crate::tracer_payload::{TraceCollection, TracerPayloadCollection};
-use datadog_trace_normalization::normalizer;
-use datadog_trace_protobuf::pb;
-use ddcommon::azure_app_services;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -510,19 +509,39 @@ pub fn enrich_span_with_mini_agent_metadata(
         span.meta
             .insert("asa.name".to_string(), azure_spring_app_name.to_string());
     }
-    if let Some(gcp_project_id) = &mini_agent_metadata.gcp_project_id {
-        span.meta
-            .insert("gcrfx.project_id".to_string(), gcp_project_id.to_string());
-    }
-    if let Some(gcp_region) = &mini_agent_metadata.gcp_region {
-        span.meta
-            .insert("gcrfx.location".to_string(), gcp_region.to_string());
-    }
     if let Some(mini_agent_version) = &mini_agent_metadata.version {
         span.meta.insert(
             "_dd.mini_agent_version".to_string(),
             mini_agent_version.to_string(),
         );
+    }
+}
+
+pub fn enrich_span_with_google_cloud_function_metadata(
+    span: &mut pb::Span,
+    mini_agent_metadata: &MiniAgentMetadata,
+    function: Option<String>,
+) {
+    let Some(region) = &mini_agent_metadata.gcp_region else {
+        todo!()
+    };
+    let Some(project) = &mini_agent_metadata.gcp_project_id else {
+        todo!()
+    };
+    if function.is_some() && !region.is_empty() && !project.is_empty() {
+        let resource_name = format!(
+            "projects/{}/locations/{}/functions/{}",
+            project,
+            region,
+            function.unwrap()
+        );
+
+        span.meta
+            .insert("gcrfx.location".to_string(), region.to_string());
+        span.meta
+            .insert("gcrfx.project_id".to_string(), project.to_string());
+        span.meta
+            .insert("gcrfx.resource_name".to_string(), resource_name.to_string());
     }
 }
 
