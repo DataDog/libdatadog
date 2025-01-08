@@ -62,6 +62,11 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
     storage: ManagedStringStorage,
     string: CharSlice,
 ) -> ManagedStringStorageInternResult {
+    // Empty strings always get assigned id 0, no need to check.
+    if string.len() == 0 {
+        return anyhow::Ok(ManagedStringId { value: 0 }).into();
+    }
+
     (|| {
         let storage = get_inner_string_storage(storage, true)?;
 
