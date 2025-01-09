@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use data_pipeline::trace_exporter::error::{
-    BuilderErrorKind, NetworkErrorKind, TraceExporterError,
+    AgentErrorKind, BuilderErrorKind, NetworkErrorKind, TraceExporterError,
 };
 use std::ffi::{c_char, CString};
 use std::fmt::Display;
@@ -19,6 +19,7 @@ pub enum ExporterErrorCode {
     HttpBodyFormat,
     HttpBodyTooLong,
     HttpClient,
+    HttpEmptyBody,
     HttpParse,
     HttpServer,
     HttpUnknown,
@@ -43,6 +44,7 @@ impl Display for ExporterErrorCode {
             Self::HttpBodyFormat => write!(f, "Error parsing HTTP body"),
             Self::HttpBodyTooLong => write!(f, "HTTP body too long"),
             Self::HttpClient => write!(f, "HTTP error orgininated by client"),
+            Self::HttpEmptyBody => write!(f, "HTTP empty body"),
             Self::HttpParse => write!(f, "Error while parsing HTTP message"),
             Self::HttpServer => write!(f, "HTTP error orgininated by server"),
             Self::HttpWrongStatus => write!(f, "HTTP wrong status number"),
@@ -79,6 +81,9 @@ impl ExporterError {
 impl From<TraceExporterError> for ExporterError {
     fn from(value: TraceExporterError) -> Self {
         let code = match &value {
+            TraceExporterError::Agent(e) => match e {
+                AgentErrorKind::EmptyResponse => ExporterErrorCode::HttpEmptyBody,
+            },
             TraceExporterError::Builder(e) => match e {
                 BuilderErrorKind::InvalidUri => ExporterErrorCode::InvalidUrl,
             },
