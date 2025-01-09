@@ -22,7 +22,6 @@ pub enum RemoteConfigProduct {
     AsmDD,
     AsmFeatures,
     AsmRaspLfi,
-    AsmRaspSsrf,
     LiveDebugger,
 }
 
@@ -36,7 +35,6 @@ impl Display for RemoteConfigProduct {
             RemoteConfigProduct::AsmData => "ASM_DATA",
             RemoteConfigProduct::AsmFeatures => "ASM_FEATURES",
             RemoteConfigProduct::AsmRaspLfi => "ASM_RASP_LFI",
-            RemoteConfigProduct::AsmRaspSsrf => "ASM_RASP_SSRF",
         };
         write!(f, "{}", str)
     }
@@ -85,7 +83,6 @@ impl RemoteConfigPath {
                 "ASM_DATA" => RemoteConfigProduct::AsmData,
                 "ASM_FEATURES" => RemoteConfigProduct::AsmFeatures,
                 "ASM_RASP_LFI" => RemoteConfigProduct::AsmRaspLfi,
-                "ASM_RASP_SSRF" => RemoteConfigProduct::AsmRaspSsrf,
                 product => anyhow::bail!("Unknown product {}", product),
             },
             config_id: parts[parts.len() - 2],
