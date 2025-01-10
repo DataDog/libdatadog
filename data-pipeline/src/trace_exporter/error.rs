@@ -9,6 +9,19 @@ use std::error::Error;
 use std::fmt::{Debug, Display};
 
 #[derive(Debug, PartialEq)]
+pub enum AgentErrorKind {
+    EmptyResponse,
+}
+
+impl Display for AgentErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AgentErrorKind::EmptyResponse => write!(f, "Agent empty response"),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub enum BuilderErrorKind {
     InvalidUri,
 }
@@ -93,6 +106,7 @@ impl RequestError {
 /// TraceExporterError holds different types of errors that occur when handling traces.
 #[derive(Debug)]
 pub enum TraceExporterError {
+    Agent(AgentErrorKind),
     Builder(BuilderErrorKind),
     Deserialization(DecodeError),
     Io(std::io::Error),
@@ -150,6 +164,7 @@ impl From<std::io::Error> for TraceExporterError {
 impl Display for TraceExporterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            TraceExporterError::Agent(e) => std::fmt::Display::fmt(e, f),
             TraceExporterError::Builder(e) => std::fmt::Display::fmt(e, f),
             TraceExporterError::Deserialization(e) => std::fmt::Display::fmt(e, f),
             TraceExporterError::Io(e) => std::fmt::Display::fmt(e, f),
