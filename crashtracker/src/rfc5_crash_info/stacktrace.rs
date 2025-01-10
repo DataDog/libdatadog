@@ -16,14 +16,58 @@ use serde::{Deserialize, Serialize};
 pub struct StackTrace {
     pub format: String,
     pub frames: Vec<StackFrame>,
+    pub incomplete: bool,
+}
+
+const FORMAT_STRING: &str = "Datadog Crashtracker 1.0";
+
+impl StackTrace {
+    pub fn empty() -> Self {
+        Self {
+            format: FORMAT_STRING.to_string(),
+            frames: vec![],
+            incomplete: false,
+        }
+    }
+
+    pub fn from_frames(frames: Vec<StackFrame>, incomplete: bool) -> Self {
+        Self {
+            format: FORMAT_STRING.to_string(),
+            frames,
+            incomplete,
+        }
+    }
+
+    pub fn new_incomplete() -> Self {
+        Self {
+            format: FORMAT_STRING.to_string(),
+            frames: vec![],
+            incomplete: true,
+        }
+    }
+
+    pub fn missing() -> Self {
+        Self {
+            format: FORMAT_STRING.to_string(),
+            frames: vec![],
+            incomplete: true,
+        }
+    }
 }
 
 impl StackTrace {
-    pub fn new() -> Self {
-        Self {
-            format: "Datadog Crashtracker 1.0".to_string(),
-            frames: vec![],
-        }
+    pub fn set_complete(&mut self) -> anyhow::Result<()> {
+        self.incomplete = false;
+        Ok(())
+    }
+
+    pub fn push_frame(&mut self, frame: StackFrame, incomplete: bool) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.incomplete,
+            "Can't push a new frame onto a complete stack"
+        );
+        self.frames.push(frame);
+        Ok(())
     }
 }
 
