@@ -73,7 +73,7 @@ impl ManagedStringStorage {
         }
     }
 
-    pub fn intern_new(&mut self, item: &str) -> anyhow::Result<u32> {
+    fn intern_new(&mut self, item: &str) -> anyhow::Result<u32> {
         let id = self.next_id;
         let str: Rc<str> = item.into();
         let data = ManagedStringData {
