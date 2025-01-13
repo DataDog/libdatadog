@@ -67,6 +67,7 @@ impl StackTrace {
             "Can't push a new frame onto a complete stack"
         );
         self.frames.push(frame);
+        self.incomplete = incomplete;
         Ok(())
     }
 }
@@ -92,7 +93,7 @@ impl StackTrace {
 
 impl Default for StackTrace {
     fn default() -> Self {
-        Self::new()
+        Self::missing()
     }
 }
 
@@ -147,7 +148,6 @@ impl From<Vec<crate::StackFrame>> for StackTrace {
             }
         }
 
-        let format = String::from("Datadog Crashtracker 1.0");
         // Todo: this will under-estimate the cap needed if there are inlined functions.
         // Maybe not worth fixing this.
         let mut frames = Vec::with_capacity(value.len());
@@ -189,8 +189,7 @@ impl From<Vec<crate::StackFrame>> for StackTrace {
                 }
             }
         }
-
-        Self { format, frames }
+        Self::from_frames(frames, false)
     }
 }
 
@@ -333,10 +332,7 @@ fn byte_slice_as_hex(bv: &[u8]) -> String {
 impl super::test_utils::TestInstance for StackTrace {
     fn test_instance(_seed: u64) -> Self {
         let frames = (0..10).map(StackFrame::test_instance).collect();
-        Self {
-            format: "Datadog Crashtracker 1.0".to_string(),
-            frames,
-        }
+        Self::from_frames(frames, false)
     }
 }
 

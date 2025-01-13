@@ -25,10 +25,7 @@ impl ErrorDataBuilder {
         let kind = self.kind.context("required field 'kind' missing")?;
         let message = self.message;
         let source_type = SourceType::Crashtracking;
-        let stack = self.stack.unwrap_or(StackTrace {
-            format: "Missing Stacktrace".to_string(),
-            frames: vec![],
-        });
+        let stack = self.stack.unwrap_or_else(StackTrace::missing);
         let threads = self.threads.unwrap_or_default();
         Ok((
             ErrorData {
