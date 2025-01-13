@@ -135,7 +135,8 @@ void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
   check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), elf_frame.release(), true),
                "failed to add stack frame");
 
-  check_result(ddog_crasht_StackTrace_set_complete(stacktrace.get()), "unable to set stacktrace as complete");
+  check_result(ddog_crasht_StackTrace_set_complete(stacktrace.get()),
+               "unable to set stacktrace as complete");
 
   // Now that all the frames are added to the stack, put the stack on the report
   // This operation consumes the stack, so use .release here
