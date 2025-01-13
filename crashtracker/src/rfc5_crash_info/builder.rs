@@ -59,6 +59,28 @@ impl ErrorDataBuilder {
         Ok(self)
     }
 
+    pub fn with_stack_frame(
+        &mut self,
+        frame: StackFrame,
+        incomplete: bool,
+    ) -> anyhow::Result<&mut Self> {
+        if let Some(stack) = &mut self.stack {
+            stack.push_frame(frame, incomplete)?;
+        } else {
+            self.stack = Some(StackTrace::from_frames(vec![frame], incomplete));
+        }
+        Ok(self)
+    }
+
+    pub fn with_stack_set_complete(&mut self) -> anyhow::Result<&mut Self> {
+        if let Some(stack) = &mut self.stack {
+            stack.set_complete()?;
+        } else {
+            anyhow::bail!("Can't set non-existant stack complete");
+        }
+        Ok(self)
+    }
+
     pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<&mut Self> {
         self.threads = Some(threads);
         Ok(self)
@@ -241,6 +263,20 @@ impl CrashInfoBuilder {
 
     pub fn with_stack(&mut self, stack: StackTrace) -> anyhow::Result<&mut Self> {
         self.error.with_stack(stack)?;
+        Ok(self)
+    }
+
+    pub fn with_stack_frame(
+        &mut self,
+        frame: StackFrame,
+        incomplete: bool,
+    ) -> anyhow::Result<&mut Self> {
+        self.error.with_stack_frame(frame, incomplete)?;
+        Ok(self)
+    }
+
+    pub fn with_stack_set_complete(&mut self) -> anyhow::Result<&mut Self> {
+        self.error.with_stack_set_complete()?;
         Ok(self)
     }
 
