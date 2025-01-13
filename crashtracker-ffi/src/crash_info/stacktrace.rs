@@ -45,7 +45,9 @@ pub unsafe extern "C" fn ddog_crasht_StackTrace_push_frame(
     incomplete: bool,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        trace.to_inner_mut()?.push_frame(*frame.take()?, incomplete)?;
+        trace
+            .to_inner_mut()?
+            .push_frame(*frame.take()?, incomplete)?;
     })
 }
 
