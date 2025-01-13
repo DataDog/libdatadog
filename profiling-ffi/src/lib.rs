@@ -4,6 +4,7 @@
 #[cfg(all(feature = "symbolizer", not(target_os = "windows")))]
 pub use symbolizer_ffi::*;
 
+mod datatypes;
 mod exporter;
 mod profiles;
 

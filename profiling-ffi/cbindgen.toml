@@ -33,17 +33,15 @@ renaming_overrides_prefixing = true
 "Timespec" = "ddog_Timespec"
 "Vec_Tag" = "ddog_Vec_Tag"
 "Vec_U8" = "ddog_Vec_U8"
+"VoidResult" = "ddog_VoidResult"
 
-"ProfilingEndpoint" = "ddog_prof_Endpoint"
 "ExporterNewResult" = "ddog_prof_Exporter_NewResult"
 "File" = "ddog_prof_Exporter_File"
 "ProfileExporter" = "ddog_prof_Exporter"
-"ProfileNewResult" = "ddog_prof_Profile_NewResult"
-"ProfileResult" = "ddog_prof_Profile_Result"
+"ProfilingEndpoint" = "ddog_prof_Endpoint"
 "Request" = "ddog_prof_Exporter_Request"
 "RequestBuildResult" = "ddog_prof_Exporter_Request_BuildResult"
 "SendResult" = "ddog_prof_Exporter_SendResult"
-"SerializeResult" = "ddog_prof_Profile_SerializeResult"
 "Slice_File" = "ddog_prof_Exporter_Slice_File"
 
 [export.mangle]
