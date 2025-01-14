@@ -13,14 +13,6 @@ pub struct Flusher {
     aggregator: Arc<Mutex<Aggregator>>,
 }
 
-#[inline]
-#[must_use]
-#[deprecated(note = "please use IntakeUrlPrefix::from_site instead")]
-// This function is deprecated becaause its name is misleading. It is not actually building Fully Qualified Domain Name.
-pub fn build_fqdn_metrics(site: String) -> String {
-    format!("https://api.{site}")
-}
-
 pub struct FlusherConfig {
     pub api_key: String,
     pub aggregator: Arc<Mutex<Aggregator>>,
