@@ -81,7 +81,7 @@ void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
                  "failed to add line");
 
     // This operation consumes the frame, so use .release here
-    check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), new_frame.release()),
+    check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), new_frame.release(), true),
                  "failed to add stack frame");
   }
 
@@ -107,7 +107,7 @@ void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
       ddog_crasht_StackFrame_with_relative_address(pbd_frame.get(), to_slice_c_char("0xBABEF00D")),
       "failed to add relative address");
   // This operation consumes the frame, so use .release here
-  check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), pbd_frame.release()),
+  check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), pbd_frame.release(), true),
                "failed to add stack frame");
 
   // ELF style frame with normalization
@@ -132,8 +132,11 @@ void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
       ddog_crasht_StackFrame_with_relative_address(elf_frame.get(), to_slice_c_char("0xBABEF00D")),
       "failed to add relative address");
   // This operation consumes the frame, so use .release here
-  check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), elf_frame.release()),
+  check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), elf_frame.release(), true),
                "failed to add stack frame");
+
+  check_result(ddog_crasht_StackTrace_set_complete(stacktrace.get()),
+               "unable to set stacktrace as complete");
 
   // Now that all the frames are added to the stack, put the stack on the report
   // This operation consumes the stack, so use .release here

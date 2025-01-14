@@ -15,7 +15,7 @@ use ddcommon_ffi::{wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResul
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_crasht_StackTrace_new() -> Result<Handle<StackTrace>> {
-    ddcommon_ffi::Result::Ok(StackTrace::new().into())
+    ddcommon_ffi::Result::Ok(StackTrace::new_incomplete().into())
 }
 
 /// # Safety
@@ -42,8 +42,25 @@ pub unsafe extern "C" fn ddog_crasht_StackTrace_drop(trace: *mut Handle<StackTra
 pub unsafe extern "C" fn ddog_crasht_StackTrace_push_frame(
     mut trace: *mut Handle<StackTrace>,
     mut frame: *mut Handle<StackFrame>,
+    incomplete: bool,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        trace.to_inner_mut()?.frames.push(*frame.take()?);
+        trace
+            .to_inner_mut()?
+            .push_frame(*frame.take()?, incomplete)?;
+    })
+}
+
+/// # Safety
+/// The `stacktrace` can be null, but if non-null it must point to a StackTrace made by this module,
+/// which has not previously been dropped.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_StackTrace_set_complete(
+    mut trace: *mut Handle<StackTrace>,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        trace.to_inner_mut()?.set_complete()?;
     })
 }
