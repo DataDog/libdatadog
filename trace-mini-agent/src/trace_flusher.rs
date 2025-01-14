@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
-use log::{error, info};
 use std::{sync::Arc, time};
 use tokio::sync::{mpsc::Receiver, Mutex};
+use tracing::{debug, error};
 
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::SendData;
@@ -53,7 +53,7 @@ impl TraceFlusher for ServerlessTraceFlusher {
         if traces.is_empty() {
             return;
         }
-        info!("Flushing {} traces", traces.len());
+        debug!("Flushing {} traces", traces.len());
 
         for traces in trace_utils::coalesce_send_data(traces) {
             match traces
@@ -61,7 +61,7 @@ impl TraceFlusher for ServerlessTraceFlusher {
                 .await
                 .last_result
             {
-                Ok(_) => info!("Successfully flushed traces"),
+                Ok(_) => debug!("Successfully flushed traces"),
                 Err(e) => {
                     error!("Error sending trace: {e:?}")
                     // TODO: Retries

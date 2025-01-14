@@ -106,6 +106,13 @@ impl BytesString {
         // SAFETY: We assume all BytesStrings are valid UTF-8.
         unsafe { std::str::from_utf8_unchecked(&self.bytes) }
     }
+
+    /// Returns a `String` with a copy of the `BytesString`.
+    /// This is typically useful when you need to hold the content of a slice for a long time and
+    /// don't want to prevent the buffer from being dropped earlier.
+    pub fn copy_to_string(&self) -> String {
+        self.as_str().to_string()
+    }
 }
 
 impl Default for BytesString {
@@ -218,14 +225,14 @@ mod tests {
     }
 
     #[test]
-    fn from_string() {
+    fn test_from_string() {
         let string = String::from("hello");
         let bytes_string = BytesString::from(string);
         assert_eq!(bytes_string.as_str(), "hello")
     }
 
     #[test]
-    fn from_static_str() {
+    fn test_from_static_str() {
         let static_str = "hello";
         let bytes_string = BytesString::from(static_str);
         assert_eq!(bytes_string.as_str(), "hello")
@@ -238,8 +245,14 @@ mod tests {
     }
 
     #[test]
-    fn hash() {
+    fn test_hash() {
         let bytes_string = BytesString::from_slice(b"test hash").unwrap();
         assert_eq!(calculate_hash(&bytes_string), calculate_hash(&"test hash"));
+    }
+
+    #[test]
+    fn test_copy_to_string() {
+        let bytes_string = BytesString::from("hello");
+        assert_eq!(bytes_string.copy_to_string(), "hello")
     }
 }

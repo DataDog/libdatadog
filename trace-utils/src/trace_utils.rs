@@ -1,8 +1,16 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub use crate::send_data::send_data_result::SendDataResult;
+pub use crate::send_data::SendData;
+pub use crate::tracer_header_tags::TracerHeaderTags;
+use crate::tracer_payload;
+use crate::tracer_payload::{TraceCollection, TracerPayloadCollection};
 use anyhow::anyhow;
 use bytes::buf::Reader;
+use datadog_trace_normalization::normalizer;
+use datadog_trace_protobuf::pb;
+use ddcommon::azure_app_services;
 use hyper::body::HttpBody;
 use hyper::{body::Buf, Body};
 use log::error;
@@ -12,15 +20,6 @@ use rmpv::{Integer, Value};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
-
-pub use crate::send_data::send_data_result::SendDataResult;
-pub use crate::send_data::SendData;
-pub use crate::tracer_header_tags::TracerHeaderTags;
-use crate::tracer_payload;
-use crate::tracer_payload::{TraceCollection, TracerPayloadCollection};
-use datadog_trace_normalization::normalizer;
-use datadog_trace_protobuf::pb;
-use ddcommon::azure_app_services;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -257,7 +256,7 @@ pub async fn get_v05_traces_from_request_body(
     Ok((body_size, traces))
 }
 
-// Tags gathered from a trace's root span
+/// Tags gathered from a trace's root span
 #[derive(Default)]
 pub struct RootSpanTags<'a> {
     pub env: &'a str,
@@ -425,13 +424,11 @@ pub fn has_top_level(span: &pb::Span) -> bool {
 }
 
 fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
-    if !is_top_level {
-        if span.metrics.contains_key(TOP_LEVEL_KEY) {
-            span.metrics.remove(TOP_LEVEL_KEY);
-        }
-        return;
+    if is_top_level {
+        span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
+    } else {
+        span.metrics.remove(TOP_LEVEL_KEY);
     }
-    span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
 }
 
 pub fn set_serverless_root_span_tags(
@@ -512,19 +509,39 @@ pub fn enrich_span_with_mini_agent_metadata(
         span.meta
             .insert("asa.name".to_string(), azure_spring_app_name.to_string());
     }
-    if let Some(gcp_project_id) = &mini_agent_metadata.gcp_project_id {
-        span.meta
-            .insert("gcrfx.project_id".to_string(), gcp_project_id.to_string());
-    }
-    if let Some(gcp_region) = &mini_agent_metadata.gcp_region {
-        span.meta
-            .insert("gcrfx.location".to_string(), gcp_region.to_string());
-    }
     if let Some(mini_agent_version) = &mini_agent_metadata.version {
         span.meta.insert(
             "_dd.mini_agent_version".to_string(),
             mini_agent_version.to_string(),
         );
+    }
+}
+
+pub fn enrich_span_with_google_cloud_function_metadata(
+    span: &mut pb::Span,
+    mini_agent_metadata: &MiniAgentMetadata,
+    function: Option<String>,
+) {
+    let Some(region) = &mini_agent_metadata.gcp_region else {
+        todo!()
+    };
+    let Some(project) = &mini_agent_metadata.gcp_project_id else {
+        todo!()
+    };
+    if function.is_some() && !region.is_empty() && !project.is_empty() {
+        let resource_name = format!(
+            "projects/{}/locations/{}/functions/{}",
+            project,
+            region,
+            function.unwrap()
+        );
+
+        span.meta
+            .insert("gcrfx.location".to_string(), region.to_string());
+        span.meta
+            .insert("gcrfx.project_id".to_string(), project.to_string());
+        span.meta
+            .insert("gcrfx.resource_name".to_string(), resource_name.to_string());
     }
 }
 
@@ -651,7 +668,7 @@ pub fn collect_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
     }
 }
 
-// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
+/// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
 pub fn is_measured(span: &pb::Span) -> bool {
     span.metrics.get(MEASURED_KEY).is_some_and(|v| *v == 1.0)
 }
@@ -669,32 +686,23 @@ pub fn is_partial_snapshot(span: &pb::Span) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::test_utils::create_test_span;
+    use ddcommon::Endpoint;
     use hyper::Request;
     use serde_json::json;
-    use std::collections::HashMap;
-
-    use super::{get_root_span_index, set_serverless_root_span_tags};
-    use crate::trace_utils::{has_top_level, TracerHeaderTags, MAX_PAYLOAD_SIZE};
-    use crate::tracer_payload::TracerPayloadCollection;
-    use crate::{
-        test_utils::create_test_span,
-        trace_utils::{self, SendData},
-    };
-    use datadog_trace_protobuf::pb::TraceChunk;
-    use datadog_trace_protobuf::pb::{Span, TracerPayload};
-    use ddcommon::Endpoint;
 
     #[test]
     fn test_coalescing_does_not_exceed_max_size() {
         let dummy = SendData::new(
             MAX_PAYLOAD_SIZE / 5 + 1,
-            TracerPayloadCollection::V07(vec![TracerPayload {
+            TracerPayloadCollection::V07(vec![pb::TracerPayload {
                 container_id: "".to_string(),
                 language_name: "".to_string(),
                 language_version: "".to_string(),
                 tracer_version: "".to_string(),
                 runtime_id: "".to_string(),
-                chunks: vec![TraceChunk {
+                chunks: vec![pb::TraceChunk {
                     priority: 0,
                     origin: "".to_string(),
                     spans: vec![],
@@ -709,7 +717,7 @@ mod tests {
             TracerHeaderTags::default(),
             &Endpoint::default(),
         );
-        let coalesced = trace_utils::coalesce_send_data(vec![
+        let coalesced = coalesce_send_data(vec![
             dummy.clone(),
             dummy.clone(),
             dummy.clone(),
@@ -744,7 +752,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::type_complexity)]
     #[cfg_attr(all(miri, target_os = "macos"), ignore)]
-    async fn get_v05_traces_from_request_body() {
+    async fn test_get_v05_traces_from_request_body() {
         let data: (
             Vec<String>,
             Vec<
@@ -793,12 +801,11 @@ mod tests {
             )]],
         );
         let bytes = rmp_serde::to_vec(&data).unwrap();
-        let res =
-            trace_utils::get_v05_traces_from_request_body(hyper::body::Body::from(bytes)).await;
+        let res = get_v05_traces_from_request_body(hyper::body::Body::from(bytes)).await;
         assert!(res.is_ok());
         let (_, traces) = res.unwrap();
         let span = traces[0][0].clone();
-        let test_span = Span {
+        let test_span = pb::Span {
             service: "my-service".to_string(),
             name: "my-name".to_string(),
             resource: "my-resource".to_string(),
@@ -842,7 +849,7 @@ mod tests {
                     "meta": {},
                     "metrics": {},
                 }]),
-                vec![vec![Span {
+                vec![vec![pb::Span {
                     service: "test-service".to_string(),
                     name: "test-service-name".to_string(),
                     resource: "test-service-resource".to_string(),
@@ -869,7 +876,7 @@ mod tests {
                     "duration": 5,
                     "meta": {},
                 }]),
-                vec![vec![Span {
+                vec![vec![pb::Span {
                     service: "".to_string(),
                     name: "test-service-name".to_string(),
                     resource: "test-service-resource".to_string(),
@@ -893,7 +900,7 @@ mod tests {
             let request = Request::builder()
                 .body(hyper::body::Body::from(bytes))
                 .unwrap();
-            let res = trace_utils::get_traces_from_request_body(request.into_body()).await;
+            let res = get_traces_from_request_body(request.into_body()).await;
             assert!(res.is_ok());
             assert_eq!(res.unwrap().1, output);
         }
@@ -932,7 +939,7 @@ mod tests {
         set_serverless_root_span_tags(
             &mut span,
             Some("test_function".to_string()),
-            &trace_utils::EnvironmentType::AzureFunction,
+            &EnvironmentType::AzureFunction,
         );
         assert_eq!(
             span.meta,
@@ -957,7 +964,7 @@ mod tests {
         set_serverless_root_span_tags(
             &mut span,
             Some("test_function".to_string()),
-            &trace_utils::EnvironmentType::CloudFunction,
+            &EnvironmentType::CloudFunction,
         );
         assert_eq!(
             span.meta,
@@ -982,5 +989,46 @@ mod tests {
         let not_top_level_span = create_test_span(123, 1234, 12, 1, false);
         assert!(has_top_level(&top_level_span));
         assert!(!has_top_level(&not_top_level_span));
+    }
+
+    #[test]
+    fn test_is_measured() {
+        let mut measured_span = create_test_span(123, 1234, 12, 1, true);
+        measured_span.metrics.insert(MEASURED_KEY.into(), 1.0);
+        let not_measured_span = create_test_span(123, 1234, 12, 1, true);
+        assert!(is_measured(&measured_span));
+        assert!(!is_measured(&not_measured_span));
+    }
+
+    #[test]
+    fn test_compute_top_level() {
+        let mut span_with_different_service = create_test_span(123, 5, 2, 1, false);
+        span_with_different_service.service = "another_service".into();
+        let mut trace = vec![
+            // Root span, should be marked as top-level
+            create_test_span(123, 1, 0, 1, false),
+            // Should not be marked as top-level
+            create_test_span(123, 2, 1, 1, false),
+            // No parent in local trace, should be marked as
+            // top-level
+            create_test_span(123, 4, 3, 1, false),
+            // Parent belongs to another service, should be marked
+            // as top-level
+            span_with_different_service,
+        ];
+
+        compute_top_level_span(trace.as_mut_slice());
+
+        let spans_marked_as_top_level: Vec<u64> = trace
+            .iter()
+            .filter_map(|span| {
+                if has_top_level(span) {
+                    Some(span.span_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(spans_marked_as_top_level, [1, 4, 5])
     }
 }

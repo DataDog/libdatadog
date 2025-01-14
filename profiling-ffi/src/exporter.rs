@@ -590,7 +590,8 @@ mod tests {
         };
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds);
+            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
+                .unwrap_none();
         }
 
         let build_result = unsafe {
@@ -663,7 +664,8 @@ mod tests {
         };
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds);
+            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
+                .unwrap_none();
         }
 
         let raw_internal_metadata = CharSlice::from(
@@ -737,7 +739,8 @@ mod tests {
         };
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds);
+            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
+                .unwrap_none();
         }
 
         let raw_internal_metadata = CharSlice::from("this is not a valid json string");
@@ -799,7 +802,8 @@ mod tests {
         };
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds);
+            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
+                .unwrap_none();
         }
 
         let raw_info = CharSlice::from(
@@ -915,7 +919,8 @@ mod tests {
         };
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds);
+            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
+                .unwrap_none();
         }
 
         let raw_info = CharSlice::from("this is not a valid json string");

@@ -15,129 +15,145 @@ extern "C" {
 #include <vector>
 
 static ddog_CharSlice to_slice_c_char(const char *s) { return {.ptr = s, .len = strlen(s)}; }
-static ddog_CharSlice to_slice_c_char(const char *s, std::size_t size) { return {.ptr = s, .len = size}; }
+static ddog_CharSlice to_slice_c_char(const char *s, std::size_t size) {
+  return {.ptr = s, .len = size};
+}
 static ddog_CharSlice to_slice_string(std::string const &s) {
   return {.ptr = s.data(), .len = s.length()};
 }
-
-template <class T>
-static ddog_ByteSlice to_byte_slice(T const& c) {
-  return {.ptr = reinterpret_cast<const std::uint8_t*>(c.data()), .len = c.size()};
-}
-
-struct Deleter {
-  void operator()(ddog_crasht_CrashInfo *object) { ddog_crasht_CrashInfo_drop(object); }
-};
 
 void print_error(const char *s, const ddog_Error &err) {
   auto charslice = ddog_Error_message(&err);
   printf("%s (%.*s)\n", s, static_cast<int>(charslice.len), charslice.ptr);
 }
 
-void check_result(ddog_crasht_Result result, const char *msg) {
-  if (result.tag != DDOG_CRASHT_RESULT_OK) {
-    print_error(msg, result.err);
-    ddog_Error_drop(&result.err);
-    exit(EXIT_FAILURE);
-  }
-}
-
-void add_stacktrace(std::unique_ptr<ddog_crasht_CrashInfo, Deleter> &crashinfo) {
-
-  // Collect things into vectors so they stay alive till the function exits
-  constexpr std::size_t nb_elements = 20;
-  std::vector<std::pair<std::string, std::string>> functions_and_filenames{nb_elements};
-  for (uintptr_t i = 0; i < nb_elements; ++i) {
-    functions_and_filenames.push_back({"func_" + std::to_string(i), "/path/to/code/file_" + std::to_string(i)});
+#define CHECK_RESULT(typ, ok_tag)                                                                  \
+  void check_result(typ result, const char *msg) {                                                 \
+    if (result.tag != ok_tag) {                                                                    \
+      print_error(msg, result.err);                                                                \
+      ddog_Error_drop(&result.err);                                                                \
+      exit(EXIT_FAILURE);                                                                          \
+    }                                                                                              \
   }
 
-  std::vector<ddog_crasht_StackFrameNames> names{nb_elements};
-  for (auto i = 0; i < nb_elements; i++) {
-    auto const& [function_name, filename] = functions_and_filenames[i];
+CHECK_RESULT(ddog_VoidResult, DDOG_VOID_RESULT_OK)
+CHECK_RESULT(ddog_Vec_Tag_PushResult, DDOG_VEC_TAG_PUSH_RESULT_OK)
 
-    auto function_name_slice = to_slice_string(function_name);
-    auto res = ddog_crasht_demangle(function_name_slice, DDOG_CRASHT_DEMANGLE_OPTIONS_COMPLETE);
-    if (res.tag == DDOG_CRASHT_STRING_WRAPPER_RESULT_OK)
-    {
-      auto string_result = res.ok.message;
-      function_name_slice = to_slice_c_char((const char*)string_result.ptr, string_result.len);
-    }
-
-    names.push_back({.colno = ddog_Option_U32_some(i),
-                     .filename = to_slice_string(filename),
-                     .lineno = ddog_Option_U32_some(2 * i + 3),
-                     .name = function_name_slice});
+#define EXTRACT_RESULT(typ, ok_tag)                                                                \
+  struct typ##Deleter {                                                                            \
+    void operator()(ddog_crasht_Handle_##typ *object) {                                            \
+      ddog_crasht_##typ##_drop(object);                                                            \
+      delete object;                                                                               \
+    }                                                                                              \
+  };                                                                                               \
+  std::unique_ptr<ddog_crasht_Handle_##typ, typ##Deleter> extract_result(                          \
+      ddog_crasht_Result_Handle##typ result, const char *msg) {                                    \
+    if (result.tag != ok_tag) {                                                                    \
+      print_error(msg, result.err);                                                                \
+      ddog_Error_drop(&result.err);                                                                \
+      exit(EXIT_FAILURE);                                                                          \
+    }                                                                                              \
+    std::unique_ptr<ddog_crasht_Handle_##typ, typ##Deleter> rval{                                  \
+        new ddog_crasht_Handle_##typ{result.ok}};                                                  \
+    return rval;                                                                                   \
   }
 
-  std::vector<ddog_crasht_StackFrame> trace;
-  for (uintptr_t i = 0; i < 20; ++i) {
-    ddog_crasht_StackFrame frame = {.ip = i,
-                                    .module_base_address = 0,
-                                    .names = {.ptr = &names[i], .len = 1},
-                                    .sp = 0,
-                                    .symbol_address = 0};
-    trace.push_back(frame);
+EXTRACT_RESULT(CrashInfoBuilder,
+               DDOG_CRASHT_RESULT_HANDLE_CRASH_INFO_BUILDER_OK_HANDLE_CRASH_INFO_BUILDER)
+EXTRACT_RESULT(CrashInfo, DDOG_CRASHT_RESULT_HANDLE_CRASH_INFO_OK_HANDLE_CRASH_INFO)
+EXTRACT_RESULT(StackTrace, DDOG_CRASHT_RESULT_HANDLE_STACK_TRACE_OK_HANDLE_STACK_TRACE)
+EXTRACT_RESULT(StackFrame, DDOG_CRASHT_RESULT_HANDLE_STACK_FRAME_OK_HANDLE_STACK_FRAME)
+
+void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
+  auto stacktrace = extract_result(ddog_crasht_StackTrace_new(), "failed to make new StackTrace");
+
+  for (uintptr_t i = 0; i < 10; ++i) {
+    auto new_frame = extract_result(ddog_crasht_StackFrame_new(), "failed to make StackFrame");
+    std::string name = "func_" + std::to_string(i);
+    check_result(ddog_crasht_StackFrame_with_function(new_frame.get(), to_slice_string(name)),
+                 "failed to add function");
+    std::string filename = "/path/to/code/file_" + std::to_string(i);
+    check_result(ddog_crasht_StackFrame_with_file(new_frame.get(), to_slice_string(filename)),
+                 "failed to add filename");
+    check_result(ddog_crasht_StackFrame_with_line(new_frame.get(), i * 4 + 3),
+                 "failed to add line");
+    check_result(ddog_crasht_StackFrame_with_column(new_frame.get(), i * 3 + 7),
+                 "failed to add line");
+
+    // This operation consumes the frame, so use .release here
+    check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), new_frame.release(), true),
+                 "failed to add stack frame");
   }
 
-  std::vector<std::uint8_t> build_id = {42};
-  std::string filePath = "/usr/share/somewhere";
-  // test with normalized
-  auto elfFrameWithNormalization = ddog_crasht_StackFrame{
-    .ip = 42,
-    .module_base_address = 0,
-    .names = {.ptr = &names[0], .len = 1}, // just for the test
-    .normalized_ip = {
-      .file_offset = 1,
-      .build_id = to_byte_slice(build_id),
-      .path = to_slice_c_char(filePath.c_str(), filePath.size()),
-      .typ = DDOG_CRASHT_NORMALIZED_ADDRESS_TYPES_ELF,
-    },
-    .sp = 0,
-    .symbol_address = 0,
-  };
-
-  trace.push_back(elfFrameWithNormalization);
-
-  // Windows-kind of frame
-  auto dllFrameWithNormalization = ddog_crasht_StackFrame{
-    .ip = 42,
-    .module_base_address = 0,
-    .names = {.ptr = &names[0], .len = 1}, // just for the test
-    .normalized_ip = {
-      .file_offset = 1,
-      .build_id = to_byte_slice(build_id),
-      .age = 21,
-      .path = to_slice_c_char(filePath.c_str(), filePath.size()),
-      .typ = DDOG_CRASHT_NORMALIZED_ADDRESS_TYPES_PDB,
-    },
-    .sp = 0,
-    .symbol_address = 0,
-  };
-  
-  trace.push_back(dllFrameWithNormalization);
-
-  ddog_crasht_Slice_StackFrame trace_slice = {.ptr = trace.data(), .len = trace.size()};
-
+  // Windows style frame with normalization
+  auto pbd_frame = extract_result(ddog_crasht_StackFrame_new(), "failed to make StackFrame");
+  check_result(ddog_crasht_StackFrame_with_ip(pbd_frame.get(), to_slice_c_char("0xDEADBEEF")),
+               "failed to add ip");
+  check_result(ddog_crasht_StackFrame_with_module_base_address(pbd_frame.get(),
+                                                               to_slice_c_char("0xABBAABBA")),
+               "failed to add module_base_address");
   check_result(
-      ddog_crasht_CrashInfo_set_stacktrace(crashinfo.get(), to_slice_c_char(""), trace_slice),
-      "Failed to set stacktrace");
+      ddog_crasht_StackFrame_with_build_id(pbd_frame.get(), to_slice_c_char("abcdef12345")),
+      "failed to add build id");
+  check_result(
+      ddog_crasht_StackFrame_with_build_id_type(pbd_frame.get(), DDOG_CRASHT_BUILD_ID_TYPE_PDB),
+      "failed to add build id type");
+  check_result(ddog_crasht_StackFrame_with_file_type(pbd_frame.get(), DDOG_CRASHT_FILE_TYPE_PDB),
+               "failed to add file type");
+  check_result(ddog_crasht_StackFrame_with_path(
+                   pbd_frame.get(), to_slice_c_char("C:/Program Files/best_program_ever.exe")),
+               "failed to add path");
+  check_result(
+      ddog_crasht_StackFrame_with_relative_address(pbd_frame.get(), to_slice_c_char("0xBABEF00D")),
+      "failed to add relative address");
+  // This operation consumes the frame, so use .release here
+  check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), pbd_frame.release(), true),
+               "failed to add stack frame");
+
+  // ELF style frame with normalization
+  auto elf_frame = extract_result(ddog_crasht_StackFrame_new(), "failed to make StackFrame");
+  check_result(ddog_crasht_StackFrame_with_ip(elf_frame.get(), to_slice_c_char("0xDEADBEEF")),
+               "failed to add ip");
+  check_result(ddog_crasht_StackFrame_with_module_base_address(elf_frame.get(),
+                                                               to_slice_c_char("0xABBAABBA")),
+               "failed to add module_base_address");
+  check_result(
+      ddog_crasht_StackFrame_with_build_id(elf_frame.get(), to_slice_c_char("987654321fedcba0")),
+      "failed to add build id");
+  check_result(
+      ddog_crasht_StackFrame_with_build_id_type(elf_frame.get(), DDOG_CRASHT_BUILD_ID_TYPE_GNU),
+      "failed to add build id type");
+  check_result(ddog_crasht_StackFrame_with_file_type(elf_frame.get(), DDOG_CRASHT_FILE_TYPE_ELF),
+               "failed to add file type");
+  check_result(ddog_crasht_StackFrame_with_path(elf_frame.get(),
+                                                to_slice_c_char("/usr/bin/awesome-gnu-utility.so")),
+               "failed to add path");
+  check_result(
+      ddog_crasht_StackFrame_with_relative_address(elf_frame.get(), to_slice_c_char("0xBABEF00D")),
+      "failed to add relative address");
+  // This operation consumes the frame, so use .release here
+  check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), elf_frame.release(), true),
+               "failed to add stack frame");
+
+  check_result(ddog_crasht_StackTrace_set_complete(stacktrace.get()),
+               "unable to set stacktrace as complete");
+
+  // Now that all the frames are added to the stack, put the stack on the report
+  // This operation consumes the stack, so use .release here
+  check_result(ddog_crasht_CrashInfoBuilder_with_stack(builder, stacktrace.release()),
+               "failed to add stacktrace");
 }
 
 int main(void) {
-  auto crashinfo_new_result = ddog_crasht_CrashInfo_new();
-  if (crashinfo_new_result.tag != DDOG_CRASHT_CRASH_INFO_NEW_RESULT_OK) {
-    print_error("Failed to make new crashinfo: ", crashinfo_new_result.err);
-    ddog_Error_drop(&crashinfo_new_result.err);
-    exit(EXIT_FAILURE);
-  }
-  std::unique_ptr<ddog_crasht_CrashInfo, Deleter> crashinfo{&crashinfo_new_result.ok};
+  auto builder = extract_result(ddog_crasht_CrashInfoBuilder_new(), "failed to make builder");
+  check_result(ddog_crasht_CrashInfoBuilder_with_counter(builder.get(),
+                                                         to_slice_c_char("my_amazing_counter"), 3),
+               "Failed to add counter");
 
-  check_result(
-      ddog_crasht_CrashInfo_add_counter(crashinfo.get(), to_slice_c_char("my_amazing_counter"), 3),
-      "Failed to add counter");
-
-  // TODO add some tags here
   auto tags = ddog_Vec_Tag_new();
+  check_result(
+      ddog_Vec_Tag_push(&tags, to_slice_c_char("best-hockey-team"), to_slice_c_char("Habs")),
+      "failed to add tag");
   const ddog_crasht_Metadata metadata = {
       .library_name = to_slice_c_char("libdatadog"),
       .library_version = to_slice_c_char("42"),
@@ -145,35 +161,35 @@ int main(void) {
       .tags = &tags,
   };
 
-  // TODO: We should set more tags that are expected by telemetry
-  check_result(ddog_crasht_CrashInfo_set_metadata(crashinfo.get(), metadata),
+  check_result(ddog_crasht_CrashInfoBuilder_with_metadata(builder.get(), metadata),
                "Failed to add metadata");
-  check_result(ddog_crasht_CrashInfo_add_tag(crashinfo.get(), to_slice_c_char("best hockey team"),
-                                             to_slice_c_char("Habs")),
-               "Failed to add tag");
+  ddog_Vec_Tag_drop(tags);
 
   // This API allows one to capture useful files (e.g. /proc/pid/maps)
-  // For testing purposes, use `/etc/hosts` which should exist on any reasonable
-  // UNIX system
-  check_result(ddog_crasht_CrashInfo_add_file(crashinfo.get(), to_slice_c_char("/etc/hosts")),
+  // For testing purposes, use `/etc/hosts` which should exist on any reasonable UNIX system
+  check_result(ddog_crasht_CrashInfoBuilder_with_file(builder.get(), to_slice_c_char("/etc/hosts")),
                "Failed to add file");
 
-  add_stacktrace(crashinfo);
+  check_result(ddog_crasht_CrashInfoBuilder_with_kind(builder.get(), DDOG_CRASHT_ERROR_KIND_PANIC),
+               "Failed to set error kind");
 
-  ddog_Timespec timestamp = {.seconds = 1568899800, .nanoseconds = 0};
+  add_stacktrace(builder.get());
+
   // Datadog IPO at 2019-09-19T13:30:00Z = 1568899800 unix
-  check_result(ddog_crasht_CrashInfo_set_timestamp(crashinfo.get(), timestamp),
+  ddog_Timespec timestamp = {.seconds = 1568899800, .nanoseconds = 0};
+  check_result(ddog_crasht_CrashInfoBuilder_with_timestamp(builder.get(), timestamp),
                "Failed to set timestamp");
 
-  ddog_crasht_ProcInfo procinfo = {
-    .pid = 42
-  };
-
-  check_result(ddog_crasht_CrashInfo_set_procinfo(crashinfo.get(), procinfo),
+  ddog_crasht_ProcInfo procinfo = {.pid = 42};
+  check_result(ddog_crasht_CrashInfoBuilder_with_proc_info(builder.get(), procinfo),
                "Failed to set procinfo");
 
-  auto endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/test"));
+  check_result(ddog_crasht_CrashInfoBuilder_with_os_info_this_machine(builder.get()),
+               "Failed to set os_info");
 
+  auto crashinfo = extract_result(ddog_crasht_CrashInfoBuilder_build(builder.release()),
+                                  "failed to build CrashInfo");
+  auto endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/test"));
   check_result(ddog_crasht_CrashInfo_upload_to_endpoint(crashinfo.get(), endpoint),
                "Failed to export to file");
   ddog_endpoint_drop(endpoint);

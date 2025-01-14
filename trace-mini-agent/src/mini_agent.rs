@@ -3,13 +3,13 @@
 
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{http, Body, Method, Request, Response, Server, StatusCode};
-use log::{debug, error, info};
 use serde_json::json;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc::{self, Receiver, Sender};
+use tracing::{debug, error};
 
 use crate::http_utils::log_and_create_http_response;
 use crate::{config, env_verifier, stats_flusher, stats_processor, trace_flusher, trace_processor};
@@ -121,7 +121,7 @@ impl MiniAgent {
 
         let server = server_builder.serve(make_svc);
 
-        info!("Mini Agent started: listening on port {MINI_AGENT_PORT}");
+        debug!("Mini Agent started: listening on port {MINI_AGENT_PORT}");
         debug!(
             "Time taken start the Mini Agent: {} ms",
             now.elapsed().as_millis()

@@ -6,8 +6,8 @@ use hyper::{
     http::{self, HeaderMap},
     Body, Response, StatusCode,
 };
-use log::{error, info};
 use serde_json::json;
+use tracing::{debug, error};
 
 /// Does two things:
 /// 1. Logs the given message. A success status code (within 200-299) will cause an info log to be
@@ -23,7 +23,7 @@ pub fn log_and_create_http_response(
     status: StatusCode,
 ) -> http::Result<Response<Body>> {
     if status.is_success() {
-        info!("{message}");
+        debug!("{message}");
     } else {
         error!("{message}");
     }
@@ -46,7 +46,7 @@ pub fn log_and_create_traces_success_http_response(
     message: &str,
     status: StatusCode,
 ) -> http::Result<Response<Body>> {
-    info!("{message}");
+    debug!("{message}");
     let body = json!({"rate_by_service":{"service:,env:":1}}).to_string();
     Response::builder().status(status).body(Body::from(body))
 }
