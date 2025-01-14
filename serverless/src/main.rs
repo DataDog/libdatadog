@@ -161,7 +161,7 @@ async fn start_dogstatsd(
                 api_key: dd_api_key,
                 aggregator: Arc::clone(&metrics_aggr),
                 intake_url_prefix: IntakeUrlPrefix::from_site(dd_site),
-                https_proxy: https_proxy,
+                https_proxy,
                 timeout: DOGSTATSD_TIMEOUT_DURATION,
             });
             Some(metrics_flusher)

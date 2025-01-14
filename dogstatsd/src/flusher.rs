@@ -31,7 +31,7 @@ impl Flusher {
             params.timeout,
         );
         Flusher {
-            dd_api: dd_api,
+            dd_api,
             aggregator: params.aggregator,
         }
     }

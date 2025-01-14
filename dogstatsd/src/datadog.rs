@@ -59,7 +59,7 @@ impl DdApi {
         };
         DdApi {
             api_key,
-            intake_url_prefix: intake_url_prefix,
+            intake_url_prefix,
             client,
         }
     }
