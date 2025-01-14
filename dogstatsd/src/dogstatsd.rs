@@ -94,8 +94,9 @@ impl DogStatsD {
                 Err(e) => {
                     // unsupported type is quite common with dd_trace metrics. Avoid perf issue and
                     // log spam in that case
-                    if !matches!(e, UnsupportedType()) {
-                        error!("Failed to parse metric {}: {}", m, e);
+                    match e {
+                        UnsupportedType(_) => debug!("Unsupported metric type: {}. {}", m, e),
+                        _ => error!("Failed to parse metric {}: {}", m, e),
                     }
                     None
                 }
