@@ -10,10 +10,10 @@
 // Define setenv for Windows
 #include <windows.h>
 int setenv(const char *name, const char *value, int overwrite) {
-    if (overwrite || getenv(name) == NULL) {
-        return SetEnvironmentVariable(name, value) ? 0 : -1;
-    }
-    return 0;
+  if (overwrite || getenv(name) == NULL) {
+    return SetEnvironmentVariable(name, value) ? 0 : -1;
+  }
+  return 0;
 }
 #endif
 
@@ -25,8 +25,6 @@ int setenv(const char *name, const char *value, int overwrite) {
 
 int main(int argc, const char *const *argv) {
   ddog_Configurator *configurator = ddog_library_configurator_new(true);
-  ddog_library_configurator_with_path(configurator,
-                                      DDOG_CHARSLICE_C("/tmp/foobar/static_config.yaml"));
 
   ddog_CharSlice args[] = {
       DDOG_CHARSLICE_C("/bin/true"),
@@ -50,7 +48,7 @@ int main(int argc, const char *const *argv) {
     const ddog_LibraryConfig *cfg = &configs.ptr[i];
     ddog_CStr name = ddog_library_config_name_to_env(cfg->name);
 
-    printf("Setting env variable: %s=%s\n", name.ptr, DDOG_VAL_STR_PTR(cfg->value));
-    setenv(name.ptr, DDOG_VAL_STR_PTR(cfg->value), 1);
+    printf("Setting env variable: %s=%s\n", name.ptr, cfg->value.ptr);
+    setenv(name.ptr, cfg->value.ptr, 1);
   }
 }

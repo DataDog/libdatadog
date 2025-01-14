@@ -13,8 +13,7 @@ bench = false
 [dependencies]
 ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
-serde = { version = "1.0", features = ["derive"] }
-serde_yaml = "0.9.34"
+datadog-library-config = { path = "../library-config" }
 anyhow = "1.0"
 
 [features]
@@ -25,4 +24,4 @@ cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 build_common = { path = "../build-common" }
 
 [dev-dependencies]
-tempfile = {version = "3.3"}
+tempfile = { version = "3.3" }
