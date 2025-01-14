@@ -15,7 +15,7 @@ use tracing::{debug, error};
 #[derive(Debug)]
 pub struct DdApi {
     api_key: String,
-    fqdn_site: String,
+    intake_url_prefix: String,
     client: reqwest::Client,
 }
 
@@ -36,7 +36,7 @@ impl DdApi {
         };
         DdApi {
             api_key,
-            fqdn_site: site,
+            intake_url_prefix: site,
             client,
         }
     }
@@ -46,7 +46,7 @@ impl DdApi {
         let body = serde_json::to_vec(&series).expect("failed to serialize series");
         debug!("Sending body: {:?}", &series);
 
-        let url = format!("{}/api/v2/series", &self.fqdn_site);
+        let url = format!("{}/api/v2/series", &self.intake_url_prefix);
         let resp = self
             .client
             .post(&url)
@@ -74,7 +74,7 @@ impl DdApi {
     }
 
     pub async fn ship_distributions(&self, sketches: &SketchPayload) {
-        let url = format!("{}/api/beta/sketches", &self.fqdn_site);
+        let url = format!("{}/api/beta/sketches", &self.intake_url_prefix);
         debug!("Sending distributions: {:?}", &sketches);
         // TODO maybe go to coded output stream if we incrementally
         // add sketch payloads to the buffer
