@@ -23,7 +23,7 @@ impl DdApi {
     #[must_use]
     pub fn new(
         api_key: String,
-        site: String,
+        intake_url_prefix: String,
         https_proxy: Option<String>,
         timeout: Duration,
     ) -> Self {
@@ -36,7 +36,7 @@ impl DdApi {
         };
         DdApi {
             api_key,
-            intake_url_prefix: site,
+            intake_url_prefix: intake_url_prefix,
             client,
         }
     }
