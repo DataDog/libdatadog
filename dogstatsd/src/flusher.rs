@@ -3,10 +3,10 @@
 
 use crate::aggregator::Aggregator;
 use crate::datadog;
+use datadog::IntakeUrlPrefix;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::debug;
-use datadog::IntakeUrlPrefix;
 
 pub struct Flusher {
     dd_api: datadog::DdApi,
@@ -15,7 +15,7 @@ pub struct Flusher {
 
 #[inline]
 #[must_use]
-#[deprecated(note="please use IntakeUrlPrefix::from_site instead")]
+#[deprecated(note = "please use IntakeUrlPrefix::from_site instead")]
 // This function is deprecated becaause its name is misleading. It is not actually building Fully Qualified Domain Name.
 pub fn build_fqdn_metrics(site: String) -> String {
     format!("https://api.{site}")

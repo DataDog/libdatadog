@@ -15,9 +15,9 @@ use datadog_trace_mini_agent::{
 use dogstatsd::{
     aggregator::Aggregator as MetricsAggregator,
     constants::CONTEXTS,
+    datadog::IntakeUrlPrefix,
     dogstatsd::{DogStatsD, DogStatsDConfig},
     flusher::Flusher,
-    datadog::IntakeUrlPrefix,
 };
 
 use dogstatsd::metric::EMPTY_TAGS;

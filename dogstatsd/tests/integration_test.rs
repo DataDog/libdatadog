@@ -5,9 +5,9 @@ use dogstatsd::metric::SortedTags;
 use dogstatsd::{
     aggregator::Aggregator as MetricsAggregator,
     constants::CONTEXTS,
+    datadog::IntakeUrlPrefix,
     dogstatsd::{DogStatsD, DogStatsDConfig},
     flusher::Flusher,
-    datadog::IntakeUrlPrefix,
 };
 use mockito::Server;
 use std::sync::{Arc, Mutex};

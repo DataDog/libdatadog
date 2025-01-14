@@ -8,9 +8,9 @@ use protobuf::Message;
 use reqwest;
 use serde::{Serialize, Serializer};
 use serde_json;
+use std::fmt;
 use std::time::Duration;
 use tracing::{debug, error};
-use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IntakeUrlPrefix(String);
