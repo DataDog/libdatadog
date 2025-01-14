@@ -194,9 +194,9 @@ fn map_operator_match(selector: &Selector, map: &impl Get, key: &str) -> bool {
 }
 
 fn parse_template_var(template_var: &str) -> (&str, Option<&str>) {
-    match template_var.trim().split_once("[") {
+    match template_var.trim().split_once('[') {
         Some((template_var, idx)) => {
-            let Some((index, _)) = idx.split_once("]") else {
+            let Some((index, _)) = idx.split_once(']') else {
                 return (template_var, None);
             };
             (template_var, Some(index.trim()))
@@ -464,21 +464,6 @@ rules:
             }]
         );
     }
-
-    // #[test]
-    // fn test_template_config() {
-    //     let config_template = "my_{{ language }}_service";
-    //     let out = template_config(
-    //         config_template,
-    //         &ProcessInfo::<&[u8]> {
-    //             args: &[],
-    //             envp: &[],
-    //             language: b"java",
-    //         },
-    //     )
-    //     .expect("templating failed");
-    //     assert_eq!(&out, "my_java_service");
-    // }
 
     #[test]
     fn test_match_missing_config() {
