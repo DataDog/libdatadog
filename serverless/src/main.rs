@@ -16,7 +16,8 @@ use dogstatsd::{
     aggregator::Aggregator as MetricsAggregator,
     constants::CONTEXTS,
     dogstatsd::{DogStatsD, DogStatsDConfig},
-    flusher::{build_fqdn_metrics, Flusher},
+    flusher::Flusher,
+    datadog::IntakeUrlPrefix,
 };
 
 use dogstatsd::metric::EMPTY_TAGS;
@@ -159,7 +160,7 @@ async fn start_dogstatsd(
             let metrics_flusher = Flusher::new(
                 dd_api_key,
                 Arc::clone(&metrics_aggr),
-                build_fqdn_metrics(dd_site),
+                IntakeUrlPrefix::from_site(dd_site),
                 https_proxy,
                 DOGSTATSD_TIMEOUT_DURATION,
             );

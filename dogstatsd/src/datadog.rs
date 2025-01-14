@@ -10,12 +10,35 @@ use serde::{Serialize, Serializer};
 use serde_json;
 use std::time::Duration;
 use tracing::{debug, error};
+use std::fmt;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntakeUrlPrefix(String);
+
+impl fmt::Display for IntakeUrlPrefix {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl IntakeUrlPrefix {
+    pub fn new(prefix: String) -> Self {
+        // Maybe we will validate this in the future, but for now we assume that the prefix is
+        // sensible.
+        IntakeUrlPrefix(prefix)
+    }
+
+    #[inline]
+    pub fn from_site(site: String) -> Self {
+        IntakeUrlPrefix(format!("https://api.{}", site))
+    }
+}
 
 /// Interface for the `DogStatsD` metrics intake API.
 #[derive(Debug)]
 pub struct DdApi {
     api_key: String,
-    intake_url_prefix: String,
+    intake_url_prefix: IntakeUrlPrefix,
     client: reqwest::Client,
 }
 
@@ -23,7 +46,7 @@ impl DdApi {
     #[must_use]
     pub fn new(
         api_key: String,
-        intake_url_prefix: String,
+        intake_url_prefix: IntakeUrlPrefix,
         https_proxy: Option<String>,
         timeout: Duration,
     ) -> Self {

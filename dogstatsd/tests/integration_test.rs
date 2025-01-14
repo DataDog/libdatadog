@@ -7,6 +7,7 @@ use dogstatsd::{
     constants::CONTEXTS,
     dogstatsd::{DogStatsD, DogStatsDConfig},
     flusher::Flusher,
+    datadog::IntakeUrlPrefix,
 };
 use mockito::Server;
 use std::sync::{Arc, Mutex};
@@ -40,7 +41,7 @@ async fn dogstatsd_server_ships_series() {
     let mut metrics_flusher = Flusher::new(
         "mock-api-key".to_string(),
         Arc::clone(&metrics_aggr),
-        mock_server.url(),
+        IntakeUrlPrefix::new(mock_server.url()),
         None,
         std::time::Duration::from_secs(5),
     );
