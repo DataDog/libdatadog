@@ -17,7 +17,7 @@ env:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
+    runs-on: ["${{ matrix.os }}", "${{ matrix.arch }}"]
 
     # container: ${{ matrix.container }}
 
@@ -30,14 +30,18 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            arch: x64
           - os: windows-latest
             target: i686-pc-windows-msvc
+            arch: x64 #todo does this need to be just x86 somehow?
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             container: centos:7
+            arch: x64
           - os: ubuntu-24.04
             target: aarch64-unknown-linux-gnu
             container: centos:7
+            arch: arm64
           # - os: ubuntu-latest
           #   target: x86_64-unknown-linux-musl
           #   container: alpine:3.19
@@ -46,8 +50,10 @@ jobs:
           #   container: alpine:3.19
           - os: macos-latest
             target: aarch64-apple-darwin
+            arch: arm64
           - os: macos-latest
             target: x86_64-apple-darwin
+            arch: x64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
