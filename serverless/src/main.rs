@@ -17,7 +17,7 @@ use dogstatsd::{
     constants::CONTEXTS,
     datadog::IntakeUrlPrefix,
     dogstatsd::{DogStatsD, DogStatsDConfig},
-    flusher::Flusher,
+    flusher::{Flusher, FlusherConfig},
 };
 
 use dogstatsd::metric::EMPTY_TAGS;
@@ -157,13 +157,13 @@ async fn start_dogstatsd(
 
     let metrics_flusher = match dd_api_key {
         Some(dd_api_key) => {
-            let metrics_flusher = Flusher::new(
-                dd_api_key,
-                Arc::clone(&metrics_aggr),
-                IntakeUrlPrefix::from_site(dd_site),
-                https_proxy,
-                DOGSTATSD_TIMEOUT_DURATION,
-            );
+            let metrics_flusher = Flusher::new(FlusherConfig {
+                api_key: dd_api_key,
+                aggregator: Arc::clone(&metrics_aggr),
+                intake_url_prefix: IntakeUrlPrefix::from_site(dd_site),
+                https_proxy: https_proxy,
+                timeout: DOGSTATSD_TIMEOUT_DURATION,
+            });
             Some(metrics_flusher)
         }
         None => {

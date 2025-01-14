@@ -7,7 +7,7 @@ use dogstatsd::{
     constants::CONTEXTS,
     datadog::IntakeUrlPrefix,
     dogstatsd::{DogStatsD, DogStatsDConfig},
-    flusher::Flusher,
+    flusher::{Flusher, FlusherConfig},
 };
 use mockito::Server;
 use std::sync::{Arc, Mutex};
@@ -38,13 +38,13 @@ async fn dogstatsd_server_ships_series() {
 
     let _ = start_dogstatsd(&metrics_aggr).await;
 
-    let mut metrics_flusher = Flusher::new(
-        "mock-api-key".to_string(),
-        Arc::clone(&metrics_aggr),
-        IntakeUrlPrefix::new(mock_server.url()),
-        None,
-        std::time::Duration::from_secs(5),
-    );
+    let mut metrics_flusher = Flusher::new(FlusherConfig {
+        api_key: "mock-api-key".to_string(),
+        aggregator: Arc::clone(&metrics_aggr),
+        intake_url_prefix: IntakeUrlPrefix::new(mock_server.url()),
+        https_proxy: None,
+        timeout: std::time::Duration::from_secs(5),
+    });
 
     let server_address = "127.0.0.1:18125";
     let socket = UdpSocket::bind("0.0.0.0:0")

@@ -21,17 +21,27 @@ pub fn build_fqdn_metrics(site: String) -> String {
     format!("https://api.{site}")
 }
 
+pub struct FlusherConfig {
+    pub api_key: String,
+    pub aggregator: Arc<Mutex<Aggregator>>,
+    pub intake_url_prefix: IntakeUrlPrefix,
+    pub https_proxy: Option<String>,
+    pub timeout: Duration,
+}
+
 #[allow(clippy::await_holding_lock)]
 impl Flusher {
-    pub fn new(
-        api_key: String,
-        aggregator: Arc<Mutex<Aggregator>>,
-        intake_url_prefix: IntakeUrlPrefix,
-        https_proxy: Option<String>,
-        timeout: Duration,
-    ) -> Self {
-        let dd_api = datadog::DdApi::new(api_key, intake_url_prefix, https_proxy, timeout);
-        Flusher { dd_api, aggregator }
+    pub fn new(params: FlusherConfig) -> Self {
+        let dd_api = datadog::DdApi::new(
+            params.api_key,
+            params.intake_url_prefix,
+            params.https_proxy,
+            params.timeout,
+        );
+        Flusher {
+            dd_api: dd_api,
+            aggregator: params.aggregator,
+        }
     }
 
     pub async fn flush(&mut self) {
