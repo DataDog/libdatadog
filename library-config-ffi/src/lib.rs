@@ -22,8 +22,8 @@ fn cast_slice_of_slice_ref<'a, 'b>(
     s: &'b ffi::Slice<'a, ffi::CharSlice<'a>>,
 ) -> &'b ffi::Slice<'a, ffi::slice::ByteSlice<'a>> {
     // Safety:
-    // ffi::CharSlice and ffi::slice::ByteSlice have the same layout, and since they are wrappers around
-    // *const char i8 and *const char u8 respectively, they are trivially interchangeable
+    // ffi::CharSlice and ffi::slice::ByteSlice have the same layout, and since they are wrappers
+    // around *const char i8 and *const char u8 respectively, they are trivially interchangeable
     unsafe { std::mem::transmute(s) }
 }
 

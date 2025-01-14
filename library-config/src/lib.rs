@@ -15,8 +15,8 @@ use anyhow::Context;
 /// Maps
 ///  * tags: This one is fairly simple, the format is tag_key: tag_value
 ///  * envs: Splits env variables based on the KEY=VALUE
-///  * args: Either splits args base on key=value, or if the argument is a long arg
-///    then parses --key value
+///  * args: Either splits args base on key=value, or if the argument is a long arg then parses
+///    --key value
 struct MatchMaps<'a> {
     tags: &'a HashMap<String, String>,
     env_map: OnceCell<HashMap<&'a str, &'a str>>,
@@ -113,14 +113,14 @@ impl<'a, T: Deref<Target = [u8]>> Matcher<'a, T> {
             Origin::Language => string_selector(selector, self.process_info.language.deref()),
             Origin::ProcessArguments => match &selector.key {
                 Some(key) => {
-                    let arg_map = self.match_maps.args(&self.process_info);
+                    let arg_map = self.match_maps.args(self.process_info);
                     map_operator_match(selector, arg_map, key)
                 }
                 None => string_list_selector(selector, self.process_info.args),
             },
             Origin::EnvironmentVariable => match &selector.key {
                 Some(key) => {
-                    let env_map = self.match_maps.env(&self.process_info);
+                    let env_map = self.match_maps.env(self.process_info);
                     map_operator_match(selector, env_map, key)
                 }
                 None => string_list_selector(selector, self.process_info.envp),
@@ -183,7 +183,7 @@ impl<'a, T: Deref<Target = [u8]>> Matcher<'a, T> {
     }
 }
 
-fn map_operator_match<'a, 'b>(selector: &Selector, map: &'a impl Get, key: &'b str) -> bool {
+fn map_operator_match(selector: &Selector, map: &impl Get, key: &str) -> bool {
     let Some(val) = map.get(key) else {
         return false;
     };
@@ -273,23 +273,23 @@ struct StableConfig {
 }
 
 trait Get {
-    fn get<'b>(&self, k: &'b str) -> Option<&str>;
+    fn get(&self, k: &str) -> Option<&str>;
 }
 
 impl<'a> Get for HashMap<&'a str, &'a str> {
-    fn get<'b>(&self, k: &'b str) -> Option<&'a str> {
-        self.get(k).map(|v| *v)
+    fn get(&self, k: &str) -> Option<&'a str> {
+        self.get(k).copied()
     }
 }
 
 impl Get for HashMap<String, String> {
-    fn get<'b>(&self, k: &'b str) -> Option<&str> {
+    fn get(&self, k: &str) -> Option<&str> {
         self.get(k).map(|v| v.as_str())
     }
 }
 
-fn string_list_selector<'a, B: Deref<Target = [u8]>>(selector: &Selector, l: &'a [B]) -> bool {
-    l.into_iter().any(|v| string_selector(selector, v.deref()))
+fn string_list_selector<B: Deref<Target = [u8]>>(selector: &Selector, l: &[B]) -> bool {
+    l.iter().any(|v| string_selector(selector, v.deref()))
 }
 
 fn string_selector(selector: &Selector, value: &[u8]) -> bool {
@@ -338,7 +338,7 @@ impl Configurator {
             process_info
                 .args
                 .iter()
-                .map(|arg| String::from_utf8_lossy(&*arg))
+                .map(|arg| String::from_utf8_lossy(arg))
                 .for_each(|e| eprintln!("\t\t{:?}", e.as_ref()));
 
             // TODO: this is for testing purpose, we don't want to log env variables
@@ -350,7 +350,7 @@ impl Configurator {
             //     .for_each(|e: std::borrow::Cow<'_, str>| eprintln!(" {:?}", e.as_ref()));
             eprintln!(
                 "\tprocess language: {:?}",
-                String::from_utf8_lossy(&*process_info.language).as_ref()
+                String::from_utf8_lossy(&process_info.language).as_ref()
             );
         }
     }
