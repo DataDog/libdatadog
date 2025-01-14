@@ -13,6 +13,63 @@ use std::time::Duration;
 use tracing::{debug, error};
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Site(String);
+
+impl fmt::Display for Site {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Site {
+    pub fn new(prefix: String) -> Self {
+        Site(prefix)
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DdUrl(String);
+
+impl fmt::Display for DdUrl {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl DdUrl {
+    pub fn new(prefix: String) -> Self {
+        DdUrl(prefix)
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DdDdUrl(String);
+
+impl fmt::Display for DdDdUrl {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl DdDdUrl {
+    pub fn new(prefix: String) -> Self {
+        DdDdUrl(prefix)
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct IntakeUrlPrefix(String);
 
 impl fmt::Display for IntakeUrlPrefix {
@@ -22,15 +79,89 @@ impl fmt::Display for IntakeUrlPrefix {
 }
 
 impl IntakeUrlPrefix {
-    pub fn new(prefix: String) -> Self {
+    /// # Safety
+    ///
+    /// This function is unsafe because it does no validation on the input string. It also does not
+    /// follow our convention of using the metrics intake url prefix over the site name. This is
+    /// fine for tests, but in production we should be using from_site_or_dd_urls instead.
+    #[inline]
+    pub unsafe fn new_unchecked(prefix: String) -> Self {
+        IntakeUrlPrefix(prefix)
+    }
+
+    #[inline]
+    fn new(prefix: String) -> Self {
         // Maybe we will validate this in the future, but for now we assume that the prefix is
         // sensible.
         IntakeUrlPrefix(prefix)
     }
 
     #[inline]
-    pub fn from_site(site: String) -> Self {
+    fn from_site(site: String) -> Self {
         IntakeUrlPrefix(format!("https://api.{}", site))
+    }
+
+    #[inline]
+    pub fn from_site_or_dd_urls(
+        site: Option<Site>,
+        dd_url: Option<DdUrl>,
+        dd_dd_url: Option<DdDdUrl>,
+    ) -> Result<Self, &'static str> {
+        match (site, dd_url, dd_dd_url) {
+            (None, None, None) => Err("No intake URL configuration"),
+            (_, _, Some(dd_dd_url)) => Ok(Self::new(dd_dd_url.into_string())),
+            (_, Some(dd_url), None) => Ok(Self::new(dd_url.into_string())),
+            (Some(site), None, None) => Ok(Self::from_site(site.into_string())),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_intake_url_prefix_from_site_or_dd_urls_requires_something() {
+        assert_eq!(
+            IntakeUrlPrefix::from_site_or_dd_urls(None, None, None),
+            Err("No intake URL configuration")
+        );
+    }
+
+    #[test]
+    fn test_intake_url_prefix_from_site_or_dd_urls_picks_dd_dd_url_above_all() {
+        assert_eq!(
+            IntakeUrlPrefix::from_site_or_dd_urls(
+                Some(Site::new("a_site".to_string())),
+                Some(DdUrl::new("a_dd_url".to_string())),
+                Some(DdDdUrl::new("a_dd_dd_url".to_string())),
+            ),
+            Ok(IntakeUrlPrefix::new("a_dd_dd_url".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_intake_url_prefix_from_site_or_dd_urls_picks_dd_url_if_it_must() {
+        assert_eq!(
+            IntakeUrlPrefix::from_site_or_dd_urls(
+                Some(Site::new("a_site".to_string())),
+                Some(DdUrl::new("a_dd_url".to_string())),
+                None,
+            ),
+            Ok(IntakeUrlPrefix::new("a_dd_url".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_intake_url_prefix_from_site_or_dd_urls_picks_site_as_a_fallback() {
+        assert_eq!(
+            IntakeUrlPrefix::from_site_or_dd_urls(
+                Some(Site::new("a_site".to_string())),
+                None,
+                None,
+            ),
+            Ok(IntakeUrlPrefix::new("https://api.a_site".to_string()))
+        );
     }
 }
 
