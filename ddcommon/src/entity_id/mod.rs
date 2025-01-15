@@ -60,6 +60,15 @@ const EXTERNAL_ENV_ENVIRONMENT_VARIABLE: &str = "DD_EXTERNAL_ENV";
 #[cfg(unix)]
 mod unix;
 
+/// Set the path to cgroup file to mock it during tests
+#[cfg(feature = "cgroup_testing")]
+pub fn set_cgroup_file(_file: String) {
+    #[cfg(unix)]
+    {
+        unix::set_cgroup_file(_file)
+    }
+}
+
 /// Returns the `container_id` if available in the cgroup file, otherwise returns `None`
 pub fn get_container_id() -> Option<&'static str> {
     #[cfg(unix)]

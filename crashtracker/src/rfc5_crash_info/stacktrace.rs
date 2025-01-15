@@ -16,14 +16,59 @@ use serde::{Deserialize, Serialize};
 pub struct StackTrace {
     pub format: String,
     pub frames: Vec<StackFrame>,
+    pub incomplete: bool,
+}
+
+const FORMAT_STRING: &str = "Datadog Crashtracker 1.0";
+
+impl StackTrace {
+    pub fn empty() -> Self {
+        Self {
+            format: FORMAT_STRING.to_string(),
+            frames: vec![],
+            incomplete: false,
+        }
+    }
+
+    pub fn from_frames(frames: Vec<StackFrame>, incomplete: bool) -> Self {
+        Self {
+            format: FORMAT_STRING.to_string(),
+            frames,
+            incomplete,
+        }
+    }
+
+    pub fn new_incomplete() -> Self {
+        Self {
+            format: FORMAT_STRING.to_string(),
+            frames: vec![],
+            incomplete: true,
+        }
+    }
+
+    pub fn missing() -> Self {
+        Self {
+            format: FORMAT_STRING.to_string(),
+            frames: vec![],
+            incomplete: true,
+        }
+    }
 }
 
 impl StackTrace {
-    pub fn new() -> Self {
-        Self {
-            format: "Datadog Crashtracker 1.0".to_string(),
-            frames: vec![],
-        }
+    pub fn set_complete(&mut self) -> anyhow::Result<()> {
+        self.incomplete = false;
+        Ok(())
+    }
+
+    pub fn push_frame(&mut self, frame: StackFrame, incomplete: bool) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.incomplete,
+            "Can't push a new frame onto a complete stack"
+        );
+        self.frames.push(frame);
+        self.incomplete = incomplete;
+        Ok(())
     }
 }
 
@@ -48,7 +93,7 @@ impl StackTrace {
 
 impl Default for StackTrace {
     fn default() -> Self {
-        Self::new()
+        Self::missing()
     }
 }
 
@@ -103,7 +148,6 @@ impl From<Vec<crate::StackFrame>> for StackTrace {
             }
         }
 
-        let format = String::from("Datadog Crashtracker 1.0");
         // Todo: this will under-estimate the cap needed if there are inlined functions.
         // Maybe not worth fixing this.
         let mut frames = Vec::with_capacity(value.len());
@@ -145,8 +189,7 @@ impl From<Vec<crate::StackFrame>> for StackTrace {
                 }
             }
         }
-
-        Self { format, frames }
+        Self::from_frames(frames, false)
     }
 }
 
@@ -289,10 +332,7 @@ fn byte_slice_as_hex(bv: &[u8]) -> String {
 impl super::test_utils::TestInstance for StackTrace {
     fn test_instance(_seed: u64) -> Self {
         let frames = (0..10).map(StackFrame::test_instance).collect();
-        Self {
-            format: "Datadog Crashtracker 1.0".to_string(),
-            frames,
-        }
+        Self::from_frames(frames, false)
     }
 }
 

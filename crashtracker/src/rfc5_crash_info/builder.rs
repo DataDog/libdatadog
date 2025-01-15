@@ -25,10 +25,7 @@ impl ErrorDataBuilder {
         let kind = self.kind.context("required field 'kind' missing")?;
         let message = self.message;
         let source_type = SourceType::Crashtracking;
-        let stack = self.stack.unwrap_or(StackTrace {
-            format: "Missing Stacktrace".to_string(),
-            frames: vec![],
-        });
+        let stack = self.stack.unwrap_or_else(StackTrace::missing);
         let threads = self.threads.unwrap_or_default();
         Ok((
             ErrorData {
@@ -59,6 +56,28 @@ impl ErrorDataBuilder {
 
     pub fn with_stack(&mut self, stack: StackTrace) -> anyhow::Result<&mut Self> {
         self.stack = Some(stack);
+        Ok(self)
+    }
+
+    pub fn with_stack_frame(
+        &mut self,
+        frame: StackFrame,
+        incomplete: bool,
+    ) -> anyhow::Result<&mut Self> {
+        if let Some(stack) = &mut self.stack {
+            stack.push_frame(frame, incomplete)?;
+        } else {
+            self.stack = Some(StackTrace::from_frames(vec![frame], incomplete));
+        }
+        Ok(self)
+    }
+
+    pub fn with_stack_set_complete(&mut self) -> anyhow::Result<&mut Self> {
+        if let Some(stack) = &mut self.stack {
+            stack.set_complete()?;
+        } else {
+            anyhow::bail!("Can't set non-existant stack complete");
+        }
         Ok(self)
     }
 
@@ -244,6 +263,20 @@ impl CrashInfoBuilder {
 
     pub fn with_stack(&mut self, stack: StackTrace) -> anyhow::Result<&mut Self> {
         self.error.with_stack(stack)?;
+        Ok(self)
+    }
+
+    pub fn with_stack_frame(
+        &mut self,
+        frame: StackFrame,
+        incomplete: bool,
+    ) -> anyhow::Result<&mut Self> {
+        self.error.with_stack_frame(frame, incomplete)?;
+        Ok(self)
+    }
+
+    pub fn with_stack_set_complete(&mut self) -> anyhow::Result<&mut Self> {
+        self.error.with_stack_set_complete()?;
         Ok(self)
     }
 
