@@ -73,9 +73,8 @@ impl SortedTags {
                 return Err(ParseError::Raw(format!("Too many tags, more than {i}")));
             }
             if !part.contains(':') {
-                return Err(ParseError::Raw("Invalid tag format".to_string()));
-            }
-            if let Some((k, v)) = part.split_once(':') {
+                parsed_tags.push((Ustr::from(part), Ustr::from("")));
+            } else if let Some((k, v)) = part.split_once(':') {
                 parsed_tags.push((Ustr::from(k), Ustr::from(v)));
             }
         }
@@ -89,7 +88,11 @@ impl SortedTags {
     pub fn to_chars(&self) -> Vec<Chars> {
         let mut tags_as_chars = Vec::new();
         for (k, v) in &self.values {
-            tags_as_chars.push(format!("{}:{}", k, v).into());
+            if v.is_empty() {
+                tags_as_chars.push(Chars::from(k.to_string()));
+            } else {
+                tags_as_chars.push(format!("{}:{}", k, v).into());
+            }
         }
         tags_as_chars
     }
@@ -97,7 +100,11 @@ impl SortedTags {
     pub fn to_strings(&self) -> Vec<String> {
         let mut tags_as_vec = Vec::new();
         for (k, v) in &self.values {
-            tags_as_vec.push(format!("{}:{}", k, v));
+            if v.is_empty() {
+                tags_as_vec.push(k.to_string());
+            } else {
+                tags_as_vec.push(format!("{}:{}", k, v));
+            }
         }
         tags_as_vec
     }
@@ -256,7 +263,7 @@ pub fn id(name: Ustr, tags: &Option<SortedTags>) -> u64 {
     hasher.finish()
 }
 // <METRIC_NAME>:<VALUE>:<VALUE>:<VALUE>|<TYPE>|@<SAMPLE_RATE>|#<TAG_KEY_1>:<TAG_VALUE_1>,
-// <TAG_KEY_2>:<TAG_VALUE_2>|T<METRIC_TIMESTAMP>|c:<CONTAINER_ID>
+// <TAG_KEY_2>:<TAG_VALUE_2>,<TAG_NO_VALUE3|T<METRIC_TIMESTAMP>|c:<CONTAINER_ID>
 //
 // Types:
 //  * c -- COUNT, allows packed values, summed
@@ -500,6 +507,11 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn parse_container_id() {
         assert!(parse("containerid.metric:0|c|#env:dev,client_transport:udp|c:0000000000000000000000000000000000000000000000000000000000000000").is_ok());
+    }
+
+    #[test]
+    fn parse_tag_no_value() {
+        assert!(parse("datadog.tracer.flush_triggered:1|c|#lang:go,lang_version:go1.22.10,_dd.origin:lambda,runtime-id:d66f501c-d09b-4d0d-970f-515235c4eb56,v1.65.1,service:aws.lambda,reason:scheduled").is_ok());
     }
 
     #[test]
