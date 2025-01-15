@@ -91,6 +91,9 @@ impl DogStatsD {
                 !m.is_empty()
                     && !m.starts_with("_sc|")
                     && !m.starts_with("_e{")
+                    // todo(serverless): remove this hack, and create a blocklist for metrics
+                    // or another mechanism for this.
+                    //
                     // avoid metric duplication with lambda layer
                     && !m.starts_with("aws.lambda.enhanced.invocations")
             }) // exclude empty messages, service checks, and events
