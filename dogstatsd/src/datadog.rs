@@ -4,7 +4,7 @@
 //!Types to serialize data into the Datadog API
 
 use datadog_protos::metrics::SketchPayload;
-use derive_more::Display;
+use derive_more::{Display, Into};
 use protobuf::Message;
 use regex::Regex;
 use reqwest;
@@ -13,7 +13,7 @@ use serde_json;
 use std::time::Duration;
 use tracing::{debug, error};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Into)]
 #[display("{}", _0)]
 pub struct Site(String);
 
@@ -33,10 +33,6 @@ impl Site {
             Err(SiteError(site))
         }
     }
-
-    pub fn into_string(self) -> String {
-        self.0
-    }
 }
 
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
@@ -52,7 +48,7 @@ fn validate_url_prefix(prefix: &String) -> Result<(), UrlPrefixError> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Into)]
 #[display("{}", _0)]
 pub struct DdUrl(String);
 
@@ -63,13 +59,9 @@ impl DdUrl {
             Err(e) => Err(e),
         }
     }
-
-    pub fn into_string(self) -> String {
-        self.0
-    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Into)]
 #[display("{}", _0)]
 pub struct DdDdUrl(String);
 
@@ -80,13 +72,9 @@ impl DdDdUrl {
             Err(e) => Err(e),
         }
     }
-
-    pub fn into_string(self) -> String {
-        self.0
-    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Into)]
 #[display("{}", _0)]
 pub struct MetricsIntakeUrlPrefixOverride(String);
 
@@ -94,13 +82,9 @@ impl MetricsIntakeUrlPrefixOverride {
     pub fn maybe_new(dd_url: Option<DdUrl>, dd_dd_url: Option<DdDdUrl>) -> Option<Self> {
         match (dd_url, dd_dd_url) {
             (None, None) => None,
-            (_, Some(dd_dd_url)) => Some(Self(dd_dd_url.into_string())),
-            (Some(dd_url), None) => Some(Self(dd_url.into_string())),
+            (_, Some(dd_dd_url)) => Some(Self(dd_dd_url.into())),
+            (Some(dd_url), None) => Some(Self(dd_url.into())),
         }
-    }
-
-    pub fn into_string(self) -> String {
-        self.0
     }
 }
 
@@ -178,7 +162,7 @@ impl MetricsIntakeUrlPrefix {
     ) -> Result<Self, MissingIntakeUrlError> {
         match (site, overridden_prefix) {
             (None, None) => Err(MissingIntakeUrlError),
-            (_, Some(prefix)) => Ok(Self::new(prefix.into_string())),
+            (_, Some(prefix)) => Ok(Self::new(prefix.into())),
             (Some(site), None) => Ok(Self::from_site(site)),
         }
     }
