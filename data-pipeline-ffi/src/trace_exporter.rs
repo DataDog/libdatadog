@@ -1,8 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::agent_response::SendResponse;
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
-use data_pipeline::trace_exporter::agent_response::AgentResponse;
 use data_pipeline::trace_exporter::{
     TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
@@ -282,13 +282,13 @@ pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
 ///   TraceExporter. The memory for the trace must be valid for the life of the call to this
 ///   function.
 /// * `trace_count` - The number of traces to send to the Datadog Agent.
-/// * `response` - Optional parameter that will ontain the agent response information.
+/// * `response_out` - Optional handle to store a pointer to the agent response information.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_send(
     handle: Option<&TraceExporter>,
     trace: ByteSlice,
     trace_count: usize,
-    response: Option<&mut AgentResponse>,
+    response_out: Option<NonNull<Box<SendResponse>>>,
 ) -> Option<Box<ExporterError>> {
     let exporter = match handle {
         Some(exp) => exp,
@@ -304,8 +304,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
         trace_count,
     ) {
         Ok(resp) => {
-            if let Some(result) = response {
-                *result = resp;
+            if let Some(result) = response_out {
+                result.as_ptr().write(Box::new(SendResponse::from(resp)));
             }
             None
         }
@@ -317,10 +317,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
 mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;
-    use crate::trace_exporter::AgentResponse;
     use datadog_trace_utils::span_v04::Span;
     use httpmock::prelude::*;
     use httpmock::MockServer;
+    use std::ffi::{CStr, CString};
     use std::{borrow::Borrow, mem::MaybeUninit};
 
     #[test]
@@ -559,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn expoter_constructor_error_test() {
+    fn exporter_constructor_error_test() {
         unsafe {
             let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
             ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
@@ -590,8 +590,10 @@ mod tests {
     fn exporter_send_test_arguments_test() {
         unsafe {
             let trace = ByteSlice::from(b"dummy contents" as &[u8]);
-            let mut resp = AgentResponse { rate: 0.0 };
-            let ret = ddog_trace_exporter_send(None, trace, 0, Some(&mut resp));
+            let mut resp = Box::new(SendResponse {
+                body: CString::default().into_raw(),
+            });
+            let ret = ddog_trace_exporter_send(None, trace, 0, NonNull::new(&mut resp));
 
             assert!(ret.is_some());
             assert_eq!(ret.unwrap().code, ErrorCode::InvalidArgument);
@@ -659,11 +661,26 @@ mod tests {
 
             let data = rmp_serde::to_vec_named::<Vec<Vec<Span>>>(&vec![vec![]]).unwrap();
             let traces = ByteSlice::new(&data);
-            let mut response = AgentResponse { rate: 0.0 };
+            let mut response = Box::new(SendResponse {
+                body: CString::default().into_raw(),
+            });
 
-            ret = ddog_trace_exporter_send(Some(exporter.as_ref()), traces, 0, Some(&mut response));
+            ret = ddog_trace_exporter_send(
+                Some(exporter.as_ref()),
+                traces,
+                0,
+                NonNull::new(&mut response),
+            );
             assert_eq!(ret, None);
-            assert_eq!(response.rate, 0.8);
+            assert_eq!(
+                CStr::from_ptr(response.body).to_string_lossy(),
+                r#"{
+                    "rate_by_service": {
+                        "service:foo,env:staging": 1.0,
+                        "service:,env:": 0.8 
+                    }
+                }"#,
+            );
 
             ddog_trace_exporter_free(exporter);
         }
@@ -718,13 +735,27 @@ mod tests {
 
             let data = vec![0x90];
             let traces = ByteSlice::new(&data);
-            let mut response = AgentResponse { rate: 0.0 };
+            let mut response = Box::new(SendResponse {
+                body: CString::default().into_raw(),
+            });
 
-            ret = ddog_trace_exporter_send(Some(exporter.as_ref()), traces, 0, Some(&mut response));
+            ret = ddog_trace_exporter_send(
+                Some(exporter.as_ref()),
+                traces,
+                0,
+                NonNull::new(&mut response),
+            );
             mock_traces.assert();
             assert_eq!(ret, None);
-            assert_eq!(response.rate, 0.8);
-
+            assert_eq!(
+                CStr::from_ptr(response.body).to_string_lossy(),
+                r#"{
+                    "rate_by_service": {
+                        "service:foo,env:staging": 1.0,
+                        "service:,env:": 0.8 
+                    }
+                }"#,
+            );
             ddog_trace_exporter_free(exporter);
         }
     }
