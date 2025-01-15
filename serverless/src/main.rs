@@ -160,7 +160,7 @@ async fn start_dogstatsd(
             let metrics_flusher = Flusher::new(FlusherConfig {
                 api_key: dd_api_key,
                 aggregator: Arc::clone(&metrics_aggr),
-                metrics_intake_url_prefix: MetricsIntakeUrlPrefix::from_site_or_override(
+                metrics_intake_url_prefix: MetricsIntakeUrlPrefix::new(
                     Some(Site::new(dd_site).expect("Failed to parse site")),
                     None,
                 )

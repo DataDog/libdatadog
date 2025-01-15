@@ -52,10 +52,8 @@ pub struct DdUrl(String);
 
 impl DdUrl {
     pub fn new(prefix: String) -> Result<Self, UrlPrefixError> {
-        match validate_url_prefix(&prefix) {
-            Ok(_) => Ok(Self(prefix)),
-            Err(e) => Err(e),
-        }
+        validate_url_prefix(&prefix)?;
+        Ok(Self(prefix))
     }
 }
 
@@ -64,10 +62,8 @@ pub struct DdDdUrl(String);
 
 impl DdDdUrl {
     pub fn new(prefix: String) -> Result<Self, UrlPrefixError> {
-        match validate_url_prefix(&prefix) {
-            Ok(_) => Ok(Self(prefix)),
-            Err(e) => Err(e),
-        }
+        validate_url_prefix(&prefix)?;
+        Ok(Self(prefix))
     }
 }
 
@@ -135,29 +131,29 @@ impl MetricsIntakeUrlPrefix {
     /// fine for tests, but in production we should be using from_site_or_dd_urls instead.
     #[inline]
     pub unsafe fn new_unchecked(prefix: String) -> Self {
-        MetricsIntakeUrlPrefix(prefix)
+        Self(prefix)
     }
 
     #[inline]
-    fn new(validated_prefix: String) -> Self {
+    fn new_expect_validated(validated_prefix: String) -> Self {
         validate_url_prefix(&validated_prefix).expect("Invalid URL prefix");
 
-        MetricsIntakeUrlPrefix(validated_prefix)
+        Self(validated_prefix)
     }
 
     #[inline]
     fn from_site(site: Site) -> Self {
-        MetricsIntakeUrlPrefix(format!("https://api.{}", site))
+        Self(format!("https://api.{}", site))
     }
 
     #[inline]
-    pub fn from_site_or_override(
+    pub fn new(
         site: Option<Site>,
         overridden_prefix: Option<MetricsIntakeUrlPrefixOverride>,
     ) -> Result<Self, MissingIntakeUrlError> {
         match (site, overridden_prefix) {
             (None, None) => Err(MissingIntakeUrlError),
-            (_, Some(prefix)) => Ok(Self::new(prefix.into())),
+            (_, Some(prefix)) => Ok(Self::new_expect_validated(prefix.into())),
             (Some(site), None) => Ok(Self::from_site(site)),
         }
     }
@@ -168,35 +164,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_intake_url_prefix_from_site_or_override_requires_something() {
+    fn test_intake_url_prefix_new_requires_something() {
         assert_eq!(
-            MetricsIntakeUrlPrefix::from_site_or_override(None, None),
+            MetricsIntakeUrlPrefix::new(None, None),
             Err(MissingIntakeUrlError)
         );
     }
 
     #[test]
-    fn test_intake_url_prefix_from_site_or_override_picks_the_override() {
+    fn test_intake_url_prefix_new_picks_the_override() {
         assert_eq!(
-            MetricsIntakeUrlPrefix::from_site_or_override(
+            MetricsIntakeUrlPrefix::new(
                 Some(Site::new("a_site".to_string()).unwrap()),
                 MetricsIntakeUrlPrefixOverride::maybe_new(
                     Some(DdUrl::new("http://a_dd_url".to_string()).unwrap()),
                     None
                 ),
             ),
-            Ok(MetricsIntakeUrlPrefix::new("http://a_dd_url".to_string()))
+            Ok(MetricsIntakeUrlPrefix::new_expect_validated(
+                "http://a_dd_url".to_string()
+            ))
         );
     }
 
     #[test]
-    fn test_intake_url_prefix_from_site_or_override_picks_site_as_a_fallback() {
+    fn test_intake_url_prefix_new_picks_site_as_a_fallback() {
         assert_eq!(
-            MetricsIntakeUrlPrefix::from_site_or_override(
-                Some(Site::new("a_site".to_string()).unwrap()),
-                None,
-            ),
-            Ok(MetricsIntakeUrlPrefix::new(
+            MetricsIntakeUrlPrefix::new(Some(Site::new("a_site".to_string()).unwrap()), None,),
+            Ok(MetricsIntakeUrlPrefix::new_expect_validated(
                 "https://api.a_site".to_string()
             ))
         );

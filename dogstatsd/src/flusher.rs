@@ -3,13 +3,13 @@
 
 use crate::aggregator::Aggregator;
 use crate::datadog;
-use datadog::MetricsIntakeUrlPrefix;
+use datadog::{DdApi, MetricsIntakeUrlPrefix};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::debug;
 
 pub struct Flusher {
-    dd_api: datadog::DdApi,
+    dd_api: DdApi,
     aggregator: Arc<Mutex<Aggregator>>,
 }
 
@@ -24,7 +24,7 @@ pub struct FlusherConfig {
 #[allow(clippy::await_holding_lock)]
 impl Flusher {
     pub fn new(config: FlusherConfig) -> Self {
-        let dd_api = datadog::DdApi::new(
+        let dd_api = DdApi::new(
             config.api_key,
             config.metrics_intake_url_prefix,
             config.https_proxy,
