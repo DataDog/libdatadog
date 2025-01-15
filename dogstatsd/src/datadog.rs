@@ -31,7 +31,7 @@ impl Site {
         // Datadog sites are generally domain names. In particular, they shouldn't have any slashes
         // in them. We expect this to be coming from a `DD_SITE` environment variable or the `site`
         // config field.
-        let re = Regex::new(r"^[a-zA-Z0-9._-]+$").unwrap();
+        let re = Regex::new(r"^[a-zA-Z0-9._-]+$").expect("invalid regex");
         if re.is_match(&site) {
             Ok(Site(site))
         } else {
@@ -49,7 +49,7 @@ impl Site {
 pub struct UrlPrefixError(String);
 
 fn validate_url_prefix(prefix: &String) -> Result<(), UrlPrefixError> {
-    let re = Regex::new(r"^https?://[a-zA-Z0-9._-]+$").unwrap();
+    let re = Regex::new(r"^https?://[a-zA-Z0-9._-]+$").expect("invalid regex");
     if re.is_match(prefix) {
         Ok(())
     } else {
