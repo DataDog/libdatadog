@@ -170,7 +170,10 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_advance_gen(
 
 pub unsafe fn get_inner_string_storage(
     storage: ManagedStringStorage,
-    cloned: bool,
+    // This should be `true` in every case EXCEPT when implementing `drop`, which uses `false`.
+    // (E.g. we use this flag to know if we need to increment the refcount for the copy we create
+    // or not).
+    for_use: bool,
 ) -> anyhow::Result<Rc<RwLock<InternalManagedStringStorage>>> {
     if storage.inner.is_null() {
         anyhow::bail!("storage inner pointer is null");
@@ -178,7 +181,7 @@ pub unsafe fn get_inner_string_storage(
 
     let storage_ptr = storage.inner;
 
-    if cloned {
+    if for_use {
         // By incrementing strong count here we ensure that the returned Rc represents a "clone" of
         // the original and will thus not trigger a drop of the underlying data when out of
         // scope. NOTE: We can't simply do Rc::from_raw(storage_ptr).clone() because when we
