@@ -5,6 +5,7 @@
 
 use datadog_protos::metrics::SketchPayload;
 use protobuf::Message;
+use regex::Regex;
 use reqwest;
 use serde::{Serialize, Serializer};
 use serde_json;
@@ -21,9 +22,21 @@ impl fmt::Display for Site {
     }
 }
 
+#[derive(thiserror::Error, Debug, Clone, PartialEq)]
+#[error("Invalid site: {0}")]
+pub struct SiteError(String);
+
 impl Site {
-    pub fn new(prefix: String) -> Self {
-        Site(prefix)
+    pub fn new(site: String) -> Result<Self, SiteError> {
+        // Datadog sites are generally domain names. In particular, they shouldn't have any slashes in
+        // them. We expect this to be coming from a `DD_SITE` environment variable or the `site`
+        // config field.
+        let re = Regex::new(r"^[a-zA-Z0-9._-]+$").unwrap();
+        if re.is_match(&site) {
+            Ok(Site(site))
+        } else {
+            Err(SiteError(site))
+        }
     }
 
     pub fn into_string(self) -> String {
@@ -132,7 +145,7 @@ mod tests {
     fn test_intake_url_prefix_from_site_or_dd_urls_picks_dd_dd_url_above_all() {
         assert_eq!(
             MetricsIntakeUrlPrefix::from_site_or_dd_urls(
-                Some(Site::new("a_site".to_string())),
+                Some(Site::new("a_site".to_string()).unwrap()),
                 Some(DdUrl::new("a_dd_url".to_string())),
                 Some(DdDdUrl::new("a_dd_dd_url".to_string())),
             ),
@@ -144,7 +157,7 @@ mod tests {
     fn test_intake_url_prefix_from_site_or_dd_urls_picks_dd_url_if_it_must() {
         assert_eq!(
             MetricsIntakeUrlPrefix::from_site_or_dd_urls(
-                Some(Site::new("a_site".to_string())),
+                Some(Site::new("a_site".to_string()).unwrap()),
                 Some(DdUrl::new("a_dd_url".to_string())),
                 None,
             ),
@@ -156,7 +169,7 @@ mod tests {
     fn test_intake_url_prefix_from_site_or_dd_urls_picks_site_as_a_fallback() {
         assert_eq!(
             MetricsIntakeUrlPrefix::from_site_or_dd_urls(
-                Some(Site::new("a_site".to_string())),
+                Some(Site::new("a_site".to_string()).expect("valid site")),
                 None,
                 None,
             ),

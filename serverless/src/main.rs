@@ -161,7 +161,7 @@ async fn start_dogstatsd(
                 api_key: dd_api_key,
                 aggregator: Arc::clone(&metrics_aggr),
                 metrics_intake_url_prefix: MetricsIntakeUrlPrefix::from_site_or_dd_urls(
-                    Some(Site::new(dd_site)),
+                    Some(Site::new(dd_site).expect("Failed to parse site")),
                     None,
                     None,
                 )
