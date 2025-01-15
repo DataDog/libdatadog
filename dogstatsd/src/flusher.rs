@@ -23,16 +23,16 @@ pub struct FlusherConfig {
 
 #[allow(clippy::await_holding_lock)]
 impl Flusher {
-    pub fn new(params: FlusherConfig) -> Self {
+    pub fn new(config: FlusherConfig) -> Self {
         let dd_api = datadog::DdApi::new(
-            params.api_key,
-            params.metrics_intake_url_prefix,
-            params.https_proxy,
-            params.timeout,
+            config.api_key,
+            config.metrics_intake_url_prefix,
+            config.https_proxy,
+            config.timeout,
         );
         Flusher {
             dd_api,
-            aggregator: params.aggregator,
+            aggregator: config.aggregator,
         }
     }
 
