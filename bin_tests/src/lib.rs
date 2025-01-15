@@ -5,7 +5,6 @@ pub mod modes;
 
 use std::{collections::HashMap, env, ops::DerefMut, path::PathBuf, process, sync::Mutex};
 
-use anyhow::Ok;
 use once_cell::sync::OnceCell;
 
 /// This crate implements an abstraction over compilation with cargo with the purpose
@@ -69,6 +68,11 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     /// it's directory
     static ARTIFACT_DIR: OnceCell<PathBuf> = OnceCell::new();
     let artifact_dir = ARTIFACT_DIR.get_or_init(|| {
+        // If the CARGO_TARGET_DIR env var is set, then just use that.
+        if let Ok(env_target_dir) = env::var("CARGO_TARGET_DIR") {
+            return PathBuf::from(env_target_dir);
+        }
+
         let test_bin_location = PathBuf::from(env::args().next().unwrap());
         let mut location_components = test_bin_location.components().rev().peekable();
         loop {

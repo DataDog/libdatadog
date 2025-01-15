@@ -14,8 +14,8 @@ use ustr::Ustr;
 pub const EMPTY_TAGS: SortedTags = SortedTags { values: Vec::new() };
 
 lazy_static! {
-    static ref METRIC_REGEX: regex::Regex = Regex::new(
-        r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[cgd])(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?(?:\|c:(?P<container_id>[^|]+))?$",
+    static ref METRIC_REGEX: Regex = Regex::new(
+        r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[a-zA-Z]+)(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?(?:\|c:(?P<container_id>[^|]+))?$",
     ).expect("Failed to create metric regex");
 }
 
@@ -70,10 +70,10 @@ impl SortedTags {
         // Validate that the tags have the right form.
         for (i, part) in tag_parts.filter(|s| !s.is_empty()).enumerate() {
             if i >= constants::MAX_TAGS {
-                return Err(ParseError::Raw("Too many tags"));
+                return Err(ParseError::Raw(format!("Too many tags, more than {i}")));
             }
             if !part.contains(':') {
-                return Err(ParseError::Raw("Invalid tag format"));
+                return Err(ParseError::Raw("Invalid tag format".to_string()));
             }
             if let Some((k, v)) = part.split_once(':') {
                 parsed_tags.push((Ustr::from(k), Ustr::from(v)));
@@ -185,7 +185,8 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
             tags = None;
         }
         let val = first_value(caps.name("values").unwrap().as_str())?;
-        let metric_value = match caps.name("type").unwrap().as_str() {
+        let t = caps.name("type").unwrap().as_str();
+        let metric_value = match t {
             "c" => MetricValue::Count(val),
             "g" => MetricValue::Gauge(val),
             "d" => {
@@ -193,8 +194,11 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
                 sketch.insert(val);
                 MetricValue::Distribution(sketch.to_owned())
             }
+            "h" | "s" | "ms" => {
+                return Err(ParseError::UnsupportedType(t.to_string()));
+            }
             _ => {
-                return Err(ParseError::Raw("Unsupported metric type"));
+                return Err(ParseError::Raw(format!("Invalid metric type: {t}")));
             }
         };
         let name = Ustr::from(caps.name("name").unwrap().as_str());
@@ -206,16 +210,16 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
             id,
         });
     }
-    Err(ParseError::Raw("Invalid metric format"))
+    Err(ParseError::Raw(format!("Invalid metric format {input}")))
 }
 
 fn first_value(values: &str) -> Result<f64, ParseError> {
     match values.split(':').next() {
         Some(v) => match v.parse::<f64>() {
             Ok(v) => Ok(v),
-            Err(_) => Err(ParseError::Raw("Invalid value")),
+            Err(e) => Err(ParseError::Raw(format!("Invalid value {e}"))),
         },
-        None => Err(ParseError::Raw("Missing value")),
+        None => Err(ParseError::Raw("Missing value".to_string())),
     }
 }
 
@@ -365,7 +369,7 @@ mod tests {
             };
             let result = parse(&input);
 
-            assert_eq!(result.unwrap_err(),ParseError::Raw("Invalid metric format"));
+            assert_eq!(result.unwrap_err(),ParseError::Raw(format!("Invalid metric format {input}")));
         }
 
         #[test]
@@ -386,10 +390,9 @@ mod tests {
             };
             let result = parse(&input);
 
-            assert_eq!(
-                result.unwrap_err(),
-                ParseError::Raw("Invalid metric format")
-            );
+            let verify = result.unwrap_err().to_string();
+            println!("{}", verify);
+            assert!(verify.starts_with("parse failure: Invalid metric format "));
         }
 
         #[test]
@@ -397,7 +400,7 @@ mod tests {
         fn parse_unsupported_metric_type(
             name in metric_name(),
             values in metric_values(),
-            mtype in "[abefhijklmnopqrstuvwxyz]",
+            mtype in "[abefijklmnopqrtuvwxyz]",
             tagset in metric_tagset()
         ) {
             let input = if let Some(ref tagset) = tagset {
@@ -409,7 +412,7 @@ mod tests {
 
             assert_eq!(
                 result.unwrap_err(),
-                ParseError::Raw("Invalid metric format")
+                ParseError::Raw(format!("Invalid metric type: {mtype}"))
             );
         }
 
@@ -469,7 +472,7 @@ mod tests {
     fn parse_too_many_tags() {
         // 33
         assert_eq!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3").unwrap_err(),
-                   ParseError::Raw("Too many tags"));
+                   ParseError::Raw("Too many tags, more than 32".to_string()));
 
         // 32
         assert!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2").is_ok());
@@ -491,5 +494,16 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn parse_container_id() {
         assert!(parse("containerid.metric:0|c|#env:dev,client_transport:udp|c:0000000000000000000000000000000000000000000000000000000000000000").is_ok());
+    }
+
+    #[test]
+    fn parse_tracer_metric() {
+        let input = "datadog.tracer.flush_duration:0.785551|ms|#lang:go,lang_version:go1.23.2,env:redacted_env,_dd.origin:lambda,runtime-id:redacted_runtime,tracer_version:v1.70.1,service:redacted_service,env:redacted_env,service:redacted_service,version:redacted_version";
+        let expected_error = "ms".to_string();
+        if let ParseError::UnsupportedType(actual_error) = parse(input).unwrap_err() {
+            assert_eq!(actual_error, expected_error);
+        } else {
+            panic!("Expected UnsupportedType error");
+        }
     }
 }
