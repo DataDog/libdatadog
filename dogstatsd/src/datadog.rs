@@ -38,12 +38,12 @@ impl Site {
 #[error("Invalid URL prefix: {0}")]
 pub struct UrlPrefixError(String);
 
-fn validate_url_prefix(prefix: &String) -> Result<(), UrlPrefixError> {
+fn validate_url_prefix(prefix: &str) -> Result<(), UrlPrefixError> {
     let re = Regex::new(r"^https?://[a-zA-Z0-9._-]+$").expect("invalid regex");
     if re.is_match(prefix) {
         Ok(())
     } else {
-        Err(UrlPrefixError(prefix.clone()))
+        Err(UrlPrefixError(prefix.to_owned()))
     }
 }
 
