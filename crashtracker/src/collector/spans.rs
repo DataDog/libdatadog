@@ -19,6 +19,7 @@ pub fn emit_spans(w: &mut impl Write) -> anyhow::Result<()> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_SPAN_IDS}")?;
     ACTIVE_SPANS.emit(w)?;
     writeln!(w, "{DD_CRASHTRACK_END_SPAN_IDS}")?;
+    w.flush()?;
     Ok(())
 }
 
@@ -40,6 +41,7 @@ pub fn emit_traces(w: &mut impl Write) -> anyhow::Result<()> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_TRACE_IDS}")?;
     ACTIVE_TRACES.emit(w)?;
     writeln!(w, "{DD_CRASHTRACK_END_TRACE_IDS}")?;
+    w.flush()?;
     Ok(())
 }
 
@@ -84,7 +86,7 @@ impl<const LEN: usize> AtomicU128Set<LEN> {
                         write!(w, ", ")?;
                     }
                     first = false;
-                    write!(w, "{v}")?;
+                    write!(w, "{{\"id\": \"{v}\"}}")?;
                 }
             }
         }

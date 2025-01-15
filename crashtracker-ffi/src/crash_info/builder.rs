@@ -176,11 +176,12 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_incomplete(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_log_message(
     mut builder: *mut Handle<CrashInfoBuilder>,
     message: CharSlice,
+    also_print: bool,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
         builder
             .to_inner_mut()?
-            .with_log_message(message.try_to_string()?)?;
+            .with_log_message(message.try_to_string()?, also_print)?;
     })
 }
 

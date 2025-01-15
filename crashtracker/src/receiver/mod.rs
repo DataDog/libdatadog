@@ -74,10 +74,8 @@ mod tests {
         let join_handle2 = tokio::spawn(send_report(Duration::from_secs(2), sender));
 
         let crash_report = join_handle1.await??;
-        assert!(matches!(
-            crash_report,
-            CrashReportStatus::PartialCrashReport(_, _, _)
-        ));
+        let (_config, crashinfo) = crash_report.expect("Expect a report");
+        assert!(crashinfo.incomplete);
         let sender_error = join_handle2.await?.unwrap_err().to_string();
         assert_eq!(sender_error, "Broken pipe (os error 32)");
         Ok(())
@@ -95,7 +93,8 @@ mod tests {
         let join_handle2 = tokio::spawn(send_report(Duration::from_secs(1), sender));
 
         let crash_report = join_handle1.await??;
-        assert!(matches!(crash_report, CrashReportStatus::CrashReport(_, _)));
+        let (_config, crashinfo) = crash_report.expect("Expect a report");
+        assert!(crashinfo.incomplete);
         join_handle2.await??;
         Ok(())
     }

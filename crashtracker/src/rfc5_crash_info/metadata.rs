@@ -15,6 +15,22 @@ pub struct Metadata {
     pub tags: Vec<String>,
 }
 
+impl Metadata {
+    pub fn new(
+        library_name: String,
+        library_version: String,
+        family: String,
+        tags: Vec<String>,
+    ) -> Self {
+        Self {
+            library_name,
+            library_version,
+            family,
+            tags,
+        }
+    }
+}
+
 impl UnknownValue for Metadata {
     fn unknown_value() -> Self {
         Self {

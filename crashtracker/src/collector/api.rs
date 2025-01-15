@@ -5,8 +5,8 @@
 use crate::{
     clear_spans, clear_traces,
     collector::crash_handler::{configure_receiver, register_crash_handlers, restore_old_handlers},
-    crash_info::CrashtrackerMetadata,
     reset_counters,
+    rfc5_crash_info::Metadata,
     shared::configuration::CrashtrackerReceiverConfig,
     update_config, update_metadata, CrashtrackerConfiguration,
 };
@@ -48,7 +48,7 @@ pub fn shutdown_crash_handler() -> anyhow::Result<()> {
 pub fn on_fork(
     config: CrashtrackerConfiguration,
     receiver_config: CrashtrackerReceiverConfig,
-    metadata: CrashtrackerMetadata,
+    metadata: Metadata,
 ) -> anyhow::Result<()> {
     clear_spans()?;
     clear_traces()?;
@@ -77,7 +77,7 @@ pub fn on_fork(
 pub fn init(
     config: CrashtrackerConfiguration,
     receiver_config: CrashtrackerReceiverConfig,
-    metadata: CrashtrackerMetadata,
+    metadata: Metadata,
 ) -> anyhow::Result<()> {
     update_metadata(metadata)?;
     update_config(config)?;
@@ -131,7 +131,7 @@ fn test_crash() -> anyhow::Result<()> {
         timeout_ms,
         None,
     )?;
-    let metadata = CrashtrackerMetadata::new(
+    let metadata = Metadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),
@@ -145,11 +145,11 @@ fn test_crash() -> anyhow::Result<()> {
     super::insert_trace(99399939399939393993)?;
 
     let tag = tag!("apple", "banana");
-    let metadata2 = CrashtrackerMetadata::new(
+    let metadata2 = Metadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),
-        vec![tag],
+        vec![tag.to_string()],
     );
     update_metadata(metadata2).expect("metadata");
 
