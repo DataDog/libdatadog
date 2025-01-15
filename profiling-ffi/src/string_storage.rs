@@ -90,9 +90,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
     storage: ManagedStringStorage,
     id: ManagedStringId,
 ) -> MaybeError {
-    let non_empty_string_id = if let Some(valid_id) = NonZeroU32::new(id.value) {
-        valid_id
-    } else {
+    let Some(non_empty_string_id) = NonZeroU32::new(id.value) else {
         return MaybeError::None; // Empty string, nothing to do
     };
 
