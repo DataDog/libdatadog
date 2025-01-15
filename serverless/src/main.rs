@@ -15,7 +15,7 @@ use datadog_trace_mini_agent::{
 use dogstatsd::{
     aggregator::Aggregator as MetricsAggregator,
     constants::CONTEXTS,
-    datadog::{IntakeUrlPrefix, Site},
+    datadog::{MetricsIntakeUrlPrefix, Site},
     dogstatsd::{DogStatsD, DogStatsDConfig},
     flusher::{Flusher, FlusherConfig},
 };
@@ -160,7 +160,7 @@ async fn start_dogstatsd(
             let metrics_flusher = Flusher::new(FlusherConfig {
                 api_key: dd_api_key,
                 aggregator: Arc::clone(&metrics_aggr),
-                intake_url_prefix: IntakeUrlPrefix::from_site_or_dd_urls(
+                metrics_intake_url_prefix: MetricsIntakeUrlPrefix::from_site_or_dd_urls(
                     Some(Site::new(dd_site)),
                     None,
                     None,

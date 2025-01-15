@@ -3,7 +3,7 @@
 
 use crate::aggregator::Aggregator;
 use crate::datadog;
-use datadog::IntakeUrlPrefix;
+use datadog::MetricsIntakeUrlPrefix;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::debug;
@@ -16,7 +16,7 @@ pub struct Flusher {
 pub struct FlusherConfig {
     pub api_key: String,
     pub aggregator: Arc<Mutex<Aggregator>>,
-    pub intake_url_prefix: IntakeUrlPrefix,
+    pub metrics_intake_url_prefix: MetricsIntakeUrlPrefix,
     pub https_proxy: Option<String>,
     pub timeout: Duration,
 }
@@ -26,7 +26,7 @@ impl Flusher {
     pub fn new(params: FlusherConfig) -> Self {
         let dd_api = datadog::DdApi::new(
             params.api_key,
-            params.intake_url_prefix,
+            params.metrics_intake_url_prefix,
             params.https_proxy,
             params.timeout,
         );

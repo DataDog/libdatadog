@@ -70,15 +70,15 @@ impl DdDdUrl {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct IntakeUrlPrefix(String);
+pub struct MetricsIntakeUrlPrefix(String);
 
-impl fmt::Display for IntakeUrlPrefix {
+impl fmt::Display for MetricsIntakeUrlPrefix {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl IntakeUrlPrefix {
+impl MetricsIntakeUrlPrefix {
     /// # Safety
     ///
     /// This function is unsafe because it does no validation on the input string. It also does not
@@ -86,19 +86,19 @@ impl IntakeUrlPrefix {
     /// fine for tests, but in production we should be using from_site_or_dd_urls instead.
     #[inline]
     pub unsafe fn new_unchecked(prefix: String) -> Self {
-        IntakeUrlPrefix(prefix)
+        MetricsIntakeUrlPrefix(prefix)
     }
 
     #[inline]
     fn new(prefix: String) -> Self {
         // Maybe we will validate this in the future, but for now we assume that the prefix is
         // sensible.
-        IntakeUrlPrefix(prefix)
+        MetricsIntakeUrlPrefix(prefix)
     }
 
     #[inline]
     fn from_site(site: String) -> Self {
-        IntakeUrlPrefix(format!("https://api.{}", site))
+        MetricsIntakeUrlPrefix(format!("https://api.{}", site))
     }
 
     #[inline]
@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn test_intake_url_prefix_from_site_or_dd_urls_requires_something() {
         assert_eq!(
-            IntakeUrlPrefix::from_site_or_dd_urls(None, None, None),
+            MetricsIntakeUrlPrefix::from_site_or_dd_urls(None, None, None),
             Err("No intake URL configuration")
         );
     }
@@ -131,36 +131,38 @@ mod tests {
     #[test]
     fn test_intake_url_prefix_from_site_or_dd_urls_picks_dd_dd_url_above_all() {
         assert_eq!(
-            IntakeUrlPrefix::from_site_or_dd_urls(
+            MetricsIntakeUrlPrefix::from_site_or_dd_urls(
                 Some(Site::new("a_site".to_string())),
                 Some(DdUrl::new("a_dd_url".to_string())),
                 Some(DdDdUrl::new("a_dd_dd_url".to_string())),
             ),
-            Ok(IntakeUrlPrefix::new("a_dd_dd_url".to_string()))
+            Ok(MetricsIntakeUrlPrefix::new("a_dd_dd_url".to_string()))
         );
     }
 
     #[test]
     fn test_intake_url_prefix_from_site_or_dd_urls_picks_dd_url_if_it_must() {
         assert_eq!(
-            IntakeUrlPrefix::from_site_or_dd_urls(
+            MetricsIntakeUrlPrefix::from_site_or_dd_urls(
                 Some(Site::new("a_site".to_string())),
                 Some(DdUrl::new("a_dd_url".to_string())),
                 None,
             ),
-            Ok(IntakeUrlPrefix::new("a_dd_url".to_string()))
+            Ok(MetricsIntakeUrlPrefix::new("a_dd_url".to_string()))
         );
     }
 
     #[test]
     fn test_intake_url_prefix_from_site_or_dd_urls_picks_site_as_a_fallback() {
         assert_eq!(
-            IntakeUrlPrefix::from_site_or_dd_urls(
+            MetricsIntakeUrlPrefix::from_site_or_dd_urls(
                 Some(Site::new("a_site".to_string())),
                 None,
                 None,
             ),
-            Ok(IntakeUrlPrefix::new("https://api.a_site".to_string()))
+            Ok(MetricsIntakeUrlPrefix::new(
+                "https://api.a_site".to_string()
+            ))
         );
     }
 }
@@ -169,7 +171,7 @@ mod tests {
 #[derive(Debug)]
 pub struct DdApi {
     api_key: String,
-    intake_url_prefix: IntakeUrlPrefix,
+    metrics_intake_url_prefix: MetricsIntakeUrlPrefix,
     client: reqwest::Client,
 }
 
@@ -177,7 +179,7 @@ impl DdApi {
     #[must_use]
     pub fn new(
         api_key: String,
-        intake_url_prefix: IntakeUrlPrefix,
+        metrics_intake_url_prefix: MetricsIntakeUrlPrefix,
         https_proxy: Option<String>,
         timeout: Duration,
     ) -> Self {
@@ -190,7 +192,7 @@ impl DdApi {
         };
         DdApi {
             api_key,
-            intake_url_prefix,
+            metrics_intake_url_prefix,
             client,
         }
     }
@@ -200,7 +202,7 @@ impl DdApi {
         let body = serde_json::to_vec(&series).expect("failed to serialize series");
         debug!("Sending body: {:?}", &series);
 
-        let url = format!("{}/api/v2/series", &self.intake_url_prefix);
+        let url = format!("{}/api/v2/series", &self.metrics_intake_url_prefix);
         let resp = self
             .client
             .post(&url)
@@ -228,7 +230,7 @@ impl DdApi {
     }
 
     pub async fn ship_distributions(&self, sketches: &SketchPayload) {
-        let url = format!("{}/api/beta/sketches", &self.intake_url_prefix);
+        let url = format!("{}/api/beta/sketches", &self.metrics_intake_url_prefix);
         debug!("Sending distributions: {:?}", &sketches);
         // TODO maybe go to coded output stream if we incrementally
         // add sketch payloads to the buffer

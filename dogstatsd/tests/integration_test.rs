@@ -5,7 +5,7 @@ use dogstatsd::metric::SortedTags;
 use dogstatsd::{
     aggregator::Aggregator as MetricsAggregator,
     constants::CONTEXTS,
-    datadog::IntakeUrlPrefix,
+    datadog::MetricsIntakeUrlPrefix,
     dogstatsd::{DogStatsD, DogStatsDConfig},
     flusher::{Flusher, FlusherConfig},
 };
@@ -41,9 +41,9 @@ async fn dogstatsd_server_ships_series() {
     let mut metrics_flusher = Flusher::new(FlusherConfig {
         api_key: "mock-api-key".to_string(),
         aggregator: Arc::clone(&metrics_aggr),
-        intake_url_prefix: unsafe {
+        metrics_intake_url_prefix: unsafe {
             // This skips validation, but we don't care in this test.
-            IntakeUrlPrefix::new_unchecked(mock_server.url())
+            MetricsIntakeUrlPrefix::new_unchecked(mock_server.url())
         },
         https_proxy: None,
         timeout: std::time::Duration::from_secs(5),
