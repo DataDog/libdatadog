@@ -14,7 +14,6 @@ use std::time::Duration;
 use tracing::{debug, error};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Into)]
-#[display("{}", _0)]
 pub struct Site(String);
 
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
@@ -49,7 +48,6 @@ fn validate_url_prefix(prefix: &String) -> Result<(), UrlPrefixError> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Into)]
-#[display("{}", _0)]
 pub struct DdUrl(String);
 
 impl DdUrl {
@@ -62,7 +60,6 @@ impl DdUrl {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Into)]
-#[display("{}", _0)]
 pub struct DdDdUrl(String);
 
 impl DdDdUrl {
@@ -75,7 +72,6 @@ impl DdDdUrl {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Into)]
-#[display("{}", _0)]
 pub struct MetricsIntakeUrlPrefixOverride(String);
 
 impl MetricsIntakeUrlPrefixOverride {
@@ -125,7 +121,6 @@ mod test {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
-#[display("{}", _0)]
 pub struct MetricsIntakeUrlPrefix(String);
 
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
