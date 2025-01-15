@@ -490,7 +490,7 @@ impl Default for MiniAgentMetadata {
             azure_spring_app_name: Default::default(),
             gcp_project_id: Default::default(),
             gcp_region: Default::default(),
-            version: env::var("DD_MINI_AGENT_VERSION").ok(),
+            version: env::var("DD_SERVERLESS_COMPAT_VERSION").ok(),
         }
     }
 }
@@ -509,10 +509,14 @@ pub fn enrich_span_with_mini_agent_metadata(
         span.meta
             .insert("asa.name".to_string(), azure_spring_app_name.to_string());
     }
-    if let Some(mini_agent_version) = &mini_agent_metadata.version {
+    if let Some(serverless_compat_version) = &mini_agent_metadata.version {
         span.meta.insert(
             "_dd.mini_agent_version".to_string(),
-            mini_agent_version.to_string(),
+            serverless_compat_version.to_string(),
+        );
+        span.meta.insert(
+            "_dd.serverless_compat_version".to_string(),
+            serverless_compat_version.to_string(),
         );
     }
 }
