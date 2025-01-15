@@ -245,19 +245,17 @@ impl<'a> TryFrom<&'a Mapping<'a>> for api::Mapping<'a> {
     }
 }
 
-impl<'a> TryFrom<&'a Mapping<'a>> for api::StringIdMapping {
-    type Error = Utf8Error;
-
-    fn try_from(mapping: &'a Mapping<'a>) -> Result<Self, Self::Error> {
+impl<'a> From<&'a Mapping<'a>> for api::StringIdMapping {
+    fn from(mapping: &'a Mapping<'a>) -> Self {
         let filename = ManagedStringId::new(mapping.filename_id.value);
         let build_id = ManagedStringId::new(mapping.build_id_id.value);
-        Ok(Self {
+        Self {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
             file_offset: mapping.file_offset,
             filename,
             build_id,
-        })
+        }
     }
 }
 
@@ -295,19 +293,17 @@ impl<'a> TryFrom<&'a Function<'a>> for api::Function<'a> {
     }
 }
 
-impl<'a> TryFrom<&'a Function<'a>> for api::StringIdFunction {
-    type Error = Utf8Error;
-
-    fn try_from(function: &'a Function<'a>) -> Result<Self, Self::Error> {
+impl<'a> From<&'a Function<'a>> for api::StringIdFunction {
+    fn from(function: &'a Function<'a>) -> Self {
         let name = ManagedStringId::new(function.name_id.value);
         let system_name = ManagedStringId::new(function.system_name_id.value);
         let filename = ManagedStringId::new(function.filename_id.value);
-        Ok(Self {
+        Self {
             name,
             system_name,
             filename,
             start_line: function.start_line,
-        })
+        }
     }
 }
 
@@ -326,18 +322,16 @@ impl<'a> TryFrom<&'a Location<'a>> for api::Location<'a> {
     }
 }
 
-impl<'a> TryFrom<&'a Location<'a>> for api::StringIdLocation {
-    type Error = Utf8Error;
-
-    fn try_from(location: &'a Location<'a>) -> Result<Self, Self::Error> {
-        let mapping = api::StringIdMapping::try_from(&location.mapping)?;
-        let function = api::StringIdFunction::try_from(&location.function)?;
-        Ok(Self {
+impl<'a> From<&'a Location<'a>> for api::StringIdLocation {
+    fn from(location: &'a Location<'a>) -> Self {
+        let mapping = api::StringIdMapping::from(&location.mapping);
+        let function = api::StringIdFunction::from(&location.function);
+        Self {
             mapping,
             function,
             address: location.address,
             line: location.line,
-        })
+        }
     }
 }
 
@@ -364,10 +358,8 @@ impl<'a> TryFrom<&'a Label<'a>> for api::Label<'a> {
     }
 }
 
-impl<'a> TryFrom<&'a Label<'a>> for api::StringIdLabel {
-    type Error = Utf8Error;
-
-    fn try_from(label: &'a Label<'a>) -> Result<Self, Self::Error> {
+impl<'a> From<&'a Label<'a>> for api::StringIdLabel {
+    fn from(label: &'a Label<'a>) -> Self {
         let key = ManagedStringId::new(label.key_id.value);
         let str = label.str_id.value;
         let str = if str == 0 {
@@ -382,12 +374,12 @@ impl<'a> TryFrom<&'a Label<'a>> for api::StringIdLabel {
             Some(ManagedStringId::new(num_unit))
         };
 
-        Ok(Self {
+        Self {
             key,
             str,
             num: label.num,
             num_unit,
-        })
+        }
     }
 }
 
@@ -416,28 +408,26 @@ impl<'a> TryFrom<Sample<'a>> for api::Sample<'a> {
     }
 }
 
-impl TryFrom<Sample<'_>> for api::StringIdSample {
-    type Error = Utf8Error;
-
-    fn try_from(sample: Sample<'_>) -> Result<Self, Self::Error> {
+impl From<Sample<'_>> for api::StringIdSample {
+    fn from(sample: Sample<'_>) -> Self {
         let mut locations: Vec<api::StringIdLocation> = Vec::with_capacity(sample.locations.len());
 
         for location in sample.locations.as_slice().iter() {
-            locations.push(location.try_into()?)
+            locations.push(location.into())
         }
 
         let values: Vec<i64> = sample.values.into_slice().to_vec();
 
         let mut labels: Vec<api::StringIdLabel> = Vec::with_capacity(sample.labels.len());
         for label in sample.labels.as_slice().iter() {
-            labels.push(label.try_into()?);
+            labels.push(label.into());
         }
 
-        Ok(Self {
+        Self {
             locations,
             values,
             labels,
-        })
+        }
     }
 }
 
@@ -552,7 +542,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
             .is_some_and(|label| label.key.is_empty() && label.key_id.value > 0);
 
         if uses_string_ids {
-            profile.add_string_id_sample(sample.try_into()?, timestamp)
+            profile.add_string_id_sample(sample.into(), timestamp)
         } else {
             profile.add_sample(sample.try_into()?, timestamp)
         }
