@@ -4,23 +4,18 @@
 //!Types to serialize data into the Datadog API
 
 use datadog_protos::metrics::SketchPayload;
+use derive_more::Display;
 use protobuf::Message;
 use regex::Regex;
 use reqwest;
 use serde::{Serialize, Serializer};
 use serde_json;
-use std::fmt;
 use std::time::Duration;
 use tracing::{debug, error};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
+#[display("{}", _0)]
 pub struct Site(String);
-
-impl fmt::Display for Site {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
 
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
 #[error("Invalid site: {0}")]
@@ -57,14 +52,9 @@ fn validate_url_prefix(prefix: &String) -> Result<(), UrlPrefixError> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
+#[display("{}", _0)]
 pub struct DdUrl(String);
-
-impl fmt::Display for DdUrl {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
 
 impl DdUrl {
     pub fn new(prefix: String) -> Result<Self, UrlPrefixError> {
@@ -79,14 +69,9 @@ impl DdUrl {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
+#[display("{}", _0)]
 pub struct DdDdUrl(String);
-
-impl fmt::Display for DdDdUrl {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
 
 impl DdDdUrl {
     pub fn new(prefix: String) -> Result<Self, UrlPrefixError> {
@@ -101,14 +86,9 @@ impl DdDdUrl {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
+#[display("{}", _0)]
 pub struct MetricsIntakeUrlPrefixOverride(String);
-
-impl fmt::Display for MetricsIntakeUrlPrefixOverride {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
 
 impl MetricsIntakeUrlPrefixOverride {
     pub fn maybe_new(dd_url: Option<DdUrl>, dd_dd_url: Option<DdDdUrl>) -> Option<Self> {
@@ -160,14 +140,9 @@ mod test {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
+#[display("{}", _0)]
 pub struct MetricsIntakeUrlPrefix(String);
-
-impl fmt::Display for MetricsIntakeUrlPrefix {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
 
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
 #[error("Missing intake URL configuration")]
