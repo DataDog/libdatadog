@@ -198,23 +198,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_version(
     }
 }
 
-/// Sets service name to be included in the headers request.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_trace_exporter_config_set_service(
-    config: Option<&mut TraceExporterConfig>,
-    service: CharSlice,
-) -> Option<Box<ExporterError>> {
-    if let Option::Some(handle) = config {
-        handle.service = match sanitize_string(service) {
-            Ok(s) => Some(s),
-            Err(e) => return Some(e),
-        };
-        None
-    } else {
-        gen_error!(ErrorCode::InvalidArgument)
-    }
-}
-
 /// Create a new TraceExporter instance.
 ///
 /// # Arguments
@@ -512,25 +495,6 @@ mod tests {
     }
 
     #[test]
-    fn config_service_test() {
-        unsafe {
-            let error = ddog_trace_exporter_config_set_service(None, CharSlice::from("service"));
-            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
-
-            ddog_trace_exporter_error_free(error);
-
-            let mut config = Some(TraceExporterConfig::default());
-            let error =
-                ddog_trace_exporter_config_set_service(config.as_mut(), CharSlice::from("service"));
-
-            assert_eq!(error, None);
-
-            let cfg = config.unwrap();
-            assert_eq!(cfg.service.as_ref().unwrap(), "service");
-        }
-    }
-
-    #[test]
     fn expoter_constructor_test() {
         unsafe {
             let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
@@ -565,7 +529,7 @@ mod tests {
             ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
 
             let mut cfg = config.assume_init();
-            let error = ddog_trace_exporter_config_set_service(
+            let error = ddog_trace_exporter_config_set_version(
                 Some(cfg.as_mut()),
                 CharSlice::from("service"),
             );
@@ -608,7 +572,7 @@ mod tests {
             let mut config = Some(TraceExporterConfig::default());
             let invalid: [i8; 2] = [0x80u8 as i8, 0xFFu8 as i8];
             let error =
-                ddog_trace_exporter_config_set_service(config.as_mut(), CharSlice::new(&invalid));
+                ddog_trace_exporter_config_set_version(config.as_mut(), CharSlice::new(&invalid));
 
             assert_eq!(error.unwrap().code, ErrorCode::InvalidInput);
         }
