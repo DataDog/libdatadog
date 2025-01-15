@@ -575,7 +575,7 @@ rules:
             ),
         ];
         for (i, (selector, matches)) in test_cases.iter().enumerate() {
-            assert_eq!(matcher.selector_match(&selector), *matches, "case {i}");
+            assert_eq!(matcher.selector_match(selector), *matches, "case {i}");
         }
     }
 }
