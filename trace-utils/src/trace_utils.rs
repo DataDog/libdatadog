@@ -511,10 +511,6 @@ pub fn enrich_span_with_mini_agent_metadata(
     }
     if let Some(serverless_compat_version) = &mini_agent_metadata.version {
         span.meta.insert(
-            "_dd.mini_agent_version".to_string(),
-            serverless_compat_version.to_string(),
-        );
-        span.meta.insert(
             "_dd.serverless_compat_version".to_string(),
             serverless_compat_version.to_string(),
         );
