@@ -12,7 +12,7 @@ use std::fmt;
 use std::time::Duration;
 use tracing::{debug, error};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Site(String);
 
 impl fmt::Display for Site {
@@ -31,7 +31,7 @@ impl Site {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DdUrl(String);
 
 impl fmt::Display for DdUrl {
@@ -50,7 +50,7 @@ impl DdUrl {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DdDdUrl(String);
 
 impl fmt::Display for DdDdUrl {
@@ -69,7 +69,7 @@ impl DdDdUrl {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IntakeUrlPrefix(String);
 
 impl fmt::Display for IntakeUrlPrefix {
