@@ -121,7 +121,7 @@ impl<'a, T: Deref<Target = [u8]>> Matcher<'a, T> {
                 }
                 None => string_list_selector(selector, self.process_info.args),
             },
-            Origin::EnvironmentVariable => match &selector.key {
+            Origin::EnvironmentVariables => match &selector.key {
                 Some(key) => {
                     let env_map = self.match_maps.env(self.process_info);
                     map_operator_match(selector, env_map, key)
@@ -173,7 +173,9 @@ impl<'a, T: Deref<Target = [u8]>> Matcher<'a, T> {
             let (template_var, index) = parse_template_var(template_var.trim());
             let val = match template_var {
                 "language" => String::from_utf8_lossy(self.process_info.language.deref()),
-                "environment" => template_map_key(index, self.match_maps.env(self.process_info)),
+                "environment_variables" => {
+                    template_map_key(index, self.match_maps.env(self.process_info))
+                }
                 "process_arguments" => {
                     template_map_key(index, self.match_maps.args(self.process_info))
                 }
@@ -231,11 +233,24 @@ pub enum LibraryConfigName {
     DdProfilingEnabled = 4,
 }
 
+impl LibraryConfigName {
+    pub fn to_str(&self) -> &'static str {
+        use LibraryConfigName::*;
+        match self {
+            DdTraceDebug => "DD_TRACE_DEBUG",
+            DdService => "DD_SERVICE",
+            DdEnv => "DD_ENV",
+            DdVersion => "DD_VERSION",
+            DdProfilingEnabled => "DD_PROFILING_ENABLED",
+        }
+    }
+}
+
 #[derive(serde::Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum Origin {
     ProcessArguments,
-    EnvironmentVariable,
+    EnvironmentVariables,
     Language,
     Tags,
 }
@@ -556,7 +571,7 @@ rules:
             (
                 Selector {
                     key: None,
-                    origin: Origin::EnvironmentVariable,
+                    origin: Origin::EnvironmentVariables,
                     operator: Operator::Equals {
                         matches: vec!["ENV=VAR".to_owned()],
                     },
