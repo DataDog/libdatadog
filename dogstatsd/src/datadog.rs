@@ -163,21 +163,21 @@ impl DdApi {
             .send()
             .await;
 
-        match resp {
-            Ok(resp) => match resp.status() {
-                reqwest::StatusCode::ACCEPTED => {}
-                unexpected_status_code => {
-                    debug!(
-                        "{}: Failed to push to API: {:?}",
-                        unexpected_status_code,
-                        resp.text().await.unwrap_or_default()
-                    );
-                }
-            },
-            Err(e) => {
-                debug!("500: Failed to push to API: {:?}", e);
-            }
-        };
+        // match resp {
+        //     Ok(resp) => match resp.status() {
+        //         reqwest::StatusCode::ACCEPTED => {}
+        //         unexpected_status_code => {
+        //             debug!(
+        //                 "{}: Failed to push to API: {:?}",
+        //                 unexpected_status_code,
+        //                 resp.text().await.unwrap_or_default()
+        //             );
+        //         }
+        //     },
+        //     Err(e) => {
+        //         debug!("500: Failed to push to API: {:?}", e);
+        //     }
+        // };
     }
 
     pub async fn ship_distributions(&self, sketches: &SketchPayload) {
@@ -192,29 +192,29 @@ impl DdApi {
         //     let _ = output_stream.write_message_no_tag(&sketches);
         //     TODO not working, has utf-8 encoding issue in dist-intake
         //}
-        let resp = self
-            .client
-            .post(&url)
-            .header("DD-API-KEY", &self.api_key)
-            .header("Content-Type", "application/x-protobuf")
-            .body(sketches.write_to_bytes().expect("can't write to buffer"))
-            .send()
-            .await;
-        match resp {
-            Ok(resp) => match resp.status() {
-                reqwest::StatusCode::ACCEPTED => {}
-                unexpected_status_code => {
-                    debug!(
-                        "{}: Failed to push to API: {:?}",
-                        unexpected_status_code,
-                        resp.text().await.unwrap_or_default()
-                    );
-                }
-            },
-            Err(e) => {
-                debug!("500: Failed to push to API: {:?}", e);
-            }
-        };
+        // let resp = self
+        //     .client
+        //     .post(&url)
+        //     .header("DD-API-KEY", &self.api_key)
+        //     .header("Content-Type", "application/x-protobuf")
+        //     .body(sketches.write_to_bytes().expect("can't write to buffer"))
+        //     .send()
+        //     .await;
+        // match resp {
+        //     Ok(resp) => match resp.status() {
+        //         reqwest::StatusCode::ACCEPTED => {}
+        //         unexpected_status_code => {
+        //             debug!(
+        //                 "{}: Failed to push to API: {:?}",
+        //                 unexpected_status_code,
+        //                 resp.text().await.unwrap_or_default()
+        //             );
+        //         }
+        //     },
+        //     Err(e) => {
+        //         debug!("500: Failed to push to API: {:?}", e);
+        //     }
+        // };
     }
 
     fn build_client(
