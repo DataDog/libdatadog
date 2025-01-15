@@ -28,8 +28,8 @@ pub struct SiteError(String);
 
 impl Site {
     pub fn new(site: String) -> Result<Self, SiteError> {
-        // Datadog sites are generally domain names. In particular, they shouldn't have any slashes in
-        // them. We expect this to be coming from a `DD_SITE` environment variable or the `site`
+        // Datadog sites are generally domain names. In particular, they shouldn't have any slashes
+        // in them. We expect this to be coming from a `DD_SITE` environment variable or the `site`
         // config field.
         let re = Regex::new(r"^[a-zA-Z0-9._-]+$").unwrap();
         if re.is_match(&site) {
@@ -50,7 +50,7 @@ pub struct UrlPrefixError(String);
 
 fn validate_url_prefix(prefix: &String) -> Result<(), UrlPrefixError> {
     let re = Regex::new(r"^https?://[a-zA-Z0-9._-]+$").unwrap();
-    if re.is_match(&prefix) {
+    if re.is_match(prefix) {
         Ok(())
     } else {
         Err(UrlPrefixError(prefix.clone()))
@@ -130,10 +130,7 @@ mod test {
 
     #[test]
     fn override_can_be_empty() {
-        assert_eq!(
-            MetricsIntakeUrlPrefixOverride::maybe_new(None, None),
-            None
-        );
+        assert_eq!(MetricsIntakeUrlPrefixOverride::maybe_new(None, None), None);
     }
 
     #[test]
@@ -143,7 +140,9 @@ mod test {
                 Some(DdUrl::new("http://a_dd_url".to_string()).unwrap()),
                 Some(DdDdUrl::new("https://a_dd_dd_url".to_string()).unwrap())
             ),
-            Some(MetricsIntakeUrlPrefixOverride("https://a_dd_dd_url".to_string()))
+            Some(MetricsIntakeUrlPrefixOverride(
+                "https://a_dd_dd_url".to_string()
+            ))
         );
     }
 
@@ -154,7 +153,9 @@ mod test {
                 Some(DdUrl::new("http://a_dd_url".to_string()).unwrap()),
                 None
             ),
-            Some(MetricsIntakeUrlPrefixOverride("http://a_dd_url".to_string()))
+            Some(MetricsIntakeUrlPrefixOverride(
+                "http://a_dd_url".to_string()
+            ))
         );
     }
 }
