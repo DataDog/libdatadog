@@ -3,10 +3,11 @@
 
 use anyhow::Context;
 use datadog_profiling::collections::string_storage::ManagedStringStorage as InternalManagedStringStorage;
+use ddcommon_ffi::slice::AsBytes;
 use ddcommon_ffi::{CharSlice, Error, MaybeError, StringWrapper};
 use libc::c_void;
 use std::num::NonZeroU32;
-use std::{ffi::CStr, rc::Rc, sync::RwLock};
+use std::{rc::Rc, sync::RwLock};
 
 #[repr(C)]
 pub struct ManagedStringId {
@@ -70,16 +71,12 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
     (|| {
         let storage = get_inner_string_storage(storage, true)?;
 
-        let string: &str = CStr::from_ptr(string.as_ptr())
-            .to_str()
-            .map_err(|_| anyhow::anyhow!("invalid utf8 string"))?;
-
         let string_id = storage
             .write()
             .map_err(|_| {
                 anyhow::anyhow!("acquisition of write lock on string storage should succeed")
             })?
-            .intern(string)?;
+            .intern(string.try_to_utf8()?)?;
 
         anyhow::Ok(ManagedStringId { value: string_id })
     })()
