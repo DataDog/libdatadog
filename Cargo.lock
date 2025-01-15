@@ -1742,7 +1742,6 @@ dependencies = [
  "datadog-trace-utils",
  "ddcommon",
  "duplicate",
- "lazy_static",
  "log",
  "percent-encoding",
  "regex",

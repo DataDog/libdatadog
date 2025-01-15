@@ -1,22 +1,20 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use lazy_static::lazy_static;
 use regex::Regex;
-use std::{borrow::Cow, collections::HashSet, net::Ipv6Addr};
+use std::{borrow::Cow, collections::HashSet, net::Ipv6Addr, sync::OnceLock};
 
-lazy_static! {
-    static ref ALLOWED_IP_ADDRESSES: HashSet<&'static str> = HashSet::from([
-        // localhost
-        "127.0.0.1",
-        "::1",
-        // link-local cloud provider metadata server addresses
-        "169.254.169.254",
-        "fd00:ec2::254"
-    ]);
+const ALLOWED_IP_ADDRESSES: [&str; 4] = [
+    // localhost
+    "127.0.0.1",
+    "::1",
+    // link-local cloud provider metadata server addresses
+    "169.254.169.254",
+    "fd00:ec2::254",
+];
 
-    static ref PREFIX_REGEX: Regex = Regex::new(r"^((?:dnspoll|ftp|file|http|https):/{2,3})").unwrap();
-}
+const PREFIX_REGEX_LITTERAL: &str = r"^((?:dnspoll|ftp|file|http|https):/{2,3})";
+static PREFIX_REGEX: OnceLock<Regex> = OnceLock::new();
 
 /// Quantizes a comma separated list of hosts.
 ///
@@ -71,7 +69,7 @@ pub fn quantize_peer_ip_addresses<'a>(s: &'a str) -> Cow<'a, str> {
 fn quantize_ip(s: &str) -> Option<String> {
     let (prefix, stripped_s) = split_prefix(s);
     if let Some((ip, suffix)) = parse_ip(stripped_s) {
-        if !ALLOWED_IP_ADDRESSES.contains(ip) {
+        if !ALLOWED_IP_ADDRESSES.contains(&ip) {
             return Some(format!("{prefix}blocked-ip-address{suffix}"));
         }
     }
@@ -82,7 +80,10 @@ fn quantize_ip(s: &str) -> Option<String> {
 fn split_prefix(s: &str) -> (&str, &str) {
     if let Some(tail) = s.strip_prefix("ip-") {
         ("ip-", tail)
-    } else if let Some(protocol) = PREFIX_REGEX.find(s) {
+    } else if let Some(protocol) = PREFIX_REGEX
+        .get_or_init(|| Regex::new(PREFIX_REGEX_LITTERAL).unwrap())
+        .find(s)
+    {
         s.split_at(protocol.end())
     } else {
         ("", s)
