@@ -12,6 +12,10 @@ mod container_id;
 const DEFAULT_CGROUP_PATH: &str = "/proc/self/cgroup";
 const DEFAULT_CGROUP_MOUNT_PATH: &str = "/sys/fs/cgroup";
 
+/// stores overridable cgroup path - used in end-to-end testing to "stub" cgroup values
+#[cfg(feature = "cgroup_testing")]
+static TESTING_CGROUP_PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 /// the base controller used to identify the cgroup v1 mount point in the cgroupMounts map.
 const CGROUP_V1_BASE_CONTROLLER: &str = "memory";
 
@@ -52,8 +56,20 @@ fn compute_entity_id(
         )
 }
 
+/// Set cgroup mount path to mock during tests
+#[cfg(feature = "cgroup_testing")]
+pub fn set_cgroup_file(path: String) {
+    let _ = TESTING_CGROUP_PATH.set(path);
+}
+
 fn get_cgroup_path() -> &'static str {
-    DEFAULT_CGROUP_PATH
+    #[cfg(feature = "cgroup_testing")]
+    return TESTING_CGROUP_PATH
+        .get()
+        .map(std::ops::Deref::deref)
+        .unwrap_or(DEFAULT_CGROUP_PATH);
+    #[cfg(not(feature = "cgroup_testing"))]
+    return DEFAULT_CGROUP_PATH;
 }
 
 fn get_cgroup_mount_path() -> &'static str {
