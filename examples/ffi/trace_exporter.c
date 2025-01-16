@@ -48,7 +48,7 @@ int main(int argc, char** argv)
     assert(trace_exporter != NULL);
 
     ddog_ByteSlice buffer = { .ptr = NULL, .len=0 };
-    ddog_AgentResponse response;
+    ddog_TraceExporterResponse *response;
 
     ret = ddog_trace_exporter_send(trace_exporter, buffer, 0, &response);
 
@@ -59,6 +59,7 @@ int main(int argc, char** argv)
         goto error;
     }
 
+    ddog_trace_exporter_response_free(response);
     ddog_trace_exporter_free(trace_exporter);
     ddog_trace_exporter_config_free(config);
 

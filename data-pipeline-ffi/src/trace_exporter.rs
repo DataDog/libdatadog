@@ -1,8 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::agent_response::SendResponse;
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
+use crate::response::ExporterResponse;
 use data_pipeline::trace_exporter::{
     TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
@@ -271,7 +271,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
     handle: Option<&TraceExporter>,
     trace: ByteSlice,
     trace_count: usize,
-    response_out: Option<NonNull<Box<SendResponse>>>,
+    response_out: Option<NonNull<Box<ExporterResponse>>>,
 ) -> Option<Box<ExporterError>> {
     let exporter = match handle {
         Some(exp) => exp,
@@ -288,7 +288,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
     ) {
         Ok(resp) => {
             if let Some(result) = response_out {
-                result.as_ptr().write(Box::new(SendResponse::from(resp)));
+                result
+                    .as_ptr()
+                    .write(Box::new(ExporterResponse::from(resp)));
             }
             None
         }
@@ -554,7 +556,7 @@ mod tests {
     fn exporter_send_test_arguments_test() {
         unsafe {
             let trace = ByteSlice::from(b"dummy contents" as &[u8]);
-            let mut resp = Box::new(SendResponse {
+            let mut resp = Box::new(ExporterResponse {
                 body: CString::default().into_raw(),
             });
             let ret = ddog_trace_exporter_send(None, trace, 0, NonNull::new(&mut resp));
@@ -625,7 +627,7 @@ mod tests {
 
             let data = rmp_serde::to_vec_named::<Vec<Vec<Span>>>(&vec![vec![]]).unwrap();
             let traces = ByteSlice::new(&data);
-            let mut response = Box::new(SendResponse {
+            let mut response = Box::new(ExporterResponse {
                 body: CString::default().into_raw(),
             });
 
@@ -699,7 +701,7 @@ mod tests {
 
             let data = vec![0x90];
             let traces = ByteSlice::new(&data);
-            let mut response = Box::new(SendResponse {
+            let mut response = Box::new(ExporterResponse {
                 body: CString::default().into_raw(),
             });
 
