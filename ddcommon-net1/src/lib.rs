@@ -13,6 +13,10 @@ use std::str::FromStr;
 
 pub mod connector;
 
+pub mod dep {
+    pub use http;
+}
+
 pub type HttpClient = hyper::Client<connector::Connector, hyper::Body>;
 pub type HttpResponse = hyper::Response<hyper::Body>;
 pub type HttpRequestBuilder = hyper::http::request::Builder;

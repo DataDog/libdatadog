@@ -13,6 +13,7 @@ members = [
   "ddcommon",
   "ddcommon-ffi",
   "ddcommon-net1",
+  "ddcommon-net2",
   "ddtelemetry",
   "ddtelemetry-ffi",
   "dogstatsd",
@@ -67,7 +68,7 @@ debug = 2 # full debug info
 
 [profile.release]
 codegen-units = 1
-debug = "line-tables-only"
+debug = "full" # todo: revert this back to line tables only
 lto = true
 opt-level = "s"            # optimize for size
 

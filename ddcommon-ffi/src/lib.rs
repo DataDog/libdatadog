@@ -5,8 +5,8 @@ mod error;
 
 pub mod array_queue;
 pub mod cstr;
-pub mod endpoint;
 pub mod handle;
+pub mod endpoint;
 pub mod option;
 pub mod result;
 pub mod slice;
@@ -17,6 +17,7 @@ pub mod utils;
 pub mod vec;
 
 pub use cstr::*;
+pub use endpoint::*;
 pub use error::*;
 pub use handle::*;
 pub use option::*;
