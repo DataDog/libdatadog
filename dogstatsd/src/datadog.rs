@@ -5,6 +5,7 @@
 
 use datadog_protos::metrics::SketchPayload;
 use derive_more::{Display, Into};
+use lazy_static::lazy_static;
 use protobuf::Message;
 use regex::Regex;
 use reqwest;
@@ -12,6 +13,12 @@ use serde::{Serialize, Serializer};
 use serde_json;
 use std::time::Duration;
 use tracing::{debug, error};
+
+lazy_static! {
+    static ref SITE_RE: Regex = Regex::new(r"^[a-zA-Z0-9._:-]+$").expect("invalid regex");
+    static ref URL_PREFIX_RE: Regex =
+        Regex::new(r"^https?://[a-zA-Z0-9._:-]+$").expect("invalid regex");
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Into)]
 pub struct Site(String);
@@ -25,8 +32,7 @@ impl Site {
         // Datadog sites are generally domain names. In particular, they shouldn't have any slashes
         // in them. We expect this to be coming from a `DD_SITE` environment variable or the `site`
         // config field.
-        let re = Regex::new(r"^[a-zA-Z0-9._:-]+$").expect("invalid regex");
-        if re.is_match(&site) {
+        if SITE_RE.is_match(&site) {
             Ok(Site(site))
         } else {
             Err(SiteError(site))
@@ -39,8 +45,7 @@ impl Site {
 pub struct UrlPrefixError(String);
 
 fn validate_url_prefix(prefix: &str) -> Result<(), UrlPrefixError> {
-    let re = Regex::new(r"^https?://[a-zA-Z0-9._:-]+$").expect("invalid regex");
-    if re.is_match(prefix) {
+    if URL_PREFIX_RE.is_match(prefix) {
         Ok(())
     } else {
         Err(UrlPrefixError(prefix.to_owned()))
