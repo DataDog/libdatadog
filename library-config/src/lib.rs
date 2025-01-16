@@ -15,11 +15,10 @@ use anyhow::Context;
 /// They are computed lazily so that if the templating feature is not necessary, we don't
 /// have to create the maps.
 ///
-/// Maps
+/// These maps come from one of three origins:
 ///  * tags: This one is fairly simple, the format is tag_key: tag_value
-///  * envs: Splits env variables based on the KEY=VALUE
-///  * args: Either splits args base on key=value, or if the argument is a long arg then parses
-///    --key value
+///  * envs: Splits env variables with format KEY=VALUE
+///  * args: Splits args with format key=value. If the arg doesn't contain an '=', skip it
 struct MatchMaps<'a> {
     tags: &'a HashMap<String, String>,
     env_map: OnceCell<HashMap<&'a str, &'a str>>,
@@ -61,17 +60,10 @@ impl<'a> MatchMaps<'a> {
                 let Ok(arg) = std::str::from_utf8(arg.deref()) else {
                     continue;
                 };
+                // Split args between key and value on '='
                 if let Some((k, v)) = arg.split_once('=') {
                     map.insert(k, v);
-                } else if args
-                    .peek()
-                    .map(|next_arg| next_arg.starts_with(b"-"))
-                    .unwrap_or(false)
-                {
-                    let Ok(next) = std::str::from_utf8(args.next().unwrap()) else {
-                        continue;
-                    };
-                    map.insert(arg, next);
+                    continue;
                 }
             }
             map
@@ -96,6 +88,7 @@ impl<'a, T: Deref<Target = [u8]>> Matcher<'a, T> {
         }
     }
 
+    /// Returns the first set of configurations that match the current process
     fn find_stable_config<'b>(
         &'a self,
         cfg: &'b StableConfig,
@@ -108,9 +101,10 @@ impl<'a, T: Deref<Target = [u8]>> Matcher<'a, T> {
         None
     }
 
-    // Returns true if the selector matches the process info
-    // Any element in the "matches" section of the selector must match, they are ORed,
-    // as selectors are ANDed.
+    /// Returns true if the selector matches the process
+    ///
+    /// Any element in the "matches" section of the selector must match, they are ORed,
+    /// as selectors are ANDed.
     fn selector_match(&'a self, selector: &Selector) -> bool {
         match selector.origin {
             Origin::Language => string_selector(selector, self.process_info.language.deref()),
@@ -272,7 +266,6 @@ struct Selector {
     origin: Origin,
     #[serde(default)]
     key: Option<String>,
-    // matches: Vec<String>,
     #[serde(flatten)]
     operator: Operator,
 }
@@ -290,12 +283,14 @@ struct StableConfig {
     rules: Vec<Rule>,
 }
 
+/// Helper trait so we don't have to duplicate code for
+/// HashMap<&str, &str> and HashMap<String, String>
 trait Get {
     fn get(&self, k: &str) -> Option<&str>;
 }
 
-impl<'a> Get for HashMap<&'a str, &'a str> {
-    fn get(&self, k: &str) -> Option<&'a str> {
+impl Get for HashMap<&str, &str> {
+    fn get(&self, k: &str) -> Option<&str> {
         self.get(k).copied()
     }
 }
@@ -359,13 +354,6 @@ impl Configurator {
                 .map(|arg| String::from_utf8_lossy(arg))
                 .for_each(|e| eprintln!("\t\t{:?}", e.as_ref()));
 
-            // TODO: this is for testing purpose, we don't want to log env variables
-            // eprintln!("\tprocess envs:");
-            // process_info
-            //     .envp
-            //     .iter()
-            //     .map(|arg| String::from_utf8_lossy(&*arg))
-            //     .for_each(|e: std::borrow::Cow<'_, str>| eprintln!(" {:?}", e.as_ref()));
             eprintln!(
                 "\tprocess language: {:?}",
                 String::from_utf8_lossy(&process_info.language).as_ref()
