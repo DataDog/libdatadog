@@ -511,7 +511,25 @@ mod tests {
 
     #[test]
     fn parse_tag_no_value() {
-        assert!(parse("datadog.tracer.flush_triggered:1|c|#lang:go,lang_version:go1.22.10,_dd.origin:lambda,runtime-id:d66f501c-d09b-4d0d-970f-515235c4eb56,v1.65.1,service:aws.lambda,reason:scheduled").is_ok());
+        let result = parse("datadog.tracer.flush_triggered:1|c|#lang:go,lang_version:go1.22.10,_dd.origin:lambda,runtime-id:d66f501c-d09b-4d0d-970f-515235c4eb56,v1.65.1,service:aws.lambda,reason:scheduled");
+        assert!(result.is_ok());
+        assert!(result
+            .unwrap()
+            .tags
+            .unwrap()
+            .values
+            .iter()
+            .any(|(k, v)| k == "v1.65.1" && v == ""));
+    }
+
+    #[test]
+    fn parse_tag_multi_column() {
+        let result = parse("datadog.tracer.flush_triggered:1|c|#lang:go:and:something:else");
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap().tags.unwrap().values[0],
+            (Ustr::from("lang"), Ustr::from("go:and:something:else"))
+        );
     }
 
     #[test]
