@@ -16,6 +16,7 @@ tracing = ["tracing/std"]
 [dependencies]
 anyhow = { version = "1.0" }
 ddcommon = { path = "../ddcommon" }
+ddcommon-net1 = { path = "../ddcommon-net1" }
 datadog-ddsketch = { path = "../ddsketch" }
 base64 = "0.22"
 futures = { version = "0.3", default-features = false }

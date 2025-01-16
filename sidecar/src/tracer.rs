@@ -4,7 +4,7 @@
 use crate::primary_sidecar_identifier;
 use datadog_ipc::rate_limiter::ShmLimiterMemory;
 use datadog_trace_utils::config_utils::trace_intake_url_prefixed;
-use ddcommon::Endpoint;
+use ddcommon_net1::Endpoint;
 use http::uri::PathAndQuery;
 use lazy_static::lazy_static;
 use std::ffi::CString;

@@ -142,7 +142,7 @@ mod tests {
     use datadog_trace_utils::{
         test_utils::create_test_json_span, trace_utils, tracer_payload::TracerPayloadCollection,
     };
-    use ddcommon::Endpoint;
+    use ddcommon_net1::Endpoint;
 
     fn get_current_timestamp_nanos() -> i64 {
         UNIX_EPOCH.elapsed().unwrap().as_nanos() as i64

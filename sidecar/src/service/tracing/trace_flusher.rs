@@ -7,7 +7,7 @@ use datadog_ipc::platform::NamedShmHandle;
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::trace_utils::SendDataResult;
-use ddcommon::Endpoint;
+use ddcommon_net1::Endpoint;
 use futures::future::join_all;
 use hyper::body::HttpBody;
 use manual_future::{ManualFuture, ManualFutureCompleter};
@@ -311,6 +311,7 @@ impl TraceFlusher {
 mod tests {
     use super::*;
     use datadog_trace_utils::test_utils::{create_send_data, poll_for_mock_hit};
+    use ddcommon_net1::Endpoint;
     use httpmock::MockServer;
     use std::sync::Arc;
 

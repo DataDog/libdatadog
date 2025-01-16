@@ -9,7 +9,7 @@ use std::{
     time::SystemTime,
 };
 
-use ddcommon::Endpoint;
+use ddcommon_net1::Endpoint;
 use ddtelemetry::{
     build_host,
     config::Config,
@@ -44,7 +44,7 @@ pub async fn push_telemetry(config: &Config, telemetry: &Telemetry<'_>) -> anyho
     let client = ddtelemetry::worker::http_client::from_config(config);
     let req = request_builder(config)?
         .method(http::Method::POST)
-        .header(CONTENT_TYPE, ddcommon::header::APPLICATION_JSON)
+        .header(CONTENT_TYPE, ddcommon_net1::header::APPLICATION_JSON)
         .header("dd-telemetry-debug-enabled", "true")
         .body(serde_json::to_string(telemetry)?.into())?;
 

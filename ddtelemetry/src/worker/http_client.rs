@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon::HttpRequestBuilder;
+use ddcommon_net1::{connector, HttpRequestBuilder};
 use http::{Request, Response};
 use hyper::body::HttpBody;
 use hyper::Body;
@@ -43,7 +43,7 @@ pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
 pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
     match &c.endpoint {
         Some(e) if e.url.scheme_str() == Some("file") => {
-            let file_path = ddcommon::decode_uri_path_in_authority(&e.url)
+            let file_path = ddcommon_net1::decode_uri_path_in_authority(&e.url)
                 .expect("file urls should always have been encoded in authority");
             return Box::new(MockClient {
                 file: Arc::new(Mutex::new(Box::new(
@@ -60,12 +60,12 @@ pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
     Box::new(HyperClient {
         inner: hyper::Client::builder()
             .pool_idle_timeout(std::time::Duration::from_secs(30))
-            .build(ddcommon::connector::Connector::default()),
+            .build(connector::Connector::default()),
     })
 }
 
 pub struct HyperClient {
-    inner: ddcommon::HttpClient,
+    inner: ddcommon_net1::HttpClient,
 }
 
 impl HttpClient for HyperClient {
@@ -101,7 +101,7 @@ impl HttpClient for MockClient {
 
 #[cfg(test)]
 mod tests {
-    use ddcommon::HttpRequestBuilder;
+    use ddcommon_net1::HttpRequestBuilder;
 
     use super::*;
 

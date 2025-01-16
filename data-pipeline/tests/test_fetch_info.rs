@@ -6,7 +6,7 @@ mod tracing_integration_tests {
     use arc_swap::access::Access;
     use data_pipeline::agent_info::{fetch_info, AgentInfoFetcher};
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
-    use ddcommon::Endpoint;
+    use ddcommon_net1::Endpoint;
     use std::time::Duration;
 
     #[cfg_attr(miri, ignore)]

@@ -1,9 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon::{config::parse_env, parse_uri, Endpoint};
+use ddcommon::config::parse_env;
 use std::{borrow::Cow, time::Duration};
 
+use ddcommon_net1::{parse_uri, Endpoint};
 use http::{uri::PathAndQuery, Uri};
 use lazy_static::lazy_static;
 
@@ -272,14 +273,12 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    use super::{Config, Settings};
+    use ddcommon_net1::connector::named_pipe;
     use std::path::Path;
 
     #[cfg(unix)]
-    use ddcommon::connector::uds;
-
-    use ddcommon::connector::named_pipe;
-
-    use super::{Config, Settings};
+    use ddcommon_net1::connector::uds;
 
     #[test]
     fn test_agent_host_detection_trace_agent_url_should_take_precedence() {
@@ -417,7 +416,7 @@ mod tests {
             );
             assert_eq!(
                 Path::new(expected),
-                ddcommon::decode_uri_path_in_authority(&cfg.endpoint.unwrap().url).unwrap(),
+                ddcommon_net1::decode_uri_path_in_authority(&cfg.endpoint.unwrap().url).unwrap(),
             );
         }
     }

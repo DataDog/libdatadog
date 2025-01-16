@@ -7,7 +7,7 @@ use std::time::SystemTime;
 
 use super::{CrashInfo, CrashtrackerMetadata, StackFrame};
 use anyhow::{Context, Ok};
-use ddcommon::Endpoint;
+use ddcommon_net1::Endpoint;
 use ddtelemetry::{
     build_host,
     data::{self, Application, LogLevel},
@@ -72,7 +72,7 @@ impl TelemetryCrashUploader {
 
             // ignore result because what are we going to do?
             let _ = if endpoint.url.scheme_str() == Some("file") {
-                let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
+                let path = ddcommon_net1::decode_uri_path_in_authority(&endpoint.url)
                     .context("file path is not valid")?;
                 cfg.set_host_from_url(&format!("file://{}.telemetry", path.display()))
             } else {
@@ -164,7 +164,7 @@ impl TelemetryCrashUploader {
             .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,
-                ddcommon::header::APPLICATION_JSON,
+                ddcommon_net1::header::APPLICATION_JSON,
             )
             .header(
                 ddtelemetry::worker::http_client::header::API_VERSION,
@@ -216,11 +216,11 @@ mod tests {
         fs,
     };
 
+    use super::TelemetryCrashUploader;
     use crate::SigInfo;
     use chrono::DateTime;
-    use ddcommon::{tag, Endpoint};
-
-    use super::TelemetryCrashUploader;
+    use ddcommon::tag;
+    use ddcommon_net1::Endpoint;
 
     fn new_test_uploader() -> TelemetryCrashUploader {
         TelemetryCrashUploader::new(

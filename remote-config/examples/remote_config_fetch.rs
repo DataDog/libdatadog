@@ -7,7 +7,7 @@ use datadog_remote_config::file_storage::ParsedFileStorage;
 use datadog_remote_config::RemoteConfigProduct::ApmTracing;
 use datadog_remote_config::{RemoteConfigData, Target};
 use ddcommon::tag::Tag;
-use ddcommon::Endpoint;
+use ddcommon_net1::Endpoint;
 use std::time::Duration;
 use tokio::time::sleep;
 

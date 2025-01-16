@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon::Endpoint;
+use ddcommon_net1::Endpoint;
 use std::borrow::Cow;
 use std::env;
 use std::str::FromStr;

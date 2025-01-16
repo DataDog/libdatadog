@@ -98,7 +98,7 @@ fn test_crash() -> anyhow::Result<()> {
     use crate::{begin_op, StacktraceCollection};
     use chrono::Utc;
     use ddcommon::tag;
-    use ddcommon::Endpoint;
+    use ddcommon_net1::Endpoint;
     use std::time::Duration;
 
     let time = Utc::now().to_rfc3339();
@@ -165,7 +165,7 @@ fn test_crash() -> anyhow::Result<()> {
 fn test_altstack_paradox() -> anyhow::Result<()> {
     use crate::StacktraceCollection;
     use chrono::Utc;
-    use ddcommon::Endpoint;
+    use ddcommon_net1::Endpoint;
 
     let time = Utc::now().to_rfc3339();
     let dir = "/tmp/crashreports/";
@@ -224,7 +224,7 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
     // taken.
     use crate::StacktraceCollection;
     use chrono::Utc;
-    use ddcommon::Endpoint;
+    use ddcommon_net1::Endpoint;
 
     let time = Utc::now().to_rfc3339();
     let dir = "/tmp/crashreports/";
@@ -351,7 +351,7 @@ fn test_altstack_use_nocreate() -> anyhow::Result<()> {
     // the main process state.
     use crate::StacktraceCollection;
     use chrono::Utc;
-    use ddcommon::Endpoint;
+    use ddcommon_net1::Endpoint;
 
     let time = Utc::now().to_rfc3339();
     let dir = "/tmp/crashreports/";
@@ -478,7 +478,7 @@ fn test_altstack_nouse() -> anyhow::Result<()> {
     // This checks that when we do not request the altstack, we do not get the altstack
     use crate::StacktraceCollection;
     use chrono::Utc;
-    use ddcommon::Endpoint;
+    use ddcommon_net1::Endpoint;
 
     let time = Utc::now().to_rfc3339();
     let dir = "/tmp/crashreports/";
@@ -640,7 +640,7 @@ fn test_waitall_nohang() -> anyhow::Result<()> {
     // options are used.
     use crate::StacktraceCollection;
     use chrono::Utc;
-    use ddcommon::Endpoint;
+    use ddcommon_net1::Endpoint;
 
     let time = Utc::now().to_rfc3339();
     let dir = "/tmp/crashreports/";

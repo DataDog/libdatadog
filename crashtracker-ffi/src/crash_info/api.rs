@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_crashtracker::rfc5_crash_info::CrashInfo;
-use ddcommon::Endpoint;
+use ddcommon_net1::Endpoint;
 use ddcommon_ffi::{wrap_with_void_ffi_result, Handle, ToInner, VoidResult};
 use function_name::named;
 
