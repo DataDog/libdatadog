@@ -104,12 +104,18 @@ impl SortedTags {
 
     pub(crate) fn to_resources(&self) -> Vec<datadog::Resource> {
         let mut resources = Vec::with_capacity(constants::MAX_TAGS);
-        for (kind, name) in &self.values {
-            let resource = datadog::Resource {
-                name: name.as_str(), // val
-                kind: kind.as_str(), // key
-            };
-            resources.push(resource);
+        for (key, val) in &self.values {
+            if key == "dd.internal.resource" {
+                //anything coming in via dd.internal.resource:<value> has to be a key/value pair
+                // (e.g., dd.internal.resource:key:value)
+                if let Some(valid_name_kind) = val.split_once(':') {
+                    let resource = datadog::Resource {
+                        name: valid_name_kind.0.to_string(),
+                        kind: valid_name_kind.1.to_string(),
+                    };
+                    resources.push(resource);
+                }
+            }
         }
         resources
     }
