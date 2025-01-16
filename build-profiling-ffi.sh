@@ -228,7 +228,7 @@ rm -r $destdir/include/datadog/
 mkdir $destdir/include/datadog/
 
 CBINDGEN_HEADERS="common.h profiling.h telemetry.h crashtracker.h data-pipeline.h"
-# When optional features are added, don't forget to also include thei headers here
+# When optional features are added, don't forget to also include the headers here
 case $ARG_FEATURES in
     datadog-library-config-ffi) CBINDGEN_HEADERS="$CBINDGEN_HEADERS library-config.h"
 esac
