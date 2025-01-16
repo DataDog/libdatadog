@@ -25,7 +25,7 @@ impl Site {
         // Datadog sites are generally domain names. In particular, they shouldn't have any slashes
         // in them. We expect this to be coming from a `DD_SITE` environment variable or the `site`
         // config field.
-        let re = Regex::new(r"^[a-zA-Z0-9._-]+$").expect("invalid regex");
+        let re = Regex::new(r"^[a-zA-Z0-9._:-]+$").expect("invalid regex");
         if re.is_match(&site) {
             Ok(Site(site))
         } else {
@@ -39,7 +39,7 @@ impl Site {
 pub struct UrlPrefixError(String);
 
 fn validate_url_prefix(prefix: &str) -> Result<(), UrlPrefixError> {
-    let re = Regex::new(r"^https?://[a-zA-Z0-9._-]+$").expect("invalid regex");
+    let re = Regex::new(r"^https?://[a-zA-Z0-9._:-]+$").expect("invalid regex");
     if re.is_match(prefix) {
         Ok(())
     } else {
@@ -88,14 +88,16 @@ pub struct MetricsIntakeUrlPrefix(String);
 pub struct MissingIntakeUrlError;
 
 impl MetricsIntakeUrlPrefix {
-    /// # Safety
-    ///
-    /// This function is unsafe because it does no validation on the input string. It also does not
-    /// follow our convention of using the metrics intake url prefix over the site name. This is
-    /// fine for tests, but in production we should be using new instead.
     #[inline]
-    pub unsafe fn new_unchecked(prefix: String) -> Self {
-        Self(prefix)
+    pub fn new(
+        site: Option<Site>,
+        overridden_prefix: Option<MetricsIntakeUrlPrefixOverride>,
+    ) -> Result<Self, MissingIntakeUrlError> {
+        match (site, overridden_prefix) {
+            (None, None) => Err(MissingIntakeUrlError),
+            (_, Some(prefix)) => Ok(Self::new_expect_validated(prefix.into())),
+            (Some(site), None) => Ok(Self::from_site(site)),
+        }
     }
 
     #[inline]
@@ -108,18 +110,6 @@ impl MetricsIntakeUrlPrefix {
     #[inline]
     fn from_site(site: Site) -> Self {
         Self(format!("https://api.{}", site))
-    }
-
-    #[inline]
-    pub fn new(
-        site: Option<Site>,
-        overridden_prefix: Option<MetricsIntakeUrlPrefixOverride>,
-    ) -> Result<Self, MissingIntakeUrlError> {
-        match (site, overridden_prefix) {
-            (None, None) => Err(MissingIntakeUrlError),
-            (_, Some(prefix)) => Ok(Self::new_expect_validated(prefix.into())),
-            (Some(site), None) => Ok(Self::from_site(site)),
-        }
     }
 }
 
