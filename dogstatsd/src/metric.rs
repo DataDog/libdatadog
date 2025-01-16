@@ -512,4 +512,15 @@ mod tests {
             panic!("Expected UnsupportedType error");
         }
     }
+
+    #[test]
+    fn sorting_tags() {
+        let mut tags = SortedTags::parse("z:z0,b:b2,c:c3").unwrap();
+        tags.extend(&SortedTags::parse("z1:z11,d:d4,e:e5,f:f6").unwrap());
+        tags.extend(&SortedTags::parse("a:a1").unwrap());
+        assert_eq!(tags.values.len(), 8);
+        let first_element = tags.values.first().unwrap();
+        assert_eq!(first_element.0, Ustr::from("a"));
+        assert_eq!(first_element.1, Ustr::from("a1"));
+    }
 }
