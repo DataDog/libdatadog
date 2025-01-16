@@ -19,7 +19,7 @@ use_webpki_roots = ["webpki-roots" ,"tokio-rustls/aws-lc-rs"]
 [dependencies]
 ddcommon = { path = "../ddcommon" }
 hex = { version = "0.4" }
-hyper = { version = "1", default-features = false }
+hyper = { version = "1", default-features = false, features = ["client", "http1"] }
 hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 rustls-native-certs = { version = "0.8", optional = true }
 serde = { version = "1.0", features = ["derive"] }
