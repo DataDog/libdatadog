@@ -38,6 +38,8 @@ members = [
   "ddsketch",
   "tinybytes",
   "dogstatsd-client",
+  "library-config-ffi",
+  "library-config",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
@@ -66,7 +68,7 @@ debug = 2 # full debug info
 codegen-units = 1
 debug = "line-tables-only"
 lto = true
-opt-level = "s" # optimize for size
+opt-level = "s"            # optimize for size
 
 [profile.release.package.datadog-serverless-trace-mini-agent]
 strip = true
@@ -82,4 +84,4 @@ codegen-units = 1
 # proptest pulls in a dependency on libm, which changes the runtime of some math functions
 # so benchmarks are not measuring the same thing as the release build. This patch removes
 # the default dependency on libm. A PR will be opened to proptest to make this optional.
-proptest = { git = 'https://github.com/bantonsson/proptest.git', branch = "ban/avoid-libm-in-std"}
+proptest = { git = 'https://github.com/bantonsson/proptest.git', branch = "ban/avoid-libm-in-std" }
