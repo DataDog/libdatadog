@@ -80,42 +80,6 @@ impl MetricsIntakeUrlPrefixOverride {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn override_can_be_empty() {
-        assert_eq!(MetricsIntakeUrlPrefixOverride::maybe_new(None, None), None);
-    }
-
-    #[test]
-    fn override_prefers_dd_dd_url() {
-        assert_eq!(
-            MetricsIntakeUrlPrefixOverride::maybe_new(
-                Some(DdUrl::new("http://a_dd_url".to_string()).unwrap()),
-                Some(DdDdUrl::new("https://a_dd_dd_url".to_string()).unwrap())
-            ),
-            Some(MetricsIntakeUrlPrefixOverride(
-                "https://a_dd_dd_url".to_string()
-            ))
-        );
-    }
-
-    #[test]
-    fn override_will_take_dd_url() {
-        assert_eq!(
-            MetricsIntakeUrlPrefixOverride::maybe_new(
-                Some(DdUrl::new("http://a_dd_url".to_string()).unwrap()),
-                None
-            ),
-            Some(MetricsIntakeUrlPrefixOverride(
-                "http://a_dd_url".to_string()
-            ))
-        );
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
 pub struct MetricsIntakeUrlPrefix(String);
 
@@ -128,7 +92,7 @@ impl MetricsIntakeUrlPrefix {
     ///
     /// This function is unsafe because it does no validation on the input string. It also does not
     /// follow our convention of using the metrics intake url prefix over the site name. This is
-    /// fine for tests, but in production we should be using from_site_or_dd_urls instead.
+    /// fine for tests, but in production we should be using new instead.
     #[inline]
     pub unsafe fn new_unchecked(prefix: String) -> Self {
         Self(prefix)
@@ -156,45 +120,6 @@ impl MetricsIntakeUrlPrefix {
             (_, Some(prefix)) => Ok(Self::new_expect_validated(prefix.into())),
             (Some(site), None) => Ok(Self::from_site(site)),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_intake_url_prefix_new_requires_something() {
-        assert_eq!(
-            MetricsIntakeUrlPrefix::new(None, None),
-            Err(MissingIntakeUrlError)
-        );
-    }
-
-    #[test]
-    fn test_intake_url_prefix_new_picks_the_override() {
-        assert_eq!(
-            MetricsIntakeUrlPrefix::new(
-                Some(Site::new("a_site".to_string()).unwrap()),
-                MetricsIntakeUrlPrefixOverride::maybe_new(
-                    Some(DdUrl::new("http://a_dd_url".to_string()).unwrap()),
-                    None
-                ),
-            ),
-            Ok(MetricsIntakeUrlPrefix::new_expect_validated(
-                "http://a_dd_url".to_string()
-            ))
-        );
-    }
-
-    #[test]
-    fn test_intake_url_prefix_new_picks_site_as_a_fallback() {
-        assert_eq!(
-            MetricsIntakeUrlPrefix::new(Some(Site::new("a_site".to_string()).unwrap()), None,),
-            Ok(MetricsIntakeUrlPrefix::new_expect_validated(
-                "https://api.a_site".to_string()
-            ))
-        );
     }
 }
 
@@ -380,5 +305,75 @@ impl Series {
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.series.len()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn override_can_be_empty() {
+        assert_eq!(MetricsIntakeUrlPrefixOverride::maybe_new(None, None), None);
+    }
+
+    #[test]
+    fn override_prefers_dd_dd_url() {
+        assert_eq!(
+            MetricsIntakeUrlPrefixOverride::maybe_new(
+                Some(DdUrl::new("http://a_dd_url".to_string()).unwrap()),
+                Some(DdDdUrl::new("https://a_dd_dd_url".to_string()).unwrap())
+            ),
+            Some(MetricsIntakeUrlPrefixOverride(
+                "https://a_dd_dd_url".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn override_will_take_dd_url() {
+        assert_eq!(
+            MetricsIntakeUrlPrefixOverride::maybe_new(
+                Some(DdUrl::new("http://a_dd_url".to_string()).unwrap()),
+                None
+            ),
+            Some(MetricsIntakeUrlPrefixOverride(
+                "http://a_dd_url".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_intake_url_prefix_new_requires_something() {
+        assert_eq!(
+            MetricsIntakeUrlPrefix::new(None, None),
+            Err(MissingIntakeUrlError)
+        );
+    }
+
+    #[test]
+    fn test_intake_url_prefix_new_picks_the_override() {
+        assert_eq!(
+            MetricsIntakeUrlPrefix::new(
+                Some(Site::new("a_site".to_string()).unwrap()),
+                MetricsIntakeUrlPrefixOverride::maybe_new(
+                    Some(DdUrl::new("http://a_dd_url".to_string()).unwrap()),
+                    None
+                ),
+            ),
+            Ok(MetricsIntakeUrlPrefix::new_expect_validated(
+                "http://a_dd_url".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_intake_url_prefix_new_picks_site_as_a_fallback() {
+        assert_eq!(
+            MetricsIntakeUrlPrefix::new(Some(Site::new("a_site".to_string()).unwrap()), None,),
+            Ok(MetricsIntakeUrlPrefix::new_expect_validated(
+                "https://api.a_site".to_string()
+            ))
+        );
     }
 }
