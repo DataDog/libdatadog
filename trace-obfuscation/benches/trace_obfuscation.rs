@@ -10,4 +10,5 @@ criterion_main!(
     benchmarks::redis_obfuscation_bench::benches,
     benchmarks::replace_trace_tags_bench::benches,
     benchmarks::sql_obfuscation_bench::benches,
+    benchmarks::ip_address_bench::benches,
 );
