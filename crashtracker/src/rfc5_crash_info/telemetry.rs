@@ -198,11 +198,11 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
             ",si_code_human_readable:{:?}",
             siginfo.si_code_human_readable
         )?;
-        write!(&mut tags, ",si_signo:{}", siginfo.si_code)?;
+        write!(&mut tags, ",si_signo:{}", siginfo.si_signo)?;
         write!(
             &mut tags,
             ",si_signo_human_readable:{:?}",
-            siginfo.si_code_human_readable
+            siginfo.si_signo_human_readable
         )?;
     }
     Ok(tags)
