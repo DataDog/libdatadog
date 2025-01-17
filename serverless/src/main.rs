@@ -51,8 +51,8 @@ pub async fn main() {
         .ok();
     debug!("Starting serverless trace mini agent");
 
-    let mini_agent_version = env!("CARGO_PKG_VERSION").to_string();
-    env::set_var("DD_MINI_AGENT_VERSION", mini_agent_version);
+    let serverless_compat_version = env!("CARGO_PKG_VERSION").to_string();
+    env::set_var("DD_SERVERLESS_COMPAT_VERSION", serverless_compat_version);
 
     let env_filter = format!("h2=off,hyper=off,rustls=off,{}", log_level);
 
