@@ -217,7 +217,10 @@ mod tests {
         let mut buf = Vec::new();
         s.emit(&mut buf).unwrap();
         let actual = String::from_utf8(buf).unwrap();
-        assert!(actual == "[42, 21]\n" || actual == "[21, 42]\n");
+        assert!(
+            actual == "[{\"id\": \"42\"}, {\"id\": \"21\"}]\n"
+                || actual == "[{\"id\": \"21\"}, {\"id\": \"42\"}]\n"
+        );
     }
 
     fn remove_and_compare(

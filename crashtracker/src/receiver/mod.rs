@@ -12,8 +12,9 @@ mod receive_report;
 #[cfg(test)]
 mod tests {
     use super::receive_report::*;
+    use crate::rfc5_crash_info::{SiCodes, SigInfo, SignalNames};
     use crate::shared::constants::*;
-    use crate::{CrashtrackerConfiguration, SigInfo, StacktraceCollection};
+    use crate::{CrashtrackerConfiguration, StacktraceCollection};
     use std::time::Duration;
     use tokio::io::{AsyncWriteExt, BufReader};
     use tokio::net::UnixStream;
@@ -34,9 +35,11 @@ mod tests {
         to_socket(
             sender,
             serde_json::to_string(&SigInfo {
-                signame: Some("SIGSEGV".to_string()),
-                signum: 11,
-                faulting_address: None,
+                si_addr: None,
+                si_code: 2,
+                si_code_human_readable: SiCodes::BUS_ADRALN,
+                si_signo: 11,
+                si_signo_human_readable: SignalNames::SIGSEGV,
             })?,
         )
         .await?;
