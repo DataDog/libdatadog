@@ -125,7 +125,7 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: 
           "signame": "SIGSEGV",
           "faulting_address": 0,
         }),
-        crash_payload["siginfo"]
+        crash_payload["sig_info"]
     );
 
     let crash_telemetry = fs::read(fixtures.crash_telemetry_path)
