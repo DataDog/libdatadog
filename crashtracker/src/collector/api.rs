@@ -256,7 +256,7 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
         timeout_ms,
         None,
     )?;
-    let metadata = CrashtrackerMetadata::new(
+    let metadata = Metadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),
@@ -383,7 +383,7 @@ fn test_altstack_use_nocreate() -> anyhow::Result<()> {
         timeout_ms,
         None,
     )?;
-    let metadata = CrashtrackerMetadata::new(
+    let metadata = Metadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),
@@ -510,7 +510,7 @@ fn test_altstack_nouse() -> anyhow::Result<()> {
         timeout_ms,
         None,
     )?;
-    let metadata = CrashtrackerMetadata::new(
+    let metadata = Metadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),
@@ -673,7 +673,7 @@ fn test_waitall_nohang() -> anyhow::Result<()> {
         None,
     )?;
 
-    let metadata = CrashtrackerMetadata::new(
+    let metadata = Metadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),
