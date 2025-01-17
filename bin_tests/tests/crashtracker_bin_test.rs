@@ -119,15 +119,27 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: 
         }),
         crash_payload["counters"],
     );
-    assert_eq!(
-        serde_json::json!({
-            "si_addr": "0x0000000000000000",
-            "si_code": 1,
-            "si_code_human_readable": "UNKNOWN",
-            "si_signo": 11,
-            "si_signo_human_readable": "SIGSEGV",
-        }),
-        crash_payload["sig_info"]
+    let sig_info = &crash_payload["sig_info"];
+    // On every platform other than OSX ARM, the si_code is 1: SEGV_MAPERR
+    // On OSX ARM, its 2: SEGV_ACCERR
+    assert!(
+        *sig_info
+            == serde_json::json!({
+                "si_addr": "0x0000000000000000",
+                "si_code": 1,
+                "si_code_human_readable": "UNKNOWN",
+                "si_signo": 11,
+                "si_signo_human_readable": "SIGSEGV",
+            })
+            || *sig_info
+                == serde_json::json!({
+                    "si_addr": "0x0000000000000000",
+                    "si_code": 2,
+                    "si_code_human_readable": "UNKNOWN",
+                    "si_signo": 11,
+                    "si_signo_human_readable": "SIGSEGV",
+                }),
+        "Unexpected sig_info: {sig_info}"
     );
 
     let crash_telemetry = fs::read(fixtures.crash_telemetry_path)
