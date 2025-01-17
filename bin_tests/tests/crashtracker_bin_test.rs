@@ -185,7 +185,8 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
         .split(',')
         .filter(|t| !t.starts_with("uuid:"))
         .collect::<std::collections::HashSet<_>>();
-    assert_eq!(
+    // As above, ARM OSX can have a si_code of 2.
+    assert!(
         std::collections::HashSet::from_iter([
             "data_schema_version:1.0",
             "incomplete:false",
@@ -199,8 +200,21 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
             "si_code:1",
             "si_signo_human_readable:SIGSEGV",
             "si_signo:11",
-        ]),
-        tags
+        ]) == tags
+            || std::collections::HashSet::from_iter([
+                "data_schema_version:1.0",
+                "incomplete:false",
+                "is_crash:true",
+                "profiler_collecting_sample:1",
+                "profiler_inactive:0",
+                "profiler_serializing:0",
+                "profiler_unwinding:0",
+                "si_addr:0x0000000000000000",
+                "si_code_human_readable:UNKNOWN",
+                "si_code:2",
+                "si_signo_human_readable:SIGSEGV",
+                "si_signo:11",
+            ]) == tags
     );
     assert_eq!(telemetry_payload["payload"][0]["is_sensitive"], true);
 }
