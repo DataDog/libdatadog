@@ -4,7 +4,7 @@
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
 use std::ffi::{CStr, CString};
 use std::io;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{fence, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 pub struct OneWayShmWriter<T>
@@ -28,7 +28,6 @@ where
 struct RawMetaData {
     generation: AtomicU64,
     size: usize,
-    writing: AtomicBool,
 }
 
 #[repr(C)]
@@ -141,11 +140,9 @@ where
                     unsafe { reinterpret_u8_as_u64_slice(handle.as_slice()) }.into();
                 let copied_data: &RawData = new_mem.as_slice().into();
 
-                // Ensure the next write hasn't started yet *and* the data is from the expected
-                // generation
-                if !source_data.meta.writing.load(Ordering::SeqCst)
-                    && new_generation == source_data.meta.generation.load(Ordering::Acquire)
-                {
+                // Ensure a new write hasn't started yet
+                fence(Ordering::Acquire); // prevent loads before from being reordered with gen load after
+                if new_generation == source_data.meta.generation.load(Ordering::Relaxed) {
                     reader.current_data.replace(new_mem);
                     return Some((true, skip_last_byte(copied_data.as_slice())));
                 }
@@ -154,17 +151,27 @@ where
 
             if let Some(cur_mem) = &self.current_data {
                 let cur_data: &RawData = cur_mem.as_slice().into();
-                // Ensure nothing is copied during a write
-                if !source_data.meta.writing.load(Ordering::SeqCst)
-                    && new_generation > cur_data.meta.generation.load(Ordering::Acquire)
-                {
+
+                if new_generation & 1 == 1 {
+                    // mid-write
+                    return (false, skip_last_byte(cur_data.as_slice()));
+                }
+
+                if new_generation > cur_data.meta.generation.load(Ordering::Relaxed) {
                     if let Some(success) = fetch_data(self) {
                         return success;
                     }
                 }
 
                 return (false, skip_last_byte(cur_data.as_slice()));
-            } else if !source_data.meta.writing.load(Ordering::SeqCst) {
+            } else {
+                // first read
+
+                if new_generation & 1 == 1 {
+                    // mid-write
+                    return (false, "".as_bytes());
+                }
+
                 if let Some(success) = fetch_data(self) {
                     return success;
                 }
@@ -193,14 +200,13 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
         // Actually &mut mapped.as_slice_mut() as RawData seems safe, but unsized locals are
         // unstable
         let data = unsafe { &mut *(mapped.as_slice_mut() as *mut [u8] as *mut RawData) };
-        data.meta.writing.store(true, Ordering::SeqCst);
+        data.meta.generation.fetch_add(1, Ordering::AcqRel);
         data.meta.size = size;
 
         data.as_slice_mut()[0..contents.len()].copy_from_slice(contents);
         data.as_slice_mut()[contents.len()] = 0;
 
-        data.meta.generation.fetch_add(1, Ordering::SeqCst);
-        data.meta.writing.store(false, Ordering::SeqCst);
+        data.meta.generation.fetch_add(1, Ordering::Release);
     }
 
     pub fn as_slice(&self) -> &[u8] {
