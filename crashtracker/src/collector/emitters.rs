@@ -92,7 +92,6 @@ pub(crate) fn emit_crashreport(
     emit_config(pipe, config_str)?;
     emit_siginfo(pipe, sig_info)?;
     emit_procinfo(pipe)?;
-    pipe.flush()?;
     emit_counters(pipe)?;
     emit_spans(pipe)?;
     emit_traces(pipe)?;
