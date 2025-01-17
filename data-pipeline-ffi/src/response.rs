@@ -8,9 +8,13 @@ use std::ffi::{c_char, CString};
 
 /// Structure containing the agent response to a trace payload
 /// MUST be freed with `ddog_trace_exporter_response_free`
+///
+/// SAFETY: the caller must ensure that `ExporterResponse` has been created by
+/// `ddog_trace_exporter_send` the `body` pointer must not be modified by external code.
 #[repr(C)]
 #[derive(Debug)]
 pub struct ExporterResponse {
+    /// This field should only contain a pointer originated from `Cstring::into_raw`
     pub body: *mut c_char,
 }
 
@@ -23,11 +27,11 @@ impl From<AgentResponse> for ExporterResponse {
 }
 
 impl Drop for ExporterResponse {
+    /// SAFETY: the caller must ensure that `ExporterResponse` has been created through its
+    /// `new` method which ensures that `body` property is originated from
+    /// `Cstring::into_raw` call. Any other posibility could lead to UB.
     fn drop(&mut self) {
         if !self.body.is_null() {
-            // SAFETY: `the caller must ensure that `SendResponse` has been created through its
-            // `new` method which ensures that `body` property is originated from
-            // `Cstring::into_raw` call. Any other posibility could lead to UB.
             unsafe {
                 drop(CString::from_raw(self.body));
                 self.body = std::ptr::null_mut();
