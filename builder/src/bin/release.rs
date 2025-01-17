@@ -72,6 +72,8 @@ pub fn main() {
         f.push("crashtracker-ffi".to_string());
         #[cfg(feature = "symbolizer")]
         f.push("symbolizer".to_string());
+        #[cfg(feature = "library-config")]
+        f.push("datadog-library-config-ffi".to_string());
         f
     };
 

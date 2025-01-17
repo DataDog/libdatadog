@@ -87,7 +87,16 @@ impl DogStatsD {
 
     fn insert_metrics(&self, msg: Split<char>) {
         let all_valid_metrics: Vec<Metric> = msg
-            .filter(|m| !m.is_empty() && !m.starts_with("_sc|") && !m.starts_with("_e{")) // exclude empty messages, service checks, and events
+            .filter(|m| {
+                !m.is_empty()
+                    && !m.starts_with("_sc|")
+                    && !m.starts_with("_e{")
+                    // todo(serverless): remove this hack, and create a blocklist for metrics
+                    // or another mechanism for this.
+                    //
+                    // avoid metric duplication with lambda layer
+                    && !m.starts_with("aws.lambda.enhanced.invocations")
+            }) // exclude empty messages, service checks, and events
             .map(|m| m.replace('\n', ""))
             .filter_map(|m| match parse(m.as_str()) {
                 Ok(metric) => Some(metric),

@@ -745,7 +745,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -754,7 +754,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1291,7 +1291,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1321,7 +1321,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline-ffi"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "build_common",
  "data-pipeline",
@@ -1334,7 +1334,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-alloc"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "allocator-api2",
  "bolero",
@@ -1344,7 +1344,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -1370,7 +1370,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker-ffi"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1386,7 +1386,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ddsketch"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "prost 0.11.9",
  "prost-build 0.11.9",
@@ -1443,6 +1443,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-library-config"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_yaml",
+ "tempfile",
+]
+
+[[package]]
+name = "datadog-library-config-ffi"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "datadog-library-config",
+ "ddcommon",
+ "ddcommon-ffi",
+ "tempfile",
+]
+
+[[package]]
 name = "datadog-live-debugger"
 version = "0.0.1"
 dependencies = [
@@ -1481,7 +1503,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -1518,12 +1540,13 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "build_common",
  "data-pipeline-ffi",
  "datadog-crashtracker-ffi",
+ "datadog-library-config-ffi",
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
@@ -1540,7 +1563,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1590,7 +1613,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-serverless-trace-mini-agent"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "datadog-trace-mini-agent",
  "datadog-trace-protobuf",
@@ -1701,7 +1724,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-mini-agent"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1723,7 +1746,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1734,7 +1757,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1752,7 +1775,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "prost 0.11.9",
  "prost-build 0.11.9",
@@ -1765,7 +1788,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1799,7 +1822,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -1829,7 +1852,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1854,7 +1877,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1880,7 +1903,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "build_common",
  "ddcommon",
@@ -1919,6 +1942,27 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "derive_more"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a9b99b9cbbe49445b21764dc0625032a89b145a2642e67603e1c936f5458d05"
+dependencies = [
+ "derive_more-impl",
+]
+
+[[package]]
+name = "derive_more-impl"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb7330aeadfbe296029522e6c40f315320aba36fc43a5b3632f3795348f3bd22"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
+ "unicode-xid",
 ]
 
 [[package]]
@@ -2003,10 +2047,11 @@ dependencies = [
 
 [[package]]
 name = "dogstatsd"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "datadog-protos",
  "ddsketch-agent",
+ "derive_more",
  "fnv",
  "hashbrown 0.14.5",
  "lazy_static",
@@ -2027,7 +2072,7 @@ dependencies = [
 
 [[package]]
 name = "dogstatsd-client"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "cadence",
@@ -5003,6 +5048,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap 2.6.0",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "serial_test"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5281,7 +5339,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5607,7 +5665,7 @@ dependencies = [
 
 [[package]]
 name = "tinybytes"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "once_cell",
  "pretty_assertions",
@@ -5879,7 +5937,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "14.3.1"
+version = "15.0.0"
 dependencies = [
  "lazy_static",
  "regex",
@@ -6073,6 +6131,12 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

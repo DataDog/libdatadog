@@ -15,8 +15,9 @@ use datadog_trace_mini_agent::{
 use dogstatsd::{
     aggregator::Aggregator as MetricsAggregator,
     constants::CONTEXTS,
+    datadog::{MetricsIntakeUrlPrefix, Site},
     dogstatsd::{DogStatsD, DogStatsDConfig},
-    flusher::{build_fqdn_metrics, Flusher},
+    flusher::{Flusher, FlusherConfig},
 };
 
 use dogstatsd::metric::EMPTY_TAGS;
@@ -156,13 +157,17 @@ async fn start_dogstatsd(
 
     let metrics_flusher = match dd_api_key {
         Some(dd_api_key) => {
-            let metrics_flusher = Flusher::new(
-                dd_api_key,
-                Arc::clone(&metrics_aggr),
-                build_fqdn_metrics(dd_site),
+            let metrics_flusher = Flusher::new(FlusherConfig {
+                api_key: dd_api_key,
+                aggregator: Arc::clone(&metrics_aggr),
+                metrics_intake_url_prefix: MetricsIntakeUrlPrefix::new(
+                    Some(Site::new(dd_site).expect("Failed to parse site")),
+                    None,
+                )
+                .expect("Failed to create intake URL prefix"),
                 https_proxy,
-                DOGSTATSD_TIMEOUT_DURATION,
-            );
+                timeout: DOGSTATSD_TIMEOUT_DURATION,
+            });
             Some(metrics_flusher)
         }
         None => {
