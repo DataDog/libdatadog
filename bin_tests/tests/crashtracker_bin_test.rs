@@ -175,13 +175,18 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
         .collect::<std::collections::HashSet<_>>();
     assert_eq!(
         std::collections::HashSet::from_iter([
-            "signum:11",
-            "profiler_unwinding:0",
+            "data_schema_version:1.0",
+            "incomplete:false",
+            "is_crash:true",
             "profiler_collecting_sample:1",
             "profiler_inactive:0",
             "profiler_serializing:0",
-            "signame:SIGSEGV",
-            "faulting_address:0x0000000000000000",
+            "profiler_unwinding:0",
+            "si_addr:0x0000000000000000",
+            "si_code_human_readable:UNKNOWN",
+            "si_code:1",
+            "si_signo_human_readable:UNKNOWN",
+            "si_signo:1",
         ]),
         tags
     );
