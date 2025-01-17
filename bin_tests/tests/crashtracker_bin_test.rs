@@ -119,13 +119,27 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: 
         }),
         crash_payload["counters"],
     );
-    assert_eq!(
-        serde_json::json!({
-          "signum": 11,
-          "signame": "SIGSEGV",
-          "faulting_address": 0,
-        }),
-        crash_payload["siginfo"]
+    let sig_info = &crash_payload["sig_info"];
+    // On every platform other than OSX ARM, the si_code is 1: SEGV_MAPERR
+    // On OSX ARM, its 2: SEGV_ACCERR
+    assert!(
+        *sig_info
+            == serde_json::json!({
+                "si_addr": "0x0000000000000000",
+                "si_code": 1,
+                "si_code_human_readable": "UNKNOWN",
+                "si_signo": 11,
+                "si_signo_human_readable": "SIGSEGV",
+            })
+            || *sig_info
+                == serde_json::json!({
+                    "si_addr": "0x0000000000000000",
+                    "si_code": 2,
+                    "si_code_human_readable": "UNKNOWN",
+                    "si_signo": 11,
+                    "si_signo_human_readable": "SIGSEGV",
+                }),
+        "Unexpected sig_info: {sig_info}"
     );
 
     let crash_telemetry = fs::read(fixtures.crash_telemetry_path)
@@ -171,17 +185,36 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
         .split(',')
         .filter(|t| !t.starts_with("uuid:"))
         .collect::<std::collections::HashSet<_>>();
-    assert_eq!(
+    // As above, ARM OSX can have a si_code of 2.
+    assert!(
         std::collections::HashSet::from_iter([
-            "signum:11",
-            "profiler_unwinding:0",
+            "data_schema_version:1.0",
+            "incomplete:false",
+            "is_crash:true",
             "profiler_collecting_sample:1",
             "profiler_inactive:0",
             "profiler_serializing:0",
-            "signame:SIGSEGV",
-            "faulting_address:0x0000000000000000",
-        ]),
-        tags
+            "profiler_unwinding:0",
+            "si_addr:0x0000000000000000",
+            "si_code_human_readable:UNKNOWN",
+            "si_code:1",
+            "si_signo_human_readable:SIGSEGV",
+            "si_signo:11",
+        ]) == tags
+            || std::collections::HashSet::from_iter([
+                "data_schema_version:1.0",
+                "incomplete:false",
+                "is_crash:true",
+                "profiler_collecting_sample:1",
+                "profiler_inactive:0",
+                "profiler_serializing:0",
+                "profiler_unwinding:0",
+                "si_addr:0x0000000000000000",
+                "si_code_human_readable:UNKNOWN",
+                "si_code:2",
+                "si_signo_human_readable:SIGSEGV",
+                "si_signo:11",
+            ]) == tags
     );
     assert_eq!(telemetry_payload["payload"][0]["is_sensitive"], true);
 }

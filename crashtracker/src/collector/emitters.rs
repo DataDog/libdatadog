@@ -8,6 +8,8 @@ use crate::shared::constants::*;
 use crate::CrashtrackerConfiguration;
 use crate::StacktraceCollection;
 use anyhow::Context;
+use backtrace::Frame;
+use libc::siginfo_t;
 use std::{
     fs::File,
     io::{Read, Write},
@@ -31,67 +33,51 @@ unsafe fn emit_backtrace_by_frames(
 ) -> anyhow::Result<()> {
     // https://docs.rs/backtrace/latest/backtrace/index.html
     writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
-    backtrace::trace_unsynchronized(|frame| {
-        // Write the values we can get without resolving, since these seem to
-        // be crash safe in my experiments.
-        write!(w, "{{").unwrap();
-        write!(w, "\"ip\": \"{:?}\", ", frame.ip()).unwrap();
+
+    // Absolute addresses appear to be safer to collect during a crash than debug info.
+    fn emit_absolute_addresses(w: &mut impl Write, frame: &Frame) -> anyhow::Result<()> {
+        write!(w, "\"ip\": \"{:?}\"", frame.ip())?;
         if let Some(module_base_address) = frame.module_base_address() {
-            write!(w, "\"module_base_address\": \"{module_base_address:?}\", ",).unwrap();
+            write!(w, ", \"module_base_address\": \"{module_base_address:?}\"",)?;
         }
-        write!(w, "\"sp\": \"{:?}\", ", frame.sp()).unwrap();
-        write!(w, "\"symbol_address\": \"{:?}\"", frame.symbol_address()).unwrap();
+        write!(w, ", \"sp\": \"{:?}\"", frame.sp())?;
+        write!(w, ", \"symbol_address\": \"{:?}\"", frame.symbol_address())?;
+        Ok(())
+    }
+
+    backtrace::trace_unsynchronized(|frame| {
         if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
-            write!(w, ", \"names\": [").unwrap();
-
-            let mut first = true;
-            // This can give multiple answers in the case of inlined functions
-            // https://docs.rs/backtrace/latest/backtrace/fn.resolve.html
-            // Store them all into an array of names
-            unsafe {
-                backtrace::resolve_frame_unsynchronized(frame, |symbol| {
-                    if !first {
-                        write!(w, ", ").unwrap();
-                    }
-                    write!(w, "{{").unwrap();
-                    let mut comma_needed = false;
-                    if let Some(name) = symbol.name() {
-                        write!(w, "\"name\": \"{}\"", name).unwrap();
-                        comma_needed = true;
-                    }
-                    if let Some(filename) = symbol.filename() {
-                        if comma_needed {
-                            write!(w, ", ").unwrap();
-                        }
-                        write!(w, "\"filename\": {:?}", filename).unwrap();
-                        comma_needed = true;
-                    }
-                    if let Some(colno) = symbol.colno() {
-                        if comma_needed {
-                            write!(w, ", ").unwrap();
-                        }
-                        write!(w, "\"colno\": {}", colno).unwrap();
-                        comma_needed = true;
-                    }
-
-                    if let Some(lineno) = symbol.lineno() {
-                        if comma_needed {
-                            write!(w, ", ").unwrap();
-                        }
-                        write!(w, "\"lineno\": {}", lineno).unwrap();
-                    }
-
-                    write!(w, "}}").unwrap();
-
-                    first = false;
-                });
-            }
-            write!(w, "]").unwrap();
+            backtrace::resolve_frame_unsynchronized(frame, |symbol| {
+                write!(w, "{{").unwrap();
+                emit_absolute_addresses(w, frame).unwrap();
+                if let Some(column) = symbol.colno() {
+                    write!(w, ", \"column\": {column}").unwrap();
+                }
+                if let Some(file) = symbol.filename() {
+                    // The debug printer for path already wraps it in `"` marks.
+                    write!(w, ", \"file\": {file:?}").unwrap();
+                }
+                if let Some(function) = symbol.name() {
+                    write!(w, ", \"function\": \"{function}\"").unwrap();
+                }
+                if let Some(line) = symbol.lineno() {
+                    write!(w, ", \"line\": {line}").unwrap();
+                }
+                writeln!(w, "}}").unwrap();
+                // Flush eagerly to ensure that each frame gets emitted even if the next one fails
+                w.flush().unwrap();
+            });
+        } else {
+            write!(w, "{{").unwrap();
+            emit_absolute_addresses(w, frame).unwrap();
+            writeln!(w, "}}").unwrap();
+            // Flush eagerly to ensure that each frame gets emitted even if the next one fails
+            w.flush().unwrap();
         }
-        writeln!(w, "}}").unwrap();
         true // keep going to the next frame
     });
     writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}").unwrap();
+    w.flush()?;
     Ok(())
 }
 
@@ -100,20 +86,15 @@ pub(crate) fn emit_crashreport(
     config: &CrashtrackerConfiguration,
     config_str: &str,
     metadata_string: &str,
-    signum: i32,
-    faulting_address: Option<usize>,
+    sig_info: *mut siginfo_t,
 ) -> anyhow::Result<()> {
     emit_metadata(pipe, metadata_string)?;
     emit_config(pipe, config_str)?;
-    emit_siginfo(pipe, signum, faulting_address)?;
+    emit_siginfo(pipe, sig_info)?;
     emit_procinfo(pipe)?;
-    pipe.flush()?;
     emit_counters(pipe)?;
-    pipe.flush()?;
     emit_spans(pipe)?;
-    pipe.flush()?;
     emit_traces(pipe)?;
-    pipe.flush()?;
 
     #[cfg(target_os = "linux")]
     emit_proc_self_maps(pipe)?;
@@ -137,6 +118,7 @@ fn emit_config(w: &mut impl Write, config_str: &str) -> anyhow::Result<()> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_CONFIG}")?;
     writeln!(w, "{}", config_str)?;
     writeln!(w, "{DD_CRASHTRACK_END_CONFIG}")?;
+    w.flush()?;
     Ok(())
 }
 
@@ -144,6 +126,7 @@ fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> anyhow::Result<()> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_METADATA}")?;
     writeln!(w, "{}", metadata_str)?;
     writeln!(w, "{DD_CRASHTRACK_END_METADATA}")?;
+    w.flush()?;
     Ok(())
 }
 
@@ -152,6 +135,7 @@ fn emit_procinfo(w: &mut impl Write) -> anyhow::Result<()> {
     let pid = nix::unistd::getpid();
     writeln!(w, "{{\"pid\": {pid} }}")?;
     writeln!(w, "{DD_CRASHTRACK_END_PROCINFO}")?;
+    w.flush()?;
     Ok(())
 }
 
@@ -164,29 +148,47 @@ fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn emit_siginfo(
-    w: &mut impl Write,
-    signum: i32,
-    faulting_address: Option<usize>,
-) -> anyhow::Result<()> {
-    let signame = if signum == libc::SIGSEGV {
-        "SIGSEGV"
-    } else if signum == libc::SIGBUS {
-        "SIGBUS"
-    } else {
-        "UNKNOWN"
+fn emit_siginfo(w: &mut impl Write, sig_info: *mut siginfo_t) -> anyhow::Result<()> {
+    anyhow::ensure!(!sig_info.is_null());
+
+    let si_signo = unsafe { (*sig_info).si_signo };
+    let si_signo_human_readable = match si_signo {
+        libc::SIGABRT => "SIGABRT",
+        libc::SIGBUS => "SIGBUS",
+        libc::SIGSEGV => "SIGSEGV",
+        libc::SIGSYS => "SIGSYS",
+        _ => "UNKNOWN",
     };
 
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
-    if let Some(addr) = faulting_address {
-        writeln!(
-            w,
-            "{{\"signum\": {signum}, \"signame\": \"{signame}\", \"faulting_address\": {addr}}}"
-        )?;
+    // Derive the faulting address from `sig_info`
+    let si_addr: Option<usize> = if si_signo == libc::SIGSEGV || si_signo == libc::SIGBUS {
+        unsafe { Some((*sig_info).si_addr() as usize) }
     } else {
-        writeln!(w, "{{\"signum\": {signum}, \"signame\": \"{signame}\"}}")?;
+        None
     };
+
+    let si_code = unsafe { (*sig_info).si_code };
+    // TODO
+    let si_code_human_readable = "UNKNOWN";
+
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
+    write!(w, "{{")?;
+    write!(w, "\"si_code\": {si_code}")?;
+    write!(
+        w,
+        ", \"si_code_human_readable\": \"{si_code_human_readable}\""
+    )?;
+    write!(w, ", \"si_signo\": {si_signo}")?;
+    write!(
+        w,
+        ", \"si_signo_human_readable\": \"{si_signo_human_readable}\""
+    )?;
+    if let Some(si_addr) = si_addr {
+        write!(w, ", \"si_addr\": \"{si_addr:#018x}\"")?;
+    }
+    writeln!(w, "}}")?;
     writeln!(w, "{DD_CRASHTRACK_END_SIGINFO}")?;
+    w.flush()?;
     Ok(())
 }
 

@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use super::*;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct ErrorDataBuilder {
     pub kind: Option<ErrorKind>,
     pub message: Option<String>,
@@ -87,7 +87,7 @@ impl ErrorDataBuilder {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct CrashInfoBuilder {
     pub counters: Option<HashMap<String, i64>>,
     pub error: ErrorDataBuilder,
@@ -112,7 +112,7 @@ impl CrashInfoBuilder {
         let (error, incomplete_error) = self.error.build()?;
         let files = self.files.unwrap_or_default();
         let fingerprint = self.fingerprint;
-        let incomplete = incomplete_error; // TODO
+        let incomplete = incomplete_error || self.incomplete.unwrap_or(false);
         let log_messages = self.log_messages.unwrap_or_default();
         let metadata = self.metadata.unwrap_or_else(Metadata::unknown_value);
         let os_info = self.os_info.unwrap_or_else(OsInfo::unknown_value);
@@ -139,6 +139,10 @@ impl CrashInfoBuilder {
             trace_ids,
             uuid,
         })
+    }
+
+    pub fn has_data(&self) -> bool {
+        *self != Self::default()
     }
 
     pub fn new() -> Self {
@@ -204,7 +208,15 @@ impl CrashInfoBuilder {
     }
 
     /// Appends the given message to the current set of messages in the builder.
-    pub fn with_log_message(&mut self, message: String) -> anyhow::Result<&mut Self> {
+    pub fn with_log_message(
+        &mut self,
+        message: String,
+        also_print: bool,
+    ) -> anyhow::Result<&mut Self> {
+        if also_print {
+            eprintln!("{message}");
+        }
+
         if let Some(ref mut messages) = &mut self.log_messages {
             messages.push(message);
         } else {

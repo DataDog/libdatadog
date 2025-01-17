@@ -19,6 +19,7 @@ pub fn emit_spans(w: &mut impl Write) -> anyhow::Result<()> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_SPAN_IDS}")?;
     ACTIVE_SPANS.emit(w)?;
     writeln!(w, "{DD_CRASHTRACK_END_SPAN_IDS}")?;
+    w.flush()?;
     Ok(())
 }
 
@@ -40,6 +41,7 @@ pub fn emit_traces(w: &mut impl Write) -> anyhow::Result<()> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_TRACE_IDS}")?;
     ACTIVE_TRACES.emit(w)?;
     writeln!(w, "{DD_CRASHTRACK_END_TRACE_IDS}")?;
+    w.flush()?;
     Ok(())
 }
 
@@ -84,7 +86,7 @@ impl<const LEN: usize> AtomicU128Set<LEN> {
                         write!(w, ", ")?;
                     }
                     first = false;
-                    write!(w, "{v}")?;
+                    write!(w, "{{\"id\": \"{v}\"}}")?;
                 }
             }
         }
@@ -215,7 +217,10 @@ mod tests {
         let mut buf = Vec::new();
         s.emit(&mut buf).unwrap();
         let actual = String::from_utf8(buf).unwrap();
-        assert!(actual == "[42, 21]\n" || actual == "[21, 42]\n");
+        assert!(
+            actual == "[{\"id\": \"42\"}, {\"id\": \"21\"}]\n"
+                || actual == "[{\"id\": \"21\"}, {\"id\": \"42\"}]\n"
+        );
     }
 
     fn remove_and_compare(

@@ -198,11 +198,11 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
             ",si_code_human_readable:{:?}",
             siginfo.si_code_human_readable
         )?;
-        write!(&mut tags, ",si_signo:{}", siginfo.si_code)?;
+        write!(&mut tags, ",si_signo:{}", siginfo.si_signo)?;
         write!(
             &mut tags,
             ",si_signo_human_readable:{:?}",
-            siginfo.si_code_human_readable
+            siginfo.si_signo_human_readable
         )?;
     }
     Ok(tags)
@@ -285,8 +285,8 @@ mod tests {
                 "si_addr:0x0000000000001234",
                 "si_code_human_readable:SEGV_BNDERR",
                 "si_code:1",
-                "si_signo_human_readable:SEGV_BNDERR",
-                "si_signo:1",
+                "si_signo_human_readable:SIGSEGV",
+                "si_signo:11",
                 "uuid:1d6b97cb-968c-40c9-af6e-e4b4d71e8781",
             ]),
             tags

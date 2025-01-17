@@ -12,8 +12,9 @@ mod receive_report;
 #[cfg(test)]
 mod tests {
     use super::receive_report::*;
+    use crate::rfc5_crash_info::{SiCodes, SigInfo, SignalNames};
     use crate::shared::constants::*;
-    use crate::{CrashtrackerConfiguration, SigInfo, StacktraceCollection};
+    use crate::{CrashtrackerConfiguration, StacktraceCollection};
     use std::time::Duration;
     use tokio::io::{AsyncWriteExt, BufReader};
     use tokio::net::UnixStream;
@@ -34,9 +35,11 @@ mod tests {
         to_socket(
             sender,
             serde_json::to_string(&SigInfo {
-                signame: Some("SIGSEGV".to_string()),
-                signum: 11,
-                faulting_address: None,
+                si_addr: None,
+                si_code: 2,
+                si_code_human_readable: SiCodes::BUS_ADRALN,
+                si_signo: 11,
+                si_signo_human_readable: SignalNames::SIGSEGV,
             })?,
         )
         .await?;
@@ -74,10 +77,8 @@ mod tests {
         let join_handle2 = tokio::spawn(send_report(Duration::from_secs(2), sender));
 
         let crash_report = join_handle1.await??;
-        assert!(matches!(
-            crash_report,
-            CrashReportStatus::PartialCrashReport(_, _, _)
-        ));
+        let (_config, crashinfo) = crash_report.expect("Expect a report");
+        assert!(crashinfo.incomplete);
         let sender_error = join_handle2.await?.unwrap_err().to_string();
         assert_eq!(sender_error, "Broken pipe (os error 32)");
         Ok(())
@@ -95,7 +96,8 @@ mod tests {
         let join_handle2 = tokio::spawn(send_report(Duration::from_secs(1), sender));
 
         let crash_report = join_handle1.await??;
-        assert!(matches!(crash_report, CrashReportStatus::CrashReport(_, _)));
+        let (_config, crashinfo) = crash_report.expect("Expect a report");
+        assert!(crashinfo.incomplete);
         join_handle2.await??;
         Ok(())
     }

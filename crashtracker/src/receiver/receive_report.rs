@@ -1,7 +1,11 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{shared::constants::*, CrashInfo, CrashtrackerConfiguration, StackFrame};
+use crate::{
+    rfc5_crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, Span},
+    shared::constants::*,
+    CrashtrackerConfiguration,
+};
 use anyhow::Context;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
@@ -16,12 +20,11 @@ pub(crate) enum StdinState {
     Counters,
     Done,
     File(String, Vec<String>),
-    InternalError(String),
     Metadata,
     ProcInfo,
     SigInfo,
     SpanIds,
-    StackTrace(Vec<StackFrame>),
+    StackTrace,
     TraceIds,
     Waiting,
 }
@@ -31,9 +34,9 @@ pub(crate) enum StdinState {
 /// variable to track which block we're in and collect partial data.
 /// Once we reach the end of a block, append the block's data to `crashinfo`.
 fn process_line(
-    crashinfo: &mut CrashInfo,
+    builder: &mut CrashInfoBuilder,
     config: &mut Option<CrashtrackerConfiguration>,
-    line: String,
+    line: &str,
     state: StdinState,
 ) -> anyhow::Result<StdinState> {
     let next = match state {
@@ -43,13 +46,13 @@ fn process_line(
                 // The config might contain sensitive data, don't log it.
                 eprintln!("Unexpected double config");
             }
-            std::mem::swap(config, &mut Some(serde_json::from_str(&line)?));
+            std::mem::swap(config, &mut Some(serde_json::from_str(line)?));
             StdinState::Config
         }
 
         StdinState::Counters if line.starts_with(DD_CRASHTRACK_END_COUNTERS) => StdinState::Waiting,
         StdinState::Counters => {
-            let v: serde_json::Value = serde_json::from_str(&line)?;
+            let v: serde_json::Value = serde_json::from_str(line)?;
             let map = v.as_object().context("Expected map type value")?;
             anyhow::ensure!(map.len() == 1);
             let (key, val) = map
@@ -57,71 +60,76 @@ fn process_line(
                 .next()
                 .context("we know there is one value here")?;
             let val = val.as_i64().context("Vals are ints")?;
-            crashinfo.add_counter(key, val)?;
+            builder.with_counter(key.clone(), val)?;
             StdinState::Counters
         }
 
         StdinState::Done => {
-            eprintln!("Unexpected line after crashreport is done: {line}");
+            builder.with_log_message(
+                format!("Unexpected line after crashreport is done: {line}"),
+                true,
+            )?;
             StdinState::Done
         }
 
         StdinState::File(filename, lines) if line.starts_with(DD_CRASHTRACK_END_FILE) => {
-            crashinfo.add_file_with_contents(&filename, lines)?;
+            builder.with_file_and_contents(filename, lines)?;
             StdinState::Waiting
         }
         StdinState::File(name, mut contents) => {
-            contents.push(line);
+            contents.push(line.to_string());
             StdinState::File(name, contents)
         }
 
-        StdinState::InternalError(e) => anyhow::bail!("Can't continue after internal error {e}"),
-
         StdinState::Metadata if line.starts_with(DD_CRASHTRACK_END_METADATA) => StdinState::Waiting,
         StdinState::Metadata => {
-            let metadata = serde_json::from_str(&line)?;
-            crashinfo.set_metadata(metadata)?;
+            let metadata = serde_json::from_str(line)?;
+            builder.with_metadata(metadata)?;
             StdinState::Metadata
         }
 
         StdinState::ProcInfo if line.starts_with(DD_CRASHTRACK_END_PROCINFO) => StdinState::Waiting,
         StdinState::ProcInfo => {
-            let proc_info = serde_json::from_str(&line)?;
-            crashinfo.set_procinfo(proc_info)?;
+            let proc_info = serde_json::from_str(line)?;
+            builder.with_proc_info(proc_info)?;
             StdinState::ProcInfo
         }
 
         StdinState::SigInfo if line.starts_with(DD_CRASHTRACK_END_SIGINFO) => StdinState::Waiting,
         StdinState::SigInfo => {
-            let siginfo = serde_json::from_str(&line)?;
-            crashinfo.set_siginfo(siginfo)?;
-            crashinfo.set_timestamp_to_now()?;
+            let sig_info = serde_json::from_str(line)?;
+            // By convention, siginfo is the first thing sent.
+            builder
+                .with_timestamp_now()?
+                .with_sig_info(sig_info)?
+                .with_incomplete(true)?;
             StdinState::SigInfo
         }
 
         StdinState::SpanIds if line.starts_with(DD_CRASHTRACK_END_SPAN_IDS) => StdinState::Waiting,
         StdinState::SpanIds => {
-            let v: Vec<u128> = serde_json::from_str(&line)?;
-            crashinfo.set_span_ids(v)?;
+            //DSN TODO fix the input for this
+            let span_ids: Vec<Span> = serde_json::from_str(line)?;
+            builder.with_span_ids(span_ids)?;
             StdinState::SpanIds
         }
 
-        StdinState::StackTrace(stacktrace) if line.starts_with(DD_CRASHTRACK_END_STACKTRACE) => {
-            crashinfo.set_stacktrace(None, stacktrace)?;
+        StdinState::StackTrace if line.starts_with(DD_CRASHTRACK_END_STACKTRACE) => {
+            builder.with_stack_set_complete()?;
             StdinState::Waiting
         }
-        StdinState::StackTrace(mut stacktrace) => {
-            let frame = serde_json::from_str(&line).context(line)?;
-            stacktrace.push(frame);
-            StdinState::StackTrace(stacktrace)
+        StdinState::StackTrace => {
+            let frame = serde_json::from_str(line)?;
+            builder.with_stack_frame(frame, true)?;
+            StdinState::StackTrace
         }
 
         StdinState::TraceIds if line.starts_with(DD_CRASHTRACK_END_TRACE_IDS) => {
             StdinState::Waiting
         }
         StdinState::TraceIds => {
-            let v: Vec<u128> = serde_json::from_str(&line)?;
-            crashinfo.set_trace_ids(v)?;
+            let trace_ids: Vec<Span> = serde_json::from_str(line)?;
+            builder.with_trace_ids(trace_ids)?;
             StdinState::TraceIds
         }
 
@@ -144,40 +152,36 @@ fn process_line(
             StdinState::SpanIds
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_STACKTRACE) => {
-            StdinState::StackTrace(vec![])
+            StdinState::StackTrace
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_TRACE_IDS) => {
             StdinState::TraceIds
         }
-        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => StdinState::Done,
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => {
+            builder.with_incomplete(false)?;
+            StdinState::Done
+        }
         StdinState::Waiting => {
-            //TODO: Do something here?
-            eprintln!("Unexpected line while receiving crashreport: {line}");
+            builder.with_log_message(
+                format!("Unexpected line while receiving crashreport: {line}"),
+                true,
+            )?;
             StdinState::Waiting
         }
     };
     Ok(next)
 }
 
-#[derive(Debug)]
-pub(crate) enum CrashReportStatus {
-    NoCrash,
-    CrashReport(CrashtrackerConfiguration, CrashInfo),
-    PartialCrashReport(CrashtrackerConfiguration, CrashInfo, StdinState),
-}
-
 /// Listens to `stream`, reading it line by line, until
-/// 1. A crash-report is received, in which case it is processed for upload
-/// 2. `stdin` closes without a crash report (i.e. if the parent terminated normally)
-///
-/// In the case where the parent failed to transfer a full crash-report
-/// (for instance if it crashed while calculating the crash-report), we return
-/// a PartialCrashReport.
+/// 1. A crash-report is received, in which case it is processed for upload, and we return
+///    Some(CrashInfo)
+/// 2. `stdin` closes without a crash report (i.e. if the parent terminated normally). In this case
+///    we return "None".
 pub(crate) async fn receive_report_from_stream(
     timeout: Duration,
     stream: impl AsyncBufReadExt + std::marker::Unpin,
-) -> anyhow::Result<CrashReportStatus> {
-    let mut crashinfo = CrashInfo::new();
+) -> anyhow::Result<Option<(CrashtrackerConfiguration, CrashInfo)>> {
+    let mut builder = CrashInfoBuilder::new();
     let mut stdin_state = StdinState::Waiting;
     let mut config = None;
 
@@ -188,23 +192,18 @@ pub(crate) async fn receive_report_from_stream(
 
     //TODO: This assumes that the input is valid UTF-8.
     loop {
-        let next = tokio::time::timeout(remaining_timeout, lines.next_line()).await;
-        if let Err(elapsed) = next {
-            eprintln!("Timeout: {elapsed}");
+        let next_line = tokio::time::timeout(remaining_timeout, lines.next_line()).await;
+        let Ok(next_line) = next_line else {
+            builder.with_log_message(format!("Timeout: {next_line:?}"), true)?;
             break;
         };
-        let next = next.unwrap();
-        if let Err(io_err) = next {
-            eprintln!("IO Error: {io_err}");
+        let Ok(next_line) = next_line else {
+            builder.with_log_message(format!("IO Error: {next_line:?}"), true)?;
             break;
-        }
-        let next = next.unwrap();
-        if next.is_none() {
-            break;
-        }
-        let line = next.unwrap();
+        };
+        let Some(next_line) = next_line else { break };
 
-        match process_line(&mut crashinfo, &mut config, line, stdin_state) {
+        match process_line(&mut builder, &mut config, &next_line, stdin_state) {
             Ok(next_state) => {
                 stdin_state = next_state;
                 if matches!(stdin_state, StdinState::Done) {
@@ -213,7 +212,10 @@ pub(crate) async fn receive_report_from_stream(
             }
             Err(e) => {
                 // If the input is corrupted, stop and salvage what we can
-                stdin_state = StdinState::InternalError(e.to_string());
+                builder.with_log_message(
+                    format!("Unable to process line: {next_line}. Error: {e}"),
+                    true,
+                )?;
                 break;
             }
         }
@@ -227,28 +229,21 @@ pub(crate) async fn receive_report_from_stream(
         }
     }
 
-    if !crashinfo.crash_seen() {
-        return Ok(CrashReportStatus::NoCrash);
+    if !builder.has_data() {
+        return Ok(None);
     }
+
+    // For now, we only support Signal based crash detection in the receiver.
+    builder.with_kind(ErrorKind::UnixSignal)?;
 
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
     let config = config.context("Missing crashtracker configuration")?;
     for filename in &config.additional_files {
-        crashinfo
-            .add_file(filename)
-            .unwrap_or_else(|e| eprintln!("Unable to add file {filename}: {e}"));
+        if let Err(e) = builder.with_file(filename.clone()) {
+            builder.with_log_message(e.to_string(), true)?;
+        }
     }
 
-    // If we were waiting for data when stdin closed, let our caller know that
-    // we only have partial data.
-    if matches!(stdin_state, StdinState::Done) {
-        Ok(CrashReportStatus::CrashReport(config, crashinfo))
-    } else {
-        crashinfo.set_incomplete(true)?;
-        Ok(CrashReportStatus::PartialCrashReport(
-            config,
-            crashinfo,
-            stdin_state,
-        ))
-    }
+    let crash_info = builder.build()?;
+    Ok(Some((config, crash_info)))
 }
