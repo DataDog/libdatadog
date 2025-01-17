@@ -68,14 +68,23 @@ int main(int argc, char *argv[]) {
           continue;
       }
 #ifndef _WIN32
+      bool already_loaded = false;
       char buf[30];
       // Redirect the symlinked /proc/self/X to the actual /proc/<pid>/X - as otherwise debugging tooling may try to read it
       // And reading /proc/self from the debugging tooling will usually lead to it reading from itself, which may be flatly wrong
       // E.g. gdb will just hang up for e.g. /proc/self/fd/4, which is an open pipe...
       if (strncmp(lib_path, "/proc/self/", strlen("/proc/self/")) == 0 && strlen(lib_path) < 20) {
         sprintf(buf, "/proc/%d/%s", getpid(), lib_path + strlen("/proc/self/"));
-        lib_path = buf;
+        if ((handles[additional_shared_libraries_count++] = dlopen(buf, RTLD_LAZY | RTLD_GLOBAL))) {
+            already_loaded = true;
+        } else {
+            // We may have to retry this (via already_loaded = false) in environments where procfs updates have some delay
+            // Like observed on google cloud run platforms: /proc/self/ exists, but /proc/<pid>/ does not yet.
+            // clear any previous errors
+            (void)dlerror();
+        }
       }
+      if (!already_loaded)
 #endif
       if (!(handles[additional_shared_libraries_count++] = dlopen(lib_path, RTLD_LAZY | RTLD_GLOBAL))) {
           fputs(dlerror(), error_fd());
@@ -103,6 +112,12 @@ int main(int argc, char *argv[]) {
       fputs(error, error_fd());
       return 11;
     }
+
+    if (fn == NULL) {
+      fprintf(error_fd(), "fn was not found; missing %s in %s", symbol_name, library_path);
+      return 12;
+    }
+
     (*fn)();
     dlclose(handle);
 
@@ -148,5 +163,5 @@ int main(int argc, char *argv[]) {
     return 0;
   }
 
-  return 12;
+  return 13;
 }
