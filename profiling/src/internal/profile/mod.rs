@@ -199,19 +199,14 @@ impl Profile {
             return Ok(StringId::ZERO); // Both string tables use zero for the empty string
         };
 
-        let string_id = self.string_storage
+        self.string_storage
             .as_ref()
             // Safety: We always get here through a direct or indirect call to add_string_id_sample,
             // which already ensured that the string storage exists.
             .ok_or_else(|| anyhow::anyhow!("Current sample makes use of ManagedStringIds but profile was not created using a string table"))?
             .read()
-            // Safety: This failure is unlikely as it only happens if the lock is poisoned (and for
-            // the lock to become poisoned, another unlikely failure already happened
-            // before)
-            .expect("acquisition of read lock on string storage should succeed")
-            .get_seq_num(non_empty_string_id, &mut self.strings)?;
-
-        Ok(string_id)
+            .map_err(|_| anyhow::anyhow!("acquisition of read lock on string storage should succeed"))?
+            .get_seq_num(non_empty_string_id, &mut self.strings)
     }
 
     /// Creates a profile with `start_time`.
