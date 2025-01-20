@@ -426,13 +426,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
     period: Option<&Period>,
     start_time: Option<&Timespec>,
 ) -> ProfileNewResult {
-    let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
-    let start_time = start_time.map_or_else(SystemTime::now, SystemTime::from);
-    let period = period.map(Into::into);
-
-    let internal_profile = internal::Profile::new(start_time, &types, period);
-    let ffi_profile = Profile::new(internal_profile);
-    ProfileNewResult::Ok(ffi_profile)
+    profile_new(sample_types, period, start_time, None)
 }
 
 /// Same as `ddog_profile_new` but also configures a `string_storage` for the profile.
@@ -445,16 +439,29 @@ pub unsafe extern "C" fn ddog_prof_Profile_with_string_storage(
     start_time: Option<&Timespec>,
     string_storage: ManagedStringStorage,
 ) -> ProfileNewResult {
+    profile_new(sample_types, period, start_time, Some(string_storage))
+}
+
+unsafe fn profile_new(
+    sample_types: Slice<ValueType>,
+    period: Option<&Period>,
+    start_time: Option<&Timespec>,
+    string_storage: Option<ManagedStringStorage>,
+) -> ProfileNewResult {
     let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
     let start_time = start_time.map_or_else(SystemTime::now, SystemTime::from);
     let period = period.map(Into::into);
-    let string_storage = match get_inner_string_storage(string_storage, true) {
-        Ok(string_storage) => string_storage,
-        Err(err) => return ProfileNewResult::Err(err.into()),
-    };
 
-    let internal_profile =
-        internal::Profile::with_string_storage(start_time, &types, period, string_storage);
+    let internal_profile = match string_storage {
+        None => internal::Profile::new(start_time, &types, period),
+        Some(s) => {
+            let string_storage = match get_inner_string_storage(s, true) {
+                Ok(string_storage) => string_storage,
+                Err(err) => return ProfileNewResult::Err(err.into()),
+            };
+            internal::Profile::with_string_storage(start_time, &types, period, string_storage)
+        }
+    };
     let ffi_profile = Profile::new(internal_profile);
     ProfileNewResult::Ok(ffi_profile)
 }
