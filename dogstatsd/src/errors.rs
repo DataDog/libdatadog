@@ -4,11 +4,13 @@
 //! Error types for `metrics` module
 
 /// Errors for the function [`crate::metric::Metric::parse`]
-#[derive(Debug, thiserror::Error, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, thiserror::Error, PartialEq)]
 pub enum ParseError {
     /// Parse failure given in text
     #[error("parse failure: {0}")]
-    Raw(&'static str),
+    Raw(String),
+    #[error("unsupported metric type: {0}")]
+    UnsupportedType(String),
 }
 
 /// Failure to create a new `Aggregator`

@@ -13,6 +13,7 @@ profiling = []
 telemetry = []
 data-pipeline = []
 symbolizer = []
+library-config = []
 
 [lib]
 bench = false

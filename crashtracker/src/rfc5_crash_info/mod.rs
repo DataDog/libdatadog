@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod builder;
 mod error_data;
 mod metadata;
 mod os_info;
@@ -8,16 +9,24 @@ mod proc_info;
 mod sig_info;
 mod spans;
 mod stacktrace;
+mod telemetry;
+mod test_utils;
+mod unknown_value;
+
+pub use builder::*;
+use ddcommon::Endpoint;
+pub use error_data::*;
+pub use metadata::Metadata;
+pub use os_info::*;
+pub use proc_info::*;
+pub use sig_info::*;
+pub use spans::*;
+pub use stacktrace::*;
+pub use telemetry::*;
 
 use anyhow::Context;
-use error_data::{thread_data_from_additional_stacktraces, ErrorData, ErrorKind, SourceType};
-use metadata::Metadata;
-use os_info::OsInfo;
-use proc_info::ProcInfo;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sig_info::SigInfo;
-use spans::Span;
 use std::{collections::HashMap, fs::File, path::Path};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -35,8 +44,10 @@ pub struct CrashInfo {
     pub log_messages: Vec<String>,
     pub metadata: Metadata,
     pub os_info: OsInfo,
-    pub proc_info: ProcInfo,
-    pub sig_info: SigInfo,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proc_info: Option<ProcInfo>, //TODO, update the schema
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sig_info: Option<SigInfo>, //TODO, update the schema
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub span_ids: Vec<Span>,
     pub timestamp: String,
@@ -45,10 +56,27 @@ pub struct CrashInfo {
     pub uuid: String,
 }
 
+impl CrashInfo {
+    pub fn current_schema_version() -> String {
+        "1.0".to_string()
+    }
+}
+
+#[cfg(unix)]
+impl CrashInfo {
+    pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
+        self.error.normalize_ips(pid)
+    }
+
+    pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {
+        self.error.resolve_names(pid)
+    }
+}
+
 impl From<crate::crash_info::CrashInfo> for CrashInfo {
     fn from(value: crate::crash_info::CrashInfo) -> Self {
         let counters = value.counters;
-        let data_schema_version = String::from("1.0");
+        let data_schema_version = CrashInfo::current_schema_version();
         let error = {
             let is_crash = true;
             let kind = ErrorKind::UnixSignal;
@@ -71,8 +99,8 @@ impl From<crate::crash_info::CrashInfo> for CrashInfo {
         let log_messages = vec![];
         let metadata = value.metadata.unwrap().into();
         let os_info = value.os_info.into();
-        let proc_info = value.proc_info.unwrap().into();
-        let sig_info = value.siginfo.unwrap().into();
+        let proc_info = value.proc_info.map(ProcInfo::from);
+        let sig_info = value.siginfo.map(SigInfo::from);
         let span_ids = value
             .span_ids
             .into_iter()
@@ -123,6 +151,36 @@ impl CrashInfo {
             .with_context(|| format!("Failed to write json to {}", path.display()))?;
         Ok(())
     }
+
+    pub fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
+        rt.block_on(async { self.async_upload_to_endpoint(endpoint).await })
+    }
+
+    pub async fn async_upload_to_endpoint(
+        &self,
+        endpoint: &Option<Endpoint>,
+    ) -> anyhow::Result<()> {
+        // If we're debugging to a file, dump the actual crashinfo into a json
+        if let Some(endpoint) = endpoint {
+            if Some("file") == endpoint.url.scheme_str() {
+                let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
+                    .context("crash output file path was not correctly formatted")?;
+                self.to_file(&path)?;
+            }
+        }
+
+        self.upload_to_telemetry(endpoint).await
+    }
+
+    async fn upload_to_telemetry(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+        let uploader = TelemetryCrashUploader::new(&self.metadata, endpoint)?;
+        uploader.upload_to_telemetry(self).await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -134,5 +192,55 @@ mod tests {
     fn print_schema() {
         let schema = schemars::schema_for!(CrashInfo);
         println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+    }
+
+    impl test_utils::TestInstance for CrashInfo {
+        fn test_instance(seed: u64) -> Self {
+            let mut counters = HashMap::new();
+            counters.insert("collecting_sample".to_owned(), 1);
+            counters.insert("not_profiling".to_owned(), 0);
+
+            let span_ids = vec![
+                Span {
+                    id: "42".to_string(),
+                    thread_name: Some("thread1".to_string()),
+                },
+                Span {
+                    id: "24".to_string(),
+                    thread_name: Some("thread2".to_string()),
+                },
+            ];
+
+            let trace_ids = vec![
+                Span {
+                    id: "345".to_string(),
+                    thread_name: Some("thread111".to_string()),
+                },
+                Span {
+                    id: "666".to_string(),
+                    thread_name: Some("thread222".to_string()),
+                },
+            ];
+
+            Self {
+                counters,
+                data_schema_version: "1.0".to_string(),
+                error: ErrorData::test_instance(seed),
+                files: HashMap::new(),
+                fingerprint: None,
+                incomplete: true,
+                log_messages: vec![],
+                metadata: Metadata::test_instance(seed),
+                os_info: ::os_info::Info::unknown().into(),
+                proc_info: Some(ProcInfo::test_instance(seed)),
+                sig_info: Some(SigInfo::test_instance(seed)),
+                span_ids,
+                timestamp: chrono::DateTime::from_timestamp(1568898000 /* Datadog IPO */, 0)
+                    .unwrap()
+                    .to_string(),
+                trace_ids,
+                uuid: uuid::uuid!("1d6b97cb-968c-40c9-af6e-e4b4d71e8781").to_string(),
+            }
+        }
     }
 }

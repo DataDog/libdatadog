@@ -2,7 +2,7 @@ name: Test
 on: [push]
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.76.0
+  RUST_VERSION: 1.78.0
 
 jobs:
   test:
@@ -141,7 +141,7 @@ jobs:
         env:
           RUSTFLAGS: "${{ matrix.flags }}"
         run: |
-          cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -- --out $LIBDD_OUTPUT_FOLDER
+          cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker,library-config --release -- --out $LIBDD_OUTPUT_FOLDER
 
       - name: 'Publish libdatadog'
         uses: actions/upload-artifact@v4
@@ -187,6 +187,7 @@ jobs:
             cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DBUILD_SYMBOLIZER=true
             cmake --build .
             ./symbolizer
+            ./crashinfo
           else
             cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER
             cmake --build .

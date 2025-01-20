@@ -34,12 +34,14 @@ impl From<crate::SigInfo> for SigInfo {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::upper_case_acronyms, non_camel_case_types)]
+#[repr(C)]
 /// See https://man7.org/linux/man-pages/man7/signal.7.html
 pub enum SignalNames {
     SIGABRT,
     SIGBUS,
     SIGSEGV,
     SIGSYS,
+    UNKNOWN,
 }
 
 #[cfg(unix)]
@@ -64,6 +66,7 @@ impl From<libc::c_int> for SignalNames {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::upper_case_acronyms, non_camel_case_types)]
+#[repr(C)]
 /// See https://man7.org/linux/man-pages/man2/sigaction.2.html
 pub enum SiCodes {
     BUS_ADRALN,
@@ -84,4 +87,18 @@ pub enum SiCodes {
     SI_TKILL,
     SI_USER,
     SYS_SECCOMP,
+    UNKNOWN,
+}
+
+#[cfg(test)]
+impl SigInfo {
+    pub fn test_instance(_seed: u64) -> Self {
+        Self {
+            si_addr: Some("0x0000000000001234".to_string()),
+            si_code: 1,
+            si_code_human_readable: SiCodes::SEGV_BNDERR,
+            si_signo: 11,
+            si_signo_human_readable: SignalNames::SIGSEGV,
+        }
+    }
 }

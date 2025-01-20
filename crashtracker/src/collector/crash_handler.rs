@@ -6,14 +6,15 @@
 
 use super::emitters::emit_crashreport;
 use super::saguard::SaGuard;
-use crate::crash_info::CrashtrackerMetadata;
+use crate::rfc5_crash_info::Metadata;
 use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
+use crate::shared::constants::*;
 use anyhow::Context;
 use libc::{
-    c_void, execve, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE,
-    PROT_READ, PROT_WRITE, SIGSTKSZ,
+    c_void, execve, mmap, nfds_t, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE,
+    PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ,
 };
-use nix::poll::{poll, PollFd, PollFlags};
+use libc::{poll, pollfd, POLLHUP};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use nix::sys::socket;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
@@ -22,7 +23,7 @@ use std::ffi::CString;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::unix::{
-    io::{BorrowedFd, FromRawFd, IntoRawFd, RawFd},
+    io::{FromRawFd, IntoRawFd, RawFd},
     net::UnixStream,
 };
 use std::ptr;
@@ -149,28 +150,23 @@ fn open_file_or_quiet(filename: Option<&str>) -> anyhow::Result<RawFd> {
 //       on macos, where the OS will terminate an offending process.  This appears to be untrue
 //       and `waitpid()` is characterized as async-signal safe by POSIX.
 fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
-    let timeout = Duration::from_millis(timeout_ms as u64);
+    let timeout = Duration::from_millis(timeout_ms.into());
     let start_time = Instant::now();
 
     loop {
         match waitpid(pid, Some(WaitPidFlag::WNOHANG)) {
-            Ok(WaitStatus::StillAlive) => {
-                if start_time.elapsed() > timeout {
-                    return Err(anyhow::anyhow!("Timeout waiting for child process to exit"));
-                }
-            }
-            Ok(_status) => {
-                return Ok(true);
-            }
+            Ok(WaitStatus::StillAlive) => anyhow::ensure!(
+                start_time.elapsed() <= timeout,
+                "Timeout waiting for child process to exit"
+            ),
+            Ok(_status) => return Ok(true),
             Err(nix::Error::ECHILD) => {
                 // Non-availability of the specified process is weird, since we should have
                 // exclusive access to reaping its exit, but at the very least means there is
                 // nothing further for us to do.
                 return Ok(true);
             }
-            _ => {
-                return Err(anyhow::anyhow!("Error waiting for child process to exit"));
-            }
+            _ => anyhow::bail!("Error waiting for child process to exit"),
         }
     }
 }
@@ -227,21 +223,28 @@ fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout
     }
 }
 
+/// true if successful wait, false if timeout occurred.
 fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
-    // Need to convert the RawFd into a BorrowedFd to satisfy the PollFd prototype
-    let target_fd = unsafe { BorrowedFd::borrow_raw(target_fd) };
-    let poll_fd = PollFd::new(&target_fd, PollFlags::POLLHUP);
+    let mut poll_fds = [pollfd {
+        fd: target_fd,
+        events: POLLHUP,
+        revents: 0,
+    }];
 
-    match poll(&mut [poll_fd], timeout_ms)? {
-        -1 => Err(anyhow::anyhow!("poll failed")),
-        0 => Ok(false),
-        _ => match poll_fd
-            .revents()
-            .ok_or_else(|| anyhow::anyhow!("No revents found"))?
-        {
-            revents if revents.contains(PollFlags::POLLHUP) => Ok(true),
-            _ => Err(anyhow::anyhow!("poll returned unexpected result")),
-        },
+    match unsafe { poll(poll_fds.as_mut_ptr(), poll_fds.len() as nfds_t, timeout_ms) } {
+        -1 => Err(anyhow::anyhow!(
+            "poll failed with errno: {}",
+            std::io::Error::last_os_error()
+        )),
+        0 => Ok(false), // Timeout occurred
+        _ => {
+            let revents = poll_fds[0].revents;
+            anyhow::ensure!(
+                revents & POLLHUP != 0,
+                "poll returned unexpected result: revents = {revents}"
+            );
+            Ok(true) // POLLHUP detected
+        }
     }
 }
 
@@ -253,7 +256,7 @@ fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
 // `Box::from_raw` to recreate the box, then dropping it.
 static ALTSTACK_INIT: AtomicBool = AtomicBool::new(false);
 static OLD_HANDLERS: AtomicPtr<OldHandlers> = AtomicPtr::new(ptr::null_mut());
-static METADATA: AtomicPtr<(CrashtrackerMetadata, String)> = AtomicPtr::new(ptr::null_mut());
+static METADATA: AtomicPtr<(Metadata, String)> = AtomicPtr::new(ptr::null_mut());
 static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
 static RECEIVER_CONFIG: AtomicPtr<CrashtrackerReceiverConfig> = AtomicPtr::new(ptr::null_mut());
 static RECEIVER_ARGS: AtomicPtr<PreparedExecve> = AtomicPtr::new(ptr::null_mut());
@@ -313,7 +316,7 @@ fn make_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<Receiver
 ///     No other crash-handler functions should be called concurrently.
 /// ATOMICITY:
 ///     This function uses a swap on an atomic pointer.
-pub fn update_metadata(metadata: CrashtrackerMetadata) -> anyhow::Result<()> {
+pub fn update_metadata(metadata: Metadata) -> anyhow::Result<()> {
     let metadata_string = serde_json::to_string(&metadata)?;
     let box_ptr = Box::into_raw(Box::new((metadata, metadata_string)));
     let old = METADATA.swap(box_ptr, SeqCst);
@@ -387,7 +390,7 @@ pub fn configure_receiver(config: CrashtrackerReceiverConfig) {
 extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucontext: *mut c_void) {
     // Handle the signal.  Note this has a guard to ensure that we only generate
     // one crash report per process.
-    let _ = handle_posix_signal_impl(signum, sig_info);
+    let _ = handle_posix_signal_impl(sig_info);
 
     // Once we've handled the signal, chain to any previous handlers.
     // SAFETY: This was created by [register_crash_handlers].  There is a tiny
@@ -484,13 +487,16 @@ fn receiver_finish(receiver: Receiver, start_time: Instant, timeout_ms: u32) {
         }
 
         let receiver_pid_as_pid = Pid::from_raw(receiver.receiver_pid);
-        let reaping_allowed_ms = timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32);
+        let reaping_allowed_ms = std::cmp::min(
+            timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32),
+            DD_CRASHTRACK_MINIMUM_REAP_TIME_MS,
+        );
 
         let _ = reap_child_non_blocking(receiver_pid_as_pid, reaping_allowed_ms);
     }
 }
 
-fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Result<()> {
+fn handle_posix_signal_impl(sig_info: *mut siginfo_t) -> anyhow::Result<()> {
     // If this is a SIGSEGV signal, it could be called due to a stack overflow. In that case, since
     // this signal allocates to the stack and cannot guarantee it is running without SA_NODEFER, it
     // is possible that we will re-emit the signal. Contemporary unices handle this just fine (no
@@ -532,14 +538,6 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     let timeout_ms = config.timeout_ms;
     let start_time = Instant::now(); // This is the time at which the signal was received
 
-    // Derive the faulting address from `sig_info`
-    let faulting_address: Option<usize> =
-        if !sig_info.is_null() && (signum == libc::SIGSEGV || signum == libc::SIGBUS) {
-            unsafe { Some((*sig_info).si_addr() as usize) }
-        } else {
-            None
-        };
-
     // During the execution of this signal handler, block ALL other signals, especially because we
     // cannot control whether or not we run with SA_NODEFER (crashtracker might have been chained).
     // The especially problematic signals are SIGCHLD and SIGPIPE, which are possibly delivered due
@@ -575,8 +573,7 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
         config,
         config_str,
         metadata_string,
-        signum,
-        faulting_address,
+        sig_info,
     );
 
     let _ = unix_stream.flush();

@@ -68,6 +68,7 @@ pub enum DogStatsDAction<'a, T: AsRef<str>, V: IntoIterator<Item = &'a Tag>> {
 }
 
 /// A dogstatsd-client that flushes stats to a given endpoint. Use `new_flusher` to build one.
+#[derive(Debug)]
 pub struct Client {
     client: StatsdClient,
 }

@@ -1,7 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::option_from_char_slice;
 pub use datadog_crashtracker::{OpTypes, StacktraceCollection};
 use ddcommon::Endpoint;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
@@ -30,23 +29,20 @@ impl<'a> TryFrom<ReceiverConfig<'a>> for datadog_crashtracker::CrashtrackerRecei
         let args = {
             let mut vec = Vec::with_capacity(value.args.len());
             for x in value.args.iter() {
-                vec.push(x.try_to_utf8()?.to_string());
+                vec.push(x.try_to_string()?);
             }
             vec
         };
         let env = {
             let mut vec = Vec::with_capacity(value.env.len());
             for x in value.env.iter() {
-                vec.push((
-                    x.key.try_to_utf8()?.to_string(),
-                    x.val.try_to_utf8()?.to_string(),
-                ));
+                vec.push((x.key.try_to_string()?, x.val.try_to_string()?));
             }
             vec
         };
-        let path_to_receiver_binary = value.path_to_receiver_binary.try_to_utf8()?.to_string();
-        let stderr_filename = option_from_char_slice(value.optional_stderr_filename)?;
-        let stdout_filename = option_from_char_slice(value.optional_stdout_filename)?;
+        let path_to_receiver_binary = value.path_to_receiver_binary.try_to_string()?;
+        let stderr_filename = value.optional_stderr_filename.try_to_string_option()?;
+        let stdout_filename = value.optional_stdout_filename.try_to_string_option()?;
         Self::new(
             args,
             env,
@@ -80,7 +76,7 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
         let additional_files = {
             let mut vec = Vec::with_capacity(value.additional_files.len());
             for x in value.additional_files.iter() {
-                vec.push(x.try_to_utf8()?.to_string());
+                vec.push(x.try_to_string()?);
             }
             vec
         };
@@ -89,7 +85,7 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
         let endpoint = value.endpoint.cloned();
         let resolve_frames = value.resolve_frames;
         let timeout_ms = value.timeout_ms;
-        let unix_socket_path = option_from_char_slice(value.optional_unix_socket_filename)?;
+        let unix_socket_path = value.optional_unix_socket_filename.try_to_string_option()?;
         Self::new(
             additional_files,
             create_alt_stack,
@@ -99,22 +95,6 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
             timeout_ms,
             unix_socket_path,
         )
-    }
-}
-
-#[repr(C)]
-pub enum UsizeResult {
-    Ok(usize),
-    #[allow(dead_code)]
-    Err(Error),
-}
-
-impl From<anyhow::Result<usize>> for UsizeResult {
-    fn from(value: anyhow::Result<usize>) -> Self {
-        match value {
-            Ok(x) => Self::Ok(x),
-            Err(err) => Self::Err(err.into()),
-        }
     }
 }
 
