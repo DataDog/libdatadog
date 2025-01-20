@@ -64,7 +64,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
     string: CharSlice,
 ) -> ManagedStringStorageInternResult {
     // Empty strings always get assigned id 0, no need to check.
-    if string.len() == 0 {
+    if string.is_empty() {
         return anyhow::Ok(ManagedStringId { value: 0 }).into();
     }
 
