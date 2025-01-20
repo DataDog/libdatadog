@@ -17,7 +17,7 @@ mod unix {
     use std::path::Path;
 
     use datadog_crashtracker::{
-        self as crashtracker, CrashtrackerConfiguration, CrashtrackerMetadata,
+        self as crashtracker, rfc5_crash_info::Metadata, CrashtrackerConfiguration,
         CrashtrackerReceiverConfig,
     };
     use ddcommon::{tag, Endpoint};
@@ -60,7 +60,7 @@ mod unix {
             unix_socket_path: Some("".to_string()),
         };
 
-        let metadata = CrashtrackerMetadata {
+        let metadata = Metadata {
             library_name: "libdatadog".to_owned(),
             library_version: "1.0.0".to_owned(),
             family: "native".to_owned(),
@@ -69,7 +69,10 @@ mod unix {
                 tag!("service_version", "bar"),
                 tag!("runtime-id", "xyz"),
                 tag!("language", "native"),
-            ],
+            ]
+            .into_iter()
+            .map(|x| x.to_string())
+            .collect(),
         };
 
         // Set the behavior of the test, run setup, and do the pre-init test

@@ -101,6 +101,7 @@ pub fn emit_counters(w: &mut impl Write) -> anyhow::Result<()> {
         writeln!(w, "{{\"{}\": {}}}", OpTypes::name(i)?, c.load(SeqCst))?;
     }
     writeln!(w, "{DD_CRASHTRACK_END_COUNTERS}")?;
+    w.flush()?;
     Ok(())
 }
 

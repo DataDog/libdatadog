@@ -1,8 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::receive_report::{receive_report_from_stream, CrashReportStatus};
-use crate::{CrashInfo, CrashtrackerConfiguration, StacktraceCollection};
+use super::receive_report::receive_report_from_stream;
+use crate::{rfc5_crash_info::CrashInfo, CrashtrackerConfiguration, StacktraceCollection};
 use anyhow::Context;
 use std::time::Duration;
 use tokio::{
@@ -32,7 +32,7 @@ pub async fn async_receiver_entry_point_unix_socket(
         let (unix_stream, _) = listener.accept().await?;
         let stream = BufReader::new(unix_stream);
         let res = receiver_entry_point(receiver_timeout(), stream).await;
-
+        // TODO, should we log failures somewhere?
         if one_shot {
             return res;
         }
@@ -97,18 +97,17 @@ async fn receiver_entry_point(
     timeout: Duration,
     stream: impl AsyncBufReadExt + std::marker::Unpin,
 ) -> anyhow::Result<()> {
-    match receive_report_from_stream(timeout, stream).await? {
-        CrashReportStatus::NoCrash => Ok(()),
-        CrashReportStatus::CrashReport(config, mut crash_info) => {
-            resolve_frames(&config, &mut crash_info)?;
-            crash_info.async_upload_to_endpoint(&config.endpoint).await
+    if let Some((config, mut crash_info)) = receive_report_from_stream(timeout, stream).await? {
+        if let Err(e) = resolve_frames(&config, &mut crash_info) {
+            crash_info
+                .log_messages
+                .push(format!("Error resolving frames: {e}"));
         }
-        CrashReportStatus::PartialCrashReport(config, mut crash_info, stdin_state) => {
-            eprintln!("Failed to fully receive crash.  Exit state was: {stdin_state:?}");
-            resolve_frames(&config, &mut crash_info)?;
-            crash_info.async_upload_to_endpoint(&config.endpoint).await
-        }
+        crash_info
+            .async_upload_to_endpoint(&config.endpoint)
+            .await?;
     }
+    Ok(())
 }
 
 fn receiver_timeout() -> Duration {
@@ -127,11 +126,13 @@ fn resolve_frames(
     crash_info: &mut CrashInfo,
 ) -> anyhow::Result<()> {
     if config.resolve_frames == StacktraceCollection::EnabledWithSymbolsInReceiver {
-        let proc_info = crash_info
+        let pid = crash_info
             .proc_info
             .as_ref()
-            .context("Unable to resolve frames: No PID specified")?;
-        crash_info.resolve_names_from_process(proc_info.pid)?;
+            .context("Unable to resolve frames: No PID specified")?
+            .pid;
+        crash_info.resolve_names(pid)?;
+        crash_info.normalize_ips(pid)?;
     }
     Ok(())
 }
