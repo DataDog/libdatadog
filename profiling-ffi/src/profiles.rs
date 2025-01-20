@@ -247,14 +247,12 @@ impl<'a> TryFrom<&'a Mapping<'a>> for api::Mapping<'a> {
 
 impl<'a> From<&'a Mapping<'a>> for api::StringIdMapping {
     fn from(mapping: &'a Mapping<'a>) -> Self {
-        let filename = ManagedStringId::new(mapping.filename_id.value);
-        let build_id = ManagedStringId::new(mapping.build_id_id.value);
         Self {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
             file_offset: mapping.file_offset,
-            filename,
-            build_id,
+            filename: mapping.filename_id,
+            build_id: mapping.build_id_id,
         }
     }
 }
@@ -295,13 +293,10 @@ impl<'a> TryFrom<&'a Function<'a>> for api::Function<'a> {
 
 impl<'a> From<&'a Function<'a>> for api::StringIdFunction {
     fn from(function: &'a Function<'a>) -> Self {
-        let name = ManagedStringId::new(function.name_id.value);
-        let system_name = ManagedStringId::new(function.system_name_id.value);
-        let filename = ManagedStringId::new(function.filename_id.value);
         Self {
-            name,
-            system_name,
-            filename,
+            name: function.name_id,
+            system_name: function.system_name_id,
+            filename: function.filename_id,
             start_line: function.start_line,
         }
     }
@@ -324,11 +319,9 @@ impl<'a> TryFrom<&'a Location<'a>> for api::Location<'a> {
 
 impl<'a> From<&'a Location<'a>> for api::StringIdLocation {
     fn from(location: &'a Location<'a>) -> Self {
-        let mapping = api::StringIdMapping::from(&location.mapping);
-        let function = api::StringIdFunction::from(&location.function);
         Self {
-            mapping,
-            function,
+            mapping: api::StringIdMapping::from(&location.mapping),
+            function: api::StringIdFunction::from(&location.function),
             address: location.address,
             line: location.line,
         }
@@ -360,18 +353,14 @@ impl<'a> TryFrom<&'a Label<'a>> for api::Label<'a> {
 
 impl<'a> From<&'a Label<'a>> for api::StringIdLabel {
     fn from(label: &'a Label<'a>) -> Self {
-        let key = ManagedStringId::new(label.key_id.value);
-        let str = label.str_id.value;
-        let str = if str == 0 {
+        let key = label.key_id;
+        let str = label.str_id;
+        let str = if str.value == 0 { None } else { Some(str) };
+        let num_unit = label.num_unit_id;
+        let num_unit = if num_unit.value == 0 {
             None
         } else {
-            Some(ManagedStringId::new(str))
-        };
-        let num_unit = label.num_unit_id.value;
-        let num_unit = if num_unit == 0 {
-            None
-        } else {
-            Some(ManagedStringId::new(num_unit))
+            Some(num_unit)
         };
 
         Self {
