@@ -399,23 +399,10 @@ impl<'a> TryFrom<Sample<'a>> for api::Sample<'a> {
 
 impl From<Sample<'_>> for api::StringIdSample {
     fn from(sample: Sample<'_>) -> Self {
-        let mut locations: Vec<api::StringIdLocation> = Vec::with_capacity(sample.locations.len());
-
-        for location in sample.locations.as_slice().iter() {
-            locations.push(location.into())
-        }
-
-        let values: Vec<i64> = sample.values.into_slice().to_vec();
-
-        let mut labels: Vec<api::StringIdLabel> = Vec::with_capacity(sample.labels.len());
-        for label in sample.labels.as_slice().iter() {
-            labels.push(label.into());
-        }
-
         Self {
-            locations,
-            values,
-            labels,
+            locations: sample.locations.as_slice().iter().map(Into::into).collect(),
+            values: sample.values.into_slice().to_vec(),
+            labels: sample.labels.as_slice().iter().map(Into::into).collect(),
         }
     }
 }
