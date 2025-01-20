@@ -268,6 +268,12 @@ impl TraceExporter {
             TraceExporterInputFormat::V04 => self.send_deser_ser(data),
         }
         .and_then(|res| {
+            if res.is_empty() {
+                return Err(TraceExporterError::Agent(
+                    error::AgentErrorKind::EmptyResponse,
+                ));
+            }
+
             let rates = res.parse::<Rates>()?;
 
             let rate = rates.get(&self.metadata.service, &self.metadata.env)?;
@@ -917,6 +923,7 @@ pub trait ResponseCallback {
 
 #[cfg(test)]
 mod tests {
+    use self::error::AgentErrorKind;
     use self::error::BuilderErrorKind;
     use super::*;
     use datadog_trace_utils::span_v04::Span;
@@ -1618,5 +1625,45 @@ mod tests {
         .unwrap();
 
         assert_eq!(code, 500);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn agent_empty_response_error() {
+        let server = MockServer::start();
+        let _agent = server.mock(|_, then| {
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("");
+        });
+
+        let exporter = TraceExporterBuilder::default()
+            .set_url(&server.url("/"))
+            .set_service("foo")
+            .set_env("foo-env")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .build()
+            .unwrap();
+
+        let traces: Vec<Vec<Span>> = vec![vec![Span {
+            name: BytesString::from_slice(b"test").unwrap(),
+            ..Default::default()
+        }]];
+        let bytes = tinybytes::Bytes::from(
+            rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace"),
+        );
+        let err = exporter.send(bytes, 1);
+
+        assert!(err.is_err());
+        assert_eq!(
+            match err.unwrap_err() {
+                TraceExporterError::Agent(e) => Some(e),
+                _ => None,
+            },
+            Some(AgentErrorKind::EmptyResponse)
+        );
     }
 }

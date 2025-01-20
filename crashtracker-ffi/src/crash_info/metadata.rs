@@ -32,22 +32,3 @@ impl<'a> TryFrom<Metadata<'a>> for datadog_crashtracker::rfc5_crash_info::Metada
         })
     }
 }
-
-impl<'a> TryFrom<Metadata<'a>> for datadog_crashtracker::CrashtrackerMetadata {
-    type Error = anyhow::Error;
-    fn try_from(value: Metadata<'a>) -> anyhow::Result<Self> {
-        let library_name = value.library_name.try_to_string()?;
-        let library_version = value.library_version.try_to_string()?;
-        let family = value.family.try_to_string()?;
-        let tags = value
-            .tags
-            .map(|tags| tags.iter().cloned().collect())
-            .unwrap_or_default();
-        Ok(Self {
-            library_name,
-            library_version,
-            family,
-            tags,
-        })
-    }
-}

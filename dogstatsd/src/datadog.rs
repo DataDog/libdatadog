@@ -4,18 +4,125 @@
 //!Types to serialize data into the Datadog API
 
 use datadog_protos::metrics::SketchPayload;
+use derive_more::{Display, Into};
+use lazy_static::lazy_static;
 use protobuf::Message;
+use regex::Regex;
 use reqwest;
 use serde::{Serialize, Serializer};
 use serde_json;
 use std::time::Duration;
 use tracing::{debug, error};
 
+lazy_static! {
+    static ref SITE_RE: Regex = Regex::new(r"^[a-zA-Z0-9._:-]+$").expect("invalid regex");
+    static ref URL_PREFIX_RE: Regex =
+        Regex::new(r"^https?://[a-zA-Z0-9._:-]+$").expect("invalid regex");
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Into)]
+pub struct Site(String);
+
+#[derive(thiserror::Error, Debug, Clone, PartialEq)]
+#[error("Invalid site: {0}")]
+pub struct SiteError(String);
+
+impl Site {
+    pub fn new(site: String) -> Result<Self, SiteError> {
+        // Datadog sites are generally domain names. In particular, they shouldn't have any slashes
+        // in them. We expect this to be coming from a `DD_SITE` environment variable or the `site`
+        // config field.
+        if SITE_RE.is_match(&site) {
+            Ok(Site(site))
+        } else {
+            Err(SiteError(site))
+        }
+    }
+}
+
+#[derive(thiserror::Error, Debug, Clone, PartialEq)]
+#[error("Invalid URL prefix: {0}")]
+pub struct UrlPrefixError(String);
+
+fn validate_url_prefix(prefix: &str) -> Result<(), UrlPrefixError> {
+    if URL_PREFIX_RE.is_match(prefix) {
+        Ok(())
+    } else {
+        Err(UrlPrefixError(prefix.to_owned()))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Into)]
+pub struct DdUrl(String);
+
+impl DdUrl {
+    pub fn new(prefix: String) -> Result<Self, UrlPrefixError> {
+        validate_url_prefix(&prefix)?;
+        Ok(Self(prefix))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Into)]
+pub struct DdDdUrl(String);
+
+impl DdDdUrl {
+    pub fn new(prefix: String) -> Result<Self, UrlPrefixError> {
+        validate_url_prefix(&prefix)?;
+        Ok(Self(prefix))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Into)]
+pub struct MetricsIntakeUrlPrefixOverride(String);
+
+impl MetricsIntakeUrlPrefixOverride {
+    pub fn maybe_new(dd_url: Option<DdUrl>, dd_dd_url: Option<DdDdUrl>) -> Option<Self> {
+        match (dd_url, dd_dd_url) {
+            (None, None) => None,
+            (_, Some(dd_dd_url)) => Some(Self(dd_dd_url.into())),
+            (Some(dd_url), None) => Some(Self(dd_url.into())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
+pub struct MetricsIntakeUrlPrefix(String);
+
+#[derive(thiserror::Error, Debug, Clone, PartialEq)]
+#[error("Missing intake URL configuration")]
+pub struct MissingIntakeUrlError;
+
+impl MetricsIntakeUrlPrefix {
+    #[inline]
+    pub fn new(
+        site: Option<Site>,
+        overridden_prefix: Option<MetricsIntakeUrlPrefixOverride>,
+    ) -> Result<Self, MissingIntakeUrlError> {
+        match (site, overridden_prefix) {
+            (None, None) => Err(MissingIntakeUrlError),
+            (_, Some(prefix)) => Ok(Self::new_expect_validated(prefix.into())),
+            (Some(site), None) => Ok(Self::from_site(site)),
+        }
+    }
+
+    #[inline]
+    fn new_expect_validated(validated_prefix: String) -> Self {
+        validate_url_prefix(&validated_prefix).expect("Invalid URL prefix");
+
+        Self(validated_prefix)
+    }
+
+    #[inline]
+    fn from_site(site: Site) -> Self {
+        Self(format!("https://api.{}", site))
+    }
+}
+
 /// Interface for the `DogStatsD` metrics intake API.
 #[derive(Debug)]
 pub struct DdApi {
     api_key: String,
-    fqdn_site: String,
+    metrics_intake_url_prefix: MetricsIntakeUrlPrefix,
     client: reqwest::Client,
 }
 
@@ -23,7 +130,7 @@ impl DdApi {
     #[must_use]
     pub fn new(
         api_key: String,
-        site: String,
+        metrics_intake_url_prefix: MetricsIntakeUrlPrefix,
         https_proxy: Option<String>,
         timeout: Duration,
     ) -> Self {
@@ -36,7 +143,7 @@ impl DdApi {
         };
         DdApi {
             api_key,
-            fqdn_site: site,
+            metrics_intake_url_prefix,
             client,
         }
     }
@@ -46,7 +153,7 @@ impl DdApi {
         let body = serde_json::to_vec(&series).expect("failed to serialize series");
         debug!("Sending body: {:?}", &series);
 
-        let url = format!("{}/api/v2/series", &self.fqdn_site);
+        let url = format!("{}/api/v2/series", &self.metrics_intake_url_prefix);
         let resp = self
             .client
             .post(&url)
@@ -74,7 +181,7 @@ impl DdApi {
     }
 
     pub async fn ship_distributions(&self, sketches: &SketchPayload) {
-        let url = format!("{}/api/beta/sketches", &self.fqdn_site);
+        let url = format!("{}/api/beta/sketches", &self.metrics_intake_url_prefix);
         debug!("Sending distributions: {:?}", &sketches);
         // TODO maybe go to coded output stream if we incrementally
         // add sketch payloads to the buffer
@@ -193,5 +300,75 @@ impl Series {
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.series.len()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn override_can_be_empty() {
+        assert_eq!(MetricsIntakeUrlPrefixOverride::maybe_new(None, None), None);
+    }
+
+    #[test]
+    fn override_prefers_dd_dd_url() {
+        assert_eq!(
+            MetricsIntakeUrlPrefixOverride::maybe_new(
+                Some(DdUrl::new("http://a_dd_url".to_string()).unwrap()),
+                Some(DdDdUrl::new("https://a_dd_dd_url".to_string()).unwrap())
+            ),
+            Some(MetricsIntakeUrlPrefixOverride(
+                "https://a_dd_dd_url".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn override_will_take_dd_url() {
+        assert_eq!(
+            MetricsIntakeUrlPrefixOverride::maybe_new(
+                Some(DdUrl::new("http://a_dd_url".to_string()).unwrap()),
+                None
+            ),
+            Some(MetricsIntakeUrlPrefixOverride(
+                "http://a_dd_url".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_intake_url_prefix_new_requires_something() {
+        assert_eq!(
+            MetricsIntakeUrlPrefix::new(None, None),
+            Err(MissingIntakeUrlError)
+        );
+    }
+
+    #[test]
+    fn test_intake_url_prefix_new_picks_the_override() {
+        assert_eq!(
+            MetricsIntakeUrlPrefix::new(
+                Some(Site::new("a_site".to_string()).unwrap()),
+                MetricsIntakeUrlPrefixOverride::maybe_new(
+                    Some(DdUrl::new("http://a_dd_url".to_string()).unwrap()),
+                    None
+                ),
+            ),
+            Ok(MetricsIntakeUrlPrefix::new_expect_validated(
+                "http://a_dd_url".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_intake_url_prefix_new_picks_site_as_a_fallback() {
+        assert_eq!(
+            MetricsIntakeUrlPrefix::new(Some(Site::new("a_site".to_string()).unwrap()), None,),
+            Ok(MetricsIntakeUrlPrefix::new_expect_validated(
+                "https://api.a_site".to_string()
+            ))
+        );
     }
 }

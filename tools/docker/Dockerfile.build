@@ -80,6 +80,8 @@ COPY "ddsketch/Cargo.toml" "ddsketch/"
 COPY "dogstatsd/Cargo.toml" "dogstatsd/"
 COPY "dogstatsd-client/Cargo.toml" "dogstatsd-client/"
 COPY "dynamic-configuration/Cargo.toml" "dynamic-configuration/"
+COPY "library-config-ffi/Cargo.toml" "library-config-ffi/"
+COPY "library-config/Cargo.toml" "library-config/"
 COPY "live-debugger/Cargo.toml" "live-debugger/"
 COPY "live-debugger-ffi/Cargo.toml" "live-debugger-ffi/"
 COPY "profiling/Cargo.toml" "profiling/"
@@ -159,7 +161,7 @@ RUN cargo build --lib --workspace --exclude builder
 RUN cargo build --release --lib --workspace --exclude builder
 
 COPY ./ ./
-RUN cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -- --out /build/output
+RUN cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker,datadog-library-config-ffi --release -- --out /build/output
 
 FROM scratch as ffi_build_output
 

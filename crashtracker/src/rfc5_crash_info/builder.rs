@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use super::*;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct ErrorDataBuilder {
     pub kind: Option<ErrorKind>,
     pub message: Option<String>,
@@ -25,10 +25,7 @@ impl ErrorDataBuilder {
         let kind = self.kind.context("required field 'kind' missing")?;
         let message = self.message;
         let source_type = SourceType::Crashtracking;
-        let stack = self.stack.unwrap_or(StackTrace {
-            format: "Missing Stacktrace".to_string(),
-            frames: vec![],
-        });
+        let stack = self.stack.unwrap_or_else(StackTrace::missing);
         let threads = self.threads.unwrap_or_default();
         Ok((
             ErrorData {
@@ -62,13 +59,35 @@ impl ErrorDataBuilder {
         Ok(self)
     }
 
+    pub fn with_stack_frame(
+        &mut self,
+        frame: StackFrame,
+        incomplete: bool,
+    ) -> anyhow::Result<&mut Self> {
+        if let Some(stack) = &mut self.stack {
+            stack.push_frame(frame, incomplete)?;
+        } else {
+            self.stack = Some(StackTrace::from_frames(vec![frame], incomplete));
+        }
+        Ok(self)
+    }
+
+    pub fn with_stack_set_complete(&mut self) -> anyhow::Result<&mut Self> {
+        if let Some(stack) = &mut self.stack {
+            stack.set_complete()?;
+        } else {
+            anyhow::bail!("Can't set non-existant stack complete");
+        }
+        Ok(self)
+    }
+
     pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<&mut Self> {
         self.threads = Some(threads);
         Ok(self)
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct CrashInfoBuilder {
     pub counters: Option<HashMap<String, i64>>,
     pub error: ErrorDataBuilder,
@@ -93,7 +112,7 @@ impl CrashInfoBuilder {
         let (error, incomplete_error) = self.error.build()?;
         let files = self.files.unwrap_or_default();
         let fingerprint = self.fingerprint;
-        let incomplete = incomplete_error; // TODO
+        let incomplete = incomplete_error || self.incomplete.unwrap_or(false);
         let log_messages = self.log_messages.unwrap_or_default();
         let metadata = self.metadata.unwrap_or_else(Metadata::unknown_value);
         let os_info = self.os_info.unwrap_or_else(OsInfo::unknown_value);
@@ -120,6 +139,10 @@ impl CrashInfoBuilder {
             trace_ids,
             uuid,
         })
+    }
+
+    pub fn has_data(&self) -> bool {
+        *self != Self::default()
     }
 
     pub fn new() -> Self {
@@ -185,7 +208,15 @@ impl CrashInfoBuilder {
     }
 
     /// Appends the given message to the current set of messages in the builder.
-    pub fn with_log_message(&mut self, message: String) -> anyhow::Result<&mut Self> {
+    pub fn with_log_message(
+        &mut self,
+        message: String,
+        also_print: bool,
+    ) -> anyhow::Result<&mut Self> {
+        if also_print {
+            eprintln!("{message}");
+        }
+
         if let Some(ref mut messages) = &mut self.log_messages {
             messages.push(message);
         } else {
@@ -244,6 +275,20 @@ impl CrashInfoBuilder {
 
     pub fn with_stack(&mut self, stack: StackTrace) -> anyhow::Result<&mut Self> {
         self.error.with_stack(stack)?;
+        Ok(self)
+    }
+
+    pub fn with_stack_frame(
+        &mut self,
+        frame: StackFrame,
+        incomplete: bool,
+    ) -> anyhow::Result<&mut Self> {
+        self.error.with_stack_frame(frame, incomplete)?;
+        Ok(self)
+    }
+
+    pub fn with_stack_set_complete(&mut self) -> anyhow::Result<&mut Self> {
+        self.error.with_stack_set_complete()?;
         Ok(self)
     }
 
