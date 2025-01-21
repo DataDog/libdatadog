@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::receive_report::receive_report_from_stream;
-use crate::{rfc5_crash_info::CrashInfo, CrashtrackerConfiguration, StacktraceCollection};
+use crate::{crash_info::CrashInfo, CrashtrackerConfiguration, StacktraceCollection};
 use anyhow::Context;
 use std::time::Duration;
 use tokio::{

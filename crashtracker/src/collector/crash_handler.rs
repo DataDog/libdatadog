@@ -6,7 +6,7 @@
 
 use super::emitters::emit_crashreport;
 use super::saguard::SaGuard;
-use crate::rfc5_crash_info::Metadata;
+use crate::crash_info::Metadata;
 use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
 use crate::shared::constants::*;
 use anyhow::Context;
