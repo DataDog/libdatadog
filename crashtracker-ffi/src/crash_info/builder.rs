@@ -3,7 +3,7 @@
 
 use super::{Metadata, OsInfo, ProcInfo, SigInfo, Span, ThreadData};
 use ::function_name::named;
-use datadog_crashtracker::rfc5_crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, StackTrace};
+use datadog_crashtracker::{CrashInfo, CrashInfoBuilder, ErrorKind, StackTrace};
 use ddcommon_ffi::{
     slice::AsBytes, wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, Handle, Result,
     Slice, Timespec, ToInner, VoidResult,

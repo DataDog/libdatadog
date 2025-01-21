@@ -5,8 +5,8 @@
 use crate::{
     clear_spans, clear_traces,
     collector::crash_handler::{configure_receiver, register_crash_handlers, restore_old_handlers},
+    crash_info::Metadata,
     reset_counters,
-    rfc5_crash_info::Metadata,
     shared::configuration::CrashtrackerReceiverConfig,
     update_config, update_metadata, CrashtrackerConfiguration,
 };

@@ -1,241 +1,75 @@
-// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod builder;
+mod error_data;
 mod metadata;
-use ddcommon::Endpoint;
-pub use metadata::*;
+mod os_info;
+mod proc_info;
+mod sig_info;
+mod spans;
 mod stacktrace;
-pub use stacktrace::*;
 mod telemetry;
+mod test_utils;
+mod unknown_value;
 
-use self::telemetry::TelemetryCrashUploader;
+pub use builder::*;
+use ddcommon::Endpoint;
+pub use error_data::*;
+pub use metadata::Metadata;
+pub use os_info::*;
+pub use proc_info::*;
+pub use sig_info::*;
+pub use spans::*;
+pub use stacktrace::*;
+pub use telemetry::*;
+
 use anyhow::Context;
-use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::io::BufRead;
-use std::path::Path;
-use std::{collections::HashMap, fs::File, io::BufReader};
-use uuid::Uuid;
+use std::{collections::HashMap, fs::File, path::Path};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SigInfo {
-    pub signum: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub signame: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub faulting_address: Option<usize>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ProcessInfo {
-    pub pid: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CrashInfo {
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    #[serde(default)]
-    pub additional_stacktraces: HashMap<String, Vec<StackFrame>>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub counters: HashMap<String, i64>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    #[serde(default)]
+    pub data_schema_version: String,
+    pub error: ErrorData,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub files: HashMap<String, Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
     pub incomplete: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub metadata: Option<CrashtrackerMetadata>,
-    pub os_info: os_info::Info,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub proc_info: Option<ProcessInfo>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub siginfo: Option<SigInfo>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    #[serde(default)]
-    pub span_ids: Vec<u128>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    #[serde(default)]
-    pub stacktrace: Vec<StackFrame>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    #[serde(default)]
-    pub trace_ids: Vec<u128>,
-    /// Any additional data goes here
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    #[serde(default)]
-    pub tags: HashMap<String, String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub timestamp: Option<DateTime<Utc>>,
-    pub uuid: Uuid,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub log_messages: Vec<String>,
+    pub metadata: Metadata,
+    pub os_info: OsInfo,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proc_info: Option<ProcInfo>, //TODO, update the schema
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sig_info: Option<SigInfo>, //TODO, update the schema
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub span_ids: Vec<Span>,
+    pub timestamp: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trace_ids: Vec<Span>,
+    pub uuid: String,
 }
 
-/// Getters and predicates
 impl CrashInfo {
-    pub fn crash_seen(&self) -> bool {
-        self.siginfo.is_some()
-    }
-}
-
-impl Default for CrashInfo {
-    fn default() -> Self {
-        Self::new()
+    pub fn current_schema_version() -> String {
+        "1.0".to_string()
     }
 }
 
 #[cfg(unix)]
 impl CrashInfo {
     pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
-        let normalizer = blazesym::normalize::Normalizer::new();
-        let pid = pid.into();
-        self.stacktrace.iter_mut().for_each(|frame| {
-            frame
-                .normalize_ip(&normalizer, pid)
-                .unwrap_or_else(|err| eprintln!("Error resolving name {err}"))
-        });
-        Ok(())
+        self.error.normalize_ips(pid)
     }
 
-    pub fn resolve_names(&mut self, src: &blazesym::symbolize::Source) -> anyhow::Result<()> {
-        let symbolizer = blazesym::symbolize::Symbolizer::new();
-        for frame in &mut self.stacktrace {
-            // Resolving names is best effort, just print the error and continue
-            frame
-                .resolve_names(src, &symbolizer)
-                .unwrap_or_else(|err| eprintln!("Error resolving name {err}"));
-        }
-        Ok(())
-    }
-
-    pub fn resolve_names_from_process(&mut self, pid: u32) -> anyhow::Result<()> {
-        let mut process = blazesym::symbolize::Process::new(pid.into());
-        // https://github.com/libbpf/blazesym/issues/518
-        process.map_files = false;
-        let src = blazesym::symbolize::Source::Process(process);
-        self.resolve_names(&src)
-    }
-}
-
-/// Constructor and setters
-impl CrashInfo {
-    pub fn new() -> Self {
-        let os_info = os_info::get();
-        let uuid = Uuid::new_v4();
-        Self {
-            additional_stacktraces: HashMap::new(),
-            counters: HashMap::new(),
-            files: HashMap::new(),
-            incomplete: false,
-            metadata: None,
-            os_info,
-            proc_info: None,
-            siginfo: None,
-            span_ids: vec![],
-            stacktrace: vec![],
-            tags: HashMap::new(),
-            timestamp: None,
-            trace_ids: vec![],
-            uuid,
-        }
-    }
-
-    pub fn add_counter(&mut self, name: &str, val: i64) -> anyhow::Result<()> {
-        let old = self.counters.insert(name.to_string(), val);
-        anyhow::ensure!(old.is_none(), "Double insert of counter {name}");
-        Ok(())
-    }
-
-    pub fn add_file(&mut self, filename: &str) -> anyhow::Result<()> {
-        let file = File::open(filename).with_context(|| filename.to_string())?;
-        let lines: std::io::Result<Vec<_>> = BufReader::new(file).lines().collect();
-        self.add_file_with_contents(filename, lines?)?;
-        Ok(())
-    }
-
-    pub fn add_file_with_contents(
-        &mut self,
-        filename: &str,
-        lines: Vec<String>,
-    ) -> anyhow::Result<()> {
-        let old = self.files.insert(filename.to_string(), lines);
-        anyhow::ensure!(
-            old.is_none(),
-            "Attempted to add file that was already there {filename}"
-        );
-        Ok(())
-    }
-
-    pub fn add_tag(&mut self, key: String, value: String) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            !self.tags.contains_key(&key),
-            "Already had tag with key: {key}"
-        );
-        self.tags.insert(key, value);
-        Ok(())
-    }
-
-    pub fn set_incomplete(&mut self, incomplete: bool) -> anyhow::Result<()> {
-        self.incomplete = incomplete;
-        Ok(())
-    }
-
-    pub fn set_metadata(&mut self, metadata: CrashtrackerMetadata) -> anyhow::Result<()> {
-        anyhow::ensure!(self.metadata.is_none());
-        self.metadata = Some(metadata);
-        Ok(())
-    }
-
-    pub fn set_procinfo(&mut self, proc_info: ProcessInfo) -> anyhow::Result<()> {
-        anyhow::ensure!(self.proc_info.is_none());
-        self.proc_info = Some(proc_info);
-        Ok(())
-    }
-
-    pub fn set_siginfo(&mut self, siginfo: SigInfo) -> anyhow::Result<()> {
-        anyhow::ensure!(self.siginfo.is_none());
-        self.siginfo = Some(siginfo);
-        Ok(())
-    }
-    pub fn set_span_ids(&mut self, ids: Vec<u128>) -> anyhow::Result<()> {
-        anyhow::ensure!(self.span_ids.is_empty());
-        self.span_ids = ids;
-        Ok(())
-    }
-
-    pub fn set_stacktrace(
-        &mut self,
-        thread_id: Option<String>,
-        stacktrace: Vec<StackFrame>,
-    ) -> anyhow::Result<()> {
-        if let Some(thread_id) = thread_id {
-            anyhow::ensure!(!self.additional_stacktraces.contains_key(&thread_id));
-            self.additional_stacktraces.insert(thread_id, stacktrace);
-        } else {
-            anyhow::ensure!(self.stacktrace.is_empty());
-            self.stacktrace = stacktrace;
-        }
-
-        Ok(())
-    }
-
-    pub fn set_timestamp(&mut self, ts: DateTime<Utc>) -> anyhow::Result<()> {
-        anyhow::ensure!(self.timestamp.is_none());
-        self.timestamp = Some(ts);
-        Ok(())
-    }
-
-    pub fn set_timestamp_to_now(&mut self) -> anyhow::Result<()> {
-        self.set_timestamp(Utc::now())
-    }
-
-    pub fn set_trace_ids(&mut self, ids: Vec<u128>) -> anyhow::Result<()> {
-        anyhow::ensure!(self.trace_ids.is_empty());
-        self.trace_ids = ids;
-        Ok(())
+    pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {
+        self.error.resolve_names(pid)
     }
 }
 
@@ -268,11 +102,8 @@ impl CrashInfo {
         if let Some(endpoint) = endpoint {
             if Some("file") == endpoint.url.scheme_str() {
                 let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
-                    .context("crash output file was not correctly formatted")?;
+                    .context("crash output file path was not correctly formatted")?;
                 self.to_file(&path)?;
-                let new_path = path.with_extension("rfc5.json");
-                let rfc5: crate::rfc5_crash_info::CrashInfo = self.clone().into();
-                rfc5.to_file(&new_path)?;
             }
         }
 
@@ -280,11 +111,70 @@ impl CrashInfo {
     }
 
     async fn upload_to_telemetry(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
-        if let Some(metadata) = &self.metadata {
-            if let Ok(uploader) = TelemetryCrashUploader::new(metadata, endpoint) {
-                uploader.upload_to_telemetry(self).await?
+        let uploader = TelemetryCrashUploader::new(&self.metadata, endpoint)?;
+        uploader.upload_to_telemetry(self).await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[ignore]
+    #[test]
+    /// Utility function to print the schema.
+    fn print_schema() {
+        let schema = schemars::schema_for!(CrashInfo);
+        println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+    }
+
+    impl test_utils::TestInstance for CrashInfo {
+        fn test_instance(seed: u64) -> Self {
+            let mut counters = HashMap::new();
+            counters.insert("collecting_sample".to_owned(), 1);
+            counters.insert("not_profiling".to_owned(), 0);
+
+            let span_ids = vec![
+                Span {
+                    id: "42".to_string(),
+                    thread_name: Some("thread1".to_string()),
+                },
+                Span {
+                    id: "24".to_string(),
+                    thread_name: Some("thread2".to_string()),
+                },
+            ];
+
+            let trace_ids = vec![
+                Span {
+                    id: "345".to_string(),
+                    thread_name: Some("thread111".to_string()),
+                },
+                Span {
+                    id: "666".to_string(),
+                    thread_name: Some("thread222".to_string()),
+                },
+            ];
+
+            Self {
+                counters,
+                data_schema_version: "1.0".to_string(),
+                error: ErrorData::test_instance(seed),
+                files: HashMap::new(),
+                fingerprint: None,
+                incomplete: true,
+                log_messages: vec![],
+                metadata: Metadata::test_instance(seed),
+                os_info: ::os_info::Info::unknown().into(),
+                proc_info: Some(ProcInfo::test_instance(seed)),
+                sig_info: Some(SigInfo::test_instance(seed)),
+                span_ids,
+                timestamp: chrono::DateTime::from_timestamp(1568898000 /* Datadog IPO */, 0)
+                    .unwrap()
+                    .to_string(),
+                trace_ids,
+                uuid: uuid::uuid!("1d6b97cb-968c-40c9-af6e-e4b4d71e8781").to_string(),
             }
         }
-        Ok(())
     }
 }
