@@ -24,6 +24,17 @@ pub struct Period<'a> {
     pub value: i64,
 }
 
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
+pub struct ManagedStringId {
+    pub value: u32,
+}
+
+impl ManagedStringId {
+    pub fn new(value: u32) -> Self {
+        ManagedStringId { value }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct Mapping<'a> {
     /// Address at which the binary (or DLL) is loaded into memory.
@@ -47,6 +58,16 @@ pub struct Mapping<'a> {
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+// Same as Mapping, but using StringIds
+pub struct StringIdMapping {
+    pub memory_start: u64,
+    pub memory_limit: u64,
+    pub file_offset: u64,
+    pub filename: ManagedStringId,
+    pub build_id: ManagedStringId,
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct Function<'a> {
     /// Name of the function, in human-readable form if available.
     pub name: &'a str,
@@ -59,6 +80,15 @@ pub struct Function<'a> {
     pub filename: &'a str,
 
     /// Line number in source file.
+    pub start_line: i64,
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+// Same as Function, but using StringIds
+pub struct StringIdFunction {
+    pub name: ManagedStringId,
+    pub system_name: ManagedStringId,
+    pub filename: ManagedStringId,
     pub start_line: i64,
 }
 
@@ -86,6 +116,15 @@ pub struct Location<'a> {
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+// Same as Location, but using StringIds
+pub struct StringIdLocation {
+    pub mapping: StringIdMapping,
+    pub function: StringIdFunction,
+    pub address: u64,
+    pub line: i64,
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct Label<'a> {
     pub key: &'a str,
 
@@ -101,6 +140,19 @@ pub struct Label<'a> {
     /// units and units like "seconds" and "nanoseconds" as time units,
     /// and apply appropriate unit conversions to these.
     pub num_unit: Option<&'a str>,
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+// Same as Label, but using StringIds
+pub struct StringIdLabel {
+    pub key: ManagedStringId,
+
+    /// At most one of the following must be present
+    pub str: Option<ManagedStringId>,
+    pub num: i64,
+
+    /// Should only be present when num is present.
+    pub num_unit: Option<ManagedStringId>,
 }
 
 impl Label<'_> {
@@ -125,6 +177,14 @@ pub struct Sample<'a> {
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
     pub labels: Vec<Label<'a>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+// Same as Sample, but using StringIds
+pub struct StringIdSample {
+    pub locations: Vec<StringIdLocation>,
+    pub values: Vec<i64>,
+    pub labels: Vec<StringIdLabel>,
 }
 
 #[derive(Debug)]
