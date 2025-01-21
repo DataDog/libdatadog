@@ -11,7 +11,7 @@ pub struct OsInfo<'a> {
     pub version: CharSlice<'a>,
 }
 
-impl<'a> TryFrom<OsInfo<'a>> for datadog_crashtracker::rfc5_crash_info::OsInfo {
+impl<'a> TryFrom<OsInfo<'a>> for datadog_crashtracker::OsInfo {
     type Error = anyhow::Error;
     fn try_from(value: OsInfo<'a>) -> anyhow::Result<Self> {
         let unknown = || "unknown".to_string();

@@ -12,7 +12,7 @@ mod receive_report;
 #[cfg(test)]
 mod tests {
     use super::receive_report::*;
-    use crate::rfc5_crash_info::{SiCodes, SigInfo, SignalNames};
+    use crate::crash_info::{SiCodes, SigInfo, SignalNames};
     use crate::shared::constants::*;
     use crate::{CrashtrackerConfiguration, StacktraceCollection};
     use std::time::Duration;

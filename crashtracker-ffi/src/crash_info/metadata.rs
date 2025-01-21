@@ -13,7 +13,7 @@ pub struct Metadata<'a> {
     pub tags: Option<&'a ddcommon_ffi::Vec<Tag>>,
 }
 
-impl<'a> TryFrom<Metadata<'a>> for datadog_crashtracker::rfc5_crash_info::Metadata {
+impl<'a> TryFrom<Metadata<'a>> for datadog_crashtracker::Metadata {
     type Error = anyhow::Error;
     fn try_from(value: Metadata<'a>) -> anyhow::Result<Self> {
         let library_name = value.library_name.try_to_string()?;

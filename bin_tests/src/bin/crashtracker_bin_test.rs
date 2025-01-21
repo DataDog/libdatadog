@@ -17,8 +17,7 @@ mod unix {
     use std::path::Path;
 
     use datadog_crashtracker::{
-        self as crashtracker, rfc5_crash_info::Metadata, CrashtrackerConfiguration,
-        CrashtrackerReceiverConfig,
+        self as crashtracker, CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata,
     };
     use ddcommon::{tag, Endpoint};
 
