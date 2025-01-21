@@ -15,8 +15,9 @@ use datadog_trace_mini_agent::{
 use dogstatsd::{
     aggregator::Aggregator as MetricsAggregator,
     constants::CONTEXTS,
+    datadog::{MetricsIntakeUrlPrefix, Site},
     dogstatsd::{DogStatsD, DogStatsDConfig},
-    flusher::{build_fqdn_metrics, Flusher},
+    flusher::{Flusher, FlusherConfig},
 };
 
 use dogstatsd::metric::EMPTY_TAGS;
@@ -50,8 +51,8 @@ pub async fn main() {
         .ok();
     debug!("Starting serverless trace mini agent");
 
-    let mini_agent_version = env!("CARGO_PKG_VERSION").to_string();
-    env::set_var("DD_MINI_AGENT_VERSION", mini_agent_version);
+    let serverless_compat_version = env!("CARGO_PKG_VERSION").to_string();
+    env::set_var("DD_SERVERLESS_COMPAT_VERSION", serverless_compat_version);
 
     let env_filter = format!("h2=off,hyper=off,rustls=off,{}", log_level);
 
@@ -156,13 +157,17 @@ async fn start_dogstatsd(
 
     let metrics_flusher = match dd_api_key {
         Some(dd_api_key) => {
-            let metrics_flusher = Flusher::new(
-                dd_api_key,
-                Arc::clone(&metrics_aggr),
-                build_fqdn_metrics(dd_site),
+            let metrics_flusher = Flusher::new(FlusherConfig {
+                api_key: dd_api_key,
+                aggregator: Arc::clone(&metrics_aggr),
+                metrics_intake_url_prefix: MetricsIntakeUrlPrefix::new(
+                    Some(Site::new(dd_site).expect("Failed to parse site")),
+                    None,
+                )
+                .expect("Failed to create intake URL prefix"),
                 https_proxy,
-                DOGSTATSD_TIMEOUT_DURATION,
-            );
+                timeout: DOGSTATSD_TIMEOUT_DURATION,
+            });
             Some(metrics_flusher)
         }
         None => {

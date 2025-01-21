@@ -3,32 +3,37 @@
 
 use crate::aggregator::Aggregator;
 use crate::datadog;
+use datadog::{DdApi, MetricsIntakeUrlPrefix};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::debug;
 
 pub struct Flusher {
-    dd_api: datadog::DdApi,
+    dd_api: DdApi,
     aggregator: Arc<Mutex<Aggregator>>,
 }
 
-#[inline]
-#[must_use]
-pub fn build_fqdn_metrics(site: String) -> String {
-    format!("https://api.{site}")
+pub struct FlusherConfig {
+    pub api_key: String,
+    pub aggregator: Arc<Mutex<Aggregator>>,
+    pub metrics_intake_url_prefix: MetricsIntakeUrlPrefix,
+    pub https_proxy: Option<String>,
+    pub timeout: Duration,
 }
 
 #[allow(clippy::await_holding_lock)]
 impl Flusher {
-    pub fn new(
-        api_key: String,
-        aggregator: Arc<Mutex<Aggregator>>,
-        site: String,
-        https_proxy: Option<String>,
-        timeout: Duration,
-    ) -> Self {
-        let dd_api = datadog::DdApi::new(api_key, site, https_proxy, timeout);
-        Flusher { dd_api, aggregator }
+    pub fn new(config: FlusherConfig) -> Self {
+        let dd_api = DdApi::new(
+            config.api_key,
+            config.metrics_intake_url_prefix,
+            config.https_proxy,
+            config.timeout,
+        );
+        Flusher {
+            dd_api,
+            aggregator: config.aggregator,
+        }
     }
 
     pub async fn flush(&mut self) {

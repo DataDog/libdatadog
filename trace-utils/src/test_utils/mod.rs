@@ -149,7 +149,7 @@ pub fn create_test_gcp_span(
         span_links: vec![],
     };
     span.meta.insert(
-        "_dd.mini_agent_version".to_string(),
+        "_dd.serverless_compat_version".to_string(),
         "dummy_version".to_string(),
     );
     span.meta.insert(
@@ -202,7 +202,7 @@ pub fn create_test_gcp_json_span(
                 "env": "test-env",
                 "runtime-id": "test-runtime-id-value",
                 "gcrfx.project_id": "dummy_project_id",
-                "_dd.mini_agent_version": "dummy_version",
+                "_dd.serverless_compat_version": "dummy_version",
                 "gcrfx.resource_name": "projects/dummy_project_id/locations/dummy_region_west/functions/dummy_function_name",
                 "gcrfx.location": "dummy_region_west"
             },

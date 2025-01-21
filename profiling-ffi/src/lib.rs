@@ -6,6 +6,7 @@ pub use symbolizer_ffi::*;
 
 mod exporter;
 mod profiles;
+mod string_storage;
 
 // re-export crashtracker ffi
 #[cfg(feature = "crashtracker-ffi")]
@@ -18,3 +19,7 @@ pub use ddtelemetry_ffi::*;
 #[cfg(feature = "data-pipeline-ffi")]
 #[allow(unused_imports)]
 pub use data_pipeline_ffi::*;
+
+// re-export library-config ffi
+#[cfg(feature = "datadog-library-config-ffi")]
+pub use datadog_library_config_ffi::*;

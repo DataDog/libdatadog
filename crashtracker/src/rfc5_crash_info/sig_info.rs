@@ -41,6 +41,7 @@ pub enum SignalNames {
     SIGBUS,
     SIGSEGV,
     SIGSYS,
+    UNKNOWN,
 }
 
 #[cfg(unix)]
@@ -86,6 +87,7 @@ pub enum SiCodes {
     SI_TKILL,
     SI_USER,
     SYS_SECCOMP,
+    UNKNOWN,
 }
 
 #[cfg(test)]
