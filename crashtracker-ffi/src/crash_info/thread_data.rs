@@ -4,7 +4,7 @@
 use anyhow::Context;
 use ddcommon_ffi::{slice::AsBytes, CharSlice, Handle, ToInner};
 
-use datadog_crashtracker::rfc5_crash_info::StackTrace;
+use datadog_crashtracker::StackTrace;
 
 #[repr(C)]
 pub struct ThreadData<'a> {
@@ -14,7 +14,7 @@ pub struct ThreadData<'a> {
     pub state: CharSlice<'a>,
 }
 
-impl<'a> TryFrom<ThreadData<'a>> for datadog_crashtracker::rfc5_crash_info::ThreadData {
+impl<'a> TryFrom<ThreadData<'a>> for datadog_crashtracker::ThreadData {
     type Error = anyhow::Error;
     fn try_from(mut value: ThreadData<'a>) -> anyhow::Result<Self> {
         let crashed = value.crashed;
