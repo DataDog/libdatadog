@@ -3,6 +3,7 @@
 extern crate build_common;
 
 use build_common::generate_and_configure_header;
+use std::env;
 
 fn main() {
     let header_name = "crashtracker.h";

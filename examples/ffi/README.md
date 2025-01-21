@@ -10,7 +10,8 @@ You can then build the examples with:
 
 ```bash
 # Run the below commands at the root level
-cmake -S examples/ffi -B examples/ffi/build -D Datadog_ROOT=./release
+# Datadog Root env is read from the DatadogConfig.cmake
+Datadog_ROOT=$PWD/release cmake -S examples/ffi -B examples/ffi/build
 cmake --build ./examples/ffi/build
 ```
 

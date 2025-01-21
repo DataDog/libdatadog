@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.19)
 project(datadog_profiling_ffi_examples LANGUAGES C CXX)
 
 find_package(Datadog REQUIRED)
+message(STATUS "Selecting datadog build from: ${Datadog_ROOT}")
 
 set(VCRUNTIME_LINK_TYPE DLL CACHE STRING "Specify the Runtime Library to use when compiling with MSVC")
 set(CMAKE_EXPORT_COMPILE_COMMANDS on)
@@ -21,6 +22,8 @@ endfunction()
 
 # Datadog_ROOT is set by the find_package(Datadog) call
 set(library_config_header "${Datadog_ROOT}/include/datadog/library-config.h")
+# This helps find the crashtracker binary
+add_compile_definitions(DATADOG_ROOT="${Datadog_ROOT}")
 
 if(EXISTS "${library_config_header}")
   message(STATUS "Header file found: ${library_config_header}")
@@ -30,8 +33,8 @@ if(EXISTS "${library_config_header}")
   set_vcruntime_link_type(library_config ${VCRUNTIME_LINK_TYPE})
 
 else()
-  message(INFO "Header file not found: ${library_config_header}. Skipping library_config example.")
-  message(INFO "Please build libdatadog with the associated feature enabled.")
+  message(INFO " Header file not found: ${library_config_header}. Skipping library_config example.")
+  message(INFO " Please build libdatadog with the associated feature enabled.")
 endif()
 
 add_executable(exporter exporter.cpp)

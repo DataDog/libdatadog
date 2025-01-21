@@ -1,11 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-
 #include <datadog/common.h>
 #include <datadog/crashtracker.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 void example_segfault_handler(int signal) {
   printf("Segmentation fault caught. Signal number: %d\n", signal);
@@ -31,20 +33,34 @@ uintptr_t handle_uintptr_t_result(ddog_crasht_Result_Usize result) {
   return result.ok;
 }
 
+void ensure_directory_exists(const char *path) {
+  struct stat st = {0};
+  if (stat(path, &st) == -1) {
+    if (mkdir(path, 0700) == -1) {
+      fprintf(stderr, "Failed to create directory");
+      exit(EXIT_FAILURE);
+    }
+  }
+}
+
 int main(int argc, char **argv) {
   if (signal(SIGSEGV, example_segfault_handler) == SIG_ERR) {
     perror("Error setting up signal handler");
     return -1;
   }
 
+  // Ensure the directory for crash reports exists
+  const char *crash_reports_dir = "/tmp/crashreports";
+  ensure_directory_exists(crash_reports_dir);
+
+  // Set the receiver binary path using DATADOG_ROOT
+  const char *receiver_binary = DATADOG_ROOT "/bin/libdatadog-crashtracking-receiver";
+  fprintf(stderr, "Using receiver binary: %s\n", receiver_binary);
+
   ddog_crasht_ReceiverConfig receiver_config = {
       .args = {},
       .env = {},
-      .path_to_receiver_binary = DDOG_CHARSLICE_C("SET ME TO THE ACTUAL PATH ON YOUR MACHINE"),
-      // E.g. on my machine, where I run ./build-profiling-ffi.sh build-ffi
-      // .path_to_receiver_binary =
-      //     DDOG_CHARSLICE_C("/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/"
-      //                      "build-ffi/bin/libdatadog-crashtracking-receiver"),
+      .path_to_receiver_binary = {.ptr = receiver_binary, .len = strlen(receiver_binary)},
       .optional_stderr_filename = DDOG_CHARSLICE_C("/tmp/crashreports/stderr.txt"),
       .optional_stdout_filename = DDOG_CHARSLICE_C("/tmp/crashreports/stdout.txt"),
   };
@@ -83,7 +99,6 @@ int main(int argc, char **argv) {
 
   char *bug = NULL;
   *bug = 42;
-
   // At this point, we expect the following files to be written into /tmp/crashreports
   // foo.txt  foo.txt.telemetry  stderr.txt  stdout.txt
   return 0;
