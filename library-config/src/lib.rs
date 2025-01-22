@@ -384,7 +384,9 @@ impl Configurator {
     }
 
     fn parse_stable_config<F: io::Read>(&self, f: &mut F) -> anyhow::Result<StableConfig> {
-        let stable_config = serde_yaml::from_reader(f)?;
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf)?;
+        let stable_config = serde_yaml2::de::from_str(std::str::from_utf8(&buf)?)?;
         if self.debug_logs {
             eprintln!("Read the following static config: {stable_config:?}");
         }
