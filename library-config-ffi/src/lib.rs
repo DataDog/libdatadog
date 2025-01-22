@@ -92,8 +92,7 @@ pub extern "C" fn ddog_library_configurator_get<'a>(
     let process_info = process_info.ffi_to_rs();
     configurator
         .get_config_from_file(
-            "/etc/datadog-agent/managed/datadog-apm-libraries/stable/libraries_config.yaml"
-                .as_ref(),
+            Configurator::FLEET_STABLE_CONFIGURATION_PATH.as_ref(),
             process_info,
         )
         .and_then(LibraryConfig::rs_vec_to_ffi)
@@ -117,6 +116,8 @@ pub extern "C" fn ddog_library_configurator_get_from_bytes<'a>(
 }
 
 #[no_mangle]
+/// Returns a static null-terminated string, containing the name of the environment variable
+/// associated with the library configuration
 pub extern "C" fn ddog_library_config_name_to_env(name: LibraryConfigName) -> ffi::CStr<'static> {
     use LibraryConfigName::*;
     ffi::CStr::from_std(match name {
@@ -129,8 +130,13 @@ pub extern "C" fn ddog_library_config_name_to_env(name: LibraryConfigName) -> ff
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_library_config_stable_config_path() -> ffi::CStr<'static> {
-    ffi::CStr::from_std(ddcommon::cstr!(Configurator::INSTALLER_MANAGED_STABLE_CONFIGURATION_PATH))
+/// Returns a static null-terminated string with the path to the stable config yaml config file
+pub extern "C" fn ddog_library_config_fleet_stable_config_path() -> ffi::CStr<'static> {
+    ffi::CStr::from_std(unsafe {
+        let path: &'static str =
+            constcat::concat!(Configurator::FLEET_STABLE_CONFIGURATION_PATH, "\0");
+        std::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
+    })
 }
 
 #[no_mangle]

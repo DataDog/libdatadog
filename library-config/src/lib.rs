@@ -339,10 +339,8 @@ pub struct Configurator {
 }
 
 impl Configurator {
-    pub const INSTALLER_MANAGED_STABLE_CONFIGURATION_PATH: &'static str =
+    pub const FLEET_STABLE_CONFIGURATION_PATH: &'static str =
         "/etc/datadog-agent/managed/datadog-apm-libraries/stable/libraries_config.yaml";
-    pub const CUSTOMER_MANAGED_STABLE_CONFIGURATION_PATH: &'static str =
-        "/etc/datadog-agent/libraries_config.yaml";
 
     pub fn new(debug_logs: bool) -> Self {
         Self { debug_logs }
