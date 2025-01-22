@@ -11,8 +11,8 @@ use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiv
 use crate::shared::constants::*;
 use anyhow::Context;
 use libc::{
-    c_void, execve, mmap, nfds_t, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE,
-    PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ,
+    c_void, execve, mmap, nfds_t, sigaltstack, siginfo_t, ucontext_t, MAP_ANON, MAP_FAILED,
+    MAP_PRIVATE, PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ,
 };
 use libc::{poll, pollfd, POLLHUP};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
@@ -390,7 +390,7 @@ pub fn configure_receiver(config: CrashtrackerReceiverConfig) {
 extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucontext: *mut c_void) {
     // Handle the signal.  Note this has a guard to ensure that we only generate
     // one crash report per process.
-    let _ = handle_posix_signal_impl(sig_info);
+    let _ = handle_posix_signal_impl(sig_info, ucontext as *mut ucontext_t);
 
     // Once we've handled the signal, chain to any previous handlers.
     // SAFETY: This was created by [register_crash_handlers].  There is a tiny
@@ -496,7 +496,10 @@ fn receiver_finish(receiver: Receiver, start_time: Instant, timeout_ms: u32) {
     }
 }
 
-fn handle_posix_signal_impl(sig_info: *mut siginfo_t) -> anyhow::Result<()> {
+fn handle_posix_signal_impl(
+    sig_info: *const siginfo_t,
+    ucontext: *const ucontext_t,
+) -> anyhow::Result<()> {
     // If this is a SIGSEGV signal, it could be called due to a stack overflow. In that case, since
     // this signal allocates to the stack and cannot guarantee it is running without SA_NODEFER, it
     // is possible that we will re-emit the signal. Contemporary unices handle this just fine (no
@@ -574,6 +577,7 @@ fn handle_posix_signal_impl(sig_info: *mut siginfo_t) -> anyhow::Result<()> {
         config_str,
         metadata_string,
         sig_info,
+        ucontext,
     );
 
     let _ = unix_stream.flush();

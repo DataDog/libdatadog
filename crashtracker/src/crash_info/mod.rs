@@ -3,6 +3,7 @@
 
 mod builder;
 mod error_data;
+mod experimental;
 mod metadata;
 mod os_info;
 mod proc_info;
@@ -16,6 +17,7 @@ mod unknown_value;
 pub use builder::*;
 use ddcommon::Endpoint;
 pub use error_data::*;
+pub use experimental::*;
 pub use metadata::Metadata;
 pub use os_info::*;
 pub use proc_info::*;
@@ -35,6 +37,8 @@ pub struct CrashInfo {
     pub counters: HashMap<String, i64>,
     pub data_schema_version: String,
     pub error: ErrorData,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub experimental: Option<Experimental>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub files: HashMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -160,6 +164,7 @@ mod tests {
                 counters,
                 data_schema_version: "1.0".to_string(),
                 error: ErrorData::test_instance(seed),
+                experimental: None,
                 files: HashMap::new(),
                 fingerprint: None,
                 incomplete: true,
