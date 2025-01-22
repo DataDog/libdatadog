@@ -1,0 +1,318 @@
+name: .NET
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  OUTPUT_DIR: bin
+  PACKAGES_DIR: packages
+  NUGET_NAME: ganeshnj.libdatadog
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    # container: ${{ matrix.container }}
+
+    env:
+      ACTIONS_RUNNER_FORCE_ACTIONS_NODE_VERSION: node16
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            container: centos:7
+#          - os: ubuntu-24.04 #TODO why doesn't this work
+#            target: aarch64-unknown-linux-gnu
+#            container: centos:7
+          # - os: ubuntu-latest
+          #   target: x86_64-unknown-linux-musl
+          #   container: alpine:3.19
+          # - os: arm-4core-linux-ubuntu24.04
+          #   target: aarch64-unknown-linux-musl
+          #   container: alpine:3.19
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: centos:7
+        uses: addnab/docker-run-action@v3
+        if: matrix.container == 'centos:7'
+        with:
+          image: ${{ matrix.container }}
+          options: -v ${{ github.workspace }}:/workspace
+          run: |
+            sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*
+            sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
+
+            yum install epel-release -y
+
+            yum clean all -y && yum makecache -y && yum update -y
+
+            yum install -y centos-release-scl \
+              && sed -i s/mirror.centos.org/buildlogs.centos.org/g /etc/yum.repos.d/CentOS-SCLo-*.repo \
+              && sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/CentOS-SCLo-*.repo \
+              && sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/CentOS-SCLo-*.repo \
+              && yum install -y --setopt=tsflags=nodocs --nogpgcheck \
+              curl \
+              devtoolset-9 \
+              git \
+              make \
+              pkg-config \
+              unzip \
+              strace \
+              zlib-devel \
+              jq \
+              && yum clean all --enablerepo='*' \
+
+            # switch to GCC9 environment for the duration of the script
+            source scl_source enable devtoolset-9
+
+            gcc --version
+            ldd --version
+
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            source $HOME/.cargo/env
+            rustup target add ${{ matrix.target }}
+            rustup default ${{ matrix.target }}
+            cargo install --force cbindgen
+
+            cd /workspace
+            ./windows/build-artifacts.sh ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
+
+      - name: alpine:3.19
+        uses: addnab/docker-run-action@v3
+        if: matrix.container == 'alpine:3.19'
+        with:
+          image: ${{ matrix.container }}
+          options: -v ${{ github.workspace }}:/workspace
+          run: |
+            apk update \
+            && apk add --no-cache \
+              build-base \
+              cargo \
+              cmake \
+              curl \
+              git \
+              make \
+              patchelf \
+              protoc \
+              pkgconf \
+              unzip \
+              bash \
+              jq \
+              clang16-libclang \
+            && mkdir /usr/local/src \
+
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            source $HOME/.cargo/env
+            rustup target add ${{ matrix.target }}
+            rustup default ${{ matrix.target }}
+            cargo install --force cbindgen
+
+            gcc --version
+            ldd --version
+
+            cd /workspace
+            ./windows/build-artifacts.sh ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
+
+      - name: Windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          $ProgressPreference = "SilentlyContinue"
+          Invoke-WebRequest https://win.rustup.rs/ -OutFile rustup-init.exe
+          .\rustup-init.exe -y --default-host=${{ matrix.target }} --default-toolchain stable --profile minimal
+          del rustup-init.exe
+          rustup target add ${{ matrix.target }}
+          ./windows/build-artifacts.ps1 ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
+        shell: powershell
+
+      - name: macOS
+        if: matrix.os == 'macos-latest'
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+          rustup target add ${{ matrix.target }}
+          cargo install --force cbindgen
+          ./windows/build-artifacts.sh ${{ env.OUTPUT_DIR }} ${{ matrix.target }}
+        shell: bash
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.OUTPUT_DIR }}-${{ matrix.target }}
+          path: |
+            bin/*
+            !bin/*/*/build
+            !bin/*/*/deps
+            !bin/*/*/examples
+            !bin/*/*/incremental
+            !bin/*/*/.fingerprint
+            !bin/debug
+            !bin/release
+
+  pack:
+    runs-on: windows-latest
+    needs: build
+    outputs:
+      NUGET_VERSION: ${{ steps.dotnet-pack.outputs.NUGET_VERSION }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download x86_64-pc-windows-msvc
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.OUTPUT_DIR }}-x86_64-pc-windows-msvc
+          path: bin
+
+      - name: Download i686-pc-windows-msvc
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.OUTPUT_DIR }}-i686-pc-windows-msvc
+          path: bin
+
+      - name: Download x86_64-unknown-linux-gnu
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.OUTPUT_DIR }}-x86_64-unknown-linux-gnu
+          path: bin
+
+      - name: Download aarch64-unknown-linux-gnu
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.OUTPUT_DIR }}-aarch64-unknown-linux-gnu
+          path: bin
+
+      # - name: Download x86_64-unknown-linux-musl
+      #   uses: actions/download-artifact@v4
+      #   with:
+      #     name: ${{ env.OUTPUT_DIR }}-x86_64-unknown-linux-musl
+      #     path: bin
+
+      # - name: Download aarch64-unknown-linux-musl
+      #   uses: actions/download-artifact@v4
+      #   with:
+      #     name: ${{ env.OUTPUT_DIR }}-aarch64-unknown-linux-musl
+      #     path: bin
+
+      - name: Download aarch64-apple-darwin
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.OUTPUT_DIR }}-aarch64-apple-darwin
+          path: bin
+
+      - name: Download x86_64-apple-darwin
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.OUTPUT_DIR }}-x86_64-apple-darwin
+          path: bin
+
+      - name: dotnet pack
+        id: dotnet-pack
+        run: |
+          $cargo_content=Get-Content Cargo.toml -Raw
+          $cargo_content -match '(?m)^version += +"([^"]+)"'
+          $current_version=$Matches[1]
+          $version_suffix="ci.${{ github.event.number }}.${{ github.run_number }}"
+          $version="$current_version-$version_suffix"
+          echo "NUGET_VERSION=$version" >> $env:GITHUB_OUTPUT
+          dotnet pack windows/libdatadog.csproj -p:LibDatadogBinariesOutputDir=../${{ env.OUTPUT_DIR }} -p:LibDatadogVersion=$version -p:PackageID=${{ env.NUGET_NAME }} -o ${{ env.PACKAGES_DIR }}
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4 # v4
+        with:
+          name: ${{ env.PACKAGES_DIR }}
+          path: ${{ env.PACKAGES_DIR }}
+
+  test:
+    runs-on: ${{ matrix.os }}
+    needs: pack
+
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+          - os: ubuntu-latest
+            container: centos:7
+          - os: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download package
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.PACKAGES_DIR }}
+          path: ${{ env.PACKAGES_DIR }}
+
+      - name: ${{ matrix.container }} Test
+        uses: addnab/docker-run-action@v3
+        if: matrix.container == 'centos:7' || matrix.container == 'alpine:3.19'
+        with:
+          image: ${{ matrix.container }}
+          options: -v ${{ github.workspace }}:/workspace
+          run: |
+            curl -sSL https://dot.net/v1/dotnet-install.sh | bash /dev/stdin --channel 6.0
+            export PATH=$PATH:~/.dotnet
+            dotnet --info
+
+            cd /workspace/tests/nuget_package
+            export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+            dotnet add nuget_package.csproj package ${{ env.NUGET_NAME }} --version ${{ needs.pack.outputs.NUGET_VERSION }}
+            dotnet run
+
+      - name: Install .NET SDK
+        if: matrix.os == 'windows-latest' || matrix.os == 'macos-latest'
+        uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 #v4
+        with:
+          dotnet-version: 6.0.X
+
+      - name: Test
+        if: matrix.os == 'windows-latest' || matrix.os == 'macos-latest'
+        run: |
+          cd tests/nuget_package
+          dotnet add nuget_package.csproj package ${{ env.NUGET_NAME }} --version ${{ needs.pack.outputs.NUGET_VERSION }}
+
+          dotnet run
+
+  nuget-push:
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download package
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.PACKAGES_DIR }}
+          path: ${{ env.PACKAGES_DIR }}
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@3e891b0cb619bf60e2c25674b222b8940e2c1c25 #v4
+        with:
+          dotnet-version: 6.0.X
+
+      - name: NuGet push
+        run: |
+          cd ${{ env.PACKAGES_DIR }}
+          dotnet nuget push *.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
