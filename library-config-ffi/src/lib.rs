@@ -129,4 +129,9 @@ pub extern "C" fn ddog_library_config_name_to_env(name: LibraryConfigName) -> ff
 }
 
 #[no_mangle]
+pub extern "C" fn ddog_library_config_stable_config_path() -> ffi::CStr<'static> {
+    ffi::CStr::from_std(ddcommon::cstr!(Configurator::INSTALLER_MANAGED_STABLE_CONFIGURATION_PATH))
+}
+
+#[no_mangle]
 pub extern "C" fn ddog_library_config_drop(_: ffi::Vec<LibraryConfig>) {}

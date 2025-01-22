@@ -23,7 +23,7 @@ pub const fn validate_cstr_contents(bytes: &[u8]) {
 
 #[macro_export]
 macro_rules! cstr {
-    ($s:literal) => {{
+    ($s:expr) => {{
         let mut bytes = $s.as_bytes();
         if bytes[bytes.len() - 1usize] != b'\0' {
             bytes = concat!($s, "\0").as_bytes();
