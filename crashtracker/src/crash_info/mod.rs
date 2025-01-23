@@ -62,7 +62,7 @@ pub struct CrashInfo {
 
 impl CrashInfo {
     pub fn current_schema_version() -> String {
-        "1.0".to_string()
+        "1.2".to_string()
     }
 }
 
@@ -162,7 +162,7 @@ mod tests {
 
             Self {
                 counters,
-                data_schema_version: "1.0".to_string(),
+                data_schema_version: CrashInfo::current_schema_version(),
                 error: ErrorData::test_instance(seed),
                 experimental: None,
                 files: HashMap::new(),
