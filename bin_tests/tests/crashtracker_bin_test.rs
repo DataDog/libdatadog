@@ -188,7 +188,7 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
     // As above, ARM OSX can have a si_code of 2.
     assert!(
         std::collections::HashSet::from_iter([
-            "data_schema_version:1.0",
+            "data_schema_version:1.2",
             "incomplete:false",
             "is_crash:true",
             "profiler_collecting_sample:1",
@@ -202,7 +202,7 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
             "si_signo:11",
         ]) == tags
             || std::collections::HashSet::from_iter([
-                "data_schema_version:1.0",
+                "data_schema_version:1.2",
                 "incomplete:false",
                 "is_crash:true",
                 "profiler_collecting_sample:1",
