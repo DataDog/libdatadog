@@ -249,7 +249,7 @@ fn crash_tracking_empty_endpoint() {
         .unwrap();
 
     let (mut stream, _) = listener.accept().unwrap();
-    let mut out = vec![0; 65536];
+    let mut out = vec![0; 65536 * 2];
     let read = stream.read(&mut out).unwrap();
 
     stream
