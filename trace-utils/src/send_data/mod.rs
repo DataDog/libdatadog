@@ -243,6 +243,7 @@ impl SendData {
                     ProxyConnector::from_proxy(connector::Connector::default(), proxy).unwrap();
                 Client::builder().build(proxy_connector).request(req)
             } else {
+                println!("no proxy, building client");
                 Client::builder()
                     .build(connector::Connector::default())
                     .request(req)
@@ -256,6 +257,7 @@ impl SendData {
                     if e.is_timeout() {
                         Err(RequestError::TimeoutSocket)
                     } else {
+                        println!("Error: {:?}", e);
                         Err(RequestError::Network)
                     }
                 }
@@ -305,6 +307,7 @@ impl SendData {
                 // An Ok response doesn't necessarily mean the request was successful, we need to
                 // check the status code and if it's not a 2xx or 3xx we treat it as an error
                 Ok(response) => {
+                    println!("Ok Response: {:?}", response);
                     let request_result = self.build_request_result_from_ok_response(
                         response,
                         request_attempt,
@@ -322,6 +325,7 @@ impl SendData {
                     }
                 }
                 Err(e) => {
+                    println!("Error Response: {:?}", e);
                     if request_attempt >= self.retry_strategy.max_retries() {
                         return self.handle_request_error(e, request_attempt, payload_chunks);
                     } else {

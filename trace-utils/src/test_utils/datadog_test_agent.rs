@@ -26,7 +26,7 @@ const TEST_AGENT_PORT: u16 = 8126;
 #[derive(Debug)]
 struct DatadogTestAgentContainer {
     mounts: Vec<Mount>,
-    env_vars: HashMap<String, String>
+    env_vars: HashMap<String, String>,
 }
 
 impl Image for DatadogTestAgentContainer {
@@ -67,32 +67,38 @@ impl Image for DatadogTestAgentContainer {
 }
 
 impl DatadogTestAgentContainer {
-    fn new(relative_snapshot_path: Option<&str>) -> Self {
+    fn new(relative_snapshot_path: Option<&str>, absolute_socket_path: Option<&str>) -> Self {
         let mut env_vars = HashMap::new();
+        let mut mounts = Vec::new();
 
-        env_vars.insert(
-            "DD_APM_RECEIVER_SOCKET".to_string(),
-            "/src/apm.socket".to_string(),
-        );
+        if let Some(absolute_socket_path) = absolute_socket_path {
+            env_vars.insert(
+                "DD_APM_RECEIVER_SOCKET".to_string(),
+                "/tmp/ddsockets/apm.socket".to_owned(),
+            );
+            mounts.push(
+                Mount::bind_mount(absolute_socket_path, "/tmp/ddsockets")
+                    .with_access_mode(AccessMode::ReadWrite),
+            );
+        }
 
         if let Some(relative_snapshot_path) = relative_snapshot_path {
-            let mount = Mount::bind_mount(
-                DatadogTestAgentContainer::calculate_snapshot_absolute_path(relative_snapshot_path),
-                "/snapshots",
-            )
-            .with_access_mode(AccessMode::ReadWrite);
-
-            DatadogTestAgentContainer {
-                mounts: vec![mount],
-                env_vars
-            }
-        } else {
-            DatadogTestAgentContainer { mounts: vec![], env_vars }
+            mounts.push(
+                Mount::bind_mount(
+                    DatadogTestAgentContainer::calculate_volume_absolute_path(
+                        relative_snapshot_path,
+                    ),
+                    "/snapshots",
+                )
+                .with_access_mode(AccessMode::ReadWrite),
+            );
         }
+
+        DatadogTestAgentContainer { mounts, env_vars }
     }
     // The docker image requires an absolute path when mounting a volume. This function gets the
     // absolute path of the workspace and appends the provided relative path.
-    fn calculate_snapshot_absolute_path(relative_snapshot_path: &str) -> String {
+    pub(crate) fn calculate_volume_absolute_path(relative_snapshot_path: &str) -> String {
         let metadata = MetadataCommand::new()
             .exec()
             .expect("Failed to fetch metadata");
@@ -130,7 +136,7 @@ impl DatadogTestAgentContainer {
 /// #[tokio::main]
 /// async fn main() {
 ///     // Create a new DatadogTestAgent instance
-///     let test_agent = DatadogTestAgent::new(Some("relative/path/to/snapshot")).await;
+///     let test_agent = DatadogTestAgent::new(Some("relative/path/to/snapshot"), None).await;
 ///
 ///     // Get the URI for a specific endpoint
 ///     let uri = test_agent
@@ -169,12 +175,19 @@ impl DatadogTestAgent {
     ///   test-agent. The relative path should include the crate name. If no relative path is
     ///   provided, no snapshot directory will be mounted.
     ///
+    /// * `absolute_socket_path` - An optional string slice that holds the absolute path to the
+    ///   socket directory. This directory will get mounted in the docker container running the
+    ///   test-agent. It is recommended to use a temporary directory for this purpose. If no socket
+    ///   path is provided the test agent will not be configured for UDS transport.
     /// # Returns
     ///
     /// A new `DatadogTestAgent`.
-    pub async fn new(relative_snapshot_path: Option<&str>) -> Self {
+    pub async fn new(
+        relative_snapshot_path: Option<&str>,
+        absolute_socket_path: Option<&str>,
+    ) -> Self {
         DatadogTestAgent {
-            container: DatadogTestAgentContainer::new(relative_snapshot_path)
+            container: DatadogTestAgentContainer::new(relative_snapshot_path, absolute_socket_path)
                 .start()
                 .await
                 .expect("Unable to start DatadogTestAgent, is the Docker Daemon running?"),

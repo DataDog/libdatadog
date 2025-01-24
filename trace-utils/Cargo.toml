@@ -50,6 +50,7 @@ httpmock = { version = "0.7.0"}
 serde_json = "1.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 datadog-trace-utils = { path = ".", features = ["test-utils"] }
+tempfile = "3.3.0"
 
 [features]
 default = ["proxy"]
