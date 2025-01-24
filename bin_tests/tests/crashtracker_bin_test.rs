@@ -162,7 +162,6 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: 
 }
 
 fn assert_telemetry_message(crash_telemetry: &[u8]) {
-    let crash_telemetry_string = String::from_utf8_lossy(crash_telemetry);
     let telemetry_payload: serde_json::Value =
         serde_json::from_slice::<serde_json::Value>(crash_telemetry)
             .context("deserializing crashtracker telemetry payload to json")
