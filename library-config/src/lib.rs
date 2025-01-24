@@ -131,6 +131,7 @@ impl<'a, T: Deref<Target = [u8]>> Matcher<'a, T> {
 
     fn template_configs(
         &'a self,
+        source: LibraryConfigSource,
         config: &HashMap<LibraryConfigName, String>,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
         config
@@ -139,6 +140,7 @@ impl<'a, T: Deref<Target = [u8]>> Matcher<'a, T> {
                 Ok(LibraryConfig {
                     name,
                     value: self.template_config(v)?,
+                    source,
                 })
             })
             .collect()
@@ -240,6 +242,27 @@ impl LibraryConfigName {
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, serde::Deserialize, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[allow(clippy::enum_variant_names)]
+pub enum LibraryConfigSource {
+    // Order matters, as it is used to determine the priority of the source.
+    //  The higher the value, the higher the priority.
+    LocalFile = 0,
+    Managed = 1,
+}
+
+impl LibraryConfigSource {
+    pub fn to_str(&self) -> &'static str {
+        use LibraryConfigSource::*;
+        match self {
+            LocalFile => "local_file",
+            Managed => "fleet_automation",
+        }
+    }
+}
+
 #[derive(serde::Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum Origin {
@@ -331,6 +354,7 @@ fn string_operator_match(op: &Operator, matches: &[u8], value: &[u8]) -> bool {
 pub struct LibraryConfig {
     pub name: LibraryConfigName,
     pub value: String,
+    pub source: LibraryConfigSource,
 }
 
 #[derive(Debug)]
@@ -339,8 +363,10 @@ pub struct Configurator {
 }
 
 impl Configurator {
-    pub const FLEET_STABLE_CONFIGURATION_PATH: &'static str =
-        "/etc/datadog-agent/managed/datadog-apm-libraries/stable/libraries_config.yaml";
+    pub const MANAGED_STABLE_CONFIGURATION_PATH: &'static str =
+        "/etc/datadog-agent/managed/datadog-agent/stable/libraries_config.yaml";
+
+    pub const LOCAL_STABLE_CONFIGURATION_PATH: &'static str = "/etc/datadog-agent/datadog_apm.yaml";
 
     pub fn new(debug_logs: bool) -> Self {
         Self { debug_logs }
@@ -366,28 +392,75 @@ impl Configurator {
 
     pub fn get_config_from_file(
         &self,
-        path: &Path,
+        path_local: &Path,
+        path_managed: &Path,
         process_info: ProcessInfo<'_, impl Deref<Target = [u8]>>,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
-        let stable_config = match fs::File::open(path) {
+        let stable_config_local = match fs::File::open(path_local) {
             Ok(file) => self.parse_stable_config(&mut io::BufReader::new(file))?,
             Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
             Err(e) => return Err(e).context("failed to open config file"),
         };
-        self.get_config(&stable_config, process_info)
+        let stable_config_managed = match fs::File::open(path_managed) {
+            Ok(file) => self.parse_stable_config(&mut io::BufReader::new(file))?,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
+            Err(e) => return Err(e).context("failed to open config file"),
+        };
+
+        let local_config = self.get_config(
+            &stable_config_local,
+            LibraryConfigSource::LocalFile,
+            &process_info,
+        );
+        let managed_config = self.get_config(
+            &stable_config_managed,
+            LibraryConfigSource::Managed,
+            &process_info,
+        );
+
+        let mut combined_config = local_config?;
+        combined_config.extend(managed_config?);
+        Ok(combined_config)
     }
 
     pub fn get_config_from_bytes(
         &self,
-        s: &[u8],
+        s_local: &[u8],
+        s_managed: &[u8],
         process_info: ProcessInfo<'_, impl Deref<Target = [u8]>>,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
-        let stable_config: StableConfig = self.parse_stable_config(&mut io::Cursor::new(s))?;
-        self.get_config(&stable_config, process_info)
+        let stable_config_local: StableConfig =
+            self.parse_stable_config(&mut io::Cursor::new(s_local))?;
+        let stable_config_managed: StableConfig =
+            self.parse_stable_config(&mut io::Cursor::new(s_managed))?;
+
+        let local_config = self.get_config(
+            &stable_config_local,
+            LibraryConfigSource::LocalFile,
+            &process_info,
+        );
+
+        let managed_config = self.get_config(
+            &stable_config_managed,
+            LibraryConfigSource::Managed,
+            &process_info,
+        );
+
+        let mut combined_config = local_config?;
+        combined_config.extend(managed_config?);
+        Ok(combined_config)
     }
 
     fn parse_stable_config<F: io::Read>(&self, f: &mut F) -> anyhow::Result<StableConfig> {
-        let stable_config = serde_yaml::from_reader(f)?;
+        let mut buffer = String::new();
+        f.read_to_string(&mut buffer)?;
+        if buffer.trim().is_empty() {
+            let stable_config = StableConfig::default();
+            eprintln!("Read the following static config: {stable_config:?}");
+            return Ok(stable_config);
+        }
+
+        let stable_config = serde_yaml::from_str(&buffer)?;
         if self.debug_logs {
             eprintln!("Read the following static config: {stable_config:?}");
         }
@@ -397,17 +470,18 @@ impl Configurator {
     fn get_config(
         &self,
         stable_config: &StableConfig,
-        process_info: ProcessInfo<'_, impl Deref<Target = [u8]>>,
+        source: LibraryConfigSource,
+        process_info: &ProcessInfo<'_, impl Deref<Target = [u8]>>,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
-        self.log_process_info(&process_info);
-        let matcher = Matcher::new(&process_info, &stable_config.tags);
+        self.log_process_info(process_info);
+        let matcher = Matcher::new(process_info, &stable_config.tags);
         let Some(configs) = matcher.find_stable_config(stable_config) else {
             if self.debug_logs {
                 eprintln!("No selector matched");
             }
             return Ok(Vec::new());
         };
-        let library_config = matcher.template_configs(configs)?;
+        let library_config = matcher.template_configs(source, configs)?;
         if self.debug_logs {
             eprintln!("Will apply the following configuration:\n\t{library_config:?}");
         }
@@ -421,7 +495,8 @@ mod tests {
 
     use super::{Configurator, ProcessInfo};
     use crate::{
-        LibraryConfig, LibraryConfigName, Matcher, Operator, Origin, Rule, Selector, StableConfig,
+        LibraryConfig, LibraryConfigName, LibraryConfigSource, Matcher, Operator, Origin, Rule,
+        Selector, StableConfig,
     };
 
     macro_rules! map {
@@ -461,12 +536,13 @@ rules:
     operator: equals
   configuration:
     DD_SERVICE: my_service_{{ tags[cluster_name] }}_{{ process_arguments[-Djava_config_key] }}_{{ language }}
-", process_info).unwrap();
+", b"", process_info).unwrap();
         assert_eq!(
             config,
             vec![LibraryConfig {
                 name: LibraryConfigName::DdService,
-                value: "my_service_my_cluster_my_config_java".to_string()
+                value: "my_service_my_cluster_my_config_java".to_string(),
+                source: LibraryConfigSource::LocalFile
             }]
         );
     }
@@ -477,6 +553,7 @@ rules:
         let cfg = configurator
             .get_config_from_file(
                 "/file/is/missing".as_ref(),
+                "/file/is/missing_too".as_ref(),
                 ProcessInfo::<&[u8]> {
                     args: &[b"-jar HelloWorld.jar"],
                     envp: &[b"ENV=VAR"],

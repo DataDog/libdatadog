@@ -74,12 +74,18 @@ pub extern "C" fn ddog_library_configurator_drop(_: Box<Configurator>) {}
 pub extern "C" fn ddog_library_configurator_get_path<'a>(
     configurator: &'a Configurator,
     process_info: ProcessInfo<'a>,
-    path: ffi::CharSlice<'a>,
+    path_local: ffi::CharSlice<'a>,
+    path_managed: ffi::CharSlice<'a>,
 ) -> ffi::Result<ffi::Vec<LibraryConfig>> {
-    let path = path.to_utf8_lossy();
+    let path_local = path_local.to_utf8_lossy();
+    let path_managed = path_managed.to_utf8_lossy();
     let process_info = process_info.ffi_to_rs();
     configurator
-        .get_config_from_file(path.deref().as_ref(), process_info)
+        .get_config_from_file(
+            path_local.deref().as_ref(),
+            path_managed.deref().as_ref(),
+            process_info,
+        )
         .and_then(LibraryConfig::rs_vec_to_ffi)
         .into()
 }
@@ -92,25 +98,10 @@ pub extern "C" fn ddog_library_configurator_get<'a>(
     let process_info = process_info.ffi_to_rs();
     configurator
         .get_config_from_file(
-            Configurator::FLEET_STABLE_CONFIGURATION_PATH.as_ref(),
+            Configurator::MANAGED_STABLE_CONFIGURATION_PATH.as_ref(),
+            Configurator::LOCAL_STABLE_CONFIGURATION_PATH.as_ref(),
             process_info,
         )
-        .and_then(LibraryConfig::rs_vec_to_ffi)
-        .into()
-}
-
-#[no_mangle]
-// In some languages like NodeJS, IO from a shared library is expensive.
-// Thus we provide a way to pass the configuration as a byte array instead,
-// so that the library can do the IO.
-pub extern "C" fn ddog_library_configurator_get_from_bytes<'a>(
-    configurator: &'a Configurator,
-    process_info: ProcessInfo<'a>,
-    config_bytes: ffi::slice::ByteSlice<'a>,
-) -> ffi::Result<ffi::Vec<LibraryConfig>> {
-    let process_info = process_info.ffi_to_rs();
-    configurator
-        .get_config_from_bytes(&config_bytes, process_info)
         .and_then(LibraryConfig::rs_vec_to_ffi)
         .into()
 }
@@ -130,11 +121,23 @@ pub extern "C" fn ddog_library_config_name_to_env(name: LibraryConfigName) -> ff
 }
 
 #[no_mangle]
-/// Returns a static null-terminated string with the path to the stable config yaml config file
-pub extern "C" fn ddog_library_config_fleet_stable_config_path() -> ffi::CStr<'static> {
+/// Returns a static null-terminated string with the path to the managed stable config yaml config
+/// file
+pub extern "C" fn ddog_library_config_managed_stable_config_path() -> ffi::CStr<'static> {
     ffi::CStr::from_std(unsafe {
         let path: &'static str =
-            constcat::concat!(Configurator::FLEET_STABLE_CONFIGURATION_PATH, "\0");
+            constcat::concat!(Configurator::MANAGED_STABLE_CONFIGURATION_PATH, "\0");
+        std::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
+    })
+}
+
+#[no_mangle]
+/// Returns a static null-terminated string with the path to the local stable config yaml config
+/// file
+pub extern "C" fn ddog_library_config_local_stable_config_path() -> ffi::CStr<'static> {
+    ffi::CStr::from_std(unsafe {
+        let path: &'static str =
+            constcat::concat!(Configurator::LOCAL_STABLE_CONFIGURATION_PATH, "\0");
         std::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
     })
 }
