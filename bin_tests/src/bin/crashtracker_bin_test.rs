@@ -21,7 +21,7 @@ mod unix {
     };
     use ddcommon::{tag, Endpoint};
 
-    const TEST_COLLECTOR_TIMEOUT_MS: u32 = 30_000;
+    const TEST_COLLECTOR_TIMEOUT_MS: u32 = 10_000;
 
     #[inline(never)]
     unsafe fn deref_ptr(p: *mut u8) {

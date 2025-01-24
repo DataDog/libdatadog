@@ -163,8 +163,6 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: 
 
 fn assert_telemetry_message(crash_telemetry: &[u8]) {
     let crash_telemetry_string = String::from_utf8_lossy(crash_telemetry);
-    // TODO REMOVE ME. For Test purposes only.
-    eprintln!("{crash_telemetry_string}");
     let telemetry_payload: serde_json::Value =
         serde_json::from_slice::<serde_json::Value>(crash_telemetry)
             .context("deserializing crashtracker telemetry payload to json")
@@ -249,6 +247,23 @@ fn crash_tracking_empty_endpoint() {
         .unwrap();
 
     let (mut stream, _) = listener.accept().unwrap();
+
+    // The read call is not guaranteed to collect all available data.  On OSX it appears to grab
+    // data in 8192 byte chunks.  This was not an issue when the size of a crashreport was below
+    // there, but is a problem when the size is greater.
+    // The obvious thing would be to use `read_to_end` or even `read_to_string`.
+    // The problem with that is that we then block waiting for the client to close the channel,
+    // which it doesn't do till it gets the response from us. Deadlock.  OOPS.
+    // This is resolved by the timeout killing the receiver, but then we just fall back to the
+    // 404 write failing.  See comment below.
+    // This loop is a best effort attempt to fix the problem.
+    // It can fail in two ways.
+    // 1: There are exactly n*8192 bytes available.  We issue a read when there are 0 bytes
+    //    available and deadlock.
+    // 2: The read call decides not to return some but not all of the available bytes.  We exit
+    //    early with a malformed string.
+    // Since this is a test, the risk of those are low, but if this test spuriously fails, that
+    // is a good place to look.
     let mut out = vec![0; 65536];
     let blocksize = 8192;
     let mut left = 0;
@@ -258,17 +273,18 @@ fn crash_tracking_empty_endpoint() {
     while !(done) {
         let read = stream.read(&mut out[left..right]).unwrap();
         total_read += read;
-        eprintln!("Reading {read} {left} {right} {done}");
         done = read != blocksize;
         left += blocksize;
         right += blocksize;
     }
-    eprintln!("Bytes read {total_read}");
+    // We write a 404 back to the client to finish the handshake and have them end their
+    // transmission.  Its not clear to me that we should unwrap here: if the client timed out, it
+    // won't receive the message, but is that an error in the test, or should the test still
+    // continue and succeed if the message itself was received by the agent?
     stream
         .write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n")
         .unwrap();
     let resp = String::from_utf8_lossy(&out[..total_read]);
-    eprintln!("{resp}");
     let pos = resp.find("\r\n\r\n").unwrap();
     let body = &resp[pos + 4..];
     assert_telemetry_message(body.as_bytes());
