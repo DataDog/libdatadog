@@ -1,0 +1,13 @@
+[package]
+name = "unwind_example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "unwind_example"
+path = "src/main.rs"
+
+[workspace]

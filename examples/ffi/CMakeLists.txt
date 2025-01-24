@@ -71,8 +71,14 @@ target_link_libraries(telemetry_metrics PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(telemetry_metrics ${VCRUNTIME_LINK_TYPE})
 
 if(NOT WIN32)
-  add_executable(crashtracking crashtracking.c)
-  target_link_libraries(crashtracking PRIVATE Datadog::Profiling)
+  # check existence of ${Datadog_ROOT}/bin/libdatadog-crashtracking-receiver 
+  if(NOT EXISTS "${Datadog_ROOT}/bin/libdatadog-crashtracking-receiver")
+    message(INFO " libdatadog-crashtracking-receiver not found. Skipping crashtracking example.")
+    message(INFO " Please build libdatadog with the associated feature enabled.")
+  else()
+    add_executable(crashtracking crashtracking.c)
+    target_link_libraries(crashtracking PRIVATE Datadog::Profiling)
+  endif()
 endif()
 
 add_executable(trace_exporter trace_exporter.c)
