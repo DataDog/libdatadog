@@ -4,7 +4,7 @@
 use anyhow::Context;
 use datadog_profiling::collections::string_storage::ManagedStringStorage as InternalManagedStringStorage;
 use ddcommon_ffi::slice::AsBytes;
-use ddcommon_ffi::{CharSlice, Error, MaybeError, StringWrapper};
+use ddcommon_ffi::{CharSlice, Error, MaybeError, Slice, StringWrapper};
 use libc::c_void;
 use std::num::NonZeroU32;
 use std::{rc::Rc, sync::RwLock};
@@ -56,7 +56,7 @@ pub enum ManagedStringStorageInternResult {
 
 #[must_use]
 #[no_mangle]
-/// TODO: Consider having a variant of intern (and unintern?) that takes an array as input, instead
+/// TODO: Consider having a variant of intern that takes an array as input, instead
 /// of just a single string at a time.
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
@@ -102,6 +102,33 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
         })?;
 
         write_locked_storage.unintern(non_empty_string_id)
+    })()
+    .context("ddog_prof_ManagedStringStorage_unintern failed");
+
+    match result {
+        Ok(_) => MaybeError::None,
+        Err(e) => MaybeError::Some(e.into()),
+    }
+}
+
+#[no_mangle]
+/// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
+pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern_all(
+    storage: ManagedStringStorage,
+    ids: Slice<ManagedStringId>,
+) -> MaybeError {
+    let result = (|| {
+        let storage = get_inner_string_storage(storage, true)?;
+
+        let write_locked_storage = storage.write().map_err(|_| {
+            anyhow::anyhow!("acquisition of write lock on string storage should succeed")
+        })?;
+
+        for non_empty_string_id in ids.iter().filter_map(|id| NonZeroU32::new(id.value)) {
+            write_locked_storage.unintern(non_empty_string_id)?;
+        }
+
+        anyhow::Ok(())
     })()
     .context("ddog_prof_ManagedStringStorage_unintern failed");
 
