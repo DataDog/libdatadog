@@ -7,7 +7,7 @@ use ddcommon_ffi::slice::AsBytes;
 use ddcommon_ffi::{CharSlice, Error, MaybeError, Slice, StringWrapper};
 use libc::c_void;
 use std::num::NonZeroU32;
-use std::{rc::Rc, sync::RwLock};
+use std::{ptr, rc::Rc, sync::RwLock};
 
 #[repr(C)]
 pub struct ManagedStringId {
@@ -56,8 +56,6 @@ pub enum ManagedStringStorageInternResult {
 
 #[must_use]
 #[no_mangle]
-/// TODO: Consider having a variant of intern that takes an array as input, instead
-/// of just a single string at a time.
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
     storage: ManagedStringStorage,
@@ -82,6 +80,49 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
     })()
     .context("ddog_prof_ManagedStringStorage_intern failed")
     .into()
+}
+
+#[no_mangle]
+/// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
+pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern_all(
+    storage: ManagedStringStorage,
+    strings: Slice<CharSlice>,
+    output_ids: *mut ManagedStringId,
+    output_ids_size: usize,
+) -> MaybeError {
+    let result = (|| {
+        if strings.len() != output_ids_size {
+            Err(anyhow::anyhow!(
+                "Input and output arrays have different sizes"
+            ))?
+        }
+
+        let storage = get_inner_string_storage(storage, true)?;
+
+        let mut write_locked_storage = storage.write().map_err(|_| {
+            anyhow::anyhow!("acquisition of write lock on string storage should succeed")
+        })?;
+
+        for (index, to_intern_string) in strings.iter().enumerate() {
+            let string_id = if to_intern_string.is_empty() {
+                ManagedStringId { value: 0 }
+            } else {
+                ManagedStringId {
+                    value: write_locked_storage.intern(to_intern_string.try_to_utf8()?)?,
+                }
+            };
+
+            ptr::write(output_ids.add(index), string_id);
+        }
+
+        anyhow::Ok(())
+    })()
+    .context("ddog_prof_ManagedStringStorage_intern failed");
+
+    match result {
+        Ok(_) => MaybeError::None,
+        Err(e) => MaybeError::Some(e.into()),
+    }
 }
 
 #[no_mangle]
