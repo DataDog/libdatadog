@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 libc = "0.2"
+backtrace = "0.3.74"
 
 [[bin]]
 name = "unwind_example"

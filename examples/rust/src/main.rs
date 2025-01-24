@@ -1,4 +1,8 @@
 use std::ffi::CStr;
+use std::panic;
+use std::sync::Once;
+use backtrace::{resolve_frame_unsynchronized, trace_unsynchronized};
+
 
 #[repr(C)]
 struct UnwContext([u8; 1024]); // Placeholder size for unw_context_t
@@ -90,8 +94,33 @@ fn unwind_stack() -> Vec<String> {
     frames
 }
 
+fn unwind_with_backtrace() {
+    unsafe {
+        println!("Starting backtrace-rs unwinding...");
+
+        trace_unsynchronized(|frame| {
+            backtrace::resolve_frame_unsynchronized(frame, |symbol| {
+                let mut info = String::new();
+                if let Some(name) = symbol.name() {
+                    info.push_str(&format!("Function: {}", name));
+                }
+                if let Some(file) = symbol.filename() {
+                    info.push_str(&format!(", File: {:?}", file));
+                }
+                if let Some(line) = symbol.lineno() {
+                    info.push_str(&format!(", Line: {}", line));
+                }
+                println!("Frame: IP: {:?}, {}", frame.ip(), info);
+            });
+            true // Continue tracing
+        });
+    }
+}
+
+
 // link to gcc_s does not work for some reason, workaround:
 // LD_PRELOAD=/usr/lib/libgcc_s.so ./target/debug/unwind_example
+// This should give this result
 // IP: 0x56074b8747cd, SP: 0x7ffe808cb0e0, Function: _ZN14unwind_example4main17hb317b7d12fbefac5E+0x2d
 // IP: 0x56074b8752db, SP: 0x7ffe808cb230, Function: _ZN4core3ops8function6FnOnce9call_once17h75cf2982c08e97f8E+0xb
 // IP: 0x56074b875a5e, SP: 0x7ffe808cb250, Function: _ZN3std3sys9backtrace28__rust_begin_short_backtrace17h4d254773be70884fE+0xe
@@ -104,13 +133,37 @@ fn unwind_stack() -> Vec<String> {
 // IP: 0x7ffe808cbec8, SP: 0x7ffe808cb438, Function: <unknown>
 // IP: 0x752f67756265642f, SP: 0x7ffe808cb448, Function: <unknown>
 
+static INIT_SIGNAL_HANDLER: Once = Once::new();
+
+extern "C" fn crash_handler(_signum: libc::c_int) {
+    eprintln!("Crash detected! Unwinding stack:");
+    let frames = unwind_stack();
+    for frame in frames {
+        eprintln!("{}", frame);
+    }
+
+    unwind_with_backtrace();
+    std::process::exit(1);
+}
+
+fn install_crash_handler() {
+    INIT_SIGNAL_HANDLER.call_once(|| unsafe {
+        libc::signal(libc::SIGSEGV, crash_handler as usize);
+        libc::signal(libc::SIGABRT, crash_handler as usize);
+    });
+}
+
 fn main() {
+    install_crash_handler();
+
     println!("Starting stack unwinding...");
     let frames = unwind_stack();
     for frame in frames {
         println!("{}", frame);
     }
 
-    // unwinding from a crash
-    // generate a fake crash here 
+    println!("Generating a crash...");
+    unsafe {
+        *(std::ptr::null_mut() as *mut i32) = 0; // Dereference a null pointer to generate a crash
+    }
 }
