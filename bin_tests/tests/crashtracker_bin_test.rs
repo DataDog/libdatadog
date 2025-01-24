@@ -249,9 +249,14 @@ fn crash_tracking_empty_endpoint() {
         .unwrap();
 
     let (mut stream, _) = listener.accept().unwrap();
-    let mut out = vec![0; 65536 * 2];
-    let read = stream.read(&mut out).unwrap();
+    let mut out = vec![0; 65536];
+    let mut read = stream.read(&mut out[..8192]).unwrap();
     eprintln!("Bytes read {read}");
+    if read == 8192 {
+        let read2 = stream.read(&mut out[8193..]).unwrap();
+        read += read2;
+        eprintln!("Bytes read {read2}");
+    }
     stream
         .write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n")
         .unwrap();
