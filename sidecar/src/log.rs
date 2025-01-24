@@ -365,6 +365,7 @@ lazy_static! {
     pub static ref MULTI_LOG_FILTER: MultiEnvFilter = MultiEnvFilter::default();
     pub static ref MULTI_LOG_WRITER: MultiWriter = MultiWriter::default();
 }
+static mut PERMANENT_MIN_LOG_LEVEL: Option<TemporarilyRetainedMapGuard<String, EnvFilter>> = None;
 
 pub(crate) fn enable_logging() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -383,7 +384,8 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
     }
     let config = config::Config::get();
     if !config.log_level.is_empty() {
-        MULTI_LOG_FILTER.add(config.log_level.clone());
+        let filter = MULTI_LOG_FILTER.add(config.log_level.clone());
+        unsafe { PERMANENT_MIN_LOG_LEVEL.replace(filter); } // SAFETY: initialized once
     }
     MULTI_LOG_WRITER.add(config.log_method); // same than MULTI_LOG_FILTER
 
