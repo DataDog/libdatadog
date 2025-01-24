@@ -250,17 +250,25 @@ fn crash_tracking_empty_endpoint() {
 
     let (mut stream, _) = listener.accept().unwrap();
     let mut out = vec![0; 65536];
-    let mut read = stream.read(&mut out[..8192]).unwrap();
-    eprintln!("Bytes read {read}");
-    if read == 8192 {
-        let read2 = stream.read(&mut out[8193..]).unwrap();
-        read += read2;
-        eprintln!("Bytes read {read2}");
+    let blocksize = 8192;
+    let mut left = 0;
+    let mut right = blocksize;
+    let mut total_read = 0;
+    let mut done = false;
+    while !(done) {
+        let read = stream.read(&mut out[left..right]).unwrap();
+        total_read += read;
+        eprintln!("Reading {read} {left} {right} {done}");
+        done = read != blocksize;
+        left += blocksize;
+        right += blocksize;
     }
+    eprintln!("Bytes read {total_read}");
     stream
         .write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n")
         .unwrap();
-    let resp = String::from_utf8_lossy(&out[..read]);
+    let resp = String::from_utf8_lossy(&out[..total_read]);
+    eprintln!("{resp}");
     let pos = resp.find("\r\n\r\n").unwrap();
     let body = &resp[pos + 4..];
     assert_telemetry_message(body.as_bytes());
