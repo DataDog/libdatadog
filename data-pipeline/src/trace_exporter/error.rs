@@ -24,12 +24,16 @@ impl Display for AgentErrorKind {
 #[derive(Debug, PartialEq)]
 pub enum BuilderErrorKind {
     InvalidUri,
+    InvalidTelemetryConfig,
 }
 
 impl Display for BuilderErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BuilderErrorKind::InvalidUri => write!(f, "Invalid URI"),
+            BuilderErrorKind::InvalidTelemetryConfig => {
+                write!(f, "Invalid telemetry configuration")
+            }
         }
     }
 }

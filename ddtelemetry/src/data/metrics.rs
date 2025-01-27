@@ -36,7 +36,7 @@ pub enum SerializedSketch {
     B64 { sketch_b64: String },
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 #[repr(C)]
 pub enum MetricNamespace {
