@@ -242,10 +242,10 @@ pub(crate) struct Point {
 /// A named resource
 pub(crate) struct Resource {
     /// The name of this resource
-    pub(crate) name: &'static str,
+    pub(crate) name: String,
     #[serde(rename = "type")]
     /// The kind of this resource
-    pub(crate) kind: &'static str,
+    pub(crate) kind: String,
 }
 
 #[derive(Debug, Clone, Copy)]
