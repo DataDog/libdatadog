@@ -91,7 +91,11 @@ impl SortedTags {
             if v.is_empty() {
                 tags_as_chars.push(Chars::from(k.to_string()));
             } else {
-                tags_as_chars.push(format!("{}:{}", k, v).into());
+                let mut a_tag = String::with_capacity(k.len() + v.len() + 1);
+                a_tag.push_str(k);
+                a_tag.push(':');
+                a_tag.push_str(v);
+                tags_as_chars.push(a_tag.into());
             }
         }
         tags_as_chars
@@ -103,7 +107,11 @@ impl SortedTags {
             if v.is_empty() {
                 tags_as_vec.push(k.to_string());
             } else {
-                tags_as_vec.push(format!("{}:{}", k, v));
+                let mut a_tag = String::with_capacity(k.len() + v.len() + 1);
+                a_tag.push_str(k);
+                a_tag.push(':');
+                a_tag.push_str(v);
+                tags_as_vec.push(a_tag);
             }
         }
         tags_as_vec
