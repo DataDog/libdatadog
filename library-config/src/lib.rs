@@ -133,6 +133,7 @@ impl<'a, T: Deref<Target = [u8]>> Matcher<'a, T> {
         &'a self,
         source: LibraryConfigSource,
         config: &HashMap<LibraryConfigName, String>,
+        config_id: &Option<String>,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
         config
             .iter()
@@ -141,6 +142,7 @@ impl<'a, T: Deref<Target = [u8]>> Matcher<'a, T> {
                     name,
                     value: self.template_config(v)?,
                     source,
+                    config_id: config_id.clone(),
                 })
             })
             .collect()
@@ -304,6 +306,7 @@ struct StableConfig {
     #[serde(default)]
     tags: HashMap<String, String>,
     rules: Vec<Rule>,
+    config_id: Option<String>,
 }
 
 /// Helper trait so we don't have to duplicate code for
@@ -355,6 +358,7 @@ pub struct LibraryConfig {
     pub name: LibraryConfigName,
     pub value: String,
     pub source: LibraryConfigSource,
+    pub config_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -481,7 +485,7 @@ impl Configurator {
             }
             return Ok(Vec::new());
         };
-        let library_config = matcher.template_configs(source, configs)?;
+        let library_config = matcher.template_configs(source, configs, &stable_config.config_id)?;
         if self.debug_logs {
             eprintln!("Will apply the following configuration:\n\t{library_config:?}");
         }
@@ -521,6 +525,7 @@ mod tests {
         };
         let configurator = Configurator::new(true);
         let config = configurator.get_config_from_bytes(b"
+config_id: abc
 tags:
   cluster_name: my_cluster 
 rules:
@@ -542,7 +547,8 @@ rules:
             vec![LibraryConfig {
                 name: LibraryConfigName::DdService,
                 value: "my_service_my_cluster_my_config_java".to_string(),
-                source: LibraryConfigSource::LocalFile
+                source: LibraryConfigSource::LocalFile,
+                config_id: Some("abc".to_string()),
             }]
         );
     }
@@ -587,6 +593,7 @@ rules:
         assert_eq!(
             cfg,
             StableConfig {
+                config_id: None,
                 tags: HashMap::default(),
                 rules: vec![Rule {
                     selectors: vec![Selector {
