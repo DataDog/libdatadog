@@ -3,7 +3,7 @@
 
 use std::{ffi::c_char, ops::Deref};
 
-use datadog_library_config::{Configurator, LibraryConfigName};
+use datadog_library_config::{Configurator, LibraryConfigName, LibraryConfigSource};
 use ddcommon_ffi::{self as ffi, slice::AsBytes, Slice};
 
 // TODO: Centos 6 build
@@ -117,6 +117,19 @@ pub extern "C" fn ddog_library_config_name_to_env(name: LibraryConfigName) -> ff
         DdEnv => ddcommon::cstr!("DD_ENV"),
         DdVersion => ddcommon::cstr!("DD_VERSION"),
         DdProfilingEnabled => ddcommon::cstr!("DD_PROFILING_ENABLED"),
+    })
+}
+
+#[no_mangle]
+/// Returns a static null-terminated string, containing the name of the environment variable
+/// associated with the library configuration
+pub extern "C" fn ddog_library_config_source_to_string(
+    name: LibraryConfigSource,
+) -> ffi::CStr<'static> {
+    use LibraryConfigSource::*;
+    ffi::CStr::from_std(match name {
+        LocalFile => ddcommon::cstr!("local_file"),
+        Managed => ddcommon::cstr!("managed"),
     })
 }
 
