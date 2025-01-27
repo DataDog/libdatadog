@@ -411,20 +411,22 @@ impl Configurator {
             Err(e) => return Err(e).context("failed to open config file"),
         };
 
-        let local_config = self.get_config(
-            &stable_config_local,
-            LibraryConfigSource::LocalFile,
-            &process_info,
-        );
         let managed_config = self.get_config(
             &stable_config_managed,
             LibraryConfigSource::Managed,
             &process_info,
-        );
+        )?;
+        if !managed_config.is_empty() {
+            return Ok(managed_config);
+        }
 
-        let mut combined_config = local_config?;
-        combined_config.extend(managed_config?);
-        Ok(combined_config)
+        // If no managed config rule matches, try the local config
+        let local_config = self.get_config(
+            &stable_config_local,
+            LibraryConfigSource::LocalFile,
+            &process_info,
+        )?;
+        Ok(local_config)
     }
 
     pub fn get_config_from_bytes(
@@ -438,21 +440,22 @@ impl Configurator {
         let stable_config_managed: StableConfig =
             self.parse_stable_config(&mut io::Cursor::new(s_managed))?;
 
-        let local_config = self.get_config(
-            &stable_config_local,
-            LibraryConfigSource::LocalFile,
-            &process_info,
-        );
-
         let managed_config = self.get_config(
             &stable_config_managed,
             LibraryConfigSource::Managed,
             &process_info,
-        );
+        )?;
+        if !managed_config.is_empty() {
+            return Ok(managed_config);
+        }
 
-        let mut combined_config = local_config?;
-        combined_config.extend(managed_config?);
-        Ok(combined_config)
+        // If no managed config rule matches, try the local config
+        let local_config = self.get_config(
+            &stable_config_local,
+            LibraryConfigSource::LocalFile,
+            &process_info,
+        )?;
+        Ok(local_config)
     }
 
     fn parse_stable_config<F: io::Read>(&self, f: &mut F) -> anyhow::Result<StableConfig> {
@@ -667,5 +670,50 @@ rules:
         for (i, (selector, matches)) in test_cases.iter().enumerate() {
             assert_eq!(matcher.selector_match(selector), *matches, "case {i}");
         }
+    }
+
+    #[test]
+    fn test_fleet_over_local() {
+        let process_info: ProcessInfo<'_, &[u8]> = ProcessInfo::<&[u8]> {
+            args: &[b"-Djava_config_key=my_config", b"-jar", b"HelloWorld.jar"],
+            envp: &[b"ENV=VAR"],
+            language: b"java",
+        };
+        let configurator = Configurator::new(true);
+        let config = configurator
+            .get_config_from_bytes(
+                b"
+config_id: abc
+tags:
+  cluster_name: my_cluster 
+rules:
+- selectors:
+  - origin: language
+    matches: [\"java\"]
+    operator: equals
+  configuration:
+    DD_SERVICE: local
+",
+                b"
+config_id: def
+rules:
+- selectors:
+  - origin: language
+    matches: [\"java\"]
+    operator: equals
+  configuration:
+    DD_SERVICE: managed",
+                process_info,
+            )
+            .unwrap();
+        assert_eq!(
+            config,
+            vec![LibraryConfig {
+                name: LibraryConfigName::DdService,
+                value: "managed".to_string(),
+                source: LibraryConfigSource::Managed,
+                config_id: Some("def".to_string()),
+            }]
+        );
     }
 }
