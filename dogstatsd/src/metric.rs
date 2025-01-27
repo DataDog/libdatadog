@@ -527,7 +527,7 @@ mod tests {
             .unwrap()
             .values
             .iter()
-            .any(|(k, v)| k == "v1.65.1" && v == ""));
+            .any(|(k, v)| k == "v1.65.1" && v.is_empty()));
     }
 
     #[test]
