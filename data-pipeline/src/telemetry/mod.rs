@@ -3,22 +3,20 @@
 
 //! Telemetry provides a client to send results accumulated in 'Metrics'.
 pub mod metrics;
-use crate::telemetry::metrics::Metrics;
-use anyhow::Result;
+use crate::telemetry::metrics::{
+    Metrics, API_BYTES_STR, API_ERRORS_STR, API_REQUEST_STR, API_RESPONSES_STR, CHUNKS_DROPPED_STR,
+    CHUNKS_SENT_STR,
+};
+use crate::trace_exporter::error::{BuilderErrorKind, TraceExporterError};
+use datadog_trace_utils::trace_utils::SendDataResult;
 use ddcommon::tag;
 use ddcommon::tag::Tag;
-use ddtelemetry::data::metrics::{MetricNamespace, MetricType};
 use ddtelemetry::metrics::ContextKey;
 use ddtelemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
 };
-use std::collections::HashMap;
 use std::time::Duration;
-use tokio::select;
 use tokio::task::JoinHandle;
-
-#[derive(Debug, PartialEq)]
-struct SelfMetric(MetricType, MetricNamespace);
 
 /// Structure to build a Telemetry client.
 ///
@@ -30,20 +28,10 @@ pub struct TelemetryClientBuilder {
     language: Option<String>,
     language_version: Option<String>,
     tracer_version: Option<String>,
-    metrics: HashMap<String, SelfMetric>,
-    heartbeat: u64,
-    interval: u64,
-    url: Option<String>,
+    config: ddtelemetry::config::Config,
 }
 
 impl TelemetryClientBuilder {
-    /// Creates a new empty builder.
-    pub fn new() -> Self {
-        Self {
-            ..Default::default()
-        }
-    }
-
     /// Sets the service name for the telemetry client
     pub fn set_service_name(mut self, name: &str) -> Self {
         self.service_name = Some(name.to_string());
@@ -68,217 +56,145 @@ impl TelemetryClientBuilder {
         self
     }
 
-    /// Register a new metric that will be used by the telemetry client.
-    pub fn add_metric(
-        mut self,
-        name: &str,
-        metric_type: MetricType,
-        namespace: MetricNamespace,
-    ) -> Self {
-        self.metrics
-            .insert(name.to_string(), SelfMetric(metric_type, namespace));
-        self
-    }
-
-    /// Sets the interval time for sending metrics to the agent.
-    pub fn set_interval(mut self, msecs: u64) -> Self {
-        self.interval = msecs;
-        self
-    }
-
     /// Sets the url where the metrics will be sent.
     pub fn set_url(mut self, url: &str) -> Self {
-        self.url = Some(url.to_string());
+        let _ = self
+            .config
+            .set_endpoint(ddcommon::Endpoint::from_slice(url));
         self
     }
 
-    /// Sets the heartbeat notification interval in seconds.
+    /// Sets the heartbeat notification interval in millis.
     pub fn set_hearbeat(mut self, interval: u64) -> Self {
-        self.heartbeat = interval;
+        if interval > 0 {
+            self.config.telemetry_hearbeat_interval = Duration::from_millis(interval);
+        }
         self
     }
 
     /// Builds the telemetry client.
-    pub async fn build(self) -> Result<TelemetryClient> {
-        let mut config = ddtelemetry::config::Config {
-            ..Default::default()
-        };
-
-        if self.heartbeat > 0 {
-            config.telemetry_hearbeat_interval = Duration::from_secs(self.heartbeat);
-        }
-
-        if let Some(url) = self.url {
-            let _ = config.set_endpoint(ddcommon::Endpoint::from_url(
-                url.parse::<hyper::Uri>().unwrap(),
-            ));
-        }
-
+    pub async fn build(self) -> Result<TelemetryClient, TraceExporterError> {
         let (worker, handle) = TelemetryWorkerBuilder::new_fetch_host(
             self.service_name.unwrap(),
             self.language.unwrap(),
             self.language_version.unwrap(),
             self.tracer_version.unwrap(),
         )
-        .spawn_with_config(config)
-        .await?;
-
-        let metrics = {
-            let mut map: HashMap<String, ContextKey> = HashMap::new();
-            for (k, v) in self.metrics.into_iter() {
-                map.insert(
-                    k.clone(),
-                    worker.register_metric_context(k, vec![], v.0, true, v.1),
-                );
-            }
-            map
-        };
+        .spawn_with_config(self.config)
+        .await
+        .map_err(|_| TraceExporterError::Builder(BuilderErrorKind::InvalidTelemetryConfig))?;
 
         Ok(TelemetryClient {
             handle,
-            interval: tokio::time::interval(Duration::from_millis(self.interval)),
+            metrics: Metrics::new(&worker),
             worker,
-            metrics,
         })
     }
 }
 
 /// Telemetry handle used to send metrics to the agent
 pub struct TelemetryClient {
-    interval: tokio::time::Interval,
+    metrics: Metrics,
     worker: TelemetryWorkerHandle,
     handle: JoinHandle<()>,
-    // TODO: use Rc<str> as key?
-    metrics: HashMap<String, ContextKey>,
-    // config: ddtelemetry::config::Config,
 }
 
 impl TelemetryClient {
-    async fn add_point(&self, value: f64, key: ContextKey, tags: Vec<Tag>) -> Result<()> {
-        self.worker
+    async fn add_point(&self, value: f64, key: ContextKey, tags: Vec<Tag>) {
+        // TODO: map error.
+        let _ = self
+            .worker
             .send_msg(TelemetryActions::AddPoint((value, key, tags)))
-            .await
+            .await;
     }
 
-    async fn send(&mut self, metrics: Metrics) {
+    /// Sends metrics to the agent using a telemetry worker handle.
+    ///
+    /// # Arguments:
+    ///
+    /// * `telemetry_handle`: telemetry worker handle used to enqueue metrics.
+    pub async fn send(&self, data: &SendDataResult) {
         let mut futures = Vec::new();
-        if metrics.api_requests > 0 {
-            let key = self.metrics.get("trace_api.requests").unwrap();
-            futures.push(self.add_point(
-                metrics.api_requests as f64,
-                *key,
-                vec![Tag::new("src_library", "libdatadog").unwrap()],
-            ));
+        if data.requests_count > 0 {
+            if let Some(key) = self.metrics.get(API_REQUEST_STR) {
+                futures.push(self.add_point(data.requests_count as f64, *key, vec![]));
+            }
         }
-        if metrics.api_errors_network > 0 {
-            let key = self.metrics.get("trace_api.errors").unwrap();
-            futures.push(self.add_point(
-                metrics.api_errors_network as f64,
-                *key,
-                vec![tag!("type", "network"), tag!("src_library", "libdatadog")],
-            ));
-        }
-        if metrics.api_errors_timeout > 0 {
-            let key = self.metrics.get("trace_api.errors").unwrap();
-            futures.push(self.add_point(
-                metrics.api_errors_timeout as f64,
-                *key,
-                vec![tag!("type", "timeout"), tag!("src_library", "libdatadog")],
-            ));
-        }
-        if metrics.api_errors_status_code > 0 {
-            let key = self.metrics.get("trace_api.errors").unwrap();
-            futures.push(self.add_point(
-                metrics.api_errors_status_code as f64,
-                *key,
-                vec![
-                    tag!("type", "status_code"),
-                    tag!("src_library", "libdatadog"),
-                ],
-            ));
-        }
-        if metrics.bytes_sent > 0 {
-            let key = self.metrics.get("trace_api.bytes").unwrap();
-            futures.push(self.add_point(
-                metrics.bytes_sent as f64,
-                *key,
-                vec![tag!("src_library", "libdatadog")],
-            ));
-        }
-        if metrics.chunks_sent > 0 {
-            let key = self.metrics.get("trace_chunks_sent").unwrap();
-            futures.push(self.add_point(
-                metrics.chunks_sent as f64,
-                *key,
-                vec![tag!("src_library", "libdatadog")],
-            ));
-        }
-        if metrics.chunks_dropped > 0 {
-            let key = self.metrics.get("trace_chunks_dropped").unwrap();
-            futures.push(self.add_point(
-                metrics.chunks_dropped as f64,
-                *key,
-                vec![tag!("src_library", "libdatadog")],
-            ));
-        }
-        if !metrics.api_responses_count_per_code.is_empty() {
-            let key = self.metrics.get("trace_api.responses").unwrap();
-            for (status_code, count) in &metrics.api_responses_count_per_code {
+        if data.errors_network > 0 {
+            if let Some(key) = self.metrics.get(API_ERRORS_STR) {
                 futures.push(self.add_point(
-                    *count as f64,
+                    data.errors_network as f64,
                     *key,
-                    vec![
-                        Tag::new("status_code", status_code.to_string().as_str()).unwrap(),
-                        tag!("src_library", "libdatadog"),
-                    ],
+                    vec![tag!("type", "network")],
                 ));
+            }
+        }
+        if data.errors_timeout > 0 {
+            if let Some(key) = self.metrics.get(API_ERRORS_STR) {
+                futures.push(self.add_point(
+                    data.errors_timeout as f64,
+                    *key,
+                    vec![tag!("type", "timeout")],
+                ));
+            }
+        }
+        if data.errors_status_code > 0 {
+            if let Some(key) = self.metrics.get(API_ERRORS_STR) {
+                futures.push(self.add_point(
+                    data.errors_status_code as f64,
+                    *key,
+                    vec![tag!("type", "status_code")],
+                ));
+            }
+        }
+        if data.bytes_sent > 0 {
+            if let Some(key) = self.metrics.get(API_BYTES_STR) {
+                futures.push(self.add_point(data.bytes_sent as f64, *key, vec![]));
+            }
+        }
+        if data.chunks_sent > 0 {
+            if let Some(key) = self.metrics.get(CHUNKS_SENT_STR) {
+                futures.push(self.add_point(data.chunks_sent as f64, *key, vec![]));
+            }
+        }
+        if data.chunks_dropped > 0 {
+            if let Some(key) = self.metrics.get(CHUNKS_DROPPED_STR) {
+                futures.push(self.add_point(data.chunks_dropped as f64, *key, vec![]));
+            }
+        }
+        if !data.responses_count_per_code.is_empty() {
+            if let Some(key) = self.metrics.get(API_RESPONSES_STR) {
+                for (status_code, count) in &data.responses_count_per_code {
+                    futures.push(self.add_point(
+                        *count as f64,
+                        *key,
+                        vec![Tag::new("status_code", status_code.to_string().as_str()).unwrap()],
+                    ));
+                }
             }
         }
 
         futures::future::join_all(futures).await;
     }
 
-    /// Spins the Telemetry client.
-    ///
-    /// The client will call the update closure peridically at the interval set in the
-    /// `TelemetryClientBuilder` to retrieve the metrics and send them to the agent. The client
-    /// will loop indefinitely until the cancellation future resolves.
-    ///
-    /// # Arguments
-    ///
-    /// * update: closure to retrieve `Metrics`.
-    /// * cancellation: future which resolution will serve as cancellation point to stop the client.
-    pub async fn run<U, C>(&mut self, mut update: U, cancellation: C)
-    where
-        U: FnMut() -> Option<Metrics>,
-        C: std::future::Future,
-    {
-        let _ = self
+    /// Starts the client
+    pub async fn start(&self) {
+        if let Err(_e) = self
             .worker
             .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-            .await;
-
-        tokio::pin!(cancellation);
-
-        loop {
-            select! {
-                _ = self.interval.tick() => {
-                    if let Some(metrics) = update() {
-                        self.send(metrics).await;
-                        let _ = self.worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushMetricAggr)).await;
-                        let _ = self.worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData)).await;
-                    }
-                },
-                _ = &mut cancellation => {
-                    if let Some(metrics) = update() {
-                        // TODO: is this necessary?
-                        self.send(metrics).await;
-                    }
-                    let _ = self.worker.send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop)).await;
-                    let _ = (&mut self.handle).await;
-                    return
-                },
-            }
+            .await
+        {
+            self.handle.abort();
+        }
+    }
+    /// Shutdowns the telemetry client.
+    pub async fn shutdown(&self) {
+        if let Err(_e) = self
+            .worker
+            .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop))
+            .await
+        {
+            self.handle.abort();
         }
     }
 }
@@ -287,83 +203,43 @@ impl TelemetryClient {
 mod tests {
     use httpmock::Method::POST;
     use httpmock::MockServer;
+    use regex::Regex;
+    use std::collections::HashMap;
 
     use super::*;
 
-    #[derive(Debug, Default)]
-    struct MetricBucket {
-        updated: bool,
-        bytes: u64,
-    }
-
-    impl MetricBucket {
-        pub fn update(&mut self, bytes: u64) {
-            self.updated = true;
-            self.bytes += bytes;
-        }
-
-        pub fn get(&mut self) -> Option<Metrics> {
-            if self.updated {
-                self.updated = false;
-                Some(Metrics {
-                    bytes_sent: self.bytes,
-                    ..Default::default()
-                })
-            } else {
-                None
-            }
-        }
-    }
-
     #[test]
     fn builder_test() {
-        let builder = TelemetryClientBuilder::new()
+        let builder = TelemetryClientBuilder::default()
             .set_service_name("test_service")
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
-            .set_interval(100)
             .set_url("http://localhost")
-            .set_hearbeat(30)
-            .add_metric("test.foo", MetricType::Count, MetricNamespace::Telemetry)
-            .add_metric(
-                "test.bar",
-                MetricType::Distribution,
-                MetricNamespace::General,
-            );
+            .set_hearbeat(30);
 
         assert_eq!(&builder.service_name.unwrap(), "test_service");
         assert_eq!(&builder.language.unwrap(), "test_language");
         assert_eq!(&builder.language_version.unwrap(), "test_language_version");
         assert_eq!(&builder.tracer_version.unwrap(), "test_tracer_version");
-        assert_eq!(&builder.url.unwrap(), "http://localhost");
-        assert_eq!(builder.interval, 100_u64);
-        assert_eq!(builder.heartbeat, 30_u64);
         assert_eq!(
-            *builder.metrics.get("test.foo").unwrap(),
-            SelfMetric(MetricType::Count, MetricNamespace::Telemetry)
+            &builder.config.endpoint.unwrap().url.to_string().as_ref(),
+            "http://localhost/telemetry/proxy/api/v2/apmtelemetry"
         );
         assert_eq!(
-            *builder.metrics.get("test.bar").unwrap(),
-            SelfMetric(MetricType::Distribution, MetricNamespace::General)
+            builder.config.telemetry_hearbeat_interval,
+            Duration::from_millis(30)
         );
     }
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn spawn_test() {
-        let client = TelemetryClientBuilder::new()
+        let client = TelemetryClientBuilder::default()
             .set_service_name("test_service")
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
-            .set_interval(100)
-            .add_metric("test.foo", MetricType::Count, MetricNamespace::Telemetry)
-            .add_metric(
-                "test.bar",
-                MetricType::Distribution,
-                MetricNamespace::General,
-            )
             .build()
             .await;
 
@@ -372,48 +248,321 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn run_test() {
+    async fn api_bytes_test() {
+        let payload = Regex::new(r#""metric":"trace_api.bytes","tags":\["src_library:libdatadog"\],"sketch_b64":".+","common":true,"interval":\d+,"type":"distribution""#).unwrap();
         let server = MockServer::start_async().await;
 
-        let telemetry_srv = server.mock_async(|when, then| {
-            when.method(POST)
-                .body_contains("\"payload\":[{\"request_type\":\"sketches\",\"payload\":{\"series\":[{\"namespace\":\"tracers\",\"metric\":\"trace_api.bytes\",\"tags\":[\"src_library:libdatadog\"]")
-                .path("/telemetry/proxy/api/v2/apmtelemetry");
-            then.status(200).body("");
-        })
-        .await;
+        let telemetry_srv = server
+            .mock_async(|when, then| {
+                when.method(POST).body_matches(payload);
+                then.status(200).body("");
+            })
+            .await;
 
-        let client = TelemetryClientBuilder::new()
+        let result = TelemetryClientBuilder::default()
             .set_service_name("test_service")
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
-            .set_interval(100)
             .set_url(&server.url("/"))
-            .set_hearbeat(1)
-            .add_metric(
-                "trace_api.bytes",
-                MetricType::Distribution,
-                MetricNamespace::Tracers,
-            )
+            .set_hearbeat(100)
             .build()
             .await;
 
-        assert!(client.is_ok());
+        assert!(result.is_ok());
 
-        // Ensure metrics are only sent once by just allowing one interval.
-        let cancel_future =
-            tokio::time::sleep_until(tokio::time::Instant::now() + Duration::from_millis(100));
-        // Mock metrics retrieval
-        let mut global_metrics = MetricBucket::default();
-        global_metrics.update(1);
+        let data = SendDataResult {
+            last_result: Ok(hyper::Response::default()),
+            bytes_sent: 1,
+            ..Default::default()
+        };
 
-        client
-            .unwrap()
-            .run(|| global_metrics.get(), cancel_future)
+        let client = result.unwrap();
+
+        client.start().await;
+        client.send(&data).await;
+        client.shutdown().await;
+        let _ = client.handle.await;
+        telemetry_srv.assert_hits_async(1).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn requests_test() {
+        let payload = Regex::new(r#""metric":"trace_api.requests","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog"\],"common":true,"type":"count""#).unwrap();
+        let server = MockServer::start_async().await;
+
+        let telemetry_srv = server
+            .mock_async(|when, then| {
+                when.method(POST).body_matches(payload);
+                then.status(200).body("");
+            })
             .await;
 
-        // Assert that just one payload contains the 'trace.api_bytes' metric.
+        let result = TelemetryClientBuilder::default()
+            .set_service_name("test_service")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_url(&server.url("/"))
+            .set_hearbeat(100)
+            .build()
+            .await;
+
+        assert!(result.is_ok());
+
+        let data = SendDataResult {
+            last_result: Ok(hyper::Response::default()),
+            requests_count: 1,
+            ..Default::default()
+        };
+
+        let client = result.unwrap();
+
+        client.start().await;
+        client.send(&data).await;
+        client.shutdown().await;
+        let _ = client.handle.await;
+        telemetry_srv.assert_hits_async(1).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn responses_per_code_test() {
+        let payload = Regex::new(r#""metric":"trace_api.responses","points":\[\[\d+,1\.0\]\],"tags":\["status_code:200","src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
+        let server = MockServer::start_async().await;
+
+        let telemetry_srv = server
+            .mock_async(|when, then| {
+                when.method(POST).body_matches(payload);
+                then.status(200).body("");
+            })
+            .await;
+
+        let result = TelemetryClientBuilder::default()
+            .set_service_name("test_service")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_url(&server.url("/"))
+            .set_hearbeat(100)
+            .build()
+            .await;
+
+        assert!(result.is_ok());
+
+        let data = SendDataResult {
+            last_result: Ok(hyper::Response::default()),
+            responses_count_per_code: HashMap::from([(200, 1)]),
+            ..Default::default()
+        };
+
+        let client = result.unwrap();
+
+        client.start().await;
+        client.send(&data).await;
+        client.shutdown().await;
+        let _ = client.handle.await;
+        telemetry_srv.assert_hits_async(1).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn errors_timeout_test() {
+        let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["type:timeout","src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
+        let server = MockServer::start_async().await;
+
+        let telemetry_srv = server
+            .mock_async(|when, then| {
+                when.method(POST).body_matches(payload);
+                then.status(200).body("");
+            })
+            .await;
+
+        let result = TelemetryClientBuilder::default()
+            .set_service_name("test_service")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_url(&server.url("/"))
+            .set_hearbeat(100)
+            .build()
+            .await;
+
+        assert!(result.is_ok());
+
+        let data = SendDataResult {
+            last_result: Ok(hyper::Response::default()),
+            errors_timeout: 1,
+            ..Default::default()
+        };
+
+        let client = result.unwrap();
+
+        client.start().await;
+        client.send(&data).await;
+        client.shutdown().await;
+        let _ = client.handle.await;
+        telemetry_srv.assert_hits_async(1).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn errors_network_test() {
+        let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["type:network","src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
+        let server = MockServer::start_async().await;
+
+        let telemetry_srv = server
+            .mock_async(|when, then| {
+                when.method(POST).body_matches(payload);
+                then.status(200).body("");
+            })
+            .await;
+
+        let result = TelemetryClientBuilder::default()
+            .set_service_name("test_service")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_url(&server.url("/"))
+            .set_hearbeat(100)
+            .build()
+            .await;
+
+        assert!(result.is_ok());
+
+        let data = SendDataResult {
+            last_result: Ok(hyper::Response::default()),
+            errors_network: 1,
+            ..Default::default()
+        };
+
+        let client = result.unwrap();
+
+        client.start().await;
+        client.send(&data).await;
+        client.shutdown().await;
+        let _ = client.handle.await;
+        telemetry_srv.assert_hits_async(1).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn errors_status_code_test() {
+        let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["type:status_code","src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
+        let server = MockServer::start_async().await;
+
+        let telemetry_srv = server
+            .mock_async(|when, then| {
+                when.method(POST).body_matches(payload);
+                then.status(200).body("");
+            })
+            .await;
+
+        let result = TelemetryClientBuilder::default()
+            .set_service_name("test_service")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_url(&server.url("/"))
+            .set_hearbeat(100)
+            .build()
+            .await;
+
+        assert!(result.is_ok());
+
+        let data = SendDataResult {
+            last_result: Ok(hyper::Response::default()),
+            errors_status_code: 1,
+            ..Default::default()
+        };
+
+        let client = result.unwrap();
+
+        client.start().await;
+        client.send(&data).await;
+        client.shutdown().await;
+        let _ = client.handle.await;
+        telemetry_srv.assert_hits_async(1).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn errors_chunks_sent_test() {
+        let payload = Regex::new(r#""metric":"trace_chunk_sent","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
+        let server = MockServer::start_async().await;
+
+        let telemetry_srv = server
+            .mock_async(|when, then| {
+                when.method(POST).body_matches(payload);
+                then.status(200).body("");
+            })
+            .await;
+
+        let result = TelemetryClientBuilder::default()
+            .set_service_name("test_service")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_url(&server.url("/"))
+            .set_hearbeat(100)
+            .build()
+            .await;
+
+        assert!(result.is_ok());
+
+        let data = SendDataResult {
+            last_result: Ok(hyper::Response::default()),
+            chunks_sent: 1,
+            ..Default::default()
+        };
+
+        let client = result.unwrap();
+
+        client.start().await;
+        client.send(&data).await;
+        client.shutdown().await;
+        let _ = client.handle.await;
+        telemetry_srv.assert_hits_async(1).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn errors_chunks_dropped_test() {
+        let payload = Regex::new(r#""metric":"trace_chunk_dropped","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
+        let server = MockServer::start_async().await;
+
+        let telemetry_srv = server
+            .mock_async(|when, then| {
+                when.method(POST).body_matches(payload);
+                then.status(200).body("");
+            })
+            .await;
+
+        let result = TelemetryClientBuilder::default()
+            .set_service_name("test_service")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_url(&server.url("/"))
+            .set_hearbeat(100)
+            .build()
+            .await;
+
+        assert!(result.is_ok());
+
+        let data = SendDataResult {
+            last_result: Ok(hyper::Response::default()),
+            chunks_dropped: 1,
+            ..Default::default()
+        };
+
+        let client = result.unwrap();
+
+        client.start().await;
+        client.send(&data).await;
+        client.shutdown().await;
+        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 }
