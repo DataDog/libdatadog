@@ -5,10 +5,19 @@ edition = "2021"
 
 [dependencies]
 libc = "0.2"
-backtrace = "0.3.74"
+backtrace = { path = "/opt/backtrace-rs" }
+libunwind = "1.3.3"
 
 [[bin]]
-name = "unwind_example"
-path = "src/main.rs"
+name = "unwind_c"
+path = "src/unwind_c.rs"
+
+[[bin]]
+name = "unwind_backtrace"
+path = "src/unwind_backtrace.rs"
+
+[[bin]]
+name = "unwind_libunwind"
+path = "src/unwind_libunwind.rs"
 
 [workspace]
