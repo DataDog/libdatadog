@@ -12,6 +12,8 @@ pub use datatypes::*;
 use ddcommon_ffi::{wrap_with_void_ffi_result, VoidResult};
 use function_name::named;
 pub use spans::*;
+use windows::Win32::Foundation::BOOL;
+use windows::Win32::System::ErrorReporting::WER_RUNTIME_EXCEPTION_INFORMATION;
 
 #[no_mangle]
 #[must_use]
@@ -130,4 +132,18 @@ pub unsafe extern "C" fn ddog_crasht_init_without_receiver(
             metadata.try_into()?,
         )?
     })
+}
+
+#[no_mangle]
+#[named]
+#[cfg(windows)]
+pub unsafe extern "C" fn OutOfProcessExceptionEventCallback(
+    pContext: *mut std::ffi::c_void,
+    pExceptionInformation: *const WER_RUNTIME_EXCEPTION_INFORMATION,
+    pbOwnershipClaimed: *mut BOOL,
+    pwszEventName: *mut u16,
+    pchSize: *mut u32,
+    pdwSignatureCount: *mut u32,
+) -> u32 {
+    return pExceptionInformation.dwSize;
 }

@@ -14,12 +14,21 @@ pragma_once = true
 no_includes = true
 sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
 includes = ["common.h"]
+after_includes = """
+
+#ifdef _WIN32
+#include <werapi.h>
+#include <windows.h>
+#endif
+
+"""
 
 [export]
 prefix = "ddog_crasht_"
 renaming_overrides_prefixing = true
 
 [export.rename]
+"BOOL" = "BOOL"
 "ByteSlice" = "ddog_ByteSlice"
 "CancellationToken" = "ddog_CancellationToken"
 "CharSlice" = "ddog_CharSlice"
@@ -35,6 +44,7 @@ renaming_overrides_prefixing = true
 "Vec_Tag" = "ddog_Vec_Tag"
 "Vec_U8" = "ddog_Vec_U8"
 "VoidResult" = "ddog_VoidResult"
+"WER_RUNTIME_EXCEPTION_INFORMATION" = "WER_RUNTIME_EXCEPTION_INFORMATION"
 
 [export.mangle]
 rename_types = "PascalCase"
