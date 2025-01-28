@@ -3,6 +3,8 @@
 
 use super::{Metadata, OsInfo, ProcInfo, SigInfo, Span, ThreadData};
 use ::function_name::named;
+use windows::Win32::Foundation::BOOL;
+use windows::Win32::System::ErrorReporting::WER_RUNTIME_EXCEPTION_INFORMATION;
 use datadog_crashtracker::{CrashInfo, CrashInfoBuilder, ErrorKind, StackTrace};
 use ddcommon_ffi::{
     slice::AsBytes, wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, Error, Handle,
@@ -428,4 +430,18 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_uuid_random(
     wrap_with_void_ffi_result!({
         builder.to_inner_mut()?.with_uuid_random()?;
     })
+}
+
+#[no_mangle]
+#[named]
+#[cfg(windows)]
+pub unsafe extern "C" fn OutOfProcessExceptionEventCallback(
+    pContext: *mut std::ffi::c_void,
+    pExceptionInformation: *const WER_RUNTIME_EXCEPTION_INFORMATION,
+    pbOwnershipClaimed: *mut BOOL,
+    pwszEventName: *mut u16,
+    pchSize: *mut u32,
+    pdwSignatureCount: *mut u32,
+) -> u32 {
+    return (*pExceptionInformation).dwSize;
 }
