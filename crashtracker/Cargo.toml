@@ -29,7 +29,7 @@ blazesym = "0.2.0-rc.2"
 
 [dependencies]
 anyhow = "1.0"
-backtrace = "0.3.74"
+backtrace = { git = "https://github.com/rust-lang/backtrace-rs", tag = "0.3.75" }
 chrono = {version = "0.4", default-features = false, features = ["std", "clock", "serde"]}
 ddcommon = {path = "../ddcommon"}
 hyper = {version = "0.14", features = ["client", "backports", "deprecated"], default-features = false}

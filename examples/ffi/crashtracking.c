@@ -72,7 +72,8 @@ int main(int argc, char **argv) {
   //      ddog_endpoint_from_url(DDOG_CHARSLICE_C("http://localhost:8126"));
 
   ddog_crasht_Config config = {
-      .create_alt_stack = false,
+      .create_alt_stack = true,
+      .use_alt_stack = true,
       .endpoint = endpoint,
       .resolve_frames = DDOG_CRASHT_STACKTRACE_COLLECTION_ENABLED_WITH_INPROCESS_SYMBOLS,
   };

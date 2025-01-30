@@ -4,6 +4,7 @@ use libc;
 static INIT_SIGNAL_HANDLER: Once = Once::new();
 static mut CRASH_UNWIND_FN: Option<fn()> = None;
 
+/// Signal handler that unwinds the stack on a crash
 extern "C" fn crash_handler(_signum: libc::c_int) {
     eprintln!("Crash detected! Unwinding stack...");
     unsafe {

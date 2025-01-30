@@ -24,11 +24,17 @@ fn unwind_stack() {
     }
 }
 
-fn main() {
-    install_crash_handler(unwind_stack);
-
-    println!("Running unwind_backtrace example...");
+// prevent inlining
+#[inline(never)]
+fn foo() {
+    unwind_stack();
     unsafe {
         *(std::ptr::null_mut() as *mut i32) = 0; // Trigger a crash
     }
+}
+
+fn main() {
+    install_crash_handler(unwind_stack);
+    println!("Running unwind_backtrace example...");
+    foo();
 }

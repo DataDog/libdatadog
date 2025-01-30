@@ -21,3 +21,12 @@ The build command will create executables in the examples/ffi/build folder. You 
 ````
 ./examples/ffi/build/test-name
 ````
+
+# Working example with Crashtracking
+
+```
+cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -- --out
+Datadog_ROOT=$PWD/release cmake -S examples/ffi -B examples/ffi/build
+cmake --build ./examples/ffi/build
+./examples/ffi/build/crashtracking
+```
