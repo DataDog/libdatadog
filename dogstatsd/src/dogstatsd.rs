@@ -79,10 +79,11 @@ impl DogStatsD {
             .read()
             .await
             .expect("didn't receive data");
+
         let msgs = std::str::from_utf8(&buf).expect("couldn't parse as string");
         debug!("Received message: {} from {}", msgs, src);
         let statsd_metric_strings = msgs.split('\n');
-        self.insert_metrics(statsd_metric_strings);
+        //self.insert_metrics(statsd_metric_strings);
     }
 
     fn insert_metrics(&self, msg: Split<char>) {
