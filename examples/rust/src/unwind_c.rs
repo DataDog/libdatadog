@@ -1,13 +1,12 @@
 use std::ffi::{CStr};
 use std::ptr;
-use libc::{self, Dl_info};
+use libc::{self, Dl_info, ucontext_t};
 
 mod crash_handler;
 mod intermediate_func;
 
-use crash_handler::install_crash_handler;
+use crash_handler::{install_crash_handler, install_crash_handler_with_context};
 use intermediate_func::intermediate_function;
-
 
 #[repr(C)]
 struct UnwContext([u8; 1024]); // Placeholder size for unw_context_t
@@ -33,18 +32,26 @@ extern "C" {
 const UNW_REG_IP: i32 = 16;
 const UNW_REG_SP: i32 = 17;
 
-fn unwind_stack() {
+/// **Wrapper function to retrieve context and call the actual unwinder**
+pub fn unwind_stack() {
     unsafe {
         let mut context = UnwContext([0; 1024]);
-        let mut cursor = UnwCursor([0; 1024]);
-
         if _Ux86_64_getcontext(&mut context) != 0 {
-            eprintln!("Failed to get context");
+            eprintln!("Failed to retrieve context for unwinding");
             return;
         }
+        unwind_from_context(&mut context as *mut UnwContext as *mut ucontext_t);
+    }
+}
 
-        if _ULx86_64_init_local(&mut cursor, &mut context) != 0 {
-            eprintln!("Failed to initialize cursor");
+/// Force unwinding from a captured signal context
+pub fn unwind_from_context(sig_ctx: *mut ucontext_t) {
+    unsafe {
+        let mut cursor = UnwCursor([0; 1024]);
+        let context = sig_ctx as *mut UnwContext; // Reinterpret as UnwContext
+
+        if _ULx86_64_init_local(&mut cursor, context) != 0 {
+            eprintln!("Failed to initialize cursor from context");
             return;
         }
 
@@ -95,7 +102,13 @@ fn foo() {
 }
 
 fn main() {
-    install_crash_handler(unwind_stack);
+    // Pick the unwinding method:
+    if std::env::var("USE_CONTEXT").is_ok() {
+        install_crash_handler_with_context(unwind_from_context);
+    } else {
+        install_crash_handler(unwind_stack);
+    }
+
     println!("Running unwind_c example...");
     foo();
 }

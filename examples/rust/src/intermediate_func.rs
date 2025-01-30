@@ -6,4 +6,5 @@ pub fn intermediate_function() {
     unsafe {
         *(std::ptr::null_mut() as *mut i32) = 0; // Trigger a crash
     }
+    println!("Exit intermediate function");
 }
