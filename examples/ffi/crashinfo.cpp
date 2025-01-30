@@ -87,10 +87,9 @@ void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
 
   // Windows style frame with normalization
   auto pbd_frame = extract_result(ddog_crasht_StackFrame_new(), "failed to make StackFrame");
-  check_result(ddog_crasht_StackFrame_with_ip(pbd_frame.get(), to_slice_c_char("0xDEADBEEF")),
+  check_result(ddog_crasht_StackFrame_with_ip(pbd_frame.get(), 3735928559), // 0xDEADBEEF
                "failed to add ip");
-  check_result(ddog_crasht_StackFrame_with_module_base_address(pbd_frame.get(),
-                                                               to_slice_c_char("0xABBAABBA")),
+  check_result(ddog_crasht_StackFrame_with_module_base_address(pbd_frame.get(), 2881137594), // 0xABBAABBA"
                "failed to add module_base_address");
   check_result(
       ddog_crasht_StackFrame_with_build_id(pbd_frame.get(), to_slice_c_char("abcdef12345")),
@@ -104,7 +103,7 @@ void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
                    pbd_frame.get(), to_slice_c_char("C:/Program Files/best_program_ever.exe")),
                "failed to add path");
   check_result(
-      ddog_crasht_StackFrame_with_relative_address(pbd_frame.get(), to_slice_c_char("0xBABEF00D")),
+      ddog_crasht_StackFrame_with_relative_address(pbd_frame.get(), 3133075469), // 0xBABEF00D
       "failed to add relative address");
   // This operation consumes the frame, so use .release here
   check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), pbd_frame.release(), true),
@@ -112,10 +111,9 @@ void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
 
   // ELF style frame with normalization
   auto elf_frame = extract_result(ddog_crasht_StackFrame_new(), "failed to make StackFrame");
-  check_result(ddog_crasht_StackFrame_with_ip(elf_frame.get(), to_slice_c_char("0xDEADBEEF")),
+  check_result(ddog_crasht_StackFrame_with_ip(elf_frame.get(), 3735928559), // 0xDEADBEEF
                "failed to add ip");
-  check_result(ddog_crasht_StackFrame_with_module_base_address(elf_frame.get(),
-                                                               to_slice_c_char("0xABBAABBA")),
+  check_result(ddog_crasht_StackFrame_with_module_base_address(elf_frame.get(), 2881137594), // 0xABBAABBA"
                "failed to add module_base_address");
   check_result(
       ddog_crasht_StackFrame_with_build_id(elf_frame.get(), to_slice_c_char("987654321fedcba0")),
@@ -129,7 +127,7 @@ void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
                                                 to_slice_c_char("/usr/bin/awesome-gnu-utility.so")),
                "failed to add path");
   check_result(
-      ddog_crasht_StackFrame_with_relative_address(elf_frame.get(), to_slice_c_char("0xBABEF00D")),
+      ddog_crasht_StackFrame_with_relative_address(elf_frame.get(), 3133075469), // 0xBABEF00D
       "failed to add relative address");
   // This operation consumes the frame, so use .release here
   check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), elf_frame.release(), true),

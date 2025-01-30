@@ -72,3 +72,13 @@ pub unsafe extern "C" fn ddog_StringWrapper_message(s: Option<&StringWrapper>) -
         Some(s) => CharSlice::from(s.as_ref()),
     }
 }
+
+pub trait ToHexStr {
+    fn to_hex_str(&self) -> String;
+}
+
+impl ToHexStr for usize {
+    fn to_hex_str(&self) -> String {
+        format!("0x{:X}", self)
+    }
+}
