@@ -385,7 +385,9 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
     let config = config::Config::get();
     if !config.log_level.is_empty() {
         let filter = MULTI_LOG_FILTER.add(config.log_level.clone());
-        unsafe { PERMANENT_MIN_LOG_LEVEL.replace(filter); } // SAFETY: initialized once
+        unsafe {
+            PERMANENT_MIN_LOG_LEVEL.replace(filter);
+        } // SAFETY: initialized once
     }
     MULTI_LOG_WRITER.add(config.log_method); // same than MULTI_LOG_FILTER
 
