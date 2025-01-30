@@ -7,6 +7,8 @@ use ddcommon_ffi::{
     slice::AsBytes, wrap_with_void_ffi_result, CharSlice, Handle, Result, ToInner, VoidResult,
 };
 
+use ddcommon_ffi::ToHexStr;
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                              FFI API                                           //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -41,10 +43,10 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_drop(frame: *mut Handle<StackFra
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_ip(
     mut frame: *mut Handle<StackFrame>,
-    ip: CharSlice,
+    ip: usize,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        frame.to_inner_mut()?.ip = ip.try_to_string_option()?;
+        frame.to_inner_mut()?.ip = Some(ip.to_hex_str());
     })
 }
 
@@ -57,10 +59,10 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_ip(
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_module_base_address(
     mut frame: *mut Handle<StackFrame>,
-    module_base_address: CharSlice,
+    module_base_address: usize,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        frame.to_inner_mut()?.module_base_address = module_base_address.try_to_string_option()?;
+        frame.to_inner_mut()?.module_base_address = Some(module_base_address.to_hex_str());
     })
 }
 
@@ -73,10 +75,10 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_module_base_address(
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_sp(
     mut frame: *mut Handle<StackFrame>,
-    sp: CharSlice,
+    sp: usize,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        frame.to_inner_mut()?.sp = sp.try_to_string_option()?;
+        frame.to_inner_mut()?.sp = Some(sp.to_hex_str());
     })
 }
 
@@ -89,10 +91,10 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_sp(
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_symbol_address(
     mut frame: *mut Handle<StackFrame>,
-    symbol_address: CharSlice,
+    symbol_address: usize,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        frame.to_inner_mut()?.symbol_address = symbol_address.try_to_string_option()?;
+        frame.to_inner_mut()?.symbol_address = Some(symbol_address.to_hex_str());
     })
 }
 
@@ -169,10 +171,10 @@ pub unsafe extern "C" fn ddog_crasht_StackFrame_with_path(
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackFrame_with_relative_address(
     mut frame: *mut Handle<StackFrame>,
-    relative_address: CharSlice,
+    relative_address: usize,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        frame.to_inner_mut()?.relative_address = relative_address.try_to_string_option()?;
+        frame.to_inner_mut()?.relative_address = Some(relative_address.to_hex_str());
     })
 }
 
