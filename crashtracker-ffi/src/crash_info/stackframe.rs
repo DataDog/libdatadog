@@ -4,7 +4,7 @@
 use ::function_name::named;
 use datadog_crashtracker::{BuildIdType, FileType, StackFrame};
 use ddcommon_ffi::{
-    slice::AsBytes, wrap_with_void_ffi_result, CharSlice, Handle, Result, ToInner, VoidResult,
+    slice::AsBytes, wrap_with_void_ffi_result, CharSlice, Error, Handle, ToInner, VoidResult,
 };
 
 use ddcommon_ffi::ToHexStr;
@@ -13,13 +13,20 @@ use ddcommon_ffi::ToHexStr;
 //                                              FFI API                                           //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#[allow(dead_code)]
+#[repr(C)]
+pub enum StackFrameNewResult {
+    Ok(Handle<StackFrame>),
+    Err(Error),
+}
+
 /// Create a new StackFrame, and returns an opaque reference to it.
 /// # Safety
 /// No safety issues.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crasht_StackFrame_new() -> Result<Handle<StackFrame>> {
-    ddcommon_ffi::Result::Ok(StackFrame::new().into())
+pub unsafe extern "C" fn ddog_crasht_StackFrame_new() -> StackFrameNewResult {
+    StackFrameNewResult::Ok(StackFrame::new().into())
 }
 
 /// # Safety
