@@ -34,9 +34,9 @@ impl BufferReader {
                 // TODO(astuyve) this should be dynamic
                 // Max buffer size is configurable in Go Agent and the default is 8KB
                 // https://github.com/DataDog/datadog-agent/blob/85939a62b5580b2a15549f6936f257e61c5aa153/pkg/config/config_template.yaml#L2154-L2158
-                let mut buf = [0; 8192];
+                let mut buf = Vec::with_capacity(8 * 1024);
                 let (amt, src) = socket
-                    .recv_from(&mut buf)
+                    .recv_buf_from(&mut buf)
                     .await
                     .expect("didn't receive data");
                 Ok((buf[..amt].to_owned(), src))
@@ -84,7 +84,6 @@ impl DogStatsD {
         debug!("Received message: {} from {}", msgs, src);
         let statsd_metric_strings = msgs.split('\n');
         self.insert_metrics(statsd_metric_strings);
-        drop(buf);
     }
 
     fn insert_metrics(&self, msg: Split<char>) {
