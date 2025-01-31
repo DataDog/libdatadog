@@ -6,25 +6,42 @@ use ddcommon::tag;
 use ddtelemetry::data::metrics::{MetricNamespace, MetricType};
 use ddtelemetry::metrics::ContextKey;
 use ddtelemetry::worker::TelemetryWorkerHandle;
-use std::collections::HashMap;
+use std::ops::Index;
 
-/// trace_api.requests metric
-pub const API_REQUEST_STR: &str = "trace_api.requests";
-/// trace_api.errors metric
-pub const API_ERRORS_STR: &str = "trace_api.errors";
-/// trace_api.bytes metric
-pub const API_BYTES_STR: &str = "trace_api.bytes";
-/// trace_api.responses metric
-pub const API_RESPONSES_STR: &str = "trace_api.responses";
-/// trace_chunk_sent metric
-pub const CHUNKS_SENT_STR: &str = "trace_chunk_sent";
-/// trace_chunk_dropped metric
-pub const CHUNKS_DROPPED_STR: &str = "trace_chunk_dropped";
+/// Used as indentifier to match the different metrics.
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub enum MetricKind {
+    /// trace_api.requests metric
+    ApiRequest,
+    /// trace_api.errors (network) metric
+    ApiErrorsNetwork,
+    /// trace_api.errors (timeout) metric
+    ApiErrorsTimeout,
+    /// trace_api.errors (status_code) metric
+    ApiErrorsStatusCode,
+    /// trace_api.bytes metric
+    ApiBytes,
+    /// trace_api.responses metric
+    ApiResponses,
+    /// trace_chunk_sent metric
+    ChunksSent,
+    /// trace_chunk_dropped metric
+    ChunksDropped,
+}
 
+const API_REQUEST_STR: &str = "trace_api.requests";
+const API_ERRORS_STR: &str = "trace_api.errors";
+const API_BYTES_STR: &str = "trace_api.bytes";
+const API_RESPONSES_STR: &str = "trace_api.responses";
+const CHUNKS_SENT_STR: &str = "trace_chunk_sent";
+const CHUNKS_DROPPED_STR: &str = "trace_chunk_dropped";
+
+#[derive(Debug)]
 struct Metric {
     name: &'static str,
     metric_type: MetricType,
     namespace: MetricNamespace,
+    tags: &'static [ddcommon::tag::Tag],
 }
 
 const METRICS: &[Metric] = &[
@@ -32,59 +49,93 @@ const METRICS: &[Metric] = &[
         name: API_REQUEST_STR,
         metric_type: MetricType::Count,
         namespace: MetricNamespace::Tracers,
+        tags: &[tag!["src_library", "libdatadog"]],
     },
     Metric {
         name: API_ERRORS_STR,
         metric_type: MetricType::Count,
         namespace: MetricNamespace::Tracers,
+        tags: &[tag!["src_library", "libdatadog"], tag!["type", "network"]],
+    },
+    Metric {
+        name: API_ERRORS_STR,
+        metric_type: MetricType::Count,
+        namespace: MetricNamespace::Tracers,
+        tags: &[tag!["src_library", "libdatadog"], tag!["type", "timeout"]],
+    },
+    Metric {
+        name: API_ERRORS_STR,
+        metric_type: MetricType::Count,
+        namespace: MetricNamespace::Tracers,
+        tags: &[
+            tag!["src_library", "libdatadog"],
+            tag!["type", "status_code"],
+        ],
     },
     Metric {
         name: API_BYTES_STR,
         metric_type: MetricType::Distribution,
         namespace: MetricNamespace::Tracers,
+        tags: &[tag!["src_library", "libdatadog"]],
     },
     Metric {
         name: API_RESPONSES_STR,
         metric_type: MetricType::Count,
         namespace: MetricNamespace::Tracers,
+        tags: &[tag!["src_library", "libdatadog"]],
     },
     Metric {
         name: CHUNKS_SENT_STR,
         metric_type: MetricType::Count,
         namespace: MetricNamespace::Tracers,
+        tags: &[tag!["src_library", "libdatadog"]],
     },
     Metric {
         name: CHUNKS_DROPPED_STR,
         metric_type: MetricType::Count,
         namespace: MetricNamespace::Tracers,
+        tags: &[tag!["src_library", "libdatadog"]],
+    },
+    Metric {
+        name: CHUNKS_DROPPED_STR,
+        metric_type: MetricType::Count,
+        namespace: MetricNamespace::Tracers,
+        tags: &[tag!["src_library", "libdatadog"]],
     },
 ];
 
 /// Structure to accumulate partial results coming from sending traces to the agent.
-#[derive(Debug)]
-pub struct Metrics(HashMap<String, ContextKey>);
+#[derive(Debug, Default)]
+pub struct Metrics(Vec<ContextKey>);
+
+impl Index<MetricKind> for Metrics {
+    type Output = ContextKey;
+    fn index(&self, index: MetricKind) -> &Self::Output {
+        &self.0[index as usize]
+    }
+}
 
 impl Metrics {
     /// Creates a new Metrics instance
     pub fn new(worker: &TelemetryWorkerHandle) -> Self {
-        let mut map = HashMap::new();
+        let mut keys = Vec::new();
         for metric in METRICS {
             let key = worker.register_metric_context(
                 metric.name.to_string(),
-                vec![tag!("src_library", "libdatadog")],
+                metric.tags.to_vec(),
                 metric.metric_type,
                 true,
                 metric.namespace,
             );
-            map.insert(metric.name.to_string(), key);
+            keys.push(key);
         }
 
-        Self(map)
+        Self(keys)
     }
 
     /// Gets the context key associated with the metric.
-    pub fn get(&self, metric_name: &str) -> Option<&ContextKey> {
-        self.0.get(metric_name)
+    pub fn get(&self, index: MetricKind) -> &ContextKey {
+        &self[index]
     }
 }
 
@@ -110,12 +161,6 @@ mod tests {
         let metrics = Metrics::new(&worker);
 
         assert!(!metrics.0.is_empty());
-
-        assert!(metrics.get(API_REQUEST_STR).is_some());
-        assert!(metrics.get(API_RESPONSES_STR).is_some());
-        assert!(metrics.get(API_BYTES_STR).is_some());
-        assert!(metrics.get(API_ERRORS_STR).is_some());
-        assert!(metrics.get(CHUNKS_SENT_STR).is_some());
-        assert!(metrics.get(CHUNKS_DROPPED_STR).is_some());
+        assert_eq!(metrics.0.len(), METRICS.len());
     }
 }
