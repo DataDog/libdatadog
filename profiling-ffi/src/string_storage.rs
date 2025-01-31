@@ -4,7 +4,7 @@
 use anyhow::Context;
 use datadog_profiling::collections::string_storage::ManagedStringStorage as InternalManagedStringStorage;
 use ddcommon_ffi::slice::AsBytes;
-use ddcommon_ffi::{CharSlice, Error, MaybeError, StringWrapper};
+use ddcommon_ffi::{CharSlice, Error, MaybeError, StringWrapperResult};
 use libc::c_void;
 use std::num::NonZeroU32;
 use std::{rc::Rc, sync::RwLock};
@@ -111,13 +111,6 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
     }
 }
 
-#[repr(C)]
-#[allow(dead_code)]
-pub enum StringWrapperResult {
-    Ok(StringWrapper),
-    Err(Error),
-}
-
 #[must_use]
 #[no_mangle]
 /// Returns a string given its id.
@@ -200,15 +193,6 @@ impl From<anyhow::Result<ManagedStringId>> for ManagedStringStorageInternResult 
     fn from(value: anyhow::Result<ManagedStringId>) -> Self {
         match value {
             Ok(v) => Self::Ok(v),
-            Err(err) => Self::Err(err.into()),
-        }
-    }
-}
-
-impl From<anyhow::Result<String>> for StringWrapperResult {
-    fn from(value: anyhow::Result<String>) -> Self {
-        match value {
-            Ok(v) => Self::Ok(v.into()),
             Err(err) => Self::Err(err.into()),
         }
     }

@@ -3,6 +3,7 @@
 
 use crate::slice::CharSlice;
 use crate::vec::Vec;
+use crate::Error;
 
 /// A wrapper for returning owned strings from FFI
 #[derive(Debug)]
@@ -80,5 +81,37 @@ pub trait ToHexStr {
 impl ToHexStr for usize {
     fn to_hex_str(&self) -> String {
         format!("0x{:X}", self)
+    }
+}
+
+#[repr(C)]
+#[allow(dead_code)]
+pub enum StringWrapperResult {
+    Ok(StringWrapper),
+    Err(Error),
+}
+
+// Useful for testing
+impl StringWrapperResult {
+    pub fn unwrap(self) -> StringWrapper {
+        match self {
+            StringWrapperResult::Ok(s) => s,
+            StringWrapperResult::Err(e) => panic!("{e}"),
+        }
+    }
+}
+
+impl From<anyhow::Result<String>> for StringWrapperResult {
+    fn from(value: anyhow::Result<String>) -> Self {
+        match value {
+            Ok(x) => Self::Ok(x.into()),
+            Err(err) => Self::Err(err.into()),
+        }
+    }
+}
+
+impl From<String> for StringWrapperResult {
+    fn from(value: String) -> Self {
+        Self::Ok(value.into())
     }
 }
