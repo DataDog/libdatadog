@@ -3,13 +3,9 @@
 
 //! Telemetry provides a client to send results accumulated in 'Metrics'.
 pub mod metrics;
-use crate::telemetry::metrics::{
-    Metrics, API_BYTES_STR, API_ERRORS_STR, API_REQUEST_STR, API_RESPONSES_STR, CHUNKS_DROPPED_STR,
-    CHUNKS_SENT_STR,
-};
+use crate::telemetry::metrics::Metrics;
 use crate::trace_exporter::error::{BuilderErrorKind, TraceExporterError};
 use datadog_trace_utils::trace_utils::SendDataResult;
-use ddcommon::tag;
 use ddcommon::tag::Tag;
 use ddtelemetry::metrics::ContextKey;
 use ddtelemetry::worker::{
@@ -116,61 +112,41 @@ impl TelemetryClient {
     pub async fn send(&self, data: &SendDataResult) {
         let mut futures = Vec::new();
         if data.requests_count > 0 {
-            if let Some(key) = self.metrics.get(API_REQUEST_STR) {
-                futures.push(self.add_point(data.requests_count as f64, *key, vec![]));
-            }
+            let key = self.metrics.get(metrics::MetricKind::ApiRequest);
+            futures.push(self.add_point(data.requests_count as f64, *key, vec![]));
         }
         if data.errors_network > 0 {
-            if let Some(key) = self.metrics.get(API_ERRORS_STR) {
-                futures.push(self.add_point(
-                    data.errors_network as f64,
-                    *key,
-                    vec![tag!("type", "network")],
-                ));
-            }
+            let key = self.metrics.get(metrics::MetricKind::ApiErrorsNetwork);
+            futures.push(self.add_point(data.errors_network as f64, *key, vec![]));
         }
         if data.errors_timeout > 0 {
-            if let Some(key) = self.metrics.get(API_ERRORS_STR) {
-                futures.push(self.add_point(
-                    data.errors_timeout as f64,
-                    *key,
-                    vec![tag!("type", "timeout")],
-                ));
-            }
+            let key = self.metrics.get(metrics::MetricKind::ApiErrorsTimeout);
+            futures.push(self.add_point(data.errors_timeout as f64, *key, vec![]));
         }
         if data.errors_status_code > 0 {
-            if let Some(key) = self.metrics.get(API_ERRORS_STR) {
-                futures.push(self.add_point(
-                    data.errors_status_code as f64,
-                    *key,
-                    vec![tag!("type", "status_code")],
-                ));
-            }
+            let key = self.metrics.get(metrics::MetricKind::ApiErrorsStatusCode);
+            futures.push(self.add_point(data.errors_status_code as f64, *key, vec![]));
         }
         if data.bytes_sent > 0 {
-            if let Some(key) = self.metrics.get(API_BYTES_STR) {
-                futures.push(self.add_point(data.bytes_sent as f64, *key, vec![]));
-            }
+            let key = self.metrics.get(metrics::MetricKind::ApiBytes);
+            futures.push(self.add_point(data.bytes_sent as f64, *key, vec![]));
         }
         if data.chunks_sent > 0 {
-            if let Some(key) = self.metrics.get(CHUNKS_SENT_STR) {
-                futures.push(self.add_point(data.chunks_sent as f64, *key, vec![]));
-            }
+            let key = self.metrics.get(metrics::MetricKind::ChunksSent);
+            futures.push(self.add_point(data.chunks_sent as f64, *key, vec![]));
         }
         if data.chunks_dropped > 0 {
-            if let Some(key) = self.metrics.get(CHUNKS_DROPPED_STR) {
-                futures.push(self.add_point(data.chunks_dropped as f64, *key, vec![]));
-            }
+            let key = self.metrics.get(metrics::MetricKind::ChunksDropped);
+            futures.push(self.add_point(data.chunks_dropped as f64, *key, vec![]));
         }
         if !data.responses_count_per_code.is_empty() {
-            if let Some(key) = self.metrics.get(API_RESPONSES_STR) {
-                for (status_code, count) in &data.responses_count_per_code {
-                    futures.push(self.add_point(
-                        *count as f64,
-                        *key,
-                        vec![Tag::new("status_code", status_code.to_string().as_str()).unwrap()],
-                    ));
-                }
+            let key = self.metrics.get(metrics::MetricKind::ApiResponses);
+            for (status_code, count) in &data.responses_count_per_code {
+                futures.push(self.add_point(
+                    *count as f64,
+                    *key,
+                    vec![Tag::new("status_code", status_code.to_string().as_str()).unwrap()],
+                ));
             }
         }
 
@@ -369,7 +345,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn errors_timeout_test() {
-        let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["type:timeout","src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
+        let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","type:timeout"\],"common":true,"type":"count"#).unwrap();
         let server = MockServer::start_async().await;
 
         let telemetry_srv = server
@@ -409,7 +385,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn errors_network_test() {
-        let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["type:network","src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
+        let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","type:network"\],"common":true,"type":"count"#).unwrap();
         let server = MockServer::start_async().await;
 
         let telemetry_srv = server
@@ -449,7 +425,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn errors_status_code_test() {
-        let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["type:status_code","src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
+        let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","type:status_code"\],"common":true,"type":"count"#).unwrap();
         let server = MockServer::start_async().await;
 
         let telemetry_srv = server
