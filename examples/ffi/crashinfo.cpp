@@ -53,7 +53,7 @@ CHECK_RESULT(ddog_Vec_Tag_PushResult, DDOG_VEC_TAG_PUSH_RESULT_OK)
     }                                                                                              \
   };                                                                                               \
   std::unique_ptr<ddog_crasht_Handle_##typ, typ##Deleter> extract_result(                          \
-      ddog_crasht_Result_Handle##typ result, const char *msg) {                                    \
+      ddog_crasht_##typ##_NewResult result, const char *msg) {                                    \
     if (result.tag != ok_tag) {                                                                    \
       print_error(msg, result.err);                                                                \
       ddog_Error_drop(&result.err);                                                                \
@@ -65,10 +65,10 @@ CHECK_RESULT(ddog_Vec_Tag_PushResult, DDOG_VEC_TAG_PUSH_RESULT_OK)
   }
 
 EXTRACT_RESULT(CrashInfoBuilder,
-               DDOG_CRASHT_RESULT_HANDLE_CRASH_INFO_BUILDER_OK_HANDLE_CRASH_INFO_BUILDER)
-EXTRACT_RESULT(CrashInfo, DDOG_CRASHT_RESULT_HANDLE_CRASH_INFO_OK_HANDLE_CRASH_INFO)
-EXTRACT_RESULT(StackTrace, DDOG_CRASHT_RESULT_HANDLE_STACK_TRACE_OK_HANDLE_STACK_TRACE)
-EXTRACT_RESULT(StackFrame, DDOG_CRASHT_RESULT_HANDLE_STACK_FRAME_OK_HANDLE_STACK_FRAME)
+               DDOG_CRASHT_CRASH_INFO_BUILDER_NEW_RESULT_OK)
+EXTRACT_RESULT(CrashInfo, DDOG_CRASHT_CRASH_INFO_NEW_RESULT_OK)
+EXTRACT_RESULT(StackTrace, DDOG_CRASHT_STACK_TRACE_NEW_RESULT_OK)
+EXTRACT_RESULT(StackFrame, DDOG_CRASHT_STACK_FRAME_NEW_RESULT_OK)
 
 std::optional<std::string> demangle(std::string const& name)
 {
