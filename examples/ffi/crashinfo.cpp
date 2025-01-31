@@ -23,6 +23,11 @@ static ddog_CharSlice to_slice_string(std::string const &s) {
   return {.ptr = s.data(), .len = s.length()};
 }
 
+static std::string to_string(ddog_CharSlice s)
+{
+  return std::string(s.ptr, s.len);
+}
+
 void print_error(const char *s, const ddog_Error &err) {
   auto charslice = ddog_Error_message(&err);
   printf("%s (%.*s)\n", s, static_cast<int>(charslice.len), charslice.ptr);
@@ -69,14 +74,14 @@ std::optional<std::string> demangle(std::string const& name)
 {
   // We must keep this call to demangle to check that the symbol is exported.
   auto result = ddog_crasht_demangle(to_slice_string(name), DDOG_CRASHT_DEMANGLE_OPTIONS_COMPLETE);
-  if (result.tag == DDOG_CRASHT_RESULT_STRING_WRAPPER_OK_STRING_WRAPPER)
+  if (result.tag == DDOG_STRING_WRAPPER_RESULT_OK)
   {
-    // TODO: There is currently no safe way to free the StringWrapper
-    auto stringWrapper = result.ok;
-    return std::string((char*)stringWrapper.message.ptr, stringWrapper.message.len);
+    auto demangled_name = to_string(ddog_StringWrapper_message(&result.ok));
+    ddog_StringWrapper_drop(&result.ok);
+    return demangled_name;
   }
 
-  print_error("Failed to demangled string", result.err);
+  print_error("Failed to demangle string", result.err);
   ddog_Error_drop(&result.err);
   return {};
 }
@@ -107,9 +112,9 @@ void add_random_frames(ddog_crasht_Handle_StackTrace* stacktrace) {
 void add_windows_style_frame(ddog_crasht_Handle_StackTrace* stacktrace) {
   // Windows style frame with normalization
   auto pbd_frame = extract_result(ddog_crasht_StackFrame_new(), "failed to make StackFrame");
-  check_result(ddog_crasht_StackFrame_with_ip(pbd_frame.get(), 3735928559), // 0xDEADBEEF
+  check_result(ddog_crasht_StackFrame_with_ip(pbd_frame.get(), 0XDEADBEEF),
                "failed to add ip");
-  check_result(ddog_crasht_StackFrame_with_module_base_address(pbd_frame.get(), 2881137594), // 0xABBAABBA"
+  check_result(ddog_crasht_StackFrame_with_module_base_address(pbd_frame.get(), 0XABBAABBA),
                "failed to add module_base_address");
   check_result(
       ddog_crasht_StackFrame_with_build_id(pbd_frame.get(), to_slice_c_char("abcdef12345")),
@@ -123,7 +128,7 @@ void add_windows_style_frame(ddog_crasht_Handle_StackTrace* stacktrace) {
                    pbd_frame.get(), to_slice_c_char("C:/Program Files/best_program_ever.exe")),
                "failed to add path");
   check_result(
-      ddog_crasht_StackFrame_with_relative_address(pbd_frame.get(), 3133075469), // 0xBABEF00D
+      ddog_crasht_StackFrame_with_relative_address(pbd_frame.get(), 0XBABEF00D),
       "failed to add relative address");
   // This operation consumes the frame, so use .release here
   check_result(ddog_crasht_StackTrace_push_frame(stacktrace, pbd_frame.release(), true),
@@ -133,9 +138,9 @@ void add_windows_style_frame(ddog_crasht_Handle_StackTrace* stacktrace) {
 void add_elf_frame(ddog_crasht_Handle_StackTrace* stacktrace) {
   // ELF style frame with normalization
   auto elf_frame = extract_result(ddog_crasht_StackFrame_new(), "failed to make StackFrame");
-  check_result(ddog_crasht_StackFrame_with_ip(elf_frame.get(), 3735928559), // 0xDEADBEEF
+  check_result(ddog_crasht_StackFrame_with_ip(elf_frame.get(), 0XDEADBEEF),
                "failed to add ip");
-  check_result(ddog_crasht_StackFrame_with_module_base_address(elf_frame.get(), 2881137594), // 0xABBAABBA"
+  check_result(ddog_crasht_StackFrame_with_module_base_address(elf_frame.get(), 0XABBAABBA),
                "failed to add module_base_address");
   check_result(
       ddog_crasht_StackFrame_with_build_id(elf_frame.get(), to_slice_c_char("987654321fedcba0")),
@@ -149,7 +154,7 @@ void add_elf_frame(ddog_crasht_Handle_StackTrace* stacktrace) {
                                                 to_slice_c_char("/usr/bin/awesome-gnu-utility.so")),
                "failed to add path");
   check_result(
-      ddog_crasht_StackFrame_with_relative_address(elf_frame.get(), 3133075469), // 0xBABEF00D
+      ddog_crasht_StackFrame_with_relative_address(elf_frame.get(), 0XBABEF00D),
       "failed to add relative address");
   // This operation consumes the frame, so use .release here
   check_result(ddog_crasht_StackTrace_push_frame(stacktrace, elf_frame.release(), true),
@@ -237,7 +242,7 @@ int main(void) {
                "Failed to set os_info");
 
   auto sigInfo = ddog_crasht_SigInfo {
-    .addr = 3133075469, // 0xBABEF00D
+    .addr = 0XBABEF00D,
     .code = 16,
     .code_human_readable = DDOG_CRASHT_SI_CODES_UNKNOWN,
     .signo = -1,
