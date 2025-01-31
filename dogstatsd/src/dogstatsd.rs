@@ -31,6 +31,7 @@ impl BufferReader {
     async fn read(&self) -> std::io::Result<(Vec<u8>, SocketAddr)> {
         match self {
             BufferReader::UdpSocketReader(socket) => {
+                println!("ASTUYVE reading from stats socket");
                 // TODO(astuyve) this should be dynamic
                 // Max buffer size is configurable in Go Agent and the default is 8KB
                 // https://github.com/DataDog/datadog-agent/blob/85939a62b5580b2a15549f6936f257e61c5aa153/pkg/config/config_template.yaml#L2154-L2158
@@ -58,6 +59,7 @@ impl DogStatsD {
         let socket = tokio::net::UdpSocket::bind(addr)
             .await
             .expect("couldn't bind to address");
+        println!("ASTUYVE bound to address");
         DogStatsD {
             cancel_token,
             aggregator,
@@ -68,7 +70,7 @@ impl DogStatsD {
     pub async fn spin(self) {
         let mut spin_cancelled = false;
         while !spin_cancelled {
-            self.consume_statsd().await;
+            //self.consume_statsd().await;
             spin_cancelled = self.cancel_token.is_cancelled();
         }
     }
