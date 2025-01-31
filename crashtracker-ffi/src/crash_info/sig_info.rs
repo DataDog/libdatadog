@@ -2,22 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_crashtracker::{SiCodes, SignalNames};
-use ddcommon_ffi::{slice::AsBytes, CharSlice};
+use ddcommon_ffi::ToHexStr;
 
 #[repr(C)]
-pub struct SigInfo<'a> {
-    pub addr: CharSlice<'a>,
+pub struct SigInfo {
+    pub addr: usize,
     pub code: libc::c_int,
     pub code_human_readable: SiCodes,
     pub signo: libc::c_int,
     pub signo_human_readable: SignalNames,
 }
 
-impl<'a> TryFrom<SigInfo<'a>> for datadog_crashtracker::SigInfo {
+impl TryFrom<SigInfo> for datadog_crashtracker::SigInfo {
     type Error = anyhow::Error;
-    fn try_from(value: SigInfo<'a>) -> anyhow::Result<Self> {
+    fn try_from(value: SigInfo) -> anyhow::Result<Self> {
         Ok(Self {
-            si_addr: value.addr.try_to_string_option()?,
+            si_addr: Some(value.addr.to_hex_str()),
             si_code: value.code,
             si_code_human_readable: value.code_human_readable,
             si_signo: value.signo,
