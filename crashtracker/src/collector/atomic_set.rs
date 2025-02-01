@@ -323,7 +323,8 @@ mod tests {
         expected.clear();
         compare(&s, &expected);
         insert_and_compare(&s, &mut expected, "z".to_string());
-
+        // Prevent memory leaks
+        s.clear()?;
         Ok(())
     }
 
