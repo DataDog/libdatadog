@@ -3,6 +3,7 @@
 pub mod agent_response;
 pub mod error;
 use crate::agent_info::{AgentInfoArc, AgentInfoFetcher};
+use crate::telemetry::{TelemetryClient, TelemetryClientBuilder};
 use crate::trace_exporter::error::{RequestError, TraceExporterError};
 use crate::{
     health_metrics, health_metrics::HealthMetric, span_concentrator::SpanConcentrator,
@@ -232,7 +233,6 @@ enum StatsComputationStatus {
 /// another task to send stats when a time bucket expire. When this feature is enabled the
 /// TraceExporter drops all spans that may not be sampled by the agent.
 #[allow(missing_docs)]
-#[derive(Debug)]
 pub struct TraceExporter {
     endpoint: Endpoint,
     metadata: TracerMetadata,
@@ -247,6 +247,7 @@ pub struct TraceExporter {
     client_side_stats: ArcSwap<StatsComputationStatus>,
     agent_info: AgentInfoArc,
     previous_info_state: ArcSwapOption<String>,
+    telemetry: Option<TelemetryClient>,
 }
 
 impl TraceExporter {
@@ -299,6 +300,9 @@ impl TraceExporter {
                         cancellation_token.cancel();
                         let _ = exporter_handle.await;
                     }
+                    if let Some(telemetry) = self.telemetry {
+                        telemetry.shutdown().await;
+                    }
                 })
                 .await
             }) {
@@ -317,6 +321,9 @@ impl TraceExporter {
                 {
                     cancellation_token.cancel();
                     let _ = exporter_handle.await;
+                }
+                if let Some(telemetry) = self.telemetry {
+                    telemetry.shutdown().await;
                 }
             });
             Ok(())
@@ -640,6 +647,11 @@ impl TraceExporter {
                 let send_data = SendData::new(size, tracer_payload, header_tags, &endpoint);
                 self.runtime.block_on(async {
                     let send_data_result = send_data.send().await;
+                    if let Some(telemetry) = &self.telemetry {
+                        if let Err(e) = telemetry.send(&send_data_result) {
+                            error!("Error sending telemetry: {}", e.to_string());
+                        }
+                    }
                     match send_data_result.last_result {
                         Ok(response) => {
                             let status = response.status();
@@ -698,6 +710,11 @@ impl TraceExporter {
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 
+#[derive(Default)]
+struct TelemetryConfig {
+    heartbeat: u64,
+}
+
 #[allow(missing_docs)]
 #[derive(Default)]
 pub struct TraceExporterBuilder {
@@ -724,6 +741,7 @@ pub struct TraceExporterBuilder {
     peer_tags_aggregation: bool,
     compute_stats_by_span_kind: bool,
     peer_tags: Vec<String>,
+    telemetry: Option<TelemetryConfig>,
 }
 
 impl TraceExporterBuilder {
@@ -850,6 +868,16 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Enables sending telemetry metrics.
+    pub fn enable_telemetry(mut self, heartbeat_ms: Option<u64>) -> Self {
+        let mut config = TelemetryConfig::default();
+        if let Some(interval) = heartbeat_ms {
+            config.heartbeat = interval;
+        }
+        self.telemetry = Some(config);
+        self
+    }
+
     #[allow(missing_docs)]
     pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -861,7 +889,8 @@ impl TraceExporterBuilder {
                                                        // None
         });
 
-        let agent_url: hyper::Uri = self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL).parse()?;
+        let base_url = self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL);
+        let agent_url: hyper::Uri = base_url.parse()?;
 
         let libdatadog_version = tag!("libdatadog_version", env!("CARGO_PKG_VERSION"));
         let mut stats = StatsComputationStatus::Disabled;
@@ -883,6 +912,27 @@ impl TraceExporterBuilder {
                 // the agent_info
                 stats = StatsComputationStatus::DisabledByAgent { bucket_size };
             }
+        }
+
+        let telemetry = if let Some(telemetry_config) = self.telemetry {
+            Some(
+                runtime.block_on(
+                    TelemetryClientBuilder::default()
+                        .set_language(&self.language)
+                        .set_language_version(&self.language_version)
+                        .set_service_name(&self.service)
+                        .set_tracer_version(&self.tracer_version)
+                        .set_hearbeat(telemetry_config.heartbeat)
+                        .set_url(base_url)
+                        .build(),
+                )?,
+            )
+        } else {
+            None
+        };
+
+        if let Some(client) = &telemetry {
+            runtime.block_on(client.start());
         }
 
         Ok(TraceExporter {
@@ -911,6 +961,7 @@ impl TraceExporterBuilder {
             client_side_stats: ArcSwap::new(stats.into()),
             agent_info,
             previous_info_state: ArcSwapOption::new(None),
+            telemetry,
         })
     }
 }
@@ -937,7 +988,7 @@ mod tests {
 
     const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 
-    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn new() {
         let builder = TraceExporterBuilder::default();
@@ -951,6 +1002,8 @@ mod tests {
             .set_git_commit_sha("797e9ea")
             .set_input_format(TraceExporterInputFormat::Proxy)
             .set_output_format(TraceExporterOutputFormat::V07)
+            .set_client_computed_stats()
+            .enable_telemetry(Some(1000))
             .build()
             .unwrap();
 
@@ -968,21 +1021,15 @@ mod tests {
         assert_eq!(exporter.metadata.language_interpreter, "v8");
         assert_eq!(exporter.metadata.language_interpreter_vendor, "node");
         assert_eq!(exporter.metadata.git_commit_sha, "797e9ea");
-        assert!(!exporter.metadata.client_computed_stats);
+        assert!(exporter.metadata.client_computed_stats);
+        assert!(exporter.telemetry.is_some());
     }
 
     #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     #[test]
     fn new_defaults() {
         let builder = TraceExporterBuilder::default();
-        let exporter = builder
-            .set_tracer_version("v0.1")
-            .set_language("nodejs")
-            .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .set_client_computed_stats()
-            .build()
-            .unwrap();
+        let exporter = builder.build().unwrap();
 
         assert_eq!(
             exporter
@@ -992,11 +1039,12 @@ mod tests {
             "http://127.0.0.1:8126/v0.4/traces"
         );
         assert_eq!(exporter.input_format, TraceExporterInputFormat::V04);
-        assert_eq!(exporter.metadata.tracer_version, "v0.1");
-        assert_eq!(exporter.metadata.language, "nodejs");
-        assert_eq!(exporter.metadata.language_version, "1.0");
-        assert_eq!(exporter.metadata.language_interpreter, "v8");
-        assert!(exporter.metadata.client_computed_stats);
+        assert_eq!(exporter.metadata.tracer_version, "");
+        assert_eq!(exporter.metadata.language, "");
+        assert_eq!(exporter.metadata.language_version, "");
+        assert_eq!(exporter.metadata.language_interpreter, "");
+        assert!(!exporter.metadata.client_computed_stats);
+        assert!(exporter.telemetry.is_none());
     }
 
     #[test]
@@ -1581,13 +1629,12 @@ mod tests {
 
         assert!(exporter.is_err());
 
-        let err = match exporter.unwrap_err() {
-            TraceExporterError::Builder(e) => Some(e),
+        let err = match exporter {
+            Err(TraceExporterError::Builder(e)) => Some(e),
             _ => None,
-        }
-        .unwrap();
+        };
 
-        assert_eq!(err, BuilderErrorKind::InvalidUri);
+        assert_eq!(err.unwrap(), BuilderErrorKind::InvalidUri);
     }
 
     #[test]
@@ -1665,5 +1712,58 @@ mod tests {
             },
             Some(AgentErrorKind::EmptyResponse)
         );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn exporter_metrics() {
+        let server = MockServer::start();
+        let traces_endpoint = server.mock(|when, then| {
+            when.method(POST).path("/v0.4/traces");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{
+                        "rate_by_service": {
+                            "service:foo,env:staging": 1.0,
+                            "service:,env:": 0.8 
+                        }
+                    }"#,
+                );
+        });
+
+        let metrics_endpoint = server.mock(|when, then| {
+            when.method(POST)
+                .body_contains("\"metric\":\"trace_api.bytes\"")
+                .path("/telemetry/proxy/api/v2/apmtelemetry");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("");
+        });
+
+        let exporter = TraceExporterBuilder::default()
+            .set_url(&server.url("/"))
+            .set_service("foo")
+            .set_env("foo-env")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .enable_telemetry(Some(100))
+            .build()
+            .unwrap();
+
+        let traces = vec![0x90];
+        let bytes = tinybytes::Bytes::from(traces);
+        let result = exporter.send(bytes, 1).unwrap();
+        assert_eq!(result, AgentResponse::from(0.8));
+
+        traces_endpoint.assert_hits(1);
+        while metrics_endpoint.hits() == 0 {
+            exporter.runtime.block_on(async {
+                sleep(Duration::from_millis(100)).await;
+            })
+        }
+        metrics_endpoint.assert_hits(1);
     }
 }
