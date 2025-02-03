@@ -9,6 +9,7 @@ use lazy_static::lazy_static;
 use protobuf::Message;
 use regex::Regex;
 use reqwest;
+use reqwest::{Error, Response};
 use serde::{Serialize, Serializer};
 use serde_json;
 use std::time::Duration;
@@ -119,7 +120,7 @@ impl MetricsIntakeUrlPrefix {
 }
 
 /// Interface for the `DogStatsD` metrics intake API.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DdApi {
     api_key: String,
     metrics_intake_url_prefix: MetricsIntakeUrlPrefix,
@@ -134,13 +135,10 @@ impl DdApi {
         https_proxy: Option<String>,
         timeout: Duration,
     ) -> Self {
-        let client = match Self::build_client(https_proxy, timeout) {
-            Ok(client) => client,
-            Err(e) => {
-                error!("Unable to parse proxy URL, no proxy will be used. {:?}", e);
-                reqwest::Client::new()
-            }
-        };
+        let client = Self::build_client(https_proxy, timeout).unwrap_or_else(|e| {
+            error!("Unable to parse proxy URL, no proxy will be used. {:?}", e);
+            reqwest::Client::new()
+        });
         DdApi {
             api_key,
             metrics_intake_url_prefix,
@@ -149,40 +147,19 @@ impl DdApi {
     }
 
     /// Ship a serialized series to the API, blocking
-    pub async fn ship_series(&self, series: &Series) {
-        let body = serde_json::to_vec(&series).expect("failed to serialize series");
-        debug!("Sending body: {:?}", &series);
-
+    pub async fn ship_series(&self, series: &Series) -> Result<Response, Error> {
         let url = format!("{}/api/v2/series", &self.metrics_intake_url_prefix);
-        let resp = self
-            .client
-            .post(&url)
-            .header("DD-API-KEY", &self.api_key)
-            .header("Content-Type", "application/json")
-            .body(body)
-            .send()
-            .await;
+        debug!("Sending body: {:?}", &series);
+        let body = serde_json::to_vec(&series).expect("failed to serialize series");
 
-        // match resp {
-        //     Ok(resp) => match resp.status() {
-        //         reqwest::StatusCode::ACCEPTED => {}
-        //         unexpected_status_code => {
-        //             debug!(
-        //                 "{}: Failed to push to API: {:?}",
-        //                 unexpected_status_code,
-        //                 resp.text().await.unwrap_or_default()
-        //             );
-        //         }
-        //     },
-        //     Err(e) => {
-        //         debug!("500: Failed to push to API: {:?}", e);
-        //     }
-        // };
+        self.ship_data(url, body, "application/json").await
     }
 
-    pub async fn ship_distributions(&self, sketches: &SketchPayload) {
+    pub async fn ship_distributions(&self, sketches: &SketchPayload) -> Result<Response, Error> {
         let url = format!("{}/api/beta/sketches", &self.metrics_intake_url_prefix);
         debug!("Sending distributions: {:?}", &sketches);
+        let body = sketches.write_to_bytes().expect("can't write to buffer");
+
         // TODO maybe go to coded output stream if we incrementally
         // add sketch payloads to the buffer
         // something like this, but fix the utf-8 encoding issue
@@ -192,29 +169,8 @@ impl DdApi {
         //     let _ = output_stream.write_message_no_tag(&sketches);
         //     TODO not working, has utf-8 encoding issue in dist-intake
         //}
-        // let resp = self
-        //     .client
-        //     .post(&url)
-        //     .header("DD-API-KEY", &self.api_key)
-        //     .header("Content-Type", "application/x-protobuf")
-        //     .body(sketches.write_to_bytes().expect("can't write to buffer"))
-        //     .send()
-        //     .await;
-        // match resp {
-        //     Ok(resp) => match resp.status() {
-        //         reqwest::StatusCode::ACCEPTED => {}
-        //         unexpected_status_code => {
-        //             debug!(
-        //                 "{}: Failed to push to API: {:?}",
-        //                 unexpected_status_code,
-        //                 resp.text().await.unwrap_or_default()
-        //             );
-        //         }
-        //     },
-        //     Err(e) => {
-        //         debug!("500: Failed to push to API: {:?}", e);
-        //     }
-        // };
+
+        self.ship_data(url, body, "application/x-protobuf").await
     }
 
     fn build_client(
@@ -226,6 +182,28 @@ impl DdApi {
             builder = builder.proxy(reqwest::Proxy::https(proxy)?);
         }
         builder.build()
+    }
+
+    async fn ship_data(
+        &self,
+        url: String,
+        body: Vec<u8>,
+        content_type: &str,
+    ) -> Result<Response, Error> {
+        let start = std::time::Instant::now();
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("DD-API-KEY", &self.api_key)
+            .header("Content-Type", content_type)
+            .body(body)
+            .send()
+            .await;
+
+        let elapsed = start.elapsed();
+        debug!("Request to {} took {}ms", url, elapsed.as_millis());
+        resp
     }
 }
 
