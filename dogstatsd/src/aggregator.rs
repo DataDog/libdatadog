@@ -302,6 +302,13 @@ fn build_metric(entry: &Metric, mut base_tag_vec: SortedTags) -> Option<MetricTo
         kind,
         points: [point; 1],
         tags: base_tag_vec.to_strings(),
+        metadata: Some(datadog::Metadata {
+            origin: datadog::Origin {
+                origin_product: 1, // 1 is the product id for serverless
+                origin_sub_product: 38, // 38 is the sub product id for lambda_metrics
+                origin_product_detail: 0, // 0 is uncategorized
+            },
+        }),
     })
 }
 
