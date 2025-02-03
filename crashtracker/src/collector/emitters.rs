@@ -1,9 +1,9 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
-use crate::collector::spans::emit_spans;
-use crate::collector::spans::emit_traces;
+use crate::collector::spans::{emit_spans, emit_traces};
 use crate::shared::constants::*;
 use crate::CrashtrackerConfiguration;
 use crate::StacktraceCollection;
@@ -96,6 +96,7 @@ pub(crate) fn emit_crashreport(
     emit_procinfo(pipe)?;
     emit_counters(pipe)?;
     emit_spans(pipe)?;
+    consume_and_emit_additional_tags(pipe)?;
     emit_traces(pipe)?;
 
     #[cfg(target_os = "linux")]

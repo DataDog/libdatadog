@@ -16,6 +16,7 @@ use tokio::io::AsyncBufReadExt;
 /// to the CrashReport.
 #[derive(Debug)]
 pub(crate) enum StdinState {
+    AdditionalTags,
     Config,
     Counters,
     Done,
@@ -41,6 +42,16 @@ fn process_line(
     state: StdinState,
 ) -> anyhow::Result<StdinState> {
     let next = match state {
+        StdinState::AdditionalTags if line.starts_with(DD_CRASHTRACK_END_ADDITIONAL_TAGS) => {
+            StdinState::Waiting
+        }
+        StdinState::AdditionalTags => {
+            //DSN TODO fix the input for this
+            let additional_tags: Vec<String> = serde_json::from_str(line)?;
+            builder.with_experimental_additional_tags(additional_tags)?;
+            StdinState::AdditionalTags
+        }
+
         StdinState::Config if line.starts_with(DD_CRASHTRACK_END_CONFIG) => StdinState::Waiting,
         StdinState::Config => {
             if config.is_some() {
@@ -139,6 +150,9 @@ fn process_line(
             StdinState::Ucontext
         }
 
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_ADDITIONAL_TAGS) => {
+            StdinState::AdditionalTags
+        }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_CONFIG) => StdinState::Config,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_COUNTERS) => {
             StdinState::Counters
