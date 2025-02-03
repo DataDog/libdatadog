@@ -126,10 +126,9 @@ pub extern "C" fn ddog_library_config_name_to_env(name: LibraryConfigName) -> ff
 pub extern "C" fn ddog_library_config_source_to_string(
     name: LibraryConfigSource,
 ) -> ffi::CStr<'static> {
-    use LibraryConfigSource::*;
     ffi::CStr::from_std(match name {
-        LocalFile => ddcommon::cstr!("local_file"),
-        Managed => ddcommon::cstr!("managed"),
+        LibraryConfigSource::LocalStableConfig => ddcommon::cstr!("local_stable_config"),
+        LibraryConfigSource::FleetStableConfig => ddcommon::cstr!("fleet_stable_config"),
     })
 }
 
