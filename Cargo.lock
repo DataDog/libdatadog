@@ -1613,7 +1613,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-serverless-trace-mini-agent"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "datadog-trace-mini-agent",
  "datadog-trace-protobuf",
@@ -1815,6 +1815,7 @@ dependencies = [
  "rmpv",
  "serde",
  "serde_json",
+ "tempfile",
  "testcontainers",
  "tinybytes",
  "tokio",

@@ -318,7 +318,7 @@ pub mod tests {
 
     const PRECISION: f64 = 0.000_000_01;
 
-    const SINGLE_METRIC_SIZE: usize = 216; // taken from the test, size of a serialized metric with one tag and 1 digit counter value
+    const SINGLE_METRIC_SIZE: usize = 193; // taken from the test, size of a serialized metric with one tag and 1 digit counter value
     const SINGLE_DISTRIBUTION_SIZE: u64 = 140;
     const DEFAULT_TAGS: &str =
         "dd_extension_version:63-next,architecture:x86_64,_dd.compute_stats:1";
@@ -450,7 +450,7 @@ pub mod tests {
     fn to_series() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
 
-        let metric1 = parse("test:1|c|#k:v").expect("metric parse failed");
+        let metric1 = parse("test:1|c|#k1:v1,k2:v2").expect("metric parse failed");
         let metric2 = parse("foo:1|c|#k:v").expect("metric parse failed");
         let metric3 = parse("bar:1|c|#k:v").expect("metric parse failed");
 
@@ -459,6 +459,7 @@ pub mod tests {
 
         assert_eq!(aggregator.map.len(), 2);
         assert_eq!(aggregator.to_series().len(), 2);
+        // to_series should not mutate the state
         assert_eq!(aggregator.map.len(), 2);
         assert_eq!(aggregator.to_series().len(), 2);
         assert_eq!(aggregator.map.len(), 2);
@@ -663,7 +664,7 @@ pub mod tests {
     fn consume_metrics_batch_bytes() {
         let expected_metrics_per_batch = 2;
         let total_number_of_metrics = 5;
-        let two_metrics_size = 420;
+        let two_metrics_size = 374;
         let max_bytes = SINGLE_METRIC_SIZE * expected_metrics_per_batch + 13;
         let mut aggregator = Aggregator {
             tags: to_sorted_tags(),

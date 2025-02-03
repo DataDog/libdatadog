@@ -26,6 +26,7 @@ pub(crate) enum StdinState {
     SpanIds,
     StackTrace,
     TraceIds,
+    Ucontext,
     Waiting,
 }
 
@@ -132,6 +133,11 @@ fn process_line(
             builder.with_trace_ids(trace_ids)?;
             StdinState::TraceIds
         }
+        StdinState::Ucontext if line.starts_with(DD_CRASHTRACK_END_UCONTEXT) => StdinState::Waiting,
+        StdinState::Ucontext => {
+            builder.with_experimental_ucontext(line.to_string())?;
+            StdinState::Ucontext
+        }
 
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_CONFIG) => StdinState::Config,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_COUNTERS) => {
@@ -156,6 +162,9 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_TRACE_IDS) => {
             StdinState::TraceIds
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_UCONTEXT) => {
+            StdinState::Ucontext
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_DONE) => {
             builder.with_incomplete(false)?;
