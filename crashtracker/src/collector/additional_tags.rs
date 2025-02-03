@@ -1,10 +1,10 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::atomic_set::AtomicStringSet;
+use super::atomic_set::AtomicStringMultiset;
 use std::io::Write;
 
-static ADDITIONAL_TAGS: AtomicStringSet<2048> = AtomicStringSet::new();
+static ADDITIONAL_TAGS: AtomicStringMultiset<2048> = AtomicStringMultiset::new();
 
 pub fn clear_additional_tags() -> anyhow::Result<()> {
     ADDITIONAL_TAGS.clear()

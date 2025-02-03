@@ -1,6 +1,12 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! This module introduces an `AtomicSet` (really an atomic multiset), which is intended to allow
+//! lock free operation including inside a crash signal handler.
+//! This is useful to allow clients to register metadata about program execution, and then the
+//! handler can emit that information into the crash-report.
+//! If this is useful for other cases, we can consider moving it to ddcommon.
+
 use portable_atomic::AtomicUsize;
 use rand::Rng;
 use std::fmt::Debug;
@@ -9,8 +15,8 @@ use std::num::NonZeroU128;
 use std::ptr::null_mut;
 use std::sync::atomic::Ordering::SeqCst;
 
-pub(crate) type AtomicSpanSet<const LEN: usize> = AtomicSet<AtomicSpan, LEN>;
-pub(crate) type AtomicStringSet<const LEN: usize> = AtomicSet<AtomicString, LEN>;
+pub(crate) type AtomicSpanSet<const LEN: usize> = AtomicMultiset<AtomicSpan, LEN>;
+pub(crate) type AtomicStringMultiset<const LEN: usize> = AtomicMultiset<AtomicString, LEN>;
 
 pub trait Atomic {
     type Item: Ord + PartialEq + Debug + Clone;
@@ -36,18 +42,21 @@ pub trait Atomic {
     fn try_insert(&self, val: Self::Item) -> Option<Self::Item>;
 }
 
-pub struct AtomicSet<T, const LEN: usize> {
+/// An atomic multiset, suitable for use in signal handler contexts.
+pub struct AtomicMultiset<T, const LEN: usize> {
     used: AtomicUsize,
     set: [T; LEN],
 }
 
-impl<T, const LEN: usize> AtomicSet<T, LEN>
+impl<T, const LEN: usize> AtomicMultiset<T, LEN>
 where
     T: Atomic,
     <T as Atomic>::Item: std::cmp::PartialEq + Debug + Ord,
 {
-    /// Atomicity: This is NOT ATOMIC.  If other code modifies the set while this is happening,
-    /// badness will occur.
+    /// Atomicity: The individual operations of the clear are atomic, but the overall operation
+    /// is not atomic.
+    /// This should only be used in a context where no other threads are modifying the set.
+    /// Performance: This operation is constant time.
     pub fn clear(&self) -> anyhow::Result<()> {
         if !self.is_empty() {
             for v in self.set.iter() {
@@ -59,10 +68,22 @@ where
         Ok(())
     }
 
+    /// Removes an element from the array at element idx.
+    /// Returns:
+    ///     Ok if the operation succeeds.
+    ///     Err if the idx was out of bounds, or had no element to remove.
+    /// Atomicity: This operation is atomic and lock-free.
+    ///     Updates to values and `len()` are not transactional, but are eventually consistent in
+    ///     that `len` will be correctly updated once this operation completes.
+    ///     Until then, the invariant that `len`` >= actual number of elements in the array is
+    ///     maintained
+    /// Performance: This operation is constant time.
     pub fn remove(&self, idx: usize) -> anyhow::Result<()> {
         anyhow::ensure!(idx < self.set.len(), "Idx {idx} out of range");
         if self.set[idx].clear() {
             self.used.sub(1, SeqCst)
+        } else {
+            anyhow::bail!("Expected an element at {idx}");
         }
         Ok(())
     }
@@ -74,6 +95,18 @@ where
         }
     }
 
+    /// Inserts an element into the array.
+    /// Returns:
+    ///     Ok(idx) if the operation succeeds.  `Idx` can later be used as an argument to `remove`.
+    ///     Err if insert failed
+    /// Atomicity: This operation is atomic and lock-free.
+    ///     Updates to values and `len()` are not transactional, but are eventually consistent in
+    ///     that `len` will be correctly updated once this operation completes.
+    ///     Until then, the invariant that `len`` >= actual number of elements in the array is
+    ///     maintained.
+    /// Performance:
+    ///     As long as the invariant is maintained that the array is <= 1/2 full, this is amortized
+    ///     constant time.
     pub fn insert(&self, mut value: T::Item) -> anyhow::Result<usize> {
         let used = self.used.fetch_add(1, SeqCst);
         if used >= self.set.len() / 2 {
@@ -112,14 +145,45 @@ where
         anyhow::bail!("This should be unreachable: we ensure that there was at least one empty slot before entering the loop")
     }
 
+    /// Best effort check if the array is definitely empty.
+    /// Returns:
+    ///     If the array is definitely empty. Note that this may spuriously fail (see atomicity).
+    /// Atomicity: This operation is atomic and lock-free.
+    ///     Updates to values and `len()` are not transactional, but are eventually consistent in
+    ///     that `len` will be correctly updated once this operations complete.
+    ///     Until then, the invariant that `len`` >= actual number of elements in the array is
+    ///     maintained.    
+    /// Performance: Constant time
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Best effort length of the array.
+    /// Returns:
+    ///     A number that is at least as large as the number of elements in the set.
+    /// Atomicity: This operation is atomic and lock-free.
+    ///     Updates to values and `len()` are not transactional, but are eventually consistent in
+    ///     that `len` will be correctly updated once this operations complete.
+    ///     Until then, the invariant that `len`` >= actual number of elements in the array is
+    ///     maintained.    
+    /// Performance: Constant time
     pub fn len(&self) -> usize {
         self.used.load(SeqCst)
     }
 
+    /// Emits the set to the given writer. This is useful to allow the crashtracker collector to
+    /// transmit the set to the receiver.  As suggested in the name, this function consumes the
+    /// elements of the set.
+    /// The `leak` argument is useful inside a signal handler where calls to the allocator are
+    /// prohibited.
+    /// Returns:
+    ///     If an error occurred during the operation.
+    /// Atomicity:
+    ///     This operation is atomic and lock-free.
+    ///     It is not transactional: if elements are added during this operation, they may or may
+    ///     not make into the emitted output.
+    /// Performance: This does a linear scan over the entire array, and then emits any found items.
+    /// It is therefore O(set.capacity()) + O(set.len()).
     pub fn consume_and_emit(&self, w: &mut impl Write, leak: bool) -> anyhow::Result<()> {
         write!(w, "[")?;
 
@@ -308,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_string_new() -> anyhow::Result<()> {
-        let s: AtomicStringSet<16> = AtomicStringSet::new();
+        let s: AtomicStringMultiset<16> = AtomicStringMultiset::new();
         assert_eq!(s.len(), 0);
         assert!(s.values()?.is_empty());
         Ok(())
@@ -317,7 +381,7 @@ mod tests {
     #[test]
     fn test_string_ops() -> anyhow::Result<()> {
         let mut expected = std::collections::BTreeMap::<String, usize>::new();
-        let s = AtomicStringSet::<8>::new();
+        let s = AtomicStringMultiset::<8>::new();
         compare(&s, &expected);
         insert_and_compare(&s, &mut expected, "a".to_string());
         insert_and_compare(&s, &mut expected, "b".to_string());
@@ -391,7 +455,7 @@ mod tests {
 
     #[test]
     fn test_string_emit() {
-        let s: AtomicStringSet<8> = AtomicStringSet::new();
+        let s: AtomicStringMultiset<8> = AtomicStringMultiset::new();
         s.insert(bs("hello")).unwrap();
         s.insert(bs("world")).unwrap();
         let mut buf = Vec::new();
@@ -404,7 +468,7 @@ mod tests {
     }
 
     fn remove_and_compare<T: Atomic>(
-        s: &AtomicSet<T, 8>,
+        s: &AtomicMultiset<T, 8>,
         expected: &mut std::collections::BTreeMap<T::Item, usize>,
         v: T::Item,
     ) {
@@ -413,7 +477,7 @@ mod tests {
     }
 
     fn remove<T: Atomic>(
-        s: &AtomicSet<T, 8>,
+        s: &AtomicMultiset<T, 8>,
         expected: &mut std::collections::BTreeMap<T::Item, usize>,
         v: T::Item,
     ) -> anyhow::Result<()> {
@@ -424,7 +488,7 @@ mod tests {
     }
 
     fn compare<T: Atomic>(
-        s: &AtomicSet<T, 8>,
+        s: &AtomicMultiset<T, 8>,
         expected: &std::collections::BTreeMap<T::Item, usize>,
     ) {
         let actual = s.values().unwrap();
@@ -434,7 +498,7 @@ mod tests {
     }
 
     fn insert<T: Atomic>(
-        s: &AtomicSet<T, 8>,
+        s: &AtomicMultiset<T, 8>,
         expected: &mut std::collections::BTreeMap<T::Item, usize>,
         v: T::Item,
     ) -> anyhow::Result<()> {
@@ -443,7 +507,7 @@ mod tests {
     }
 
     fn insert_and_compare<T: Atomic>(
-        s: &AtomicSet<T, 8>,
+        s: &AtomicMultiset<T, 8>,
         expected: &mut std::collections::BTreeMap<T::Item, usize>,
         v: T::Item,
     ) {
