@@ -367,10 +367,35 @@ pub struct Configurator {
 }
 
 impl Configurator {
-    pub const MANAGED_STABLE_CONFIGURATION_PATH: &'static str =
-        "/etc/datadog-agent/managed/datadog-agent/stable/libraries_config.yaml";
+    pub const FLEET_STABLE_CONFIGURATION_PATH: &'static str = {
+        #[cfg(target_os = "linux")]
+        {
+            "/etc/datadog-agent/managed/datadog-agent/stable/application_monitoring.yaml"
+        }
+        #[cfg(target_os = "macos")]
+        {
+            "/opt/datadog-agent/etc/stable/application_monitoring.yaml"
+        }
+        #[cfg(windows)]
+        {
+            "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml"
+        }
+    };
 
-    pub const LOCAL_STABLE_CONFIGURATION_PATH: &'static str = "/etc/datadog-agent/datadog_apm.yaml";
+    pub const LOCAL_STABLE_CONFIGURATION_PATH: &'static str = {
+        #[cfg(target_os = "linux")]
+        {
+            "/etc/datadog-agent/application_monitoring.yaml"
+        }
+        #[cfg(target_os = "macos")]
+        {
+            "/opt/datadog-agent/etc/application_monitoring.yaml"
+        }
+        #[cfg(windows)]
+        {
+            "C:\\ProgramData\\Datadog\\application_monitoring.yaml"
+        }
+    };
 
     pub fn new(debug_logs: bool) -> Self {
         Self { debug_logs }
@@ -442,7 +467,7 @@ impl Configurator {
 
         let managed_config = self.get_config(
             &stable_config_managed,
-            LibraryConfigSource::Managed,
+            LibraryConfigSource::FleetStableConfig,
             &process_info,
         )?;
         if !managed_config.is_empty() {
