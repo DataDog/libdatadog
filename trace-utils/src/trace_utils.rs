@@ -20,6 +20,7 @@ use rmpv::{Integer, Value};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::io::Read;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -39,10 +40,20 @@ pub async fn get_traces_from_request_body(
     let buffer = body.collect().await?.aggregate();
     let size = buffer.remaining();
 
-    let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_read(buffer.reader()) {
-        Ok(res) => res,
-        Err(err) => {
-            anyhow::bail!("Error deserializing trace from request body: {err}")
+    let traces: Vec<Vec<pb::Span>> = {
+        // Read the entire buffer into a Vec<u8>
+        let mut raw_data = Vec::new();
+        buffer.reader().read_to_end(&mut raw_data)?;
+
+        match rmp_serde::from_slice(&raw_data) {
+            Ok(res) => res,
+            Err(err) => {
+                // Convert raw_data to a string for logging
+                let data_string = String::from_utf8_lossy(&raw_data);
+                log::error!("Failed to deserialize protobuf. Raw data: {}", data_string);
+
+                anyhow::bail!("Error deserializing trace from request body: {}", err)
+            }
         }
     };
 
