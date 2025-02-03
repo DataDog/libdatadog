@@ -23,3 +23,8 @@ pub use data_pipeline_ffi::*;
 // re-export library-config ffi
 #[cfg(feature = "datadog-library-config-ffi")]
 pub use datadog_library_config_ffi::*;
+
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
