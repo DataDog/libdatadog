@@ -72,6 +72,7 @@ pub trait SidecarInterface {
         session_id: String,
         remote_config_notify_target: RemoteConfigNotifyTarget,
         config: SessionConfig,
+        is_fork: bool,
     );
 
     /// Shuts down a runtime.

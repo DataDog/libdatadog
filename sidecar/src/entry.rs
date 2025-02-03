@@ -73,15 +73,16 @@ where
     #[cfg(unix)]
     tokio::spawn(async move {
         let socket_path = crashtracker_unix_socket_path();
-        match datadog_crashtracker::get_receiver_unix_socket(socket_path.to_str().unwrap_or_default()) {
-            Ok(listener) =>
-                loop {
-                    if let Err(e) =
-                        datadog_crashtracker::async_receiver_entry_point_unix_listener(&listener).await
-                    {
-                        tracing::warn!("Got error while receiving crash report: {e}");
-                    }
-                },
+        match datadog_crashtracker::get_receiver_unix_socket(
+            socket_path.to_str().unwrap_or_default(),
+        ) {
+            Ok(listener) => loop {
+                if let Err(e) =
+                    datadog_crashtracker::async_receiver_entry_point_unix_listener(&listener).await
+                {
+                    tracing::warn!("Got error while receiving crash report: {e}");
+                }
+            },
             Err(e) => tracing::error!("Failed setting up the crashtracker listener: {e}"),
         }
     });

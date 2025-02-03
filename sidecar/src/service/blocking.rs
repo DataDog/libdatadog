@@ -209,6 +209,7 @@ pub fn set_session_config(
     #[cfg(windows)] remote_config_notify_function: *mut libc::c_void,
     session_id: String,
     config: &SessionConfig,
+    is_fork: bool,
 ) -> io::Result<()> {
     #[cfg(unix)]
     let remote_config_notify_target = pid;
@@ -219,6 +220,7 @@ pub fn set_session_config(
         session_id,
         remote_config_notify_target,
         config: config.clone(),
+        is_fork,
     })
 }
 
