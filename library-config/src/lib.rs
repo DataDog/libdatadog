@@ -251,16 +251,16 @@ impl LibraryConfigName {
 pub enum LibraryConfigSource {
     // Order matters, as it is used to determine the priority of the source.
     //  The higher the value, the higher the priority.
-    LocalFile = 0,
-    Managed = 1,
+    LocalStableConfig = 0,
+    FleetStableConfig = 1,
 }
 
 impl LibraryConfigSource {
     pub fn to_str(&self) -> &'static str {
         use LibraryConfigSource::*;
         match self {
-            LocalFile => "local_file",
-            Managed => "fleet_automation",
+            LocalStableConfig => "local_stable_config",
+            FleetStableConfig => "fleet_stable_config",
         }
     }
 }
@@ -413,7 +413,7 @@ impl Configurator {
 
         let managed_config = self.get_config(
             &stable_config_managed,
-            LibraryConfigSource::Managed,
+            LibraryConfigSource::FleetStableConfig,
             &process_info,
         )?;
         if !managed_config.is_empty() {
@@ -423,7 +423,7 @@ impl Configurator {
         // If no managed config rule matches, try the local config
         let local_config = self.get_config(
             &stable_config_local,
-            LibraryConfigSource::LocalFile,
+            LibraryConfigSource::LocalStableConfig,
             &process_info,
         )?;
         Ok(local_config)
@@ -452,7 +452,7 @@ impl Configurator {
         // If no managed config rule matches, try the local config
         let local_config = self.get_config(
             &stable_config_local,
-            LibraryConfigSource::LocalFile,
+            LibraryConfigSource::LocalStableConfig,
             &process_info,
         )?;
         Ok(local_config)
@@ -550,7 +550,7 @@ rules:
             vec![LibraryConfig {
                 name: LibraryConfigName::DdService,
                 value: "my_service_my_cluster_my_config_java".to_string(),
-                source: LibraryConfigSource::LocalFile,
+                source: LibraryConfigSource::LocalStableConfig,
                 config_id: Some("abc".to_string()),
             }]
         );
@@ -711,7 +711,7 @@ rules:
             vec![LibraryConfig {
                 name: LibraryConfigName::DdService,
                 value: "managed".to_string(),
-                source: LibraryConfigSource::Managed,
+                source: LibraryConfigSource::FleetStableConfig,
                 config_id: Some("def".to_string()),
             }]
         );
