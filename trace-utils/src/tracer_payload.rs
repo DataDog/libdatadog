@@ -271,10 +271,6 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
                     *size_ref = size;
                 }
 
-                if traces.is_empty() {
-                    anyhow::bail!("No traces deserialized from the request body.");
-                }
-
                 Ok(collect_trace_chunks(
                     TraceCollection::V04(traces),
                     self.tracer_header_tags,
