@@ -20,7 +20,7 @@ renaming_overrides_prefixing = true
 "Slice_U8" = "ddog_Slice_U8"
 "Slice_CChar" = "ddog_Slice_CChar"
 "Error" = "ddog_Error"
-"AgentResponse" = "ddog_AgentResponse"
+"ExporterResponse" = "ddog_TraceExporterResponse"
 "ExporterErrorCode" = "ddog_TraceExporterErrorCode"
 "ExporterError" = "ddog_TraceExporterError"
 
