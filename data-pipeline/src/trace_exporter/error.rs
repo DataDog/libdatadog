@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::telemetry::error::TelemetryError;
 use crate::trace_exporter::msgpack_decoder::v04::error::DecodeError;
 use hyper::http::StatusCode;
 use hyper::Error as HyperError;
@@ -162,6 +163,19 @@ impl From<DecodeError> for TraceExporterError {
 impl From<std::io::Error> for TraceExporterError {
     fn from(err: std::io::Error) -> Self {
         TraceExporterError::Io(err)
+    }
+}
+
+impl From<TelemetryError> for TraceExporterError {
+    fn from(value: TelemetryError) -> Self {
+        match value {
+            TelemetryError::Builder(_) => {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidTelemetryConfig)
+            }
+            TelemetryError::Send(_) => {
+                TraceExporterError::Io(std::io::ErrorKind::WouldBlock.into())
+            }
+        }
     }
 }
 

@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Telemetry provides a client to send results accumulated in 'Metrics'.
+pub mod error;
 pub mod metrics;
+use crate::telemetry::error::TelemetryError;
 use crate::telemetry::metrics::Metrics;
-use crate::trace_exporter::error::{BuilderErrorKind, TraceExporterError};
 use datadog_trace_utils::trace_utils::SendDataResult;
 use ddcommon::tag::Tag;
-use ddtelemetry::metrics::ContextKey;
 use ddtelemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
 };
@@ -69,7 +69,7 @@ impl TelemetryClientBuilder {
     }
 
     /// Builds the telemetry client.
-    pub async fn build(self) -> Result<TelemetryClient, TraceExporterError> {
+    pub async fn build(self) -> Result<TelemetryClient, TelemetryError> {
         let (worker, handle) = TelemetryWorkerBuilder::new_fetch_host(
             self.service_name.unwrap(),
             self.language.unwrap(),
@@ -78,7 +78,7 @@ impl TelemetryClientBuilder {
         )
         .spawn_with_config(self.config)
         .await
-        .map_err(|_| TraceExporterError::Builder(BuilderErrorKind::InvalidTelemetryConfig))?;
+        .map_err(|e| TelemetryError::Builder(e.to_string()))?;
 
         Ok(TelemetryClient {
             handle,
@@ -96,61 +96,54 @@ pub struct TelemetryClient {
 }
 
 impl TelemetryClient {
-    async fn add_point(&self, value: f64, key: ContextKey, tags: Vec<Tag>) {
-        // TODO: map error.
-        let _ = self
-            .worker
-            .send_msg(TelemetryActions::AddPoint((value, key, tags)))
-            .await;
-    }
-
     /// Sends metrics to the agent using a telemetry worker handle.
     ///
     /// # Arguments:
     ///
     /// * `telemetry_handle`: telemetry worker handle used to enqueue metrics.
-    pub async fn send(&self, data: &SendDataResult) {
-        let mut futures = Vec::new();
+    pub fn send(&self, data: &SendDataResult) -> Result<(), TelemetryError> {
         if data.requests_count > 0 {
             let key = self.metrics.get(metrics::MetricKind::ApiRequest);
-            futures.push(self.add_point(data.requests_count as f64, *key, vec![]));
+            self.worker
+                .add_point(data.requests_count as f64, key, vec![])?;
         }
         if data.errors_network > 0 {
             let key = self.metrics.get(metrics::MetricKind::ApiErrorsNetwork);
-            futures.push(self.add_point(data.errors_network as f64, *key, vec![]));
+            self.worker
+                .add_point(data.errors_network as f64, key, vec![])?;
         }
         if data.errors_timeout > 0 {
             let key = self.metrics.get(metrics::MetricKind::ApiErrorsTimeout);
-            futures.push(self.add_point(data.errors_timeout as f64, *key, vec![]));
+            self.worker
+                .add_point(data.errors_timeout as f64, key, vec![])?;
         }
         if data.errors_status_code > 0 {
             let key = self.metrics.get(metrics::MetricKind::ApiErrorsStatusCode);
-            futures.push(self.add_point(data.errors_status_code as f64, *key, vec![]));
+            self.worker
+                .add_point(data.errors_status_code as f64, key, vec![])?;
         }
         if data.bytes_sent > 0 {
             let key = self.metrics.get(metrics::MetricKind::ApiBytes);
-            futures.push(self.add_point(data.bytes_sent as f64, *key, vec![]));
+            self.worker.add_point(data.bytes_sent as f64, key, vec![])?;
         }
         if data.chunks_sent > 0 {
             let key = self.metrics.get(metrics::MetricKind::ChunksSent);
-            futures.push(self.add_point(data.chunks_sent as f64, *key, vec![]));
+            self.worker
+                .add_point(data.chunks_sent as f64, key, vec![])?;
         }
         if data.chunks_dropped > 0 {
             let key = self.metrics.get(metrics::MetricKind::ChunksDropped);
-            futures.push(self.add_point(data.chunks_dropped as f64, *key, vec![]));
+            self.worker
+                .add_point(data.chunks_dropped as f64, key, vec![])?;
         }
         if !data.responses_count_per_code.is_empty() {
             let key = self.metrics.get(metrics::MetricKind::ApiResponses);
             for (status_code, count) in &data.responses_count_per_code {
-                futures.push(self.add_point(
-                    *count as f64,
-                    *key,
-                    vec![Tag::new("status_code", status_code.to_string().as_str()).unwrap()],
-                ));
+                let tag = Tag::new("status_code", status_code.to_string().as_str())?;
+                self.worker.add_point(*count as f64, key, vec![tag])?;
             }
         }
-
-        futures::future::join_all(futures).await;
+        Ok(())
     }
 
     /// Starts the client
@@ -256,7 +249,7 @@ mod tests {
         let client = result.unwrap();
 
         client.start().await;
-        client.send(&data).await;
+        let _ = client.send(&data);
         client.shutdown().await;
         let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
@@ -296,7 +289,7 @@ mod tests {
         let client = result.unwrap();
 
         client.start().await;
-        client.send(&data).await;
+        let _ = client.send(&data);
         client.shutdown().await;
         let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
@@ -336,7 +329,7 @@ mod tests {
         let client = result.unwrap();
 
         client.start().await;
-        client.send(&data).await;
+        let _ = client.send(&data);
         client.shutdown().await;
         let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
@@ -376,7 +369,7 @@ mod tests {
         let client = result.unwrap();
 
         client.start().await;
-        client.send(&data).await;
+        let _ = client.send(&data);
         client.shutdown().await;
         let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
@@ -416,7 +409,7 @@ mod tests {
         let client = result.unwrap();
 
         client.start().await;
-        client.send(&data).await;
+        let _ = client.send(&data);
         client.shutdown().await;
         let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
@@ -456,7 +449,7 @@ mod tests {
         let client = result.unwrap();
 
         client.start().await;
-        client.send(&data).await;
+        let _ = client.send(&data);
         client.shutdown().await;
         let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
@@ -496,7 +489,7 @@ mod tests {
         let client = result.unwrap();
 
         client.start().await;
-        client.send(&data).await;
+        let _ = client.send(&data);
         client.shutdown().await;
         let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
@@ -536,7 +529,7 @@ mod tests {
         let client = result.unwrap();
 
         client.start().await;
-        client.send(&data).await;
+        let _ = client.send(&data);
         client.shutdown().await;
         let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;

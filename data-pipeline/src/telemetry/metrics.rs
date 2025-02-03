@@ -147,7 +147,7 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn new_test() {
+    async fn new_metrics_test() {
         let (worker, _) = TelemetryWorkerBuilder::new_fetch_host(
             "service".to_string(),
             "language".to_string(),

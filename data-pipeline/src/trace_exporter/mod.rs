@@ -648,7 +648,9 @@ impl TraceExporter {
                 self.runtime.block_on(async {
                     let send_data_result = send_data.send().await;
                     if let Some(telemetry) = &self.telemetry {
-                        telemetry.send(&send_data_result).await;
+                        if let Err(e) = telemetry.send(&send_data_result) {
+                            error!("Error sending telemetry: {}", e.to_string());
+                        }
                     }
                     match send_data_result.last_result {
                         Ok(response) => {
