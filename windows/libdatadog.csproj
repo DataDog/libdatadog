@@ -37,6 +37,8 @@
       PackagePath="include\native\datadog\crashtracker.h" />
     <None Include="$(LibDatadogBinariesOutputDir)\data-pipeline.h" Pack="true"
       PackagePath="include\native\datadog\data-pipeline.h" />
+    <None Include="$(LibDatadogBinariesOutputDir)\library-config.h" Pack="true"
+      PackagePath="include\native\datadog\library-config.h" />
 
     <None Include="$(LibDatadogBinariesOutputDir)\x86_64-pc-windows-msvc\debug\datadog_profiling_ffi.lib"
       Pack="true" PackagePath="build\native\lib\x64\debug\static\datadog_profiling_ffi.lib" />
