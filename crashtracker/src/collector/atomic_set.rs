@@ -1,8 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! This module introduces an `AtomicSet` (really an atomic multiset), which is intended to allow
-//! lock free operation including inside a crash signal handler.
+//! This module introduces an `AtomicMultiset`, which is intended to allow lock free operation
+//! including inside a crash signal handler.
 //! This is useful to allow clients to register metadata about program execution, and then the
 //! handler can emit that information into the crash-report.
 //! If this is useful for other cases, we can consider moving it to ddcommon.
