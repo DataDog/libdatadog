@@ -4,16 +4,26 @@
 use anyhow::Context;
 use datadog_profiling::collections::string_storage::ManagedStringStorage as InternalManagedStringStorage;
 use ddcommon_ffi::slice::AsBytes;
-use ddcommon_ffi::{CharSlice, Error, MaybeError, StringWrapper};
+use ddcommon_ffi::{CharSlice, Error, MaybeError, Slice, StringWrapper};
 use libc::c_void;
+use std::mem::MaybeUninit;
 use std::num::NonZeroU32;
 use std::{rc::Rc, sync::RwLock};
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct ManagedStringId {
     pub value: u32,
 }
 
+// A note about this being Copy:
+// We're writing code for C with C semantics but with Rust restrictions still
+// around. In terms of C, this is just a pointer with some unknown lifetime
+// that is the programmer's job to handle.
+// Normally, Rust is taking care of that lifetime for us. Because we need to
+// uncouple this so that lifetimes can bridge C and Rust, the lifetime of the
+// object isn't managed in Rust, but in the sequence of API calls.
+#[derive(Copy, Clone)]
 #[repr(C)]
 pub struct ManagedStringStorage {
     // This may be null, but if not it will point to a valid InternalManagedStringStorage.
@@ -31,7 +41,7 @@ pub enum ManagedStringStorageNewResult {
 
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_new() -> ManagedStringStorageNewResult {
+pub extern "C" fn ddog_prof_ManagedStringStorage_new() -> ManagedStringStorageNewResult {
     let storage = InternalManagedStringStorage::new();
 
     ManagedStringStorageNewResult::Ok(ManagedStringStorage {
@@ -56,8 +66,6 @@ pub enum ManagedStringStorageInternResult {
 
 #[must_use]
 #[no_mangle]
-/// TODO: Consider having a variant of intern (and unintern?) that takes an array as input, instead
-/// of just a single string at a time.
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
     storage: ManagedStringStorage,
@@ -73,15 +81,67 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
 
         let string_id = storage
             .write()
-            .map_err(|_| {
-                anyhow::anyhow!("acquisition of write lock on string storage should succeed")
-            })?
+            .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?
             .intern(string.try_to_utf8()?)?;
 
         anyhow::Ok(ManagedStringId { value: string_id })
     })()
     .context("ddog_prof_ManagedStringStorage_intern failed")
     .into()
+}
+
+/// Interns all the strings in `strings`, writing the resulting id to the same
+/// offset in `output_ids`.
+///
+/// This can fail if:
+///  1. The given `output_ids_size` doesn't match the size of the input slice.
+///  2. The internal storage pointer is null.
+///  3. It fails to acquire a lock (e.g. it was poisoned).
+///  4. Defensive checks against bugs fail.
+///
+/// If a failure occurs, do not use any of the ids in the output array. After
+/// this point, you should only use read-only routines (except for drop) on
+/// the managed string storage.
+#[no_mangle]
+/// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
+pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern_all(
+    storage: ManagedStringStorage,
+    strings: Slice<CharSlice>,
+    output_ids: *mut MaybeUninit<ManagedStringId>,
+    output_ids_size: usize,
+) -> MaybeError {
+    let result = (|| {
+        if strings.len() != output_ids_size {
+            anyhow::bail!("input and output arrays have different sizes")
+        }
+
+        let storage = get_inner_string_storage(storage, true)?;
+
+        let mut write_locked_storage = storage
+            .write()
+            .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
+
+        let output_slice = core::slice::from_raw_parts_mut(output_ids, output_ids_size);
+
+        for (output_id, input_str) in output_slice.iter_mut().zip(strings.iter()) {
+            let string_id = if input_str.is_empty() {
+                ManagedStringId { value: 0 }
+            } else {
+                ManagedStringId {
+                    value: write_locked_storage.intern(input_str.try_to_utf8()?)?,
+                }
+            };
+            output_id.write(string_id);
+        }
+
+        anyhow::Ok(())
+    })()
+    .context("ddog_prof_ManagedStringStorage_intern failed");
+
+    match result {
+        Ok(_) => MaybeError::None,
+        Err(e) => MaybeError::Some(e.into()),
+    }
 }
 
 #[no_mangle]
@@ -97,11 +157,38 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
     let result = (|| {
         let storage = get_inner_string_storage(storage, true)?;
 
-        let write_locked_storage = storage.write().map_err(|_| {
-            anyhow::anyhow!("acquisition of write lock on string storage should succeed")
-        })?;
+        let write_locked_storage = storage
+            .write()
+            .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
 
         write_locked_storage.unintern(non_empty_string_id)
+    })()
+    .context("ddog_prof_ManagedStringStorage_unintern failed");
+
+    match result {
+        Ok(_) => MaybeError::None,
+        Err(e) => MaybeError::Some(e.into()),
+    }
+}
+
+#[no_mangle]
+/// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
+pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern_all(
+    storage: ManagedStringStorage,
+    ids: Slice<ManagedStringId>,
+) -> MaybeError {
+    let result = (|| {
+        let storage = get_inner_string_storage(storage, true)?;
+
+        let write_locked_storage = storage
+            .write()
+            .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
+
+        for non_empty_string_id in ids.iter().filter_map(|id| NonZeroU32::new(id.value)) {
+            write_locked_storage.unintern(non_empty_string_id)?;
+        }
+
+        anyhow::Ok(())
     })()
     .context("ddog_prof_ManagedStringStorage_unintern failed");
 
@@ -155,9 +242,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_advance_gen(
 
         storage
             .write()
-            .map_err(|_| {
-                anyhow::anyhow!("acquisition of write lock on string storage should succeed")
-            })?
+            .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?
             .advance_gen();
 
         anyhow::Ok(())
@@ -211,5 +296,53 @@ impl From<anyhow::Result<String>> for StringWrapperResult {
             Ok(v) => Self::Ok(v.into()),
             Err(err) => Self::Err(err.into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_string_storage() {
+        let storage = match ddog_prof_ManagedStringStorage_new() {
+            ManagedStringStorageNewResult::Ok(ok) => ok,
+            ManagedStringStorageNewResult::Err(err) => panic!("{err}"),
+        };
+        let string_rs = [
+            CharSlice::from("I'm running out of time."),
+            CharSlice::from("My zoom meeting ends in 2 minutes."),
+        ];
+        let strings = Slice::new(&string_rs);
+
+        // We're going to intern the same group of strings twice to make sure
+        // that we get the same ids.
+        let mut ids_rs1 = [ManagedStringId { value: 0 }; 2];
+        let ids1 = ids_rs1.as_mut_ptr();
+        let result = unsafe {
+            ddog_prof_ManagedStringStorage_intern_all(storage, strings, ids1.cast(), strings.len())
+        };
+        if let MaybeError::Some(err) = result {
+            panic!("{err}");
+        }
+
+        let mut ids_rs2 = [ManagedStringId { value: 0 }; 2];
+        let ids2 = ids_rs2.as_mut_ptr();
+        let result = unsafe {
+            ddog_prof_ManagedStringStorage_intern_all(storage, strings, ids2.cast(), strings.len())
+        };
+        if let MaybeError::Some(err) = result {
+            panic!("{err}");
+        }
+
+        // Check the ids match and aren't zero.
+        {
+            assert_eq!(ids_rs1, ids_rs2);
+            for id in ids_rs1 {
+                assert_ne!(id.value, 0);
+            }
+        }
+
+        unsafe { ddog_prof_ManagedStringStorage_drop(storage) }
     }
 }
