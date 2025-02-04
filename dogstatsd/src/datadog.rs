@@ -10,7 +10,7 @@ use lazy_static::lazy_static;
 use protobuf::Message;
 use regex::Regex;
 use reqwest;
-use reqwest::Response;
+use reqwest::{Client, Response};
 use serde::{Serialize, Serializer};
 use serde_json;
 use std::time::Duration;
@@ -125,7 +125,7 @@ impl MetricsIntakeUrlPrefix {
 pub struct DdApi {
     api_key: String,
     metrics_intake_url_prefix: MetricsIntakeUrlPrefix,
-    client: reqwest::Client,
+    client: Option<Client>,
 }
 
 impl DdApi {
@@ -136,10 +136,13 @@ impl DdApi {
         https_proxy: Option<String>,
         timeout: Duration,
     ) -> Self {
-        let client = Self::build_client(https_proxy, timeout).unwrap_or_else(|e| {
-            error!("Unable to parse proxy URL, no proxy will be used. {:?}", e);
-            reqwest::Client::new()
-        });
+        let client = match build_client(https_proxy, timeout) {
+            Ok(client) => Some(client),
+            Err(e) => {
+                error!("Unable to create client {:?}", e);
+                None
+            }
+        };
         DdApi {
             api_key,
             metrics_intake_url_prefix,
@@ -185,38 +188,43 @@ impl DdApi {
         //}
     }
 
-    fn build_client(
-        https_proxy: Option<String>,
-        timeout: Duration,
-    ) -> Result<reqwest::Client, reqwest::Error> {
-        let mut builder = reqwest::Client::builder().timeout(timeout);
-        if let Some(proxy) = https_proxy {
-            builder = builder.proxy(reqwest::Proxy::https(proxy)?);
-        }
-        builder.build()
-    }
-
     async fn ship_data(
         &self,
         url: String,
         body: Vec<u8>,
         content_type: &str,
     ) -> Result<Response, ShippingError> {
-        let start = std::time::Instant::now();
+        if let Some(client) = &self.client {
+            let start = std::time::Instant::now();
 
-        let resp = self
-            .client
-            .post(&url)
-            .header("DD-API-KEY", &self.api_key)
-            .header("Content-Type", content_type)
-            .body(body)
-            .send()
-            .await;
+            let resp = client
+                .post(&url)
+                .header("DD-API-KEY", &self.api_key)
+                .header("Content-Type", content_type)
+                .body(body)
+                .send()
+                .await;
 
-        let elapsed = start.elapsed();
-        debug!("Request to {} took {}ms", url, elapsed.as_millis());
-        resp.map_err(|e| ShippingError::Destination(e.status(), format!("Cannot reach {}", url)))
+            let elapsed = start.elapsed();
+            debug!("Request to {} took {}ms", url, elapsed.as_millis());
+            resp.map_err(|e| {
+                ShippingError::Destination(e.status(), format!("Cannot reach {}", url))
+            })
+        } else {
+            Err(ShippingError::Destination(None, "No client".to_string()))
+        }
     }
+}
+
+fn build_client(
+    https_proxy: Option<String>,
+    timeout: Duration,
+) -> Result<reqwest::Client, reqwest::Error> {
+    let mut builder = reqwest::Client::builder().timeout(timeout);
+    if let Some(proxy) = https_proxy {
+        builder = builder.proxy(reqwest::Proxy::https(proxy)?);
+    }
+    builder.build()
 }
 
 #[derive(Debug, Serialize, Clone, Copy)]
