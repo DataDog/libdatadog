@@ -465,6 +465,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_try_into_empty() {
         let empty_data = vec![0x90];
