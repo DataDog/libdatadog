@@ -86,7 +86,7 @@ impl StatsExporter {
 
         let mut req_builder = self
             .endpoint
-            .into_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
+            .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
             .header(
                 hyper::header::CONTENT_TYPE,
                 ddcommon::header::APPLICATION_MSGPACK,
