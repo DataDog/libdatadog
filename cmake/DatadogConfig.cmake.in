@@ -14,19 +14,22 @@ find_path(Datadog_INCLUDE_DIR datadog/profiling.h HINTS ${Datadog_ROOT}/include)
 set(DD_LIB_NAME "datadog_profiling")
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-  set(DD_LIB_NAME "${DD_LIB_NAME} datadog_profling_ffi")
+  # Prefer static linking over dynamic unless specified
+  set(LINK_TYPE "static")
+  string(TOLOWER ${VCRUNTIME_LINK_TYPE} LINK_TYPE)
 
-  if(CMAKE_BUILD_TYPE STREQUAL "Release")
+  set(BUILD_TYPE "release")
+  string(TOLOWER ${CMAKE_BUILD_TYPE} BUILD_TYPE)
+
   find_library(
       Datadog_LIBRARY
-      NAMES ${DD_LIB_NAME}
-      HINTS ${Datadog_ROOT}/release/static)
-  else()
-  find_library(
-      Datadog_LIBRARY
-      NAMES ${DD_LIB_NAME}
-      HINTS ${Datadog_ROOT}/debug/static)
-  endif()
+      # Windows artifacts publish the library as datadog_profiling_ffi
+      # in {build_type}/{link_type} directory
+      NAMES ${DD_LIB_NAME} datadog_profiling_ffi
+      HINTS ${Datadog_ROOT}/lib ${Datadog_ROOT}/${BULID_TYPE}/${LINK_TYPE})
+
+  # It could be either datadog_profiling or datadog_profiling_ffi, set it to the
+  # one that is found
   get_filename_component(DD_LIB_NAME ${Datadog_LIBRARY} NAME_WE)
   message(STATUS "Datadog library name: ${DD_LIB_NAME}")
 else()
