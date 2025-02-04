@@ -7,7 +7,9 @@ mod tracing_integration_tests {
     use datadog_trace_utils::test_utils::create_test_no_alloc_span;
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use datadog_trace_utils::trace_utils::TracerHeaderTags;
-    use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
+    use datadog_trace_utils::tracer_payload::{
+        DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadCollection, TracerPayloadParams,
+    };
     #[cfg(target_os = "linux")]
     use ddcommon::connector::uds::socket_path_to_uri;
     use ddcommon::Endpoint;
@@ -21,6 +23,8 @@ mod tracing_integration_tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
+    // TODO: APMSP-1779 - This test should call tracer_payload::TracerPayloadParams::try_into()
+    // instead of calling TracerPayloadCollection::V04 directly
     async fn compare_v04_trace_snapshot_test() {
         let relative_snapshot_path = "trace-utils/tests/snapshots/";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
@@ -73,8 +77,50 @@ mod tracing_integration_tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
+    // It is valid for some tracers to send an empty array of spans to the agent
+    async fn send_empty_v04_trace_test() {
+        let test_agent = DatadogTestAgent::new(None, None).await;
+
+        let header_tags = TracerHeaderTags {
+            lang: "test-lang",
+            lang_version: "2.0",
+            lang_interpreter: "interpreter",
+            lang_vendor: "vendor",
+            tracer_version: "1.0",
+            container_id: "id",
+            ..Default::default()
+        };
+
+        let endpoint =
+            Endpoint::from_url(test_agent.get_uri_for_endpoint("v0.4/traces", None).await);
+
+        let empty_data = vec![0x90];
+        let data = tinybytes::Bytes::from(empty_data);
+        let tracer_header_tags = &TracerHeaderTags::default();
+
+        let payload_collection = TracerPayloadParams::new(
+            data,
+            tracer_header_tags,
+            &mut DefaultTraceChunkProcessor,
+            false,
+            TraceEncoding::V04,
+        )
+        .try_into()
+        .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
+
+        let data = SendData::new(0, payload_collection, header_tags, &endpoint);
+
+        let result = data.send().await;
+
+        assert!(result.last_result.is_ok());
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
     #[cfg(target_os = "linux")]
     // Validate that we can correctly send traces to the agent via UDS
+    // TODO: APMSP-1779 - This test should call tracer_payload::TracerPayloadParams::try_into()
+    // instead of calling TracerPayloadCollection::V04 directly
     async fn uds_snapshot_test() {
         let relative_snapshot_path = "trace-utils/tests/snapshots/";
 
