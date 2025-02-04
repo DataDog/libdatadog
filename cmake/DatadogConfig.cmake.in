@@ -14,19 +14,21 @@ find_path(Datadog_INCLUDE_DIR datadog/profiling.h HINTS ${Datadog_ROOT}/include)
 set(DD_LIB_NAME "datadog_profiling")
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
-  set(DD_LIB_NAME "datadog_profling_ffi")
+  set(DD_LIB_NAME "${DD_LIB_NAME} datadog_profling_ffi")
 
   if(CMAKE_BUILD_TYPE STREQUAL "Release")
   find_library(
       Datadog_LIBRARY
-      NAMES datadog_profiling_ffi
+      NAMES ${DD_LIB_NAME}
       HINTS ${Datadog_ROOT}/release/static)
   else()
   find_library(
       Datadog_LIBRARY
-      NAMES datadog_profiling_ffi
+      NAMES ${DD_LIB_NAME}
       HINTS ${Datadog_ROOT}/debug/static)
   endif()
+  get_filename_component(DD_LIB_NAME ${Datadog_LIBRARY} NAME_WE)
+  message(STATUS "Datadog library name: ${DD_LIB_NAME}")
 else()
   find_library(
     Datadog_LIBRARY
