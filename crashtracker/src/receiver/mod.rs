@@ -54,6 +54,7 @@ mod tests {
                 false,
                 None,
                 StacktraceCollection::Disabled,
+                vec![libc::SIGBUS, libc::SIGSEGV],
                 3000,
                 None,
             )?)?,

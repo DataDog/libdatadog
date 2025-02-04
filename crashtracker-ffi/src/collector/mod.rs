@@ -11,7 +11,7 @@ use anyhow::Context;
 pub use counters::*;
 use datadog_crashtracker::CrashtrackerReceiverConfig;
 pub use datatypes::*;
-use ddcommon_ffi::{wrap_with_void_ffi_result, VoidResult};
+use ddcommon_ffi::{wrap_with_void_ffi_result, Slice, VoidResult};
 use function_name::named;
 pub use spans::*;
 
@@ -132,4 +132,12 @@ pub unsafe extern "C" fn ddog_crasht_init_without_receiver(
             metadata.try_into()?,
         )?
     })
+}
+
+#[no_mangle]
+/// Returns a list of signals suitable for use in a crashtracker config.
+pub extern "C" fn ddog_crasht_default_signals<'a>() -> Slice<'a, libc::c_int> {
+    static DEFAULT_SYMBOLS: [libc::c_int; 4] =
+        [libc::SIGBUS, libc::SIGABRT, libc::SIGSEGV, libc::SIGILL];
+    Slice::new(&DEFAULT_SYMBOLS)
 }

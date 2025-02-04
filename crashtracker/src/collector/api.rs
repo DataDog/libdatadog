@@ -80,9 +80,9 @@ pub fn init(
     metadata: Metadata,
 ) -> anyhow::Result<()> {
     update_metadata(metadata)?;
-    update_config(config)?;
+    update_config(config.clone())?;
     configure_receiver(receiver_config);
-    register_crash_handlers()?;
+    register_crash_handlers(&config)?;
     Ok(())
 }
 
@@ -128,6 +128,7 @@ fn test_crash() -> anyhow::Result<()> {
         use_alt_stack,
         endpoint,
         resolve_frames,
+        vec![libc::SIGBUS, libc::SIGSEGV],
         timeout_ms,
         None,
     )?;
@@ -185,6 +186,7 @@ fn test_altstack_paradox() -> anyhow::Result<()> {
         use_alt_stack,
         endpoint,
         resolve_frames,
+        vec![libc::SIGBUS, libc::SIGSEGV],
         timeout_ms,
         None,
     );

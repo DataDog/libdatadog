@@ -27,6 +27,7 @@ pub struct CrashtrackerConfiguration {
     pub use_alt_stack: bool,
     pub endpoint: Option<Endpoint>,
     pub resolve_frames: StacktraceCollection,
+    pub signals: Vec<i32>,
     pub timeout_ms: u32,
     pub unix_socket_path: Option<String>,
 }
@@ -66,12 +67,14 @@ impl CrashtrackerReceiverConfig {
 }
 
 impl CrashtrackerConfiguration {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         additional_files: Vec<String>,
         create_alt_stack: bool,
         use_alt_stack: bool,
         endpoint: Option<Endpoint>,
         resolve_frames: StacktraceCollection,
+        mut signals: Vec<i32>,
         timeout_ms: u32,
         unix_socket_path: Option<String>,
     ) -> anyhow::Result<Self> {
@@ -87,6 +90,16 @@ impl CrashtrackerConfiguration {
         } else {
             timeout_ms
         };
+        anyhow::ensure!(!signals.is_empty(), "Expect to monitor at least one signal");
+        // Ensure we don't have double elements in the signals list.
+        let before_len = signals.len();
+        signals.sort();
+        signals.dedup();
+        anyhow::ensure!(
+            before_len == signals.len(),
+            "Signals contained duplicate elements"
+        );
+
         // Note:  don't check the receiver socket upfront, since a configuration can be interned
         // before the receiver is started when using an async-receiver.
         Ok(Self {
@@ -95,6 +108,7 @@ impl CrashtrackerConfiguration {
             use_alt_stack,
             endpoint,
             resolve_frames,
+            signals,
             timeout_ms,
             unix_socket_path,
         })
