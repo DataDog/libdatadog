@@ -122,7 +122,7 @@ void add_windows_style_frame(ddog_crasht_Handle_StackTrace* stacktrace) {
   check_result(
       ddog_crasht_StackFrame_with_build_id_type(pbd_frame.get(), DDOG_CRASHT_BUILD_ID_TYPE_PDB),
       "failed to add build id type");
-  check_result(ddog_crasht_StackFrame_with_file_type(pbd_frame.get(), DDOG_CRASHT_FILE_TYPE_PDB),
+  check_result(ddog_crasht_StackFrame_with_file_type(pbd_frame.get(), DDOG_CRASHT_FILE_TYPE_PE),
                "failed to add file type");
   check_result(ddog_crasht_StackFrame_with_path(
                    pbd_frame.get(), to_slice_c_char("C:/Program Files/best_program_ever.exe")),
@@ -242,7 +242,7 @@ int main(void) {
                "Failed to set os_info");
 
   auto sigInfo = ddog_crasht_SigInfo {
-    .addr = 0XBABEF00D,
+    .addr = "0xBABEF00D",
     .code = 16,
     .code_human_readable = DDOG_CRASHT_SI_CODES_UNKNOWN,
     .signo = -1,
