@@ -11,10 +11,28 @@ endif()
 
 find_path(Datadog_INCLUDE_DIR datadog/profiling.h HINTS ${Datadog_ROOT}/include)
 
-find_library(
-  Datadog_LIBRARY
-  NAMES datadog_profiling
-  HINTS ${Datadog_ROOT}/lib)
+set(DD_LIB_NAME "datadog_profiling")
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+  set(DD_LIB_NAME "datadog_profling_ffi")
+
+  if(CMAKE_BUILD_TYPE STREQUAL "Release")
+  find_library(
+      Datadog_LIBRARY
+      NAMES datadog_profiling_ffi
+      HINTS ${Datadog_ROOT}/release/static)
+  else()
+  find_library(
+      Datadog_LIBRARY
+      NAMES datadog_profiling_ffi
+      HINTS ${Datadog_ROOT}/debug/static)
+  endif()
+else()
+  find_library(
+    Datadog_LIBRARY
+    NAMES ${DD_LIB_NAME}
+    HINTS ${Datadog_ROOT}/lib)
+endif()
 
 find_package_handle_standard_args(Datadog DEFAULT_MSG Datadog_LIBRARY
                                   Datadog_INCLUDE_DIR)
@@ -24,15 +42,15 @@ if(Datadog_FOUND)
   set(Datadog_LIBRARIES ${Datadog_LIBRARY} "@Datadog_LIBRARIES@")
   mark_as_advanced(Datadog_ROOT Datadog_LIBRARY Datadog_INCLUDE_DIR)
 
-  add_library(datadog_profiling INTERFACE)
-  target_include_directories(datadog_profiling
+  add_library(${DD_LIB_NAME} INTERFACE)
+  target_include_directories(${DD_LIB_NAME}
                              INTERFACE ${Datadog_INCLUDE_DIRS})
-  target_link_libraries(datadog_profiling INTERFACE ${Datadog_LIBRARIES})
-  target_compile_features(datadog_profiling INTERFACE c_std_11)
+  target_link_libraries(${DD_LIB_NAME} INTERFACE ${Datadog_LIBRARIES})
+  target_compile_features(${DD_LIB_NAME} INTERFACE c_std_11)
 
   if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
     target_link_libraries(
-      datadog_profiling
+      ${DD_LIB_NAME}
       INTERFACE NtDll
                 UserEnv
                 Bcrypt
@@ -45,7 +63,7 @@ if(Datadog_FOUND)
                 PowrProf)
   endif()
 
-  add_library(Datadog::Profiling ALIAS datadog_profiling)
+  add_library(Datadog::Profiling ALIAS ${DD_LIB_NAME})
 else()
   set(Datadog_ROOT
       ""
