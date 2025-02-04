@@ -3,13 +3,14 @@
 
 //!Types to serialize data into the Datadog API
 
+use crate::flusher::ShippingError;
 use datadog_protos::metrics::SketchPayload;
 use derive_more::{Display, Into};
 use lazy_static::lazy_static;
 use protobuf::Message;
 use regex::Regex;
 use reqwest;
-use reqwest::{Error, Response};
+use reqwest::Response;
 use serde::{Serialize, Serializer};
 use serde_json;
 use std::time::Duration;
@@ -147,19 +148,32 @@ impl DdApi {
     }
 
     /// Ship a serialized series to the API, blocking
-    pub async fn ship_series(&self, series: &Series) -> Result<Response, Error> {
+    pub async fn ship_series(&self, series: &Series) -> Result<Response, ShippingError> {
         let url = format!("{}/api/v2/series", &self.metrics_intake_url_prefix);
-        debug!("Sending body: {:?}", &series);
-        let body = serde_json::to_vec(&series).expect("failed to serialize series");
-
-        self.ship_data(url, body, "application/json").await
+        if let Ok(safe_body) = serde_json::to_vec(&series) {
+            debug!("Sending body: {:?}", &series);
+            self.ship_data(url, safe_body, "application/json").await
+        } else {
+            Err(ShippingError::Payload(
+                "Failed to serialize series".to_string(),
+            ))
+        }
     }
 
-    pub async fn ship_distributions(&self, sketches: &SketchPayload) -> Result<Response, Error> {
+    pub async fn ship_distributions(
+        &self,
+        sketches: &SketchPayload,
+    ) -> Result<Response, ShippingError> {
         let url = format!("{}/api/beta/sketches", &self.metrics_intake_url_prefix);
-        debug!("Sending distributions: {:?}", &sketches);
-        let body = sketches.write_to_bytes().expect("can't write to buffer");
-
+        if let Ok(safe_body) = sketches.write_to_bytes() {
+            debug!("Sending distributions: {:?}", &sketches);
+            self.ship_data(url, safe_body, "application/x-protobuf")
+                .await
+        } else {
+            Err(ShippingError::Payload(
+                "Failed to serialize sketches".to_string(),
+            ))
+        }
         // TODO maybe go to coded output stream if we incrementally
         // add sketch payloads to the buffer
         // something like this, but fix the utf-8 encoding issue
@@ -169,8 +183,6 @@ impl DdApi {
         //     let _ = output_stream.write_message_no_tag(&sketches);
         //     TODO not working, has utf-8 encoding issue in dist-intake
         //}
-
-        self.ship_data(url, body, "application/x-protobuf").await
     }
 
     fn build_client(
@@ -189,7 +201,7 @@ impl DdApi {
         url: String,
         body: Vec<u8>,
         content_type: &str,
-    ) -> Result<Response, Error> {
+    ) -> Result<Response, ShippingError> {
         let start = std::time::Instant::now();
 
         let resp = self
@@ -203,7 +215,7 @@ impl DdApi {
 
         let elapsed = start.elapsed();
         debug!("Request to {} took {}ms", url, elapsed.as_millis());
-        resp
+        resp.map_err(|e| ShippingError::Destination(e.status(), format!("Cannot reach {}", url)))
     }
 }
 
