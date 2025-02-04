@@ -46,7 +46,6 @@ fn process_line(
             StdinState::Waiting
         }
         StdinState::AdditionalTags => {
-            //DSN TODO fix the input for this
             let additional_tags: Vec<String> = serde_json::from_str(line)?;
             builder.with_experimental_additional_tags(additional_tags)?;
             StdinState::AdditionalTags
@@ -120,7 +119,6 @@ fn process_line(
 
         StdinState::SpanIds if line.starts_with(DD_CRASHTRACK_END_SPAN_IDS) => StdinState::Waiting,
         StdinState::SpanIds => {
-            //DSN TODO fix the input for this
             let span_ids: Vec<Span> = serde_json::from_str(line)?;
             builder.with_span_ids(span_ids)?;
             StdinState::SpanIds
