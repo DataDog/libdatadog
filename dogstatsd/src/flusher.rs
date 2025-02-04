@@ -56,7 +56,6 @@ impl Flusher {
             for a_batch in all_series {
                 let continue_shipping =
                     should_continue_shipping(dd_api_clone.ship_series(&a_batch).await).await;
-                // TODO(astuyve) retry and do not panic
                 if !continue_shipping {
                     break;
                 }
