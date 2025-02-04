@@ -16,10 +16,14 @@ set(DD_LIB_NAME "datadog_profiling")
 if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
   # Prefer static linking over dynamic unless specified
   set(LINK_TYPE "static")
-  string(TOLOWER ${VCRUNTIME_LINK_TYPE} LINK_TYPE)
+  if (DEFINED VCRUNTIME_LINK_TYPE)
+    string(TOLOWER ${VCRUNTIME_LINK_TYPE} LINK_TYPE)
+  endif()
 
   set(BUILD_TYPE "release")
-  string(TOLOWER ${CMAKE_BUILD_TYPE} BUILD_TYPE)
+  if (DEFINED CMAKE_BUILD_TYPE)
+    string(TOLOWER ${CMAKE_BUILD_TYPE} BUILD_TYPE)
+  endif()
 
   find_library(
       Datadog_LIBRARY
