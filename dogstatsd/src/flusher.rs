@@ -4,10 +4,10 @@
 use crate::aggregator::Aggregator;
 use crate::datadog;
 use datadog::{DdApi, MetricsIntakeUrlPrefix};
-use reqwest::{Error, Response};
+use reqwest::{Response, StatusCode};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tracing::debug;
+use tracing::{debug, error};
 
 pub struct Flusher {
     dd_api: DdApi,
@@ -55,7 +55,7 @@ impl Flusher {
         tokio::spawn(async move {
             for a_batch in all_series {
                 let continue_shipping =
-                    should_continue_shipping(dd_api_clone.ship_series(&a_batch).await).await;
+                    should_try_next_batch(dd_api_clone.ship_series(&a_batch).await).await;
                 if !continue_shipping {
                     break;
                 }
@@ -65,7 +65,7 @@ impl Flusher {
         tokio::spawn(async move {
             for a_batch in all_distributions {
                 let continue_shipping =
-                    should_continue_shipping(dd_api_clone.ship_distributions(&a_batch).await).await;
+                    should_try_next_batch(dd_api_clone.ship_distributions(&a_batch).await).await;
                 if !continue_shipping {
                     break;
                 }
@@ -74,12 +74,17 @@ impl Flusher {
     }
 }
 
-async fn should_continue_shipping(resp: Result<Response, Error>) -> bool {
+pub enum ShippingError {
+    Payload(String),
+    Destination(Option<StatusCode>, String),
+}
+
+async fn should_try_next_batch(resp: Result<Response, ShippingError>) -> bool {
     match resp {
         Ok(resp_payload) => match resp_payload.status() {
-            reqwest::StatusCode::ACCEPTED => true,
+            StatusCode::ACCEPTED => true,
             unexpected_status_code => {
-                debug!(
+                error!(
                     "{}: Failed to push to API: {:?}",
                     unexpected_status_code,
                     resp_payload.text().await.unwrap_or_default()
@@ -87,8 +92,12 @@ async fn should_continue_shipping(resp: Result<Response, Error>) -> bool {
                 true
             }
         },
-        Err(err) => {
-            debug!("500: Failed to push to API: {:?}. Aborting retries", err);
+        Err(ShippingError::Payload(msg)) => {
+            error!("Failed to prepare payload. Data dropped: {}", msg);
+            true
+        }
+        Err(ShippingError::Destination(sc, msg)) => {
+            error!("Error shipping data: {:?} {}", sc, msg);
             false
         }
     }
