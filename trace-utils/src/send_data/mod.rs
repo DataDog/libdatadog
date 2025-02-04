@@ -1,75 +1,27 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub mod retry_strategy;
 pub mod send_data_result;
 
-pub use crate::send_data::retry_strategy::{RetryBackoffType, RetryStrategy};
-
+use crate::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryResult};
 use crate::trace_utils::{SendDataResult, TracerHeaderTags};
 use crate::tracer_payload::TracerPayloadCollection;
 use anyhow::{anyhow, Context};
-use bytes::Bytes;
 use datadog_trace_protobuf::pb::{AgentPayload, TracerPayload};
-use ddcommon::{connector, Endpoint, HttpRequestBuilder};
+use ddcommon::Endpoint;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use hyper::header::HeaderValue;
-use hyper::{Body, Client, HeaderMap, Method, Response};
-use hyper_proxy::{Intercept, Proxy, ProxyConnector};
+use hyper::header::CONTENT_TYPE;
 use std::collections::HashMap;
-use std::time::Duration;
-
-const DD_API_KEY: &str = "DD-API-KEY";
 
 const HEADER_DD_TRACE_COUNT: &str = "X-Datadog-Trace-Count";
 
-const HEADER_HTTP_CTYPE: &str = "Content-Type";
 const HEADER_CTYPE_MSGPACK: &str = "application/msgpack";
 const HEADER_CTYPE_PROTOBUF: &str = "application/x-protobuf";
 
 /// HEADER_REAL_HTTP_STATUS signals to the agent to send 429 responses when a payload is dropped
 /// If this is not set then the agent will always return a 200 regardless if the payload is dropped.
 const HEADER_REAL_HTTP_STATUS: &str = "Datadog-Send-Real-Http-Status";
-
-type BytesSent = u64;
-type ChunksSent = u64;
-type ChunksDropped = u64;
-type Attempts = u32;
-
-#[derive(Debug)]
-enum RequestError {
-    Build,
-    Network,
-    TimeoutSocket,
-    TimeoutApi,
-}
-
-impl std::fmt::Display for RequestError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RequestError::TimeoutSocket => write!(f, "Socket timed out"),
-            RequestError::TimeoutApi => write!(f, "Api timeout exhausted"),
-            RequestError::Network => write!(f, "Network error"),
-            RequestError::Build => write!(f, "Request failed due to invalid property"),
-        }
-    }
-}
-
-impl std::error::Error for RequestError {}
-
-pub(crate) enum RequestResult {
-    /// Holds information from a successful request.
-    Success((Response<Body>, Attempts, BytesSent, ChunksSent)),
-    /// Treats HTTP errors.
-    Error((Response<Body>, Attempts, ChunksDropped)),
-    /// Treats timeout errors originated in the transport layer.
-    TimeoutError((Attempts, ChunksDropped)),
-    /// Treats errors coming from networking.
-    NetworkError((Attempts, ChunksDropped)),
-    /// Treats errors coming from building the request
-    BuildError((Attempts, ChunksDropped)),
-}
 
 #[derive(Debug, Clone)]
 /// `SendData` is a structure that holds the data to be sent to a target endpoint.
@@ -135,15 +87,8 @@ impl SendData {
         tracer_header_tags: TracerHeaderTags,
         target: &Endpoint,
     ) -> SendData {
-        let mut headers = if let Some(api_key) = &target.api_key {
-            HashMap::from([(DD_API_KEY, api_key.as_ref().to_string())])
-        } else {
-            tracer_header_tags.into()
-        };
-        if let Some(token) = &target.test_token {
-            headers.insert("x-datadog-test-session-token", token.to_string());
-        }
-
+        let mut headers: HashMap<&'static str, String> = tracer_header_tags.into();
+        headers.insert(HEADER_REAL_HTTP_STATUS, "1".to_string());
         SendData {
             tracer_payloads: tracer_payload,
             size,
@@ -224,165 +169,30 @@ impl SendData {
         }
     }
 
-    async fn send_request(
+    async fn send_payload(
         &self,
-        req: HttpRequestBuilder,
-        payload: Bytes,
+        chunks: u64,
+        payload: Vec<u8>,
+        headers: HashMap<&'static str, String>,
         http_proxy: Option<&str>,
-    ) -> Result<Response<Body>, RequestError> {
-        let req = match req.body(Body::from(payload)) {
-            Ok(req) => req,
-            Err(_) => return Err(RequestError::Build),
-        };
-
-        match tokio::time::timeout(
-            Duration::from_millis(self.target.timeout_ms),
-            if let Some(proxy) = http_proxy {
-                let proxy = Proxy::new(Intercept::Https, proxy.parse().unwrap());
-                let proxy_connector =
-                    ProxyConnector::from_proxy(connector::Connector::default(), proxy).unwrap();
-                Client::builder().build(proxy_connector).request(req)
-            } else {
-                Client::builder()
-                    .build(connector::Connector::default())
-                    .request(req)
-            },
-        )
-        .await
-        {
-            Ok(resp) => match resp {
-                Ok(body) => Ok(body),
-                Err(e) => {
-                    if e.is_timeout() {
-                        Err(RequestError::TimeoutSocket)
-                    } else {
-                        Err(RequestError::Network)
-                    }
-                }
-            },
-            Err(_) => Err(RequestError::TimeoutApi),
-        }
+    ) -> (SendWithRetryResult, u64, u64) {
+        let payload_len = u64::try_from(payload.len()).unwrap();
+        return (
+            send_with_retry(
+                &self.target,
+                payload,
+                &headers,
+                &self.retry_strategy,
+                http_proxy,
+            )
+            .await,
+            payload_len,
+            chunks,
+        );
     }
 
     fn use_protobuf(&self) -> bool {
         self.target.api_key.is_some()
-    }
-
-    // This function wraps send_data with a retry strategy and the building of the request.
-    // Hyper doesn't allow you to send a ref to a request, and you can't clone it. So we have to
-    // build a new one for every send attempt. Being of type Bytes, the payload.clone() is not doing
-    // a deep clone.
-    async fn send_payload(
-        &self,
-        content_type: &'static str,
-        payload: Vec<u8>,
-        payload_chunks: u64,
-        // For payload specific headers that need to be added to the request like trace count.
-        additional_payload_headers: Option<HashMap<&'static str, String>>,
-        http_proxy: Option<&str>,
-    ) -> RequestResult {
-        let mut request_attempt = 0;
-        let payload = Bytes::from(payload);
-
-        let mut headers = HeaderMap::new();
-        headers.insert(HEADER_HTTP_CTYPE, HeaderValue::from_static(content_type));
-        headers.insert(HEADER_REAL_HTTP_STATUS, HeaderValue::from_static("1"));
-
-        if let Some(additional_payload_headers) = &additional_payload_headers {
-            for (key, value) in additional_payload_headers {
-                headers.insert(*key, HeaderValue::from_str(value).unwrap());
-            }
-        }
-
-        loop {
-            request_attempt += 1;
-            let mut req = self.create_request_builder();
-            req.headers_mut()
-                .expect("HttpRequestBuilder unable to get headers for request")
-                .extend(headers.clone());
-
-            match self.send_request(req, payload.clone(), http_proxy).await {
-                // An Ok response doesn't necessarily mean the request was successful, we need to
-                // check the status code and if it's not a 2xx or 3xx we treat it as an error
-                Ok(response) => {
-                    let request_result = self.build_request_result_from_ok_response(
-                        response,
-                        request_attempt,
-                        payload_chunks,
-                        payload.len(),
-                    );
-                    match request_result {
-                        RequestResult::Error(_)
-                            if request_attempt < self.retry_strategy.max_retries() =>
-                        {
-                            self.retry_strategy.delay(request_attempt).await;
-                            continue;
-                        }
-                        _ => return request_result,
-                    }
-                }
-                Err(e) => {
-                    if request_attempt >= self.retry_strategy.max_retries() {
-                        return self.handle_request_error(e, request_attempt, payload_chunks);
-                    } else {
-                        self.retry_strategy.delay(request_attempt).await;
-                    }
-                }
-            }
-        }
-    }
-
-    fn build_request_result_from_ok_response(
-        &self,
-        response: Response<Body>,
-        request_attempt: Attempts,
-        payload_chunks: ChunksSent,
-        payload_len: usize,
-    ) -> RequestResult {
-        if response.status().is_client_error() || response.status().is_server_error() {
-            RequestResult::Error((response, request_attempt, payload_chunks))
-        } else {
-            RequestResult::Success((
-                response,
-                request_attempt,
-                u64::try_from(payload_len).unwrap(),
-                payload_chunks,
-            ))
-        }
-    }
-
-    fn handle_request_error(
-        &self,
-        e: RequestError,
-        request_attempt: Attempts,
-        payload_chunks: ChunksDropped,
-    ) -> RequestResult {
-        match e {
-            RequestError::Build => RequestResult::BuildError((request_attempt, payload_chunks)),
-            RequestError::Network => RequestResult::NetworkError((request_attempt, payload_chunks)),
-            RequestError::TimeoutSocket => {
-                RequestResult::TimeoutError((request_attempt, payload_chunks))
-            }
-            RequestError::TimeoutApi => {
-                RequestResult::TimeoutError((request_attempt, payload_chunks))
-            }
-        }
-    }
-
-    fn create_request_builder(&self) -> HttpRequestBuilder {
-        let mut req = hyper::Request::builder()
-            .uri(self.target.url.clone())
-            .header(
-                hyper::header::USER_AGENT,
-                concat!("Tracer/", env!("CARGO_PKG_VERSION")),
-            )
-            .method(Method::POST);
-
-        for (key, value) in &self.headers {
-            req = req.header(*key, value);
-        }
-
-        req
     }
 
     async fn send_with_protobuf(&self, http_proxy: Option<&str>) -> SendDataResult {
@@ -399,18 +209,19 @@ impl SendData {
                     Err(e) => return result.error(e),
                 };
 
-                result
-                    .update(
-                        self.send_payload(
-                            HEADER_CTYPE_PROTOBUF,
-                            serialized_trace_payload,
-                            chunks,
-                            None,
-                            http_proxy,
-                        )
-                        .await,
+                let mut request_headers = self.headers.clone();
+                request_headers.insert(CONTENT_TYPE.as_str(), HEADER_CTYPE_PROTOBUF.to_string());
+
+                let (response, bytes_sent, chunks) = self
+                    .send_payload(
+                        chunks,
+                        serialized_trace_payload,
+                        request_headers,
+                        http_proxy,
                     )
                     .await;
+
+                result.update(response, bytes_sent, chunks).await;
 
                 result
             }
@@ -426,45 +237,37 @@ impl SendData {
             TracerPayloadCollection::V07(payloads) => {
                 for tracer_payload in payloads {
                     let chunks = u64::try_from(tracer_payload.chunks.len()).unwrap();
-                    let additional_payload_headers =
-                        Some(HashMap::from([(HEADER_DD_TRACE_COUNT, chunks.to_string())]));
+                    let mut headers = self.headers.clone();
+                    headers.insert(HEADER_DD_TRACE_COUNT, chunks.to_string());
+                    headers.insert(CONTENT_TYPE.as_str(), HEADER_CTYPE_MSGPACK.to_string());
 
                     let payload = match rmp_serde::to_vec_named(tracer_payload) {
                         Ok(p) => p,
                         Err(e) => return result.error(anyhow!(e)),
                     };
-                    futures.push(self.send_payload(
-                        HEADER_CTYPE_MSGPACK,
-                        payload,
-                        chunks,
-                        additional_payload_headers,
-                        http_proxy,
-                    ));
+
+                    futures.push(self.send_payload(chunks, payload, headers, http_proxy));
                 }
             }
             TracerPayloadCollection::V04(payloads) => {
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
-                let headers = Some(HashMap::from([(HEADER_DD_TRACE_COUNT, chunks.to_string())]));
+                let mut headers = self.headers.clone();
+                headers.insert(HEADER_DD_TRACE_COUNT, chunks.to_string());
+                headers.insert(CONTENT_TYPE.as_str(), HEADER_CTYPE_MSGPACK.to_string());
 
                 let payload = match rmp_serde::to_vec_named(payloads) {
                     Ok(p) => p,
                     Err(e) => return result.error(anyhow!(e)),
                 };
 
-                futures.push(self.send_payload(
-                    HEADER_CTYPE_MSGPACK,
-                    payload,
-                    chunks,
-                    headers,
-                    http_proxy,
-                ));
+                futures.push(self.send_payload(chunks, payload, headers, http_proxy));
             }
         }
 
         loop {
             match futures.next().await {
-                Some(response) => {
-                    result.update(response).await;
+                Some((response, payload_len, chunks)) => {
+                    result.update(response, payload_len, chunks).await;
                     if result.last_result.is_err() {
                         return result;
                     }
@@ -500,9 +303,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::send_data::retry_strategy::RetryBackoffType;
-    use crate::send_data::retry_strategy::RetryStrategy;
-    use crate::test_utils::{create_send_data, create_test_no_alloc_span, poll_for_mock_hit};
+    use crate::test_utils::create_test_no_alloc_span;
     use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, RootSpanTags};
     use crate::tracer_header_tags::TracerHeaderTags;
     use datadog_trace_protobuf::pb::Span;
@@ -510,6 +311,7 @@ mod tests {
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::collections::HashMap;
+    use std::time::Duration;
 
     const ONE_SECOND: u64 = 1_000;
     const HEADER_TAGS: TracerHeaderTags = TracerHeaderTags {
@@ -580,20 +382,6 @@ mod tests {
     }
 
     #[test]
-    fn error_format() {
-        assert_eq!(
-            RequestError::Build.to_string(),
-            "Request failed due to invalid property"
-        );
-        assert_eq!(RequestError::Network.to_string(), "Network error");
-        assert_eq!(RequestError::TimeoutSocket.to_string(), "Socket timed out");
-        assert_eq!(
-            RequestError::TimeoutApi.to_string(),
-            "Api timeout exhausted"
-        );
-    }
-
-    #[test]
     fn send_data_new_api_key() {
         let header_tags = TracerHeaderTags::default();
 
@@ -614,8 +402,6 @@ mod tests {
 
         assert_eq!(data.target.api_key.unwrap(), "TEST-KEY");
         assert_eq!(data.target.url.path(), "/foo/bar");
-
-        assert_eq!(data.headers.get("DD-API-KEY").unwrap(), "TEST-KEY");
     }
 
     #[test]
@@ -640,8 +426,9 @@ mod tests {
         assert_eq!(data.target.api_key, None);
         assert_eq!(data.target.url.path(), "/foo/bar");
 
-        assert_eq!(data.headers.get("DD-API-KEY"), None);
-        assert_eq!(data.headers, HashMap::from(header_tags));
+        for (key, value) in HashMap::from(header_tags) {
+            assert_eq!(data.headers.get(key).unwrap(), &value);
+        }
     }
 
     #[cfg_attr(miri, ignore)]
@@ -653,6 +440,7 @@ mod tests {
             .mock_async(|when, then| {
                 when.method(POST)
                     .header("Content-type", "application/x-protobuf")
+                    .header("DD-API-KEY", "TEST-KEY")
                     .path("/");
                 then.status(202).body("");
             })
@@ -697,6 +485,7 @@ mod tests {
             .mock_async(|when, then| {
                 when.method(POST)
                     .header("Content-type", "application/x-protobuf")
+                    .header("DD-API-KEY", "TEST-KEY")
                     .path("/");
                 then.status(202).body("");
             })
@@ -1072,210 +861,5 @@ mod tests {
         assert_eq!(res.chunks_sent, 0);
         assert_eq!(res.bytes_sent, 0);
         assert_eq!(res.responses_count_per_code.len(), 0);
-    }
-
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_zero_retries_on_error() {
-        let server = MockServer::start();
-
-        let mut mock_503 = server
-            .mock_async(|_when, then| {
-                then.status(503)
-                    .header("content-type", "application/json")
-                    .body(r#"{"status":"error"}"#);
-            })
-            .await;
-
-        // We add this mock so that if a second request was made it would be a success and our
-        // assertion below that last_result is an error would fail.
-        let _mock_202 = server
-            .mock_async(|_when, then| {
-                then.status(202)
-                    .header("content-type", "application/json")
-                    .body(r#"{"status":"ok"}"#);
-            })
-            .await;
-
-        let target_endpoint = Endpoint {
-            url: server.url("").to_owned().parse().unwrap(),
-            api_key: Some("test-key".into()),
-            ..Default::default()
-        };
-
-        let size = 512;
-
-        let mut send_data = create_send_data(size, &target_endpoint);
-        send_data.set_retry_strategy(RetryStrategy::new(0, 2, RetryBackoffType::Constant, None));
-
-        tokio::spawn(async move {
-            let result = send_data.send().await;
-            assert!(result.last_result.is_err(), "Expected an error result");
-        });
-
-        assert!(poll_for_mock_hit(&mut mock_503, 10, 100, 1, true).await);
-    }
-
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_retry_logic_error_then_success() {
-        let server = MockServer::start();
-
-        let mut mock_503 = server
-            .mock_async(|_when, then| {
-                then.status(503)
-                    .header("content-type", "application/json")
-                    .body(r#"{"status":"error"}"#);
-            })
-            .await;
-
-        let mut mock_202 = server
-            .mock_async(|_when, then| {
-                then.status(202)
-                    .header("content-type", "application/json")
-                    .body(r#"{"status":"ok"}"#);
-            })
-            .await;
-
-        let target_endpoint = Endpoint {
-            url: server.url("").to_owned().parse().unwrap(),
-            api_key: Some("test-key".into()),
-            ..Default::default()
-        };
-
-        let size = 512;
-
-        let mut send_data = create_send_data(size, &target_endpoint);
-        send_data.set_retry_strategy(RetryStrategy::new(2, 250, RetryBackoffType::Constant, None));
-
-        tokio::spawn(async move {
-            let result = send_data.send().await;
-            assert!(result.last_result.is_ok(), "Expected a successful result");
-        });
-
-        assert!(poll_for_mock_hit(&mut mock_503, 10, 100, 1, true).await);
-        assert!(
-            poll_for_mock_hit(&mut mock_202, 10, 100, 1, true).await,
-            "Expected a retry request after a 5xx error"
-        );
-    }
-
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    // Ensure at least one test exists for msgpack with retry logic
-    async fn test_retry_logic_error_then_success_msgpack() {
-        let server = MockServer::start();
-
-        let mut mock_503 = server
-            .mock_async(|_when, then| {
-                then.status(503)
-                    .header("content-type", "application/json")
-                    .body(r#"{"status":"error"}"#);
-            })
-            .await;
-
-        let mut mock_202 = server
-            .mock_async(|_when, then| {
-                then.status(202)
-                    .header("content-type", "application/json")
-                    .body(r#"{"status":"ok"}"#);
-            })
-            .await;
-
-        let target_endpoint = Endpoint::from_slice(server.url("").as_str());
-
-        let size = 512;
-
-        let mut send_data = create_send_data(size, &target_endpoint);
-        send_data.set_retry_strategy(RetryStrategy::new(2, 250, RetryBackoffType::Constant, None));
-
-        tokio::spawn(async move {
-            let result = send_data.send().await;
-            assert!(result.last_result.is_ok(), "Expected a successful result");
-        });
-
-        assert!(poll_for_mock_hit(&mut mock_503, 10, 100, 1, true).await);
-        assert!(
-            poll_for_mock_hit(&mut mock_202, 10, 100, 1, true).await,
-            "Expected a retry request after a 5xx error"
-        );
-    }
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_retry_logic_max_errors() {
-        let server = MockServer::start();
-        let expected_retry_attempts = 3;
-        let mut mock_503 = server
-            .mock_async(|_when, then| {
-                then.status(503)
-                    .header("content-type", "application/json")
-                    .body(r#"{"status":"error"}"#);
-            })
-            .await;
-
-        let target_endpoint = Endpoint {
-            url: server.url("").to_owned().parse().unwrap(),
-            api_key: Some("test-key".into()),
-            ..Default::default()
-        };
-
-        let size = 512;
-
-        let mut send_data = create_send_data(size, &target_endpoint);
-        send_data.set_retry_strategy(RetryStrategy::new(
-            expected_retry_attempts,
-            10,
-            RetryBackoffType::Constant,
-            None,
-        ));
-
-        tokio::spawn(async move {
-            send_data.send().await;
-        });
-
-        assert!(
-            poll_for_mock_hit(
-                &mut mock_503,
-                10,
-                100,
-                expected_retry_attempts as usize,
-                true
-            )
-            .await,
-            "Expected max retry attempts"
-        );
-    }
-
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_retry_logic_no_errors() {
-        let server = MockServer::start();
-        let mut mock_202 = server
-            .mock_async(|_when, then| {
-                then.status(202)
-                    .header("content-type", "application/json")
-                    .body(r#"{"status":"Ok"}"#);
-            })
-            .await;
-
-        let target_endpoint = Endpoint {
-            url: server.url("").to_owned().parse().unwrap(),
-            api_key: Some("test-key".into()),
-            ..Default::default()
-        };
-
-        let size = 512;
-
-        let mut send_data = create_send_data(size, &target_endpoint);
-        send_data.set_retry_strategy(RetryStrategy::new(2, 10, RetryBackoffType::Constant, None));
-
-        tokio::spawn(async move {
-            send_data.send().await;
-        });
-
-        assert!(
-            poll_for_mock_hit(&mut mock_202, 10, 250, 1, true).await,
-            "Expected only one request attempt"
-        );
     }
 }
