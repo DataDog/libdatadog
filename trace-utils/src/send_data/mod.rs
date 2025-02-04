@@ -33,9 +33,9 @@ const HEADER_REAL_HTTP_STATUS: &str = "Datadog-Send-Real-Http-Status";
 /// ```rust
 /// use datadog_trace_protobuf::pb::TracerPayload;
 /// use datadog_trace_utils::send_data::{
-///     retry_strategy::{RetryBackoffType, RetryStrategy},
 ///     SendData,
 /// };
+/// use datadog_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
 /// use datadog_trace_utils::trace_utils::TracerHeaderTags;
 /// use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
 /// use ddcommon::Endpoint;
@@ -177,7 +177,7 @@ impl SendData {
         http_proxy: Option<&str>,
     ) -> (SendWithRetryResult, u64, u64) {
         let payload_len = u64::try_from(payload.len()).unwrap();
-        return (
+        (
             send_with_retry(
                 &self.target,
                 payload,
@@ -188,7 +188,7 @@ impl SendData {
             .await,
             payload_len,
             chunks,
-        );
+        )
     }
 
     fn use_protobuf(&self) -> bool {

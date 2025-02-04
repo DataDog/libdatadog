@@ -1,8 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Provide [`send_with_retry`] utility to send a payload to an [`Endpoint`] with retries if the request
-//! fails.
+//! Provide [`send_with_retry`] utility to send a payload to an [`Endpoint`] with retries if the
+//! request fails.
 
 mod retry_strategy;
 pub use retry_strategy::{RetryBackoffType, RetryStrategy};
@@ -77,16 +77,18 @@ impl std::fmt::Display for RequestError {
 
 impl std::error::Error for RequestError {}
 
-/// Send the `payload` with a POST request to `target` using the provided `retry_strategy` if the request fails.
+/// Send the `payload` with a POST request to `target` using the provided `retry_strategy` if the
+/// request fails.
 ///
-/// The request builder from [`Endpoint::to_request_builder`] is used with the associated headers (api key, test token), and `headers` are added to the request.
-/// If `http_proxy` is provided then it is used as the uri of the proxy.
-/// The request is executed with a timeout of [`Endpoint::timeout_ms`].
+/// The request builder from [`Endpoint::to_request_builder`] is used with the associated headers
+/// (api key, test token), and `headers` are added to the request. If `http_proxy` is provided then
+/// it is used as the uri of the proxy. The request is executed with a timeout of
+/// [`Endpoint::timeout_ms`].
 ///
 /// # Returns
 ///
-/// Return a [`SendWithRetryResult`] containing the response and the number of attempts or an error describing the
-/// last attempt faillure.
+/// Return a [`SendWithRetryResult`] containing the response and the number of attempts or an error
+/// describing the last attempt faillure.
 ///
 /// # Errors
 /// Fail if the request didn't succeed after applying the retry strategy.
@@ -94,17 +96,19 @@ impl std::error::Error for RequestError {}
 /// # Example
 ///
 /// ```rust, no_run
+/// # use ddcommon::Endpoint;
+/// # use std::collections::HashMap;
+/// # use datadog_trace_utils::send_with_retry::*;
 /// # async fn run() -> SendWithRetryResult {
-///     let payload: Vec<u8> = vec![0,1,2,3];
-///     let target = Endpoint {
-///         url: "localhost:8126/v04/traces".parse::<hyper::Uri>().unwrap(),
-///         Endpoint::default()
-///     }
-///     let headers = HashMap::from([("Content-type", "application/msgpack")])
-///     let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
-///     send_with_retry(&target, payload, &headers, retry_strategy, None)
+/// let payload: Vec<u8> = vec![0, 1, 2, 3];
+/// let target = Endpoint {
+///     url: "localhost:8126/v04/traces".parse::<hyper::Uri>().unwrap(),
+///     ..Endpoint::default()
+/// };
+/// let headers = HashMap::from([("Content-type", "application/msgpack".to_string())]);
+/// let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
+/// send_with_retry(&target, payload, &headers, &retry_strategy, None).await
 /// # }
-///
 /// ```
 pub async fn send_with_retry(
     target: &Endpoint,

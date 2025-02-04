@@ -51,6 +51,8 @@ impl SendDataResult {
     /// # Arguments
     ///
     /// * `res` -  [`SendWithRetryResult`].
+    /// * `bytes_sent` -  Number of bytes in the payload sent.
+    /// * `chunks` -  Number of chunks sent or dropped in the request.
     pub(crate) async fn update(&mut self, res: SendWithRetryResult, bytes_sent: u64, chunks: u64) {
         match res {
             Ok((response, attempts)) => {
