@@ -219,8 +219,8 @@ impl DdApi {
 fn build_client(
     https_proxy: Option<String>,
     timeout: Duration,
-) -> Result<reqwest::Client, reqwest::Error> {
-    let mut builder = reqwest::Client::builder().timeout(timeout);
+) -> Result<Client, reqwest::Error> {
+    let mut builder = Client::builder().timeout(timeout);
     if let Some(proxy) = https_proxy {
         builder = builder.proxy(reqwest::Proxy::https(proxy)?);
     }
