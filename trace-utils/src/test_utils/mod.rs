@@ -217,8 +217,9 @@ pub fn create_test_json_span(
     span_id: u64,
     parent_id: u64,
     start: i64,
+    is_top_level: bool,
 ) -> serde_json::Value {
-    json!(
+    let mut span = json!(
         {
             "trace_id": trace_id,
             "span_id": span_id,
@@ -237,7 +238,44 @@ pub fn create_test_json_span(
             "metrics": {},
             "meta_struct": {},
         }
-    )
+    );
+
+    if is_top_level {
+        let additional_meta = json!(
+            {
+                "functionname": "dummy_function_name",
+                "_dd.origin": "cloudfunction",
+                "origin": "cloudfunction",
+            }
+        );
+        span.get_mut("meta")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .extend(additional_meta.as_object().unwrap().clone());
+
+        span["type"] = json!("serverless");
+
+        span["metrics"] = json!(
+            {
+                "_top_level": 1.0,
+            }
+        );
+    }
+
+    span
+    // if is_top_level {
+    //     span.meta.insert(
+    //         "functionname".to_string(),
+    //         "dummy_function_name".to_string(),
+    //     );
+    //     span.metrics.insert("_top_level".to_string(), 1.0);
+    //     span.meta
+    //         .insert("_dd.origin".to_string(), "cloudfunction".to_string());
+    //     span.meta
+    //         .insert("origin".to_string(), "cloudfunction".to_string());
+    //     span.r#type = "serverless".to_string();
+    // }
 }
 
 /// This is a helper function for observing if a httpmock object has been "hit" the expected number

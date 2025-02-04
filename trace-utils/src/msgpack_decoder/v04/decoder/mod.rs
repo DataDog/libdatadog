@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn test_decoder_read_null_string_success() {
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["name"] = json!(null);
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn test_decoder_read_number_success() {
-        let span = create_test_json_span(1, 2, 0, 0);
+        let span = create_test_json_span(1, 2, 0, 0, false);
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
         let (decoded_traces, _) =
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn test_decoder_read_null_number_success() {
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["trace_id"] = json!(null);
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn test_decoder_meta_struct_null_map_success() {
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["meta_struct"] = json!(null);
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -433,7 +433,7 @@ mod tests {
             generate_meta_struct_element(1),
         ]);
 
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["meta_struct"] = json!(expected_meta_struct.clone());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -457,7 +457,7 @@ mod tests {
         let expected_meta_struct: HashMap<String, Vec<u8>> =
             (0..20).map(generate_meta_struct_element).collect();
 
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["meta_struct"] = json!(expected_meta_struct.clone());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -483,7 +483,7 @@ mod tests {
             ("key2".to_string(), "value2".to_string()),
         ]);
 
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["meta"] = json!(expected_meta.clone());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -504,7 +504,7 @@ mod tests {
 
     #[test]
     fn test_decoder_meta_null_map_success() {
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["meta"] = json!(null);
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -529,7 +529,7 @@ mod tests {
             })
             .collect();
 
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["meta"] = json!(expected_meta.clone());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -552,7 +552,7 @@ mod tests {
     fn test_decoder_metrics_fixed_map_success() {
         let expected_metrics = HashMap::from([("metric1", 1.23), ("metric2", 4.56)]);
 
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["metrics"] = json!(expected_metrics.clone());
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
@@ -576,7 +576,7 @@ mod tests {
             .map(|i| (format!("metric{}", i), i as f64))
             .collect();
 
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["metrics"] = json!(expected_metrics.clone());
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
@@ -596,7 +596,7 @@ mod tests {
 
     #[test]
     fn test_decoder_metrics_null_success() {
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["metrics"] = json!(null);
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
@@ -622,7 +622,7 @@ mod tests {
             "flags": 0b101
         });
 
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["span_links"] = json!([expected_span_link]);
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn test_decoder_null_span_link_success() {
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["span_links"] = json!(null);
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
