@@ -30,7 +30,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
       # Windows artifacts publish the library as datadog_profiling_ffi
       # in {build_type}/{link_type} directory
       NAMES ${DD_LIB_NAME} datadog_profiling_ffi
-      HINTS ${Datadog_ROOT}/lib ${Datadog_ROOT}/${BULID_TYPE}/${LINK_TYPE})
+      HINTS ${Datadog_ROOT}/lib ${Datadog_ROOT}/${BUILD_TYPE}/${LINK_TYPE})
 
   # It could be either datadog_profiling or datadog_profiling_ffi, set it to the
   # one that is found
