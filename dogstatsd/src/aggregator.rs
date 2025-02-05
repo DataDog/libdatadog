@@ -9,10 +9,10 @@ use crate::errors;
 use crate::metric::{self, Metric, MetricValue, SortedTags};
 use std::time;
 
-use datadog_protos::metrics::{Dogsketch, Sketch, SketchPayload};
+use datadog_protos::metrics::{Dogsketch, Sketch, SketchPayload, Metadata, Origin};
 use ddsketch_agent::DDSketch;
 use hashbrown::hash_table;
-use protobuf::Message;
+use protobuf::{Message, MessageField};
 use tracing::{error, warn};
 use ustr::Ustr;
 
@@ -271,6 +271,39 @@ fn build_sketch(now: i64, entry: &Metric, mut base_tag_vec: SortedTags) -> Optio
         base_tag_vec.extend(&tags);
     }
     sketch.set_tags(base_tag_vec.to_chars());
+
+    let metadata: Option<Metadata>;
+    let prefix = name.split('.').take(2).collect::<Vec<&str>>().join(".");
+    match prefix {
+        _ if prefix == AWS_LAMBDA_PREFIX => {
+            metadata = Some(Metadata {
+                origin: MessageField::some(Origin {
+                    origin_product: 1, // serverless
+                    origin_category: 38, // lambda
+                    origin_service: 0, // uncategorized
+                    special_fields: Default::default(), // default
+                }),
+                ..Default::default()
+            });
+            sketch.set_metadata(metadata.clone().unwrap())
+        }
+        _ if prefix == AWS_STEP_FUNCTIONS_PREFIX => {
+            metadata = Some(Metadata {
+                origin: MessageField::some(Origin {
+                    origin_product: 1, // serverless
+                    origin_category: 41, // lambda
+                    origin_service: 0, // uncategorized
+                    special_fields: Default::default(), // default
+                }),
+                ..Default::default()
+            });
+            sketch.set_metadata(metadata.clone().unwrap())
+        }
+        _ => metadata = None,
+    }
+
+    println!("================== LIBDATADOG: Prefix: {}, Metadata: {:?}", prefix, metadata);
+
     Some(sketch)
 }
 
@@ -299,39 +332,12 @@ fn build_metric(entry: &Metric, mut base_tag_vec: SortedTags) -> Option<MetricTo
         base_tag_vec.extend(&tags);
     }
 
-    let metadata: Option<datadog::Metadata>;
-    let prefix = entry.name.split('.').take(2).collect::<Vec<&str>>().join(".");
-    match prefix.as_str() {
-        AWS_LAMBDA_PREFIX => {
-            metadata = Some(datadog::Metadata {
-                origin: datadog::Origin {
-                    origin_product: 1, // serverless
-                    origin_sub_product: 38, // lambda
-                    origin_product_detail: 0, // uncategorized
-                },
-            });
-        }
-        AWS_STEP_FUNCTIONS_PREFIX => {
-            metadata = Some(datadog::Metadata {
-                origin: datadog::Origin {
-                    origin_product: 1, // serverless
-                    origin_sub_product: 41, // step functions
-                    origin_product_detail: 0, // uncategorized
-                },
-            });
-        }
-        _ => metadata = None,
-    }
-
-    println!("================== LIBDATADOG: Prefix: {}, Metadata: {:?}", prefix, metadata);
-
     Some(MetricToShip {
         metric: entry.name.as_str(),
         resources,
         kind,
         points: [point; 1],
         tags: base_tag_vec.to_strings(),
-        metadata,
     })
 }
 

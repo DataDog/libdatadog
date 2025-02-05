@@ -9,7 +9,7 @@ use lazy_static::lazy_static;
 use protobuf::Message;
 use regex::Regex;
 use reqwest;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Serialize, Serializer};
 use serde_json;
 use std::time::Duration;
 use tracing::{debug, error};
@@ -283,19 +283,6 @@ pub(crate) struct Metric {
     /// The kind of metric
     pub(crate) kind: DdMetricKind,
     pub(crate) tags: Vec<String>,
-    pub(crate) metadata: Option<Metadata>, // metadata
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct Origin {
-    pub(crate) origin_product: u32,
-    pub(crate) origin_sub_product: u32,
-    pub(crate) origin_product_detail: u32,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct Metadata {
-    pub(crate) origin: Origin,
 }
 
 #[derive(Debug, Serialize)]
