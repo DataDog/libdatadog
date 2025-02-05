@@ -305,7 +305,6 @@ mod tests {
     use datadog_trace_utils::span_v04::Span;
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    use std::ffi::{CStr, CString};
     use std::{borrow::Borrow, mem::MaybeUninit};
 
     #[test]
@@ -556,10 +555,13 @@ mod tests {
     fn exporter_send_test_arguments_test() {
         unsafe {
             let trace = ByteSlice::from(b"dummy contents" as &[u8]);
-            let mut resp = Box::new(ExporterResponse {
-                body: CString::default().into_raw(),
-            });
-            let ret = ddog_trace_exporter_send(None, trace, 0, NonNull::new(&mut resp));
+            let mut resp: MaybeUninit<Box<ExporterResponse>> = MaybeUninit::uninit();
+            let ret = ddog_trace_exporter_send(
+                None,
+                trace,
+                0,
+                Some(NonNull::new_unchecked(&mut resp).cast()),
+            );
 
             assert!(ret.is_some());
             assert_eq!(ret.unwrap().code, ErrorCode::InvalidArgument);
@@ -618,6 +620,7 @@ mod tests {
             };
 
             let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+            let mut response: MaybeUninit<Box<ExporterResponse>> = MaybeUninit::uninit();
             let mut ret =
                 ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
 
@@ -627,19 +630,15 @@ mod tests {
 
             let data = rmp_serde::to_vec_named::<Vec<Vec<Span>>>(&vec![vec![]]).unwrap();
             let traces = ByteSlice::new(&data);
-            let mut response = Box::new(ExporterResponse {
-                body: CString::default().into_raw(),
-            });
-
             ret = ddog_trace_exporter_send(
                 Some(exporter.as_ref()),
                 traces,
                 0,
-                NonNull::new(&mut response),
+                Some(NonNull::new_unchecked(&mut response).cast()),
             );
             assert_eq!(ret, None);
             assert_eq!(
-                CStr::from_ptr(response.body).to_string_lossy(),
+                response.assume_init().body.to_string_lossy(),
                 r#"{
                     "rate_by_service": {
                         "service:foo,env:staging": 1.0,
@@ -647,8 +646,6 @@ mod tests {
                     }
                 }"#,
             );
-
-            ddog_trace_exporter_free(exporter);
         }
     }
 
@@ -701,20 +698,18 @@ mod tests {
 
             let data = vec![0x90];
             let traces = ByteSlice::new(&data);
-            let mut response = Box::new(ExporterResponse {
-                body: CString::default().into_raw(),
-            });
+            let mut response: MaybeUninit<Box<ExporterResponse>> = MaybeUninit::uninit();
 
             ret = ddog_trace_exporter_send(
                 Some(exporter.as_ref()),
                 traces,
                 0,
-                NonNull::new(&mut response),
+                Some(NonNull::new_unchecked(&mut response).cast()),
             );
             mock_traces.assert();
             assert_eq!(ret, None);
             assert_eq!(
-                CStr::from_ptr(response.body).to_string_lossy(),
+                response.assume_init().body.to_string_lossy(),
                 r#"{
                     "rate_by_service": {
                         "service:foo,env:staging": 1.0,
@@ -722,7 +717,6 @@ mod tests {
                     }
                 }"#,
             );
-            ddog_trace_exporter_free(exporter);
         }
     }
 }
