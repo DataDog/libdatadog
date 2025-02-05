@@ -14,8 +14,8 @@ use datadog_trace_utils::span_v04::{
     trace_utils::{compute_top_level_span, has_top_level},
     Span,
 };
-use datadog_trace_utils::trace_utils::{self, SendData, TracerHeaderTags};
-use datadog_trace_utils::tracer_payload::TraceCollection;
+use datadog_trace_utils::trace_utils::{self, SendData, SendDataResult, TracerHeaderTags};
+use datadog_trace_utils::tracer_payload::{TraceCollection, TracerPayloadCollection};
 use datadog_trace_utils::{msgpack_decoder, tracer_payload};
 use ddcommon::tag::Tag;
 use ddcommon::{connector, tag, Endpoint};
@@ -265,7 +265,7 @@ impl TraceExporter {
         self.check_agent_info();
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
-            TraceExporterInputFormat::V04 => self.send_deser_ser(data),
+            TraceExporterInputFormat::V04 => self.trace_processor(data),
         }
         .and_then(|res| {
             if res.is_empty() {
@@ -582,27 +582,36 @@ impl TraceExporter {
         }
     }
 
-    fn send_deser_ser(&self, data: tinybytes::Bytes) -> Result<String, TraceExporterError> {
+    fn deserialize_traces(
+        &self,
+        data: tinybytes::Bytes,
+    ) -> Result<(Vec<Vec<Span>>, usize), TraceExporterError> {
         // TODO base on input format
-        let (mut traces, size) = match msgpack_decoder::v04::decoder::from_slice(data) {
-            Ok(res) => res,
+        match msgpack_decoder::v04::decoder::from_slice(data) {
+            Ok(res) => {
+                let (traces, size) = res;
+
+                self.emit_metric(
+                    HealthMetric::Count(health_metrics::STAT_DESER_TRACES, traces.len() as i64),
+                    None,
+                );
+
+                Ok((traces, size))
+            }
             Err(err) => {
                 error!("Error deserializing trace from request body: {err}");
+
                 self.emit_metric(
                     HealthMetric::Count(health_metrics::STAT_DESER_TRACES_ERRORS, 1),
                     None,
                 );
-                return Err(TraceExporterError::Deserialization(err));
+
+                Err(TraceExporterError::Deserialization(err))
             }
-        };
+        }
+    }
 
-        let num_traces = traces.len();
-
-        self.emit_metric(
-            HealthMetric::Count(health_metrics::STAT_DESER_TRACES, traces.len() as i64),
-            None,
-        );
-
+    fn stats_processor(&self, mut traces: Vec<Vec<Span>>) -> (Vec<Vec<Span>>, TracerHeaderTags) {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         // Stats computation
@@ -625,74 +634,105 @@ impl TraceExporter {
             header_tags.dropped_p0_spans = dropped_counts.dropped_p0_spans;
         }
 
+        (traces, header_tags)
+    }
+
+    fn prepare_tracer_payload(
+        &self,
+        traces: Vec<Vec<Span>>,
+        header_tags: &TracerHeaderTags,
+    ) -> TracerPayloadCollection {
         match self.output_format {
-            TraceExporterOutputFormat::V04 => {
-                let tracer_payload = trace_utils::collect_trace_chunks(
-                    TraceCollection::V04(traces),
-                    &header_tags,
-                    &mut tracer_payload::DefaultTraceChunkProcessor,
-                    self.endpoint.api_key.is_some(),
-                );
-                let endpoint = Endpoint {
-                    url: self.output_format.add_path(&self.endpoint.url),
-                    ..self.endpoint.clone()
-                };
-                let send_data = SendData::new(size, tracer_payload, header_tags, &endpoint);
-                self.runtime.block_on(async {
-                    let send_data_result = send_data.send().await;
-                    match send_data_result.last_result {
-                        Ok(response) => {
-                            let status = response.status();
-                            let body = match response.into_body().collect().await {
-                                Ok(body) => String::from_utf8_lossy(&body.to_bytes()).to_string(),
-                                Err(err) => {
-                                    error!("Error reading agent response body: {err}");
-                                    self.emit_metric(
-                                        HealthMetric::Count(
-                                            health_metrics::STAT_SEND_TRACES_ERRORS,
-                                            1,
-                                        ),
-                                        None,
-                                    );
-                                    return Err(TraceExporterError::from(err));
-                                }
-                            };
-
-                            if status.is_success() {
-                                self.emit_metric(
-                                    HealthMetric::Count(
-                                        health_metrics::STAT_SEND_TRACES,
-                                        num_traces as i64,
-                                    ),
-                                    None,
-                                );
-                                Ok(body)
-                            } else {
-                                self.emit_metric(
-                                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                                    None,
-                                );
-                                Err(TraceExporterError::Request(RequestError::new(
-                                    status, &body,
-                                )))
-                            }
-                        }
-                        Err(err) => {
-                            error!("Error sending traces: {err}");
-                            self.emit_metric(
-                                HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                                None,
-                            );
-                            Err(TraceExporterError::Io(std::io::Error::from(
-                                std::io::ErrorKind::Other,
-                            )))
-                        }
-                    }
-                })
-            }
-
+            TraceExporterOutputFormat::V04 => trace_utils::collect_trace_chunks(
+                TraceCollection::V04(traces),
+                &header_tags,
+                &mut tracer_payload::DefaultTraceChunkProcessor,
+                self.endpoint.api_key.is_some(),
+            ),
             TraceExporterOutputFormat::V07 => todo!("We don't support translating to v07 yet"),
         }
+    }
+
+    async fn process_send_data_result(
+        &self,
+        send_data_result: SendDataResult,
+        trace_count: usize,
+    ) -> Result<String, TraceExporterError> {
+        match send_data_result.last_result {
+            Ok(response) => {
+                let status = response.status();
+                let body = match response.into_body().collect().await {
+                    Ok(body) => String::from_utf8_lossy(&body.to_bytes()).to_string(),
+                    Err(err) => {
+                        error!("Error reading agent response body: {err}");
+                        self.emit_metric(
+                            HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                            None,
+                        );
+                        return Err(TraceExporterError::from(err));
+                    }
+                };
+
+                if status.is_success() {
+                    self.emit_metric(
+                        HealthMetric::Count(health_metrics::STAT_SEND_TRACES, trace_count as i64),
+                        None,
+                    );
+                    Ok(body)
+                } else {
+                    self.emit_metric(
+                        HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                        None,
+                    );
+                    Err(TraceExporterError::Request(RequestError::new(
+                        status, &body,
+                    )))
+                }
+            }
+            Err(err) => {
+                error!("Error sending traces: {err}");
+                self.emit_metric(
+                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                    None,
+                );
+                Err(TraceExporterError::Io(std::io::Error::from(
+                    std::io::ErrorKind::Other,
+                )))
+            }
+        }
+    }
+
+    async fn export_traces(
+        &self,
+        tracer_payload_collection: TracerPayloadCollection,
+        trace_count: usize,
+        header_tags: TracerHeaderTags<'_>,
+        size: usize,
+    ) -> SendDataResult {
+        let endpoint = Endpoint {
+            url: self.output_format.add_path(&self.endpoint.url),
+            ..self.endpoint.clone()
+        };
+
+        let send_data = SendData::new(size, tracer_payload_collection, header_tags, &endpoint);
+
+        send_data.send().await
+    }
+
+    fn trace_processor(&self, data: tinybytes::Bytes) -> Result<String, TraceExporterError> {
+        let (traces, size) = self.deserialize_traces(data)?;
+        let (traces, header_tags) = self.stats_processor(traces);
+        // move this into deserialize_traces
+        let trace_count = traces.len();
+        let tracer_payload = self.prepare_tracer_payload(traces, &header_tags);
+
+        self.runtime.block_on(async {
+            let send_data_result = self
+                .export_traces(tracer_payload, trace_count, header_tags, size)
+                .await;
+            self.process_send_data_result(send_data_result, trace_count)
+                .await
+        })
     }
 }
 
