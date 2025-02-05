@@ -1458,6 +1458,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "build_common",
+ "constcat",
  "datadog-library-config",
  "ddcommon",
  "ddcommon-ffi",

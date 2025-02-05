@@ -15,6 +15,7 @@ ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 datadog-library-config = { path = "../library-config" }
 anyhow = "1.0"
+constcat = "0.4.1"
 
 [features]
 default = ["cbindgen"]

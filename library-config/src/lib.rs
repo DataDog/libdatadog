@@ -6,7 +6,7 @@ use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::Path;
-use std::{fs, io};
+use std::{env, fs, io};
 
 use anyhow::Context;
 
@@ -26,13 +26,10 @@ struct MatchMaps<'a> {
 }
 
 impl<'a> MatchMaps<'a> {
-    fn env(
-        &self,
-        process_info: &'a ProcessInfo<'a, impl Deref<Target = [u8]>>,
-    ) -> &HashMap<&'a str, &'a str> {
+    fn env(&self, process_info: &'a ProcessInfo) -> &HashMap<&'a str, &'a str> {
         self.env_map.get_or_init(|| {
             let mut map = HashMap::new();
-            for e in process_info.envp {
+            for e in &process_info.envp {
                 let Ok(s) = std::str::from_utf8(e.deref()) else {
                     continue;
                 };
@@ -46,10 +43,7 @@ impl<'a> MatchMaps<'a> {
         })
     }
 
-    fn args(
-        &self,
-        process_info: &'a ProcessInfo<'a, impl Deref<Target = [u8]>>,
-    ) -> &HashMap<&str, &str> {
+    fn args(&self, process_info: &'a ProcessInfo) -> &HashMap<&str, &str> {
         self.args_map.get_or_init(|| {
             let mut map = HashMap::new();
             let mut args = process_info.args.iter().peekable();
@@ -71,13 +65,13 @@ impl<'a> MatchMaps<'a> {
     }
 }
 
-struct Matcher<'a, T: Deref<Target = [u8]>> {
-    process_info: &'a ProcessInfo<'a, T>,
+struct Matcher<'a> {
+    process_info: &'a ProcessInfo,
     match_maps: MatchMaps<'a>,
 }
 
-impl<'a, T: Deref<Target = [u8]>> Matcher<'a, T> {
-    fn new(process_info: &'a ProcessInfo<'a, T>, tags: &'a HashMap<String, String>) -> Self {
+impl<'a> Matcher<'a> {
+    fn new(process_info: &'a ProcessInfo, tags: &'a HashMap<String, String>) -> Self {
         Self {
             process_info,
             match_maps: MatchMaps {
@@ -113,14 +107,14 @@ impl<'a, T: Deref<Target = [u8]>> Matcher<'a, T> {
                     let arg_map = self.match_maps.args(self.process_info);
                     map_operator_match(selector, arg_map, key)
                 }
-                None => string_list_selector(selector, self.process_info.args),
+                None => string_list_selector(selector, &self.process_info.args),
             },
             Origin::EnvironmentVariables => match &selector.key {
                 Some(key) => {
                     let env_map = self.match_maps.env(self.process_info);
                     map_operator_match(selector, env_map, key)
                 }
-                None => string_list_selector(selector, self.process_info.envp),
+                None => string_list_selector(selector, &self.process_info.envp),
             },
             Origin::Tags => match &selector.key {
                 Some(key) => map_operator_match(selector, self.match_maps.tags, key),
@@ -131,7 +125,9 @@ impl<'a, T: Deref<Target = [u8]>> Matcher<'a, T> {
 
     fn template_configs(
         &'a self,
+        source: LibraryConfigSource,
         config: &HashMap<LibraryConfigName, String>,
+        config_id: &Option<String>,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
         config
             .iter()
@@ -139,6 +135,8 @@ impl<'a, T: Deref<Target = [u8]>> Matcher<'a, T> {
                 Ok(LibraryConfig {
                     name,
                     value: self.template_config(v)?,
+                    source,
+                    config_id: config_id.clone(),
                 })
             })
             .collect()
@@ -209,10 +207,64 @@ fn template_map_key<'a>(key: Option<&str>, map: &'a impl Get) -> Cow<'a, str> {
 }
 
 #[repr(C)]
-pub struct ProcessInfo<'a, T: Deref<Target = [u8]>> {
-    pub args: &'a [T],
-    pub envp: &'a [T],
-    pub language: T,
+pub struct ProcessInfo {
+    pub args: Vec<Vec<u8>>,
+    pub envp: Vec<Vec<u8>>,
+    pub language: Vec<u8>,
+}
+
+fn process_envp() -> Vec<Vec<u8>> {
+    #[allow(clippy::unnecessary_filter_map)]
+    env::vars_os()
+        .filter_map(|(k, v)| {
+            #[cfg(not(unix))]
+            {
+                let mut env = Vec::new();
+                env.extend(k.to_str()?.as_bytes());
+                env.push(b'=');
+                env.extend(v.to_str()?.as_bytes());
+                Some(env)
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::ffi::OsStrExt;
+                let mut env = Vec::new();
+                env.extend(k.as_bytes());
+                env.push(b'=');
+                env.extend(v.as_bytes());
+                Some(env)
+            }
+        })
+        .collect()
+}
+
+fn process_args() -> Vec<Vec<u8>> {
+    #[allow(clippy::unnecessary_filter_map)]
+    env::args_os()
+        .filter_map(|a| {
+            #[cfg(not(unix))]
+            {
+                Some(a.into_string().ok()?.into_bytes())
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::ffi::OsStringExt;
+                Some(a.into_vec())
+            }
+        })
+        .collect()
+}
+
+impl ProcessInfo {
+    pub fn detect_global(language: String) -> Self {
+        let envp = process_envp();
+        let args = process_args();
+        Self {
+            args,
+            envp,
+            language: language.into_bytes(),
+        }
+    }
 }
 
 #[repr(C)]
@@ -236,6 +288,27 @@ impl LibraryConfigName {
             DdEnv => "DD_ENV",
             DdVersion => "DD_VERSION",
             DdProfilingEnabled => "DD_PROFILING_ENABLED",
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, serde::Deserialize, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[allow(clippy::enum_variant_names)]
+pub enum LibraryConfigSource {
+    // Order matters, as it is used to determine the priority of the source.
+    //  The higher the value, the higher the priority.
+    LocalStableConfig = 0,
+    FleetStableConfig = 1,
+}
+
+impl LibraryConfigSource {
+    pub fn to_str(&self) -> &'static str {
+        use LibraryConfigSource::*;
+        match self {
+            LocalStableConfig => "local_stable_config",
+            FleetStableConfig => "fleet_stable_config",
         }
     }
 }
@@ -281,6 +354,7 @@ struct StableConfig {
     #[serde(default)]
     tags: HashMap<String, String>,
     rules: Vec<Rule>,
+    config_id: Option<String>,
 }
 
 /// Helper trait so we don't have to duplicate code for
@@ -331,6 +405,8 @@ fn string_operator_match(op: &Operator, matches: &[u8], value: &[u8]) -> bool {
 pub struct LibraryConfig {
     pub name: LibraryConfigName,
     pub value: String,
+    pub source: LibraryConfigSource,
+    pub config_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -339,13 +415,44 @@ pub struct Configurator {
 }
 
 impl Configurator {
+    pub const FLEET_STABLE_CONFIGURATION_PATH: &'static str = {
+        #[cfg(target_os = "linux")]
+        {
+            "/etc/datadog-agent/managed/datadog-agent/stable/application_monitoring.yaml"
+        }
+        #[cfg(target_os = "macos")]
+        {
+            "/opt/datadog-agent/etc/stable/application_monitoring.yaml"
+        }
+        #[cfg(windows)]
+        {
+            "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml"
+        }
+    };
+
+    pub const LOCAL_STABLE_CONFIGURATION_PATH: &'static str = {
+        #[cfg(target_os = "linux")]
+        {
+            "/etc/datadog-agent/application_monitoring.yaml"
+        }
+        #[cfg(target_os = "macos")]
+        {
+            "/opt/datadog-agent/etc/application_monitoring.yaml"
+        }
+        #[cfg(windows)]
+        {
+            "C:\\ProgramData\\Datadog\\application_monitoring.yaml"
+        }
+    };
+
     pub fn new(debug_logs: bool) -> Self {
         Self { debug_logs }
     }
 
-    fn log_process_info(&self, process_info: &ProcessInfo<'_, impl Deref<Target = [u8]>>) {
+    fn log_process_info(&self, process_info: &ProcessInfo, source: LibraryConfigSource) {
         if self.debug_logs {
             eprintln!("Called library_config_common_component:");
+            eprintln!("\tsource: {source:?}");
             eprintln!("\tconfigurator: {:?}", self);
             eprintln!("\tprocess args:");
             process_info
@@ -363,28 +470,78 @@ impl Configurator {
 
     pub fn get_config_from_file(
         &self,
-        path: &Path,
-        process_info: ProcessInfo<'_, impl Deref<Target = [u8]>>,
+        path_local: &Path,
+        path_managed: &Path,
+        process_info: ProcessInfo,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
-        let stable_config = match fs::File::open(path) {
+        let stable_config_local = match fs::File::open(path_local) {
             Ok(file) => self.parse_stable_config(&mut io::BufReader::new(file))?,
             Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
             Err(e) => return Err(e).context("failed to open config file"),
         };
-        self.get_config(&stable_config, process_info)
+        let stable_config_managed = match fs::File::open(path_managed) {
+            Ok(file) => self.parse_stable_config(&mut io::BufReader::new(file))?,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
+            Err(e) => return Err(e).context("failed to open config file"),
+        };
+
+        let managed_config = self.get_config(
+            &stable_config_managed,
+            LibraryConfigSource::FleetStableConfig,
+            &process_info,
+        )?;
+        if !managed_config.is_empty() {
+            return Ok(managed_config);
+        }
+
+        // If no managed config rule matches, try the local config
+        let local_config = self.get_config(
+            &stable_config_local,
+            LibraryConfigSource::LocalStableConfig,
+            &process_info,
+        )?;
+        Ok(local_config)
     }
 
     pub fn get_config_from_bytes(
         &self,
-        s: &[u8],
-        process_info: ProcessInfo<'_, impl Deref<Target = [u8]>>,
+        s_local: &[u8],
+        s_managed: &[u8],
+        process_info: ProcessInfo,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
-        let stable_config: StableConfig = self.parse_stable_config(&mut io::Cursor::new(s))?;
-        self.get_config(&stable_config, process_info)
+        let stable_config_local: StableConfig =
+            self.parse_stable_config(&mut io::Cursor::new(s_local))?;
+        let stable_config_managed: StableConfig =
+            self.parse_stable_config(&mut io::Cursor::new(s_managed))?;
+
+        let managed_config = self.get_config(
+            &stable_config_managed,
+            LibraryConfigSource::FleetStableConfig,
+            &process_info,
+        )?;
+        if !managed_config.is_empty() {
+            return Ok(managed_config);
+        }
+
+        // If no managed config rule matches, try the local config
+        let local_config = self.get_config(
+            &stable_config_local,
+            LibraryConfigSource::LocalStableConfig,
+            &process_info,
+        )?;
+        Ok(local_config)
     }
 
     fn parse_stable_config<F: io::Read>(&self, f: &mut F) -> anyhow::Result<StableConfig> {
-        let stable_config = serde_yaml::from_reader(f)?;
+        let mut buffer = String::new();
+        f.read_to_string(&mut buffer)?;
+        if buffer.trim().is_empty() {
+            let stable_config = StableConfig::default();
+            eprintln!("Read the following static config: {stable_config:?}");
+            return Ok(stable_config);
+        }
+
+        let stable_config = serde_yaml::from_str(&buffer)?;
         if self.debug_logs {
             eprintln!("Read the following static config: {stable_config:?}");
         }
@@ -394,17 +551,18 @@ impl Configurator {
     fn get_config(
         &self,
         stable_config: &StableConfig,
-        process_info: ProcessInfo<'_, impl Deref<Target = [u8]>>,
+        source: LibraryConfigSource,
+        process_info: &ProcessInfo,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
-        self.log_process_info(&process_info);
-        let matcher = Matcher::new(&process_info, &stable_config.tags);
+        self.log_process_info(process_info, source);
+        let matcher = Matcher::new(process_info, &stable_config.tags);
         let Some(configs) = matcher.find_stable_config(stable_config) else {
             if self.debug_logs {
                 eprintln!("No selector matched");
             }
             return Ok(Vec::new());
         };
-        let library_config = matcher.template_configs(configs)?;
+        let library_config = matcher.template_configs(source, configs, &stable_config.config_id)?;
         if self.debug_logs {
             eprintln!("Will apply the following configuration:\n\t{library_config:?}");
         }
@@ -418,7 +576,8 @@ mod tests {
 
     use super::{Configurator, ProcessInfo};
     use crate::{
-        LibraryConfig, LibraryConfigName, Matcher, Operator, Origin, Rule, Selector, StableConfig,
+        LibraryConfig, LibraryConfigName, LibraryConfigSource, Matcher, Operator, Origin, Rule,
+        Selector, StableConfig,
     };
 
     macro_rules! map {
@@ -436,13 +595,18 @@ mod tests {
 
     #[test]
     fn test_get_config() {
-        let process_info: ProcessInfo<'_, &[u8]> = ProcessInfo::<&[u8]> {
-            args: &[b"-Djava_config_key=my_config", b"-jar", b"HelloWorld.jar"],
-            envp: &[b"ENV=VAR"],
-            language: b"java",
+        let process_info: ProcessInfo = ProcessInfo {
+            args: vec![
+                b"-Djava_config_key=my_config".to_vec(),
+                b"-jar".to_vec(),
+                b"HelloWorld.jar".to_vec(),
+            ],
+            envp: vec![b"ENV=VAR".to_vec()],
+            language: b"java".to_vec(),
         };
         let configurator = Configurator::new(true);
         let config = configurator.get_config_from_bytes(b"
+config_id: abc
 tags:
   cluster_name: my_cluster 
 rules:
@@ -458,12 +622,14 @@ rules:
     operator: equals
   configuration:
     DD_SERVICE: my_service_{{ tags[cluster_name] }}_{{ process_arguments[-Djava_config_key] }}_{{ language }}
-", process_info).unwrap();
+", b"", process_info).unwrap();
         assert_eq!(
             config,
             vec![LibraryConfig {
                 name: LibraryConfigName::DdService,
-                value: "my_service_my_cluster_my_config_java".to_string()
+                value: "my_service_my_cluster_my_config_java".to_string(),
+                source: LibraryConfigSource::LocalStableConfig,
+                config_id: Some("abc".to_string()),
             }]
         );
     }
@@ -474,10 +640,11 @@ rules:
         let cfg = configurator
             .get_config_from_file(
                 "/file/is/missing".as_ref(),
-                ProcessInfo::<&[u8]> {
-                    args: &[b"-jar HelloWorld.jar"],
-                    envp: &[b"ENV=VAR"],
-                    language: b"java",
+                "/file/is/missing_too".as_ref(),
+                ProcessInfo {
+                    args: vec![b"-jar HelloWorld.jar".to_vec()],
+                    envp: vec![b"ENV=VAR".to_vec()],
+                    language: b"java".to_vec(),
                 },
             )
             .unwrap();
@@ -507,6 +674,7 @@ rules:
         assert_eq!(
             cfg,
             StableConfig {
+                config_id: None,
                 tags: HashMap::default(),
                 rules: vec![Rule {
                     selectors: vec![Selector {
@@ -527,10 +695,10 @@ rules:
 
     #[test]
     fn test_selector_match() {
-        let process_info = ProcessInfo::<&[u8]> {
-            args: &[b"-jar HelloWorld.jar"],
-            envp: &[b"ENV=VAR"],
-            language: b"java",
+        let process_info = ProcessInfo {
+            args: vec![b"-jar HelloWorld.jar".to_vec()],
+            envp: vec![b"ENV=VAR".to_vec()],
+            language: b"java".to_vec(),
         };
         let tags = HashMap::new();
         let matcher = Matcher::new(&process_info, &tags);
@@ -580,5 +748,54 @@ rules:
         for (i, (selector, matches)) in test_cases.iter().enumerate() {
             assert_eq!(matcher.selector_match(selector), *matches, "case {i}");
         }
+    }
+
+    #[test]
+    fn test_fleet_over_local() {
+        let process_info: ProcessInfo = ProcessInfo {
+            args: vec![
+                b"-Djava_config_key=my_config".to_vec(),
+                b"-jar".to_vec(),
+                b"HelloWorld.jar".to_vec(),
+            ],
+            envp: vec![b"ENV=VAR".to_vec()],
+            language: b"java".to_vec(),
+        };
+        let configurator = Configurator::new(true);
+        let config = configurator
+            .get_config_from_bytes(
+                b"
+config_id: abc
+tags:
+  cluster_name: my_cluster 
+rules:
+- selectors:
+  - origin: language
+    matches: [\"java\"]
+    operator: equals
+  configuration:
+    DD_SERVICE: local
+",
+                b"
+config_id: def
+rules:
+- selectors:
+  - origin: language
+    matches: [\"java\"]
+    operator: equals
+  configuration:
+    DD_SERVICE: managed",
+                process_info,
+            )
+            .unwrap();
+        assert_eq!(
+            config,
+            vec![LibraryConfig {
+                name: LibraryConfigName::DdService,
+                value: "managed".to_string(),
+                source: LibraryConfigSource::FleetStableConfig,
+                config_id: Some("def".to_string()),
+            }]
+        );
     }
 }
