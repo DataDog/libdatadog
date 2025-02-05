@@ -141,11 +141,21 @@ pub extern "C" fn ddog_library_configurator_get(
 pub extern "C" fn ddog_library_config_name_to_env(name: LibraryConfigName) -> ffi::CStr<'static> {
     use LibraryConfigName::*;
     ffi::CStr::from_std(match name {
+        DdTraceApmEnabled => ddcommon::cstr!("DD_TRACE_ENABLED"),
+        DdRuntimeMetricsEnabled => ddcommon::cstr!("DD_RUNTIME_METRICS_ENABLED"),
+        DdLogsInjection => ddcommon::cstr!("DD_LOGS_INJECTION"),
+        DdProfilingEnabled => ddcommon::cstr!("DD_PROFILING_ENABLED"),
+        DdDataStreamsEnabled => ddcommon::cstr!("DD_DATA_STREAMS_ENABLED"),
+        DdAppsecEnabled => ddcommon::cstr!("DD_APPSEC_ENABLED"),
+        DdIastEnabled => ddcommon::cstr!("DD_IAST_ENABLED"),
+        DdDynamicInstrumentationEnabled => ddcommon::cstr!("DD_DYNAMIC_INSTRUMENTATION_ENABLED"),
+        DdDataJobsEnabled => ddcommon::cstr!("DD_DATA_JOBS_ENABLED"),
+        DdAppsecScaEnabled => ddcommon::cstr!("DD_APPSEC_SCA_ENABLED"),
+
         DdTraceDebug => ddcommon::cstr!("DD_TRACE_DEBUG"),
         DdService => ddcommon::cstr!("DD_SERVICE"),
         DdEnv => ddcommon::cstr!("DD_ENV"),
         DdVersion => ddcommon::cstr!("DD_VERSION"),
-        DdProfilingEnabled => ddcommon::cstr!("DD_PROFILING_ENABLED"),
     })
 }
 

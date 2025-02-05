@@ -253,22 +253,44 @@ impl ProcessInfo {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[allow(clippy::enum_variant_names)]
 pub enum LibraryConfigName {
-    DdTraceDebug = 0,
-    DdService = 1,
-    DdEnv = 2,
-    DdVersion = 3,
-    DdProfilingEnabled = 4,
+    // Phase 1: product enablement
+    DdTraceApmEnabled,
+    DdRuntimeMetricsEnabled,
+    DdLogsInjection,
+    DdProfilingEnabled,
+    DdDataStreamsEnabled,
+    DdAppsecEnabled,
+    DdIastEnabled,
+    DdDynamicInstrumentationEnabled,
+    DdDataJobsEnabled,
+    DdAppsecScaEnabled,
+
+    // Phase 2: Service tagging + misceanellous stuff
+    DdTraceDebug,
+    DdService,
+    DdEnv,
+    DdVersion,
 }
 
 impl LibraryConfigName {
     pub fn to_str(&self) -> &'static str {
         use LibraryConfigName::*;
         match self {
+            DdTraceApmEnabled => "DD_TRACE_ENABLED",
+            DdRuntimeMetricsEnabled => "DD_RUNTIME_METRICS_ENABLED",
+            DdLogsInjection => "DD_LOGS_INJECTION",
+            DdProfilingEnabled => "DD_PROFILING_ENABLED",
+            DdDataStreamsEnabled => "DD_DATA_STREAMS_ENABLED",
+            DdAppsecEnabled => "DD_APPSEC_ENABLED",
+            DdIastEnabled => "DD_IAST_ENABLED",
+            DdDynamicInstrumentationEnabled => "DD_DYNAMIC_INSTRUMENTATION_ENABLED",
+            DdDataJobsEnabled => "DD_DATA_JOBS_ENABLED",
+            DdAppsecScaEnabled => "DD_APPSEC_SCA_ENABLED",
+
             DdTraceDebug => "DD_TRACE_DEBUG",
             DdService => "DD_SERVICE",
             DdEnv => "DD_ENV",
             DdVersion => "DD_VERSION",
-            DdProfilingEnabled => "DD_PROFILING_ENABLED",
         }
     }
 }
@@ -670,7 +692,258 @@ mod tests {
             language: b"java".to_vec(),
         };
         let configurator = Configurator::new(true);
-        let config = configurator.get_config_from_bytes(b"
+        let mut actual = configurator
+            .get_config_from_bytes(local_cfg, fleet_cfg, process_info)
+            .unwrap();
+
+        // Sort by name for determinism
+        actual.sort_by_key(|c| c.name);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_empty_configs() {
+        test_config(b"", b"", vec![]);
+    }
+
+    #[test]
+    fn test_missing_files() {
+        let configurator = Configurator::new(true);
+        let cfg = configurator
+            .get_config_from_file(
+                "/file/is/missing".as_ref(),
+                "/file/is/missing_too".as_ref(),
+                ProcessInfo {
+                    args: vec![b"-jar HelloWorld.jar".to_vec()],
+                    envp: vec![b"ENV=VAR".to_vec()],
+                    language: b"java".to_vec(),
+                },
+            )
+            .unwrap();
+        assert_eq!(cfg, vec![]);
+    }
+
+    #[test]
+    fn test_local_host_global_config() {
+        use LibraryConfigName::*;
+        use LibraryConfigSource::*;
+        test_config(
+            b"
+apm_configuration_default:
+  DD_TRACE_APM_ENABLED: true
+  DD_RUNTIME_METRICS_ENABLED: true
+  DD_LOGS_INJECTION: true
+  DD_PROFILING_ENABLED: true
+  DD_DATA_STREAMS_ENABLED: true
+  DD_APPSEC_ENABLED: true
+  DD_IAST_ENABLED: true
+  DD_DYNAMIC_INSTRUMENTATION_ENABLED: true
+  DD_DATA_JOBS_ENABLED: true
+  DD_APPSEC_SCA_ENABLED: true
+    ",
+            b"",
+            vec![
+                LibraryConfig {
+                    name: DdTraceApmEnabled,
+                    value: "true".to_owned(),
+                    source: LocalStableConfig,
+                    config_id: None,
+                },
+                LibraryConfig {
+                    name: DdRuntimeMetricsEnabled,
+                    value: "true".to_owned(),
+                    source: LocalStableConfig,
+                    config_id: None,
+                },
+                LibraryConfig {
+                    name: DdLogsInjection,
+                    value: "true".to_owned(),
+                    source: LocalStableConfig,
+                    config_id: None,
+                },
+                LibraryConfig {
+                    name: DdProfilingEnabled,
+                    value: "true".to_owned(),
+                    source: LocalStableConfig,
+                    config_id: None,
+                },
+                LibraryConfig {
+                    name: DdDataStreamsEnabled,
+                    value: "true".to_owned(),
+                    source: LocalStableConfig,
+                    config_id: None,
+                },
+                LibraryConfig {
+                    name: DdAppsecEnabled,
+                    value: "true".to_owned(),
+                    source: LocalStableConfig,
+                    config_id: None,
+                },
+                LibraryConfig {
+                    name: DdIastEnabled,
+                    value: "true".to_owned(),
+                    source: LocalStableConfig,
+                    config_id: None,
+                },
+                LibraryConfig {
+                    name: DdDynamicInstrumentationEnabled,
+                    value: "true".to_owned(),
+                    source: LocalStableConfig,
+                    config_id: None,
+                },
+                LibraryConfig {
+                    name: DdDataJobsEnabled,
+                    value: "true".to_owned(),
+                    source: LocalStableConfig,
+                    config_id: None,
+                },
+                LibraryConfig {
+                    name: DdAppsecScaEnabled,
+                    value: "true".to_owned(),
+                    source: LocalStableConfig,
+                    config_id: None,
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn test_fleet_host_global_config() {
+        use LibraryConfigName::*;
+        use LibraryConfigSource::*;
+        test_config(
+            b"",
+            b"
+config_id: abc
+apm_configuration_default:
+  DD_TRACE_APM_ENABLED: true
+  DD_RUNTIME_METRICS_ENABLED: true
+  DD_LOGS_INJECTION: true
+  DD_PROFILING_ENABLED: true
+  DD_DATA_STREAMS_ENABLED: true
+  DD_APPSEC_ENABLED: true
+  DD_IAST_ENABLED: true
+  DD_DYNAMIC_INSTRUMENTATION_ENABLED: true
+  DD_DATA_JOBS_ENABLED: true
+  DD_APPSEC_SCA_ENABLED: true
+    ",
+            vec![
+                LibraryConfig {
+                    name: DdTraceApmEnabled,
+                    value: "true".to_owned(),
+                    source: FleetStableConfig,
+                    config_id: Some("abc".to_owned()),
+                },
+                LibraryConfig {
+                    name: DdRuntimeMetricsEnabled,
+                    value: "true".to_owned(),
+                    source: FleetStableConfig,
+                    config_id: Some("abc".to_owned()),
+                },
+                LibraryConfig {
+                    name: DdLogsInjection,
+                    value: "true".to_owned(),
+                    source: FleetStableConfig,
+                    config_id: Some("abc".to_owned()),
+                },
+                LibraryConfig {
+                    name: DdProfilingEnabled,
+                    value: "true".to_owned(),
+                    source: FleetStableConfig,
+                    config_id: Some("abc".to_owned()),
+                },
+                LibraryConfig {
+                    name: DdDataStreamsEnabled,
+                    value: "true".to_owned(),
+                    source: FleetStableConfig,
+                    config_id: Some("abc".to_owned()),
+                },
+                LibraryConfig {
+                    name: DdAppsecEnabled,
+                    value: "true".to_owned(),
+                    source: FleetStableConfig,
+                    config_id: Some("abc".to_owned()),
+                },
+                LibraryConfig {
+                    name: DdIastEnabled,
+                    value: "true".to_owned(),
+                    source: FleetStableConfig,
+                    config_id: Some("abc".to_owned()),
+                },
+                LibraryConfig {
+                    name: DdDynamicInstrumentationEnabled,
+                    value: "true".to_owned(),
+                    source: FleetStableConfig,
+                    config_id: Some("abc".to_owned()),
+                },
+                LibraryConfig {
+                    name: DdDataJobsEnabled,
+                    value: "true".to_owned(),
+                    source: FleetStableConfig,
+                    config_id: Some("abc".to_owned()),
+                },
+                LibraryConfig {
+                    name: DdAppsecScaEnabled,
+                    value: "true".to_owned(),
+                    source: FleetStableConfig,
+                    config_id: Some("abc".to_owned()),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn test_merge_local_fleet() {
+        use LibraryConfigName::*;
+        use LibraryConfigSource::*;
+
+        test_config(
+            b"
+apm_configuration_default:
+  DD_TRACE_APM_ENABLED: true
+  DD_RUNTIME_METRICS_ENABLED: true
+  DD_PROFILING_ENABLED: true
+        ",
+            b"
+config_id: abc
+apm_configuration_default:
+  DD_TRACE_APM_ENABLED: true
+  DD_LOGS_INJECTION: true
+  DD_PROFILING_ENABLED: false
+",
+            vec![
+                LibraryConfig {
+                    name: DdTraceApmEnabled,
+                    value: "true".to_owned(),
+                    source: FleetStableConfig,
+                    config_id: Some("abc".to_owned()),
+                },
+                LibraryConfig {
+                    name: DdRuntimeMetricsEnabled,
+                    value: "true".to_owned(),
+                    source: LocalStableConfig,
+                    config_id: None,
+                },
+                LibraryConfig {
+                    name: DdLogsInjection,
+                    value: "true".to_owned(),
+                    source: FleetStableConfig,
+                    config_id: Some("abc".to_owned()),
+                },
+                LibraryConfig {
+                    name: DdProfilingEnabled,
+                    value: "false".to_owned(),
+                    source: FleetStableConfig,
+                    config_id: Some("abc".to_owned()),
+                },
+            ],
+        );
+    }
+
+    #[test]
+    fn test_process_config() {
+        test_config(
+    b"
 config_id: abc
 tags:
   cluster_name: my_cluster 
@@ -687,33 +960,15 @@ rules:
     operator: equals
   configuration:
     DD_SERVICE: my_service_{{ tags[cluster_name] }}_{{ process_arguments[-Djava_config_key] }}_{{ language }}
-", b"", process_info).unwrap();
-        assert_eq!(
-            config,
+    ",
+    b"", 
     vec![LibraryConfig {
             name: LibraryConfigName::DdService,
             value: "my_service_my_cluster_my_config_java".to_string(),
             source: LibraryConfigSource::LocalStableConfig,
             config_id: Some("abc".to_string()),
-            }]
+        }],
         );
-    }
-
-    #[test]
-    fn test_match_missing_config() {
-        let configurator = Configurator::new(true);
-        let cfg = configurator
-            .get_config_from_file(
-                "/file/is/missing".as_ref(),
-                "/file/is/missing_too".as_ref(),
-                ProcessInfo {
-                    args: vec![b"-jar HelloWorld.jar".to_vec()],
-                    envp: vec![b"ENV=VAR".to_vec()],
-                    language: b"java".to_vec(),
-                },
-            )
-            .unwrap();
-        assert_eq!(cfg, vec![]);
     }
 
     #[test]
@@ -735,12 +990,14 @@ rules:
             )
             .unwrap();
         let configurator = Configurator::new(true);
-        let cfg = configurator.parse_stable_config_file(tmp.as_file_mut()).unwrap();
+        let cfg = configurator
+            .parse_stable_config_file(tmp.as_file_mut())
+            .unwrap();
         assert_eq!(
             cfg,
             StableConfig {
                 config_id: None,
-                apm_configuration_default: HashMap::new(),
+                apm_configuration_default: HashMap::default(),
                 tags: HashMap::default(),
                 rules: vec![Rule {
                     selectors: vec![Selector {
