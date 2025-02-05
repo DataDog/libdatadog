@@ -122,6 +122,13 @@ fn main() -> anyhow::Result<()> {
                 .required(false),
         )
         .arg(
+            Arg::new("print-samples")
+                .long("print-samples")
+                .help("verbose printing of the stacks")
+                .required(false)
+                .num_args(0),
+        )
+        .arg(
             Arg::new("output")
                 .short('o')
                 .help("the path to save the result to")
@@ -131,6 +138,7 @@ fn main() -> anyhow::Result<()> {
 
     let input = matches.get_one::<String>("input").unwrap();
     let output = matches.get_one::<String>("output");
+    let print_stacks = matches.get_one("print-samples");
     let collect_memory_stats = matches.get_flag("mem");
     let mut sysinfo = if collect_memory_stats {
         Some(Sysinfo::new())
@@ -172,6 +180,18 @@ fn main() -> anyhow::Result<()> {
         println!("Min stack depth is {min}.");
         println!("Q1 = {q1}, Q2 = {q2}, Q3 = {q3}.");
         println!("Max stack depth is {max}.");
+    }
+
+    if let Some(true) = print_stacks {
+        for (_tstamp, sample) in replayer.samples.iter() {
+            sample.locations.iter().rev().for_each(|location| {
+                let fname = location.function.name;
+                let lineno = location.line;
+                let filename = location.function.filename;
+                println!("{fname}:{lineno} ({filename})");
+            });
+            println!();
+        }
     }
 
     // When benchmarking, don't count the copying of the stacks, do that before.
