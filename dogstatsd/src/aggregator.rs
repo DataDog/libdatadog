@@ -323,13 +323,15 @@ fn build_metric(entry: &Metric, mut base_tag_vec: SortedTags) -> Option<MetricTo
         _ => metadata = None,
     }
 
+    println!("================== LIBDATADOG: Prefix: {}, Metadata: {:?}", prefix, metadata);
+
     Some(MetricToShip {
         metric: entry.name.as_str(),
         resources,
         kind,
         points: [point; 1],
         tags: base_tag_vec.to_strings(),
-        metadata: metadata,
+        metadata,
     })
 }
 
