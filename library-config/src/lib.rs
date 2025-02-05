@@ -6,7 +6,7 @@ use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::Path;
-use std::{env, fs, io};
+use std::{env, fs, io, mem};
 
 use anyhow::Context;
 
@@ -121,25 +121,6 @@ impl<'a> Matcher<'a> {
                 None => false,
             },
         }
-    }
-
-    fn template_configs(
-        &'a self,
-        source: LibraryConfigSource,
-        config: &HashMap<LibraryConfigName, String>,
-        config_id: &Option<String>,
-    ) -> anyhow::Result<Vec<LibraryConfig>> {
-        config
-            .iter()
-            .map(|(&name, v)| {
-                Ok(LibraryConfig {
-                    name,
-                    value: self.template_config(v)?,
-                    source,
-                    config_id: config_id.clone(),
-                })
-            })
-            .collect()
     }
 
     /// Templates a config string.
@@ -268,7 +249,7 @@ impl ProcessInfo {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, serde::Deserialize, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, serde::Deserialize, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[allow(clippy::enum_variant_names)]
 pub enum LibraryConfigName {
@@ -351,28 +332,17 @@ struct Rule {
 
 #[derive(serde::Deserialize, Default, Debug, PartialEq, Eq)]
 struct StableConfig {
+    // Phase 1
+    #[serde(default)]
+    config_id: Option<String>,
+    #[serde(default)]
+    apm_configuration_default: HashMap<LibraryConfigName, String>,
+
+    // Phase 2
     #[serde(default)]
     tags: HashMap<String, String>,
+    #[serde(default)]
     rules: Vec<Rule>,
-    config_id: Option<String>,
-}
-
-/// Helper trait so we don't have to duplicate code for
-/// HashMap<&str, &str> and HashMap<String, String>
-trait Get {
-    fn get(&self, k: &str) -> Option<&str>;
-}
-
-impl Get for HashMap<&str, &str> {
-    fn get(&self, k: &str) -> Option<&str> {
-        self.get(k).copied()
-    }
-}
-
-impl Get for HashMap<String, String> {
-    fn get(&self, k: &str) -> Option<&str> {
-        self.get(k).map(|v| v.as_str())
-    }
 }
 
 fn string_list_selector<B: Deref<Target = [u8]>>(selector: &Selector, l: &[B]) -> bool {
@@ -402,11 +372,22 @@ fn string_operator_match(op: &Operator, matches: &[u8], value: &[u8]) -> bool {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+/// LibraryConfig represent a configuration item and is part of the public API
+/// of this module
 pub struct LibraryConfig {
     pub name: LibraryConfigName,
     pub value: String,
     pub source: LibraryConfigSource,
     pub config_id: Option<String>,
+}
+
+#[derive(Debug)]
+/// This struct is used to hold configuration item data in a Hashmap, while the name of
+/// the configuration is the key used for deduplication
+struct LibraryConfigVal {
+    value: String,
+    source: LibraryConfigSource,
+    config_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -468,39 +449,43 @@ impl Configurator {
         }
     }
 
+    fn parse_stable_config_slice(&self, buf: &[u8]) -> anyhow::Result<StableConfig> {
+        if buf.is_empty() {
+            let stable_config = StableConfig::default();
+            eprintln!("Read the following static config: {stable_config:?}");
+            return Ok(stable_config);
+        }
+        let stable_config = serde_yaml::from_slice(&buf)?;
+        if self.debug_logs {
+            eprintln!("Read the following static config: {stable_config:?}");
+        }
+        Ok(stable_config)
+    }
+
+    fn parse_stable_config_file<F: io::Read>(&self, mut f: F) -> anyhow::Result<StableConfig> {
+        let mut buffer = Vec::new();
+        f.read_to_end(&mut buffer)?;
+        self.parse_stable_config_slice(utils::trim_bytes(&buffer))
+    }
+
     pub fn get_config_from_file(
         &self,
         path_local: &Path,
         path_managed: &Path,
         process_info: ProcessInfo,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
-        let stable_config_local = match fs::File::open(path_local) {
-            Ok(file) => self.parse_stable_config(&mut io::BufReader::new(file))?,
+        let local_config = match fs::File::open(path_local) {
+            Ok(file) => self.parse_stable_config_file(file)?,
             Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
             Err(e) => return Err(e).context("failed to open config file"),
         };
-        let stable_config_managed = match fs::File::open(path_managed) {
-            Ok(file) => self.parse_stable_config(&mut io::BufReader::new(file))?,
+        let fleet_config = match fs::File::open(path_managed) {
+            Ok(file) => self.parse_stable_config_file(file)?,
             Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
             Err(e) => return Err(e).context("failed to open config file"),
         };
 
-        let managed_config = self.get_config(
-            &stable_config_managed,
-            LibraryConfigSource::FleetStableConfig,
-            &process_info,
-        )?;
-        if !managed_config.is_empty() {
-            return Ok(managed_config);
-        }
-
-        // If no managed config rule matches, try the local config
-        let local_config = self.get_config(
-            &stable_config_local,
-            LibraryConfigSource::LocalStableConfig,
-            &process_info,
-        )?;
-        Ok(local_config)
+        self.get_config(local_config, fleet_config, &process_info)
     }
 
     pub fn get_config_from_bytes(
@@ -509,64 +494,145 @@ impl Configurator {
         s_managed: &[u8],
         process_info: ProcessInfo,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
-        let stable_config_local: StableConfig =
-            self.parse_stable_config(&mut io::Cursor::new(s_local))?;
-        let stable_config_managed: StableConfig =
-            self.parse_stable_config(&mut io::Cursor::new(s_managed))?;
+        let local_config: StableConfig = self.parse_stable_config_slice(s_local)?;
+        let fleet_config: StableConfig = self.parse_stable_config_slice(s_managed)?;
 
-        let managed_config = self.get_config(
-            &stable_config_managed,
-            LibraryConfigSource::FleetStableConfig,
-            &process_info,
-        )?;
-        if !managed_config.is_empty() {
-            return Ok(managed_config);
-        }
-
-        // If no managed config rule matches, try the local config
-        let local_config = self.get_config(
-            &stable_config_local,
-            LibraryConfigSource::LocalStableConfig,
-            &process_info,
-        )?;
-        Ok(local_config)
-    }
-
-    fn parse_stable_config<F: io::Read>(&self, f: &mut F) -> anyhow::Result<StableConfig> {
-        let mut buffer = String::new();
-        f.read_to_string(&mut buffer)?;
-        if buffer.trim().is_empty() {
-            let stable_config = StableConfig::default();
-            eprintln!("Read the following static config: {stable_config:?}");
-            return Ok(stable_config);
-        }
-
-        let stable_config = serde_yaml::from_str(&buffer)?;
-        if self.debug_logs {
-            eprintln!("Read the following static config: {stable_config:?}");
-        }
-        Ok(stable_config)
+        self.get_config(local_config, fleet_config, &process_info)
     }
 
     fn get_config(
         &self,
-        stable_config: &StableConfig,
-        source: LibraryConfigSource,
+        local_config: StableConfig,
+        fleet_config: StableConfig,
         process_info: &ProcessInfo,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
+        let mut cfg = HashMap::new();
+        // First get local configuration
+        self.get_single_source_config(
+            local_config,
+            LibraryConfigSource::LocalStableConfig,
+            &process_info,
+            &mut cfg,
+        )?;
+        // Merge with fleet config override
+        self.get_single_source_config(
+            fleet_config,
+            LibraryConfigSource::FleetStableConfig,
+            &process_info,
+            &mut cfg,
+        )?;
+        Ok(cfg
+            .into_iter()
+            .map(|(k, v)| LibraryConfig {
+                name: k,
+                value: v.value,
+                source: v.source,
+                config_id: v.config_id,
+            })
+            .collect())
+    }
+
+    /// Get config from a stable config file and associate them with the file origin
+    ///
+    /// This is done in two steps:
+    ///     * First take the global host config
+    ///     * Merge the global config with the process specific config
+    fn get_single_source_config(
+        &self,
+        mut stable_config: StableConfig,
+        source: LibraryConfigSource,
+        process_info: &ProcessInfo,
+        cfg: &mut HashMap<LibraryConfigName, LibraryConfigVal>,
+    ) -> anyhow::Result<()> {
         self.log_process_info(process_info, source);
+
+        // Phase 1: take host default config
+        cfg.extend(
+            mem::take(&mut stable_config.apm_configuration_default)
+                .into_iter()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        LibraryConfigVal {
+                            value: v,
+                            source,
+                            config_id: stable_config.config_id.clone(),
+                        },
+                    )
+                }),
+        );
+
+        // Phase 2: process specific config
+        self.get_single_source_process_config(stable_config, source, process_info, cfg)?;
+        Ok(())
+    }
+
+    /// Get config from a stable config using process matching rules
+    fn get_single_source_process_config(
+        &self,
+        stable_config: StableConfig,
+        source: LibraryConfigSource,
+        process_info: &ProcessInfo,
+        library_config: &mut HashMap<LibraryConfigName, LibraryConfigVal>,
+    ) -> anyhow::Result<()> {
         let matcher = Matcher::new(process_info, &stable_config.tags);
-        let Some(configs) = matcher.find_stable_config(stable_config) else {
+        let Some(configs) = matcher.find_stable_config(&stable_config) else {
             if self.debug_logs {
-                eprintln!("No selector matched");
+                eprintln!("No selector matched for source {source:?}");
             }
-            return Ok(Vec::new());
+            return Ok(());
         };
-        let library_config = matcher.template_configs(source, configs, &stable_config.config_id)?;
-        if self.debug_logs {
-            eprintln!("Will apply the following configuration:\n\t{library_config:?}");
+
+        for (name, config_val) in configs {
+            let value = matcher.template_config(config_val)?;
+            library_config.insert(
+                *name,
+                LibraryConfigVal {
+                    value,
+                    source,
+                    config_id: stable_config.config_id.clone(),
+                },
+            );
         }
-        Ok(library_config)
+
+        if self.debug_logs {
+            eprintln!("Will apply the following configuration:\n\tsource {source:?}\n\t{library_config:?}");
+        }
+        Ok(())
+    }
+}
+
+use utils::Get;
+mod utils {
+    use std::collections::HashMap;
+
+    /// Removes leading and trailing ascci whitespaces from a byte slice
+    pub(crate) fn trim_bytes(mut b: &[u8]) -> &[u8] {
+        while b.first().map(u8::is_ascii_whitespace).unwrap_or(false) {
+            b = &b[1..];
+        }
+        while b.last().map(u8::is_ascii_whitespace).unwrap_or(false) {
+            b = &b[..b.len() - 1];
+        }
+        b
+    }
+
+    /// Helper trait so we don't have to duplicate code for
+    /// HashMap<&str, &str> and HashMap<String, String>
+    pub(crate) trait Get {
+        fn get(&self, k: &str) -> Option<&str>;
+    }
+
+    impl Get for HashMap<&str, &str> {
+        fn get(&self, k: &str) -> Option<&str> {
+            self.get(k).copied()
+        }
+    }
+
+    impl Get for HashMap<String, String> {
+        fn get(&self, k: &str) -> Option<&str> {
+            self.get(k).map(|v| v.as_str())
+        }
     }
 }
 
@@ -593,8 +659,7 @@ mod tests {
         };
     }
 
-    #[test]
-    fn test_get_config() {
+    fn test_config(local_cfg: &[u8], fleet_cfg: &[u8], expected: Vec<LibraryConfig>) {
         let process_info: ProcessInfo = ProcessInfo {
             args: vec![
                 b"-Djava_config_key=my_config".to_vec(),
@@ -625,11 +690,11 @@ rules:
 ", b"", process_info).unwrap();
         assert_eq!(
             config,
-            vec![LibraryConfig {
-                name: LibraryConfigName::DdService,
-                value: "my_service_my_cluster_my_config_java".to_string(),
-                source: LibraryConfigSource::LocalStableConfig,
-                config_id: Some("abc".to_string()),
+    vec![LibraryConfig {
+            name: LibraryConfigName::DdService,
+            value: "my_service_my_cluster_my_config_java".to_string(),
+            source: LibraryConfigSource::LocalStableConfig,
+            config_id: Some("abc".to_string()),
             }]
         );
     }
@@ -670,11 +735,12 @@ rules:
             )
             .unwrap();
         let configurator = Configurator::new(true);
-        let cfg = configurator.parse_stable_config(tmp.as_file_mut()).unwrap();
+        let cfg = configurator.parse_stable_config_file(tmp.as_file_mut()).unwrap();
         assert_eq!(
             cfg,
             StableConfig {
                 config_id: None,
+                apm_configuration_default: HashMap::new(),
                 tags: HashMap::default(),
                 rules: vec![Rule {
                     selectors: vec![Selector {
