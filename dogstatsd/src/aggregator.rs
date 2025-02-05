@@ -60,6 +60,9 @@ pub struct Aggregator {
     max_context: usize,
 }
 
+const AWS_LAMBDA_PREFIX: &str = "aws.lambda";
+const AWS_STEP_FUNCTIONS_PREFIX: &str = "aws.states";
+
 impl Aggregator {
     /// Create a new instance of `Aggregator`
     ///
@@ -296,19 +299,37 @@ fn build_metric(entry: &Metric, mut base_tag_vec: SortedTags) -> Option<MetricTo
         base_tag_vec.extend(&tags);
     }
 
+    let metadata: Option<datadog::Metadata>;
+    let prefix = entry.name.split('.').take(2).collect::<Vec<&str>>().join(".");
+    match prefix.as_str() {
+        AWS_LAMBDA_PREFIX => {
+            metadata = Some(datadog::Metadata {
+                origin: datadog::Origin {
+                    origin_product: 1, // serverless
+                    origin_sub_product: 38, // lambda
+                    origin_product_detail: 0, // uncategorized
+                },
+            });
+        }
+        AWS_STEP_FUNCTIONS_PREFIX => {
+            metadata = Some(datadog::Metadata {
+                origin: datadog::Origin {
+                    origin_product: 1, // serverless
+                    origin_sub_product: 41, // step functions
+                    origin_product_detail: 0, // uncategorized
+                },
+            });
+        }
+        _ => metadata = None,
+    }
+
     Some(MetricToShip {
         metric: entry.name.as_str(),
         resources,
         kind,
         points: [point; 1],
         tags: base_tag_vec.to_strings(),
-        metadata: Some(datadog::Metadata {
-            origin: datadog::Origin {
-                origin_product: 1, // 1 is the product id for serverless
-                origin_sub_product: 38, // 38 is the sub product id for lambda_metrics
-                origin_product_detail: 0, // 0 is uncategorized
-            },
-        }),
+        metadata: metadata,
     })
 }
 

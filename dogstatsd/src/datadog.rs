@@ -283,7 +283,7 @@ pub(crate) struct Metric {
     /// The kind of metric
     pub(crate) kind: DdMetricKind,
     pub(crate) tags: Vec<String>,
-    pub(crate) metadata: Option<Metadata>,
+    pub(crate) metadata: Option<Metadata>, // metadata
 }
 
 #[derive(Debug, Serialize, Deserialize)]
