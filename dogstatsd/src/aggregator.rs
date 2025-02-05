@@ -7,12 +7,13 @@ use crate::constants;
 use crate::datadog::{self, Metric as MetricToShip, Series};
 use crate::errors;
 use crate::metric::{self, Metric, MetricValue, SortedTags};
+use crate::metrics_origins::get_metric_origin;
 use std::time;
 
-use datadog_protos::metrics::{Dogsketch, Sketch, SketchPayload, Metadata, Origin};
+use datadog_protos::metrics::{Dogsketch, Sketch, SketchPayload, Metadata};
 use ddsketch_agent::DDSketch;
 use hashbrown::hash_table;
-use protobuf::{Message, MessageField};
+use protobuf::Message;
 use tracing::{error, warn};
 use ustr::Ustr;
 
@@ -59,9 +60,6 @@ pub struct Aggregator {
     max_batch_bytes_sketch_metric: u64,
     max_context: usize,
 }
-
-const AWS_LAMBDA_PREFIX: &str = "aws.lambda";
-const AWS_STEP_FUNCTIONS_PREFIX: &str = "aws.states";
 
 impl Aggregator {
     /// Create a new instance of `Aggregator`
@@ -272,37 +270,8 @@ fn build_sketch(now: i64, entry: &Metric, mut base_tag_vec: SortedTags) -> Optio
     }
     sketch.set_tags(base_tag_vec.to_chars());
 
-    let metadata: Option<Metadata>;
-    let prefix = name.split('.').take(2).collect::<Vec<&str>>().join(".");
-    match prefix {
-        _ if prefix == AWS_LAMBDA_PREFIX => {
-            metadata = Some(Metadata {
-                origin: MessageField::some(Origin {
-                    origin_product: 1, // serverless
-                    origin_category: 38, // lambda
-                    origin_service: 0, // uncategorized
-                    special_fields: Default::default(), // default
-                }),
-                ..Default::default()
-            });
-            sketch.set_metadata(metadata.clone().unwrap())
-        }
-        _ if prefix == AWS_STEP_FUNCTIONS_PREFIX => {
-            metadata = Some(Metadata {
-                origin: MessageField::some(Origin {
-                    origin_product: 1, // serverless
-                    origin_category: 41, // lambda
-                    origin_service: 0, // uncategorized
-                    special_fields: Default::default(), // default
-                }),
-                ..Default::default()
-            });
-            sketch.set_metadata(metadata.clone().unwrap())
-        }
-        _ => metadata = None,
-    }
-
-    println!("================== LIBDATADOG: Prefix: {}, Metadata: {:?}", prefix, metadata);
+    let metadata: Option<Metadata> = get_metric_origin(&name);
+    sketch.set_metadata(metadata.unwrap());
 
     Some(sketch)
 }
