@@ -477,7 +477,7 @@ impl Configurator {
             eprintln!("Read the following static config: {stable_config:?}");
             return Ok(stable_config);
         }
-        let stable_config = serde_yaml::from_slice(&buf)?;
+        let stable_config = serde_yaml::from_slice(buf)?;
         if self.debug_logs {
             eprintln!("Read the following static config: {stable_config:?}");
         }
@@ -533,14 +533,14 @@ impl Configurator {
         self.get_single_source_config(
             local_config,
             LibraryConfigSource::LocalStableConfig,
-            &process_info,
+            process_info,
             &mut cfg,
         )?;
         // Merge with fleet config override
         self.get_single_source_config(
             fleet_config,
             LibraryConfigSource::FleetStableConfig,
-            &process_info,
+            process_info,
             &mut cfg,
         )?;
         Ok(cfg
