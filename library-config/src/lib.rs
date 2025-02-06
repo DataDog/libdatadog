@@ -254,7 +254,7 @@ impl ProcessInfo {
 #[allow(clippy::enum_variant_names)]
 pub enum LibraryConfigName {
     // Phase 1: product enablement
-    DdTraceApmEnabled,
+    DdApmTracingEnabled,
     DdRuntimeMetricsEnabled,
     DdLogsInjection,
     DdProfilingEnabled,
@@ -276,7 +276,7 @@ impl LibraryConfigName {
     pub fn to_str(&self) -> &'static str {
         use LibraryConfigName::*;
         match self {
-            DdTraceApmEnabled => "DD_TRACE_ENABLED",
+            DdApmTracingEnabled => "DD_APM_TRACING_ENABLED",
             DdRuntimeMetricsEnabled => "DD_RUNTIME_METRICS_ENABLED",
             DdLogsInjection => "DD_LOGS_INJECTION",
             DdProfilingEnabled => "DD_PROFILING_ENABLED",
@@ -417,36 +417,54 @@ pub struct Configurator {
     debug_logs: bool,
 }
 
-impl Configurator {
-    pub const FLEET_STABLE_CONFIGURATION_PATH: &'static str = {
-        #[cfg(target_os = "linux")]
-        {
-            "/etc/datadog-agent/managed/datadog-agent/stable/application_monitoring.yaml"
-        }
-        #[cfg(target_os = "macos")]
-        {
-            "/opt/datadog-agent/etc/stable/application_monitoring.yaml"
-        }
-        #[cfg(windows)]
-        {
-            "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml"
-        }
-    };
+pub enum Target {
+    Linux,
+    Macos,
+    Windows,
+}
 
-    pub const LOCAL_STABLE_CONFIGURATION_PATH: &'static str = {
+impl Target {
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    const fn current() -> Self {
         #[cfg(target_os = "linux")]
         {
-            "/etc/datadog-agent/application_monitoring.yaml"
+            Self::Linux
         }
         #[cfg(target_os = "macos")]
         {
-            "/opt/datadog-agent/etc/application_monitoring.yaml"
+            Self::Macos
         }
         #[cfg(windows)]
         {
-            "C:\\ProgramData\\Datadog\\application_monitoring.yaml"
+            Self::Windows
         }
-    };
+    }
+}
+
+impl Configurator {
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    pub const FLEET_STABLE_CONFIGURATION_PATH: &'static str =
+        Self::fleet_stable_configuration_path(Target::current());
+
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    pub const LOCAL_STABLE_CONFIGURATION_PATH: &'static str =
+        Self::local_stable_configuration_path(Target::current());
+
+    pub const fn local_stable_configuration_path(target: Target) -> &'static str {
+        match target {
+            Target::Linux => "/etc/datadog-agent/managed/datadog-agent/stable/application_monitoring.yaml",
+            Target::Macos => "/opt/datadog-agent/etc/stable/application_monitoring.yaml",
+            Target::Windows => "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml",
+        }
+    }
+
+    pub const fn fleet_stable_configuration_path(target: Target) -> &'static str {
+        match target {
+            Target::Linux => "/etc/datadog-agent/application_monitoring.yaml",
+            Target::Macos => "/opt/datadog-agent/etc/application_monitoring.yaml",
+            Target::Windows => "C:\\ProgramData\\Datadog\\application_monitoring.yaml",
+        }
+    }
 
     pub fn new(debug_logs: bool) -> Self {
         Self { debug_logs }
@@ -730,7 +748,7 @@ mod tests {
         test_config(
             b"
 apm_configuration_default:
-  DD_TRACE_APM_ENABLED: true
+  DD_APM_TRACING_ENABLED: true
   DD_RUNTIME_METRICS_ENABLED: true
   DD_LOGS_INJECTION: true
   DD_PROFILING_ENABLED: true
@@ -744,7 +762,7 @@ apm_configuration_default:
             b"",
             vec![
                 LibraryConfig {
-                    name: DdTraceApmEnabled,
+                    name: DdApmTracingEnabled,
                     value: "true".to_owned(),
                     source: LocalStableConfig,
                     config_id: None,
@@ -816,7 +834,7 @@ apm_configuration_default:
             b"
 config_id: abc
 apm_configuration_default:
-  DD_TRACE_APM_ENABLED: true
+  DD_APM_TRACING_ENABLED: true
   DD_RUNTIME_METRICS_ENABLED: true
   DD_LOGS_INJECTION: true
   DD_PROFILING_ENABLED: true
@@ -829,7 +847,7 @@ apm_configuration_default:
     ",
             vec![
                 LibraryConfig {
-                    name: DdTraceApmEnabled,
+                    name: DdApmTracingEnabled,
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
@@ -900,20 +918,20 @@ apm_configuration_default:
         test_config(
             b"
 apm_configuration_default:
-  DD_TRACE_APM_ENABLED: true
+  DD_APM_TRACING_ENABLED: true
   DD_RUNTIME_METRICS_ENABLED: true
   DD_PROFILING_ENABLED: true
         ",
             b"
 config_id: abc
 apm_configuration_default:
-  DD_TRACE_APM_ENABLED: true
+  DD_APM_TRACING_ENABLED: true
   DD_LOGS_INJECTION: true
   DD_PROFILING_ENABLED: false
 ",
             vec![
                 LibraryConfig {
-                    name: DdTraceApmEnabled,
+                    name: DdApmTracingEnabled,
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),

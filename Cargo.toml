@@ -58,7 +58,7 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.78.0"
 edition = "2021"
-version = "15.0.0"
+version = "16.0.1"
 license = "Apache-2.0"
 
 [profile.dev]
