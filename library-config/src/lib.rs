@@ -417,36 +417,54 @@ pub struct Configurator {
     debug_logs: bool,
 }
 
-impl Configurator {
-    pub const FLEET_STABLE_CONFIGURATION_PATH: &'static str = {
-        #[cfg(target_os = "linux")]
-        {
-            "/etc/datadog-agent/managed/datadog-agent/stable/application_monitoring.yaml"
-        }
-        #[cfg(target_os = "macos")]
-        {
-            "/opt/datadog-agent/etc/stable/application_monitoring.yaml"
-        }
-        #[cfg(windows)]
-        {
-            "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml"
-        }
-    };
+pub enum Target {
+    Linux,
+    Macos,
+    Windows,
+}
 
-    pub const LOCAL_STABLE_CONFIGURATION_PATH: &'static str = {
+impl Target {
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    const fn current() -> Self {
         #[cfg(target_os = "linux")]
         {
-            "/etc/datadog-agent/application_monitoring.yaml"
+            Self::Linux
         }
         #[cfg(target_os = "macos")]
         {
-            "/opt/datadog-agent/etc/application_monitoring.yaml"
+            Self::Macos
         }
         #[cfg(windows)]
         {
-            "C:\\ProgramData\\Datadog\\application_monitoring.yaml"
+            Self::Windows
         }
-    };
+    }
+}
+
+impl Configurator {
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    pub const FLEET_STABLE_CONFIGURATION_PATH: &'static str =
+        Self::fleet_stable_configuration_path(Target::current());
+
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    pub const LOCAL_STABLE_CONFIGURATION_PATH: &'static str =
+        Self::local_stable_configuration_path(Target::current());
+
+    pub const fn local_stable_configuration_path(target: Target) -> &'static str {
+        match target {
+            Target::Linux => "/etc/datadog-agent/managed/datadog-agent/stable/application_monitoring.yaml",
+            Target::Macos => "/opt/datadog-agent/etc/stable/application_monitoring.yaml",
+            Target::Windows => "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml",
+        }
+    }
+
+    pub const fn fleet_stable_configuration_path(target: Target) -> &'static str {
+        match target {
+            Target::Linux => "/etc/datadog-agent/application_monitoring.yaml",
+            Target::Macos => "/opt/datadog-agent/etc/application_monitoring.yaml",
+            Target::Windows => "C:\\ProgramData\\Datadog\\application_monitoring.yaml",
+        }
+    }
 
     pub fn new(debug_logs: bool) -> Self {
         Self { debug_logs }
