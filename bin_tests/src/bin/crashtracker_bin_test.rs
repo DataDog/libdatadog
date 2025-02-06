@@ -54,7 +54,7 @@ mod unix {
             create_alt_stack: true,
             use_alt_stack: true,
             resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
-            signals: vec![libc::SIGBUS, libc::SIGSEGV],
+            signals: crashtracker::default_signals(),
             endpoint,
             timeout_ms: TEST_COLLECTOR_TIMEOUT_MS,
             unix_socket_path: Some("".to_string()),

@@ -12,6 +12,7 @@ mod receive_report;
 #[cfg(test)]
 mod tests {
     use super::receive_report::*;
+    use crate::collector::default_signals;
     use crate::crash_info::{SiCodes, SigInfo, SignalNames};
     use crate::shared::constants::*;
     use crate::{CrashtrackerConfiguration, StacktraceCollection};
@@ -54,7 +55,7 @@ mod tests {
                 false,
                 None,
                 StacktraceCollection::Disabled,
-                vec![libc::SIGBUS, libc::SIGSEGV],
+                default_signals(),
                 3000,
                 None,
             )?)?,

@@ -55,9 +55,9 @@ mod shared;
 #[cfg(all(unix, feature = "collector"))]
 pub use collector::{
     begin_op, clear_additional_tags, clear_spans, clear_traces, consume_and_emit_additional_tags,
-    end_op, init, insert_additional_tag, insert_span, insert_trace, on_fork, remove_additional_tag,
-    remove_span, remove_trace, reset_counters, shutdown_crash_handler, update_config,
-    update_metadata, OpTypes,
+    default_signals, end_op, init, insert_additional_tag, insert_span, insert_trace, on_fork,
+    remove_additional_tag, remove_span, remove_trace, reset_counters, shutdown_crash_handler,
+    update_config, update_metadata, OpTypes,
 };
 
 pub use crash_info::*;
