@@ -1,3 +1,6 @@
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use datadog_protos::metrics::{Metadata, Origin};
 use protobuf::MessageField;
 
@@ -14,9 +17,9 @@ pub enum OriginProduct {
     Serverless = 1,
 }
 
-impl Into<u32> for OriginProduct {
-    fn into(self) -> u32 {
-        self as u32
+impl From<OriginProduct> for u32 {
+    fn from(product: OriginProduct) -> u32 {
+        product as u32
     }
 }
 
@@ -31,9 +34,9 @@ pub enum OriginCategory {
     StepFunctionsMetrics = 41,
 }
 
-impl Into<u32> for OriginCategory {
-    fn into(self) -> u32 {
-        self as u32
+impl From<OriginCategory> for u32 {
+    fn from(category: OriginCategory) -> u32 {
+        category as u32
     }
 }
 
@@ -44,9 +47,9 @@ pub enum OriginService {
     Other = 0,
 }
 
-impl Into<u32> for OriginService {
-    fn into(self) -> u32 {
-        self as u32
+impl From<OriginService> for u32 {
+    fn from(service: OriginService) -> u32 {
+        service as u32
     }
 }
 
