@@ -78,6 +78,15 @@ impl TraceExporterOutputFormat {
             },
         )
     }
+
+    #[cfg(feature = "test-utils")]
+    // This function is only intended for testing purposes so we don't need to go to all the trouble
+    // of breaking the uri down and parsing it as rigorously as we would if we were using it in
+    // production code.
+    fn add_query(&self, url: &Uri, query: &str) -> Uri {
+        let url = format!("{}?{}", url.to_string(), query);
+        Uri::from_str(&url).expect("Failed to create Uri from string")
+    }
 }
 
 /// Add a path to the URL.
@@ -90,11 +99,10 @@ fn add_path(url: &Uri, path: &str) -> Uri {
     let p_and_q = url.path_and_query();
     let new_p_and_q = match p_and_q {
         Some(pq) => {
-            let mut p = pq.path().to_string();
-            if p.ends_with('/') {
-                p.pop();
-            }
+            let p = pq.path();
+            let mut p = p.strip_suffix('/').unwrap_or(p).to_owned();
             p.push_str(path);
+
             PathAndQuery::from_str(p.as_str())
         }
         None => PathAndQuery::from_str(path),
@@ -247,6 +255,8 @@ pub struct TraceExporter {
     client_side_stats: ArcSwap<StatsComputationStatus>,
     agent_info: AgentInfoArc,
     previous_info_state: ArcSwapOption<String>,
+    #[cfg(feature = "test-utils")]
+    query_params: Option<String>,
 }
 
 impl TraceExporter {
@@ -585,18 +595,18 @@ impl TraceExporter {
     fn deserialize_traces(
         &self,
         data: tinybytes::Bytes,
-    ) -> Result<(Vec<Vec<Span>>, usize), TraceExporterError> {
+    ) -> Result<(Vec<Vec<Span>>, usize, usize), TraceExporterError> {
         // TODO base on input format
         match msgpack_decoder::v04::decoder::from_slice(data) {
             Ok(res) => {
                 let (traces, size) = res;
+                let trace_count = traces.len();
 
                 self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_DESER_TRACES, traces.len() as i64),
+                    HealthMetric::Count(health_metrics::STAT_DESER_TRACES, trace_count as i64),
                     None,
                 );
-
-                Ok((traces, size))
+                Ok((traces, size, trace_count))
             }
             Err(err) => {
                 error!("Error deserializing trace from request body: {err}");
@@ -645,7 +655,7 @@ impl TraceExporter {
         match self.output_format {
             TraceExporterOutputFormat::V04 => trace_utils::collect_trace_chunks(
                 TraceCollection::V04(traces),
-                &header_tags,
+                header_tags,
                 &mut tracer_payload::DefaultTraceChunkProcessor,
                 self.endpoint.api_key.is_some(),
             ),
@@ -702,15 +712,26 @@ impl TraceExporter {
         }
     }
 
+    fn get_agent_url(&self) -> Uri {
+        #[cfg(feature = "test-utils")]
+        {
+            if let Some(query) = &self.query_params {
+                let url = self.output_format.add_path(&self.endpoint.url);
+                return self.output_format.add_query(&url, query);
+            }
+        }
+
+        self.output_format.add_path(&self.endpoint.url)
+    }
+
     async fn export_traces(
         &self,
         tracer_payload_collection: TracerPayloadCollection,
-        trace_count: usize,
         header_tags: TracerHeaderTags<'_>,
         size: usize,
     ) -> SendDataResult {
         let endpoint = Endpoint {
-            url: self.output_format.add_path(&self.endpoint.url),
+            url: self.get_agent_url(),
             ..self.endpoint.clone()
         };
 
@@ -720,16 +741,12 @@ impl TraceExporter {
     }
 
     fn trace_processor(&self, data: tinybytes::Bytes) -> Result<String, TraceExporterError> {
-        let (traces, size) = self.deserialize_traces(data)?;
+        let (traces, size, trace_count) = self.deserialize_traces(data)?;
         let (traces, header_tags) = self.stats_processor(traces);
-        // move this into deserialize_traces
-        let trace_count = traces.len();
         let tracer_payload = self.prepare_tracer_payload(traces, &header_tags);
 
         self.runtime.block_on(async {
-            let send_data_result = self
-                .export_traces(tracer_payload, trace_count, header_tags, size)
-                .await;
+            let send_data_result = self.export_traces(tracer_payload, header_tags, size).await;
             self.process_send_data_result(send_data_result, trace_count)
                 .await
         })
@@ -757,6 +774,9 @@ pub struct TraceExporterBuilder {
     dogstatsd_url: Option<String>,
     client_computed_stats: bool,
     client_computed_top_level: bool,
+    #[cfg(feature = "test-utils")]
+    /// not supported in production, but useful for interacting with the test-agent
+    query_params: Option<String>,
 
     // Stats specific fields
     /// A Some value enables stats-computation, None if it is disabled
@@ -890,6 +910,14 @@ impl TraceExporterBuilder {
         self
     }
 
+    #[cfg(feature = "test-utils")]
+    /// Set query parameters to be used in the URL when communicating with the test-agent. This is
+    /// not supported in production as the real agent doesn't accept query params.
+    pub fn set_query_params(mut self, query_params: &str) -> Self {
+        self.query_params = Some(query_params.to_owned());
+        self
+    }
+
     #[allow(missing_docs)]
     pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -951,6 +979,8 @@ impl TraceExporterBuilder {
             client_side_stats: ArcSwap::new(stats.into()),
             agent_info,
             previous_info_state: ArcSwapOption::new(None),
+            #[cfg(feature = "test-utils")]
+            query_params: self.query_params,
         })
     }
 }
