@@ -85,7 +85,24 @@ impl From<libc::c_int> for SignalNames {
             libc::SIGWINCH => SignalNames::SIGWINCH,
             libc::SIGIO => SignalNames::SIGIO,
             libc::SIGSYS => SignalNames::SIGSYS,
+            #[cfg(not(any(
+                target_os = "android",
+                target_os = "emscripten",
+                target_os = "fuchsia",
+                target_os = "linux",
+                target_os = "redox",
+                target_os = "haiku"
+            )))]
             libc::SIGEMT => SignalNames::SIGEMT,
+            #[cfg(not(any(
+                target_os = "android",
+                target_os = "emscripten",
+                target_os = "fuchsia",
+                target_os = "linux",
+                target_os = "redox",
+                target_os = "haiku",
+                target_os = "aix"
+            )))]
             libc::SIGINFO => SignalNames::SIGINFO,
             _ => SignalNames::UNKNOWN,
         }
@@ -125,7 +142,24 @@ impl From<nix::sys::signal::Signal> for SignalNames {
             nix::sys::signal::Signal::SIGWINCH => SignalNames::SIGWINCH,
             nix::sys::signal::Signal::SIGIO => SignalNames::SIGIO,
             nix::sys::signal::Signal::SIGSYS => SignalNames::SIGSYS,
+            #[cfg(not(any(
+                target_os = "android",
+                target_os = "emscripten",
+                target_os = "fuchsia",
+                target_os = "linux",
+                target_os = "redox",
+                target_os = "haiku"
+            )))]
             nix::sys::signal::Signal::SIGEMT => SignalNames::SIGEMT,
+            #[cfg(not(any(
+                target_os = "android",
+                target_os = "emscripten",
+                target_os = "fuchsia",
+                target_os = "linux",
+                target_os = "redox",
+                target_os = "haiku",
+                target_os = "aix"
+            )))]
             nix::sys::signal::Signal::SIGINFO => SignalNames::SIGINFO,
             _ => SignalNames::UNKNOWN,
         }
@@ -165,7 +199,24 @@ pub fn signal_from_signum(value: libc::c_int) -> anyhow::Result<nix::sys::signal
         libc::SIGWINCH => nix::sys::signal::Signal::SIGWINCH,
         libc::SIGIO => nix::sys::signal::Signal::SIGIO,
         libc::SIGSYS => nix::sys::signal::Signal::SIGSYS,
+        #[cfg(not(any(
+            target_os = "android",
+            target_os = "emscripten",
+            target_os = "fuchsia",
+            target_os = "linux",
+            target_os = "redox",
+            target_os = "haiku"
+        )))]
         libc::SIGEMT => nix::sys::signal::Signal::SIGEMT,
+        #[cfg(not(any(
+            target_os = "android",
+            target_os = "emscripten",
+            target_os = "fuchsia",
+            target_os = "linux",
+            target_os = "redox",
+            target_os = "haiku",
+            target_os = "aix"
+        )))]
         libc::SIGINFO => nix::sys::signal::Signal::SIGINFO,
         _ => anyhow::bail!("Unexpected signal number {value}"),
     };
