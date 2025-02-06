@@ -10,7 +10,6 @@ use std::ffi::{c_char, CString};
 /// MUST be freed with `ddog_trace_exporter_response_free`
 #[derive(Debug, Default)]
 pub struct ExporterResponse {
-    /// This field should only contain a pointer originated from `Cstring::into_raw`
     pub body: CString,
 }
 
