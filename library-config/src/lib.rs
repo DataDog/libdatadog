@@ -254,7 +254,7 @@ impl ProcessInfo {
 #[allow(clippy::enum_variant_names)]
 pub enum LibraryConfigName {
     // Phase 1: product enablement
-    DdTraceApmEnabled,
+    DdApmTracingEnabled,
     DdRuntimeMetricsEnabled,
     DdLogsInjection,
     DdProfilingEnabled,
@@ -276,7 +276,7 @@ impl LibraryConfigName {
     pub fn to_str(&self) -> &'static str {
         use LibraryConfigName::*;
         match self {
-            DdTraceApmEnabled => "DD_TRACE_ENABLED",
+            DdApmTracingEnabled => "DD_APM_TRACING_ENABLED",
             DdRuntimeMetricsEnabled => "DD_RUNTIME_METRICS_ENABLED",
             DdLogsInjection => "DD_LOGS_INJECTION",
             DdProfilingEnabled => "DD_PROFILING_ENABLED",
@@ -748,7 +748,7 @@ mod tests {
         test_config(
             b"
 apm_configuration_default:
-  DD_TRACE_APM_ENABLED: true
+  DD_APM_TRACING_ENABLED: true
   DD_RUNTIME_METRICS_ENABLED: true
   DD_LOGS_INJECTION: true
   DD_PROFILING_ENABLED: true
@@ -762,7 +762,7 @@ apm_configuration_default:
             b"",
             vec![
                 LibraryConfig {
-                    name: DdTraceApmEnabled,
+                    name: DdApmTracingEnabled,
                     value: "true".to_owned(),
                     source: LocalStableConfig,
                     config_id: None,
@@ -834,7 +834,7 @@ apm_configuration_default:
             b"
 config_id: abc
 apm_configuration_default:
-  DD_TRACE_APM_ENABLED: true
+  DD_APM_TRACING_ENABLED: true
   DD_RUNTIME_METRICS_ENABLED: true
   DD_LOGS_INJECTION: true
   DD_PROFILING_ENABLED: true
@@ -847,7 +847,7 @@ apm_configuration_default:
     ",
             vec![
                 LibraryConfig {
-                    name: DdTraceApmEnabled,
+                    name: DdApmTracingEnabled,
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
@@ -918,20 +918,20 @@ apm_configuration_default:
         test_config(
             b"
 apm_configuration_default:
-  DD_TRACE_APM_ENABLED: true
+  DD_APM_TRACING_ENABLED: true
   DD_RUNTIME_METRICS_ENABLED: true
   DD_PROFILING_ENABLED: true
         ",
             b"
 config_id: abc
 apm_configuration_default:
-  DD_TRACE_APM_ENABLED: true
+  DD_APM_TRACING_ENABLED: true
   DD_LOGS_INJECTION: true
   DD_PROFILING_ENABLED: false
 ",
             vec![
                 LibraryConfig {
-                    name: DdTraceApmEnabled,
+                    name: DdApmTracingEnabled,
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
