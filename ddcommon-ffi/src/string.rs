@@ -74,16 +74,6 @@ pub unsafe extern "C" fn ddog_StringWrapper_message(s: Option<&StringWrapper>) -
     }
 }
 
-pub trait ToHexStr {
-    fn to_hex_str(&self) -> String;
-}
-
-impl ToHexStr for usize {
-    fn to_hex_str(&self) -> String {
-        format!("0x{:X}", self)
-    }
-}
-
 #[repr(C)]
 #[allow(dead_code)]
 pub enum StringWrapperResult {
