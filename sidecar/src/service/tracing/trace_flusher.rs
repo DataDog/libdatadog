@@ -255,7 +255,7 @@ impl TraceFlusher {
                         Err(e) => error!("Error receiving agent configuration: {e:?}"),
                     }
                 }
-                info!("Successfully flushed traces to {}", endpoint.url);
+                info!("Successfully flushed traces to {endpoint:?}");
             }
             Err(e) => {
                 error!("Error sending trace: {e:?}");
