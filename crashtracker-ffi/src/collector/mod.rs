@@ -136,7 +136,7 @@ pub unsafe extern "C" fn ddog_crasht_init_without_receiver(
 
 #[no_mangle]
 /// Returns a list of signals suitable for use in a crashtracker config.
-pub extern "C" fn ddog_crasht_default_signals<'a>() -> Slice<'a, libc::c_int> {
+pub extern "C" fn ddog_crasht_default_signals() -> Slice<'static, libc::c_int> {
     static DEFAULT_SYMBOLS: [libc::c_int; 4] =
         [libc::SIGBUS, libc::SIGABRT, libc::SIGSEGV, libc::SIGILL];
     Slice::new(&DEFAULT_SYMBOLS)
