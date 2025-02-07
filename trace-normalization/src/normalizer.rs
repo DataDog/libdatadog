@@ -17,6 +17,7 @@ pub enum SamplerPriority {
 }
 
 fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
+    println!("[lib] normalize_span");
     anyhow::ensure!(s.trace_id != 0, "TraceID is zero (reason:trace_id_zero)");
     anyhow::ensure!(s.span_id != 0, "SpanID is zero (reason:span_id_zero)");
 
@@ -54,6 +55,7 @@ pub(crate) fn is_valid_status_code(sc: &str) -> bool {
 /// * returns an error if there is a trace ID discrepancy between 2 spans
 /// * returns an error if at least one span cannot be normalized
 pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
+    println!("[lib] normalize_trace");
     let first_trace_id = match trace.first() {
         Some(first_span) => first_span.trace_id,
         None => anyhow::bail!("Normalize Trace Error: Trace is empty"),
@@ -76,6 +78,7 @@ pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
 /// * populates priority field if it wasn't populated the root span is used to populate these
 ///   fields, and it's index in TraceChunk spans vec must be passed.
 pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_span_index: usize) -> anyhow::Result<()> {
+    println!("[lib] normalize_chunk");
     // check if priority is not populated
     let root_span = match chunk.spans.get(root_span_index) {
         Some(span) => span,
