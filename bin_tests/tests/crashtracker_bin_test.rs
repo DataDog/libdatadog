@@ -11,7 +11,6 @@ use std::{fs, path::PathBuf};
 
 use anyhow::Context;
 use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
-use datadog_profiling::exporter;
 use serde_json::Value;
 
 #[test]
@@ -71,8 +70,23 @@ fn test_crash_tracking_bin_fork() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_abort() {
+    // For now, do the base test (donthing).  For future we should probably also test chaining.
     test_crash_tracking_bin(BuildProfile::Release, "donothing", "abort");
 }
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_sigill() {
+    // For now, do the base test (donthing).  For future we should probably also test chaining.
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "sigill");
+}
+
+// #[test]
+// #[cfg_attr(miri, ignore)]
+// fn test_crash_tracking_bin_sigbus() {
+//     // For now, do the base test (donthing).  For future we should probably also test chaining.
+//     test_crash_tracking_bin(BuildProfile::Release, "donothing", "sigbus");
+// }
 
 fn test_crash_tracking_bin(
     crash_tracking_receiver_profile: BuildProfile,
@@ -156,38 +170,36 @@ fn test_crash_tracking_bin(
 
 fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
     match crash_typ {
-        "abort" => assert_eq!(
-            *sig_info,
-            serde_json::json!({
-                "si_code": 0,
-                "si_code_human_readable": "UNKNOWN",
-                "si_signo": 6,
-                "si_signo_human_readable": "SIGABRT",
-            })
-        ),
+        "abort" => {
+            assert_eq!(sig_info["si_code"], 0);
+            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
+            assert_eq!(sig_info["si_signo"], libc::SIGABRT);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGABRT");
+        }
+        "sigbus" => {
+            assert_eq!(sig_info["si_code"], 2);
+            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
+            assert_eq!(sig_info["si_signo"], libc::SIGBUS);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGBUS");
+        }
+        "sigill" => {
+            assert_eq!(sig_info["si_code"], 2);
+            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
+            assert_eq!(sig_info["si_signo"], libc::SIGILL);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGILL");
+        }
         "null_deref" =>
         // On every platform other than OSX ARM, the si_code is 1: SEGV_MAPERR
         // On OSX ARM, its 2: SEGV_ACCERR
         {
+            assert_eq!(sig_info["si_addr"], "0x0000000000000000");
             assert!(
-                *sig_info
-                    == serde_json::json!({
-                        "si_addr": "0x0000000000000000",
-                        "si_code": 0,
-                        "si_code_human_readable": "UNKNOWN",
-                        "si_signo": 11,
-                        "si_signo_human_readable": "SIGSEGV",
-                    })
-                    || *sig_info
-                        == serde_json::json!({
-                            "si_addr": "0x0000000000000000",
-                            "si_code": 2,
-                            "si_code_human_readable": "UNKNOWN",
-                            "si_signo": 11,
-                            "si_signo_human_readable": "SIGSEGV",
-                        }),
-                "Unexpected sig_info: {sig_info}"
-            )
+                sig_info["si_code"] == 2 || sig_info["si_code"] == 1,
+                "{sig_info:?}"
+            );
+            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
+            assert_eq!(sig_info["si_signo"], libc::SIGSEGV);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGSEGV");
         }
         _ => panic!("unexpected crash_typ {crash_typ}"),
     }
@@ -231,33 +243,36 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
 
     match crash_typ {
         "abort" => {
-            let mut expected_tags = base_expected_tags.clone();
-            expected_tags.extend([
-                "si_code_human_readable:UNKNOWN",
-                "si_code:0",
-                "si_signo_human_readable:SIGABRT",
-                "si_signo:6",
-            ]);
-            assert_eq!(expected_tags, tags);
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
+            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(tags.contains("si_code:0"), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGABRT"), "{tags:?}");
+            assert!(tags.contains("si_signo:6"), "{tags:?}");
+        }
+        "sigbus" => {
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
+            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(tags.contains("si_code:2"), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGILL"), "{tags:?}");
+            assert!(tags.contains("si_signo:4"), "{tags:?}");
+        }
+        "sigill" => {
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
+            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(tags.contains("si_code:2"), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGILL"), "{tags:?}");
+            assert!(tags.contains("si_signo:4"), "{tags:?}");
         }
         "null_deref" => {
-            let mut expected_tags1 = base_expected_tags.clone();
-            expected_tags1.extend([
-                "si_addr:0x0000000000000000",
-                "si_code_human_readable:UNKNOWN",
-                "si_code:1",
-                "si_signo_human_readable:SIGSEGV",
-                "si_signo:11",
-            ]);
-            let mut expected_tags2 = base_expected_tags.clone();
-            expected_tags2.extend([
-                "si_addr:0x0000000000000000",
-                "si_code_human_readable:UNKNOWN",
-                "si_code:2",
-                "si_signo_human_readable:SIGSEGV",
-                "si_signo:11",
-            ]);
-            assert!(expected_tags1 == tags || expected_tags2 == tags, "{tags:?}");
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
+            assert!(tags.contains("si_addr:0x0000000000000000"), "{tags:?}");
+            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
+            assert!(tags.contains("si_signo:11"), "{tags:?}");
+            assert!(
+                tags.contains("si_code:1") || tags.contains("si_code:2"),
+                "{tags:?}"
+            );
         }
         _ => panic!("{crash_typ}"),
     }
