@@ -452,17 +452,17 @@ impl Configurator {
 
     pub const fn local_stable_configuration_path(target: Target) -> &'static str {
         match target {
-            Target::Linux => "/etc/datadog-agent/managed/datadog-agent/stable/application_monitoring.yaml",
-            Target::Macos => "/opt/datadog-agent/etc/stable/application_monitoring.yaml",
-            Target::Windows => "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml",
+            Target::Linux => "/etc/datadog-agent/application_monitoring.yaml",
+            Target::Macos => "/opt/datadog-agent/etc/application_monitoring.yaml",
+            Target::Windows => "C:\\ProgramData\\Datadog\\application_monitoring.yaml",
         }
     }
 
     pub const fn fleet_stable_configuration_path(target: Target) -> &'static str {
         match target {
-            Target::Linux => "/etc/datadog-agent/application_monitoring.yaml",
-            Target::Macos => "/opt/datadog-agent/etc/application_monitoring.yaml",
-            Target::Windows => "C:\\ProgramData\\Datadog\\application_monitoring.yaml",
+            Target::Linux => "/etc/datadog-agent/managed/datadog-agent/stable/application_monitoring.yaml",
+            Target::Macos => "/opt/datadog-agent/etc/stable/application_monitoring.yaml",
+            Target::Windows => "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml",
         }
     }
 
