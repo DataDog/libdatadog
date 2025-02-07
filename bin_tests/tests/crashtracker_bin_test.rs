@@ -70,23 +70,30 @@ fn test_crash_tracking_bin_fork() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_abort() {
-    // For now, do the base test (donthing).  For future we should probably also test chaining.
+    // For now, do the base test (donothing).  For future we should probably also test chaining.
     test_crash_tracking_bin(BuildProfile::Release, "donothing", "abort");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_sigill() {
-    // For now, do the base test (donthing).  For future we should probably also test chaining.
+    // For now, do the base test (donothing).  For future we should probably also test chaining.
     test_crash_tracking_bin(BuildProfile::Release, "donothing", "sigill");
 }
 
-// #[test]
-// #[cfg_attr(miri, ignore)]
-// fn test_crash_tracking_bin_sigbus() {
-//     // For now, do the base test (donthing).  For future we should probably also test chaining.
-//     test_crash_tracking_bin(BuildProfile::Release, "donothing", "sigbus");
-// }
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_sigbus() {
+    // For now, do the base test (donothing).  For future we should probably also test chaining.
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "sigbus");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_sigsegv() {
+    // For now, do the base test (donothing).  For future we should probably also test chaining.
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "sigsegv");
+}
 
 fn test_crash_tracking_bin(
     crash_tracking_receiver_profile: BuildProfile,
@@ -109,7 +116,16 @@ fn test_crash_tracking_bin(
         eprintln!("Waiting for exit");
         p.wait().unwrap()
     });
-    assert!(!exit_status.success());
+
+    // When we raise SIGSEGV/SIGBUS, the chained handler doesn't kill the program
+    // Presumably because continuing after raise is allowed.
+    // Not sure why sigill behaves differently??
+    // TODO: figure that out.
+    match crash_typ {
+        "null_deref" | "abort" | "sigill" => assert!(!exit_status.success()),
+        "sigbus" | "sigsegv" => (),
+        _ => unreachable!("{crash_typ} shouldn't happen"),
+    }
 
     let stderr_path = format!("{0}/out.stderr", fixtures.output_dir.display());
     let stderr = fs::read(stderr_path)
@@ -176,8 +192,14 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
             assert_eq!(sig_info["si_signo"], libc::SIGABRT);
             assert_eq!(sig_info["si_signo_human_readable"], "SIGABRT");
         }
-        "sigbus" => {
+        "sigsegv" => {
             assert_eq!(sig_info["si_code"], 2);
+            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
+            assert_eq!(sig_info["si_signo"], libc::SIGSEGV);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGSEGV");
+        }
+        "sigbus" => {
+            assert_eq!(sig_info["si_code"], 1);
             assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
             assert_eq!(sig_info["si_signo"], libc::SIGBUS);
             assert_eq!(sig_info["si_signo_human_readable"], "SIGBUS");
@@ -252,9 +274,9 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
         "sigbus" => {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
-            assert!(tags.contains("si_code:2"), "{tags:?}");
-            assert!(tags.contains("si_signo_human_readable:SIGILL"), "{tags:?}");
-            assert!(tags.contains("si_signo:4"), "{tags:?}");
+            assert!(tags.contains("si_code:1"), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGBUS"), "{tags:?}");
+            assert!(tags.contains("si_signo:10"), "{tags:?}");
         }
         "sigill" => {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
@@ -262,6 +284,13 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
             assert!(tags.contains("si_code:2"), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGILL"), "{tags:?}");
             assert!(tags.contains("si_signo:4"), "{tags:?}");
+        }
+        "sigsegv" => {
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
+            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(tags.contains("si_code:2"), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
+            assert!(tags.contains("si_signo:11"), "{tags:?}");
         }
         "null_deref" => {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");

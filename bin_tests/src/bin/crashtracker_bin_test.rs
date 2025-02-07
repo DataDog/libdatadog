@@ -107,6 +107,7 @@ mod unix {
             "abort" => raise(Signal::SIGABRT)?,
             "sigill" => raise(Signal::SIGILL)?,
             "sigbus" => raise(Signal::SIGBUS)?,
+            "sigsegv" => raise(Signal::SIGSEGV)?,
             _ => anyhow::bail!("Unexpected crash_typ: {crash_typ}"),
         }
         crashtracker::end_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
