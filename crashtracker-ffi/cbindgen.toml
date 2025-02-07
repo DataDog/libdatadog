@@ -35,6 +35,12 @@ renaming_overrides_prefixing = true
 "Vec_Tag" = "ddog_Vec_Tag"
 "Vec_U8" = "ddog_Vec_U8"
 "VoidResult" = "ddog_VoidResult"
+"StringWrapper" = "ddog_StringWrapper"
+"StringWrapperResult" = "ddog_StringWrapperResult"
+"CrashInfoBuilderNewResult" = " ddog_crasht_CrashInfoBuilder_NewResult"
+"StackTraceNewResult" = " ddog_crasht_StackTrace_NewResult"
+"StackFrameNewResult" = "ddog_crasht_StackFrame_NewResult"
+"CrashInfoNewResult" = "ddog_crasht_CrashInfo_NewResult"
 
 [export.mangle]
 rename_types = "PascalCase"

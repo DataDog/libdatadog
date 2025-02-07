@@ -119,13 +119,27 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: 
         }),
         crash_payload["counters"],
     );
-    assert_eq!(
-        serde_json::json!({
-          "signum": 11,
-          "signame": "SIGSEGV",
-          "faulting_address": 0,
-        }),
-        crash_payload["siginfo"]
+    let sig_info = &crash_payload["sig_info"];
+    // On every platform other than OSX ARM, the si_code is 1: SEGV_MAPERR
+    // On OSX ARM, its 2: SEGV_ACCERR
+    assert!(
+        *sig_info
+            == serde_json::json!({
+                "si_addr": "0x0000000000000000",
+                "si_code": 1,
+                "si_code_human_readable": "UNKNOWN",
+                "si_signo": 11,
+                "si_signo_human_readable": "SIGSEGV",
+            })
+            || *sig_info
+                == serde_json::json!({
+                    "si_addr": "0x0000000000000000",
+                    "si_code": 2,
+                    "si_code_human_readable": "UNKNOWN",
+                    "si_signo": 11,
+                    "si_signo_human_readable": "SIGSEGV",
+                }),
+        "Unexpected sig_info: {sig_info}"
     );
 
     let crash_telemetry = fs::read(fixtures.crash_telemetry_path)
@@ -171,17 +185,36 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
         .split(',')
         .filter(|t| !t.starts_with("uuid:"))
         .collect::<std::collections::HashSet<_>>();
-    assert_eq!(
+    // As above, ARM OSX can have a si_code of 2.
+    assert!(
         std::collections::HashSet::from_iter([
-            "signum:11",
-            "profiler_unwinding:0",
+            "data_schema_version:1.2",
+            "incomplete:false",
+            "is_crash:true",
             "profiler_collecting_sample:1",
             "profiler_inactive:0",
             "profiler_serializing:0",
-            "signame:SIGSEGV",
-            "faulting_address:0x0000000000000000",
-        ]),
-        tags
+            "profiler_unwinding:0",
+            "si_addr:0x0000000000000000",
+            "si_code_human_readable:UNKNOWN",
+            "si_code:1",
+            "si_signo_human_readable:SIGSEGV",
+            "si_signo:11",
+        ]) == tags
+            || std::collections::HashSet::from_iter([
+                "data_schema_version:1.2",
+                "incomplete:false",
+                "is_crash:true",
+                "profiler_collecting_sample:1",
+                "profiler_inactive:0",
+                "profiler_serializing:0",
+                "profiler_unwinding:0",
+                "si_addr:0x0000000000000000",
+                "si_code_human_readable:UNKNOWN",
+                "si_code:2",
+                "si_signo_human_readable:SIGSEGV",
+                "si_signo:11",
+            ]) == tags
     );
     assert_eq!(telemetry_payload["payload"][0]["is_sensitive"], true);
 }
@@ -213,13 +246,44 @@ fn crash_tracking_empty_endpoint() {
         .unwrap();
 
     let (mut stream, _) = listener.accept().unwrap();
-    let mut out = vec![0; 65536];
-    let read = stream.read(&mut out).unwrap();
 
+    // The read call is not guaranteed to collect all available data.  On OSX it appears to grab
+    // data in 8192 byte chunks.  This was not an issue when the size of a crashreport was below
+    // there, but is a problem when the size is greater.
+    // The obvious thing would be to use `read_to_end` or even `read_to_string`.
+    // The problem with that is that we then block waiting for the client to close the channel,
+    // which it doesn't do till it gets the response from us. Deadlock.  OOPS.
+    // This is resolved by the timeout killing the receiver, but then we just fall back to the
+    // 404 write failing.  See comment below.
+    // This loop is a best effort attempt to fix the problem.
+    // It can fail in two ways.
+    // 1: There are exactly n*8192 bytes available.  We issue a read when there are 0 bytes
+    //    available and deadlock.
+    // 2: The read call decides not to return some but not all of the available bytes.  We exit
+    //    early with a malformed string.
+    // Since this is a test, the risk of those are low, but if this test spuriously fails, that
+    // is a good place to look.
+    let mut out = vec![0; 65536];
+    let blocksize = 8192;
+    let mut left = 0;
+    let mut right = blocksize;
+    let mut total_read = 0;
+    let mut done = false;
+    while !(done) {
+        let read = stream.read(&mut out[left..right]).unwrap();
+        total_read += read;
+        done = read != blocksize;
+        left += blocksize;
+        right += blocksize;
+    }
+    // We write a 404 back to the client to finish the handshake and have them end their
+    // transmission.  Its not clear to me that we should unwrap here: if the client timed out, it
+    // won't receive the message, but is that an error in the test, or should the test still
+    // continue and succeed if the message itself was received by the agent?
     stream
         .write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n")
         .unwrap();
-    let resp = String::from_utf8_lossy(&out[..read]);
+    let resp = String::from_utf8_lossy(&out[..total_read]);
     let pos = resp.find("\r\n\r\n").unwrap();
     let body = &resp[pos + 4..];
     assert_telemetry_message(body.as_bytes());

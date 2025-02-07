@@ -49,13 +49,13 @@ mod collector;
 mod crash_info;
 #[cfg(all(unix, feature = "receiver"))]
 mod receiver;
-pub mod rfc5_crash_info;
 #[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
 mod shared;
 
 #[cfg(all(unix, feature = "collector"))]
 pub use collector::{
-    begin_op, clear_spans, clear_traces, end_op, init, insert_span, insert_trace, on_fork,
+    begin_op, clear_additional_tags, clear_spans, clear_traces, consume_and_emit_additional_tags,
+    end_op, init, insert_additional_tag, insert_span, insert_trace, on_fork, remove_additional_tag,
     remove_span, remove_trace, reset_counters, shutdown_crash_handler, update_config,
     update_metadata, OpTypes,
 };

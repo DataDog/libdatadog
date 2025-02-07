@@ -47,7 +47,7 @@ Here's an example of using on of these scripts, placing the output inside `/opt/
 bash build-profiling-ffi.sh /opt/libdatadog
 ```
 
-#### Build Dependencies
+#### Build dependencies
 
 - Rust 1.78.0 or newer with cargo. See the Cargo.toml for information about bumping this version.
 - `cbindgen` 0.26
@@ -69,6 +69,25 @@ The simplest way to install [cargo-nextest][nt] is to use `cargo install` like t
 cargo install --locked 'cargo-nextest@0.9.85'
 ```
 
+#### Docker container
+A dockerfile is provided to run tests in a Ubuntu linux environment. This is particularly useful for running and debugging linux-only tests on macOS.
+
+To build the docker image, from the root directory of the libdatadog project run
+```bash
+docker build -f local-linux.Dockerfile -t libdatadog-linux .
+``` 
+
+To start the docker container, you can run
+```bash
+docker run -it --privileged -v "$(pwd)":/libdatadog -v cargo-cache:/home/user/.cargo libdatadog-linux
+```
+
+This will:
+1. Start the container in privileged mode to allow the container to run docker-in-docker, which is necessary for some integration tests.
+1. Mount the current directory (the root of the libdatadog workspace) into the container at `/libdatadog`.
+1. Mount a named volume `cargo-cache` to cache the cargo dependencies at ~/.cargo. This is helpful to avoid re-downloading dependencies every time you start the container, but isn't absolutely necessary.
+
+The `$CARGO_TARGET_DIR` environment variable is set to `/libdatadog/docker-linux-target` in the container, so cargo will use the target directory in the mounted volume to avoid conflicts with the host's default target directory of `libdatadog/target`.
 #### Skipping tracing integration tests
 
 Tracing integration tests require docker to be installed and running. If you don't have docker installed or you want to skip these tests, you can run:

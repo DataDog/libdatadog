@@ -37,7 +37,6 @@ lazy_static! {
         b"dburl",
         b"encryptionkey",
         b"encryptionkeyid",
-        b"env",
         b"geolocation",
         b"gpgkey",
         b"ipaddress",

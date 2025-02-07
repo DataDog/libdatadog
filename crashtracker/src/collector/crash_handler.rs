@@ -6,13 +6,13 @@
 
 use super::emitters::emit_crashreport;
 use super::saguard::SaGuard;
-use crate::crash_info::CrashtrackerMetadata;
+use crate::crash_info::Metadata;
 use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
 use crate::shared::constants::*;
 use anyhow::Context;
 use libc::{
-    c_void, execve, mmap, nfds_t, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE,
-    PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ,
+    c_void, execve, mmap, nfds_t, sigaltstack, siginfo_t, ucontext_t, MAP_ANON, MAP_FAILED,
+    MAP_PRIVATE, PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ,
 };
 use libc::{poll, pollfd, POLLHUP};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
@@ -256,7 +256,7 @@ fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
 // `Box::from_raw` to recreate the box, then dropping it.
 static ALTSTACK_INIT: AtomicBool = AtomicBool::new(false);
 static OLD_HANDLERS: AtomicPtr<OldHandlers> = AtomicPtr::new(ptr::null_mut());
-static METADATA: AtomicPtr<(CrashtrackerMetadata, String)> = AtomicPtr::new(ptr::null_mut());
+static METADATA: AtomicPtr<(Metadata, String)> = AtomicPtr::new(ptr::null_mut());
 static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
 static RECEIVER_CONFIG: AtomicPtr<CrashtrackerReceiverConfig> = AtomicPtr::new(ptr::null_mut());
 static RECEIVER_ARGS: AtomicPtr<PreparedExecve> = AtomicPtr::new(ptr::null_mut());
@@ -316,7 +316,7 @@ fn make_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<Receiver
 ///     No other crash-handler functions should be called concurrently.
 /// ATOMICITY:
 ///     This function uses a swap on an atomic pointer.
-pub fn update_metadata(metadata: CrashtrackerMetadata) -> anyhow::Result<()> {
+pub fn update_metadata(metadata: Metadata) -> anyhow::Result<()> {
     let metadata_string = serde_json::to_string(&metadata)?;
     let box_ptr = Box::into_raw(Box::new((metadata, metadata_string)));
     let old = METADATA.swap(box_ptr, SeqCst);
@@ -390,7 +390,7 @@ pub fn configure_receiver(config: CrashtrackerReceiverConfig) {
 extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucontext: *mut c_void) {
     // Handle the signal.  Note this has a guard to ensure that we only generate
     // one crash report per process.
-    let _ = handle_posix_signal_impl(signum, sig_info);
+    let _ = handle_posix_signal_impl(sig_info, ucontext as *mut ucontext_t);
 
     // Once we've handled the signal, chain to any previous handlers.
     // SAFETY: This was created by [register_crash_handlers].  There is a tiny
@@ -496,7 +496,10 @@ fn receiver_finish(receiver: Receiver, start_time: Instant, timeout_ms: u32) {
     }
 }
 
-fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Result<()> {
+fn handle_posix_signal_impl(
+    sig_info: *const siginfo_t,
+    ucontext: *const ucontext_t,
+) -> anyhow::Result<()> {
     // If this is a SIGSEGV signal, it could be called due to a stack overflow. In that case, since
     // this signal allocates to the stack and cannot guarantee it is running without SA_NODEFER, it
     // is possible that we will re-emit the signal. Contemporary unices handle this just fine (no
@@ -538,14 +541,6 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     let timeout_ms = config.timeout_ms;
     let start_time = Instant::now(); // This is the time at which the signal was received
 
-    // Derive the faulting address from `sig_info`
-    let faulting_address: Option<usize> =
-        if !sig_info.is_null() && (signum == libc::SIGSEGV || signum == libc::SIGBUS) {
-            unsafe { Some((*sig_info).si_addr() as usize) }
-        } else {
-            None
-        };
-
     // During the execution of this signal handler, block ALL other signals, especially because we
     // cannot control whether or not we run with SA_NODEFER (crashtracker might have been chained).
     // The especially problematic signals are SIGCHLD and SIGPIPE, which are possibly delivered due
@@ -581,8 +576,8 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
         config,
         config_str,
         metadata_string,
-        signum,
-        faulting_address,
+        sig_info,
+        ucontext,
     );
 
     let _ = unix_stream.flush();

@@ -10,6 +10,7 @@ extern "C" {
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -20,6 +21,11 @@ static ddog_CharSlice to_slice_c_char(const char *s, std::size_t size) {
 }
 static ddog_CharSlice to_slice_string(std::string const &s) {
   return {.ptr = s.data(), .len = s.length()};
+}
+
+static std::string to_string(ddog_CharSlice s)
+{
+  return std::string(s.ptr, s.len);
 }
 
 void print_error(const char *s, const ddog_Error &err) {
@@ -47,7 +53,7 @@ CHECK_RESULT(ddog_Vec_Tag_PushResult, DDOG_VEC_TAG_PUSH_RESULT_OK)
     }                                                                                              \
   };                                                                                               \
   std::unique_ptr<ddog_crasht_Handle_##typ, typ##Deleter> extract_result(                          \
-      ddog_crasht_Result_Handle##typ result, const char *msg) {                                    \
+      ddog_crasht_##typ##_NewResult result, const char *msg) {                                    \
     if (result.tag != ok_tag) {                                                                    \
       print_error(msg, result.err);                                                                \
       ddog_Error_drop(&result.err);                                                                \
@@ -59,18 +65,34 @@ CHECK_RESULT(ddog_Vec_Tag_PushResult, DDOG_VEC_TAG_PUSH_RESULT_OK)
   }
 
 EXTRACT_RESULT(CrashInfoBuilder,
-               DDOG_CRASHT_RESULT_HANDLE_CRASH_INFO_BUILDER_OK_HANDLE_CRASH_INFO_BUILDER)
-EXTRACT_RESULT(CrashInfo, DDOG_CRASHT_RESULT_HANDLE_CRASH_INFO_OK_HANDLE_CRASH_INFO)
-EXTRACT_RESULT(StackTrace, DDOG_CRASHT_RESULT_HANDLE_STACK_TRACE_OK_HANDLE_STACK_TRACE)
-EXTRACT_RESULT(StackFrame, DDOG_CRASHT_RESULT_HANDLE_STACK_FRAME_OK_HANDLE_STACK_FRAME)
+               DDOG_CRASHT_CRASH_INFO_BUILDER_NEW_RESULT_OK)
+EXTRACT_RESULT(CrashInfo, DDOG_CRASHT_CRASH_INFO_NEW_RESULT_OK)
+EXTRACT_RESULT(StackTrace, DDOG_CRASHT_STACK_TRACE_NEW_RESULT_OK)
+EXTRACT_RESULT(StackFrame, DDOG_CRASHT_STACK_FRAME_NEW_RESULT_OK)
 
-void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
-  auto stacktrace = extract_result(ddog_crasht_StackTrace_new(), "failed to make new StackTrace");
+std::optional<std::string> demangle(std::string const& name)
+{
+  // We must keep this call to demangle to check that the symbol is exported.
+  auto result = ddog_crasht_demangle(to_slice_string(name), DDOG_CRASHT_DEMANGLE_OPTIONS_COMPLETE);
+  if (result.tag == DDOG_STRING_WRAPPER_RESULT_OK)
+  {
+    auto demangled_name = to_string(ddog_StringWrapper_message(&result.ok));
+    ddog_StringWrapper_drop(&result.ok);
+    return demangled_name;
+  }
 
+  print_error("Failed to demangle string", result.err);
+  ddog_Error_drop(&result.err);
+  return {};
+}
+
+void add_random_frames(ddog_crasht_Handle_StackTrace* stacktrace) {
   for (uintptr_t i = 0; i < 10; ++i) {
     auto new_frame = extract_result(ddog_crasht_StackFrame_new(), "failed to make StackFrame");
     std::string name = "func_" + std::to_string(i);
-    check_result(ddog_crasht_StackFrame_with_function(new_frame.get(), to_slice_string(name)),
+    auto function_name = demangle(name).value_or(name);
+
+    check_result(ddog_crasht_StackFrame_with_function(new_frame.get(), to_slice_string(function_name)),
                  "failed to add function");
     std::string filename = "/path/to/code/file_" + std::to_string(i);
     check_result(ddog_crasht_StackFrame_with_file(new_frame.get(), to_slice_string(filename)),
@@ -81,16 +103,18 @@ void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
                  "failed to add line");
 
     // This operation consumes the frame, so use .release here
-    check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), new_frame.release()),
+    check_result(ddog_crasht_StackTrace_push_frame(stacktrace, new_frame.release(), true),
                  "failed to add stack frame");
   }
+  
+}
 
+void add_windows_style_frame(ddog_crasht_Handle_StackTrace* stacktrace) {
   // Windows style frame with normalization
   auto pbd_frame = extract_result(ddog_crasht_StackFrame_new(), "failed to make StackFrame");
-  check_result(ddog_crasht_StackFrame_with_ip(pbd_frame.get(), to_slice_c_char("0xDEADBEEF")),
+  check_result(ddog_crasht_StackFrame_with_ip(pbd_frame.get(), 0XDEADBEEF),
                "failed to add ip");
-  check_result(ddog_crasht_StackFrame_with_module_base_address(pbd_frame.get(),
-                                                               to_slice_c_char("0xABBAABBA")),
+  check_result(ddog_crasht_StackFrame_with_module_base_address(pbd_frame.get(), 0XABBAABBA),
                "failed to add module_base_address");
   check_result(
       ddog_crasht_StackFrame_with_build_id(pbd_frame.get(), to_slice_c_char("abcdef12345")),
@@ -98,24 +122,25 @@ void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
   check_result(
       ddog_crasht_StackFrame_with_build_id_type(pbd_frame.get(), DDOG_CRASHT_BUILD_ID_TYPE_PDB),
       "failed to add build id type");
-  check_result(ddog_crasht_StackFrame_with_file_type(pbd_frame.get(), DDOG_CRASHT_FILE_TYPE_PDB),
+  check_result(ddog_crasht_StackFrame_with_file_type(pbd_frame.get(), DDOG_CRASHT_FILE_TYPE_PE),
                "failed to add file type");
   check_result(ddog_crasht_StackFrame_with_path(
                    pbd_frame.get(), to_slice_c_char("C:/Program Files/best_program_ever.exe")),
                "failed to add path");
   check_result(
-      ddog_crasht_StackFrame_with_relative_address(pbd_frame.get(), to_slice_c_char("0xBABEF00D")),
+      ddog_crasht_StackFrame_with_relative_address(pbd_frame.get(), 0XBABEF00D),
       "failed to add relative address");
   // This operation consumes the frame, so use .release here
-  check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), pbd_frame.release()),
+  check_result(ddog_crasht_StackTrace_push_frame(stacktrace, pbd_frame.release(), true),
                "failed to add stack frame");
+}
 
+void add_elf_frame(ddog_crasht_Handle_StackTrace* stacktrace) {
   // ELF style frame with normalization
   auto elf_frame = extract_result(ddog_crasht_StackFrame_new(), "failed to make StackFrame");
-  check_result(ddog_crasht_StackFrame_with_ip(elf_frame.get(), to_slice_c_char("0xDEADBEEF")),
+  check_result(ddog_crasht_StackFrame_with_ip(elf_frame.get(), 0XDEADBEEF),
                "failed to add ip");
-  check_result(ddog_crasht_StackFrame_with_module_base_address(elf_frame.get(),
-                                                               to_slice_c_char("0xABBAABBA")),
+  check_result(ddog_crasht_StackFrame_with_module_base_address(elf_frame.get(), 0XABBAABBA),
                "failed to add module_base_address");
   check_result(
       ddog_crasht_StackFrame_with_build_id(elf_frame.get(), to_slice_c_char("987654321fedcba0")),
@@ -129,16 +154,48 @@ void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
                                                 to_slice_c_char("/usr/bin/awesome-gnu-utility.so")),
                "failed to add path");
   check_result(
-      ddog_crasht_StackFrame_with_relative_address(elf_frame.get(), to_slice_c_char("0xBABEF00D")),
+      ddog_crasht_StackFrame_with_relative_address(elf_frame.get(), 0XBABEF00D),
       "failed to add relative address");
   // This operation consumes the frame, so use .release here
-  check_result(ddog_crasht_StackTrace_push_frame(stacktrace.get(), elf_frame.release()),
+  check_result(ddog_crasht_StackTrace_push_frame(stacktrace, elf_frame.release(), true),
                "failed to add stack frame");
+}
+
+void add_thread(ddog_crasht_Handle_CrashInfoBuilder *builder) {
+  auto stacktrace = extract_result(ddog_crasht_StackTrace_new(), "failed to make new StackTrace");
+  add_random_frames(stacktrace.get());
+
+  add_windows_style_frame(stacktrace.get());
+
+  add_elf_frame(stacktrace.get());
+
+  auto thread = ddog_crasht_ThreadData{
+    .crashed = false,
+    .name = to_slice_c_char("main thread"),
+    .stack = *stacktrace.release(), // stacktrace is consumed so use release
+    .state = to_slice_c_char("sleeping")
+  };
+  check_result(ddog_crasht_CrashInfoBuilder_with_thread(builder, thread), "failed to add a thread");
+}
+
+void add_stacktrace(ddog_crasht_Handle_CrashInfoBuilder *builder) {
+  auto stacktrace = extract_result(ddog_crasht_StackTrace_new(), "failed to make new StackTrace");
+
+  add_random_frames(stacktrace.get());
+
+  add_windows_style_frame(stacktrace.get());
+
+  add_elf_frame(stacktrace.get());
+
+  check_result(ddog_crasht_StackTrace_set_complete(stacktrace.get()),
+               "unable to set stacktrace as complete");
 
   // Now that all the frames are added to the stack, put the stack on the report
   // This operation consumes the stack, so use .release here
   check_result(ddog_crasht_CrashInfoBuilder_with_stack(builder, stacktrace.release()),
                "failed to add stacktrace");
+
+  add_thread(builder);
 }
 
 int main(void) {
@@ -183,6 +240,17 @@ int main(void) {
 
   check_result(ddog_crasht_CrashInfoBuilder_with_os_info_this_machine(builder.get()),
                "Failed to set os_info");
+
+  auto sigInfo = ddog_crasht_SigInfo {
+    .addr = "0xBABEF00D",
+    .code = 16,
+    .code_human_readable = DDOG_CRASHT_SI_CODES_UNKNOWN,
+    .signo = -1,
+    .signo_human_readable = DDOG_CRASHT_SIGNAL_NAMES_UNKNOWN
+  };
+
+  check_result(ddog_crasht_CrashInfoBuilder_with_sig_info(builder.get(), sigInfo),
+               "failed to add signal info");
 
   auto crashinfo = extract_result(ddog_crasht_CrashInfoBuilder_build(builder.release()),
                                   "failed to build CrashInfo");

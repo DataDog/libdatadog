@@ -26,6 +26,7 @@ crashtracker-collector = ["crashtracker-ffi", "datadog-crashtracker-ffi/collecto
 # Enables the use of this library to receiver crash-info from a suitable collector
 crashtracker-receiver = ["crashtracker-ffi", "datadog-crashtracker-ffi/receiver"]
 demangler = ["crashtracker-ffi", "datadog-crashtracker-ffi/demangler"]
+datadog-library-config-ffi = ["dep:datadog-library-config-ffi"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
@@ -46,3 +47,4 @@ symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features
 symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"] }
 symbolic-common = "12.8.0"
 data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
+datadog-library-config-ffi = {  path = "../library-config-ffi", default-features = false, optional = true }

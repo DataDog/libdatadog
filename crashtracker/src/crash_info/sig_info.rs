@@ -13,25 +13,6 @@ pub struct SigInfo {
     pub si_signo_human_readable: SignalNames,
 }
 
-impl From<crate::SigInfo> for SigInfo {
-    fn from(value: crate::SigInfo) -> Self {
-        let si_addr = value.faulting_address.map(|addr| format!("{addr:#018x}"));
-        // TODO, use the actual value when https://github.com/DataDog/libdatadog/pull/726 lands
-        let si_code = -1;
-        // TODO, use the actual value when https://github.com/DataDog/libdatadog/pull/726 lands
-        let si_code_human_readable = SiCodes::SI_USER;
-        let si_signo: libc::c_int = value.signum.try_into().unwrap(); // libc uses c_int, so this should fit.
-        let si_signo_human_readable = si_signo.into();
-        Self {
-            si_addr,
-            si_code,
-            si_code_human_readable,
-            si_signo,
-            si_signo_human_readable,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::upper_case_acronyms, non_camel_case_types)]
 #[repr(C)]
@@ -41,6 +22,7 @@ pub enum SignalNames {
     SIGBUS,
     SIGSEGV,
     SIGSYS,
+    UNKNOWN,
 }
 
 #[cfg(unix)]
@@ -86,6 +68,7 @@ pub enum SiCodes {
     SI_TKILL,
     SI_USER,
     SYS_SECCOMP,
+    UNKNOWN,
 }
 
 #[cfg(test)]

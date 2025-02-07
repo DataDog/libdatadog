@@ -23,6 +23,23 @@ pub struct Vec<T: Sized> {
     _marker: PhantomData<T>,
 }
 
+impl<T: Sized> Vec<T> {
+    pub fn from_std(vec: alloc::vec::Vec<T>) -> Self {
+        let mut v = ManuallyDrop::new(vec);
+        Self {
+            ptr: v.as_mut_ptr(),
+            len: v.len(),
+            capacity: v.capacity(),
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn into_std(self) -> alloc::vec::Vec<T> {
+        let v = ManuallyDrop::new(self);
+        unsafe { alloc::vec::Vec::from_raw_parts(v.ptr.cast_mut(), v.len, v.capacity) }
+    }
+}
+
 unsafe impl<T: Send> Send for Vec<T> {}
 
 unsafe impl<T: Sync> Sync for Vec<T> {}
@@ -45,20 +62,13 @@ impl<T> Drop for Vec<T> {
 
 impl<T> From<Vec<T>> for alloc::vec::Vec<T> {
     fn from(vec: Vec<T>) -> Self {
-        let v = ManuallyDrop::new(vec);
-        unsafe { alloc::vec::Vec::from_raw_parts(v.ptr as *mut T, v.len, v.capacity) }
+        vec.into_std()
     }
 }
 
 impl<T> From<alloc::vec::Vec<T>> for Vec<T> {
     fn from(vec: alloc::vec::Vec<T>) -> Self {
-        let mut v = ManuallyDrop::new(vec);
-        Self {
-            ptr: v.as_mut_ptr(),
-            len: v.len(),
-            capacity: v.capacity(),
-            _marker: PhantomData,
-        }
+        Self::from_std(vec)
     }
 }
 

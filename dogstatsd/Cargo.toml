@@ -11,6 +11,7 @@ bench = false
 [dependencies]
 datadog-protos = { version = "0.1.0", default-features = false, git = "https://github.com/DataDog/saluki/", rev = "c89b58e5784b985819baf11f13f7d35876741222" }
 ddsketch-agent = { version = "0.1.0", default-features = false, git = "https://github.com/DataDog/saluki/", rev = "c89b58e5784b985819baf11f13f7d35876741222" }
+derive_more = { version = "1.0.0", features = ["display", "into"] }
 hashbrown = { version = "0.14.3", default-features = false, features = ["inline-more"] }
 protobuf = { version = "3.5.0", default-features = false }
 ustr = { version = "1.0.0", default-features = false }
