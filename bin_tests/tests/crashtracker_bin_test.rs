@@ -11,6 +11,8 @@ use std::{fs, path::PathBuf};
 
 use anyhow::Context;
 use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
+use datadog_profiling::exporter;
+use serde_json::Value;
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -64,6 +66,12 @@ fn test_crash_tracking_bin_chained() {
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_fork() {
     test_crash_tracking_bin(BuildProfile::Release, "fork", "null_deref");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_abort() {
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "abort");
 }
 
 fn test_crash_tracking_bin(
@@ -125,32 +133,12 @@ fn test_crash_tracking_bin(
         crash_payload["counters"],
     );
     let sig_info = &crash_payload["sig_info"];
-    // On every platform other than OSX ARM, the si_code is 1: SEGV_MAPERR
-    // On OSX ARM, its 2: SEGV_ACCERR
-    assert!(
-        *sig_info
-            == serde_json::json!({
-                "si_addr": "0x0000000000000000",
-                "si_code": 1,
-                "si_code_human_readable": "UNKNOWN",
-                "si_signo": 11,
-                "si_signo_human_readable": "SIGSEGV",
-            })
-            || *sig_info
-                == serde_json::json!({
-                    "si_addr": "0x0000000000000000",
-                    "si_code": 2,
-                    "si_code_human_readable": "UNKNOWN",
-                    "si_signo": 11,
-                    "si_signo_human_readable": "SIGSEGV",
-                }),
-        "Unexpected sig_info: {sig_info}"
-    );
+    assert_siginfo_message(sig_info, crash_typ);
 
     let crash_telemetry = fs::read(fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
-    assert_telemetry_message(&crash_telemetry);
+    assert_telemetry_message(&crash_telemetry, crash_typ);
 
     // Crashtracking signal handler chaining tests, as well as other tests, might only be able to
     // influence system state after the main application has crashed, and has therefore lost the
@@ -166,7 +154,46 @@ fn test_crash_tracking_bin(
     }
 }
 
-fn assert_telemetry_message(crash_telemetry: &[u8]) {
+fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
+    match crash_typ {
+        "abort" => assert_eq!(
+            *sig_info,
+            serde_json::json!({
+                "si_code": 0,
+                "si_code_human_readable": "UNKNOWN",
+                "si_signo": 6,
+                "si_signo_human_readable": "SIGABRT",
+            })
+        ),
+        "null_deref" =>
+        // On every platform other than OSX ARM, the si_code is 1: SEGV_MAPERR
+        // On OSX ARM, its 2: SEGV_ACCERR
+        {
+            assert!(
+                *sig_info
+                    == serde_json::json!({
+                        "si_addr": "0x0000000000000000",
+                        "si_code": 0,
+                        "si_code_human_readable": "UNKNOWN",
+                        "si_signo": 11,
+                        "si_signo_human_readable": "SIGSEGV",
+                    })
+                    || *sig_info
+                        == serde_json::json!({
+                            "si_addr": "0x0000000000000000",
+                            "si_code": 2,
+                            "si_code_human_readable": "UNKNOWN",
+                            "si_signo": 11,
+                            "si_signo_human_readable": "SIGSEGV",
+                        }),
+                "Unexpected sig_info: {sig_info}"
+            )
+        }
+        _ => panic!("unexpected crash_typ {crash_typ}"),
+    }
+}
+
+fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
     let telemetry_payload: serde_json::Value =
         serde_json::from_slice::<serde_json::Value>(crash_telemetry)
             .context("deserializing crashtracker telemetry payload to json")
@@ -190,8 +217,8 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
         .split(',')
         .filter(|t| !t.starts_with("uuid:"))
         .collect::<std::collections::HashSet<_>>();
-    // As above, ARM OSX can have a si_code of 2.
-    assert!(
+
+    let base_expected_tags: std::collections::HashSet<&str> =
         std::collections::HashSet::from_iter([
             "data_schema_version:1.2",
             "incomplete:false",
@@ -200,27 +227,41 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
             "profiler_inactive:0",
             "profiler_serializing:0",
             "profiler_unwinding:0",
-            "si_addr:0x0000000000000000",
-            "si_code_human_readable:UNKNOWN",
-            "si_code:1",
-            "si_signo_human_readable:SIGSEGV",
-            "si_signo:11",
-        ]) == tags
-            || std::collections::HashSet::from_iter([
-                "data_schema_version:1.2",
-                "incomplete:false",
-                "is_crash:true",
-                "profiler_collecting_sample:1",
-                "profiler_inactive:0",
-                "profiler_serializing:0",
-                "profiler_unwinding:0",
+        ]);
+
+    match crash_typ {
+        "abort" => {
+            let mut expected_tags = base_expected_tags.clone();
+            expected_tags.extend([
+                "si_code_human_readable:UNKNOWN",
+                "si_code:0",
+                "si_signo_human_readable:SIGABRT",
+                "si_signo:6",
+            ]);
+            assert_eq!(expected_tags, tags);
+        }
+        "null_deref" => {
+            let mut expected_tags1 = base_expected_tags.clone();
+            expected_tags1.extend([
+                "si_addr:0x0000000000000000",
+                "si_code_human_readable:UNKNOWN",
+                "si_code:1",
+                "si_signo_human_readable:SIGSEGV",
+                "si_signo:11",
+            ]);
+            let mut expected_tags2 = base_expected_tags.clone();
+            expected_tags2.extend([
                 "si_addr:0x0000000000000000",
                 "si_code_human_readable:UNKNOWN",
                 "si_code:2",
                 "si_signo_human_readable:SIGSEGV",
                 "si_signo:11",
-            ]) == tags
-    );
+            ]);
+            assert!(expected_tags1 == tags || expected_tags2 == tags, "{tags:?}");
+        }
+        _ => panic!("{crash_typ}"),
+    }
+
     assert_eq!(telemetry_payload["payload"][0]["is_sensitive"], true);
 }
 
@@ -292,7 +333,7 @@ fn crash_tracking_empty_endpoint() {
     let resp = String::from_utf8_lossy(&out[..total_read]);
     let pos = resp.find("\r\n\r\n").unwrap();
     let body = &resp[pos + 4..];
-    assert_telemetry_message(body.as_bytes());
+    assert_telemetry_message(body.as_bytes(), "null_deref");
 }
 
 struct TestFixtures<'a> {
