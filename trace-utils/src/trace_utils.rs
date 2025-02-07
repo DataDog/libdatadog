@@ -42,6 +42,7 @@ pub async fn get_traces_from_request_body(
     let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_read(buffer.reader()) {
         Ok(res) => res,
         Err(err) => {
+            println!("ASTUYVE bailing in libdatadog because of error: {}", err);
             anyhow::bail!("Error deserializing trace from request body: {err}")
         }
     };
