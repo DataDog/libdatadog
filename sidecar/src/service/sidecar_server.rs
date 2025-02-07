@@ -32,7 +32,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
@@ -274,6 +274,13 @@ impl SidecarServer {
             }
         };
 
+        debug!(
+            "Received {} bytes of data for {:?} with headers {:?}",
+            data.len(),
+            target,
+            headers
+        );
+
         let mut size = 0;
         let mut processor = tracer_payload::DefaultTraceChunkProcessor;
         let mut payload_params = tracer_payload::TracerPayloadParams::new(
@@ -286,6 +293,7 @@ impl SidecarServer {
         payload_params.measure_size(&mut size);
         match payload_params.try_into() {
             Ok(payload) => {
+                trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
                 let data = SendData::new(size, payload, headers, target);
                 self.trace_flusher.enqueue(data);
             }
@@ -670,6 +678,7 @@ impl SidecarInterface for SidecarServer {
         #[cfg(windows)]
         remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
         config: SessionConfig,
+        is_fork: bool,
     ) -> Self::SetSessionConfigFut {
         debug!("Set session config for {session_id} to {config:?}");
 
@@ -762,7 +771,9 @@ impl SidecarInterface for SidecarServer {
         }
 
         Box::pin(async move {
-            session.shutdown_running_instances().await;
+            if !is_fork {
+                session.shutdown_running_instances().await;
+            }
             no_response().await
         })
     }
@@ -1000,6 +1011,7 @@ impl SidecarInterface for SidecarServer {
         } else {
             Some(Cow::Owned(token))
         };
+        debug!("Update test token of session {session_id} to {token:?}");
         fn update_cfg<F: FnOnce(Endpoint) -> anyhow::Result<()>>(
             endpoint: Option<Endpoint>,
             set: F,
