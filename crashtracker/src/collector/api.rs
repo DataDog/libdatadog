@@ -31,8 +31,11 @@ pub fn shutdown_crash_handler() -> anyhow::Result<()> {
     Ok(())
 }
 
+pub static DEFAULT_SYMBOLS: [libc::c_int; 4] =
+    [libc::SIGBUS, libc::SIGABRT, libc::SIGSEGV, libc::SIGILL];
+
 pub fn default_signals() -> Vec<libc::c_int> {
-    vec![libc::SIGBUS, libc::SIGABRT, libc::SIGSEGV, libc::SIGILL]
+    Vec::from(DEFAULT_SYMBOLS)
 }
 
 /// Reinitialize the crash-tracking infrastructure after a fork.
