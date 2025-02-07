@@ -66,7 +66,11 @@ fn test_crash_tracking_bin_fork() {
     test_crash_tracking_bin(BuildProfile::Release, "fork", "null_deref");
 }
 
-fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: &str, crash_typ: &str) {
+fn test_crash_tracking_bin(
+    crash_tracking_receiver_profile: BuildProfile,
+    mode: &str,
+    crash_typ: &str,
+) {
     let (crashtracker_bin, crashtracker_receiver) =
         setup_crashtracking_crates(crash_tracking_receiver_profile);
     let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
@@ -239,6 +243,7 @@ fn crash_tracking_empty_endpoint() {
         .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
         .arg(&fixtures.output_dir)
         .arg("donothing")
+        .arg("null_deref")
         .env(
             "DD_TRACE_AGENT_URL",
             format!("unix://{}", socket_path.display()),

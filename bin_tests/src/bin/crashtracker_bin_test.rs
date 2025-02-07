@@ -24,8 +24,9 @@ mod unix {
     const TEST_COLLECTOR_TIMEOUT_MS: u32 = 10_000;
 
     #[inline(never)]
-    unsafe fn deref_ptr(p: *mut u8) {
+    unsafe fn deref_ptr(p: *mut u8) -> u8 {
         *std::hint::black_box(p) = std::hint::black_box(1);
+        *std::hint::black_box(p)
     }
 
     pub fn main() -> anyhow::Result<()> {
@@ -97,14 +98,14 @@ mod unix {
         behavior.post(output_dir)?;
 
         crashtracker::begin_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
-        unsafe {
+        let x = unsafe {
             match crash_typ.as_str() {
                 "null_deref" => deref_ptr(std::ptr::null_mut::<u8>()),
                 _ => anyhow::bail!("Unexpected crash_typ: {crash_typ}"),
             }
-        }
+        };
         crashtracker::end_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
-
+        println!("{x}");
         Ok(())
     }
 }
