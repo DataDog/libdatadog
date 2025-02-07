@@ -15,58 +15,58 @@ use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_debug() {
-    test_crash_tracking_bin(BuildProfile::Debug, "donothing");
+    test_crash_tracking_bin(BuildProfile::Debug, "donothing", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_sigpipe() {
-    test_crash_tracking_bin(BuildProfile::Debug, "sigpipe");
+    test_crash_tracking_bin(BuildProfile::Debug, "sigpipe", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_sigchld() {
-    test_crash_tracking_bin(BuildProfile::Debug, "sigchld");
+    test_crash_tracking_bin(BuildProfile::Debug, "sigchld", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_sigchld_exec() {
-    test_crash_tracking_bin(BuildProfile::Debug, "sigchld_exec");
+    test_crash_tracking_bin(BuildProfile::Debug, "sigchld_exec", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_sigstack() {
-    test_crash_tracking_bin(BuildProfile::Release, "donothing_sigstack");
+    test_crash_tracking_bin(BuildProfile::Release, "donothing_sigstack", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_sigpipe_sigstack() {
-    test_crash_tracking_bin(BuildProfile::Release, "sigpipe_sigstack");
+    test_crash_tracking_bin(BuildProfile::Release, "sigpipe_sigstack", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_sigchld_sigstack() {
-    test_crash_tracking_bin(BuildProfile::Release, "sigchld_sigstack");
+    test_crash_tracking_bin(BuildProfile::Release, "sigchld_sigstack", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_chained() {
-    test_crash_tracking_bin(BuildProfile::Release, "chained");
+    test_crash_tracking_bin(BuildProfile::Release, "chained", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_fork() {
-    test_crash_tracking_bin(BuildProfile::Release, "fork");
+    test_crash_tracking_bin(BuildProfile::Release, "fork", "null_deref");
 }
 
-fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: &str) {
+fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: &str, crash_typ: &str) {
     let (crashtracker_bin, crashtracker_receiver) =
         setup_crashtracking_crates(crash_tracking_receiver_profile);
     let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
@@ -76,6 +76,7 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: 
         .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
         .arg(&fixtures.output_dir)
         .arg(mode)
+        .arg(crash_typ)
         .spawn()
         .unwrap();
     let exit_status = bin_tests::timeit!("exit after signal", {

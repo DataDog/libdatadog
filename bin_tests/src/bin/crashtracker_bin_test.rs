@@ -34,6 +34,7 @@ mod unix {
         let receiver_binary = args.next().context("Unexpected number of arguments")?;
         let output_dir = args.next().context("Unexpected number of arguments")?;
         let mode_str = args.next().context("Unexpected number of arguments")?;
+        let crash_typ = args.next().context("Missing crash type")?;
         anyhow::ensure!(args.next().is_none(), "unexpected extra arguments");
 
         let stderr_filename = format!("{output_dir}/out.stderr");
@@ -97,7 +98,10 @@ mod unix {
 
         crashtracker::begin_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
         unsafe {
-            deref_ptr(std::ptr::null_mut::<u8>());
+            match crash_typ.as_str() {
+                "null_deref" => deref_ptr(std::ptr::null_mut::<u8>()),
+                _ => anyhow::bail!("Unexpected crash_typ: {crash_typ}"),
+            }
         }
         crashtracker::end_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
 
