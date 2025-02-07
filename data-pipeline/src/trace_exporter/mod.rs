@@ -1654,18 +1654,17 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn exporter_metrics() {
         let server = MockServer::start();
-        let traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path("/v0.4/traces");
-            then.status(200)
-                .header("content-type", "application/json")
-                .body(
-                    r#"{
+        let response_body = r#"{
                         "rate_by_service": {
                             "service:foo,env:staging": 1.0,
                             "service:,env:": 0.8 
                         }
-                    }"#,
-                );
+                    }"#;
+        let traces_endpoint = server.mock(|when, then| {
+            when.method(POST).path("/v0.4/traces");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(response_body);
         });
 
         let metrics_endpoint = server.mock(|when, then| {
@@ -1695,7 +1694,7 @@ mod tests {
         let traces = vec![0x90];
         let bytes = tinybytes::Bytes::from(traces);
         let result = exporter.send(bytes, 1).unwrap();
-        assert_eq!(result, AgentResponse::from(0.8));
+        assert_eq!(result.body, response_body);
 
         traces_endpoint.assert_hits(1);
         while metrics_endpoint.hits() == 0 {

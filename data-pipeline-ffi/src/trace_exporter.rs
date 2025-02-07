@@ -774,19 +774,18 @@ mod tests {
         // (.NET) ping the agent with the aforementioned data type.
         unsafe {
             let server = MockServer::start();
+            let response_body = r#"{ 
+                        "rate_by_service": {
+                            "service:foo,env:staging": 1.0,
+                            "service:,env:": 0.8 
+                        }
+                    }"#;
 
             let mock_traces = server.mock(|when, then| {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
                     .path("/v0.4/traces");
-                then.status(200).body(
-                    r#"{
-                    "rate_by_service": {
-                        "service:foo,env:staging": 1.0,
-                        "service:,env:": 0.8 
-                    }
-                }"#,
-                );
+                then.status(200).body(response_body);
             });
 
             let cfg = TraceExporterConfig {
@@ -815,12 +814,17 @@ mod tests {
 
             let data = vec![0x90];
             let traces = ByteSlice::new(&data);
-            let mut response = AgentResponse { rate: 0.0 };
+            let mut response: MaybeUninit<Box<ExporterResponse>> = MaybeUninit::uninit();
 
-            ret = ddog_trace_exporter_send(Some(exporter.as_ref()), traces, 0, Some(&mut response));
+            ret = ddog_trace_exporter_send(
+                Some(exporter.as_ref()),
+                traces,
+                0,
+                Some(NonNull::new_unchecked(&mut response).cast()),
+            );
             mock_traces.assert();
             assert_eq!(ret, None);
-            assert_eq!(response.rate, 0.8);
+            assert_eq!(response.assume_init().body.to_string_lossy(), response_body);
 
             ddog_trace_exporter_free(exporter);
         }
@@ -833,18 +837,17 @@ mod tests {
     fn exporter_send_telemetry_test() {
         unsafe {
             let server = MockServer::start();
-            let mock_traces = server.mock(|when, then| {
-                when.method(POST).path("/v0.4/traces");
-                then.status(200)
-                    .header("content-type", "application/json")
-                    .body(
-                        r#"{
+            let response_body = r#"{ 
                         "rate_by_service": {
                             "service:foo,env:staging": 1.0,
                             "service:,env:": 0.8 
                         }
-                    }"#,
-                    );
+                    }"#;
+            let mock_traces = server.mock(|when, then| {
+                when.method(POST).path("/v0.4/traces");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(response_body);
             });
 
             let mock_metrics = server.mock(|when, then| {
@@ -895,15 +898,7 @@ mod tests {
             );
             mock_traces.assert();
             assert_eq!(ret, None);
-            assert_eq!(
-                response.assume_init().body.to_string_lossy(),
-                r#"{
-                    "rate_by_service": {
-                        "service:foo,env:staging": 1.0,
-                        "service:,env:": 0.8 
-                    }
-                }"#,
-            );
+            assert_eq!(response.assume_init().body.to_string_lossy(), response_body);
 
             ddog_trace_exporter_free(exporter);
             mock_metrics.assert();
