@@ -81,6 +81,51 @@ unsafe fn emit_backtrace_by_frames(
     Ok(())
 }
 
+
+// libunwind structures and functions
+#[repr(C)]
+struct UnwContext([u8; 1024]); // Placeholder size for unw_context_t
+
+#[repr(C)]
+struct UnwCursor([u8; 1024]); // Placeholder size for unw_cursor_t
+
+extern "C" {
+    fn _ULx86_64_init_local(cursor: *mut UnwCursor, context: *mut UnwContext) -> i32;
+    fn _ULx86_64_step(cursor: *mut UnwCursor) -> i32;
+    fn _ULx86_64_get_reg(cursor: *mut UnwCursor, reg: i32, valp: *mut u64) -> i32;
+}
+
+const UNW_REG_IP: i32 = 16; // Register number for Instruction Pointer
+const UNW_REG_SP: i32 = 17; // Register number for Stack Pointer
+
+fn emit_backtrace_libuwnind(w: &mut impl Write, ucontext: *const ucontext_t) -> anyhow::Result<()> {
+    unsafe {
+        let mut context = UnwContext([0; 1024]);
+        let mut cursor = UnwCursor([0; 1024]);
+
+        if _ULx86_64_init_local(&mut cursor, &mut context) != 0 {
+            writeln!(w, "Failed to initialize libunwind cursor")?;
+            return Ok(());
+        }
+
+        writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
+        while _ULx86_64_step(&mut cursor) > 0 {
+            let mut ip: u64 = 0;
+            let mut sp: u64 = 0;
+            if _ULx86_64_get_reg(&mut cursor, UNW_REG_IP, &mut ip) == 0 &&
+               _ULx86_64_get_reg(&mut cursor, UNW_REG_SP, &mut sp) == 0 {
+                writeln!(w, "{{ \"ip\": \"{:x}\", \"sp\": \"{:x}\" }}", ip, sp)?;
+            } else {
+                writeln!(w, "Failed to get registers")?;
+                break;
+            }
+        }
+        writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
+    }
+    Ok(())
+}
+
+
 pub(crate) fn emit_crashreport(
     pipe: &mut impl Write,
     config: &CrashtrackerConfiguration,
@@ -109,7 +154,9 @@ pub(crate) fn emit_crashreport(
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
     // Do this last, so even if it crashes, we still get the other info.
     if config.resolve_frames != StacktraceCollection::Disabled {
-        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames)? };
+        // todo: add a switch between musl / glibc
+        // unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames)? };
+        emit_backtrace_libuwnind(pipe, ucontext)?;
     }
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
