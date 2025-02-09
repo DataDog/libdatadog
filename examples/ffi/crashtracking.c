@@ -6,16 +6,23 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <time.h>
+
+#define CRASH_REPORTS_DIR "/tmp/crashreports"
+#define TIMESTAMP_FORMAT "%Y%m%d_%H%M%S"
 
 void example_segfault_handler(int signal) {
-  printf("Segmentation fault caught. Signal number: %d\n", signal);
-  exit(-1);
+  fprintf(stderr, "Segmentation fault caught. Signal number: %d\n", signal);
+  exit(EXIT_FAILURE);
 }
 
 void handle_result(ddog_VoidResult result) {
   if (result.tag == DDOG_VOID_RESULT_ERR) {
     ddog_CharSlice message = ddog_Error_message(&result.err);
-    fprintf(stderr, "%.*s\n", (int)message.len, message.ptr);
+    fprintf(stderr, "Error: %.*s\n", (int)message.len, message.ptr);
     ddog_Error_drop(&result.err);
     exit(EXIT_FAILURE);
   }
@@ -24,38 +31,69 @@ void handle_result(ddog_VoidResult result) {
 uintptr_t handle_uintptr_t_result(ddog_crasht_Result_Usize result) {
   if (result.tag == DDOG_CRASHT_RESULT_USIZE_ERR_USIZE) {
     ddog_CharSlice message = ddog_Error_message(&result.err);
-    fprintf(stderr, "%.*s\n", (int)message.len, message.ptr);
+    fprintf(stderr, "Error: %.*s\n", (int)message.len, message.ptr);
     ddog_Error_drop(&result.err);
     exit(EXIT_FAILURE);
   }
   return result.ok;
 }
 
+void ensure_directory_exists(const char *path) {
+  struct stat st = {0};
+  if (stat(path, &st) == -1) {
+    if (mkdir(path, 0700) == -1) {
+      fprintf(stderr, "Failed to create directory: %s\n", path);
+      exit(EXIT_FAILURE);
+    }
+  }
+}
+
+void generate_unique_filename(char *buffer, size_t len) {
+  time_t now = time(NULL);
+  struct tm t;
+  if (localtime_r(&now, &t) == NULL) {
+    perror("Failed to get local time");
+    exit(EXIT_FAILURE);
+  }
+
+  // Format timestamp and append to directory path
+  snprintf(buffer, len, "%s/crashreport_", CRASH_REPORTS_DIR);
+  strftime(buffer + strlen(buffer), len - strlen(buffer), TIMESTAMP_FORMAT, &t);
+  strncat(buffer, ".json", len - strlen(buffer) - 1);
+}
+
 int main(int argc, char **argv) {
   if (signal(SIGSEGV, example_segfault_handler) == SIG_ERR) {
     perror("Error setting up signal handler");
-    return -1;
+    return EXIT_FAILURE;
   }
+
+  // Ensure the directory for crash reports exists
+  ensure_directory_exists(CRASH_REPORTS_DIR);
+
+  // Generate a unique crash report filename
+  char crash_report_filename[256];
+  generate_unique_filename(crash_report_filename, sizeof(crash_report_filename));
+  fprintf(stderr, "Using crash report file: %s\n", crash_report_filename);
+
+  // Set the receiver binary path using DATADOG_ROOT
+  const char *receiver_binary = DATADOG_ROOT "/bin/libdatadog-crashtracking-receiver";
+  fprintf(stderr, "Using receiver binary: %s\n", receiver_binary);
 
   ddog_crasht_ReceiverConfig receiver_config = {
       .args = {},
       .env = {},
-      //.path_to_receiver_binary = DDOG_CHARSLICE_C("SET ME TO THE ACTUAL PATH ON YOUR MACHINE"),
-      // E.g. on my machine, where I run ./build-profiling-ffi.sh /tmp/libdatadog
-      // .path_to_receiver_binary =
-           DDOG_CHARSLICE_C("/tmp/libdatadog/bin/libdatadog-crashtracking-receiver"),
-      .optional_stderr_filename = DDOG_CHARSLICE_C("/tmp/crashreports/stderr.txt"),
-      .optional_stdout_filename = DDOG_CHARSLICE_C("/tmp/crashreports/stdout.txt"),
+      .path_to_receiver_binary = {.ptr = receiver_binary, .len = strlen(receiver_binary)},
+      .optional_stderr_filename = DDOG_CHARSLICE_C(CRASH_REPORTS_DIR "/stderr.txt"),
+      .optional_stdout_filename = DDOG_CHARSLICE_C(CRASH_REPORTS_DIR "/stdout.txt"),
   };
 
-  struct ddog_Endpoint *endpoint =
-      ddog_endpoint_from_filename(DDOG_CHARSLICE_C("/tmp/crashreports/crashreport.json"));
-  // Alternatively:
-  //  struct ddog_Endpoint * endpoint =
-  //      ddog_endpoint_from_url(DDOG_CHARSLICE_C("http://localhost:8126"));
+  ddog_CharSlice report_filename_slice = {.ptr = crash_report_filename, .len = strlen(crash_report_filename)};
+  struct ddog_Endpoint *endpoint = ddog_endpoint_from_filename(report_filename_slice);
 
   ddog_crasht_Config config = {
-      .create_alt_stack = false,
+      .create_alt_stack = true,
+      .use_alt_stack = true,
       .endpoint = endpoint,
       .resolve_frames = DDOG_CRASHT_STACKTRACE_COLLECTION_ENABLED_WITH_INPROCESS_SYMBOLS,
   };
@@ -73,22 +111,23 @@ int main(int argc, char **argv) {
   handle_result(ddog_crasht_begin_op(DDOG_CRASHT_OP_TYPES_PROFILER_COLLECTING_SAMPLE));
   handle_uintptr_t_result(ddog_crasht_insert_span_id(0, 42));
   handle_uintptr_t_result(ddog_crasht_insert_trace_id(1, 1));
-  handle_uintptr_t_result(ddog_crasht_insert_additional_tag(DDOG_CHARSLICE_C("This is a very informative extra bit of info")));
-  handle_uintptr_t_result(ddog_crasht_insert_additional_tag(DDOG_CHARSLICE_C("This message will for sure help us debug the crash")));
+  handle_uintptr_t_result(ddog_crasht_insert_additional_tag(
+      DDOG_CHARSLICE_C("This is a very informative extra bit of info")));
+  handle_uintptr_t_result(ddog_crasht_insert_additional_tag(
+      DDOG_CHARSLICE_C("This is a very informative extra bit of info")));
 
 #ifdef EXPLICIT_RAISE_SEGV
-  // Test raising SEGV explicitly, to ensure chaining works
-  // properly in this case
-  raise(SIGSEGV);
+  raise(SIGSEGV); // Explicitly trigger segmentation fault for testing
 #endif
 
   char *bug = NULL;
-  *bug = 42;
-
-  // At this point, we expect the following files to be written into /tmp/crashreports
-  // foo.txt  foo.txt.telemetry  stderr.txt  stdout.txt
+  *bug = 42; // Cause segmentation fault
+  // find the expected crashtracking files in:
+  // ls /tmp/crashreports
+  // crashreport_20240719_165216.json stderr.txt stdout.txt
   return 0;
 }
+
 
 /* Example output file:
 {

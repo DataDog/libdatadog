@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.19)
 project(datadog_profiling_ffi_examples LANGUAGES C CXX)
 
 find_package(Datadog REQUIRED)
+message(STATUS "Selecting datadog build from: ${Datadog_ROOT}")
 
 set(VCRUNTIME_LINK_TYPE DLL CACHE STRING "Specify the Runtime Library to use when compiling with MSVC")
 set(CMAKE_EXPORT_COMPILE_COMMANDS on)
@@ -19,6 +20,23 @@ endfunction()
 # Uncomment to debug build commands
 # set(CMAKE_VERBOSE_MAKEFILE ON)
 
+# Datadog_ROOT is set by the find_package(Datadog) call
+set(library_config_header "${Datadog_ROOT}/include/datadog/library-config.h")
+# This helps find the crashtracker binary
+add_compile_definitions(DATADOG_ROOT="${Datadog_ROOT}")
+
+if(EXISTS "${library_config_header}")
+  message(STATUS "Header file found: ${library_config_header}")
+  
+  add_executable(library_config library_config.c)
+  target_link_libraries(library_config PRIVATE Datadog::Profiling)
+  set_vcruntime_link_type(library_config ${VCRUNTIME_LINK_TYPE})
+
+else()
+  message(INFO " Header file not found: ${library_config_header}. Skipping library_config example.")
+  message(INFO " Please build libdatadog with the associated feature enabled.")
+endif()
+
 add_executable(exporter exporter.cpp)
 # needed for designated initializers
 target_compile_features(exporter PRIVATE cxx_std_20)
@@ -29,7 +47,6 @@ add_executable(crashinfo crashinfo.cpp)
 # needed for designated initializers
 target_compile_features(crashinfo PRIVATE cxx_std_20)
 target_link_libraries(crashinfo PRIVATE Datadog::Profiling)
-
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
   target_compile_definitions(exporter PUBLIC _CRT_SECURE_NO_WARNINGS)
@@ -54,8 +71,14 @@ target_link_libraries(telemetry_metrics PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(telemetry_metrics ${VCRUNTIME_LINK_TYPE})
 
 if(NOT WIN32)
-  add_executable(crashtracking crashtracking.c)
-  target_link_libraries(crashtracking PRIVATE Datadog::Profiling)
+  # check existence of ${Datadog_ROOT}/bin/libdatadog-crashtracking-receiver 
+  if(NOT EXISTS "${Datadog_ROOT}/bin/libdatadog-crashtracking-receiver")
+    message(INFO " libdatadog-crashtracking-receiver not found. Skipping crashtracking example.")
+    message(INFO " Please build libdatadog with the associated feature enabled.")
+  else()
+    add_executable(crashtracking crashtracking.c)
+    target_link_libraries(crashtracking PRIVATE Datadog::Profiling)
+  endif()
 endif()
 
 add_executable(trace_exporter trace_exporter.c)
@@ -66,7 +89,3 @@ add_executable(array_queue array_queue.cpp)
 target_compile_features(array_queue PRIVATE cxx_std_20)
 target_link_libraries(array_queue PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(array_queue ${VCRUNTIME_LINK_TYPE})
-
-add_executable(library_config library_config.c)
-target_link_libraries(library_config PRIVATE Datadog::Profiling)
-set_vcruntime_link_type(library_config ${VCRUNTIME_LINK_TYPE})

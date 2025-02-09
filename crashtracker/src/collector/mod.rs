@@ -14,6 +14,13 @@ pub use additional_tags::{
     clear_additional_tags, consume_and_emit_additional_tags, insert_additional_tag,
     remove_additional_tag,
 };
+
+#[cfg(target_arch = "x86_64")]
+pub mod libunwind_x86_64;
+
+#[cfg(target_arch = "arm")]
+pub mod libunwind_arm;
+
 pub use api::*;
 pub use counters::{begin_op, end_op, reset_counters, OpTypes};
 pub use crash_handler::{update_config, update_metadata};
