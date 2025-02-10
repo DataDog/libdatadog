@@ -63,6 +63,7 @@ pub struct Config<'a> {
     pub endpoint: Option<&'a Endpoint>,
     pub resolve_frames: StacktraceCollection,
     /// The set of signals we should be registered for.
+    /// If empty, use the default set.
     pub signals: Slice<'a, i32>,
     /// Timeout in milliseconds before the signal handler starts tearing things down to return.
     /// This is given as a uint32_t, but the actual timeout needs to fit inside of an i32 (max

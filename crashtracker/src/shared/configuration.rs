@@ -1,6 +1,6 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use crate::shared::constants;
+use crate::{default_signals, shared::constants, signal_from_signum};
 use ddcommon::Endpoint;
 use serde::{Deserialize, Serialize};
 
@@ -90,15 +90,22 @@ impl CrashtrackerConfiguration {
         } else {
             timeout_ms
         };
-        anyhow::ensure!(!signals.is_empty(), "Expect to monitor at least one signal");
-        // Ensure we don't have double elements in the signals list.
-        let before_len = signals.len();
-        signals.sort();
-        signals.dedup();
-        anyhow::ensure!(
-            before_len == signals.len(),
-            "Signals contained duplicate elements"
-        );
+        if signals.is_empty() {
+            signals = default_signals();
+        } else {
+            // Ensure we don't have double elements in the signals list.
+            let before_len = signals.len();
+            signals.sort();
+            signals.dedup();
+            anyhow::ensure!(
+                before_len == signals.len(),
+                "Signals contained duplicate elements"
+            );
+            // Ensure that all signal values translate to a valid signum
+            signals
+                .iter()
+                .try_for_each(|x| signal_from_signum(*x).map(|_| ()))?;
+        }
 
         // Note:  don't check the receiver socket upfront, since a configuration can be interned
         // before the receiver is started when using an async-receiver.
