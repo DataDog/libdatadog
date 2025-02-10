@@ -29,7 +29,7 @@ Note: No Ruby needed to run this! It all runs inside docker :)
 Note: Publishing new releases to rubygems.org can only be done by Datadog employees.
 
 1. [ ] Locate the new libdatadog release on GitHub: <https://github.com/datadog/libdatadog/releases>
-2. [ ] Update the `LIB_VERSION_TO_PACKAGE` and `LIB_GITHUB_RELEASES` sections of the `Rakefile` with the new version
+2. [ ] Update the `LIB_GITHUB_RELEASES` section of the `Rakefile` with the hashes from the new version
 3. [ ] Update the <lib/libdatadog/version.rb> file with the `LIB_VERSION` and `VERSION` to use
 4. [ ] Commit change, open PR, get it merged
 5. [ ] Release by running `docker-compose run push_to_rubygems`.
