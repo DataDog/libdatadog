@@ -53,7 +53,7 @@ impl From<OriginService> for u32 {
     }
 }
 
-pub fn get_metric_origin(name: &str) -> Option<Metadata> {
+pub fn get_origin(name: &str) -> Option<Metadata> {
     let prefix = name.split('.').take(2).collect::<Vec<&str>>().join(".");
 
     match prefix {
@@ -105,3 +105,34 @@ pub fn get_metric_origin(name: &str) -> Option<Metadata> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_origin_product() {
+        let origin_product: u32 = OriginProduct::Serverless.into();
+        assert_eq!(origin_product, 1);
+    }
+
+    #[test]
+    fn test_origin_category() {
+        let origin_category: u32 = OriginCategory::LambdaMetrics.into();
+        assert_eq!(origin_category, 38);
+    }
+
+    #[test]
+    fn test_origin_service() {
+        let origin_service: u32 = OriginService::Other.into();
+        assert_eq!(origin_service, 0);
+    }
+
+    #[test]
+    fn test_get_origin() {
+        let origin = get_origin("aws.lambda.enhanced.invocations");
+        assert_eq!(origin.as_ref().unwrap().origin.as_ref().unwrap().origin_product, 1);
+        assert_eq!(origin.as_ref().unwrap().origin.as_ref().unwrap().origin_category, 38);
+        assert_eq!(origin.as_ref().unwrap().origin.as_ref().unwrap().origin_service, 0);
+    }
+ }

@@ -7,7 +7,7 @@ use crate::constants;
 use crate::datadog::{self, Metric as MetricToShip, Series};
 use crate::errors;
 use crate::metric::{self, Metric, MetricValue, SortedTags};
-use crate::metrics_origins::get_metric_origin;
+use crate::origins::get_origin;
 use std::time;
 
 use datadog_protos::metrics::{Dogsketch, Sketch, SketchPayload, Metadata};
@@ -270,7 +270,7 @@ fn build_sketch(now: i64, entry: &Metric, mut base_tag_vec: SortedTags) -> Optio
     }
     sketch.set_tags(base_tag_vec.to_chars());
 
-    let metadata: Option<Metadata> = get_metric_origin(&name);
+    let metadata: Option<Metadata> = get_origin(&name);
     if let Some(metadata) = metadata {
         sketch.set_metadata(metadata);
     }
