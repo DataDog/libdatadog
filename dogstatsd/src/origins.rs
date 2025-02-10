@@ -59,8 +59,9 @@ pub fn get_origin(metric: &Metric) -> Option<Metadata> {
     let prefix = name.split('.').take(2).collect::<Vec<&str>>().join(".");
 
     if let Some(tags) = &metric.tags {
-        if tags.contains("function_arn") {
-            println!("======================== FOUND FUNCTION ARN TAG ========================");
+        println!("========================== Metric tags: {:?}", tags);
+        if tags.contains("env:dev") {
+            println!("======================== FOUND TAG ========================");
         }
     }
 
