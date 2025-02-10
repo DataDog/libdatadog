@@ -54,7 +54,11 @@ fn now() -> u64 {
             tv_nsec: 0,
         };
         unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
-        (ts.tv_sec as i64 * TIME_PER_SECOND + ts.tv_nsec as i64) as u64
+        #[cfg(target_pointer_width = "64")]
+        let result = (ts.tv_sec * TIME_PER_SECOND + ts.tv_nsec) as u64;
+        #[cfg(target_pointer_width = "32")]
+        let result = (ts.tv_sec as i64 * TIME_PER_SECOND + ts.tv_nsec as i64) as u64;
+        result
     };
     now
 }
