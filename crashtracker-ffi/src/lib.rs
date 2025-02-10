@@ -8,7 +8,8 @@ mod crash_info;
 mod demangler;
 #[cfg(all(unix, feature = "receiver"))]
 mod receiver;
-
+#[cfg(all(windows, feature = "collector"))]
+mod collector_windows;
 #[cfg(all(unix, feature = "collector"))]
 pub use collector::*;
 pub use crash_info::*;

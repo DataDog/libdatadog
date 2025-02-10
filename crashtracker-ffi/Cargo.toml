@@ -12,10 +12,11 @@ license.workspace = true
 bench = false
 
 [features]
-default = ["cbindgen", "collector", "demangler", "receiver"]
+default = ["cbindgen", "collector", "collector_windows", "demangler", "receiver"]
 cbindgen = ["build_common/cbindgen"]
 # Enables the in-process collection of crash-info
 collector = []
+collector_windows = []
 demangler = ["dep:symbolic-demangle", "dep:symbolic-common"]
 # Enables the use of this library to receiver crash-info from a suitable collector
 receiver = []
@@ -35,6 +36,14 @@ function_name = "0.3.0"
 libc = "0.2.167"
 windows = { version = "0.59.0", features = [
     "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_ErrorReporting",
-    "Win32_System_Kernel"
+    "Win32_System_Kernel",
+    "Win32_System_ProcessStatus",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
 ] }
+serde_json = "1.0.132"
+serde = { version = "1.0.214", features = ["derive"] }
+log = "0.4.22"
