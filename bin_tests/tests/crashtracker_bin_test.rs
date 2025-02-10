@@ -270,7 +270,11 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGBUS"), "{tags:?}");
-            assert!(tags.contains("si_signo:10"), "{tags:?}");
+            // SIGBUS can be 7 or 10, depending on the os.
+            assert!(
+                tags.contains(format!("si_signo:{}", libc::SIGBUS).as_str()),
+                "{tags:?}"
+            );
         }
         "sigill" => {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
