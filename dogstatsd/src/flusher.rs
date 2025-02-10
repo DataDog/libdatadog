@@ -52,7 +52,7 @@ impl Flusher {
         debug!("Flushing {n_series} series and {n_distributions} distributions");
 
         let dd_api_clone = self.dd_api.clone();
-        tokio::spawn(async move {
+        let series_handle = tokio::spawn(async move {
             for a_batch in all_series {
                 let continue_shipping =
                     should_try_next_batch(dd_api_clone.ship_series(&a_batch).await).await;
@@ -62,7 +62,7 @@ impl Flusher {
             }
         });
         let dd_api_clone = self.dd_api.clone();
-        tokio::spawn(async move {
+        let distributions_handle = tokio::spawn(async move {
             for a_batch in all_distributions {
                 let continue_shipping =
                     should_try_next_batch(dd_api_clone.ship_distributions(&a_batch).await).await;
@@ -71,6 +71,15 @@ impl Flusher {
                 }
             }
         });
+
+        match tokio::try_join!(series_handle, distributions_handle) {
+            Ok(_) => {
+                debug!("Successfully flushed {n_series} series and {n_distributions} distributions")
+            }
+            Err(err) => {
+                error!("Failed to flush metrics{err}")
+            }
+        };
     }
 }
 
