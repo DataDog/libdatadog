@@ -1,6 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::metric::Metric;
 use datadog_protos::metrics::{Metadata, Origin};
 use protobuf::MessageField;
 
@@ -11,7 +12,7 @@ const AWS_LAMBDA_PREFIX: &str = "aws.lambda";
 const AWS_STEP_FUNCTIONS_PREFIX: &str = "aws.states";
 
 /// Represents the product origin of a metric.
-/// The full enum is exhaustive so we only include what we need. Please reference the corresponding enum for all possible values 
+/// The full enum is exhaustive so we only include what we need. Please reference the corresponding enum for all possible values
 /// https://github.com/DataDog/dd-source/blob/573dee9b5f7ee13935cb3ad11b16dde970528983/domains/metrics/shared/libs/proto/origin/origin.proto#L161
 pub enum OriginProduct {
     Serverless = 1,
@@ -24,7 +25,7 @@ impl From<OriginProduct> for u32 {
 }
 
 /// Represents the category origin of a metric.
-/// The full enum is exhaustive so we only include what we need. Please reference the corresponding enum for all possible values 
+/// The full enum is exhaustive so we only include what we need. Please reference the corresponding enum for all possible values
 /// https://github.com/DataDog/dd-source/blob/573dee9b5f7ee13935cb3ad11b16dde970528983/domains/metrics/shared/libs/proto/origin/origin.proto#L276
 pub enum OriginCategory {
     AppServicesMetrics = 35,
@@ -41,7 +42,7 @@ impl From<OriginCategory> for u32 {
 }
 
 /// Represents the service origin of a metric.
-/// The full enum is exhaustive so we only include what we need. Please reference the corresponding enum for all possible values 
+/// The full enum is exhaustive so we only include what we need. Please reference the corresponding enum for all possible values
 /// https://github.com/DataDog/dd-source/blob/573dee9b5f7ee13935cb3ad11b16dde970528983/domains/metrics/shared/libs/proto/origin/origin.proto#L417
 pub enum OriginService {
     Other = 0,
@@ -53,8 +54,15 @@ impl From<OriginService> for u32 {
     }
 }
 
-pub fn get_origin(name: &str) -> Option<Metadata> {
+pub fn get_origin(metric: &Metric) -> Option<Metadata> {
+    let name = metric.name.to_string();
     let prefix = name.split('.').take(2).collect::<Vec<&str>>().join(".");
+
+    if let Some(tags) = &metric.tags {
+        if tags.contains("function_arn") {
+            println!("======================== FOUND FUNCTION ARN TAG ========================");
+        }
+    }
 
     match prefix {
         _ if prefix == AZURE_APP_SERVICES_PREFIX => Some(Metadata {
@@ -131,8 +139,35 @@ mod tests {
     #[test]
     fn test_get_origin() {
         let origin = get_origin("aws.lambda.enhanced.invocations");
-        assert_eq!(origin.as_ref().unwrap().origin.as_ref().unwrap().origin_product, 1);
-        assert_eq!(origin.as_ref().unwrap().origin.as_ref().unwrap().origin_category, 38);
-        assert_eq!(origin.as_ref().unwrap().origin.as_ref().unwrap().origin_service, 0);
+        assert_eq!(
+            origin
+                .as_ref()
+                .unwrap()
+                .origin
+                .as_ref()
+                .unwrap()
+                .origin_product,
+            1
+        );
+        assert_eq!(
+            origin
+                .as_ref()
+                .unwrap()
+                .origin
+                .as_ref()
+                .unwrap()
+                .origin_category,
+            38
+        );
+        assert_eq!(
+            origin
+                .as_ref()
+                .unwrap()
+                .origin
+                .as_ref()
+                .unwrap()
+                .origin_service,
+            0
+        );
     }
- }
+}

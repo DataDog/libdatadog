@@ -134,6 +134,11 @@ impl SortedTags {
         }
         resources
     }
+
+    // TODO Dylan: TEST THIS
+    pub fn contains(&self, key: &str) -> bool {
+        self.values.iter().any(|(k, _)| k.as_str() == key)
+    }
 }
 
 /// Representation of a dogstatsd Metric
