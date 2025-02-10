@@ -133,17 +133,3 @@ pub unsafe extern "C" fn ddog_crasht_init_without_receiver(
         )?
     })
 }
-
-#[no_mangle]
-#[named]
-#[cfg(windows)]
-pub unsafe extern "C" fn OutOfProcessExceptionEventCallback(
-    pContext: *mut std::ffi::c_void,
-    pExceptionInformation: *const WER_RUNTIME_EXCEPTION_INFORMATION,
-    pbOwnershipClaimed: *mut BOOL,
-    pwszEventName: *mut u16,
-    pchSize: *mut u32,
-    pdwSignatureCount: *mut u32,
-) -> u32 {
-    return pExceptionInformation.dwSize;
-}
