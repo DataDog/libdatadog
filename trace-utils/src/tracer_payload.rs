@@ -271,10 +271,6 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
                     *size_ref = size;
                 }
 
-                if traces.is_empty() {
-                    anyhow::bail!("No traces deserialized from the request body.");
-                }
-
                 Ok(collect_trace_chunks(
                     TraceCollection::V04(traces),
                     self.tracer_header_tags,
@@ -467,6 +463,29 @@ mod tests {
         } else {
             panic!("Invalid collection type returned for try_into");
         }
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_try_into_empty() {
+        let empty_data = vec![0x90];
+        let data = tinybytes::Bytes::from(empty_data);
+
+        let tracer_header_tags = &TracerHeaderTags::default();
+
+        let result: anyhow::Result<TracerPayloadCollection> = TracerPayloadParams::new(
+            data,
+            tracer_header_tags,
+            &mut DefaultTraceChunkProcessor,
+            false,
+            TraceEncoding::V04,
+        )
+        .try_into();
+
+        assert!(result.is_ok());
+
+        let collection = result.unwrap();
+        assert_eq!(0, collection.size());
     }
 
     #[test]

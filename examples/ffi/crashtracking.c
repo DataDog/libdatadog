@@ -40,11 +40,10 @@ int main(int argc, char **argv) {
   ddog_crasht_ReceiverConfig receiver_config = {
       .args = {},
       .env = {},
-      .path_to_receiver_binary = DDOG_CHARSLICE_C("SET ME TO THE ACTUAL PATH ON YOUR MACHINE"),
-      // E.g. on my machine, where I run ./build-profiling-ffi.sh build-ffi
+      //.path_to_receiver_binary = DDOG_CHARSLICE_C("SET ME TO THE ACTUAL PATH ON YOUR MACHINE"),
+      // E.g. on my machine, where I run ./build-profiling-ffi.sh /tmp/libdatadog
       // .path_to_receiver_binary =
-      //     DDOG_CHARSLICE_C("/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/"
-      //                      "build-ffi/bin/libdatadog-crashtracking-receiver"),
+           DDOG_CHARSLICE_C("/tmp/libdatadog/bin/libdatadog-crashtracking-receiver"),
       .optional_stderr_filename = DDOG_CHARSLICE_C("/tmp/crashreports/stderr.txt"),
       .optional_stdout_filename = DDOG_CHARSLICE_C("/tmp/crashreports/stdout.txt"),
   };
@@ -74,6 +73,8 @@ int main(int argc, char **argv) {
   handle_result(ddog_crasht_begin_op(DDOG_CRASHT_OP_TYPES_PROFILER_COLLECTING_SAMPLE));
   handle_uintptr_t_result(ddog_crasht_insert_span_id(0, 42));
   handle_uintptr_t_result(ddog_crasht_insert_trace_id(1, 1));
+  handle_uintptr_t_result(ddog_crasht_insert_additional_tag(DDOG_CHARSLICE_C("This is a very informative extra bit of info")));
+  handle_uintptr_t_result(ddog_crasht_insert_additional_tag(DDOG_CHARSLICE_C("This message will for sure help us debug the crash")));
 
 #ifdef EXPLICIT_RAISE_SEGV
   // Test raising SEGV explicitly, to ensure chaining works

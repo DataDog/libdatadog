@@ -1,15 +1,15 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
-use crate::collector::spans::emit_spans;
-use crate::collector::spans::emit_traces;
+use crate::collector::spans::{emit_spans, emit_traces};
 use crate::shared::constants::*;
 use crate::CrashtrackerConfiguration;
 use crate::StacktraceCollection;
 use anyhow::Context;
 use backtrace::Frame;
-use libc::siginfo_t;
+use libc::{siginfo_t, ucontext_t};
 use std::{
     fs::File,
     io::{Read, Write},
@@ -86,14 +86,17 @@ pub(crate) fn emit_crashreport(
     config: &CrashtrackerConfiguration,
     config_str: &str,
     metadata_string: &str,
-    sig_info: *mut siginfo_t,
+    sig_info: *const siginfo_t,
+    ucontext: *const ucontext_t,
 ) -> anyhow::Result<()> {
     emit_metadata(pipe, metadata_string)?;
     emit_config(pipe, config_str)?;
     emit_siginfo(pipe, sig_info)?;
+    emit_ucontext(pipe, ucontext)?;
     emit_procinfo(pipe)?;
     emit_counters(pipe)?;
     emit_spans(pipe)?;
+    consume_and_emit_additional_tags(pipe)?;
     emit_traces(pipe)?;
 
     #[cfg(target_os = "linux")]
@@ -148,7 +151,37 @@ fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn emit_siginfo(w: &mut impl Write, sig_info: *mut siginfo_t) -> anyhow::Result<()> {
+#[cfg(target_os = "linux")]
+fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> anyhow::Result<()> {
+    anyhow::ensure!(!ucontext.is_null());
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_UCONTEXT}")?;
+    // SAFETY: the pointer is given to us by the signal handler, and is non-null.
+    writeln!(w, "{:?}", unsafe { *ucontext })?;
+    writeln!(w, "{DD_CRASHTRACK_END_UCONTEXT}")?;
+    w.flush()?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> anyhow::Result<()> {
+    anyhow::ensure!(!ucontext.is_null());
+    // On MacOS, the actual machine context is behind a second pointer.
+    // SAFETY: the pointer is given to us by the signal handler, and is non-null.
+    let mcontext = unsafe { *ucontext }.uc_mcontext;
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_UCONTEXT}")?;
+    // SAFETY: the pointer is given to us by the signal handler, and is non-null.
+    write!(w, "{:?}", unsafe { *ucontext })?;
+    if !mcontext.is_null() {
+        // SAFETY: the pointer is given to us by the signal handler, and is non-null.
+        write!(w, ", {:?}", unsafe { *mcontext })?;
+    }
+    writeln!(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_UCONTEXT}")?;
+    w.flush()?;
+    Ok(())
+}
+
+fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> anyhow::Result<()> {
     anyhow::ensure!(!sig_info.is_null());
 
     let si_signo = unsafe { (*sig_info).si_signo };

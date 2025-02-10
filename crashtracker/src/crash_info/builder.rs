@@ -91,6 +91,7 @@ impl ErrorDataBuilder {
 pub struct CrashInfoBuilder {
     pub counters: Option<HashMap<String, i64>>,
     pub error: ErrorDataBuilder,
+    pub experimental: Option<Experimental>,
     pub files: Option<HashMap<String, Vec<String>>>,
     pub fingerprint: Option<String>,
     pub incomplete: Option<bool>,
@@ -110,6 +111,7 @@ impl CrashInfoBuilder {
         let counters = self.counters.unwrap_or_default();
         let data_schema_version = CrashInfo::current_schema_version().to_string();
         let (error, incomplete_error) = self.error.build()?;
+        let experimental = self.experimental;
         let files = self.files.unwrap_or_default();
         let fingerprint = self.fingerprint;
         let incomplete = incomplete_error || self.incomplete.unwrap_or(false);
@@ -126,6 +128,7 @@ impl CrashInfoBuilder {
             counters,
             data_schema_version,
             error,
+            experimental,
             files,
             fingerprint,
             incomplete,
@@ -162,6 +165,27 @@ impl CrashInfoBuilder {
 
     pub fn with_counters(&mut self, counters: HashMap<String, i64>) -> anyhow::Result<&mut Self> {
         self.counters = Some(counters);
+        Ok(self)
+    }
+
+    pub fn with_experimental_additional_tags(
+        &mut self,
+        additional_tags: Vec<String>,
+    ) -> anyhow::Result<&mut Self> {
+        if let Some(experimental) = &mut self.experimental {
+            experimental.additional_tags = additional_tags;
+        } else {
+            self.experimental = Some(Experimental::new().with_additional_tags(additional_tags));
+        }
+        Ok(self)
+    }
+
+    pub fn with_experimental_ucontext(&mut self, ucontext: String) -> anyhow::Result<&mut Self> {
+        if let Some(experimental) = &mut self.experimental {
+            experimental.ucontext = Some(ucontext);
+        } else {
+            self.experimental = Some(Experimental::new().with_ucontext(ucontext));
+        }
         Ok(self)
     }
 

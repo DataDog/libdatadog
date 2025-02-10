@@ -19,19 +19,23 @@ use std::sync::atomic::{AtomicI32, Ordering};
 
 pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMem<T>> {
     let fd = handle.get_shm().handle.as_owned_fd()?;
-    Ok(MappedMem {
-        ptr: unsafe {
-            mmap(
-                None,
-                NonZeroUsize::new(handle.get_shm().size).unwrap(),
-                ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
-                MapFlags::MAP_SHARED,
-                Some(fd),
-                0,
-            )?
-        },
-        mem: handle,
-    })
+    if let Some(size) = NonZeroUsize::new(handle.get_shm().size) {
+        Ok(MappedMem {
+            ptr: unsafe {
+                mmap(
+                    None,
+                    size,
+                    ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
+                    MapFlags::MAP_SHARED,
+                    Some(fd),
+                    0,
+                )?
+            },
+            mem: handle,
+        })
+    } else {
+        Err(io::Error::other("Size of handle used for mmap() is zero. When used for shared memory this may originate from race conditions between creation and truncation of the shared memory file."))
+    }
 }
 
 pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {

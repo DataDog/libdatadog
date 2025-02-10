@@ -46,10 +46,6 @@ pub async fn get_traces_from_request_body(
         }
     };
 
-    if traces.is_empty() {
-        anyhow::bail!("No traces deserialized from the request body.")
-    }
-
     Ok((size, traces))
 }
 

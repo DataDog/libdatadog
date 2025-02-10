@@ -73,9 +73,8 @@ impl SortedTags {
                 return Err(ParseError::Raw(format!("Too many tags, more than {i}")));
             }
             if !part.contains(':') {
-                return Err(ParseError::Raw("Invalid tag format".to_string()));
-            }
-            if let Some((k, v)) = part.split_once(':') {
+                parsed_tags.push((Ustr::from(part), Ustr::from("")));
+            } else if let Some((k, v)) = part.split_once(':') {
                 parsed_tags.push((Ustr::from(k), Ustr::from(v)));
             }
         }
@@ -89,7 +88,15 @@ impl SortedTags {
     pub fn to_chars(&self) -> Vec<Chars> {
         let mut tags_as_chars = Vec::new();
         for (k, v) in &self.values {
-            tags_as_chars.push(format!("{}:{}", k, v).into());
+            if v.is_empty() {
+                tags_as_chars.push(Chars::from(k.to_string()));
+            } else {
+                let mut a_tag = String::with_capacity(k.len() + v.len() + 1);
+                a_tag.push_str(k);
+                a_tag.push(':');
+                a_tag.push_str(v);
+                tags_as_chars.push(a_tag.into());
+            }
         }
         tags_as_chars
     }
@@ -97,19 +104,33 @@ impl SortedTags {
     pub fn to_strings(&self) -> Vec<String> {
         let mut tags_as_vec = Vec::new();
         for (k, v) in &self.values {
-            tags_as_vec.push(format!("{}:{}", k, v));
+            if v.is_empty() {
+                tags_as_vec.push(k.to_string());
+            } else {
+                let mut a_tag = String::with_capacity(k.len() + v.len() + 1);
+                a_tag.push_str(k);
+                a_tag.push(':');
+                a_tag.push_str(v);
+                tags_as_vec.push(a_tag);
+            }
         }
         tags_as_vec
     }
 
     pub(crate) fn to_resources(&self) -> Vec<datadog::Resource> {
         let mut resources = Vec::with_capacity(constants::MAX_TAGS);
-        for (kind, name) in &self.values {
-            let resource = datadog::Resource {
-                name: name.as_str(), // val
-                kind: kind.as_str(), // key
-            };
-            resources.push(resource);
+        for (key, val) in &self.values {
+            if key == "dd.internal.resource" {
+                //anything coming in via dd.internal.resource:<value> has to be a key/value pair
+                // (e.g., dd.internal.resource:key:value)
+                if let Some(valid_name_kind) = val.split_once(':') {
+                    let resource = datadog::Resource {
+                        name: valid_name_kind.0.to_string(),
+                        kind: valid_name_kind.1.to_string(),
+                    };
+                    resources.push(resource);
+                }
+            }
         }
         resources
     }
@@ -250,7 +271,7 @@ pub fn id(name: Ustr, tags: &Option<SortedTags>) -> u64 {
     hasher.finish()
 }
 // <METRIC_NAME>:<VALUE>:<VALUE>:<VALUE>|<TYPE>|@<SAMPLE_RATE>|#<TAG_KEY_1>:<TAG_VALUE_1>,
-// <TAG_KEY_2>:<TAG_VALUE_2>|T<METRIC_TIMESTAMP>|c:<CONTAINER_ID>
+// <TAG_KEY_2>:<TAG_VALUE_2>,<TAG_NO_VALUE_3>|T<METRIC_TIMESTAMP>|c:<CONTAINER_ID>
 //
 // Types:
 //  * c -- COUNT, allows packed values, summed
@@ -497,6 +518,29 @@ mod tests {
     }
 
     #[test]
+    fn parse_tag_no_value() {
+        let result = parse("datadog.tracer.flush_triggered:1|c|#lang:go,lang_version:go1.22.10,_dd.origin:lambda,runtime-id:d66f501c-d09b-4d0d-970f-515235c4eb56,v1.65.1,service:aws.lambda,reason:scheduled");
+        assert!(result.is_ok());
+        assert!(result
+            .unwrap()
+            .tags
+            .unwrap()
+            .values
+            .iter()
+            .any(|(k, v)| k == "v1.65.1" && v.is_empty()));
+    }
+
+    #[test]
+    fn parse_tag_multi_column() {
+        let result = parse("datadog.tracer.flush_triggered:1|c|#lang:go:and:something:else");
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap().tags.unwrap().values[0],
+            (Ustr::from("lang"), Ustr::from("go:and:something:else"))
+        );
+    }
+
+    #[test]
     fn parse_tracer_metric() {
         let input = "datadog.tracer.flush_duration:0.785551|ms|#lang:go,lang_version:go1.23.2,env:redacted_env,_dd.origin:lambda,runtime-id:redacted_runtime,tracer_version:v1.70.1,service:redacted_service,env:redacted_env,service:redacted_service,version:redacted_version";
         let expected_error = "ms".to_string();
@@ -505,5 +549,16 @@ mod tests {
         } else {
             panic!("Expected UnsupportedType error");
         }
+    }
+
+    #[test]
+    fn sorting_tags() {
+        let mut tags = SortedTags::parse("z:z0,b:b2,c:c3").unwrap();
+        tags.extend(&SortedTags::parse("z1:z11,d:d4,e:e5,f:f6").unwrap());
+        tags.extend(&SortedTags::parse("a:a1").unwrap());
+        assert_eq!(tags.values.len(), 8);
+        let first_element = tags.values.first().unwrap();
+        assert_eq!(first_element.0, Ustr::from("a"));
+        assert_eq!(first_element.1, Ustr::from("a1"));
     }
 }
