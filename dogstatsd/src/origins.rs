@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::metric::Metric;
+use crate::metric::{Metric, SortedTags};
 use datadog_protos::metrics::{Metadata, Origin};
 use protobuf::MessageField;
 
@@ -54,16 +54,13 @@ impl From<OriginService> for u32 {
     }
 }
 
-pub fn get_origin(metric: &Metric) -> Option<Metadata> {
-    println!("========================== Metric: {:?}", metric);
+pub fn get_origin(metric: &Metric, tags: SortedTags) -> Option<Metadata> {
     let name = metric.name.to_string();
     let prefix = name.split('.').take(2).collect::<Vec<&str>>().join(".");
 
-    if let Some(tags) = &metric.tags {
-        println!("========================== Metric tags: {:?}", tags);
-        if tags.contains("env") {
-            println!("======================== FOUND TAG ========================");
-        }
+    println!("========================== Metric sorted tags: {:?}", tags);
+    if tags.contains("function_arn") {
+        println!("======================== FOUND TAG ========================");
     }
 
     match prefix {
