@@ -83,10 +83,7 @@ impl<'a> Matcher<'a> {
     }
 
     /// Returns the first set of configurations that match the current process
-    fn find_stable_config<'b>(
-        &'a self,
-        cfg: &'b StableConfig,
-    ) -> Option<&'b HashMap<LibraryConfigName, String>> {
+    fn find_stable_config<'b>(&'a self, cfg: &'b StableConfig) -> Option<&'b ConfigMap> {
         for rule in &cfg.rules {
             if rule.selectors.iter().all(|s| self.selector_match(s)) {
                 return Some(&rule.configuration);
@@ -248,6 +245,52 @@ impl ProcessInfo {
     }
 }
 
+/// A (key, value) struct
+///
+/// This type has a custom serde Deserialize implementation from maps:
+/// * It skips invalid/unknown keys in the map
+/// * Since the storage is a Boxed slice and not a Hashmap, it doesn't over-allocate
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ConfigMap(Box<[(LibraryConfigName, String)]>);
+
+impl<'de> serde::Deserialize<'de> for ConfigMap {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ConfigMapVisitor;
+        impl<'de> serde::de::Visitor<'de> for ConfigMapVisitor {
+            type Value = ConfigMap;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct ConfigMap(HashMap<LibraryConfig, String>)")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut configs = Vec::new();
+                configs.reserve_exact(map.size_hint().unwrap_or(0));
+                loop {
+                    let k = match map.next_key::<LibraryConfigName>() {
+                        Ok(Some(k)) => k,
+                        Ok(None) => break,
+                        Err(_) => {
+                            map.next_value::<serde::de::IgnoredAny>()?;
+                            continue;
+                        }
+                    };
+                    let v = map.next_value::<String>()?;
+                    configs.push((k, v));
+                }
+                Ok(ConfigMap(configs.into_boxed_slice()))
+            }
+        }
+        deserializer.deserialize_map(ConfigMapVisitor)
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, serde::Deserialize, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -349,7 +392,7 @@ struct Selector {
 #[derive(serde::Deserialize, Debug, PartialEq, Eq)]
 struct Rule {
     selectors: Vec<Selector>,
-    configuration: HashMap<LibraryConfigName, String>,
+    configuration: ConfigMap,
 }
 
 #[derive(serde::Deserialize, Default, Debug, PartialEq, Eq)]
@@ -358,7 +401,7 @@ struct StableConfig {
     #[serde(default)]
     config_id: Option<String>,
     #[serde(default)]
-    apm_configuration_default: HashMap<LibraryConfigName, String>,
+    apm_configuration_default: ConfigMap,
 
     // Phase 2
     #[serde(default)]
@@ -589,6 +632,9 @@ impl Configurator {
         // Phase 1: take host default config
         cfg.extend(
             mem::take(&mut stable_config.apm_configuration_default)
+                .0
+                // TODO(paullgdc): use Box<[I]>::into_iter when we can use rust 1.80
+                .to_vec()
                 .into_iter()
                 .map(|(k, v)| {
                     (
@@ -623,7 +669,7 @@ impl Configurator {
             return Ok(());
         };
 
-        for (name, config_val) in configs {
+        for (name, config_val) in configs.0.iter() {
             let value = matcher.template_config(config_val)?;
             library_config.insert(
                 *name,
@@ -682,22 +728,9 @@ mod tests {
 
     use super::{Configurator, ProcessInfo};
     use crate::{
-        LibraryConfig, LibraryConfigName, LibraryConfigSource, Matcher, Operator, Origin, Rule,
-        Selector, StableConfig,
+        ConfigMap, LibraryConfig, LibraryConfigName, LibraryConfigSource, Matcher, Operator,
+        Origin, Rule, Selector, StableConfig,
     };
-
-    macro_rules! map {
-        ($(($key:expr , $value:expr)),* $(,)?) => {
-            {
-                #[allow(unused_mut)]
-                let mut map = std::collections::HashMap::new();
-                $(
-                    map.insert($key, $value);
-                )*
-                map
-            }
-        };
-    }
 
     fn test_config(local_cfg: &[u8], fleet_cfg: &[u8], expected: Vec<LibraryConfig>) {
         let process_info: ProcessInfo = ProcessInfo {
@@ -844,6 +877,10 @@ apm_configuration_default:
   DD_DYNAMIC_INSTRUMENTATION_ENABLED: true
   DD_DATA_JOBS_ENABLED: true
   DD_APPSEC_SCA_ENABLED: true
+  # extra keys should be skipped without errors
+  FOO_BAR: hqecuh
+wtf:
+- 1
     ",
             vec![
                 LibraryConfig {
@@ -991,6 +1028,7 @@ rules:
 
     #[test]
     fn test_parse_static_config() {
+        use LibraryConfigName::*;
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.reopen()
             .unwrap()
@@ -1004,6 +1042,8 @@ rules:
   configuration:
     DD_PROFILING_ENABLED: true
     DD_SERVICE: my-service
+    # extra keys should be skipped without errors
+    FOOBAR: maybe??
 ",
             )
             .unwrap();
@@ -1015,7 +1055,7 @@ rules:
             cfg,
             StableConfig {
                 config_id: None,
-                apm_configuration_default: HashMap::default(),
+                apm_configuration_default: ConfigMap::default(),
                 tags: HashMap::default(),
                 rules: vec![Rule {
                     selectors: vec![Selector {
@@ -1025,10 +1065,13 @@ rules:
                         },
                         key: None,
                     }],
-                    configuration: map![
-                        (LibraryConfigName::DdProfilingEnabled, "true".to_owned()),
-                        (LibraryConfigName::DdService, "my-service".to_owned())
-                    ],
+                    configuration: ConfigMap(
+                        vec![
+                            (DdProfilingEnabled, "true".to_owned()),
+                            (DdService, "my-service".to_owned())
+                        ]
+                        .into_boxed_slice()
+                    ),
                 }]
             }
         )
