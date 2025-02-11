@@ -3,6 +3,7 @@
 use crate::shared::constants;
 use ddcommon::Endpoint;
 use serde::{Deserialize, Serialize};
+use std::env;
 
 /// Stacktrace collection occurs in the context of a crashing process.
 /// If the stack is sufficiently corruputed, it is possible (but unlikely),
@@ -19,6 +20,27 @@ pub enum StacktraceCollection {
     EnabledWithSymbolsInReceiver,
 }
 
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StackTraceUnwinding {
+    Backtrace,
+    Libunwind,
+}
+
+impl StackTraceUnwinding {
+    /// Determines the unwinding strategy based on the environment variable `DD_CRASHTRACK_UNWINDING`.
+    pub fn from_env() -> Self {
+        match env::var("DD_CRASHTRACK_UNWINDING")
+            .unwrap_or_else(|_| "libunwind".to_string())
+            .to_lowercase()
+            .as_str()
+        {
+            "backtrace" => StackTraceUnwinding::Backtrace,
+            _ => StackTraceUnwinding::Libunwind, // Default to libunwind
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashtrackerConfiguration {
     // Paths to any additional files to track, if any
@@ -27,6 +49,7 @@ pub struct CrashtrackerConfiguration {
     pub use_alt_stack: bool,
     pub endpoint: Option<Endpoint>,
     pub resolve_frames: StacktraceCollection,
+    pub stacktrace_unwinding: StackTraceUnwinding,
     pub timeout_ms: u32,
     pub unix_socket_path: Option<String>,
 }
@@ -72,6 +95,7 @@ impl CrashtrackerConfiguration {
         use_alt_stack: bool,
         endpoint: Option<Endpoint>,
         resolve_frames: StacktraceCollection,
+
         timeout_ms: u32,
         unix_socket_path: Option<String>,
     ) -> anyhow::Result<Self> {
@@ -87,6 +111,10 @@ impl CrashtrackerConfiguration {
         } else {
             timeout_ms
         };
+        
+        // Read stack unwinding strategy from environment
+        let stacktrace_unwinding = StackTraceUnwinding::from_env();
+
         // Note:  don't check the receiver socket upfront, since a configuration can be interned
         // before the receiver is started when using an async-receiver.
         Ok(Self {
@@ -95,6 +123,7 @@ impl CrashtrackerConfiguration {
             use_alt_stack,
             endpoint,
             resolve_frames,
+            stacktrace_unwinding,
             timeout_ms,
             unix_socket_path,
         })
