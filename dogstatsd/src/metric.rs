@@ -139,6 +139,13 @@ impl SortedTags {
     pub fn contains(&self, key: &str) -> bool {
         self.values.iter().any(|(k, _)| k.as_str() == key)
     }
+
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.values
+            .iter()
+            .find(|(k, _)| k.as_str() == key)
+            .map(|(_, v)| v.as_str())
+    }
 }
 
 /// Representation of a dogstatsd Metric
