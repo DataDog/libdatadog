@@ -634,7 +634,7 @@ impl Configurator {
             mem::take(&mut stable_config.apm_configuration_default)
                 .0
                 // TODO(paullgdc): use Box<[I]>::into_iter when we can use rust 1.80
-                .to_vec()
+                .into_vec()
                 .into_iter()
                 .map(|(k, v)| {
                     (
