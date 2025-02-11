@@ -18,6 +18,7 @@ pub mod cstr;
 pub mod config;
 pub mod rate_limiter;
 pub mod tag;
+pub mod tracer_metadata;
 
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
