@@ -875,10 +875,10 @@ apm_configuration_default:
   DD_APPSEC_ENABLED: true
   DD_IAST_ENABLED: true
   DD_DYNAMIC_INSTRUMENTATION_ENABLED: true
+  # extra keys should be skipped without errors
+  FOO_BAR: quoicoubeh
   DD_DATA_JOBS_ENABLED: true
   DD_APPSEC_SCA_ENABLED: true
-  # extra keys should be skipped without errors
-  FOO_BAR: hqecuh
 wtf:
 - 1
     ",
