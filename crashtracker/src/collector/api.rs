@@ -313,7 +313,7 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
             let mut exit_code = -5;
 
             for signal in default_signals() {
-                let signame = signal_from_signum(signal)?;
+                let signame = crate::signal_from_signum(signal)?;
                 exit_code -= 1;
                 let res = unsafe { libc::sigaction(signal, std::ptr::null(), &mut sigaction) };
                 if res != 0 {
