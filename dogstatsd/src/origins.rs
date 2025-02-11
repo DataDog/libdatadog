@@ -55,6 +55,7 @@ impl From<OriginService> for u32 {
 }
 
 pub fn get_origin(metric: &Metric) -> Option<Metadata> {
+    println!("========================== Metric: {:?}", metric);
     let name = metric.name.to_string();
     let prefix = name.split('.').take(2).collect::<Vec<&str>>().join(".");
 

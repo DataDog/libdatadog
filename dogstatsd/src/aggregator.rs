@@ -270,9 +270,7 @@ fn build_sketch(now: i64, entry: &Metric, mut base_tag_vec: SortedTags) -> Optio
     }
     sketch.set_tags(base_tag_vec.to_chars());
 
-    println!("========================== base_tag_vec: {:?}", base_tag_vec);
-
-    let metadata: Option<Metadata> = get_origin(&entry);
+    let metadata: Option<Metadata> = get_origin(entry);
     if let Some(metadata) = metadata {
         sketch.set_metadata(metadata);
     }
