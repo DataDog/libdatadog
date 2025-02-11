@@ -71,7 +71,7 @@ fn test_crash_tracking_bin_fork() {
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_abort() {
     // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "abort");
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "sigabrt");
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn test_crash_tracking_bin(
     // Not sure why sigill behaves differently??
     // TODO: figure that out.
     match crash_typ {
-        "null_deref" | "abort" | "sigill" => assert!(!exit_status.success()),
+        "null_deref" | "sigabrt" | "sigill" => assert!(!exit_status.success()),
         "sigbus" | "sigsegv" => (),
         _ => unreachable!("{crash_typ} shouldn't happen"),
     }
@@ -186,7 +186,7 @@ fn test_crash_tracking_bin(
 
 fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
     match crash_typ {
-        "abort" => {
+        "sigabrt" => {
             assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
             assert_eq!(sig_info["si_signo"], libc::SIGABRT);
             assert_eq!(sig_info["si_signo_human_readable"], "SIGABRT");
@@ -260,7 +260,7 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
         ]);
 
     match crash_typ {
-        "abort" => {
+        "sigabrt" => {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGABRT"), "{tags:?}");

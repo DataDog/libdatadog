@@ -310,28 +310,23 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
                 sa_restorer: None,
             };
 
-            // First, SIGBUS
-            let res = unsafe { libc::sigaction(libc::SIGBUS, std::ptr::null(), &mut sigaction) };
-            if res != 0 {
-                eprintln!("Failed to get SIGBUS handler");
-                std::process::exit(-6);
-            }
-            if sigaction.sa_flags & libc::SA_ONSTACK != libc::SA_ONSTACK {
-                eprintln!("Expected SIGBUS handler to have SA_ONSTACK");
-                std::process::exit(-7);
-            }
+            let mut exit_code = -6;
 
-            // Second, SIGSEGV
-            let res = unsafe { libc::sigaction(libc::SIGSEGV, std::ptr::null(), &mut sigaction) };
-            if res != 0 {
-                eprintln!("Failed to get SIGSEGV handler");
-                std::process::exit(-8);
+            for signal in default_signals() {
+                let signame = signal_from_signum(signal)?;
+                let res = unsafe { libc::sigaction(signal, std::ptr::null(), &mut sigaction) };
+                if res != 0 {
+                    eprintln!("Failed to get {signame:?} handler");
+                    std::process::exit(exit_code);
+                    exit_code = exit_code - 1;
+                }
+
+                if sigaction.sa_flags & libc::SA_ONSTACK != libc::SA_ONSTACK {
+                    eprintln!("Expected {signame:?} handler to have SA_ONSTACK");
+                    std::process::exit(exit_code);
+                    exit_code = exit_code - 1;
+                }
             }
-            if sigaction.sa_flags & libc::SA_ONSTACK != libc::SA_ONSTACK {
-                eprintln!("Expected SIGSEGV handler to have SA_ONSTACK");
-                std::process::exit(-9);
-            }
-            // TODO, the other signals
 
             // OK, we're done
             std::process::exit(42);

@@ -56,6 +56,8 @@ int main(int argc, char **argv) {
   //  struct ddog_Endpoint * endpoint =
   //      ddog_endpoint_from_url(DDOG_CHARSLICE_C("http://localhost:8126"));
 
+  // Get the default signals and explicitly use them.
+  // We could also pass an empty list here, which would also use the default signals.
   struct ddog_crasht_Slice_CInt signals = ddog_crasht_default_signals();
   ddog_crasht_Config config = {
       .create_alt_stack = false,

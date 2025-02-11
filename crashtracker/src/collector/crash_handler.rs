@@ -620,6 +620,8 @@ pub fn register_crash_handlers(config: &CrashtrackerConfiguration) -> anyhow::Re
     let boxed_ptr = Box::into_raw(Box::new(old_handlers));
 
     let res = OLD_HANDLERS.compare_exchange(ptr::null_mut(), boxed_ptr, SeqCst, SeqCst);
+    // Note this doesn't restore the old setup, and leaks `old_handlers`, but hard to recover here
+    // and the leak is small.
     anyhow::ensure!(
         res.is_ok(),
         "TOCTTOU error in crashtracker::register_crash_handlers"
