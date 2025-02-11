@@ -60,7 +60,7 @@ pub fn get_origin(metric: &Metric) -> Option<Metadata> {
 
     if let Some(tags) = &metric.tags {
         println!("========================== Metric tags: {:?}", tags);
-        if tags.contains("env:dev") {
+        if tags.contains("env") {
             println!("======================== FOUND TAG ========================");
         }
     }
