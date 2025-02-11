@@ -310,21 +310,21 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
                 sa_restorer: None,
             };
 
-            let mut exit_code = -6;
+            let mut exit_code = -5;
 
             for signal in default_signals() {
                 let signame = signal_from_signum(signal)?;
+                exit_code -= 1;
                 let res = unsafe { libc::sigaction(signal, std::ptr::null(), &mut sigaction) };
                 if res != 0 {
                     eprintln!("Failed to get {signame:?} handler");
                     std::process::exit(exit_code);
-                    exit_code = exit_code - 1;
                 }
 
+                exit_code -= 1;
                 if sigaction.sa_flags & libc::SA_ONSTACK != libc::SA_ONSTACK {
                     eprintln!("Expected {signame:?} handler to have SA_ONSTACK");
                     std::process::exit(exit_code);
-                    exit_code = exit_code - 1;
                 }
             }
 
