@@ -104,7 +104,7 @@ mod unix {
                 let x = unsafe { deref_ptr(std::ptr::null_mut::<u8>()) };
                 println!("{x}");
             }
-            "abort" => raise(Signal::SIGABRT)?,
+            "sigabrt" => raise(Signal::SIGABRT)?,
             "sigill" => raise(Signal::SIGILL)?,
             "sigbus" => raise(Signal::SIGBUS)?,
             "sigsegv" => raise(Signal::SIGSEGV)?,
