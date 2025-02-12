@@ -62,6 +62,9 @@ pub struct Config<'a> {
     /// If None, the crashtracker will infer the agent host from env variables.
     pub endpoint: Option<&'a Endpoint>,
     pub resolve_frames: StacktraceCollection,
+    /// The set of signals we should be registered for.
+    /// If empty, use the default set.
+    pub signals: Slice<'a, i32>,
     /// Timeout in milliseconds before the signal handler starts tearing things down to return.
     /// This is given as a uint32_t, but the actual timeout needs to fit inside of an i32 (max
     /// 2^31-1). This is a limitation of the various interfaces used to guarantee the timeout.
@@ -84,6 +87,7 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
         let use_alt_stack = value.use_alt_stack;
         let endpoint = value.endpoint.cloned();
         let resolve_frames = value.resolve_frames;
+        let signals = value.signals.iter().copied().collect();
         let timeout_ms = value.timeout_ms;
         let unix_socket_path = value.optional_unix_socket_filename.try_to_string_option()?;
         Self::new(
@@ -92,6 +96,7 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
             use_alt_stack,
             endpoint,
             resolve_frames,
+            signals,
             timeout_ms,
             unix_socket_path,
         )
