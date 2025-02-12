@@ -99,3 +99,4 @@ cargo nextest run -E '!test(tracing_integration_tests::)'
 Please note that the locked version is to make sure that it can be built using rust `1.78.0`, and if you are using a newer rust version, then it's enough to limit the version to `0.9.*`.
 
 [nt]: https://nexte.st/
+
