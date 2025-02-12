@@ -9,7 +9,7 @@ use crate::datadog::{
 };
 use crate::errors;
 use crate::metric::{self, Metric, MetricValue, SortedTags};
-use crate::origins::get_origin;
+use crate::origin::get_origin;
 use std::time;
 
 use datadog_protos::metrics::{Dogsketch, Metadata, Origin, Sketch, SketchPayload};

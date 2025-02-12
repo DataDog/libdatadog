@@ -8,4 +8,4 @@ pub mod dogstatsd;
 pub mod errors;
 pub mod flusher;
 pub mod metric;
-pub mod origins;
+pub mod origin;
