@@ -163,6 +163,12 @@ impl hash::Hash for BytesString {
     }
 }
 
+impl PartialEq<&str> for BytesString {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
 impl Debug for BytesString {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.serialize_str(self.as_str())

@@ -3,3 +3,4 @@
 
 pub mod decode;
 pub mod v04;
+pub mod v05;
