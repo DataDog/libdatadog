@@ -23,8 +23,8 @@ pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
     use hyper::{header::HeaderName, http::HeaderValue};
 
-    /// These strings are defined separately to be used in context where &str are used to represent
-    /// headers (e.g. SendData) while keeping a single source of truth.
+    // These strings are defined separately to be used in context where &str are used to represent
+    // headers (e.g. SendData) while keeping a single source of truth.
     pub const DATADOG_SEND_REAL_HTTP_STATUS_STR: &str = "datadog-send-real-http-status";
     pub const DATADOG_TRACE_COUNT_STR: &str = "x-datadog-trace-count";
     pub const APPLICATION_MSGPACK_STR: &str = "application/msgpack";
@@ -35,7 +35,8 @@ pub mod header {
     pub const DATADOG_EXTERNAL_ENV: HeaderName = HeaderName::from_static("datadog-external-env");
     pub const DATADOG_TRACE_COUNT: HeaderName = HeaderName::from_static("x-datadog-trace-count");
     /// Signal to the agent to send 429 responses when a payload is dropped
-    /// If this is not set then the agent will always return a 200 regardless if the payload is dropped.
+    /// If this is not set then the agent will always return a 200 regardless if the payload is
+    /// dropped.
     pub const DATADOG_SEND_REAL_HTTP_STATUS: HeaderName =
         HeaderName::from_static(DATADOG_SEND_REAL_HTTP_STATUS_STR);
     pub const DATADOG_API_KEY: HeaderName = HeaderName::from_static("dd-api-key");

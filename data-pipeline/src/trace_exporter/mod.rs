@@ -3,7 +3,7 @@
 pub mod agent_response;
 pub mod error;
 use crate::agent_info::{AgentInfoArc, AgentInfoFetcher};
-use crate::telemetry::{TelemetryClient, TelemetryClientBuilder};
+use crate::telemetry::{SendPayloadTelemetry, TelemetryClient, TelemetryClientBuilder};
 use crate::trace_exporter::error::{RequestError, TraceExporterError};
 use crate::{
     health_metrics, health_metrics::HealthMetric, span_concentrator::SpanConcentrator,
@@ -11,21 +11,25 @@ use crate::{
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
+use datadog_trace_utils::msgpack_decoder;
+use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryError};
 use datadog_trace_utils::span_v04::{
     trace_utils::{compute_top_level_span, has_top_level},
     Span,
 };
-use datadog_trace_utils::trace_utils::{self, SendData, TracerHeaderTags};
-use datadog_trace_utils::tracer_payload::TraceCollection;
-use datadog_trace_utils::{msgpack_decoder, tracer_payload};
+use datadog_trace_utils::trace_utils::TracerHeaderTags;
+use ddcommon::header::{
+    APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
+};
 use ddcommon::tag::Tag;
 use ddcommon::{connector, tag, Endpoint};
 use dogstatsd_client::{new_flusher, Client, DogStatsDAction};
 use either::Either;
 use hyper::body::HttpBody;
 use hyper::http::uri::PathAndQuery;
-use hyper::{Body, Method, Uri};
+use hyper::{header::CONTENT_TYPE, Body, Method, Uri};
 use log::{error, info};
+use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr, time};
@@ -588,7 +592,7 @@ impl TraceExporter {
 
     fn send_deser_ser(&self, data: tinybytes::Bytes) -> Result<String, TraceExporterError> {
         // TODO base on input format
-        let (mut traces, size) = match msgpack_decoder::v04::decoder::from_slice(data) {
+        let (mut traces, _) = match msgpack_decoder::v04::decoder::from_slice(data) {
             Ok(res) => res,
             Err(err) => {
                 error!("Error deserializing trace from request body: {err}");
@@ -631,26 +635,38 @@ impl TraceExporter {
 
         match self.output_format {
             TraceExporterOutputFormat::V04 => {
-                let tracer_payload = trace_utils::collect_trace_chunks(
-                    TraceCollection::V04(traces),
-                    &header_tags,
-                    &mut tracer_payload::DefaultTraceChunkProcessor,
-                    self.endpoint.api_key.is_some(),
-                );
+                let payload = rmp_serde::to_vec_named(&traces).map_err(TraceExporterError::from)?;
+                let chunks = traces.len();
+                let payload_len = payload.len();
                 let endpoint = Endpoint {
                     url: self.output_format.add_path(&self.endpoint.url),
                     ..self.endpoint.clone()
                 };
-                let send_data = SendData::new(size, tracer_payload, header_tags, &endpoint);
+                let mut headers: HashMap<&str, String> = header_tags.into();
+                headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
+                headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
+                headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
+
+                let strategy = RetryStrategy::default();
                 self.runtime.block_on(async {
-                    let send_data_result = send_data.send().await;
+                    // Send traces to the agent
+                    let result =
+                        send_with_retry(&endpoint, payload, &headers, &strategy, None).await;
+
+                    // Send telemetry for the payload sending
                     if let Some(telemetry) = &self.telemetry {
-                        if let Err(e) = telemetry.send(&send_data_result) {
+                        if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
+                            &result,
+                            payload_len.try_into().unwrap_or(0),
+                            chunks.try_into().unwrap_or(0),
+                        )) {
                             error!("Error sending telemetry: {}", e.to_string());
                         }
                     }
-                    match send_data_result.last_result {
-                        Ok(response) => {
+
+                    // Handle the result
+                    match result {
+                        Ok((response, _)) => {
                             let status = response.status();
                             let body = match response.into_body().collect().await {
                                 Ok(body) => String::from_utf8_lossy(&body.to_bytes()).to_string(),
@@ -692,9 +708,31 @@ impl TraceExporter {
                                 HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
                                 None,
                             );
-                            Err(TraceExporterError::Io(std::io::Error::from(
-                                std::io::ErrorKind::Other,
-                            )))
+                            match err {
+                                SendWithRetryError::Http(response, _) => {
+                                    let status = response.status();
+                                    let body = match response.into_body().collect().await {
+                                        Ok(body) => body.to_bytes(),
+                                        Err(err) => {
+                                            error!("Error reading agent response body: {err}");
+                                            return Err(TraceExporterError::from(err));
+                                        }
+                                    };
+                                    Err(TraceExporterError::Request(RequestError::new(
+                                        status,
+                                        &String::from_utf8_lossy(&body),
+                                    )))
+                                }
+                                SendWithRetryError::Timeout(_) => Err(TraceExporterError::from(
+                                    io::Error::from(io::ErrorKind::TimedOut),
+                                )),
+                                SendWithRetryError::Network(err, _) => {
+                                    Err(TraceExporterError::from(err))
+                                }
+                                SendWithRetryError::Build(_) => Err(TraceExporterError::from(
+                                    io::Error::from(io::ErrorKind::Other),
+                                )),
+                            }
                         }
                     }
                 })
