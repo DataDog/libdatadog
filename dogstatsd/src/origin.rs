@@ -68,6 +68,7 @@ pub fn get_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
     let name = metric.name.to_string();
     let prefix = name.split('.').take(2).collect::<Vec<&str>>().join(".");
 
+    // TODO (dylan): expand origin service to differentiate custom and standard metrics
     let origin: Option<Origin> = match tags.get(DD_ORIGIN_TAG_KEY) {
         Some(AZURE_APP_SERVICES_TAG_VALUE) if prefix != AZURE_APP_SERVICES_PREFIX => Some(Origin {
             origin_product: OriginProduct::Serverless.into(),
