@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span_v04::Span;
+use crate::span::v04::Span;
 use crate::{
     msgpack_decoder,
     trace_utils::{cmp_send_data_payloads, collect_trace_chunks, TracerHeaderTags},
@@ -260,7 +260,7 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
     fn try_into(self) -> Result<TracerPayloadCollection, Self::Error> {
         match self.encoding_type {
             TraceEncoding::V04 => {
-                let (traces, size) = match msgpack_decoder::v04::decoder::from_slice(self.data) {
+                let (traces, size) = match msgpack_decoder::v04::from_slice(self.data) {
                     Ok(res) => res,
                     Err(e) => {
                         anyhow::bail!("Error deserializing trace from request body: {e}")
