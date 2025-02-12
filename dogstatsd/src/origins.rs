@@ -4,14 +4,15 @@
 use crate::metric::{Metric, SortedTags};
 use datadog_protos::metrics::Origin;
 
-const AZURE_APP_SERVICES_TAG_VALUE: &str = "appservice";
-const GOOGLE_CLOUD_RUN_TAG_VALUE: &str = "cloudrun";
-const AZURE_CONTAINER_APP_TAG_VALUE: &str = "containerapp";
-
 const DD_ORIGIN_TAG_KEY: &str = "origin";
 const AWS_LAMBDA_TAG_KEY: &str = "function_arn";
 const AWS_STEP_FUNCTIONS_TAG_KEY: &str = "statemachinearn";
 
+const AZURE_APP_SERVICES_TAG_VALUE: &str = "appservice";
+const GOOGLE_CLOUD_RUN_TAG_VALUE: &str = "cloudrun";
+const AZURE_CONTAINER_APP_TAG_VALUE: &str = "containerapp";
+
+const DATADOG_PREFIX: &str = "datadog";
 const AZURE_APP_SERVICES_PREFIX: &str = "azure.app_services";
 const GOOGLE_CLOUD_RUN_PREFIX: &str = "gcp.run";
 const AZURE_CONTAINER_APP_PREFIX: &str = "azure.app_containerapps";
@@ -67,33 +68,45 @@ pub fn get_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
     let name = metric.name.to_string();
     let prefix = name.split('.').take(2).collect::<Vec<&str>>().join(".");
 
-    let category: OriginCategory = match tags.get(DD_ORIGIN_TAG_KEY) {
-        Some(AZURE_APP_SERVICES_TAG_VALUE) if prefix != AZURE_APP_SERVICES_PREFIX => {
-            OriginCategory::AppServicesMetrics
-        }
-        Some(GOOGLE_CLOUD_RUN_TAG_VALUE) if prefix != GOOGLE_CLOUD_RUN_PREFIX => {
-            OriginCategory::CloudRunMetrics
-        }
-        Some(AZURE_CONTAINER_APP_TAG_VALUE) if prefix != AZURE_CONTAINER_APP_PREFIX => {
-            OriginCategory::ContainerAppMetrics
-        }
-        _ if tags.contains(AWS_LAMBDA_TAG_KEY) && prefix != AWS_LAMBDA_PREFIX => {
-            OriginCategory::LambdaMetrics
-        }
-        _ if tags.contains(AWS_STEP_FUNCTIONS_TAG_KEY) && prefix != AWS_STEP_FUNCTIONS_PREFIX => {
-            OriginCategory::StepFunctionsMetrics
-        }
-        _ => OriginCategory::Other,
-    };
-
-    Some(
-        Origin {
+    let origin: Option<Origin> = match tags.get(DD_ORIGIN_TAG_KEY) {
+        Some(AZURE_APP_SERVICES_TAG_VALUE) if prefix != AZURE_APP_SERVICES_PREFIX => Some(Origin {
             origin_product: OriginProduct::Serverless.into(),
-            origin_category: category.into(),
+            origin_category: OriginCategory::AppServicesMetrics.into(),
             origin_service: OriginService::Other.into(),
-            special_fields: Default::default(),
-        },
-    )
+            ..Default::default()
+        }),
+        Some(GOOGLE_CLOUD_RUN_TAG_VALUE) if prefix != GOOGLE_CLOUD_RUN_PREFIX => Some(Origin {
+            origin_product: OriginProduct::Serverless.into(),
+            origin_category: OriginCategory::CloudRunMetrics.into(),
+            origin_service: OriginService::Other.into(),
+            ..Default::default()
+        }),
+        Some(AZURE_CONTAINER_APP_TAG_VALUE) if prefix != AZURE_CONTAINER_APP_PREFIX => {
+            Some(Origin {
+                origin_product: OriginProduct::Serverless.into(),
+                origin_category: OriginCategory::ContainerAppMetrics.into(),
+                origin_service: OriginService::Other.into(),
+                ..Default::default()
+            })
+        }
+        _ if tags.contains(AWS_LAMBDA_TAG_KEY) && prefix != AWS_LAMBDA_PREFIX => Some(Origin {
+            origin_product: OriginProduct::Serverless.into(),
+            origin_category: OriginCategory::LambdaMetrics.into(),
+            origin_service: OriginService::Other.into(),
+            ..Default::default()
+        }),
+        _ if tags.contains(AWS_STEP_FUNCTIONS_TAG_KEY) && prefix != AWS_STEP_FUNCTIONS_PREFIX => {
+            Some(Origin {
+                origin_product: OriginProduct::Serverless.into(),
+                origin_category: OriginCategory::StepFunctionsMetrics.into(),
+                origin_service: OriginService::Other.into(),
+                ..Default::default()
+            })
+        }
+        _ if prefix == DATADOG_PREFIX => return None,
+        _ => return None,
+    };
+    origin
 }
 
 #[cfg(test)]

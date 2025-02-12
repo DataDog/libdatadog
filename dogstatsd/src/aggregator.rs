@@ -4,7 +4,9 @@
 //! The aggregation of metrics.
 
 use crate::constants;
-use crate::datadog::{self, Metric as MetricToShip, Series, Metadata as MetadataToShip, Origin as OriginToShip};
+use crate::datadog::{
+    self, Metadata as MetadataToShip, Metric as MetricToShip, Origin as OriginToShip, Series,
+};
 use crate::errors;
 use crate::metric::{self, Metric, MetricValue, SortedTags};
 use crate::origins::get_origin;
@@ -308,9 +310,6 @@ fn build_metric(entry: &Metric, mut base_tag_vec: SortedTags) -> Option<MetricTo
 
     let origin: Option<Origin> = get_origin(entry, base_tag_vec.clone());
 
-    println!("==================== sending metric name: {:?}", entry.name);
-    println!("==================== metric origin is: {:?}", origin);
-
     Some(MetricToShip {
         metric: entry.name.as_str(),
         resources,
@@ -324,7 +323,6 @@ fn build_metric(entry: &Metric, mut base_tag_vec: SortedTags) -> Option<MetricTo
                 origin_product_detail: o.origin_service,
             }),
         }),
-
     })
 }
 
