@@ -47,7 +47,7 @@ impl From<libc::c_int> for SignalNames {
     }
 }
 
-unsafe extern "C" {
+extern "C" {
     fn translate_si_code_impl(signum: libc::c_int, si_code: libc::c_int) -> libc::c_int;
 }
 
