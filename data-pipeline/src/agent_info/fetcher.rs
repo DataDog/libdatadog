@@ -36,7 +36,7 @@ pub async fn fetch_info_with_state(
     current_state_hash: Option<&str>,
 ) -> Result<FetchInfoStatus> {
     let req = info_endpoint
-        .into_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
+        .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
         .method(hyper::Method::GET)
         .body(hyper::Body::empty());
     let client = hyper::Client::builder().build(Connector::default());

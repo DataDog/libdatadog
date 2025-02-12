@@ -33,7 +33,7 @@ pub trait HttpClient {
 
 pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
     match &c.endpoint {
-        Some(e) => e.into_request_builder(concat!("telemetry/", env!("CARGO_PKG_VERSION"))),
+        Some(e) => e.to_request_builder(concat!("telemetry/", env!("CARGO_PKG_VERSION"))),
         None => Err(anyhow::Error::msg(
             "no valid endpoint found, can't build the request".to_string(),
         )),
