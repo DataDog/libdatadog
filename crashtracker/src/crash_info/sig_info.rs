@@ -28,15 +28,41 @@ pub enum SignalNames {
 }
 
 #[cfg(unix)]
-impl From<libc::c_int> for SignalNames {
-    fn from(value: libc::c_int) -> Self {
-        match value {
-            libc::SIGABRT => SignalNames::SIGABRT,
-            libc::SIGBUS => SignalNames::SIGBUS,
-            libc::SIGSEGV => SignalNames::SIGSEGV,
-            libc::SIGSYS => SignalNames::SIGSYS,
-            _ => panic!("Unexpected signal number: {value}"),
+pub use unix::*;
+
+#[cfg(unix)]
+mod unix {
+    use super::*;
+    impl From<libc::c_int> for SignalNames {
+        fn from(value: libc::c_int) -> Self {
+            match value {
+                libc::SIGABRT => SignalNames::SIGABRT,
+                libc::SIGBUS => SignalNames::SIGBUS,
+                libc::SIGSEGV => SignalNames::SIGSEGV,
+                libc::SIGSYS => SignalNames::SIGSYS,
+                _ => panic!("Unexpected signal number: {value}"),
+            }
         }
+    }
+
+    extern "C" {
+        fn translate_si_code_impl(signum: libc::c_int, si_code: libc::c_int) -> libc::c_int;
+    }
+
+    pub fn translate_si_code(signum: libc::c_int, si_code: libc::c_int) -> SiCodes {
+        // SAFETY: this function has no safety requirements
+        let translated = unsafe { translate_si_code_impl(signum, si_code) };
+        SiCodes::from_i32(translated).unwrap_or(SiCodes::UNKNOWN)
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn test_si_code() {
+        // standard values differ between oses, but it seems like segv match
+        // https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/siginfo.h for some
+        //  https://github.com/apple/darwin-xnu/blob/main/bsd/sys/signal.h
+        assert_eq!(translate_si_code(libc::SIGSEGV, 42), SiCodes::UNKNOWN);
+        assert_eq!(translate_si_code(libc::SIGSEGV, 2), SiCodes::SEGV_ACCERR);
     }
 }
 
@@ -45,26 +71,6 @@ impl From<libc::c_int> for SignalNames {
     fn from(_value: libc::c_int) -> Self {
         unreachable!("Non-unix systems should not have Signals")
     }
-}
-
-extern "C" {
-    fn translate_si_code_impl(signum: libc::c_int, si_code: libc::c_int) -> libc::c_int;
-}
-
-pub fn translate_si_code(signum: libc::c_int, si_code: libc::c_int) -> SiCodes {
-    // SAFETY: this function has no safety requirements
-    let translated = unsafe { translate_si_code_impl(signum, si_code) };
-    SiCodes::from_i32(translated).unwrap_or(SiCodes::UNKNOWN)
-}
-
-#[cfg(test)]
-#[test]
-fn test_si_code() {
-    // standard values differ between oses, but it seems like segv match
-    // https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/siginfo.h for some
-    //  https://github.com/apple/darwin-xnu/blob/main/bsd/sys/signal.h
-    assert_eq!(translate_si_code(libc::SIGSEGV, 42), SiCodes::UNKNOWN);
-    assert_eq!(translate_si_code(libc::SIGSEGV, 2), SiCodes::SEGV_ACCERR);
 }
 
 #[derive(
