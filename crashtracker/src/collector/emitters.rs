@@ -5,7 +5,7 @@ use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::{emit_spans, emit_traces};
 use crate::shared::constants::*;
-use crate::CrashtrackerConfiguration;
+use crate::{translate_si_code, CrashtrackerConfiguration};
 use crate::StacktraceCollection;
 use anyhow::Context;
 use backtrace::Frame;
@@ -201,15 +201,14 @@ fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> anyhow::Resul
     };
 
     let si_code = unsafe { (*sig_info).si_code };
-    // TODO
-    let si_code_human_readable = "UNKNOWN";
+    let si_code_human_readable = translate_si_code(si_signo, si_code);
 
     writeln!(w, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
     write!(w, "{{")?;
     write!(w, "\"si_code\": {si_code}")?;
     write!(
         w,
-        ", \"si_code_human_readable\": \"{si_code_human_readable}\""
+        ", \"si_code_human_readable\": \"{si_code_human_readable:?}\""
     )?;
     write!(w, ", \"si_signo\": {si_signo}")?;
     write!(

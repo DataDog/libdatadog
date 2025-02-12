@@ -64,8 +64,10 @@ mod unix {
         // standard values differ between oses, but it seems like segv match
         // https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/siginfo.h
         // https://github.com/apple/darwin-xnu/blob/main/bsd/sys/signal.h
-        assert_eq!(translate_si_code(libc::SIGSEGV, 42), SiCodes::UNKNOWN);
         assert_eq!(translate_si_code(libc::SIGSEGV, 2), SiCodes::SEGV_ACCERR);
+
+        // An invalid code should translate to UNKNOWN
+        assert_eq!(translate_si_code(libc::SIGSEGV, 42), SiCodes::UNKNOWN);
     }
 }
 

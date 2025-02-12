@@ -4,8 +4,12 @@
 #include <signal.h>
 
 //! Different OSes have different values for si_code constants
-        //! https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/siginfo.h
-        //! https://github.com/apple/darwin-xnu/blob/main/bsd/sys/signal.h
+//! https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/siginfo.h
+//! https://github.com/apple/darwin-xnu/blob/main/bsd/sys/signal.h
+//! Ideally we would use libc::<CONSTANT_NAME> like we do for signum, but rust doesn't actually
+//! export constants for si_code types.
+//! As a workaround, link some C code which DOES have access to the types on the current platform
+//! and use it to do the translation.
 
 // MUST REMAIN IN SYNC WITH THE ENUM IN SIG_INFO.RS
 enum SiCodes {
@@ -38,12 +42,10 @@ enum SiCodes {
   SI_CODE_UNKNOWN,
 };
 
-/// @brief  A best effort attempt to translate si_codes
-///         into the enum crashtracker understands.
+/// @brief  A best effort attempt to translate si_codes into the enum crashtracker understands.
 /// @param signum
 /// @param si_code
-/// @return The enum value of the si_code, given signum.
-///         UNKNOWN if unable to translate.
+/// @return The enum value of the si_code, given signum. UNKNOWN if unable to translate.
 int translate_si_code_impl(int signum, int si_code) {
   switch (si_code) {
   case SI_USER:
