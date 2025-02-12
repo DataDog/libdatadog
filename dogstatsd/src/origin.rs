@@ -34,7 +34,7 @@ impl From<OriginProduct> for u32 {
 }
 
 /// Represents the category origin of a metric.
-/// The full enum is exhaustive so we only include what we need. Please reference the corresponding 
+/// The full enum is exhaustive so we only include what we need. Please reference the corresponding
 /// enum for all possible values https://github.com/DataDog/dd-source/blob/573dee9b5f7ee13935cb3ad11b16dde970528983/domains/metrics/shared/libs/proto/origin/origin.proto#L276
 pub enum OriginCategory {
     Other = 0,
@@ -52,7 +52,7 @@ impl From<OriginCategory> for u32 {
 }
 
 /// Represents the service origin of a metric.
-/// The full enum is exhaustive so we only include what we need. Please reference the corresponding 
+/// The full enum is exhaustive so we only include what we need. Please reference the corresponding
 /// enum for all possible values https://github.com/DataDog/dd-source/blob/573dee9b5f7ee13935cb3ad11b16dde970528983/domains/metrics/shared/libs/proto/origin/origin.proto#L417
 pub enum OriginService {
     Other = 0,
