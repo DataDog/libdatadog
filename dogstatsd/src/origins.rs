@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::metric::{Metric, SortedTags};
-use datadog_protos::metrics::{Metadata, Origin};
-use protobuf::MessageField;
+use datadog_protos::metrics::Origin;
 
 const AZURE_APP_SERVICES_TAG_VALUE: &str = "appservice";
 const GOOGLE_CLOUD_RUN_TAG_VALUE: &str = "cloudrun";
 const AZURE_CONTAINER_APP_TAG_VALUE: &str = "containerapp";
 
+const DD_ORIGIN_TAG_KEY: &str = "origin";
 const AWS_LAMBDA_TAG_KEY: &str = "function_arn";
 const AWS_STEP_FUNCTIONS_TAG_KEY: &str = "statemachinearn";
 
@@ -22,6 +22,7 @@ const AWS_STEP_FUNCTIONS_PREFIX: &str = "aws.states";
 /// The full enum is exhaustive so we only include what we need. Please reference the corresponding enum for all possible values
 /// https://github.com/DataDog/dd-source/blob/573dee9b5f7ee13935cb3ad11b16dde970528983/domains/metrics/shared/libs/proto/origin/origin.proto#L161
 pub enum OriginProduct {
+    Other = 0,
     Serverless = 1,
 }
 
@@ -62,11 +63,11 @@ impl From<OriginService> for u32 {
     }
 }
 
-pub fn get_origin(metric: &Metric, tags: SortedTags) -> Option<Metadata> {
+pub fn get_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
     let name = metric.name.to_string();
     let prefix = name.split('.').take(2).collect::<Vec<&str>>().join(".");
 
-    let category: OriginCategory = match tags.get("origin") {
+    let category: OriginCategory = match tags.get(DD_ORIGIN_TAG_KEY) {
         Some(AZURE_APP_SERVICES_TAG_VALUE) if prefix != AZURE_APP_SERVICES_PREFIX => {
             OriginCategory::AppServicesMetrics
         }
@@ -85,15 +86,14 @@ pub fn get_origin(metric: &Metric, tags: SortedTags) -> Option<Metadata> {
         _ => OriginCategory::Other,
     };
 
-    Some(Metadata {
-        origin: MessageField::some(Origin {
+    Some(
+        Origin {
             origin_product: OriginProduct::Serverless.into(),
             origin_category: category.into(),
             origin_service: OriginService::Other.into(),
             special_fields: Default::default(),
-        }),
-        ..Default::default()
-    })
+        },
+    )
 }
 
 #[cfg(test)]

@@ -4,16 +4,16 @@
 //! The aggregation of metrics.
 
 use crate::constants;
-use crate::datadog::{self, Metric as MetricToShip, Series};
+use crate::datadog::{self, Metric as MetricToShip, Series, Metadata as MetadataToShip, Origin as OriginToShip};
 use crate::errors;
 use crate::metric::{self, Metric, MetricValue, SortedTags};
 use crate::origins::get_origin;
 use std::time;
 
-use datadog_protos::metrics::{Dogsketch, Metadata, Sketch, SketchPayload};
+use datadog_protos::metrics::{Dogsketch, Metadata, Origin, Sketch, SketchPayload};
 use ddsketch_agent::DDSketch;
 use hashbrown::hash_table;
-use protobuf::Message;
+use protobuf::{Message, MessageField, SpecialFields};
 use tracing::{error, warn};
 use ustr::Ustr;
 
@@ -270,9 +270,12 @@ fn build_sketch(now: i64, entry: &Metric, mut base_tag_vec: SortedTags) -> Optio
     }
     sketch.set_tags(base_tag_vec.to_chars());
 
-    let metadata: Option<Metadata> = get_origin(entry, base_tag_vec);
-    if let Some(metadata) = metadata {
-        sketch.set_metadata(metadata);
+    let origin: Option<Origin> = get_origin(entry, base_tag_vec);
+    if let Some(origin) = origin {
+        sketch.set_metadata(Metadata::from(Metadata {
+            origin: MessageField::some(origin),
+            special_fields: SpecialFields::default(),
+        }));
     }
 
     Some(sketch)
@@ -303,12 +306,25 @@ fn build_metric(entry: &Metric, mut base_tag_vec: SortedTags) -> Option<MetricTo
         base_tag_vec.extend(&tags);
     }
 
+    let origin: Option<Origin> = get_origin(entry, base_tag_vec.clone());
+
+    println!("==================== sending metric name: {:?}", entry.name);
+    println!("==================== metric origin is: {:?}", origin);
+
     Some(MetricToShip {
         metric: entry.name.as_str(),
         resources,
         kind,
         points: [point; 1],
         tags: base_tag_vec.to_strings(),
+        metadata: Some(MetadataToShip {
+            origin: origin.map(|o| OriginToShip {
+                origin_product: o.origin_product,
+                origin_sub_product: o.origin_category,
+                origin_product_detail: o.origin_service,
+            }),
+        }),
+
     })
 }
 
