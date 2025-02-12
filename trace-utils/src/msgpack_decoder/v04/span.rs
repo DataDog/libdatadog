@@ -1,13 +1,14 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{
-    read_meta_struct, read_metrics, read_nullable_str_map_to_bytes_strings,
-    read_nullable_string_bytes, read_string_ref, span_link::read_span_links,
+use crate::msgpack_decoder::decode::error::DecodeError;
+use crate::msgpack_decoder::decode::number::read_nullable_number_bytes;
+use crate::msgpack_decoder::decode::span_link::read_span_links;
+use crate::msgpack_decoder::decode::string::{
+    read_nullable_str_map_to_bytes_strings, read_nullable_string_bytes, read_string_ref,
 };
-use crate::msgpack_decoder::v04::error::DecodeError;
-use crate::msgpack_decoder::v04::number::read_nullable_number_bytes;
-use crate::span_v04::{Span, SpanKey};
+use crate::msgpack_decoder::decode::{meta::read_meta_struct, metrics::read_metrics};
+use crate::span::v04::{Span, SpanKey};
 use tinybytes::Bytes;
 
 /// Decodes a slice of bytes into a `Span` object.
@@ -69,7 +70,7 @@ fn fill_span(span: &mut Span, buf: &mut Bytes) -> Result<(), DecodeError> {
 #[cfg(test)]
 mod tests {
     use super::SpanKey;
-    use crate::span_v04::SpanKeyParseError;
+    use crate::span::v04::SpanKeyParseError;
     use std::str::FromStr;
 
     #[test]
