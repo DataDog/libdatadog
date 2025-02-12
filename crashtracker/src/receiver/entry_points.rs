@@ -23,15 +23,21 @@ pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {
     Ok(())
 }
 
+pub async fn async_receiver_entry_point_unix_listener(
+    listener: &UnixListener,
+) -> anyhow::Result<()> {
+    let (unix_stream, _) = listener.accept().await?;
+    let stream = BufReader::new(unix_stream);
+    receiver_entry_point(receiver_timeout(), stream).await
+}
+
 pub async fn async_receiver_entry_point_unix_socket(
     socket_path: impl AsRef<str>,
     one_shot: bool,
 ) -> anyhow::Result<()> {
-    let listener = get_unix_socket(socket_path)?;
+    let listener = get_receiver_unix_socket(socket_path)?;
     loop {
-        let (unix_stream, _) = listener.accept().await?;
-        let stream = BufReader::new(unix_stream);
-        let res = receiver_entry_point(receiver_timeout(), stream).await;
+        let res = async_receiver_entry_point_unix_listener(&listener).await;
         // TODO, should we log failures somewhere?
         if one_shot {
             return res;
@@ -48,11 +54,7 @@ pub fn receiver_entry_point_unix_socket(socket_path: impl AsRef<str>) -> anyhow:
     // Dropping the stream closes it, allowing the collector to exit if it was waiting.
 }
 
-/*-----------------------------------------
-|             Helper Functions             |
-------------------------------------------*/
-
-fn get_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<UnixListener> {
+pub fn get_receiver_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<UnixListener> {
     fn path_bind(socket_path: impl AsRef<str>) -> anyhow::Result<UnixListener> {
         let socket_path = socket_path.as_ref();
         if std::fs::metadata(socket_path).is_ok() {

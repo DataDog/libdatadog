@@ -86,7 +86,7 @@ impl StatsExporter {
 
         let mut req_builder = self
             .endpoint
-            .into_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
+            .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
             .header(
                 hyper::header::CONTENT_TYPE,
                 ddcommon::header::APPLICATION_MSGPACK,
@@ -163,11 +163,11 @@ fn encode_stats_payload(
         version: meta.app_version.clone(),
         runtime_id: meta.runtime_id.clone(),
         tracer_version: meta.tracer_version.clone(),
-        service: meta.service.clone(),
         sequence,
         stats: buckets,
         git_commit_sha: meta.git_commit_sha.clone(),
-        // These fields will be set by the Agent
+        // These fields are unused or will be set by the Agent
+        service: String::new(),
         container_id: String::new(),
         tags: Vec::new(),
         agent_aggregation: String::new(),
@@ -213,7 +213,6 @@ mod tests {
             language: "rust".into(),
             tracer_version: "0.0.0".into(),
             runtime_id: "e39d6d12-0752-489f-b488-cf80006c0378".into(),
-            service: "stats_exporter_test".into(),
             ..Default::default()
         }
     }

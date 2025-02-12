@@ -304,7 +304,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
         let req = self
             .state
             .endpoint
-            .into_request_builder(concat!("Sidecar/", env!("CARGO_PKG_VERSION")))?
+            .to_request_builder(concat!("Sidecar/", env!("CARGO_PKG_VERSION")))?
             .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,

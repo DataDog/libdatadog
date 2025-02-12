@@ -159,7 +159,7 @@ impl Endpoint {
     /// - User agent
     /// - Api key
     /// - Container Id/Entity Id
-    pub fn into_request_builder(&self, user_agent: &str) -> anyhow::Result<HttpRequestBuilder> {
+    pub fn to_request_builder(&self, user_agent: &str) -> anyhow::Result<HttpRequestBuilder> {
         let mut builder = hyper::Request::builder()
             .uri(self.url.clone())
             .header(hyper::header::USER_AGENT, user_agent);

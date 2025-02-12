@@ -1,6 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! Types used when calling [`super::send_with_retry`] to configure the retry logic.
+
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -61,7 +63,7 @@ impl RetryStrategy {
     /// # Examples
     ///
     /// ```rust
-    /// use datadog_trace_utils::send_data::{RetryBackoffType, RetryStrategy};
+    /// use datadog_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
     /// use std::time::Duration;
     ///
     /// let retry_strategy = RetryStrategy::new(5, 100, RetryBackoffType::Exponential, Some(50));

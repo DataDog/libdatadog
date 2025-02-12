@@ -105,6 +105,7 @@ fn test_ddog_sidecar_register_app() {
             0,
             null(),
             0,
+            false,
         )
         .unwrap_none();
 
@@ -160,6 +161,7 @@ fn test_ddog_sidecar_register_app() {
             0,
             null(),
             0,
+            false,
         )
         .unwrap_none();
 

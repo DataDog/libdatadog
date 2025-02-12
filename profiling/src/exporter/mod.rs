@@ -273,7 +273,7 @@ impl ProfileExporter {
 
         let builder = self
             .endpoint
-            .into_request_builder(concat!("DDProf/", env!("CARGO_PKG_VERSION")))?
+            .to_request_builder(concat!("DDProf/", env!("CARGO_PKG_VERSION")))?
             .method(http::Method::POST)
             .header("Connection", "close")
             .header("DD-EVP-ORIGIN", self.profiling_library_name.as_ref())

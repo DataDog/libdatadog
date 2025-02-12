@@ -1,10 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+mod additional_tags;
 mod counters;
 mod datatypes;
 mod spans;
 
 use super::crash_info::Metadata;
+pub use additional_tags::*;
 use anyhow::Context;
 pub use counters::*;
 use datadog_crashtracker::CrashtrackerReceiverConfig;

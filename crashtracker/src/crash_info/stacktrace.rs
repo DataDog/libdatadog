@@ -193,7 +193,6 @@ pub enum BuildIdType {
     GNU,
     GO,
     PDB,
-    PE,
     SHA1,
 }
 
@@ -203,7 +202,7 @@ pub enum BuildIdType {
 pub enum FileType {
     APK,
     ELF,
-    PDB,
+    PE,
 }
 
 #[cfg(unix)]
