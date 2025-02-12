@@ -274,10 +274,10 @@ fn build_sketch(now: i64, entry: &Metric, mut base_tag_vec: SortedTags) -> Optio
 
     let origin: Option<Origin> = get_origin(entry, base_tag_vec);
     if let Some(origin) = origin {
-        sketch.set_metadata(Metadata::from(Metadata {
+        sketch.set_metadata(Metadata {
             origin: MessageField::some(origin),
             special_fields: SpecialFields::default(),
-        }));
+        });
     }
 
     Some(sketch)
