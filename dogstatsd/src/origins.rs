@@ -111,6 +111,8 @@ pub fn get_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
 
 #[cfg(test)]
 mod tests {
+    use crate::metric::MetricValue;
+
     use super::*;
 
     #[test]
@@ -129,5 +131,39 @@ mod tests {
     fn test_origin_service() {
         let origin_service: u32 = OriginService::Other.into();
         assert_eq!(origin_service, 0);
+    }
+
+    #[test]
+    fn test_get_origin_aws_lambda_standard_metric() {
+        let tags = SortedTags::parse("function_arn:hello123").unwrap();
+        let metric = Metric {
+            id: 0,
+            name: "aws.lambda.enhanced.invocations".into(),
+            value: MetricValue::Gauge(1.0),
+            tags: Some(tags.clone()),
+        };
+        let origin = get_origin(&metric, tags);
+        assert_eq!(origin, None);
+    }
+
+    #[test]
+    fn test_get_origin_aws_lambda_custom_metric() {
+        let tags = SortedTags::parse("function_arn:hello123").unwrap();
+        let metric = Metric {
+            id: 0,
+            name: "my.custom.aws.lambda.invocations".into(),
+            value: MetricValue::Gauge(1.0),
+            tags: Some(tags.clone()),
+        };
+        let origin = get_origin(&metric, tags);
+        assert_eq!(
+            origin,
+            Some(Origin {
+                origin_product: OriginProduct::Serverless.into(),
+                origin_category: OriginCategory::LambdaMetrics.into(),
+                origin_service: OriginService::Other.into(),
+                ..Default::default()
+            })
+        );
     }
 }

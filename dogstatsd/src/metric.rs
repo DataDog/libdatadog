@@ -117,6 +117,17 @@ impl SortedTags {
         tags_as_vec
     }
 
+    pub fn contains(&self, key: &str) -> bool {
+        self.values.iter().any(|(k, _)| k.as_str() == key)
+    }
+
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.values
+            .iter()
+            .find(|(k, _)| k.as_str() == key)
+            .map(|(_, v)| v.as_str())
+    }
+
     pub(crate) fn to_resources(&self) -> Vec<datadog::Resource> {
         let mut resources = Vec::with_capacity(constants::MAX_TAGS);
         for (key, val) in &self.values {
@@ -133,18 +144,6 @@ impl SortedTags {
             }
         }
         resources
-    }
-
-    // TODO Dylan: TEST THIS
-    pub fn contains(&self, key: &str) -> bool {
-        self.values.iter().any(|(k, _)| k.as_str() == key)
-    }
-
-    pub fn get(&self, key: &str) -> Option<&str> {
-        self.values
-            .iter()
-            .find(|(k, _)| k.as_str() == key)
-            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -572,5 +571,23 @@ mod tests {
         let first_element = tags.values.first().unwrap();
         assert_eq!(first_element.0, Ustr::from("a"));
         assert_eq!(first_element.1, Ustr::from("a1"));
+    }
+
+    #[test]
+    fn sorted_tags_contains_key() {
+        let tags = SortedTags::parse("a:1,b:2,c:3").unwrap();
+        assert!(tags.contains("a"));
+        assert!(tags.contains("b"));
+        assert!(tags.contains("c"));
+        assert!(!tags.contains("d"));
+    }
+
+    #[test]
+    fn sorted_tags_get_value() {
+        let tags = SortedTags::parse("a:1,b:2,c:3").unwrap();
+        assert_eq!(tags.get("a"), Some("1"));
+        assert_eq!(tags.get("b"), Some("2"));
+        assert_eq!(tags.get("c"), Some("3"));
+        assert_eq!(tags.get("d"), None);
     }
 }
