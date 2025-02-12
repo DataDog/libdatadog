@@ -1,7 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 use num_derive::{FromPrimitive, ToPrimitive};
-use num_traits::FromPrimitive;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -46,21 +45,25 @@ mod unix {
     }
 
     extern "C" {
+        /// A bit of C code which can access the constants in <signal.h>.
+        /// See the file comment on emit_sicodes.c for full details.
         fn translate_si_code_impl(signum: libc::c_int, si_code: libc::c_int) -> libc::c_int;
     }
 
     pub fn translate_si_code(signum: libc::c_int, si_code: libc::c_int) -> SiCodes {
+        use num_traits::FromPrimitive;
         // SAFETY: this function has no safety requirements
         let translated = unsafe { translate_si_code_impl(signum, si_code) };
         SiCodes::from_i32(translated).unwrap_or(SiCodes::UNKNOWN)
     }
 
     #[cfg(test)]
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_si_code() {
         // standard values differ between oses, but it seems like segv match
-        // https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/siginfo.h for some
-        //  https://github.com/apple/darwin-xnu/blob/main/bsd/sys/signal.h
+        // https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/siginfo.h
+        // https://github.com/apple/darwin-xnu/blob/main/bsd/sys/signal.h
         assert_eq!(translate_si_code(libc::SIGSEGV, 42), SiCodes::UNKNOWN);
         assert_eq!(translate_si_code(libc::SIGSEGV, 2), SiCodes::SEGV_ACCERR);
     }
@@ -79,6 +82,7 @@ impl From<libc::c_int> for SignalNames {
 #[allow(clippy::upper_case_acronyms, non_camel_case_types)]
 #[repr(C)]
 /// See https://man7.org/linux/man-pages/man2/sigaction.2.html
+/// MUST REMAIN IN SYNC WITH THE ENUM IN emit_sigcodes.c
 pub enum SiCodes {
     BUS_ADRALN,
     BUS_ADRERR,

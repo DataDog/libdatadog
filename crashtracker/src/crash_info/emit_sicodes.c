@@ -3,6 +3,10 @@
 
 #include <signal.h>
 
+//! Different OSes have different values for si_code constants
+        //! https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/siginfo.h
+        //! https://github.com/apple/darwin-xnu/blob/main/bsd/sys/signal.h
+
 // MUST REMAIN IN SYNC WITH THE ENUM IN SIG_INFO.RS
 enum SiCodes {
   SI_CODE_BUS_ADRALN,
