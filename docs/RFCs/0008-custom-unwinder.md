@@ -45,7 +45,7 @@ If this is a success, we can roll out progressively the change.
 ### Out of scope
 
 Signal safety is not discussed.
-The current implementation is not signal safe. We have more work to improve this.
+The current implementation is not signal safe. The long term direction is to move the unwinding out of the process.
 
 Shipping libunwund so that .NET folks can reuse it.
 This should come in a second phase.

@@ -35,8 +35,8 @@ impl StackTraceUnwinding {
             .to_lowercase()
             .as_str()
         {
-            "backtrace" => StackTraceUnwinding::Backtrace,
-            _ => StackTraceUnwinding::Libunwind, // Default to libunwind
+            "libunwind" => StackTraceUnwinding::Libunwind,
+            _ => StackTraceUnwinding::Backtrace, // default to backtrace
         }
     }
 }

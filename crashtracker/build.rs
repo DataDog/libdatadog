@@ -24,7 +24,6 @@ fn main() {
     if target.contains("musl") {
         // possibly lzma compressed symbol tables. Do we really need it ?
         println!("cargo:rustc-link-lib=static=lzma");
-        println!("cargo:rustc-link-lib=static=unwind-{}", link_lib_arch);
         println!("cargo:rustc-link-lib=static=unwind");
     }
     else {
