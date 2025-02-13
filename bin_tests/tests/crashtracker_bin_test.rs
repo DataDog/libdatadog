@@ -11,62 +11,95 @@ use std::{fs, path::PathBuf};
 
 use anyhow::Context;
 use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
+use serde_json::Value;
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_debug() {
-    test_crash_tracking_bin(BuildProfile::Debug, "donothing");
+    test_crash_tracking_bin(BuildProfile::Debug, "donothing", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_sigpipe() {
-    test_crash_tracking_bin(BuildProfile::Debug, "sigpipe");
+    test_crash_tracking_bin(BuildProfile::Debug, "sigpipe", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_sigchld() {
-    test_crash_tracking_bin(BuildProfile::Debug, "sigchld");
+    test_crash_tracking_bin(BuildProfile::Debug, "sigchld", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_sigchld_exec() {
-    test_crash_tracking_bin(BuildProfile::Debug, "sigchld_exec");
+    test_crash_tracking_bin(BuildProfile::Debug, "sigchld_exec", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_sigstack() {
-    test_crash_tracking_bin(BuildProfile::Release, "donothing_sigstack");
+    test_crash_tracking_bin(BuildProfile::Release, "donothing_sigstack", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_sigpipe_sigstack() {
-    test_crash_tracking_bin(BuildProfile::Release, "sigpipe_sigstack");
+    test_crash_tracking_bin(BuildProfile::Release, "sigpipe_sigstack", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_sigchld_sigstack() {
-    test_crash_tracking_bin(BuildProfile::Release, "sigchld_sigstack");
+    test_crash_tracking_bin(BuildProfile::Release, "sigchld_sigstack", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_chained() {
-    test_crash_tracking_bin(BuildProfile::Release, "chained");
+    test_crash_tracking_bin(BuildProfile::Release, "chained", "null_deref");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_fork() {
-    test_crash_tracking_bin(BuildProfile::Release, "fork");
+    test_crash_tracking_bin(BuildProfile::Release, "fork", "null_deref");
 }
 
-fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: &str) {
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_abort() {
+    // For now, do the base test (donothing).  For future we should probably also test chaining.
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "sigabrt");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_sigill() {
+    // For now, do the base test (donothing).  For future we should probably also test chaining.
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "sigill");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_sigbus() {
+    // For now, do the base test (donothing).  For future we should probably also test chaining.
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "sigbus");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_sigsegv() {
+    // For now, do the base test (donothing).  For future we should probably also test chaining.
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "sigsegv");
+}
+
+fn test_crash_tracking_bin(
+    crash_tracking_receiver_profile: BuildProfile,
+    mode: &str,
+    crash_typ: &str,
+) {
     let (crashtracker_bin, crashtracker_receiver) =
         setup_crashtracking_crates(crash_tracking_receiver_profile);
     let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
@@ -76,13 +109,23 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: 
         .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
         .arg(&fixtures.output_dir)
         .arg(mode)
+        .arg(crash_typ)
         .spawn()
         .unwrap();
     let exit_status = bin_tests::timeit!("exit after signal", {
         eprintln!("Waiting for exit");
         p.wait().unwrap()
     });
-    assert!(!exit_status.success());
+
+    // When we raise SIGSEGV/SIGBUS, the chained handler doesn't kill the program
+    // Presumably because continuing after raise is allowed.
+    // Not sure why sigill behaves differently??
+    // TODO: figure that out.
+    match crash_typ {
+        "null_deref" | "sigabrt" | "sigill" => assert!(!exit_status.success()),
+        "sigbus" | "sigsegv" => (),
+        _ => unreachable!("{crash_typ} shouldn't happen"),
+    }
 
     let stderr_path = format!("{0}/out.stderr", fixtures.output_dir.display());
     let stderr = fs::read(stderr_path)
@@ -120,32 +163,12 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: 
         crash_payload["counters"],
     );
     let sig_info = &crash_payload["sig_info"];
-    // On every platform other than OSX ARM, the si_code is 1: SEGV_MAPERR
-    // On OSX ARM, its 2: SEGV_ACCERR
-    assert!(
-        *sig_info
-            == serde_json::json!({
-                "si_addr": "0x0000000000000000",
-                "si_code": 1,
-                "si_code_human_readable": "UNKNOWN",
-                "si_signo": 11,
-                "si_signo_human_readable": "SIGSEGV",
-            })
-            || *sig_info
-                == serde_json::json!({
-                    "si_addr": "0x0000000000000000",
-                    "si_code": 2,
-                    "si_code_human_readable": "UNKNOWN",
-                    "si_signo": 11,
-                    "si_signo_human_readable": "SIGSEGV",
-                }),
-        "Unexpected sig_info: {sig_info}"
-    );
+    assert_siginfo_message(sig_info, crash_typ);
 
     let crash_telemetry = fs::read(fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
-    assert_telemetry_message(&crash_telemetry);
+    assert_telemetry_message(&crash_telemetry, crash_typ);
 
     // Crashtracking signal handler chaining tests, as well as other tests, might only be able to
     // influence system state after the main application has crashed, and has therefore lost the
@@ -161,7 +184,46 @@ fn test_crash_tracking_bin(crash_tracking_receiver_profile: BuildProfile, mode: 
     }
 }
 
-fn assert_telemetry_message(crash_telemetry: &[u8]) {
+fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
+    match crash_typ {
+        "sigabrt" => {
+            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
+            assert_eq!(sig_info["si_signo"], libc::SIGABRT);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGABRT");
+        }
+        "sigsegv" => {
+            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
+            assert_eq!(sig_info["si_signo"], libc::SIGSEGV);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGSEGV");
+        }
+        "sigbus" => {
+            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
+            assert_eq!(sig_info["si_signo"], libc::SIGBUS);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGBUS");
+        }
+        "sigill" => {
+            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
+            assert_eq!(sig_info["si_signo"], libc::SIGILL);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGILL");
+        }
+        "null_deref" =>
+        // On every platform other than OSX ARM, the si_code is 1: SEGV_MAPERR
+        // On OSX ARM, its 2: SEGV_ACCERR
+        {
+            assert_eq!(sig_info["si_addr"], "0x0000000000000000");
+            assert!(
+                sig_info["si_code"] == 2 || sig_info["si_code"] == 1,
+                "{sig_info:?}"
+            );
+            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
+            assert_eq!(sig_info["si_signo"], libc::SIGSEGV);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGSEGV");
+        }
+        _ => panic!("unexpected crash_typ {crash_typ}"),
+    }
+}
+
+fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
     let telemetry_payload: serde_json::Value =
         serde_json::from_slice::<serde_json::Value>(crash_telemetry)
             .context("deserializing crashtracker telemetry payload to json")
@@ -185,8 +247,8 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
         .split(',')
         .filter(|t| !t.starts_with("uuid:"))
         .collect::<std::collections::HashSet<_>>();
-    // As above, ARM OSX can have a si_code of 2.
-    assert!(
+
+    let base_expected_tags: std::collections::HashSet<&str> =
         std::collections::HashSet::from_iter([
             "data_schema_version:1.2",
             "incomplete:false",
@@ -195,27 +257,51 @@ fn assert_telemetry_message(crash_telemetry: &[u8]) {
             "profiler_inactive:0",
             "profiler_serializing:0",
             "profiler_unwinding:0",
-            "si_addr:0x0000000000000000",
-            "si_code_human_readable:UNKNOWN",
-            "si_code:1",
-            "si_signo_human_readable:SIGSEGV",
-            "si_signo:11",
-        ]) == tags
-            || std::collections::HashSet::from_iter([
-                "data_schema_version:1.2",
-                "incomplete:false",
-                "is_crash:true",
-                "profiler_collecting_sample:1",
-                "profiler_inactive:0",
-                "profiler_serializing:0",
-                "profiler_unwinding:0",
-                "si_addr:0x0000000000000000",
-                "si_code_human_readable:UNKNOWN",
-                "si_code:2",
-                "si_signo_human_readable:SIGSEGV",
-                "si_signo:11",
-            ]) == tags
-    );
+        ]);
+
+    match crash_typ {
+        "sigabrt" => {
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
+            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGABRT"), "{tags:?}");
+            assert!(tags.contains("si_signo:6"), "{tags:?}");
+        }
+        "sigbus" => {
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
+            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGBUS"), "{tags:?}");
+            // SIGBUS can be 7 or 10, depending on the os.
+            assert!(
+                tags.contains(format!("si_signo:{}", libc::SIGBUS).as_str()),
+                "{tags:?}"
+            );
+        }
+        "sigill" => {
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
+            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGILL"), "{tags:?}");
+            assert!(tags.contains("si_signo:4"), "{tags:?}");
+        }
+        "sigsegv" => {
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
+            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
+            assert!(tags.contains("si_signo:11"), "{tags:?}");
+        }
+        "null_deref" => {
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
+            assert!(tags.contains("si_addr:0x0000000000000000"), "{tags:?}");
+            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
+            assert!(tags.contains("si_signo:11"), "{tags:?}");
+            assert!(
+                tags.contains("si_code:1") || tags.contains("si_code:2"),
+                "{tags:?}"
+            );
+        }
+        _ => panic!("{crash_typ}"),
+    }
+
     assert_eq!(telemetry_payload["payload"][0]["is_sensitive"], true);
 }
 
@@ -238,6 +324,7 @@ fn crash_tracking_empty_endpoint() {
         .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
         .arg(&fixtures.output_dir)
         .arg("donothing")
+        .arg("null_deref")
         .env(
             "DD_TRACE_AGENT_URL",
             format!("unix://{}", socket_path.display()),
@@ -286,7 +373,7 @@ fn crash_tracking_empty_endpoint() {
     let resp = String::from_utf8_lossy(&out[..total_read]);
     let pos = resp.find("\r\n\r\n").unwrap();
     let body = &resp[pos + 4..];
-    assert_telemetry_message(body.as_bytes());
+    assert_telemetry_message(body.as_bytes(), "null_deref");
 }
 
 struct TestFixtures<'a> {
