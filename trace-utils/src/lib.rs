@@ -12,4 +12,4 @@ pub mod trace_utils;
 pub mod tracer_header_tags;
 pub mod tracer_payload;
 
-pub mod span_v04;
+pub mod span;
