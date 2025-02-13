@@ -192,12 +192,12 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
             assert_eq!(sig_info["si_signo_human_readable"], "SIGABRT");
         }
         "sigsegv" => {
-            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
+            assert_eq!(sig_info["si_code_human_readable"], "SEGV_ACCERR");
             assert_eq!(sig_info["si_signo"], libc::SIGSEGV);
             assert_eq!(sig_info["si_signo_human_readable"], "SIGSEGV");
         }
         "sigbus" => {
-            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
+            assert_eq!(sig_info["si_code_human_readable"], "BUS_ADRALN");
             assert_eq!(sig_info["si_signo"], libc::SIGBUS);
             assert_eq!(sig_info["si_signo_human_readable"], "SIGBUS");
         }
@@ -215,7 +215,7 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
                 sig_info["si_code"] == 2 || sig_info["si_code"] == 1,
                 "{sig_info:?}"
             );
-            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
+            assert_eq!(sig_info["si_code_human_readable"], "SEGV_ACCERR");
             assert_eq!(sig_info["si_signo"], libc::SIGSEGV);
             assert_eq!(sig_info["si_signo_human_readable"], "SIGSEGV");
         }
@@ -268,7 +268,10 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
         }
         "sigbus" => {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
-            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(
+                tags.contains("si_code_human_readable:BUS_ADRALN"),
+                "{tags:?}"
+            );
             assert!(tags.contains("si_signo_human_readable:SIGBUS"), "{tags:?}");
             // SIGBUS can be 7 or 10, depending on the os.
             assert!(
@@ -284,14 +287,20 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
         }
         "sigsegv" => {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
-            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(
+                tags.contains("si_code_human_readable:SEGV_ACCERR"),
+                "{tags:?}"
+            );
             assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
             assert!(tags.contains("si_signo:11"), "{tags:?}");
         }
         "null_deref" => {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_addr:0x0000000000000000"), "{tags:?}");
-            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(
+                tags.contains("si_code_human_readable:SEGV_ACCERR"),
+                "{tags:?}"
+            );
             assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
             assert!(tags.contains("si_signo:11"), "{tags:?}");
             assert!(
