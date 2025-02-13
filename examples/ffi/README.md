@@ -10,7 +10,8 @@ You can then build the examples with:
 
 ```bash
 # Run the below commands at the root level
-cmake -S examples/ffi -B examples/ffi/build -D Datadog_ROOT=./release
+# Datadog Root env is read from the DatadogConfig.cmake
+Datadog_ROOT=$PWD/release cmake -S examples/ffi -B examples/ffi/build
 cmake --build ./examples/ffi/build
 ```
 
@@ -20,3 +21,14 @@ The build command will create executables in the examples/ffi/build folder. You 
 ````
 ./examples/ffi/build/test-name
 ````
+
+# Working example with Crashtracking
+
+```
+cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -- --out
+Datadog_ROOT=$PWD/release cmake -S examples/ffi -B examples/ffi/build
+cmake --build ./examples/ffi/build 
+# You can also focus on a single target
+# cmake --build ./examples/ffi/build -t crashtracking
+./examples/ffi/build/crashtracking
+```

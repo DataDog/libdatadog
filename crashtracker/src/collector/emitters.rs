@@ -4,6 +4,7 @@
 use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::{emit_spans, emit_traces};
+use crate::shared::configuration::StackTraceUnwinding;
 use crate::shared::constants::*;
 use crate::CrashtrackerConfiguration;
 use crate::StacktraceCollection;
@@ -14,6 +15,16 @@ use std::{
     fs::File,
     io::{Read, Write},
 };
+use std::ffi::CStr;
+
+#[cfg(target_arch = "x86_64")]
+use crate::collector::libunwind_x86_64 as libunwind;
+
+#[cfg(target_arch = "arm")]
+use crate::collector::libunwind_arm as libunwind;
+
+use libunwind::{UnwCursor, UnwContext, unw_init_local, unw_step, unw_get_reg, unw_get_proc_name, UNW_REG_IP, UNW_REG_SP};
+
 
 /// Emit a stacktrace onto the given handle as formatted json.
 /// SAFETY:
@@ -81,6 +92,66 @@ unsafe fn emit_backtrace_by_frames(
     Ok(())
 }
 
+
+fn emit_backtrace_libuwnind(
+    w: &mut impl Write,
+    ucontext: *const ucontext_t,
+    resolve_symbols: bool,
+) -> anyhow::Result<()> {
+    unsafe {
+        let mut cursor = UnwCursor([0; std::mem::size_of::<UnwCursor>()]);
+        let context = ucontext as *mut UnwContext; // Reinterpret as UnwContext
+
+        writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
+
+        if unw_init_local(&mut cursor, context) != 0 {
+            writeln!(w, "{{ \"error\": \"Failed to initialize cursor from context\" }}")?;
+            writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
+            w.flush()?;  
+            return Err(anyhow::anyhow!("Failed to initialize cursor from context"));
+        }
+
+        let mut name_buf = vec![0 as libc::c_char; 256]; // Buffer for function names
+        let mut offset: u64 = 0;
+
+        loop {
+            let mut ip: u64 = 0;
+            let mut sp: u64 = 0;
+
+            if unw_get_reg(&mut cursor, UNW_REG_IP, &mut ip) != 0 ||
+               unw_get_reg(&mut cursor, UNW_REG_SP, &mut sp) != 0 {
+                writeln!(w, "{{ \"error\": \"Failed to retrieve registers during stack unwinding\" }}")?;
+                break;
+            }
+
+            if resolve_symbols {
+                let mut func_name = "<unknown>".to_string();
+                let mut symbol_address: u64 = 0;
+
+                // Attempt to retrieve the function name & offset
+                if unw_get_proc_name(&mut cursor, name_buf.as_mut_ptr(), name_buf.len(), &mut offset) == 0 {
+                    func_name = CStr::from_ptr(name_buf.as_ptr()).to_string_lossy().into_owned();
+                    symbol_address = ip - offset;
+                }
+                // we could also retrieve the elf offsets using the libunwind APIs if needed.
+                writeln!(w, "{{ \"ip\": \"{:#x}\", \"sp\": \"{:#x}\", \"symbol_address\": \"{:#x}\", \"function\": \"{}\", \"offset\": \"0x{:x}\" }}", 
+                    ip, sp, symbol_address, func_name, offset)?;
+            } else {
+                writeln!(w, "{{ \"ip\": \"{:#x}\", \"sp\": \"{:#x}\" }}", ip, sp)?;
+            }
+
+            if unw_step(&mut cursor) <= 0 {
+                break;
+            }
+        }
+
+        writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
+    }
+
+    w.flush()?;  
+    Ok(())
+}
+
 pub(crate) fn emit_crashreport(
     pipe: &mut impl Write,
     config: &CrashtrackerConfiguration,
@@ -109,7 +180,11 @@ pub(crate) fn emit_crashreport(
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
     // Do this last, so even if it crashes, we still get the other info.
     if config.resolve_frames != StacktraceCollection::Disabled {
-        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames)? };
+        if config.stacktrace_unwinding == StackTraceUnwinding::Backtrace { 
+            unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames)? };
+        } else {
+            emit_backtrace_libuwnind(pipe, ucontext, config.resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols)?;
+        }
     }
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
