@@ -53,4 +53,4 @@ uuid = { version = "1.4.1", features = ["v4", "serde"] }
 tempfile = { version = "3.3" }
 
 [build-dependencies]
-cc = "1.2.13"
+cc = "1.1.31"
