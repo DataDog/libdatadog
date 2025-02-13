@@ -215,7 +215,11 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
                 sig_info["si_code"] == 2 || sig_info["si_code"] == 1,
                 "{sig_info:?}"
             );
-            assert_eq!(sig_info["si_code_human_readable"], "SEGV_ACCERR");
+            assert!(
+                sig_info["si_code_human_readable"] == "SEGV_ACCERR"
+                    || sig_info["si_code_human_readable"] == "SEGV_MAPERR",
+                "{sig_info:?}"
+            );
             assert_eq!(sig_info["si_signo"], libc::SIGSEGV);
             assert_eq!(sig_info["si_signo_human_readable"], "SIGSEGV");
         }
