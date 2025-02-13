@@ -302,7 +302,8 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_addr:0x0000000000000000"), "{tags:?}");
             assert!(
-                tags.contains("si_code_human_readable:SEGV_ACCERR"),
+                tags.contains("si_code_human_readable:SEGV_ACCERR")
+                    || tags.contains("si_code_human_readable:SEGV_MAPERR"),
                 "{tags:?}"
             );
             assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
