@@ -209,6 +209,18 @@ pub fn read_nullable_number_bytes<T: TryFrom<Number, Error = DecodeError>>(
     read_number(unsafe { buf.as_mut_slice() }, true)?.try_into()
 }
 
+pub fn read_number_ref<T: TryFrom<Number, Error = DecodeError>>(
+    buf: &mut &[u8],
+) -> Result<T, DecodeError> {
+    read_number(buf, false)?.try_into()
+}
+
+pub fn read_nullable_number_ref<T: TryFrom<Number, Error = DecodeError>>(
+    buf: &mut &[u8],
+) -> Result<T, DecodeError> {
+    read_number(buf, true)?.try_into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
