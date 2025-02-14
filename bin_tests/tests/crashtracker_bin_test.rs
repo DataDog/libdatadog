@@ -241,48 +241,32 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
             assert_eq!(sig_info["si_signo_human_readable"], "SIGABRT");
             // https://vorner.github.io/2021/01/03/dark-side-of-posix-apis.html
             // OSX signal handling is the worst.
-            assert!(
-                sig_info["si_code_human_readable"] == "UNKNOWN"
-                    || sig_info["si_code_human_readable"] == "SI_USER",
-                "{sig_info:?}"
-            );
+            #[cfg(not(target_os = "macos"))]
+            assert_eq!(sig_info["si_code_human_readable"], "SI_USER");
         }
         "kill_sigsegv" => {
             assert_eq!(sig_info["si_signo"], libc::SIGSEGV);
             assert_eq!(sig_info["si_signo_human_readable"], "SIGSEGV");
             // https://vorner.github.io/2021/01/03/dark-side-of-posix-apis.html
             // OSX signal handling is the worst.
-            assert!(
-                matches!(
-                    sig_info["si_code_human_readable"].as_str().unwrap(),
-                    "UNKNOWN" | "SI_USER" | "SEGV_ACCERR"
-                ),
-                "{sig_info:?}"
-            );
+            #[cfg(not(target_os = "macos"))]
+            assert_eq!(sig_info["si_code_human_readable"], "SI_USER");
         }
         "kill_sigbus" => {
             assert_eq!(sig_info["si_signo"], libc::SIGBUS);
             assert_eq!(sig_info["si_signo_human_readable"], "SIGBUS");
             // https://vorner.github.io/2021/01/03/dark-side-of-posix-apis.html
             // OSX signal handling is the worst.
-            assert!(
-                matches!(
-                    sig_info["si_code_human_readable"].as_str().unwrap(),
-                    "UNKNOWN" | "SI_USER" | "BUS_ADRALN"
-                ),
-                "{sig_info:?}"
-            );
+            #[cfg(not(target_os = "macos"))]
+            assert_eq!(sig_info["si_code_human_readable"], "SI_USER");
         }
         "kill_sigill" => {
             assert_eq!(sig_info["si_signo"], libc::SIGILL);
             assert_eq!(sig_info["si_signo_human_readable"], "SIGILL");
             // https://vorner.github.io/2021/01/03/dark-side-of-posix-apis.html
             // OSX signal handling is the worst.
-            assert!(
-                sig_info["si_code_human_readable"] == "UNKNOWN"
-                    || sig_info["si_code_human_readable"] == "SI_USER",
-                "{sig_info:?}"
-            );
+            #[cfg(not(target_os = "macos"))]
+            assert_eq!(sig_info["si_code_human_readable"], "SI_USER");
         }
         "raise_sigabrt" => {
             assert_eq!(sig_info["si_signo"], libc::SIGABRT);
