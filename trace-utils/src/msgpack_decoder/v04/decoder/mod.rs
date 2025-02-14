@@ -6,10 +6,11 @@ mod span_link;
 
 use self::span::decode_span;
 use super::error::DecodeError;
-use super::number::read_number_bytes;
-use crate::span_v04::Span;
+use super::number::{read_nullable_number_ref, read_number_bytes, read_number_ref};
+use crate::span_v04::{Span, SpanSlice};
 use rmp::decode::DecodeStringError;
 use rmp::{decode, decode::RmpRead, Marker};
+use span::decode_span_ref;
 use std::{collections::HashMap, f64};
 use tinybytes::{Bytes, BytesString};
 
@@ -58,11 +59,26 @@ const NULL_MARKER: &u8 = &0xc0;
 /// let decoded_span = &decoded_traces[0][0];
 /// assert_eq!("test-span", decoded_span.name.as_str());
 /// ```
-pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<Span>>, usize), DecodeError> {
-    let trace_count =
-        rmp::decode::read_array_len(unsafe { data.as_mut_slice() }).map_err(|_| {
-            DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
-        })?;
+pub fn from_slice(data: tinybytes::Bytes) -> Result<(Vec<Vec<Span>>, usize), DecodeError> {
+    let mut parsed_data = data.clone();
+    let (traces_ref, size) = from_slice_ref(unsafe { parsed_data.as_mut_slice() })?;
+    let traces_owned = traces_ref
+        .iter()
+        .map(|trace| {
+            trace
+                .iter()
+                // Safe to unwrap since the spans uses subslices of the `data` slice
+                .map(|span| span.try_to_bytes(&data).unwrap())
+                .collect()
+        })
+        .collect();
+    Ok((traces_owned, size))
+}
+
+pub fn from_slice_ref(mut data: &[u8]) -> Result<(Vec<Vec<SpanSlice>>, usize), DecodeError> {
+    let trace_count = rmp::decode::read_array_len(&mut data).map_err(|_| {
+        DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
+    })?;
 
     let start_len = data.len();
 
@@ -74,12 +90,9 @@ pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<Span>>, usize),
                     .expect("Unable to cast trace_count to usize"),
             ),
             |mut traces, _| {
-                let span_count = rmp::decode::read_array_len(unsafe { data.as_mut_slice() })
-                    .map_err(|_| {
-                        DecodeError::InvalidFormat(
-                            "Unable to read array len for span count".to_owned(),
-                        )
-                    })?;
+                let span_count = rmp::decode::read_array_len(&mut data).map_err(|_| {
+                    DecodeError::InvalidFormat("Unable to read array len for span count".to_owned())
+                })?;
 
                 let trace = (0..span_count).try_fold(
                     Vec::with_capacity(
@@ -88,7 +101,7 @@ pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<Span>>, usize),
                             .expect("Unable to cast span_count to usize"),
                     ),
                     |mut trace, _| {
-                        let span = decode_span(&mut data)?;
+                        let span = decode_span_ref(&mut data)?;
                         trace.push(span);
                         Ok(trace)
                     },
@@ -144,6 +157,15 @@ fn read_nullable_string_bytes(buf: &mut Bytes) -> Result<BytesString, DecodeErro
 }
 
 #[inline]
+fn read_nullable_string_ref<'a>(buf: &mut &'a [u8]) -> Result<&'a str, DecodeError> {
+    if is_null_marker(buf) {
+        Ok("")
+    } else {
+        read_string_ref(buf)
+    }
+}
+
+#[inline]
 // Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
 // BytesStrings.
 fn read_str_map_to_bytes_strings(
@@ -170,6 +192,35 @@ fn read_nullable_str_map_to_bytes_strings(
     }
 
     read_str_map_to_bytes_strings(buf)
+}
+
+#[inline]
+// Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
+// BytesStrings.
+fn read_str_map_to_str_ref<'a>(
+    buf: &mut &'a [u8],
+) -> Result<HashMap<&'a str, &'a str>, DecodeError> {
+    let len = decode::read_map_len(buf)
+        .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
+
+    let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
+    for _ in 0..len {
+        let key = read_string_ref(buf)?;
+        let value = read_string_ref(buf)?;
+        map.insert(key, value);
+    }
+    Ok(map)
+}
+
+#[inline]
+fn read_nullable_str_map_to_str_ref<'a>(
+    buf: &mut &'a [u8],
+) -> Result<HashMap<&'a str, &'a str>, DecodeError> {
+    if is_null_marker(buf) {
+        return Ok(HashMap::default());
+    }
+
+    read_str_map_to_str_ref(buf)
 }
 
 #[inline]
@@ -215,6 +266,52 @@ fn read_meta_struct(buf: &mut Bytes) -> Result<HashMap<BytesString, Vec<u8>>, De
     read_map(len, buf, read_meta_struct_pair)
 }
 
+#[inline]
+fn read_metric_pair_ref<'a>(buf: &mut &'a [u8]) -> Result<(&'a str, f64), DecodeError> {
+    let key = read_string_ref(buf)?;
+    let v = read_number_ref(buf)?;
+
+    Ok((key, v))
+}
+
+#[inline]
+fn read_metrics_ref<'a>(buf: &mut &'a [u8]) -> Result<HashMap<&'a str, f64>, DecodeError> {
+    if is_null_marker(buf) {
+        return Ok(HashMap::default());
+    }
+
+    let len = read_map_len(buf)?;
+
+    read_map(len, buf, read_metric_pair_ref)
+}
+
+#[inline]
+fn read_meta_struct_ref<'a>(buf: &mut &'a [u8]) -> Result<HashMap<&'a str, Vec<u8>>, DecodeError> {
+    if is_null_marker(buf) {
+        return Ok(HashMap::default());
+    }
+
+    fn read_meta_struct_pair_ref<'a>(
+        buf: &mut &'a [u8],
+    ) -> Result<(&'a str, Vec<u8>), DecodeError> {
+        let key = read_string_ref(buf)?;
+        let array_len = decode::read_array_len(buf).map_err(|_| {
+            DecodeError::InvalidFormat("Unable to read array len for meta_struct".to_owned())
+        })?;
+
+        let mut v = Vec::with_capacity(array_len as usize);
+
+        for _ in 0..array_len {
+            let value = read_number_ref(buf)?;
+            v.push(value);
+        }
+        Ok((key, v))
+    }
+
+    let len = read_map_len(buf)?;
+    read_map(len, buf, read_meta_struct_pair_ref)
+}
+
 /// Reads a map from the buffer and returns it as a `HashMap`.
 ///
 /// This function is generic over the key and value types of the map, and it uses a provided
@@ -243,14 +340,10 @@ fn read_meta_struct(buf: &mut Bytes) -> Result<HashMap<BytesString, Vec<u8>>, De
 /// * `V` - The type of the values in the map.
 /// * `F` - The type of the function used to read key-value pairs from the buffer.
 #[inline]
-fn read_map<K, V, F>(
-    len: usize,
-    buf: &mut Bytes,
-    read_pair: F,
-) -> Result<HashMap<K, V>, DecodeError>
+fn read_map<K, B, V, F>(len: usize, buf: &mut B, read_pair: F) -> Result<HashMap<K, V>, DecodeError>
 where
     K: std::hash::Hash + Eq,
-    F: Fn(&mut Bytes) -> Result<(K, V), DecodeError>,
+    F: Fn(&mut B) -> Result<(K, V), DecodeError>,
 {
     let mut map = HashMap::with_capacity(len);
     for _ in 0..len {
@@ -294,6 +387,18 @@ where
         Some(default())
     } else {
         None
+    }
+}
+
+/// When you want to "peek" if the next value is a null marker, and only advance the buffer if it is
+/// null and return the default value. If it is not null, you can continue to decode as expected.
+#[inline]
+fn is_null_marker(buf: &mut &[u8]) -> bool {
+    if buf.first() == Some(NULL_MARKER) {
+        *buf = &buf[1..];
+        true
+    } else {
+        false
     }
 }
 

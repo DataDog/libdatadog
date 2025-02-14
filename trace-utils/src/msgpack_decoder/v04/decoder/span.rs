@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{
-    read_meta_struct, read_metrics, read_nullable_str_map_to_bytes_strings,
-    read_nullable_string_bytes, read_string_ref, span_link::read_span_links,
+    read_meta_struct, read_meta_struct_ref, read_metric_pair_ref, read_metrics, read_metrics_ref,
+    read_nullable_number_ref, read_nullable_str_map_to_bytes_strings,
+    read_nullable_str_map_to_str_ref, read_nullable_string_bytes, read_nullable_string_ref,
+    read_number_ref, read_str_map_to_str_ref, read_string_ref,
+    span_link::{read_span_links, read_span_links_ref},
 };
 use crate::msgpack_decoder::v04::error::DecodeError;
 use crate::msgpack_decoder::v04::number::read_nullable_number_bytes;
-use crate::span_v04::{Span, SpanKey};
+use crate::span_v04::{Span, SpanKey, SpanSlice};
 use tinybytes::Bytes;
 
 /// Decodes a slice of bytes into a `Span` object.
@@ -27,14 +30,24 @@ use tinybytes::Bytes;
 /// - The map length cannot be read.
 /// - Any key or value cannot be decoded.
 pub fn decode_span(buffer: &mut Bytes) -> Result<Span, DecodeError> {
-    let mut span = Span::default();
+    let span_ref = decode_span_ref(unsafe { buffer.as_mut_slice() });
+    println!("Span ref {:?}", span_ref);
 
-    let span_size = rmp::decode::read_map_len(unsafe { buffer.as_mut_slice() }).map_err(|_| {
+    span_ref
+        .unwrap()
+        .try_to_bytes(buffer)
+        .ok_or(DecodeError::IOError)
+}
+
+pub fn decode_span_ref<'a>(buffer: &mut &'a [u8]) -> Result<SpanSlice<'a>, DecodeError> {
+    let mut span = SpanSlice::default();
+
+    let span_size = rmp::decode::read_map_len(buffer).map_err(|_| {
         DecodeError::InvalidFormat("Unable to get map len for span size".to_owned())
     })?;
 
     for _ in 0..span_size {
-        fill_span(&mut span, buffer)?;
+        fill_span_ref(&mut span, buffer)?;
     }
 
     Ok(span)
@@ -62,6 +75,32 @@ fn fill_span(span: &mut Span, buf: &mut Bytes) -> Result<(), DecodeError> {
         SpanKey::Metrics => span.metrics = read_metrics(buf)?,
         SpanKey::MetaStruct => span.meta_struct = read_meta_struct(buf)?,
         SpanKey::SpanLinks => span.span_links = read_span_links(buf)?,
+    }
+    Ok(())
+}
+
+// Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
+// BytesStrings
+fn fill_span_ref<'a>(span: &mut SpanSlice<'a>, buf: &mut &'a [u8]) -> Result<(), DecodeError> {
+    let key = read_string_ref(buf)?
+        .parse::<SpanKey>()
+        .map_err(|_| DecodeError::InvalidFormat("Invalid span key".to_owned()))?;
+
+    match key {
+        SpanKey::Service => span.service = read_nullable_string_ref(buf)?,
+        SpanKey::Name => span.name = read_nullable_string_ref(buf)?,
+        SpanKey::Resource => span.resource = read_nullable_string_ref(buf)?,
+        SpanKey::TraceId => span.trace_id = read_nullable_number_ref(buf)?,
+        SpanKey::SpanId => span.span_id = read_nullable_number_ref(buf)?,
+        SpanKey::ParentId => span.parent_id = read_nullable_number_ref(buf)?,
+        SpanKey::Start => span.start = read_nullable_number_ref(buf)?,
+        SpanKey::Duration => span.duration = read_nullable_number_ref(buf)?,
+        SpanKey::Error => span.error = read_nullable_number_ref(buf)?,
+        SpanKey::Type => span.r#type = read_nullable_string_ref(buf)?,
+        SpanKey::Meta => span.meta = read_nullable_str_map_to_str_ref(buf)?,
+        SpanKey::Metrics => span.metrics = read_metrics_ref(buf)?,
+        SpanKey::MetaStruct => span.meta_struct = read_meta_struct_ref(buf)?,
+        SpanKey::SpanLinks => span.span_links = read_span_links_ref(buf)?,
     }
     Ok(())
 }
