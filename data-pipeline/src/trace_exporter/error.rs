@@ -5,7 +5,7 @@ use crate::telemetry::error::TelemetryError;
 use crate::trace_exporter::msgpack_decoder::v04::error::DecodeError;
 use hyper::http::StatusCode;
 use hyper::Error as HyperError;
-use serde_json::error::Error as SerdeError;
+use rmp_serde::encode::Error as EncodeError;
 use std::error::Error;
 use std::fmt::{Debug, Display};
 
@@ -111,18 +111,25 @@ impl RequestError {
 /// TraceExporterError holds different types of errors that occur when handling traces.
 #[derive(Debug)]
 pub enum TraceExporterError {
+    /// Error in agent response processing.
     Agent(AgentErrorKind),
+    /// Invalid builder input.
     Builder(BuilderErrorKind),
+    /// Error in deserialization of incoming trace payload.
     Deserialization(DecodeError),
+    /// Generic IO error.
     Io(std::io::Error),
+    /// Network related error (i.e. hyper error).
     Network(NetworkError),
+    /// Agent responded with an error code.
     Request(RequestError),
-    Serde(SerdeError),
+    /// Error in serialization of processed trace payload.
+    Serialization(EncodeError),
 }
 
-impl From<serde_json::error::Error> for TraceExporterError {
-    fn from(value: SerdeError) -> Self {
-        TraceExporterError::Serde(value)
+impl From<EncodeError> for TraceExporterError {
+    fn from(value: EncodeError) -> Self {
+        TraceExporterError::Serialization(value)
     }
 }
 
@@ -188,7 +195,7 @@ impl Display for TraceExporterError {
             TraceExporterError::Io(e) => std::fmt::Display::fmt(e, f),
             TraceExporterError::Network(e) => std::fmt::Display::fmt(e, f),
             TraceExporterError::Request(e) => std::fmt::Display::fmt(e, f),
-            TraceExporterError::Serde(e) => std::fmt::Display::fmt(e, f),
+            TraceExporterError::Serialization(e) => std::fmt::Display::fmt(e, f),
         }
     }
 }

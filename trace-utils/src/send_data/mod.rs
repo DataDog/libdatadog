@@ -4,24 +4,22 @@
 pub mod send_data_result;
 
 use crate::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryResult};
-use crate::trace_utils::{SendDataResult, TracerHeaderTags};
+use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use anyhow::{anyhow, Context};
 use datadog_trace_protobuf::pb::{AgentPayload, TracerPayload};
-use ddcommon::Endpoint;
+use ddcommon::{
+    header::{
+        APPLICATION_MSGPACK_STR, APPLICATION_PROTOBUF_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR,
+        DATADOG_TRACE_COUNT_STR,
+    },
+    Endpoint,
+};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hyper::header::CONTENT_TYPE;
+use send_data_result::SendDataResult;
 use std::collections::HashMap;
-
-const HEADER_DD_TRACE_COUNT: &str = "X-Datadog-Trace-Count";
-
-const HEADER_CTYPE_MSGPACK: &str = "application/msgpack";
-const HEADER_CTYPE_PROTOBUF: &str = "application/x-protobuf";
-
-/// HEADER_REAL_HTTP_STATUS signals to the agent to send 429 responses when a payload is dropped
-/// If this is not set then the agent will always return a 200 regardless if the payload is dropped.
-const HEADER_REAL_HTTP_STATUS: &str = "Datadog-Send-Real-Http-Status";
 
 #[derive(Debug, Clone)]
 /// `SendData` is a structure that holds the data to be sent to a target endpoint.
@@ -88,7 +86,7 @@ impl SendData {
         target: &Endpoint,
     ) -> SendData {
         let mut headers: HashMap<&'static str, String> = tracer_header_tags.into();
-        headers.insert(HEADER_REAL_HTTP_STATUS, "1".to_string());
+        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
         SendData {
             tracer_payloads: tracer_payload,
             size,
@@ -210,7 +208,7 @@ impl SendData {
                 };
 
                 let mut request_headers = self.headers.clone();
-                request_headers.insert(CONTENT_TYPE.as_str(), HEADER_CTYPE_PROTOBUF.to_string());
+                request_headers.insert(CONTENT_TYPE.as_str(), APPLICATION_PROTOBUF_STR.to_string());
 
                 let (response, bytes_sent, chunks) = self
                     .send_payload(
@@ -221,7 +219,7 @@ impl SendData {
                     )
                     .await;
 
-                result.update(response, bytes_sent, chunks).await;
+                result.update(response, bytes_sent, chunks);
 
                 result
             }
@@ -238,8 +236,8 @@ impl SendData {
                 for tracer_payload in payloads {
                     let chunks = u64::try_from(tracer_payload.chunks.len()).unwrap();
                     let mut headers = self.headers.clone();
-                    headers.insert(HEADER_DD_TRACE_COUNT, chunks.to_string());
-                    headers.insert(CONTENT_TYPE.as_str(), HEADER_CTYPE_MSGPACK.to_string());
+                    headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
+                    headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
 
                     let payload = match rmp_serde::to_vec_named(tracer_payload) {
                         Ok(p) => p,
@@ -252,8 +250,8 @@ impl SendData {
             TracerPayloadCollection::V04(payloads) => {
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
                 let mut headers = self.headers.clone();
-                headers.insert(HEADER_DD_TRACE_COUNT, chunks.to_string());
-                headers.insert(CONTENT_TYPE.as_str(), HEADER_CTYPE_MSGPACK.to_string());
+                headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
+                headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
 
                 let payload = match rmp_serde::to_vec_named(payloads) {
                     Ok(p) => p,
@@ -267,7 +265,7 @@ impl SendData {
         loop {
             match futures.next().await {
                 Some((response, payload_len, chunks)) => {
-                    result.update(response, payload_len, chunks).await;
+                    result.update(response, payload_len, chunks);
                     if result.last_result.is_err() {
                         return result;
                     }
@@ -530,7 +528,7 @@ mod tests {
         let mock = server
             .mock_async(|when, then| {
                 when.method(POST)
-                    .header(HEADER_DD_TRACE_COUNT, "1")
+                    .header(DATADOG_TRACE_COUNT_STR, "1")
                     .header("Content-type", "application/msgpack")
                     .header("datadog-meta-lang", header_tags.lang)
                     .header(
@@ -589,7 +587,7 @@ mod tests {
         let mock = server
             .mock_async(|when, then| {
                 when.method(POST)
-                    .header(HEADER_DD_TRACE_COUNT, "1")
+                    .header(DATADOG_TRACE_COUNT_STR, "1")
                     .header("Content-type", "application/msgpack")
                     .header("datadog-meta-lang", header_tags.lang)
                     .header(
@@ -774,7 +772,7 @@ mod tests {
         let mock = server
             .mock_async(|when, then| {
                 when.method(POST)
-                    .header(HEADER_DD_TRACE_COUNT, "2")
+                    .header(DATADOG_TRACE_COUNT_STR, "2")
                     .header("Content-type", "application/msgpack")
                     .header("datadog-meta-lang", header_tags.lang)
                     .header(
