@@ -31,6 +31,13 @@ pub fn shutdown_crash_handler() -> anyhow::Result<()> {
     Ok(())
 }
 
+pub static DEFAULT_SYMBOLS: [libc::c_int; 4] =
+    [libc::SIGBUS, libc::SIGABRT, libc::SIGSEGV, libc::SIGILL];
+
+pub fn default_signals() -> Vec<libc::c_int> {
+    Vec::from(DEFAULT_SYMBOLS)
+}
+
 /// Reinitialize the crash-tracking infrastructure after a fork.
 /// This should be one of the first things done after a fork, to minimize the
 /// chance that a crash occurs between the fork, and this call.
@@ -80,9 +87,9 @@ pub fn init(
     metadata: Metadata,
 ) -> anyhow::Result<()> {
     update_metadata(metadata)?;
-    update_config(config)?;
+    update_config(config.clone())?;
     configure_receiver(receiver_config);
-    register_crash_handlers()?;
+    register_crash_handlers(&config)?;
     Ok(())
 }
 
@@ -128,6 +135,7 @@ fn test_crash() -> anyhow::Result<()> {
         use_alt_stack,
         endpoint,
         resolve_frames,
+        default_signals(),
         timeout_ms,
         None,
     )?;
@@ -185,6 +193,7 @@ fn test_altstack_paradox() -> anyhow::Result<()> {
         use_alt_stack,
         endpoint,
         resolve_frames,
+        default_signals(),
         timeout_ms,
         None,
     );
@@ -239,6 +248,7 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
+    let signals = default_signals();
     let timeout_ms = 10_000;
     let receiver_config = CrashtrackerReceiverConfig::new(
         vec![],
@@ -253,6 +263,7 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
         use_alt_stack,
         endpoint,
         resolve_frames,
+        signals,
         timeout_ms,
         None,
     )?;
@@ -299,26 +310,22 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
                 sa_restorer: None,
             };
 
-            // First, SIGBUS
-            let res = unsafe { libc::sigaction(libc::SIGBUS, std::ptr::null(), &mut sigaction) };
-            if res != 0 {
-                eprintln!("Failed to get SIGBUS handler");
-                std::process::exit(-6);
-            }
-            if sigaction.sa_flags & libc::SA_ONSTACK != libc::SA_ONSTACK {
-                eprintln!("Expected SIGBUS handler to have SA_ONSTACK");
-                std::process::exit(-7);
-            }
+            let mut exit_code = -5;
 
-            // Second, SIGSEGV
-            let res = unsafe { libc::sigaction(libc::SIGSEGV, std::ptr::null(), &mut sigaction) };
-            if res != 0 {
-                eprintln!("Failed to get SIGSEGV handler");
-                std::process::exit(-8);
-            }
-            if sigaction.sa_flags & libc::SA_ONSTACK != libc::SA_ONSTACK {
-                eprintln!("Expected SIGSEGV handler to have SA_ONSTACK");
-                std::process::exit(-9);
+            for signal in default_signals() {
+                let signame = crate::signal_from_signum(signal)?;
+                exit_code -= 1;
+                let res = unsafe { libc::sigaction(signal, std::ptr::null(), &mut sigaction) };
+                if res != 0 {
+                    eprintln!("Failed to get {signame:?} handler");
+                    std::process::exit(exit_code);
+                }
+
+                exit_code -= 1;
+                if sigaction.sa_flags & libc::SA_ONSTACK != libc::SA_ONSTACK {
+                    eprintln!("Expected {signame:?} handler to have SA_ONSTACK");
+                    std::process::exit(exit_code);
+                }
             }
 
             // OK, we're done
@@ -366,6 +373,7 @@ fn test_altstack_use_nocreate() -> anyhow::Result<()> {
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
+    let signals = default_signals();
     let timeout_ms = 10_000;
     let receiver_config = CrashtrackerReceiverConfig::new(
         vec![],
@@ -380,6 +388,7 @@ fn test_altstack_use_nocreate() -> anyhow::Result<()> {
         use_alt_stack,
         endpoint,
         resolve_frames,
+        signals,
         timeout_ms,
         None,
     )?;
@@ -493,6 +502,7 @@ fn test_altstack_nouse() -> anyhow::Result<()> {
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
+    let signals = default_signals();
     let timeout_ms = 10_000;
     let receiver_config = CrashtrackerReceiverConfig::new(
         vec![],
@@ -507,6 +517,7 @@ fn test_altstack_nouse() -> anyhow::Result<()> {
         use_alt_stack,
         endpoint,
         resolve_frames,
+        signals,
         timeout_ms,
         None,
     )?;
@@ -655,6 +666,7 @@ fn test_waitall_nohang() -> anyhow::Result<()> {
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
+    let signals = default_signals();
     let timeout_ms = 10_000;
     let receiver_config = CrashtrackerReceiverConfig::new(
         vec![],
@@ -669,6 +681,7 @@ fn test_waitall_nohang() -> anyhow::Result<()> {
         use_alt_stack,
         endpoint,
         resolve_frames,
+        signals,
         timeout_ms,
         None,
     )?;

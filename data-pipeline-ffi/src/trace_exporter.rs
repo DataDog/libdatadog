@@ -247,6 +247,20 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
     }
 }
 
+/// Set client-side stats computation status.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_compute_stats(
+    config: Option<&mut TraceExporterConfig>,
+    is_enabled: bool,
+) -> Option<Box<ExporterError>> {
+    if let Option::Some(config) = config {
+        config.compute_stats = is_enabled;
+        None
+    } else {
+        gen_error!(ErrorCode::InvalidArgument)
+    }
+}
+
 /// Create a new TraceExporter instance.
 ///
 /// # Arguments
