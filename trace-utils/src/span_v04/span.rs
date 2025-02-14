@@ -57,6 +57,7 @@ pub struct Span {
     pub r#type: BytesString,
     pub trace_id: u64,
     pub span_id: u64,
+    #[serde(skip_serializing_if = "is_default")]
     pub parent_id: u64,
     pub start: i64,
     pub duration: i64,
