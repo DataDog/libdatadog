@@ -13,7 +13,10 @@ fn main() -> anyhow::Result<()> {
 mod unix {
     use anyhow::Context;
     use bin_tests::modes::behavior::get_behavior;
-    use nix::sys::signal::{raise, Signal};
+    use nix::{
+        sys::signal::{kill, raise, Signal},
+        unistd::Pid,
+    };
     use std::env;
     use std::path::Path;
 
@@ -100,14 +103,18 @@ mod unix {
 
         crashtracker::begin_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
         match crash_typ.as_str() {
+            "kill_sigabrt" => kill(Pid::this(), Signal::SIGABRT)?,
+            "kill_sigill" => kill(Pid::this(), Signal::SIGILL)?,
+            "kill_sigbus" => kill(Pid::this(), Signal::SIGBUS)?,
+            "kill_sigsegv" => kill(Pid::this(), Signal::SIGSEGV)?,
             "null_deref" => {
                 let x = unsafe { deref_ptr(std::ptr::null_mut::<u8>()) };
                 println!("{x}");
             }
-            "sigabrt" => raise(Signal::SIGABRT)?,
-            "sigill" => raise(Signal::SIGILL)?,
-            "sigbus" => raise(Signal::SIGBUS)?,
-            "sigsegv" => raise(Signal::SIGSEGV)?,
+            "raise_sigabrt" => raise(Signal::SIGABRT)?,
+            "raise_sigill" => raise(Signal::SIGILL)?,
+            "raise_sigbus" => raise(Signal::SIGBUS)?,
+            "raise_sigsegv" => raise(Signal::SIGSEGV)?,
             _ => anyhow::bail!("Unexpected crash_typ: {crash_typ}"),
         }
         crashtracker::end_op(crashtracker::OpTypes::ProfilerCollectingSample)?;

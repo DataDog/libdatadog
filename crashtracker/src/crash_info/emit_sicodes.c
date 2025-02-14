@@ -10,6 +10,8 @@
 //! export constants for si_code types.
 //! As a workaround, link some C code which DOES have access to the types on the current platform
 //! and use it to do the translation.
+//! Also, OSX doesn't always set the value at all, which sucks
+//! https://vorner.github.io/2021/01/03/dark-side-of-posix-apis.html
 
 // MUST REMAIN IN SYNC WITH THE ENUM IN SIG_INFO.RS
 enum SiCodes {
@@ -47,6 +49,8 @@ enum SiCodes {
 /// @param si_code
 /// @return The enum value of the si_code, given signum. UNKNOWN if unable to translate.
 int translate_si_code_impl(int signum, int si_code) {
+  // TODO, handle ptrace events
+
   switch (si_code) {
   case SI_USER:
     return SI_CODE_SI_USER;
