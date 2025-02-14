@@ -272,7 +272,6 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
                 ),
                 "{sig_info:?}"
             );
-
         }
         "kill_sigill" => {
             assert_eq!(sig_info["si_signo"], libc::SIGILL);
