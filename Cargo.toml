@@ -73,6 +73,12 @@ opt-level = "s"            # optimize for size
 [profile.release.package.datadog-serverless-trace-mini-agent]
 strip = true
 
+[profile.bench]
+codegen-units = 1
+debug = false
+incremental = false
+opt-level = 3
+
 # https://camshaft.github.io/bolero/library-installation.html
 [profile.fuzz]
 inherits = "dev"
