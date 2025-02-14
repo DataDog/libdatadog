@@ -69,30 +69,58 @@ fn test_crash_tracking_bin_fork() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_abort() {
+fn test_crash_tracking_bin_kill_sigabrt() {
     // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "sigabrt");
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "kill_sigabrt");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_sigill() {
+fn test_crash_tracking_bin_kill_sigill() {
     // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "sigill");
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "kill_sigill");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_sigbus() {
+fn test_crash_tracking_bin_kill_sigbus() {
     // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "sigbus");
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "kill_sigbus");
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn test_crash_tracking_bin_sigsegv() {
+fn test_crash_tracking_bin_kill_sigsegv() {
     // For now, do the base test (donothing).  For future we should probably also test chaining.
-    test_crash_tracking_bin(BuildProfile::Release, "donothing", "sigsegv");
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "kill_sigsegv");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_raise_sigabrt() {
+    // For now, do the base test (donothing).  For future we should probably also test chaining.
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "raise_sigabrt");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_raise_sigill() {
+    // For now, do the base test (donothing).  For future we should probably also test chaining.
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "raise_sigill");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_raise_sigbus() {
+    // For now, do the base test (donothing).  For future we should probably also test chaining.
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "raise_sigbus");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_raise_sigsegv() {
+    // For now, do the base test (donothing).  For future we should probably also test chaining.
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "raise_sigsegv");
 }
 
 fn test_crash_tracking_bin(
@@ -122,8 +150,12 @@ fn test_crash_tracking_bin(
     // Not sure why sigill behaves differently??
     // TODO: figure that out.
     match crash_typ {
-        "null_deref" | "sigabrt" | "sigill" => assert!(!exit_status.success()),
-        "sigbus" | "sigsegv" => (),
+        "kill_sigabrt" | "kill_sigill" | "null_deref" | "raise_sigabrt" | "raise_sigill" => {
+            assert!(!exit_status.success())
+        }
+        "kill_sigbus" | "kill_sigsegv" | "raise_sigbus" | "raise_sigsegv" => {
+            assert!(exit_status.success())
+        }
         _ => unreachable!("{crash_typ} shouldn't happen"),
     }
 
@@ -186,26 +218,6 @@ fn test_crash_tracking_bin(
 
 fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
     match crash_typ {
-        "sigabrt" => {
-            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
-            assert_eq!(sig_info["si_signo"], libc::SIGABRT);
-            assert_eq!(sig_info["si_signo_human_readable"], "SIGABRT");
-        }
-        "sigsegv" => {
-            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
-            assert_eq!(sig_info["si_signo"], libc::SIGSEGV);
-            assert_eq!(sig_info["si_signo_human_readable"], "SIGSEGV");
-        }
-        "sigbus" => {
-            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
-            assert_eq!(sig_info["si_signo"], libc::SIGBUS);
-            assert_eq!(sig_info["si_signo_human_readable"], "SIGBUS");
-        }
-        "sigill" => {
-            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
-            assert_eq!(sig_info["si_signo"], libc::SIGILL);
-            assert_eq!(sig_info["si_signo_human_readable"], "SIGILL");
-        }
         "null_deref" =>
         // On every platform other than OSX ARM, the si_code is 1: SEGV_MAPERR
         // On OSX ARM, its 2: SEGV_ACCERR
@@ -215,9 +227,62 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
                 sig_info["si_code"] == 2 || sig_info["si_code"] == 1,
                 "{sig_info:?}"
             );
-            assert_eq!(sig_info["si_code_human_readable"], "UNKNOWN");
+            assert!(
+                sig_info["si_code_human_readable"] == "SEGV_ACCERR"
+                    || sig_info["si_code_human_readable"] == "SEGV_MAPERR",
+                "{sig_info:?}"
+            );
             assert_eq!(sig_info["si_signo"], libc::SIGSEGV);
             assert_eq!(sig_info["si_signo_human_readable"], "SIGSEGV");
+        }
+
+        "kill_sigabrt" => {
+            assert_eq!(sig_info["si_signo"], libc::SIGABRT);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGABRT");
+            // https://vorner.github.io/2021/01/03/dark-side-of-posix-apis.html
+            // OSX signal handling is the worst.
+            #[cfg(not(target_os = "macos"))]
+            assert_eq!(sig_info["si_code_human_readable"], "SI_USER");
+        }
+        "kill_sigsegv" => {
+            assert_eq!(sig_info["si_signo"], libc::SIGSEGV);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGSEGV");
+            // https://vorner.github.io/2021/01/03/dark-side-of-posix-apis.html
+            // OSX signal handling is the worst.
+            #[cfg(not(target_os = "macos"))]
+            assert_eq!(sig_info["si_code_human_readable"], "SI_USER");
+        }
+        "kill_sigbus" => {
+            assert_eq!(sig_info["si_signo"], libc::SIGBUS);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGBUS");
+            // https://vorner.github.io/2021/01/03/dark-side-of-posix-apis.html
+            // OSX signal handling is the worst.
+            #[cfg(not(target_os = "macos"))]
+            assert_eq!(sig_info["si_code_human_readable"], "SI_USER");
+        }
+        "kill_sigill" => {
+            assert_eq!(sig_info["si_signo"], libc::SIGILL);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGILL");
+            // https://vorner.github.io/2021/01/03/dark-side-of-posix-apis.html
+            // OSX signal handling is the worst.
+            #[cfg(not(target_os = "macos"))]
+            assert_eq!(sig_info["si_code_human_readable"], "SI_USER");
+        }
+        "raise_sigabrt" => {
+            assert_eq!(sig_info["si_signo"], libc::SIGABRT);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGABRT");
+        }
+        "raise_sigsegv" => {
+            assert_eq!(sig_info["si_signo"], libc::SIGSEGV);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGSEGV");
+        }
+        "raise_sigbus" => {
+            assert_eq!(sig_info["si_signo"], libc::SIGBUS);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGBUS");
+        }
+        "raise_sigill" => {
+            assert_eq!(sig_info["si_signo"], libc::SIGILL);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGILL");
         }
         _ => panic!("unexpected crash_typ {crash_typ}"),
     }
@@ -260,15 +325,33 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
         ]);
 
     match crash_typ {
-        "sigabrt" => {
+        "null_deref" => {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
-            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(tags.contains("si_addr:0x0000000000000000"), "{tags:?}");
+            assert!(
+                tags.contains("si_code_human_readable:SEGV_ACCERR")
+                    || tags.contains("si_code_human_readable:SEGV_MAPERR"),
+                "{tags:?}"
+            );
+            assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
+            assert!(tags.contains("si_signo:11"), "{tags:?}");
+            assert!(
+                tags.contains("si_code:1") || tags.contains("si_code:2"),
+                "{tags:?}"
+            );
+        }
+        "kill_sigabrt" => {
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGABRT"), "{tags:?}");
             assert!(tags.contains("si_signo:6"), "{tags:?}");
         }
-        "sigbus" => {
+        "kill_sigill" => {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
-            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGILL"), "{tags:?}");
+            assert!(tags.contains("si_signo:4"), "{tags:?}");
+        }
+        "kill_sigbus" => {
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGBUS"), "{tags:?}");
             // SIGBUS can be 7 or 10, depending on the os.
             assert!(
@@ -276,28 +359,34 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
                 "{tags:?}"
             );
         }
-        "sigill" => {
+        "kill_sigsegv" => {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
-            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
+            assert!(tags.contains("si_signo:11"), "{tags:?}");
+        }
+        "raise_sigabrt" => {
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGABRT"), "{tags:?}");
+            assert!(tags.contains("si_signo:6"), "{tags:?}");
+        }
+        "raise_sigill" => {
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGILL"), "{tags:?}");
             assert!(tags.contains("si_signo:4"), "{tags:?}");
         }
-        "sigsegv" => {
+        "raise_sigbus" => {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
-            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
-            assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
-            assert!(tags.contains("si_signo:11"), "{tags:?}");
-        }
-        "null_deref" => {
-            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
-            assert!(tags.contains("si_addr:0x0000000000000000"), "{tags:?}");
-            assert!(tags.contains("si_code_human_readable:UNKNOWN"), "{tags:?}");
-            assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
-            assert!(tags.contains("si_signo:11"), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGBUS"), "{tags:?}");
+            // SIGBUS can be 7 or 10, depending on the os.
             assert!(
-                tags.contains("si_code:1") || tags.contains("si_code:2"),
+                tags.contains(format!("si_signo:{}", libc::SIGBUS).as_str()),
                 "{tags:?}"
             );
+        }
+        "raise_sigsegv" => {
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
+            assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
+            assert!(tags.contains("si_signo:11"), "{tags:?}");
         }
         _ => panic!("{crash_typ}"),
     }
