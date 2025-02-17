@@ -1,24 +1,14 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+/// Read spans from msgpack
 mod span;
-mod span_link;
 
-use self::span::decode_span;
 use super::error::DecodeError;
-use super::number::read_number_bytes;
-use crate::span_v04::Span;
-use rmp::decode::DecodeStringError;
-use rmp::{decode, decode::RmpRead, Marker};
-use std::{collections::HashMap, f64};
-use tinybytes::{Bytes, BytesString};
+use crate::span_v04::{Span, SpanSlice};
+use span::decode_span;
 
-// https://docs.rs/rmp/latest/rmp/enum.Marker.html#variant.Null (0xc0 == 192)
-const NULL_MARKER: &u8 = &0xc0;
-
-/// Decodes a slice of bytes into a vector of `TracerPayloadV04` objects.
-///
-///
+/// Decodes a Bytes buffer into a vector of `TracerPayloadV04` objects.
 ///
 /// # Arguments
 ///
@@ -39,10 +29,10 @@ const NULL_MARKER: &u8 = &0xc0;
 /// # Examples
 ///
 /// ```
-/// use datadog_trace_protobuf::pb::Span;
-/// use datadog_trace_utils::msgpack_decoder::v04::decoder::from_slice;
-/// use rmp_serde::to_vec_named;
-/// use tinybytes;
+/// # use datadog_trace_protobuf::pb::Span;
+/// # use datadog_trace_utils::msgpack_decoder::v04::decoder::from_bytes;
+/// # use rmp_serde::to_vec_named;
+/// # use tinybytes;
 ///
 /// let span = Span {
 ///     name: "test-span".to_owned(),
@@ -51,18 +41,73 @@ const NULL_MARKER: &u8 = &0xc0;
 /// let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
 /// let encoded_data_as_tinybytes = tinybytes::Bytes::from(encoded_data);
 /// let (decoded_traces, _payload_size) =
-///     from_slice(encoded_data_as_tinybytes).expect("Decoding failed");
+///     from_bytes(encoded_data_as_tinybytes).expect("Decoding failed");
 ///
 /// assert_eq!(1, decoded_traces.len());
 /// assert_eq!(1, decoded_traces[0].len());
 /// let decoded_span = &decoded_traces[0][0];
 /// assert_eq!("test-span", decoded_span.name.as_str());
 /// ```
-pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<Span>>, usize), DecodeError> {
-    let trace_count =
-        rmp::decode::read_array_len(unsafe { data.as_mut_slice() }).map_err(|_| {
-            DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
-        })?;
+pub fn from_bytes(data: tinybytes::Bytes) -> Result<(Vec<Vec<Span>>, usize), DecodeError> {
+    let mut parsed_data = data.clone();
+    let (traces_ref, size) = from_slice(unsafe { parsed_data.as_mut_slice() })?;
+    let traces_owned = traces_ref
+        .iter()
+        .map(|trace| {
+            trace
+                .iter()
+                // Safe to unwrap since the spans use subslices of the `data` slice
+                .map(|span| span.try_to_bytes(&data).unwrap())
+                .collect()
+        })
+        .collect();
+    Ok((traces_owned, size))
+}
+
+/// Decodes a slice of bytes into a `Vec<Vec<SpanSlice>>` object.
+/// The resulting spans have the same lifetime as the initial buffer.
+///
+/// # Arguments
+///
+/// * `data` - A tinybytes Bytes buffer containing the encoded data. Bytes are expected to be
+///   encoded msgpack data containing a list of a list of v04 spans.
+///
+/// # Returns
+///
+/// * `Ok(Vec<Vec<SpanSlice>>)` - The decoded `SpanSlice` objects if successful.
+/// * `Err(DecodeError)` - An error if the decoding process fails.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - The array length for trace count or span count cannot be read.
+/// - Any span cannot be decoded.
+///
+/// # Examples
+///
+/// ```
+/// # use datadog_trace_protobuf::pb::Span;
+/// # use datadog_trace_utils::msgpack_decoder::v04::decoder::from_slice;
+/// # use rmp_serde::to_vec_named;
+/// # use tinybytes;
+///
+/// let span = Span {
+///     name: "test-span".to_owned(),
+///     ..Default::default()
+/// };
+/// let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
+/// let (decoded_traces, _payload_size) =
+///     from_slice(encoded_data.as_slice()).expect("Decoding failed");
+///
+/// assert_eq!(1, decoded_traces.len());
+/// assert_eq!(1, decoded_traces[0].len());
+/// let decoded_span = &decoded_traces[0][0];
+/// assert_eq!("test-span", decoded_span.name);
+/// ```
+pub fn from_slice(mut data: &[u8]) -> Result<(Vec<Vec<SpanSlice>>, usize), DecodeError> {
+    let trace_count = rmp::decode::read_array_len(&mut data).map_err(|_| {
+        DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
+    })?;
 
     let start_len = data.len();
 
@@ -74,12 +119,9 @@ pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<Span>>, usize),
                     .expect("Unable to cast trace_count to usize"),
             ),
             |mut traces, _| {
-                let span_count = rmp::decode::read_array_len(unsafe { data.as_mut_slice() })
-                    .map_err(|_| {
-                        DecodeError::InvalidFormat(
-                            "Unable to read array len for span count".to_owned(),
-                        )
-                    })?;
+                let span_count = rmp::decode::read_array_len(&mut data).map_err(|_| {
+                    DecodeError::InvalidFormat("Unable to read array len for span count".to_owned())
+                })?;
 
                 let trace = (0..span_count).try_fold(
                     Vec::with_capacity(
@@ -103,200 +145,6 @@ pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<Span>>, usize),
     ))
 }
 
-#[inline]
-fn read_string_ref_nomut(buf: &[u8]) -> Result<(&str, &[u8]), DecodeError> {
-    decode::read_str_from_slice(buf).map_err(|e| match e {
-        DecodeStringError::InvalidMarkerRead(e) => DecodeError::InvalidFormat(e.to_string()),
-        DecodeStringError::InvalidDataRead(e) => DecodeError::InvalidConversion(e.to_string()),
-        DecodeStringError::TypeMismatch(marker) => {
-            DecodeError::InvalidType(format!("Type mismatch at marker {:?}", marker))
-        }
-        DecodeStringError::InvalidUtf8(_, e) => DecodeError::Utf8Error(e.to_string()),
-        _ => DecodeError::IOError,
-    })
-}
-
-#[inline]
-fn read_string_ref<'a>(buf: &mut &'a [u8]) -> Result<&'a str, DecodeError> {
-    read_string_ref_nomut(buf).map(|(str, newbuf)| {
-        *buf = newbuf;
-        str
-    })
-}
-
-#[inline]
-fn read_string_bytes(buf: &mut Bytes) -> Result<BytesString, DecodeError> {
-    // Note: we need to pass a &'static lifetime here, otherwise it'll complain
-    read_string_ref_nomut(unsafe { buf.as_mut_slice() }).map(|(str, newbuf)| {
-        let string = BytesString::from_bytes_slice(buf, str);
-        *unsafe { buf.as_mut_slice() } = newbuf;
-        string
-    })
-}
-
-#[inline]
-fn read_nullable_string_bytes(buf: &mut Bytes) -> Result<BytesString, DecodeError> {
-    if let Some(empty_string) = handle_null_marker(buf, BytesString::default) {
-        Ok(empty_string)
-    } else {
-        read_string_bytes(buf)
-    }
-}
-
-#[inline]
-// Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
-// BytesStrings.
-fn read_str_map_to_bytes_strings(
-    buf: &mut Bytes,
-) -> Result<HashMap<BytesString, BytesString>, DecodeError> {
-    let len = decode::read_map_len(unsafe { buf.as_mut_slice() })
-        .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
-
-    let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
-    for _ in 0..len {
-        let key = read_string_bytes(buf)?;
-        let value = read_string_bytes(buf)?;
-        map.insert(key, value);
-    }
-    Ok(map)
-}
-
-#[inline]
-fn read_nullable_str_map_to_bytes_strings(
-    buf: &mut Bytes,
-) -> Result<HashMap<BytesString, BytesString>, DecodeError> {
-    if let Some(empty_map) = handle_null_marker(buf, HashMap::default) {
-        return Ok(empty_map);
-    }
-
-    read_str_map_to_bytes_strings(buf)
-}
-
-#[inline]
-fn read_metric_pair(buf: &mut Bytes) -> Result<(BytesString, f64), DecodeError> {
-    let key = read_string_bytes(buf)?;
-    let v = read_number_bytes(buf)?;
-
-    Ok((key, v))
-}
-#[inline]
-fn read_metrics(buf: &mut Bytes) -> Result<HashMap<BytesString, f64>, DecodeError> {
-    if let Some(empty_map) = handle_null_marker(buf, HashMap::default) {
-        return Ok(empty_map);
-    }
-
-    let len = read_map_len(unsafe { buf.as_mut_slice() })?;
-
-    read_map(len, buf, read_metric_pair)
-}
-
-#[inline]
-fn read_meta_struct(buf: &mut Bytes) -> Result<HashMap<BytesString, Vec<u8>>, DecodeError> {
-    if let Some(empty_map) = handle_null_marker(buf, HashMap::default) {
-        return Ok(empty_map);
-    }
-
-    fn read_meta_struct_pair(buf: &mut Bytes) -> Result<(BytesString, Vec<u8>), DecodeError> {
-        let key = read_string_bytes(buf)?;
-        let array_len = decode::read_array_len(unsafe { buf.as_mut_slice() }).map_err(|_| {
-            DecodeError::InvalidFormat("Unable to read array len for meta_struct".to_owned())
-        })?;
-
-        let mut v = Vec::with_capacity(array_len as usize);
-
-        for _ in 0..array_len {
-            let value = read_number_bytes(buf)?;
-            v.push(value);
-        }
-        Ok((key, v))
-    }
-
-    let len = read_map_len(unsafe { buf.as_mut_slice() })?;
-    read_map(len, buf, read_meta_struct_pair)
-}
-
-/// Reads a map from the buffer and returns it as a `HashMap`.
-///
-/// This function is generic over the key and value types of the map, and it uses a provided
-/// function to read key-value pairs from the buffer.
-///
-/// # Arguments
-///
-/// * `len` - The number of key-value pairs to read from the buffer.
-/// * `buf` - A reference to the Bytes containing the encoded map data.
-/// * `read_pair` - A function that reads a key-value pair from the buffer and returns it as a
-///   `Result<(K, V), DecodeError>`.
-///
-/// # Returns
-///
-/// * `Ok(HashMap<K, V>)` - A `HashMap` containing the decoded key-value pairs if successful.
-/// * `Err(DecodeError)` - An error if the decoding process fails.
-///
-/// # Errors
-///
-/// This function will return an error if:
-/// - The `read_pair` function returns an error while reading a key-value pair.
-///
-/// # Type Parameters
-///
-/// * `K` - The type of the keys in the map. Must implement `std::hash::Hash` and `Eq`.
-/// * `V` - The type of the values in the map.
-/// * `F` - The type of the function used to read key-value pairs from the buffer.
-#[inline]
-fn read_map<K, V, F>(
-    len: usize,
-    buf: &mut Bytes,
-    read_pair: F,
-) -> Result<HashMap<K, V>, DecodeError>
-where
-    K: std::hash::Hash + Eq,
-    F: Fn(&mut Bytes) -> Result<(K, V), DecodeError>,
-{
-    let mut map = HashMap::with_capacity(len);
-    for _ in 0..len {
-        let (k, v) = read_pair(buf)?;
-        map.insert(k, v);
-    }
-    Ok(map)
-}
-
-#[inline]
-fn read_map_len(buf: &mut &[u8]) -> Result<usize, DecodeError> {
-    match decode::read_marker(buf)
-        .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for map".to_owned()))?
-    {
-        Marker::FixMap(len) => Ok(len as usize),
-        Marker::Map16 => buf
-            .read_data_u16()
-            .map_err(|_| DecodeError::IOError)
-            .map(|len| len as usize),
-        Marker::Map32 => buf
-            .read_data_u32()
-            .map_err(|_| DecodeError::IOError)
-            .map(|len| len as usize),
-        _ => Err(DecodeError::InvalidType(
-            "Unable to read map from buffer".to_owned(),
-        )),
-    }
-}
-
-/// When you want to "peek" if the next value is a null marker, and only advance the buffer if it is
-/// null and return the default value. If it is not null, you can continue to decode as expected.
-#[inline]
-fn handle_null_marker<T, F>(buf: &mut Bytes, default: F) -> Option<T>
-where
-    F: FnOnce() -> T,
-{
-    let slice = unsafe { buf.as_mut_slice() };
-
-    if slice.first() == Some(NULL_MARKER) {
-        *slice = &slice[1..];
-        Some(default())
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,6 +153,7 @@ mod tests {
     use rmp_serde;
     use rmp_serde::to_vec_named;
     use serde_json::json;
+    use std::collections::HashMap;
     use tinybytes::BytesString;
 
     fn generate_meta_struct_element(i: u8) -> (String, Vec<u8>) {
@@ -322,13 +171,14 @@ mod tests {
 
         (key, rmp_serde::to_vec_named(&map).unwrap())
     }
+
     #[test]
     fn test_empty_array() {
         let encoded_data = vec![0x90];
         let encoded_data =
             unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(encoded_data.as_ref()) };
         let bytes = tinybytes::Bytes::from_static(encoded_data);
-        let (_decoded_traces, decoded_size) = from_slice(bytes).expect("Decoding failed");
+        let (_decoded_traces, decoded_size) = from_bytes(bytes).expect("Decoding failed");
 
         assert_eq!(0, decoded_size);
     }
@@ -343,7 +193,7 @@ mod tests {
         let expected_size = encoded_data.len() - 1; // rmp_serde adds additional 0 byte
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
         let (_decoded_traces, decoded_size) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(expected_size, decoded_size);
     }
@@ -358,7 +208,7 @@ mod tests {
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
         let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -373,7 +223,7 @@ mod tests {
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
         let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -387,7 +237,7 @@ mod tests {
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
         let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -402,7 +252,7 @@ mod tests {
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
         let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -417,7 +267,7 @@ mod tests {
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -438,7 +288,7 @@ mod tests {
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -462,7 +312,7 @@ mod tests {
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -488,7 +338,7 @@ mod tests {
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -509,7 +359,7 @@ mod tests {
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -534,7 +384,7 @@ mod tests {
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -556,7 +406,7 @@ mod tests {
         span["metrics"] = json!(expected_metrics.clone());
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -580,7 +430,7 @@ mod tests {
         span["metrics"] = json!(expected_metrics.clone());
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -600,7 +450,7 @@ mod tests {
         span["metrics"] = json!(null);
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -627,7 +477,7 @@ mod tests {
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -674,7 +524,7 @@ mod tests {
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+            from_bytes(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
 
         assert_eq!(1, decoded_traces.len());
         assert_eq!(1, decoded_traces[0].len());
@@ -696,7 +546,7 @@ mod tests {
             unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(encoded_data.as_ref()) };
         let bytes = tinybytes::Bytes::from_static(encoded_data);
 
-        let result = from_slice(bytes);
+        let result = from_bytes(bytes);
         assert_eq!(
             Err(DecodeError::InvalidFormat(
                 "Expected at least bytes 1, but only got 0 (pos 0)".to_owned()
@@ -719,7 +569,7 @@ mod tests {
             unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(encoded_data.as_ref()) };
         let bytes = tinybytes::Bytes::from_static(encoded_data);
 
-        let result = from_slice(bytes);
+        let result = from_bytes(bytes);
         assert_eq!(
             Err(DecodeError::Utf8Error(
                 "invalid utf-8 sequence of 1 bytes from index 1".to_owned()
@@ -739,7 +589,7 @@ mod tests {
             unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(encoded_data.as_ref()) };
         let bytes = tinybytes::Bytes::from_static(encoded_data);
 
-        let result = from_slice(bytes);
+        let result = from_bytes(bytes);
 
         assert_eq!(
             Err(DecodeError::InvalidFormat(
@@ -761,7 +611,7 @@ mod tests {
             unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(encoded_data.as_ref()) };
         let bytes = tinybytes::Bytes::from_static(encoded_data);
 
-        let result = from_slice(bytes);
+        let result = from_bytes(bytes);
 
         assert_eq!(
             Err(DecodeError::InvalidFormat(
@@ -782,7 +632,7 @@ mod tests {
             unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(encoded_data.as_ref()) };
         let bytes = tinybytes::Bytes::from_static(encoded_data);
 
-        let result = from_slice(bytes);
+        let result = from_bytes(bytes);
 
         assert_eq!(
             Err(DecodeError::InvalidType(
@@ -794,7 +644,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn fuzz_from_slice() {
+    fn fuzz_from_bytes() {
         check!()
             .with_type::<(
                 String,
@@ -845,10 +695,11 @@ mod tests {
                         start,
                         ..Default::default()
                     };
-                    let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
-                    let result = from_slice(tinybytes::Bytes::from(encoded_data));
+                    let encoded_data = to_vec_named(&vec![vec![span.clone()]]).unwrap();
+                    let result = from_bytes(tinybytes::Bytes::from(encoded_data));
 
                     assert!(result.is_ok());
+                    assert_eq!(result.unwrap().0, vec![vec![span]])
                 },
             );
     }
