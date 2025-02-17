@@ -943,25 +943,24 @@ impl SidecarInterface for SidecarServer {
         let notify_target = RemoteConfigNotifyTarget {
             pid: session.pid.load(Ordering::Relaxed),
         };
+        let invariants = session
+            .get_remote_config_invariants()
+            .as_ref()
+            .expect("Expecting remote config invariants to be set early")
+            .clone();
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
         let mut applications = runtime_info.lock_applications();
         let app = applications.entry(queue_id).or_default();
-        app.remote_config_guard = Some(
-            self.remote_configs.add_runtime(
-                session
-                    .get_remote_config_invariants()
-                    .as_ref()
-                    .expect("Expecting remote config invariants to be set early")
-                    .clone(),
-                *session.remote_config_interval.lock().unwrap(),
-                instance_id.runtime_id,
-                notify_target,
-                env_name.clone(),
-                service_name,
-                app_version.clone(),
-                global_tags.clone(),
-            ),
-        );
+        app.remote_config_guard = Some(self.remote_configs.add_runtime(
+            invariants,
+            *session.remote_config_interval.lock().unwrap(),
+            instance_id.runtime_id,
+            notify_target,
+            env_name.clone(),
+            service_name,
+            app_version.clone(),
+            global_tags.clone(),
+        ));
         app.set_metadata(env_name, app_version, global_tags);
 
         no_response()

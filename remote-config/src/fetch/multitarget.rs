@@ -109,6 +109,10 @@ pub trait MultiTargetHandlers<S> {
 
     fn expired(&self, target: &Arc<Target>);
 
+    /// Called when a fetcher has no active runtimes.
+    /// Beware: This function may be called at any time, e.g. another thread might be attempting to
+    /// call add_runtime() right when no other runtime was left. Be careful with the locking here.
+    /// Will not be called multiple times, unless this specific case was encountered.
     fn dead(&self);
 }
 
@@ -510,7 +514,7 @@ where
 
             this.storage.storage.expired(&fetcher.target);
 
-            {
+            let is_dead = {
                 // scope lock before await
                 trace!(
                     "Remove {:?} from services map at fetcher end",
@@ -518,10 +522,10 @@ where
                 );
                 let mut services = this.services.lock().unwrap();
                 services.remove(&fetcher.target);
-                if services.is_empty() && this.pending_async_insertions.load(Ordering::Relaxed) == 0
-                {
-                    this.storage.storage.dead();
-                }
+                services.is_empty() && this.pending_async_insertions.load(Ordering::Relaxed) == 0
+            };
+            if is_dead {
+                this.storage.storage.dead();
             }
             remove_completer.complete(()).await;
         });
