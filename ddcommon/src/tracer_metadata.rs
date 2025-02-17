@@ -64,7 +64,7 @@ pub fn store_tracer_metadata(data: TracerMetadata) -> Result<AnonymousFileHandle
         memfd::FileSeal::SealGrow,
         memfd::FileSeal::SealSeal,
     ])
-    .map_error(|e| format!("Unable to seal: {}", e))?;
+    .map_err(|e| format!("Unable to seal: {}", e))?;
 
     return Ok(AnonymousFileHandle::Linux(Box::new(mfd)));
 }
