@@ -33,8 +33,15 @@ TODO: measures are ongoing with the PHP binary.
 
 ### Deployment 
 
-We propose to deploy the feature OFF by default. We can then check with the customer to enable this and get the musl crash locations.
-If this is a success, we can roll out progressively the change.
+Phase 0:
+The feature is OFF by default. We can then check with the customer to enable this and get the musl crash locations. `DD_CRASHTRACK_UNWINDING=Libunwind`
+
+Phase 1:
+We roll out the unwinding using libunwind as ON by default.
+Fallback would be: `DD_CRASHTRACK_UNWINDING=Backtrace`
+
+Phase 2:
+Either we are able to upstream a change in backtrace-rs or we use remote unwinding capabilities (and then we can remove in process unwinding).
 
 ### Out of scope
 

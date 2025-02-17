@@ -111,7 +111,7 @@ impl CrashtrackerConfiguration {
         } else {
             timeout_ms
         };
-        
+
         // Read stack unwinding strategy from environment
         let stacktrace_unwinding = StackTraceUnwinding::from_env();
 
