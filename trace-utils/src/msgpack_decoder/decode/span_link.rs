@@ -1,12 +1,12 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::msgpack_decoder::v04::decoder::{
+use crate::msgpack_decoder::decode::error::DecodeError;
+use crate::msgpack_decoder::decode::number::read_number_bytes;
+use crate::msgpack_decoder::decode::string::{
     handle_null_marker, read_str_map_to_bytes_strings, read_string_bytes, read_string_ref,
 };
-use crate::msgpack_decoder::v04::error::DecodeError;
-use crate::msgpack_decoder::v04::number::read_number_bytes;
-use crate::span_v04::SpanLink;
+use crate::span::v04::SpanLink;
 use rmp::Marker;
 use std::str::FromStr;
 use tinybytes::Bytes;
@@ -98,7 +98,7 @@ fn decode_span_link(buf: &mut Bytes) -> Result<SpanLink, DecodeError> {
 #[cfg(test)]
 mod tests {
     use super::SpanLinkKey;
-    use crate::msgpack_decoder::v04::error::DecodeError;
+    use crate::msgpack_decoder::decode::error::DecodeError;
     use std::str::FromStr;
 
     #[test]

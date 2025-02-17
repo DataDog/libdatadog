@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use datadog_trace_utils::span_v04::trace_utils::compute_top_level_span;
+use datadog_trace_utils::span::v04::trace_utils::compute_top_level_span;
 use rand::{thread_rng, Rng};
 
 const BUCKET_SIZE: u64 = Duration::from_secs(2).as_nanos() as u64;
