@@ -7,7 +7,7 @@ use crate::msgpack_decoder::decode::span_link::read_span_links;
 use crate::msgpack_decoder::decode::string::{
     read_nullable_str_map_to_bytes_strings, read_nullable_string_bytes, read_string_ref,
 };
-use crate::msgpack_decoder::decode::{meta::read_meta_struct, metrics::read_metrics};
+use crate::msgpack_decoder::decode::{meta_struct::read_meta_struct, metrics::read_metrics};
 use crate::span::v04::{Span, SpanKey};
 use tinybytes::Bytes;
 

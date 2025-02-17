@@ -3,7 +3,7 @@
 
 pub mod error;
 pub mod map;
-pub mod meta;
+pub mod meta_struct;
 pub mod metrics;
 pub mod number;
 pub mod span_link;

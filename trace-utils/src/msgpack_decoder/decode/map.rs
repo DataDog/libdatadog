@@ -51,6 +51,22 @@ where
     Ok(map)
 }
 
+/// Reads map length from the buffer
+///
+/// # Arguments
+///
+/// * `buf` - A reference to the Bytes containing the encoded map data.
+///
+/// # Returns
+///
+/// * `Ok(usize)` - Map length.
+/// * `Err(DecodeError)` - An error if the decoding process fails.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - The buffer does not contain a map.
+/// - There is an error reading from the buffer.
 #[inline]
 pub fn read_map_len(buf: &mut &[u8]) -> Result<usize, DecodeError> {
     match decode::read_marker(buf)
