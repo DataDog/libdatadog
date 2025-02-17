@@ -1,14 +1,38 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{
-    read_meta_struct, read_metrics, read_nullable_number_ref, read_nullable_str_map_to_str,
-    read_nullable_string, read_string, span_link::read_span_links,
-};
+/// Read maps from msgpack
+mod map;
+/// Read numbers from msgpack
+mod number;
+/// Read span links from msgpack
+mod span_link;
+/// Read strings from msgpack
+mod string;
+
 use crate::msgpack_decoder::v04::error::DecodeError;
 use crate::span_v04::{SpanKey, SpanSlice};
+use map::{read_meta_struct, read_metrics, read_nullable_str_map_to_str};
+use number::read_nullable_number;
+use span_link::read_span_links;
+use string::{read_nullable_string, read_string};
 
-/// Decodes a slice of bytes into a `Span` object.
+// https://docs.rs/rmp/latest/rmp/enum.Marker.html#variant.Null (0xc0 == 192)
+const NULL_MARKER: &u8 = &0xc0;
+
+/// When you want to "peek" if the next value is a null marker, and only advance the buffer if it is
+/// null. If it is not null, you can continue to decode as expected.
+#[inline]
+fn is_null_marker(buf: &mut &[u8]) -> bool {
+    if buf.first() == Some(NULL_MARKER) {
+        *buf = &buf[1..];
+        true
+    } else {
+        false
+    }
+}
+
+/// Decodes a slice of bytes into a `SpanSlice` object.
 ///
 /// # Arguments
 ///
@@ -16,7 +40,7 @@ use crate::span_v04::{SpanKey, SpanSlice};
 ///
 /// # Returns
 ///
-/// * `Ok(Span)` - A decoded `Span` object if successful.
+/// * `Ok(Span)` - A decoded `SpanSlice` object if successful.
 /// * `Err(DecodeError)` - An error if the decoding process fails.
 ///
 /// # Errors
@@ -38,8 +62,7 @@ pub fn decode_span<'a>(buffer: &mut &'a [u8]) -> Result<SpanSlice<'a>, DecodeErr
     Ok(span)
 }
 
-// Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
-// BytesStrings
+/// Read the next entry from `buf` and update `span` corresponding field.
 fn fill_span<'a>(span: &mut SpanSlice<'a>, buf: &mut &'a [u8]) -> Result<(), DecodeError> {
     let key = read_string(buf)?
         .parse::<SpanKey>()
@@ -49,12 +72,12 @@ fn fill_span<'a>(span: &mut SpanSlice<'a>, buf: &mut &'a [u8]) -> Result<(), Dec
         SpanKey::Service => span.service = read_nullable_string(buf)?,
         SpanKey::Name => span.name = read_nullable_string(buf)?,
         SpanKey::Resource => span.resource = read_nullable_string(buf)?,
-        SpanKey::TraceId => span.trace_id = read_nullable_number_ref(buf)?,
-        SpanKey::SpanId => span.span_id = read_nullable_number_ref(buf)?,
-        SpanKey::ParentId => span.parent_id = read_nullable_number_ref(buf)?,
-        SpanKey::Start => span.start = read_nullable_number_ref(buf)?,
-        SpanKey::Duration => span.duration = read_nullable_number_ref(buf)?,
-        SpanKey::Error => span.error = read_nullable_number_ref(buf)?,
+        SpanKey::TraceId => span.trace_id = read_nullable_number(buf)?,
+        SpanKey::SpanId => span.span_id = read_nullable_number(buf)?,
+        SpanKey::ParentId => span.parent_id = read_nullable_number(buf)?,
+        SpanKey::Start => span.start = read_nullable_number(buf)?,
+        SpanKey::Duration => span.duration = read_nullable_number(buf)?,
+        SpanKey::Error => span.error = read_nullable_number(buf)?,
         SpanKey::Type => span.r#type = read_nullable_string(buf)?,
         SpanKey::Meta => span.meta = read_nullable_str_map_to_str(buf)?,
         SpanKey::Metrics => span.metrics = read_metrics(buf)?,

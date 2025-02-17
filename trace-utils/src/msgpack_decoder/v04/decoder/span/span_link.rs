@@ -1,14 +1,14 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::msgpack_decoder::v04::decoder::read_string;
+use super::number::read_number;
+use super::string::read_string;
 use crate::msgpack_decoder::v04::error::DecodeError;
-use crate::msgpack_decoder::v04::number::read_number_ref;
 use crate::span_v04::SpanLinkSlice;
 use rmp::Marker;
 use std::str::FromStr;
 
-use super::{is_null_marker, read_str_map_to_str};
+use super::{is_null_marker, map::read_str_map_to_str};
 
 /// Reads a slice of bytes and decodes it into a vector of `SpanLink` objects.
 ///
@@ -85,12 +85,12 @@ fn decode_span_link<'a>(buf: &mut &'a [u8]) -> Result<SpanLinkSlice<'a>, DecodeE
 
     for _ in 0..span_size {
         match read_string(buf)?.parse::<SpanLinkKey>()? {
-            SpanLinkKey::TraceId => span.trace_id = read_number_ref(buf)?,
-            SpanLinkKey::TraceIdHigh => span.trace_id_high = read_number_ref(buf)?,
-            SpanLinkKey::SpanId => span.span_id = read_number_ref(buf)?,
+            SpanLinkKey::TraceId => span.trace_id = read_number(buf)?,
+            SpanLinkKey::TraceIdHigh => span.trace_id_high = read_number(buf)?,
+            SpanLinkKey::SpanId => span.span_id = read_number(buf)?,
             SpanLinkKey::Attributes => span.attributes = read_str_map_to_str(buf)?,
             SpanLinkKey::Tracestate => span.tracestate = read_string(buf)?,
-            SpanLinkKey::Flags => span.flags = read_number_ref(buf)?,
+            SpanLinkKey::Flags => span.flags = read_number(buf)?,
         }
     }
 

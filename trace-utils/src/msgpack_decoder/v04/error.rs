@@ -1,12 +1,18 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+/// Represent error that can happen while decoding msgpack
 #[derive(Debug, PartialEq)]
 pub enum DecodeError {
+    /// Failed to convert a number to the expected type.
     InvalidConversion(String),
+    /// Payload does not match the expected type for a trace payload.
     InvalidType(String),
+    /// Payload is not a valid msgpack object.
     InvalidFormat(String),
+    /// Failed to read the buffer.
     IOError,
+    /// The payload contains non-utf8 strings.
     Utf8Error(String),
 }
 

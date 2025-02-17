@@ -1,19 +1,12 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+/// Read spans from msgpack
 mod span;
-mod span_link;
 
 use super::error::DecodeError;
-use super::number::{read_nullable_number_ref, read_number_ref};
 use crate::span_v04::{Span, SpanSlice};
-use rmp::decode::DecodeStringError;
-use rmp::{decode, decode::RmpRead, Marker};
 use span::decode_span;
-use std::{collections::HashMap, f64};
-
-// https://docs.rs/rmp/latest/rmp/enum.Marker.html#variant.Null (0xc0 == 192)
-const NULL_MARKER: &u8 = &0xc0;
 
 /// Decodes a Bytes buffer into a vector of `TracerPayloadV04` objects.
 ///
@@ -152,181 +145,6 @@ pub fn from_slice(mut data: &[u8]) -> Result<(Vec<Vec<SpanSlice>>, usize), Decod
     ))
 }
 
-#[inline]
-fn read_string_nomut(buf: &[u8]) -> Result<(&str, &[u8]), DecodeError> {
-    decode::read_str_from_slice(buf).map_err(|e| match e {
-        DecodeStringError::InvalidMarkerRead(e) => DecodeError::InvalidFormat(e.to_string()),
-        DecodeStringError::InvalidDataRead(e) => DecodeError::InvalidConversion(e.to_string()),
-        DecodeStringError::TypeMismatch(marker) => {
-            DecodeError::InvalidType(format!("Type mismatch at marker {:?}", marker))
-        }
-        DecodeStringError::InvalidUtf8(_, e) => DecodeError::Utf8Error(e.to_string()),
-        _ => DecodeError::IOError,
-    })
-}
-
-#[inline]
-fn read_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, DecodeError> {
-    read_string_nomut(buf).map(|(str, newbuf)| {
-        *buf = newbuf;
-        str
-    })
-}
-
-#[inline]
-fn read_nullable_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, DecodeError> {
-    if is_null_marker(buf) {
-        Ok("")
-    } else {
-        read_string(buf)
-    }
-}
-
-#[inline]
-fn read_str_map_to_str<'a>(buf: &mut &'a [u8]) -> Result<HashMap<&'a str, &'a str>, DecodeError> {
-    let len = decode::read_map_len(buf)
-        .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
-
-    let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
-    for _ in 0..len {
-        let key = read_string(buf)?;
-        let value = read_string(buf)?;
-        map.insert(key, value);
-    }
-    Ok(map)
-}
-
-#[inline]
-fn read_nullable_str_map_to_str<'a>(
-    buf: &mut &'a [u8],
-) -> Result<HashMap<&'a str, &'a str>, DecodeError> {
-    if is_null_marker(buf) {
-        return Ok(HashMap::default());
-    }
-
-    read_str_map_to_str(buf)
-}
-
-#[inline]
-fn read_metrics<'a>(buf: &mut &'a [u8]) -> Result<HashMap<&'a str, f64>, DecodeError> {
-    if is_null_marker(buf) {
-        return Ok(HashMap::default());
-    }
-
-    fn read_metric_pair<'a>(buf: &mut &'a [u8]) -> Result<(&'a str, f64), DecodeError> {
-        let key = read_string(buf)?;
-        let v = read_number_ref(buf)?;
-
-        Ok((key, v))
-    }
-
-    let len = read_map_len(buf)?;
-
-    read_map(len, buf, read_metric_pair)
-}
-
-#[inline]
-fn read_meta_struct<'a>(buf: &mut &'a [u8]) -> Result<HashMap<&'a str, Vec<u8>>, DecodeError> {
-    if is_null_marker(buf) {
-        return Ok(HashMap::default());
-    }
-
-    fn read_meta_struct_pair<'a>(buf: &mut &'a [u8]) -> Result<(&'a str, Vec<u8>), DecodeError> {
-        let key = read_string(buf)?;
-        let array_len = decode::read_array_len(buf).map_err(|_| {
-            DecodeError::InvalidFormat("Unable to read array len for meta_struct".to_owned())
-        })?;
-
-        let mut v = Vec::with_capacity(array_len as usize);
-
-        for _ in 0..array_len {
-            let value = read_number_ref(buf)?;
-            v.push(value);
-        }
-        Ok((key, v))
-    }
-
-    let len = read_map_len(buf)?;
-    read_map(len, buf, read_meta_struct_pair)
-}
-
-/// Reads a map from the buffer and returns it as a `HashMap`.
-///
-/// This function is generic over the key and value types of the map, and it uses a provided
-/// function to read key-value pairs from the buffer.
-///
-/// # Arguments
-///
-/// * `len` - The number of key-value pairs to read from the buffer.
-/// * `buf` - A reference to the slice containing the encoded map data.
-/// * `read_pair` - A function that reads a key-value pair from the buffer and returns it as a
-///   `Result<(K, V), DecodeError>`.
-///
-/// # Returns
-///
-/// * `Ok(HashMap<K, V>)` - A `HashMap` containing the decoded key-value pairs if successful.
-/// * `Err(DecodeError)` - An error if the decoding process fails.
-///
-/// # Errors
-///
-/// This function will return an error if:
-/// - The `read_pair` function returns an error while reading a key-value pair.
-///
-/// # Type Parameters
-///
-/// * `K` - The type of the keys in the map. Must implement `std::hash::Hash` and `Eq`.
-/// * `V` - The type of the values in the map.
-/// * `F` - The type of the function used to read key-value pairs from the buffer.
-#[inline]
-fn read_map<'a, K, V, F>(
-    len: usize,
-    buf: &mut &'a [u8],
-    read_pair: F,
-) -> Result<HashMap<K, V>, DecodeError>
-where
-    K: std::hash::Hash + Eq,
-    F: Fn(&mut &'a [u8]) -> Result<(K, V), DecodeError>,
-{
-    let mut map = HashMap::with_capacity(len);
-    for _ in 0..len {
-        let (k, v) = read_pair(buf)?;
-        map.insert(k, v);
-    }
-    Ok(map)
-}
-
-#[inline]
-fn read_map_len(buf: &mut &[u8]) -> Result<usize, DecodeError> {
-    match decode::read_marker(buf)
-        .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for map".to_owned()))?
-    {
-        Marker::FixMap(len) => Ok(len as usize),
-        Marker::Map16 => buf
-            .read_data_u16()
-            .map_err(|_| DecodeError::IOError)
-            .map(|len| len as usize),
-        Marker::Map32 => buf
-            .read_data_u32()
-            .map_err(|_| DecodeError::IOError)
-            .map(|len| len as usize),
-        _ => Err(DecodeError::InvalidType(
-            "Unable to read map from buffer".to_owned(),
-        )),
-    }
-}
-
-/// When you want to "peek" if the next value is a null marker, and only advance the buffer if it is
-/// null. If it is not null, you can continue to decode as expected.
-#[inline]
-fn is_null_marker(buf: &mut &[u8]) -> bool {
-    if buf.first() == Some(NULL_MARKER) {
-        *buf = &buf[1..];
-        true
-    } else {
-        false
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,6 +153,7 @@ mod tests {
     use rmp_serde;
     use rmp_serde::to_vec_named;
     use serde_json::json;
+    use std::collections::HashMap;
     use tinybytes::BytesString;
 
     fn generate_meta_struct_element(i: u8) -> (String, Vec<u8>) {
@@ -352,6 +171,7 @@ mod tests {
 
         (key, rmp_serde::to_vec_named(&map).unwrap())
     }
+
     #[test]
     fn test_empty_array() {
         let encoded_data = vec![0x90];
@@ -824,7 +644,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn fuzz_from_slice() {
+    fn fuzz_from_bytes() {
         check!()
             .with_type::<(
                 String,
@@ -875,10 +695,11 @@ mod tests {
                         start,
                         ..Default::default()
                     };
-                    let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
+                    let encoded_data = to_vec_named(&vec![vec![span.clone()]]).unwrap();
                     let result = from_bytes(tinybytes::Bytes::from(encoded_data));
 
                     assert!(result.is_ok());
+                    assert_eq!(result.unwrap().0, vec![vec![span]])
                 },
             );
     }

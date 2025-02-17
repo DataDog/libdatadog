@@ -1,13 +1,12 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::error::DecodeError;
+use crate::msgpack_decoder::v04::error::DecodeError;
 use rmp::{decode::RmpRead, Marker};
 use std::fmt;
-use tinybytes::Bytes;
 
 #[derive(Debug, PartialEq)]
-pub enum Number {
+pub(crate) enum Number {
     Unsigned(u64),
     Signed(i64),
     Float(f64),
@@ -150,7 +149,7 @@ impl TryFrom<Number> for f64 {
     }
 }
 
-fn read_number(buf: &mut &[u8], allow_null: bool) -> Result<Number, DecodeError> {
+fn read_number_inner(buf: &mut &[u8], allow_null: bool) -> Result<Number, DecodeError> {
     match rmp::decode::read_marker(buf)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for number".to_owned()))?
     {
@@ -197,28 +196,18 @@ fn read_number(buf: &mut &[u8], allow_null: bool) -> Result<Number, DecodeError>
     }
 }
 
-pub fn read_number_bytes<T: TryFrom<Number, Error = DecodeError>>(
-    buf: &mut Bytes,
-) -> Result<T, DecodeError> {
-    read_number(unsafe { buf.as_mut_slice() }, false)?.try_into()
-}
-
-pub fn read_nullable_number_bytes<T: TryFrom<Number, Error = DecodeError>>(
-    buf: &mut Bytes,
-) -> Result<T, DecodeError> {
-    read_number(unsafe { buf.as_mut_slice() }, true)?.try_into()
-}
-
-pub fn read_number_ref<T: TryFrom<Number, Error = DecodeError>>(
+/// Read a msgpack encoded number from `buf`.
+pub fn read_number<T: TryFrom<Number, Error = DecodeError>>(
     buf: &mut &[u8],
 ) -> Result<T, DecodeError> {
-    read_number(buf, false)?.try_into()
+    read_number_inner(buf, false)?.try_into()
 }
 
-pub fn read_nullable_number_ref<T: TryFrom<Number, Error = DecodeError>>(
+/// Read a msgpack encoded number from `buf` and return 0 if null.
+pub fn read_nullable_number<T: TryFrom<Number, Error = DecodeError>>(
     buf: &mut &[u8],
 ) -> Result<T, DecodeError> {
-    read_number(buf, true)?.try_into()
+    read_number_inner(buf, true)?.try_into()
 }
 
 #[cfg(test)]
@@ -233,8 +222,7 @@ mod tests {
         let expected_value = 42;
         let val = json!(expected_value);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut bytes = Bytes::from(buf.clone());
-        let result: u8 = read_number_bytes(&mut bytes).unwrap();
+        let result: u8 = read_number(&mut buf.as_slice()).unwrap();
         assert_eq!(result, expected_value);
     }
 
@@ -244,8 +232,7 @@ mod tests {
         let expected_value = 42;
         let val = json!(expected_value);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut bytes = Bytes::from(buf.clone());
-        let result: i8 = read_number_bytes(&mut bytes).unwrap();
+        let result: i8 = read_number(&mut buf.as_slice()).unwrap();
         assert_eq!(result, expected_value);
     }
 
@@ -255,8 +242,7 @@ mod tests {
         let expected_value = 42.98;
         let val = json!(expected_value);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut bytes = Bytes::from(buf.clone());
-        let result: f64 = read_number_bytes(&mut bytes).unwrap();
+        let result: f64 = read_number(&mut buf.as_slice()).unwrap();
         assert_eq!(result, expected_value);
     }
 
@@ -265,8 +251,7 @@ mod tests {
         let mut buf = Vec::new();
         let val = json!(null);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut bytes = Bytes::from(buf.clone());
-        let result: Result<u8, DecodeError> = read_number_bytes(&mut bytes);
+        let result: Result<u8, DecodeError> = read_number(&mut buf.as_slice());
         assert!(matches!(result, Err(DecodeError::InvalidType(_))));
 
         assert_eq!(
@@ -280,8 +265,7 @@ mod tests {
         let mut buf = Vec::new();
         let val = json!(null);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut bytes = Bytes::from(buf.clone());
-        let result: u8 = read_nullable_number_bytes(&mut bytes).unwrap();
+        let result: u8 = read_nullable_number(&mut buf.as_slice()).unwrap();
         assert_eq!(result, 0);
     }
 
@@ -290,8 +274,7 @@ mod tests {
         let mut buf = Vec::new();
         let val = json!(null);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut bytes = Bytes::from(buf.clone());
-        let result: i8 = read_nullable_number_bytes(&mut bytes).unwrap();
+        let result: i8 = read_nullable_number(&mut buf.as_slice()).unwrap();
         assert_eq!(result, 0);
     }
 
@@ -300,8 +283,7 @@ mod tests {
         let mut buf = Vec::new();
         let val = json!(null);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut bytes = Bytes::from(buf.clone());
-        let result: f64 = read_nullable_number_bytes(&mut bytes).unwrap();
+        let result: f64 = read_nullable_number(&mut buf.as_slice()).unwrap();
         assert_eq!(result, 0.0);
     }
 
