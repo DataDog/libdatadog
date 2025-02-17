@@ -12,6 +12,7 @@ use std::{
     time::Duration,
 };
 
+use crate::service::SidecarServer;
 use tokio::{select, sync::mpsc::Receiver};
 use tracing::error;
 
@@ -42,7 +43,7 @@ impl Watchdog {
         }
     }
 
-    pub fn spawn_watchdog(mut self) -> WatchdogHandle {
+    pub fn spawn_watchdog(mut self, server: SidecarServer) -> WatchdogHandle {
         let mem_usage_bytes = Arc::new(AtomicUsize::new(0));
         let handle_mem_usage_bytes = mem_usage_bytes.clone();
 
@@ -98,6 +99,9 @@ impl Watchdog {
                                 std::thread::sleep(Duration::from_secs(5));
                                 std::process::exit(1);
                             });
+
+                            error!("Watchdog memory exceeded: Sidecar using more than {} bytes. Exiting.", self.max_memory_usage_bytes);
+                            error!("Memory statistics: {:?}", server.compute_stats().await);
                             return
                         }
 

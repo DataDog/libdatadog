@@ -54,7 +54,7 @@ where
     fetcher_semaphore: Semaphore,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MultiTargetStats {
     known_runtimes: u32,
     starting_fetchers: u32,

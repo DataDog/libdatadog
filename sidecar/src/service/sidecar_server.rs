@@ -63,8 +63,8 @@ fn no_response() -> NoResponse {
     future::ready(())
 }
 
-#[derive(Serialize, Deserialize)]
-struct SidecarStats {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SidecarStats {
     trace_flusher: TraceFlusherStats,
     sessions: u32,
     session_counter_size: u32,
@@ -306,7 +306,7 @@ impl SidecarServer {
         }
     }
 
-    async fn compute_stats(&self) -> SidecarStats {
+    pub async fn compute_stats(&self) -> SidecarStats {
         let mut telemetry_stats_errors = 0;
         let telemetry_stats = join_all({
             let sessions = self.lock_sessions();
