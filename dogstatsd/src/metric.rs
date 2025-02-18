@@ -117,13 +117,10 @@ impl SortedTags {
         tags_as_vec
     }
 
-    pub fn contains(&self, key: &str) -> bool {
-        self.values.iter().any(|(k, _)| k.as_str() == key)
-    }
-
     pub fn get(&self, key: &str) -> Option<&str> {
         self.values
             .iter()
+            .filter(|(k, v)| !v.is_empty() && k.as_str() == key)
             .find(|(k, _)| k.as_str() == key)
             .map(|(_, v)| v.as_str())
     }
@@ -574,17 +571,8 @@ mod tests {
     }
 
     #[test]
-    fn sorted_tags_contains_key() {
-        let tags = SortedTags::parse("a:1,b:2,c:3").unwrap();
-        assert!(tags.contains("a"));
-        assert!(tags.contains("b"));
-        assert!(tags.contains("c"));
-        assert!(!tags.contains("d"));
-    }
-
-    #[test]
     fn sorted_tags_get_value() {
-        let tags = SortedTags::parse("a:1,b:2,c:3").unwrap();
+        let tags = SortedTags::parse("a,a:1,b:2,c:3").unwrap();
         assert_eq!(tags.get("a"), Some("1"));
         assert_eq!(tags.get("b"), Some("2"));
         assert_eq!(tags.get("c"), Some("3"));
