@@ -78,8 +78,11 @@ pub struct SpanLink {
     pub trace_id: u64,
     pub trace_id_high: u64,
     pub span_id: u64,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub attributes: HashMap<BytesString, BytesString>,
+    #[serde(skip_serializing_if = "BytesString::is_empty")]
     pub tracestate: BytesString,
+    #[serde(skip_serializing_if = "is_default")]
     pub flags: u64,
 }
 

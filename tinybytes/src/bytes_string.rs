@@ -114,6 +114,11 @@ impl BytesString {
     pub fn copy_to_string(&self) -> String {
         self.as_str().to_string()
     }
+
+    /// Returns `true` if the underlying bytes are empty.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
 }
 
 impl Default for BytesString {
