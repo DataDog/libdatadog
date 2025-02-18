@@ -611,6 +611,34 @@ mod tests {
         )
     }
 
+    #[test]
+    fn telemetry_from_send_data_result_test() {
+        let result = SendDataResult {
+            requests_count: 10,
+            responses_count_per_code: HashMap::from([(200, 3)]),
+            errors_timeout: 1,
+            errors_network: 2,
+            errors_status_code: 3,
+            bytes_sent: 4,
+            chunks_sent: 5,
+            chunks_dropped: 6,
+            ..Default::default()
+        };
+
+        let expected_telemetry = SendPayloadTelemetry {
+            requests_count: 10,
+            errors_network: 2,
+            errors_timeout: 1,
+            errors_status_code: 3,
+            bytes_sent: 4,
+            chunks_sent: 5,
+            chunks_dropped: 6,
+            responses_count_per_code: HashMap::from([(200, 3)]),
+        };
+
+        assert_eq!(SendPayloadTelemetry::from(&result), expected_telemetry)
+    }
+
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn runtime_id_test() {

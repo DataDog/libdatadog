@@ -657,8 +657,8 @@ impl TraceExporter {
                     if let Some(telemetry) = &self.telemetry {
                         if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
                             &result,
-                            payload_len.try_into().unwrap_or(0),
-                            chunks.try_into().unwrap_or(0),
+                            payload_len as u64,
+                            chunks as u64,
                         )) {
                             error!("Error sending telemetry: {}", e.to_string());
                         }
