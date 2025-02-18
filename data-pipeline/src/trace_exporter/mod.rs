@@ -14,7 +14,6 @@ use bytes::Bytes;
 use datadog_trace_utils::msgpack_decoder;
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryError};
 use datadog_trace_utils::span::v04::{
-
     trace_utils::{compute_top_level_span, has_top_level},
     Span,
 };
