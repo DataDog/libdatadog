@@ -11,7 +11,7 @@ use crate::{
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
-use datadog_trace_utils::span_v04::{
+use datadog_trace_utils::span::v04::{
     trace_utils::{compute_top_level_span, has_top_level},
     Span,
 };
@@ -588,7 +588,7 @@ impl TraceExporter {
 
     fn send_deser_ser(&self, data: tinybytes::Bytes) -> Result<String, TraceExporterError> {
         // TODO base on input format
-        let (mut traces, size) = match msgpack_decoder::v04::decoder::from_slice(data) {
+        let (mut traces, size) = match msgpack_decoder::v04::from_slice(data) {
             Ok(res) => res,
             Err(err) => {
                 error!("Error deserializing trace from request body: {err}");
@@ -976,7 +976,7 @@ mod tests {
     use self::error::AgentErrorKind;
     use self::error::BuilderErrorKind;
     use super::*;
-    use datadog_trace_utils::span_v04::Span;
+    use datadog_trace_utils::span::v04::Span;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::collections::HashMap;
