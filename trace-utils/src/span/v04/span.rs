@@ -54,6 +54,7 @@ pub struct Span {
     pub service: BytesString,
     pub name: BytesString,
     pub resource: BytesString,
+    #[serde(skip_serializing_if = "BytesString::is_empty")]
     pub r#type: BytesString,
     pub trace_id: u64,
     pub span_id: u64,
