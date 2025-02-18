@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::send_data::SendData;
-use crate::span_v04::Span;
+use crate::span::v04::Span;
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use datadog_trace_protobuf::pb;

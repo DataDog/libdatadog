@@ -369,7 +369,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
 mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;
-    use datadog_trace_utils::span_v04::Span;
+    use datadog_trace_utils::span::v04::Span;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::{borrow::Borrow, mem::MaybeUninit};
