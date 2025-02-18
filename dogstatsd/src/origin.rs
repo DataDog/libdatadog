@@ -115,7 +115,7 @@ pub fn find_metric_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
         });
     }
 
-    return None;
+    None
 }
 
 fn is_datadog_metric(prefix: &str) -> bool {
@@ -138,11 +138,11 @@ fn is_azure_container_app(tags: &SortedTags, prefix: &str) -> bool {
 }
 
 fn is_aws_lambda(tags: &SortedTags, prefix: &str) -> bool {
-    tags.get(AWS_LAMBDA_TAG_KEY) != None && prefix != AWS_LAMBDA_PREFIX
+    tags.get(AWS_LAMBDA_TAG_KEY).is_some() && prefix != AWS_LAMBDA_PREFIX
 }
 
 fn is_aws_step_functions(tags: &SortedTags, prefix: &str) -> bool {
-    tags.get(AWS_STEP_FUNCTIONS_TAG_KEY) != None && prefix != AWS_STEP_FUNCTIONS_PREFIX
+    tags.get(AWS_STEP_FUNCTIONS_TAG_KEY).is_some() && prefix != AWS_STEP_FUNCTIONS_PREFIX
 }
 
 #[cfg(test)]
