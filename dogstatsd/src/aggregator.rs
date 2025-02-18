@@ -9,10 +9,10 @@ use crate::datadog::{
 };
 use crate::errors;
 use crate::metric::{self, Metric, MetricValue, SortedTags};
-use crate::origin::get_origin;
+use crate::origin::find_metric_origin;
 use std::time;
 
-use datadog_protos::metrics::{Dogsketch, Metadata, Origin, Sketch, SketchPayload};
+use datadog_protos::metrics::{Dogsketch, Metadata, Sketch, SketchPayload};
 use ddsketch_agent::DDSketch;
 use hashbrown::hash_table;
 use protobuf::{Message, MessageField, SpecialFields};
@@ -272,8 +272,7 @@ fn build_sketch(now: i64, entry: &Metric, mut base_tag_vec: SortedTags) -> Optio
     }
     sketch.set_tags(base_tag_vec.to_chars());
 
-    let origin: Option<Origin> = get_origin(entry, base_tag_vec);
-    if let Some(origin) = origin {
+    if let Some(origin) = find_metric_origin(entry, base_tag_vec) {
         sketch.set_metadata(Metadata {
             origin: MessageField::some(origin),
             special_fields: SpecialFields::default(),
@@ -308,7 +307,14 @@ fn build_metric(entry: &Metric, mut base_tag_vec: SortedTags) -> Option<MetricTo
         base_tag_vec.extend(&tags);
     }
 
-    let origin: Option<Origin> = get_origin(entry, base_tag_vec.clone());
+    let origin = find_metric_origin(entry, base_tag_vec.clone());
+    let metadata = origin.map(|o| MetadataToShip {
+        origin: Some(OriginToShip {
+            origin_product: o.origin_product,
+            origin_sub_product: o.origin_category,
+            origin_product_detail: o.origin_service,
+        }),
+    });
 
     Some(MetricToShip {
         metric: entry.name.as_str(),
@@ -316,13 +322,7 @@ fn build_metric(entry: &Metric, mut base_tag_vec: SortedTags) -> Option<MetricTo
         kind,
         points: [point; 1],
         tags: base_tag_vec.to_strings(),
-        metadata: Some(MetadataToShip {
-            origin: origin.map(|o| OriginToShip {
-                origin_product: o.origin_product,
-                origin_sub_product: o.origin_category,
-                origin_product_detail: o.origin_service,
-            }),
-        }),
+        metadata,
     })
 }
 
@@ -339,7 +339,7 @@ pub mod tests {
 
     const PRECISION: f64 = 0.000_000_01;
 
-    const SINGLE_METRIC_SIZE: usize = 220; // taken from the test, size of a serialized metric with one tag and 1 digit counter value
+    const SINGLE_METRIC_SIZE: usize = 209; // taken from the test, size of a serialized metric with one tag and 1 digit counter value
     const SINGLE_DISTRIBUTION_SIZE: u64 = 140;
     const DEFAULT_TAGS: &str =
         "dd_extension_version:63-next,architecture:x86_64,_dd.compute_stats:1";
@@ -685,7 +685,7 @@ pub mod tests {
     fn consume_metrics_batch_bytes() {
         let expected_metrics_per_batch = 2;
         let total_number_of_metrics = 5;
-        let two_metrics_size = 428;
+        let two_metrics_size = 406;
         let max_bytes = SINGLE_METRIC_SIZE * expected_metrics_per_batch + 13;
         let mut aggregator = Aggregator {
             tags: to_sorted_tags(),

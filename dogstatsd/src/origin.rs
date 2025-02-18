@@ -64,12 +64,12 @@ impl From<OriginService> for u32 {
     }
 }
 
-pub fn get_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
+pub fn find_metric_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
     let name = metric.name.to_string();
     let prefix = name.split('.').take(2).collect::<Vec<&str>>().join(".");
 
     // TODO (dylan): expand origin service to differentiate custom and standard metrics
-    let origin: Option<Origin> = match tags.get(DD_ORIGIN_TAG_KEY) {
+    match tags.get(DD_ORIGIN_TAG_KEY) {
         Some(AZURE_APP_SERVICES_TAG_VALUE) if prefix != AZURE_APP_SERVICES_PREFIX => Some(Origin {
             origin_product: OriginProduct::Serverless.into(),
             origin_category: OriginCategory::AppServicesMetrics.into(),
@@ -106,8 +106,7 @@ pub fn get_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
         }
         _ if prefix == DATADOG_PREFIX => return None,
         _ => return None,
-    };
-    origin
+    }
 }
 
 #[cfg(test)]
@@ -135,7 +134,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_origin_aws_lambda_standard_metric() {
+    fn test_find_metric_origin_aws_lambda_standard_metric() {
         let tags = SortedTags::parse("function_arn:hello123").unwrap();
         let metric = Metric {
             id: 0,
@@ -143,12 +142,12 @@ mod tests {
             value: MetricValue::Gauge(1.0),
             tags: Some(tags.clone()),
         };
-        let origin = get_origin(&metric, tags);
+        let origin = find_metric_origin(&metric, tags);
         assert_eq!(origin, None);
     }
 
     #[test]
-    fn test_get_origin_aws_lambda_custom_metric() {
+    fn test_find_metric_origin_aws_lambda_custom_metric() {
         let tags = SortedTags::parse("function_arn:hello123").unwrap();
         let metric = Metric {
             id: 0,
@@ -156,7 +155,7 @@ mod tests {
             value: MetricValue::Gauge(1.0),
             tags: Some(tags.clone()),
         };
-        let origin = get_origin(&metric, tags);
+        let origin = find_metric_origin(&metric, tags);
         assert_eq!(
             origin,
             Some(Origin {
