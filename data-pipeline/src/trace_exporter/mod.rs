@@ -13,7 +13,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use datadog_trace_utils::span::v04::{
     trace_utils::{compute_top_level_span, has_top_level},
-    Span,
+    SpanBytes,
 };
 use datadog_trace_utils::trace_utils::{self, SendData, TracerHeaderTags};
 use datadog_trace_utils::tracer_payload::TraceCollection;
@@ -112,7 +112,7 @@ struct DroppedP0Counts {
 }
 
 /// Remove spans and chunks only keeping the ones that may be sampled by the agent
-fn drop_chunks(traces: &mut Vec<Vec<Span>>) -> DroppedP0Counts {
+fn drop_chunks(traces: &mut Vec<Vec<SpanBytes>>) -> DroppedP0Counts {
     let mut dropped_p0_traces = 0;
     let mut dropped_p0_spans = 0;
     traces.retain_mut(|chunk| {
@@ -572,7 +572,7 @@ impl TraceExporter {
     /// Add all spans from the given iterator into the stats concentrator
     /// # Panic
     /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
-    fn add_spans_to_stats<'a>(&self, spans: impl Iterator<Item = &'a Span>) {
+    fn add_spans_to_stats<'a>(&self, spans: impl Iterator<Item = &'a SpanBytes>) {
         if let StatsComputationStatus::Enabled {
             stats_concentrator,
             cancellation_token: _,
@@ -976,7 +976,7 @@ mod tests {
     use self::error::AgentErrorKind;
     use self::error::BuilderErrorKind;
     use super::*;
-    use datadog_trace_utils::span::v04::Span;
+    use datadog_trace_utils::span::v04::SpanBytes;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::collections::HashMap;
@@ -1101,7 +1101,7 @@ mod tests {
     #[test]
     fn test_drop_chunks() {
         let chunk_with_priority = vec![
-            Span {
+            SpanBytes {
                 span_id: 1,
                 metrics: HashMap::from([
                     (SAMPLING_PRIORITY_KEY.into(), 1.0),
@@ -1109,14 +1109,14 @@ mod tests {
                 ]),
                 ..Default::default()
             },
-            Span {
+            SpanBytes {
                 span_id: 2,
                 parent_id: 1,
                 ..Default::default()
             },
         ];
         let chunk_with_null_priority = vec![
-            Span {
+            SpanBytes {
                 span_id: 1,
                 metrics: HashMap::from([
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
@@ -1124,26 +1124,26 @@ mod tests {
                 ]),
                 ..Default::default()
             },
-            Span {
+            SpanBytes {
                 span_id: 2,
                 parent_id: 1,
                 ..Default::default()
             },
         ];
         let chunk_without_priority = vec![
-            Span {
+            SpanBytes {
                 span_id: 1,
                 metrics: HashMap::from([(TRACER_TOP_LEVEL_KEY.into(), 1.0)]),
                 ..Default::default()
             },
-            Span {
+            SpanBytes {
                 span_id: 2,
                 parent_id: 1,
                 ..Default::default()
             },
         ];
         let chunk_with_error = vec![
-            Span {
+            SpanBytes {
                 span_id: 1,
                 error: 1,
                 metrics: HashMap::from([
@@ -1152,14 +1152,14 @@ mod tests {
                 ]),
                 ..Default::default()
             },
-            Span {
+            SpanBytes {
                 span_id: 2,
                 parent_id: 1,
                 ..Default::default()
             },
         ];
         let chunk_with_a_single_span = vec![
-            Span {
+            SpanBytes {
                 span_id: 1,
                 metrics: HashMap::from([
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
@@ -1167,7 +1167,7 @@ mod tests {
                 ]),
                 ..Default::default()
             },
-            Span {
+            SpanBytes {
                 span_id: 2,
                 parent_id: 1,
                 metrics: HashMap::from([(SAMPLING_SINGLE_SPAN_MECHANISM.into(), 8.0)]),
@@ -1175,7 +1175,7 @@ mod tests {
             },
         ];
         let chunk_with_analyzed_span = vec![
-            Span {
+            SpanBytes {
                 span_id: 1,
                 metrics: HashMap::from([
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
@@ -1183,7 +1183,7 @@ mod tests {
                 ]),
                 ..Default::default()
             },
-            Span {
+            SpanBytes {
                 span_id: 2,
                 parent_id: 1,
                 metrics: HashMap::from([(SAMPLING_ANALYTICS_RATE_KEY.into(), 1.0)]),
@@ -1253,7 +1253,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let trace_chunk = vec![Span {
+        let trace_chunk = vec![SpanBytes {
             duration: 10,
             ..Default::default()
         }];
@@ -1326,7 +1326,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let trace_chunk = vec![Span {
+        let trace_chunk = vec![SpanBytes {
             service: "test".into(),
             name: "test".into(),
             resource: "test".into(),
@@ -1392,12 +1392,12 @@ mod tests {
             stats_socket.local_addr().unwrap().to_string(),
         );
 
-        let traces: Vec<Vec<Span>> = vec![
-            vec![Span {
+        let traces: Vec<Vec<SpanBytes>> = vec![
+            vec![SpanBytes {
                 name: BytesString::from_slice(b"test").unwrap(),
                 ..Default::default()
             }],
-            vec![Span {
+            vec![SpanBytes {
                 name: BytesString::from_slice(b"test2").unwrap(),
                 ..Default::default()
             }],
@@ -1469,7 +1469,7 @@ mod tests {
             stats_socket.local_addr().unwrap().to_string(),
         );
 
-        let traces: Vec<Vec<Span>> = vec![vec![Span {
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
@@ -1527,7 +1527,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let traces: Vec<Vec<Span>> = vec![vec![Span {
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
@@ -1594,7 +1594,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let traces: Vec<Vec<Span>> = vec![vec![Span {
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
@@ -1631,7 +1631,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let traces: Vec<Vec<Span>> = vec![vec![Span {
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];

@@ -49,12 +49,36 @@ impl FromStr for SpanKey {
     }
 }
 
+use std::borrow::Borrow;
+use std::hash::Hash;
+
+/// Trait representing the requirements for a type to be used as a Span "string" type.
+/// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
+/// from a static str.
+pub trait SpanValue: Eq + Hash + Borrow<str> {}
+/// Implement the SpanValue trait for any type which satisfies the sub trait.
+impl<T: Eq + Hash + Borrow<str>> SpanValue for T {}
+
+/// The generic representation of a V04 span.
+///
+/// `T` is the type used to represent strings in the span, it can be either owned (e.g. BytesString)
+/// or borrowed (e.g. &str). To define a generic function taking any `Span<T>` you can use the
+/// [`SpanValue`] trait:
+/// ```
+/// use datadog_trace_utils::span::v04::{Span, SpanValue};
+/// fn foo<T: SpanValue>(span: Span<T>) {
+///     let _ = span.meta.get("foo");
+/// }
+/// ```
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct Span {
-    pub service: BytesString,
-    pub name: BytesString,
-    pub resource: BytesString,
-    pub r#type: BytesString,
+pub struct Span<T>
+where
+    T: SpanValue,
+{
+    pub service: T,
+    pub name: T,
+    pub resource: T,
+    pub r#type: T,
     pub trace_id: u64,
     pub span_id: u64,
     #[serde(skip_serializing_if = "is_default")]
@@ -64,24 +88,32 @@ pub struct Span {
     #[serde(skip_serializing_if = "is_default")]
     pub error: i32,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta: HashMap<BytesString, BytesString>,
+    pub meta: HashMap<T, T>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub metrics: HashMap<BytesString, f64>,
+    pub metrics: HashMap<T, f64>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta_struct: HashMap<BytesString, Vec<u8>>,
+    pub meta_struct: HashMap<T, Vec<u8>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub span_links: Vec<SpanLink>,
+    pub span_links: Vec<SpanLink<T>>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
-pub struct SpanLink {
+/// The generic representation of a V04 span link.
+/// `T` is the type used to represent strings in the span link.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct SpanLink<T>
+where
+    T: SpanValue,
+{
     pub trace_id: u64,
     pub trace_id_high: u64,
     pub span_id: u64,
-    pub attributes: HashMap<BytesString, BytesString>,
-    pub tracestate: BytesString,
+    pub attributes: HashMap<T, T>,
+    pub tracestate: T,
     pub flags: u64,
 }
+
+pub type SpanBytes = Span<BytesString>;
+pub type SpanLinkBytes = SpanLink<BytesString>;
 
 #[derive(Debug)]
 pub struct SpanKeyParseError {
