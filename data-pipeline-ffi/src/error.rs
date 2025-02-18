@@ -119,7 +119,7 @@ impl From<TraceExporterError> for ExporterError {
                     ExporterErrorCode::HttpUnknown
                 }
             }
-            TraceExporterError::Serde(_) => ExporterErrorCode::Serde,
+            TraceExporterError::Serialization(_) => ExporterErrorCode::Serde,
         };
         ExporterError::new(code, &value.to_string())
     }
