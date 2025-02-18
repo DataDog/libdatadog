@@ -34,16 +34,7 @@ symbolic-demangle = { version = "12.8.0", default-features = false, features = [
 symbolic-common = { version = "12.8.0", default-features = false, optional = true }
 function_name = "0.3.0"
 libc = "0.2.167"
-windows = { version = "0.59.0", features = [
-    "Win32_System_Diagnostics_Debug",
-    "Win32_System_Diagnostics_ToolHelp",
-    "Win32_System_ErrorReporting",
-    "Win32_System_Kernel",
-    "Win32_System_ProcessStatus",
-    "Win32_System_SystemInformation",
-    "Win32_System_SystemServices",
-    "Win32_System_Threading",
-] }
+windows = { version = "0.59.0", features = ["Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ErrorReporting", "Win32_System_Kernel", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_Security"] }
 serde_json = "1.0.132"
 serde = { version = "1.0.214", features = ["derive"] }
 log = "0.4.22"

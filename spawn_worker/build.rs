@@ -38,4 +38,17 @@ fn main() {
             .try_compile_shared_lib("ld_preload_trampoline.shared_lib")
             .unwrap();
     }
+
+    if cfg!(target_os = "windows") {
+        cc_utils::ImprovedBuild::new()
+            .file("src/crashtracking_trampoline.cpp") // Path to your C++ file
+            .warnings(true)
+            .warnings_into_errors(true)
+            .flag("/std:c++17") // Set the C++ standard (adjust as needed)
+            .flag("/LD")
+            .flag("/EHsc")
+            .emit_rerun_if_env_changed(true)
+            .try_compile_shared_lib("crashtracking_trampoline.bin")
+            .unwrap();
+    }
 }

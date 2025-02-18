@@ -9,8 +9,8 @@ use datadog_ipc::platform::{
 use futures::FutureExt;
 use lazy_static::lazy_static;
 use manual_future::ManualFuture;
-use spawn_worker::{SpawnWorker, Stdio};
-use std::ffi::CStr;
+use spawn_worker::{write_crashtracking_trampoline, SpawnWorker, Stdio};
+use std::ffi::{CStr, CString};
 use std::io::{self, Error};
 use std::os::windows::io::{AsRawHandle, IntoRawHandle, OwnedHandle};
 use std::ptr::null_mut;
@@ -126,6 +126,24 @@ pub fn setup_daemon_process(listener: OwnedHandle, spawn_cfg: &mut SpawnWorker) 
         .stdin(Stdio::Null);
 
     Ok(())
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_setup_crashtracking() -> *mut libc::c_char {
+    // Ensure unique process names - we spawn one sidecar per console session id (see
+    // setup/windows.rs for the reasoning)
+    let result = write_crashtracking_trampoline(&format!(
+        "datadog-crashtracking-{}",
+        primary_sidecar_identifier()
+    ));
+
+    if result.is_ok() {
+        // TODO: initialize crashtracking
+        let path = result.unwrap().0.into_os_string().into_string().unwrap();
+        return CString::new(path).unwrap().into_raw();
+    }
+
+    return null_mut();
 }
 
 lazy_static! {

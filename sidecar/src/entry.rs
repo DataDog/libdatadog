@@ -29,7 +29,7 @@ use crate::config::{self, Config};
 use crate::self_telemetry::self_telemetry;
 use crate::tracer::SHM_LIMITER;
 use crate::watchdog::Watchdog;
-use crate::{ddog_daemon_entry_point, setup_daemon_process};
+use crate::{ddog_daemon_entry_point, ddog_setup_crashtracking, setup_daemon_process};
 
 async fn main_loop<L, C, Fut>(listener: L, cancel: Arc<C>) -> io::Result<()>
 where
@@ -205,6 +205,11 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
         .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
         .context("Could not spawn the sidecar daemon")?;
 
+    Ok(())
+}
+
+pub fn start_crashtracking() -> anyhow::Result<()> {
+    ddog_setup_crashtracking();
     Ok(())
 }
 

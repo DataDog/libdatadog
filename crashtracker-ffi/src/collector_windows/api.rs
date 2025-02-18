@@ -10,9 +10,9 @@ use std::fmt;
 use std::mem::MaybeUninit;
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::ptr::{addr_of, read_unaligned};
-use windows::core::{s, HRESULT, PCWSTR};
-use windows::Win32::Foundation::{GetLastError, BOOL, HANDLE, HMODULE, MAX_PATH, S_OK, TRUE};
-use windows::Win32::System::Diagnostics::Debug::{AddrModeFlat, GetThreadContext, OutputDebugStringA, ReadProcessMemory, StackWalkEx, SymInitializeW, CONTEXT, CONTEXT_FULL_AMD64, IMAGE_DATA_DIRECTORY, IMAGE_DEBUG_DIRECTORY, IMAGE_DEBUG_TYPE_CODEVIEW, IMAGE_DIRECTORY_ENTRY_DEBUG, IMAGE_FILE_HEADER, IMAGE_NT_HEADERS32, IMAGE_NT_HEADERS64, IMAGE_OPTIONAL_HEADER_MAGIC, STACKFRAME_EX, SYM_STKWALK_DEFAULT};
+use windows::core::{s, w, HRESULT, PCWSTR};
+use windows::Win32::Foundation::{GetLastError, BOOL, ERROR_SUCCESS, HANDLE, HMODULE, MAX_PATH, S_OK, TRUE};
+use windows::Win32::System::Diagnostics::Debug::{AddrModeFlat, GetThreadContext, OutputDebugStringA, OutputDebugStringW, ReadProcessMemory, StackWalkEx, SymInitializeW, CONTEXT, CONTEXT_FULL_AMD64, CONTEXT_FULL_X86, IMAGE_DATA_DIRECTORY, IMAGE_DEBUG_DIRECTORY, IMAGE_DEBUG_TYPE_CODEVIEW, IMAGE_DIRECTORY_ENTRY_DEBUG, IMAGE_FILE_HEADER, IMAGE_NT_HEADERS32, IMAGE_NT_HEADERS64, IMAGE_OPTIONAL_HEADER_MAGIC, STACKFRAME_EX, SYM_STKWALK_DEFAULT};
 use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32};
 use windows::Win32::System::ErrorReporting::{WerRegisterRuntimeExceptionModule, WER_RUNTIME_EXCEPTION_INFORMATION};
 use windows::Win32::System::ProcessStatus::{EnumProcessModules, GetModuleFileNameExW, GetModuleInformation, MODULEINFO};
@@ -23,6 +23,7 @@ use ddcommon_ffi::{wrap_with_void_ffi_result, CharSlice, Slice, VoidResult};
 use serde::{Deserialize, Serialize};
 use log::error;
 use windows::core::imp::HSTRING;
+use windows::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, RegQueryValueExW, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE};
 use ddcommon_ffi::slice::AsBytes;
 use crate::Metadata;
 
@@ -44,6 +45,7 @@ pub unsafe extern "C" fn ddog_crasht_init_windows(
     endpoint: Option<&mut Endpoint>,
     metadata: Metadata,
 ) -> bool {
+    OutputDebugStringW(w!("ddog_crasht_init_windows"));
     let result: Result<(), _> = (|| {
         let endpoint_option = if endpoint.is_none() {
             None
@@ -56,18 +58,25 @@ pub unsafe extern "C" fn ddog_crasht_init_windows(
         set_error_context(&error_context_json);
 
         let path = get_module_path(GetCurrentProcess(), module)?;
-        let wpath: Vec<u16> = path.encode_utf16().collect();
 
+        create_registry_key(&path)?;
+
+        let mut wpath: Vec<u16> = path.encode_utf16().collect();
+        wpath.push(0); // Ensure null termination
         WerRegisterRuntimeExceptionModule(PCWSTR::from_raw(wpath.as_ptr()), &WERCONTEXT as *const WerContext as *const c_void)?;
-
+        OutputDebugStringW(PCWSTR::from_raw(wpath.as_ptr()));
         Ok::<(), anyhow::Error>(())
     })();
 
     if result.is_err()
     {
+        OutputDebugStringW(w!("ddog_crasht_init_windows failed"));
+        output_debug_string(result.err().unwrap().to_string());
+
         return false;
     }
 
+    OutputDebugStringW(w!("ddog_crasht_init_windows succeeded"));
     true
 }
 
@@ -76,6 +85,103 @@ pub unsafe extern "C" fn ddog_crasht_init_windows(
 #[named]
 pub unsafe extern "C" fn ddog_crasht_get_wercontext_for_tests() -> *const c_void {
     return &WERCONTEXT as *const WerContext as *const c_void;
+}
+
+unsafe fn create_registry_key(path: &String) -> Result<()> {
+    // First, check if there is already a key named "path" in SOFTWARE\Microsoft\Windows\Windows Error Reporting\RuntimeExceptionHelperModules,
+    // in either HKEY_LOCAL_MACHINE or HKEY_CURRENT_USER.
+    // If not, create it in HKEY_CURRENT_USER.
+
+    // Convert value name to null-terminated wide string
+    let mut name_wide: Vec<u16> = path.encode_utf16().collect();
+    name_wide.push(0); // Add null terminator
+    let name_pcwstr = PCWSTR::from_raw(name_wide.as_ptr());
+
+    // Subkey path as wide string constant
+    let subkey = w!(
+        "SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\RuntimeExceptionHelperModules"
+    );
+
+    // Check both HKEY_LOCAL_MACHINE and HKEY_CURRENT_USER
+    for root in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
+        let mut hkey = HKEY::default();
+
+        // Try to open the registry key
+        let open_result = unsafe {
+            RegOpenKeyExW(
+                root,
+                subkey,
+                None,
+                KEY_READ,
+                &mut hkey,
+            )
+        };
+
+        if open_result == ERROR_SUCCESS {
+            // Check if the value exists
+            let query_result =
+                RegQueryValueExW(
+                    hkey,
+                    name_pcwstr,
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+
+            let _ = RegCloseKey(hkey);
+
+            if query_result == ERROR_SUCCESS {
+                // Value exists in either hive, exit successfully
+                return Ok(());
+            }
+        }
+    }
+
+    // Value doesn't exist in either hive, create in HKEY_CURRENT_USER
+    let mut hkey = HKEY::default();
+
+    // Create or open the key with write access
+    let create_result = RegCreateKeyExW(
+        HKEY_CURRENT_USER,
+        subkey,
+        None,
+        None,
+        REG_OPTION_NON_VOLATILE,
+        KEY_WRITE,
+        None,
+        &mut hkey,
+        None,
+    );
+
+    if create_result != ERROR_SUCCESS {
+        return Err(anyhow!("Failed to create registry key"));
+    }
+
+    // Create the DWORD value (0)
+    let dword_value: u32 = 0;
+    let dword_bytes = dword_value.to_ne_bytes();
+    let set_value_result = RegSetValueExW(
+        hkey,
+        name_pcwstr,
+        None,
+        REG_DWORD,
+        Some(&dword_bytes)
+    );
+
+    if set_value_result != ERROR_SUCCESS {
+        return Err(anyhow!("Failed to set registry value"));
+    }
+
+    let _ = RegCloseKey(hkey);
+
+    Ok(())
+}
+
+unsafe fn output_debug_string(message: String) {
+    let mut wstr: Vec<u16> = message.encode_utf16().collect();
+    wstr.push(0); // Ensure null termination
+    OutputDebugStringW(PCWSTR::from_raw(wstr.as_ptr()));
 }
 
 fn set_error_context(message: &str) {
@@ -117,7 +223,39 @@ pub struct WerContext
 #[no_mangle]
 #[named]
 #[cfg(windows)]
-pub unsafe extern "C" fn exception_event_callback(
+pub unsafe extern "C" fn ddog_crasht_event_signature_callback(
+    pContext: *const c_void,
+    pExceptionInformation: *const WER_RUNTIME_EXCEPTION_INFORMATION,
+    dwIndex: i32,
+    pwszName: *mut u16,
+    pchSize: *mut u32,
+    pwszValue: *mut u16,
+    pchValue: *mut u32,
+) -> HRESULT
+{
+    OutputDebugStringW(w!("ddog_crasht_event_signature_callback"));
+    S_OK
+}
+
+#[no_mangle]
+#[named]
+#[cfg(windows)]
+pub unsafe extern "C" fn ddog_crasht_debugger_launch_callback(
+    pContext: *const c_void,
+    pExceptionInformation: *const WER_RUNTIME_EXCEPTION_INFORMATION,
+    pbIsCustomDebugger: *mut BOOL,
+    pwszDebuggerLaunch: *mut u16,
+    pchDebuggerLaunch: *mut u32,
+    pbIsDebuggerAutolaunch: *mut BOOL,
+) -> HRESULT {
+    OutputDebugStringW(w!("ddog_crasht_debugger_launch_callback"));
+    S_OK
+}
+
+#[no_mangle]
+#[named]
+#[cfg(windows)]
+pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
     pContext: *const c_void,
     pExceptionInformation: *const WER_RUNTIME_EXCEPTION_INFORMATION,
     pbOwnershipClaimed: *mut BOOL,
@@ -125,6 +263,7 @@ pub unsafe extern "C" fn exception_event_callback(
     pchSize: *mut u32,
     pdwSignatureCount: *mut u32,
 ) -> HRESULT {
+    OutputDebugStringW(w!("ddog_crasht_exception_event_callback"));
     let exception_information = *pExceptionInformation;
     let sym_init_result = SymInitializeW(exception_information.hProcess, PCWSTR::null(), true);
 
@@ -146,9 +285,18 @@ pub unsafe extern "C" fn exception_event_callback(
     let mut builder = CrashInfoBuilder::new();
 
     for thread in threads.unwrap() {
-        let stack = walk_thread_stack(exception_information.hProcess, thread, &modules).unwrap_or_else(|_| StackTrace::new_incomplete());
+        let stack: StackTrace;
+        let stack_result = walk_thread_stack(exception_information.hProcess, thread, &modules);
 
-        if (thread == crash_tid) {
+        if stack_result.is_err() {
+            OutputDebugStringW(w!("Failed to walk thread stack"));
+            output_debug_string(stack_result.err().unwrap().to_string());
+            stack = StackTrace::new_incomplete();
+        } else {
+            stack = stack_result.unwrap();
+        }
+
+        if thread == crash_tid {
             builder.with_stack(stack.clone()).expect("Failed to add crashed thread info");
         }
 
@@ -227,27 +375,57 @@ pub unsafe fn read_wer_context(process_handle: HANDLE, base_address: usize) -> R
     Ok(wer_context)
 }
 
+// https://github.com/microsoft/win32metadata/issues/1044
+#[repr(align(16))]
+#[derive(Default)]
+struct AlignedContext {
+    ctx: CONTEXT
+}
+
 pub unsafe fn walk_thread_stack(process_handle: HANDLE, thread_id: u32, modules: &Vec<ModuleInfo>) -> Result<StackTrace> {
     let mut stacktrace = StackTrace::new_incomplete();
-
     let thread_handle = OpenThread(THREAD_ALL_ACCESS, false, thread_id)?;
-
-    let mut context = CONTEXT::default();
-    context.ContextFlags = CONTEXT_FULL_AMD64;
-    GetThreadContext(thread_handle, &mut context)?;
+    let mut context = AlignedContext::default();
 
     #[cfg(target_arch = "x86_64")]
+    {
+        context.ctx.ContextFlags = CONTEXT_FULL_AMD64;
+    }
+    #[cfg(target_arch = "x86")]
+    {
+        context.ctx.ContextFlags = CONTEXT_FULL_X86;
+    }
+
+    GetThreadContext(thread_handle, &mut context.ctx)?;
+
     let mut native_frame = STACKFRAME_EX::default();
-    native_frame.AddrPC.Offset = context.Rip as u64;
-    native_frame.AddrPC.Mode = AddrModeFlat;
-    native_frame.AddrStack.Offset = context.Rsp as u64;
-    native_frame.AddrStack.Mode = AddrModeFlat;
-    native_frame.AddrFrame.Offset = context.Rbp as u64;
-    native_frame.AddrFrame.Mode = AddrModeFlat;
+    let machine_type:u32;
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        machine_type = IMAGE_FILE_MACHINE_AMD64.0 as u32;
+        native_frame.AddrPC.Offset = context.ctx.Rip as u64;
+        native_frame.AddrPC.Mode = AddrModeFlat;
+        native_frame.AddrStack.Offset = context.ctx.Rsp as u64;
+        native_frame.AddrStack.Mode = AddrModeFlat;
+        native_frame.AddrFrame.Offset = context.ctx.Rbp as u64;
+        native_frame.AddrFrame.Mode = AddrModeFlat;
+    }
+
+    #[cfg(target_arch = "x86")]
+    {
+        machine_type = IMAGE_FILE_MACHINE_I386.0 as u32;
+        native_frame.AddrPC.Offset = context.ctx.Eip as u64;
+        native_frame.AddrPC.Mode = AddrModeFlat;
+        native_frame.AddrStack.Offset = context.ctx.Esp as u64;
+        native_frame.AddrStack.Mode = AddrModeFlat;
+        native_frame.AddrFrame.Offset = context.ctx.Ebp as u64;
+        native_frame.AddrFrame.Mode = AddrModeFlat;
+    }
 
     loop {
         let result = StackWalkEx(
-            IMAGE_FILE_MACHINE_AMD64.0 as u32,
+            machine_type,
             process_handle,
             thread_handle,
             &mut native_frame,
@@ -288,8 +466,6 @@ pub unsafe fn walk_thread_stack(process_handle: HANDLE, thread_id: u32, modules:
 
         stacktrace.push_frame(frame, true).expect("Failed to add frame");
     }
-
-    stacktrace.set_complete().expect("Failed to set complete");
 
     stacktrace.set_complete()?;
     Ok(stacktrace)
