@@ -905,26 +905,26 @@ mod tests {
     #[tokio::test]
     async fn test_get_traces_from_request_body_with_span_links() {
         let trace_input = json!([[{
-        "service": "test-service",
-        "name": "test-name",
-        "resource": "test-resource",
-        "trace_id": 111,
-        "span_id": 222,
-        "parent_id": 333,
-        "start": 1,
-        "duration": 5,
-        "error": 0,
-        "meta": {},
-        "metrics": {},
-        "span_links": [{
-            "trace_id": 999,
-            "span_id": 888,
-            "trace_id_high": 777,
-            "attributes": {"key": "value"},
-            "tracestate": "vendor=value"
-            // flags field intentionally omitted
-        }]
-    }]]);
+            "service": "test-service",
+            "name": "test-name",
+            "resource": "test-resource",
+            "trace_id": 111,
+            "span_id": 222,
+            "parent_id": 333,
+            "start": 1,
+            "duration": 5,
+            "error": 0,
+            "meta": {},
+            "metrics": {},
+            "span_links": [{
+                "trace_id": 999,
+                "span_id": 888,
+                "trace_id_high": 777,
+                "attributes": {"key": "value"},
+                "tracestate": "vendor=value"
+                // flags field intentionally omitted
+            }]
+        }]]);
 
         let expected_output = vec![vec![pb::Span {
             service: "test-service".to_string(),
@@ -944,9 +944,7 @@ mod tests {
                 trace_id: 999,
                 span_id: 888,
                 trace_id_high: 777,
-                attributes: HashMap::from([
-                    ("key".to_string(), "value".to_string())
-                ]),
+                attributes: HashMap::from([("key".to_string(), "value".to_string())]),
                 tracestate: "vendor=value".to_string(),
                 flags: 0, // Should default to 0 when omitted
             }],
