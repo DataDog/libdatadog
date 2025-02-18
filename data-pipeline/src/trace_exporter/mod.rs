@@ -11,7 +11,7 @@ use crate::{
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
-use datadog_trace_utils::span_v04::{
+use datadog_trace_utils::span::v04::{
     trace_utils::{compute_top_level_span, has_top_level},
     Span,
 };
@@ -32,7 +32,7 @@ use std::{borrow::Borrow, collections::HashMap, str::FromStr, time};
 use tokio::{runtime::Runtime, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
-use self::agent_response::{AgentResponse, Rates};
+use self::agent_response::AgentResponse;
 
 const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] = ["client", "server", "producer", "consumer"];
 const STATS_ENDPOINT: &str = "/v0.6/stats";
@@ -275,10 +275,7 @@ impl TraceExporter {
                 ));
             }
 
-            let rates = res.parse::<Rates>()?;
-
-            let rate = rates.get(&self.metadata.service, &self.metadata.env)?;
-            Ok(AgentResponse::from(rate))
+            Ok(AgentResponse::from(res))
         })
     }
 
@@ -591,7 +588,7 @@ impl TraceExporter {
 
     fn send_deser_ser(&self, data: tinybytes::Bytes) -> Result<String, TraceExporterError> {
         // TODO base on input format
-        let (mut traces, size) = match msgpack_decoder::v04::decoder::from_slice(data) {
+        let (mut traces, size) = match msgpack_decoder::v04::from_slice(data) {
             Ok(res) => res,
             Err(err) => {
                 error!("Error deserializing trace from request body: {err}");
@@ -710,9 +707,10 @@ impl TraceExporter {
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 
-#[derive(Default)]
-struct TelemetryConfig {
-    heartbeat: u64,
+#[derive(Debug, Default, Clone)]
+pub struct TelemetryConfig {
+    pub heartbeat: u64,
+    pub runtime_id: Option<String>,
 }
 
 #[allow(missing_docs)]
@@ -869,12 +867,12 @@ impl TraceExporterBuilder {
     }
 
     /// Enables sending telemetry metrics.
-    pub fn enable_telemetry(mut self, heartbeat_ms: Option<u64>) -> Self {
-        let mut config = TelemetryConfig::default();
-        if let Some(interval) = heartbeat_ms {
-            config.heartbeat = interval;
+    pub fn enable_telemetry(mut self, cfg: Option<TelemetryConfig>) -> Self {
+        if let Some(cfg) = cfg {
+            self.telemetry = Some(cfg);
+        } else {
+            self.telemetry = Some(TelemetryConfig::default());
         }
-        self.telemetry = Some(config);
         self
     }
 
@@ -915,18 +913,19 @@ impl TraceExporterBuilder {
         }
 
         let telemetry = if let Some(telemetry_config) = self.telemetry {
-            Some(
-                runtime.block_on(
-                    TelemetryClientBuilder::default()
-                        .set_language(&self.language)
-                        .set_language_version(&self.language_version)
-                        .set_service_name(&self.service)
-                        .set_tracer_version(&self.tracer_version)
-                        .set_hearbeat(telemetry_config.heartbeat)
-                        .set_url(base_url)
-                        .build(),
-                )?,
-            )
+            Some(runtime.block_on(async {
+                let mut builder = TelemetryClientBuilder::default()
+                    .set_language(&self.language)
+                    .set_language_version(&self.language_version)
+                    .set_service_name(&self.service)
+                    .set_tracer_version(&self.tracer_version)
+                    .set_hearbeat(telemetry_config.heartbeat)
+                    .set_url(base_url);
+                if let Some(id) = telemetry_config.runtime_id {
+                    builder = builder.set_runtime_id(&id);
+                }
+                builder.build().await
+            })?)
         } else {
             None
         };
@@ -977,7 +976,7 @@ mod tests {
     use self::error::AgentErrorKind;
     use self::error::BuilderErrorKind;
     use super::*;
-    use datadog_trace_utils::span_v04::Span;
+    use datadog_trace_utils::span::v04::Span;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::collections::HashMap;
@@ -1003,7 +1002,10 @@ mod tests {
             .set_input_format(TraceExporterInputFormat::Proxy)
             .set_output_format(TraceExporterOutputFormat::V07)
             .set_client_computed_stats()
-            .enable_telemetry(Some(1000))
+            .enable_telemetry(Some(TelemetryConfig {
+                heartbeat: 1000,
+                runtime_id: None,
+            }))
             .build()
             .unwrap();
 
@@ -1342,9 +1344,7 @@ mod tests {
             })
         }
 
-        let result = exporter.send(bytes, 1).unwrap();
-
-        assert_eq!(result.rate, 0.8);
+        exporter.send(bytes, 1).unwrap();
 
         exporter
             .shutdown(Some(Duration::from_millis(500)))
@@ -1501,46 +1501,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn agent_response_parse() {
-        let server = MockServer::start();
-        let _agent = server.mock(|_, then| {
-            then.status(200)
-                .header("content-type", "application/json")
-                .body(
-                    r#"{
-                    "rate_by_service": {
-                        "service:test_service,env:testing":0.5,
-                        "service:another_service,env:testing":1
-                    }
-                }"#,
-                );
-        });
-
-        let exporter = TraceExporterBuilder::default()
-            .set_url(&server.url("/"))
-            .set_service("test_service")
-            .set_env("testing")
-            .set_tracer_version("v0.1")
-            .set_language("nodejs")
-            .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .build()
-            .unwrap();
-
-        let traces: Vec<Vec<Span>> = vec![vec![Span {
-            name: BytesString::from_slice(b"test").unwrap(),
-            ..Default::default()
-        }]];
-        let bytes = tinybytes::Bytes::from(
-            rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace"),
-        );
-        let result = exporter.send(bytes, 1).unwrap();
-
-        assert_eq!(result, AgentResponse::from(0.5));
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
     fn agent_response_parse_default() {
         let server = MockServer::start();
         let _agent = server.mock(|_, then| {
@@ -1576,42 +1536,18 @@ mod tests {
         );
         let result = exporter.send(bytes, 1).unwrap();
 
-        assert_eq!(result, AgentResponse::from(0.8));
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn agent_response_empty_array() {
-        let server = MockServer::start();
-        let _agent = server.mock(|_, then| {
-            then.status(200)
-                .header("content-type", "application/json")
-                .body(
-                    r#"{
+        assert_eq!(
+            result,
+            AgentResponse::from(
+                r#"{
                     "rate_by_service": {
                         "service:foo,env:staging": 1.0,
                         "service:,env:": 0.8 
                     }
-                }"#,
-                );
-        });
-
-        let exporter = TraceExporterBuilder::default()
-            .set_url(&server.url("/"))
-            .set_service("foo")
-            .set_env("foo-env")
-            .set_tracer_version("v0.1")
-            .set_language("nodejs")
-            .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .build()
-            .unwrap();
-
-        let traces = vec![0x90];
-        let bytes = tinybytes::Bytes::from(traces);
-        let result = exporter.send(bytes, 1).unwrap();
-
-        assert_eq!(result, AgentResponse::from(0.8));
+                }"#
+                .to_string()
+            )
+        );
     }
 
     #[test]
@@ -1718,18 +1654,17 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn exporter_metrics() {
         let server = MockServer::start();
-        let traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path("/v0.4/traces");
-            then.status(200)
-                .header("content-type", "application/json")
-                .body(
-                    r#"{
+        let response_body = r#"{
                         "rate_by_service": {
                             "service:foo,env:staging": 1.0,
                             "service:,env:": 0.8 
                         }
-                    }"#,
-                );
+                    }"#;
+        let traces_endpoint = server.mock(|when, then| {
+            when.method(POST).path("/v0.4/traces");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(response_body);
         });
 
         let metrics_endpoint = server.mock(|when, then| {
@@ -1749,14 +1684,17 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8")
-            .enable_telemetry(Some(100))
+            .enable_telemetry(Some(TelemetryConfig {
+                heartbeat: 100,
+                ..Default::default()
+            }))
             .build()
             .unwrap();
 
         let traces = vec![0x90];
         let bytes = tinybytes::Bytes::from(traces);
         let result = exporter.send(bytes, 1).unwrap();
-        assert_eq!(result, AgentResponse::from(0.8));
+        assert_eq!(result.body, response_body);
 
         traces_endpoint.assert_hits(1);
         while metrics_endpoint.hits() == 0 {

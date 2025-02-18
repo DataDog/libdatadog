@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::time::{self, Duration, SystemTime};
 
 use datadog_trace_protobuf::pb;
-use datadog_trace_utils::span_v04::{trace_utils, Span};
+use datadog_trace_utils::span::v04::{trace_utils, Span};
 
 use aggregation::{AggregationKey, StatsBucket};
 

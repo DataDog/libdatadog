@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::telemetry::error::TelemetryError;
-use crate::trace_exporter::msgpack_decoder::v04::error::DecodeError;
+use crate::trace_exporter::msgpack_decoder::decode::error::DecodeError;
 use hyper::http::StatusCode;
 use hyper::Error as HyperError;
 use serde_json::error::Error as SerdeError;

@@ -83,10 +83,7 @@ impl<'a> Matcher<'a> {
     }
 
     /// Returns the first set of configurations that match the current process
-    fn find_stable_config<'b>(
-        &'a self,
-        cfg: &'b StableConfig,
-    ) -> Option<&'b HashMap<LibraryConfigName, String>> {
+    fn find_stable_config<'b>(&'a self, cfg: &'b StableConfig) -> Option<&'b ConfigMap> {
         for rule in &cfg.rules {
             if rule.selectors.iter().all(|s| self.selector_match(s)) {
                 return Some(&rule.configuration);
@@ -248,13 +245,59 @@ impl ProcessInfo {
     }
 }
 
+/// A (key, value) struct
+///
+/// This type has a custom serde Deserialize implementation from maps:
+/// * It skips invalid/unknown keys in the map
+/// * Since the storage is a Boxed slice and not a Hashmap, it doesn't over-allocate
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ConfigMap(Box<[(LibraryConfigName, String)]>);
+
+impl<'de> serde::Deserialize<'de> for ConfigMap {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ConfigMapVisitor;
+        impl<'de> serde::de::Visitor<'de> for ConfigMapVisitor {
+            type Value = ConfigMap;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct ConfigMap(HashMap<LibraryConfig, String>)")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut configs = Vec::new();
+                configs.reserve_exact(map.size_hint().unwrap_or(0));
+                loop {
+                    let k = match map.next_key::<LibraryConfigName>() {
+                        Ok(Some(k)) => k,
+                        Ok(None) => break,
+                        Err(_) => {
+                            map.next_value::<serde::de::IgnoredAny>()?;
+                            continue;
+                        }
+                    };
+                    let v = map.next_value::<String>()?;
+                    configs.push((k, v));
+                }
+                Ok(ConfigMap(configs.into_boxed_slice()))
+            }
+        }
+        deserializer.deserialize_map(ConfigMapVisitor)
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, serde::Deserialize, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 #[allow(clippy::enum_variant_names)]
 pub enum LibraryConfigName {
     // Phase 1: product enablement
-    DdTraceApmEnabled,
+    DdApmTracingEnabled,
     DdRuntimeMetricsEnabled,
     DdLogsInjection,
     DdProfilingEnabled,
@@ -276,7 +319,7 @@ impl LibraryConfigName {
     pub fn to_str(&self) -> &'static str {
         use LibraryConfigName::*;
         match self {
-            DdTraceApmEnabled => "DD_TRACE_ENABLED",
+            DdApmTracingEnabled => "DD_APM_TRACING_ENABLED",
             DdRuntimeMetricsEnabled => "DD_RUNTIME_METRICS_ENABLED",
             DdLogsInjection => "DD_LOGS_INJECTION",
             DdProfilingEnabled => "DD_PROFILING_ENABLED",
@@ -349,7 +392,7 @@ struct Selector {
 #[derive(serde::Deserialize, Debug, PartialEq, Eq)]
 struct Rule {
     selectors: Vec<Selector>,
-    configuration: HashMap<LibraryConfigName, String>,
+    configuration: ConfigMap,
 }
 
 #[derive(serde::Deserialize, Default, Debug, PartialEq, Eq)]
@@ -358,7 +401,7 @@ struct StableConfig {
     #[serde(default)]
     config_id: Option<String>,
     #[serde(default)]
-    apm_configuration_default: HashMap<LibraryConfigName, String>,
+    apm_configuration_default: ConfigMap,
 
     // Phase 2
     #[serde(default)]
@@ -417,36 +460,54 @@ pub struct Configurator {
     debug_logs: bool,
 }
 
-impl Configurator {
-    pub const FLEET_STABLE_CONFIGURATION_PATH: &'static str = {
-        #[cfg(target_os = "linux")]
-        {
-            "/etc/datadog-agent/managed/datadog-agent/stable/application_monitoring.yaml"
-        }
-        #[cfg(target_os = "macos")]
-        {
-            "/opt/datadog-agent/etc/stable/application_monitoring.yaml"
-        }
-        #[cfg(windows)]
-        {
-            "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml"
-        }
-    };
+pub enum Target {
+    Linux,
+    Macos,
+    Windows,
+}
 
-    pub const LOCAL_STABLE_CONFIGURATION_PATH: &'static str = {
+impl Target {
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    const fn current() -> Self {
         #[cfg(target_os = "linux")]
         {
-            "/etc/datadog-agent/application_monitoring.yaml"
+            Self::Linux
         }
         #[cfg(target_os = "macos")]
         {
-            "/opt/datadog-agent/etc/application_monitoring.yaml"
+            Self::Macos
         }
         #[cfg(windows)]
         {
-            "C:\\ProgramData\\Datadog\\application_monitoring.yaml"
+            Self::Windows
         }
-    };
+    }
+}
+
+impl Configurator {
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    pub const FLEET_STABLE_CONFIGURATION_PATH: &'static str =
+        Self::fleet_stable_configuration_path(Target::current());
+
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    pub const LOCAL_STABLE_CONFIGURATION_PATH: &'static str =
+        Self::local_stable_configuration_path(Target::current());
+
+    pub const fn local_stable_configuration_path(target: Target) -> &'static str {
+        match target {
+            Target::Linux => "/etc/datadog-agent/application_monitoring.yaml",
+            Target::Macos => "/opt/datadog-agent/etc/application_monitoring.yaml",
+            Target::Windows => "C:\\ProgramData\\Datadog\\application_monitoring.yaml",
+        }
+    }
+
+    pub const fn fleet_stable_configuration_path(target: Target) -> &'static str {
+        match target {
+            Target::Linux => "/etc/datadog-agent/managed/datadog-agent/stable/application_monitoring.yaml",
+            Target::Macos => "/opt/datadog-agent/etc/stable/application_monitoring.yaml",
+            Target::Windows => "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml",
+        }
+    }
 
     pub fn new(debug_logs: bool) -> Self {
         Self { debug_logs }
@@ -571,6 +632,9 @@ impl Configurator {
         // Phase 1: take host default config
         cfg.extend(
             mem::take(&mut stable_config.apm_configuration_default)
+                .0
+                // TODO(paullgdc): use Box<[I]>::into_iter when we can use rust 1.80
+                .into_vec()
                 .into_iter()
                 .map(|(k, v)| {
                     (
@@ -605,7 +669,7 @@ impl Configurator {
             return Ok(());
         };
 
-        for (name, config_val) in configs {
+        for (name, config_val) in configs.0.iter() {
             let value = matcher.template_config(config_val)?;
             library_config.insert(
                 *name,
@@ -664,22 +728,9 @@ mod tests {
 
     use super::{Configurator, ProcessInfo};
     use crate::{
-        LibraryConfig, LibraryConfigName, LibraryConfigSource, Matcher, Operator, Origin, Rule,
-        Selector, StableConfig,
+        ConfigMap, LibraryConfig, LibraryConfigName, LibraryConfigSource, Matcher, Operator,
+        Origin, Rule, Selector, StableConfig,
     };
-
-    macro_rules! map {
-        ($(($key:expr , $value:expr)),* $(,)?) => {
-            {
-                #[allow(unused_mut)]
-                let mut map = std::collections::HashMap::new();
-                $(
-                    map.insert($key, $value);
-                )*
-                map
-            }
-        };
-    }
 
     fn test_config(local_cfg: &[u8], fleet_cfg: &[u8], expected: Vec<LibraryConfig>) {
         let process_info: ProcessInfo = ProcessInfo {
@@ -730,7 +781,7 @@ mod tests {
         test_config(
             b"
 apm_configuration_default:
-  DD_TRACE_APM_ENABLED: true
+  DD_APM_TRACING_ENABLED: true
   DD_RUNTIME_METRICS_ENABLED: true
   DD_LOGS_INJECTION: true
   DD_PROFILING_ENABLED: true
@@ -744,7 +795,7 @@ apm_configuration_default:
             b"",
             vec![
                 LibraryConfig {
-                    name: DdTraceApmEnabled,
+                    name: DdApmTracingEnabled,
                     value: "true".to_owned(),
                     source: LocalStableConfig,
                     config_id: None,
@@ -816,7 +867,7 @@ apm_configuration_default:
             b"
 config_id: abc
 apm_configuration_default:
-  DD_TRACE_APM_ENABLED: true
+  DD_APM_TRACING_ENABLED: true
   DD_RUNTIME_METRICS_ENABLED: true
   DD_LOGS_INJECTION: true
   DD_PROFILING_ENABLED: true
@@ -824,12 +875,16 @@ apm_configuration_default:
   DD_APPSEC_ENABLED: true
   DD_IAST_ENABLED: true
   DD_DYNAMIC_INSTRUMENTATION_ENABLED: true
+  # extra keys should be skipped without errors
+  FOO_BAR: quoicoubeh
   DD_DATA_JOBS_ENABLED: true
   DD_APPSEC_SCA_ENABLED: true
+wtf:
+- 1
     ",
             vec![
                 LibraryConfig {
-                    name: DdTraceApmEnabled,
+                    name: DdApmTracingEnabled,
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
@@ -900,20 +955,20 @@ apm_configuration_default:
         test_config(
             b"
 apm_configuration_default:
-  DD_TRACE_APM_ENABLED: true
+  DD_APM_TRACING_ENABLED: true
   DD_RUNTIME_METRICS_ENABLED: true
   DD_PROFILING_ENABLED: true
         ",
             b"
 config_id: abc
 apm_configuration_default:
-  DD_TRACE_APM_ENABLED: true
+  DD_APM_TRACING_ENABLED: true
   DD_LOGS_INJECTION: true
   DD_PROFILING_ENABLED: false
 ",
             vec![
                 LibraryConfig {
-                    name: DdTraceApmEnabled,
+                    name: DdApmTracingEnabled,
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
@@ -973,6 +1028,7 @@ rules:
 
     #[test]
     fn test_parse_static_config() {
+        use LibraryConfigName::*;
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.reopen()
             .unwrap()
@@ -986,6 +1042,8 @@ rules:
   configuration:
     DD_PROFILING_ENABLED: true
     DD_SERVICE: my-service
+    # extra keys should be skipped without errors
+    FOOBAR: maybe??
 ",
             )
             .unwrap();
@@ -997,7 +1055,7 @@ rules:
             cfg,
             StableConfig {
                 config_id: None,
-                apm_configuration_default: HashMap::default(),
+                apm_configuration_default: ConfigMap::default(),
                 tags: HashMap::default(),
                 rules: vec![Rule {
                     selectors: vec![Selector {
@@ -1007,10 +1065,13 @@ rules:
                         },
                         key: None,
                     }],
-                    configuration: map![
-                        (LibraryConfigName::DdProfilingEnabled, "true".to_owned()),
-                        (LibraryConfigName::DdService, "my-service".to_owned())
-                    ],
+                    configuration: ConfigMap(
+                        vec![
+                            (DdProfilingEnabled, "true".to_owned()),
+                            (DdService, "my-service".to_owned())
+                        ]
+                        .into_boxed_slice()
+                    ),
                 }]
             }
         )

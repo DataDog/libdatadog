@@ -55,17 +55,17 @@ mod shared;
 #[cfg(all(unix, feature = "collector"))]
 pub use collector::{
     begin_op, clear_additional_tags, clear_spans, clear_traces, consume_and_emit_additional_tags,
-    end_op, init, insert_additional_tag, insert_span, insert_trace, on_fork, remove_additional_tag,
-    remove_span, remove_trace, reset_counters, shutdown_crash_handler, update_config,
-    update_metadata, OpTypes,
+    default_signals, end_op, init, insert_additional_tag, insert_span, insert_trace, on_fork,
+    remove_additional_tag, remove_span, remove_trace, reset_counters, shutdown_crash_handler,
+    update_config, update_metadata, OpTypes, DEFAULT_SYMBOLS,
 };
 
 pub use crash_info::*;
 
 #[cfg(all(unix, feature = "receiver"))]
 pub use receiver::{
-    async_receiver_entry_point_unix_socket, receiver_entry_point_stdin,
-    receiver_entry_point_unix_socket,
+    async_receiver_entry_point_unix_listener, async_receiver_entry_point_unix_socket,
+    get_receiver_unix_socket, receiver_entry_point_stdin, receiver_entry_point_unix_socket,
 };
 
 #[cfg(all(unix, any(feature = "collector", feature = "receiver")))]

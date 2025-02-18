@@ -25,6 +25,7 @@ pub struct TelemetryClientBuilder {
     language_version: Option<String>,
     tracer_version: Option<String>,
     config: ddtelemetry::config::Config,
+    runtime_id: Option<String>,
 }
 
 impl TelemetryClientBuilder {
@@ -68,17 +69,29 @@ impl TelemetryClientBuilder {
         self
     }
 
+    /// Sets runtime id for the telemetry client.
+    pub fn set_runtime_id(mut self, id: &str) -> Self {
+        self.runtime_id = Some(id.to_string());
+        self
+    }
+
     /// Builds the telemetry client.
     pub async fn build(self) -> Result<TelemetryClient, TelemetryError> {
-        let (worker, handle) = TelemetryWorkerBuilder::new_fetch_host(
+        let mut builder = TelemetryWorkerBuilder::new_fetch_host(
             self.service_name.unwrap(),
             self.language.unwrap(),
             self.language_version.unwrap(),
             self.tracer_version.unwrap(),
-        )
-        .spawn_with_config(self.config)
-        .await
-        .map_err(|e| TelemetryError::Builder(e.to_string()))?;
+        );
+
+        if let Some(id) = self.runtime_id {
+            builder.runtime_id = Some(id);
+        }
+
+        let (worker, handle) = builder
+            .spawn_with_config(self.config)
+            .await
+            .map_err(|e| TelemetryError::Builder(e.to_string()))?;
 
         Ok(TelemetryClient {
             handle,
@@ -156,8 +169,9 @@ impl TelemetryClient {
             self.handle.abort();
         }
     }
+
     /// Shutdowns the telemetry client.
-    pub async fn shutdown(&self) {
+    pub async fn shutdown(self) {
         if let Err(_e) = self
             .worker
             .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop))
@@ -165,6 +179,8 @@ impl TelemetryClient {
         {
             self.handle.abort();
         }
+
+        let _ = self.handle.await;
     }
 }
 
@@ -251,7 +267,6 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -291,7 +306,6 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -331,7 +345,6 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -371,7 +384,6 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -411,7 +423,6 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -451,7 +462,6 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -491,7 +501,6 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -531,7 +540,39 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        let _ = client.handle.await;
         telemetry_srv.assert_hits_async(1).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn runtime_id_test() {
+        let server = MockServer::start_async().await;
+
+        let telemetry_srv = server
+            .mock_async(|when, then| {
+                when.method(POST).body_contains(r#""runtime_id":"foo""#);
+                then.status(200).body("");
+            })
+            .await;
+
+        let result = TelemetryClientBuilder::default()
+            .set_service_name("test_service")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_url(&server.url("/"))
+            .set_hearbeat(100)
+            .set_runtime_id("foo")
+            .build()
+            .await;
+
+        assert!(result.is_ok());
+
+        let client = result.unwrap();
+
+        client.start().await;
+        client.shutdown().await;
+        // Check for 2 hits: app-started and app-closing.
+        telemetry_srv.assert_hits_async(2).await;
     }
 }

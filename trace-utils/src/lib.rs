@@ -4,6 +4,7 @@
 pub mod config_utils;
 pub mod msgpack_decoder;
 pub mod send_data;
+pub mod send_with_retry;
 pub mod stats_utils;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
@@ -11,4 +12,4 @@ pub mod trace_utils;
 pub mod tracer_header_tags;
 pub mod tracer_payload;
 
-pub mod span_v04;
+pub mod span;

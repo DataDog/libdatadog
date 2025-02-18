@@ -4,9 +4,10 @@
 use crate::Bytes;
 #[cfg(feature = "serde")]
 use serde::ser::{Serialize, Serializer};
+use std::fmt::{Debug, Formatter};
 use std::{borrow::Borrow, hash, str::Utf8Error};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct BytesString {
     bytes: Bytes,
 }
@@ -113,6 +114,11 @@ impl BytesString {
     pub fn copy_to_string(&self) -> String {
         self.as_str().to_string()
     }
+
+    /// Returns `true` if the underlying bytes are empty.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
 }
 
 impl Default for BytesString {
@@ -154,6 +160,12 @@ impl hash::Hash for BytesString {
     #[inline]
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.as_str().hash(state);
+    }
+}
+
+impl Debug for BytesString {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.serialize_str(self.as_str())
     }
 }
 

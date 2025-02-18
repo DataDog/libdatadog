@@ -167,44 +167,71 @@ where
         // "goto" like handling to drop the known_service borrow and be able to change services
         'service_handling: {
             'drop_service: {
-                let known_service = services.get_mut(target).unwrap();
-                known_service.refcount = if known_service.refcount == 1 {
-                    known_service.runtimes.remove(runtime_id);
-                    let mut status = known_service.status.lock().unwrap();
-                    *status = match *status {
-                        KnownTargetStatus::Pending => KnownTargetStatus::Alive, // not really
-                        KnownTargetStatus::Alive => {
-                            KnownTargetStatus::RemoveAt(Instant::now() + Duration::from_secs(3666))
-                        }
-                        KnownTargetStatus::RemoveAt(_) | KnownTargetStatus::Removing(_) => {
-                            unreachable!()
-                        }
-                    };
-                    // We've marked it Alive so that the Pending check in start_fetcher() will fail
-                    if matches!(*status, KnownTargetStatus::Alive) {
-                        break 'drop_service;
-                    }
-                    0
-                } else {
-                    if *known_service.fetcher.runtime_id.lock().unwrap() == runtime_id {
-                        'changed_rt_id: {
-                            for (id, runtime) in self.runtimes.lock().unwrap().iter() {
-                                if runtime.targets.len() == 1
-                                    && runtime.targets.contains_key(target)
-                                {
-                                    *known_service.fetcher.runtime_id.lock().unwrap() =
-                                        id.to_string();
-                                    break 'changed_rt_id;
+                if let Some(known_service) = services.get_mut(target) {
+                    known_service.refcount = match known_service.refcount {
+                        0 => {
+                            // Handle the possible race condition where the service gets added AND
+                            // removed while in Removing state.
+                            let status = known_service.status.lock().unwrap();
+                            match *status {
+                                KnownTargetStatus::Removing(ref future) => {
+                                    let future = future.clone();
+                                    let runtime_id = runtime_id.to_string();
+                                    let this = self.clone();
+                                    let target = target.clone();
+                                    tokio::spawn(async move {
+                                        future.await;
+                                        this.remove_target(runtime_id.as_str(), &target);
+                                    });
+                                    return;
+                                }
+                                _ => {
+                                    // It's already in process of being removed
+                                    return;
                                 }
                             }
-                            known_service.synthetic_id = true;
-                            *known_service.fetcher.runtime_id.lock().unwrap() =
-                                Self::generate_synthetic_id();
                         }
-                    }
-                    known_service.refcount - 1
-                };
-                break 'service_handling;
+                        1 => {
+                            known_service.runtimes.remove(runtime_id);
+                            let mut status = known_service.status.lock().unwrap();
+                            *status = match *status {
+                                KnownTargetStatus::Pending => KnownTargetStatus::Alive, /* not really */
+                                KnownTargetStatus::Alive => KnownTargetStatus::RemoveAt(
+                                    Instant::now() + Duration::from_secs(3666),
+                                ),
+                                KnownTargetStatus::RemoveAt(_) | KnownTargetStatus::Removing(_) => {
+                                    unreachable!()
+                                }
+                            };
+                            // We've marked it Alive so that the Pending check in start_fetcher()
+                            // will fail
+                            if matches!(*status, KnownTargetStatus::Alive) {
+                                break 'drop_service;
+                            }
+                            0
+                        }
+                        _ => {
+                            if *known_service.fetcher.runtime_id.lock().unwrap() == runtime_id {
+                                'changed_rt_id: {
+                                    for (id, runtime) in self.runtimes.lock().unwrap().iter() {
+                                        if runtime.targets.len() == 1
+                                            && runtime.targets.contains_key(target)
+                                        {
+                                            *known_service.fetcher.runtime_id.lock().unwrap() =
+                                                id.to_string();
+                                            break 'changed_rt_id;
+                                        }
+                                    }
+                                    known_service.synthetic_id = true;
+                                    *known_service.fetcher.runtime_id.lock().unwrap() =
+                                        Self::generate_synthetic_id();
+                                }
+                            }
+                            known_service.refcount - 1
+                        }
+                    };
+                    break 'service_handling;
+                }
             }
             trace!("Remove {target:?} from services map while in pending state");
             services.remove(target);
@@ -309,14 +336,15 @@ where
                 match info.targets.entry(target.clone()) {
                     Entry::Occupied(mut e) => *e.get_mut() += 1,
                     Entry::Vacant(e) => {
-                        // it's the second usage here
                         if let Some(primary_target) = primary_target {
                             let mut services = self.services.lock().unwrap();
-                            let known_target = services.get_mut(&primary_target).unwrap();
-                            if !known_target.synthetic_id {
-                                known_target.synthetic_id = true;
-                                *known_target.fetcher.runtime_id.lock().unwrap() =
-                                    Self::generate_synthetic_id();
+                            if let Some(known_target) = services.get_mut(&primary_target) {
+                                // it's the second usage here
+                                if !known_target.synthetic_id {
+                                    known_target.synthetic_id = true;
+                                    *known_target.fetcher.runtime_id.lock().unwrap() =
+                                        Self::generate_synthetic_id();
+                                }
                             }
                         }
                         e.insert(1);

@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
-use data_pipeline::trace_exporter::agent_response::AgentResponse;
+use crate::response::ExporterResponse;
 use data_pipeline::trace_exporter::{
-    TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
+    TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
 use ddcommon_ffi::{
     CharSlice,
@@ -29,10 +29,17 @@ fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
     }
 }
 
+#[derive(Debug)]
+#[repr(C)]
+pub struct TelemetryClientConfig<'a> {
+    pub interval: u64,
+    pub runtime_id: CharSlice<'a>,
+}
+
 /// The TraceExporterConfig object will hold the configuration properties for the TraceExporter.
 /// Once the configuration is passed to the TraceExporter constructor the config is no longer
 /// needed by the handle and it can be freed.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default)]
 pub struct TraceExporterConfig {
     url: Option<String>,
     tracer_version: Option<String>,
@@ -46,6 +53,7 @@ pub struct TraceExporterConfig {
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     compute_stats: bool,
+    telemetry_cfg: Option<TelemetryConfig>,
 }
 
 #[no_mangle]
@@ -215,6 +223,44 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_service(
     }
 }
 
+/// Enables metrics.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
+    config: Option<&mut TraceExporterConfig>,
+    telemetry_cfg: Option<&TelemetryClientConfig>,
+) -> Option<Box<ExporterError>> {
+    if let Option::Some(config) = config {
+        if let Option::Some(telemetry_cfg) = telemetry_cfg {
+            config.telemetry_cfg = Some(TelemetryConfig {
+                heartbeat: telemetry_cfg.interval,
+                runtime_id: match sanitize_string(telemetry_cfg.runtime_id) {
+                    Ok(s) => Some(s),
+                    Err(e) => return Some(e),
+                },
+            })
+        } else {
+            config.telemetry_cfg = Some(TelemetryConfig::default());
+        }
+        None
+    } else {
+        gen_error!(ErrorCode::InvalidArgument)
+    }
+}
+
+/// Set client-side stats computation status.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_compute_stats(
+    config: Option<&mut TraceExporterConfig>,
+    is_enabled: bool,
+) -> Option<Box<ExporterError>> {
+    if let Option::Some(config) = config {
+        config.compute_stats = is_enabled;
+        None
+    } else {
+        gen_error!(ErrorCode::InvalidArgument)
+    }
+}
+
 /// Create a new TraceExporter instance.
 ///
 /// # Arguments
@@ -251,6 +297,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
             // configuration
         }
 
+        if let Some(cfg) = &config.telemetry_cfg {
+            builder = builder.enable_telemetry(Some(cfg.clone()));
+        }
+
         match builder.build() {
             Ok(exporter) => {
                 out_handle.as_ptr().write(Box::new(exporter));
@@ -270,7 +320,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 /// * handle - The handle to the TraceExporter instance.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
-    drop(handle);
+    let _ = handle.shutdown(None);
 }
 
 /// Send traces to the Datadog Agent.
@@ -282,13 +332,13 @@ pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
 ///   TraceExporter. The memory for the trace must be valid for the life of the call to this
 ///   function.
 /// * `trace_count` - The number of traces to send to the Datadog Agent.
-/// * `response` - Optional parameter that will ontain the agent response information.
+/// * `response_out` - Optional handle to store a pointer to the agent response information.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_send(
     handle: Option<&TraceExporter>,
     trace: ByteSlice,
     trace_count: usize,
-    response: Option<&mut AgentResponse>,
+    response_out: Option<NonNull<Box<ExporterResponse>>>,
 ) -> Option<Box<ExporterError>> {
     let exporter = match handle {
         Some(exp) => exp,
@@ -304,8 +354,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
         trace_count,
     ) {
         Ok(resp) => {
-            if let Some(result) = response {
-                *result = resp;
+            if let Some(result) = response_out {
+                result
+                    .as_ptr()
+                    .write(Box::new(ExporterResponse::from(resp)));
             }
             None
         }
@@ -317,8 +369,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
 mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;
-    use crate::trace_exporter::AgentResponse;
-    use datadog_trace_utils::span_v04::Span;
+    use datadog_trace_utils::span::v04::Span;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::{borrow::Borrow, mem::MaybeUninit};
@@ -343,6 +394,7 @@ mod tests {
             assert_eq!(cfg.input_format, TraceExporterInputFormat::V04);
             assert_eq!(cfg.output_format, TraceExporterOutputFormat::V04);
             assert!(!cfg.compute_stats);
+            assert!(cfg.telemetry_cfg.is_none());
 
             ddog_trace_exporter_config_free(cfg);
         }
@@ -531,7 +583,49 @@ mod tests {
     }
 
     #[test]
-    fn expoter_constructor_test() {
+    fn config_telemetry_test() {
+        unsafe {
+            let error = ddog_trace_exporter_config_enable_telemetry(
+                None,
+                Some(&TelemetryClientConfig {
+                    interval: 1000,
+                    runtime_id: CharSlice::from("id"),
+                }),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            let mut cfg = TraceExporterConfig::default();
+            let error = ddog_trace_exporter_config_enable_telemetry(Some(&mut cfg), None);
+            assert!(error.is_none());
+            assert_eq!(cfg.telemetry_cfg.as_ref().unwrap().heartbeat, 0);
+            assert!(cfg.telemetry_cfg.as_ref().unwrap().runtime_id.is_none());
+
+            let mut cfg = TraceExporterConfig::default();
+            let error = ddog_trace_exporter_config_enable_telemetry(
+                Some(&mut cfg),
+                Some(&TelemetryClientConfig {
+                    interval: 1000,
+                    runtime_id: CharSlice::from("foo"),
+                }),
+            );
+            assert!(error.is_none());
+            assert_eq!(cfg.telemetry_cfg.as_ref().unwrap().heartbeat, 1000);
+            assert!(cfg.telemetry_cfg.as_ref().unwrap().runtime_id.is_some());
+            assert_eq!(
+                cfg.telemetry_cfg
+                    .as_ref()
+                    .unwrap()
+                    .runtime_id
+                    .as_ref()
+                    .unwrap(),
+                "foo"
+            );
+        }
+    }
+
+    #[test]
+    fn exporter_constructor_test() {
         unsafe {
             let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
             ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
@@ -559,7 +653,7 @@ mod tests {
     }
 
     #[test]
-    fn expoter_constructor_error_test() {
+    fn exporter_constructor_error_test() {
         unsafe {
             let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
             ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
@@ -590,8 +684,13 @@ mod tests {
     fn exporter_send_test_arguments_test() {
         unsafe {
             let trace = ByteSlice::from(b"dummy contents" as &[u8]);
-            let mut resp = AgentResponse { rate: 0.0 };
-            let ret = ddog_trace_exporter_send(None, trace, 0, Some(&mut resp));
+            let mut resp: MaybeUninit<Box<ExporterResponse>> = MaybeUninit::uninit();
+            let ret = ddog_trace_exporter_send(
+                None,
+                trace,
+                0,
+                Some(NonNull::new_unchecked(&mut resp).cast()),
+            );
 
             assert!(ret.is_some());
             assert_eq!(ret.unwrap().code, ErrorCode::InvalidArgument);
@@ -647,9 +746,11 @@ mod tests {
                 input_format: TraceExporterInputFormat::V04,
                 output_format: TraceExporterOutputFormat::V04,
                 compute_stats: false,
+                telemetry_cfg: None,
             };
 
             let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+            let mut response: MaybeUninit<Box<ExporterResponse>> = MaybeUninit::uninit();
             let mut ret =
                 ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
 
@@ -659,13 +760,22 @@ mod tests {
 
             let data = rmp_serde::to_vec_named::<Vec<Vec<Span>>>(&vec![vec![]]).unwrap();
             let traces = ByteSlice::new(&data);
-            let mut response = AgentResponse { rate: 0.0 };
-
-            ret = ddog_trace_exporter_send(Some(exporter.as_ref()), traces, 0, Some(&mut response));
+            ret = ddog_trace_exporter_send(
+                Some(exporter.as_ref()),
+                traces,
+                0,
+                Some(NonNull::new_unchecked(&mut response).cast()),
+            );
             assert_eq!(ret, None);
-            assert_eq!(response.rate, 0.8);
-
-            ddog_trace_exporter_free(exporter);
+            assert_eq!(
+                response.assume_init().body.to_string_lossy(),
+                r#"{
+                    "rate_by_service": {
+                        "service:foo,env:staging": 1.0,
+                        "service:,env:": 0.8 
+                    }
+                }"#,
+            );
         }
     }
 
@@ -678,19 +788,18 @@ mod tests {
         // (.NET) ping the agent with the aforementioned data type.
         unsafe {
             let server = MockServer::start();
+            let response_body = r#"{ 
+                        "rate_by_service": {
+                            "service:foo,env:staging": 1.0,
+                            "service:,env:": 0.8 
+                        }
+                    }"#;
 
             let mock_traces = server.mock(|when, then| {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
                     .path("/v0.4/traces");
-                then.status(200).body(
-                    r#"{
-                    "rate_by_service": {
-                        "service:foo,env:staging": 1.0,
-                        "service:,env:": 0.8 
-                    }
-                }"#,
-                );
+                then.status(200).body(response_body);
             });
 
             let cfg = TraceExporterConfig {
@@ -706,6 +815,7 @@ mod tests {
                 input_format: TraceExporterInputFormat::V04,
                 output_format: TraceExporterOutputFormat::V04,
                 compute_stats: false,
+                telemetry_cfg: None,
             };
 
             let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
@@ -718,14 +828,95 @@ mod tests {
 
             let data = vec![0x90];
             let traces = ByteSlice::new(&data);
-            let mut response = AgentResponse { rate: 0.0 };
+            let mut response: MaybeUninit<Box<ExporterResponse>> = MaybeUninit::uninit();
 
-            ret = ddog_trace_exporter_send(Some(exporter.as_ref()), traces, 0, Some(&mut response));
+            ret = ddog_trace_exporter_send(
+                Some(exporter.as_ref()),
+                traces,
+                0,
+                Some(NonNull::new_unchecked(&mut response).cast()),
+            );
             mock_traces.assert();
             assert_eq!(ret, None);
-            assert_eq!(response.rate, 0.8);
+            assert_eq!(response.assume_init().body.to_string_lossy(), response_body);
 
             ddog_trace_exporter_free(exporter);
+        }
+    }
+
+    #[test]
+    // Ignore because it seems, at least in the version we're currently using, miri can't emulate
+    // libc::socket function.
+    #[cfg_attr(miri, ignore)]
+    fn exporter_send_telemetry_test() {
+        unsafe {
+            let server = MockServer::start();
+            let response_body = r#"{ 
+                        "rate_by_service": {
+                            "service:foo,env:staging": 1.0,
+                            "service:,env:": 0.8 
+                        }
+                    }"#;
+            let mock_traces = server.mock(|when, then| {
+                when.method(POST).path("/v0.4/traces");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(response_body);
+            });
+
+            let mock_metrics = server.mock(|when, then| {
+                when.method(POST)
+                    .path("/telemetry/proxy/api/v2/apmtelemetry")
+                    .body_contains(r#""runtime_id":"foo""#);
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body("");
+            });
+
+            let cfg = TraceExporterConfig {
+                url: Some(server.url("/")),
+                tracer_version: Some("0.1".to_string()),
+                language: Some("lang".to_string()),
+                language_version: Some("0.1".to_string()),
+                language_interpreter: Some("interpreter".to_string()),
+                hostname: Some("hostname".to_string()),
+                env: Some("env-test".to_string()),
+                version: Some("1.0".to_string()),
+                service: Some("test-service".to_string()),
+                input_format: TraceExporterInputFormat::V04,
+                output_format: TraceExporterOutputFormat::V04,
+                compute_stats: false,
+                telemetry_cfg: Some(TelemetryConfig {
+                    heartbeat: 50,
+                    runtime_id: Some("foo".to_string()),
+                }),
+            };
+
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+            let mut ret =
+                ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
+
+            let exporter = ptr.assume_init();
+
+            assert_eq!(ret, None);
+
+            let data = vec![0x90];
+            let traces = ByteSlice::new(&data);
+            let mut response: MaybeUninit<Box<ExporterResponse>> = MaybeUninit::uninit();
+
+            ret = ddog_trace_exporter_send(
+                Some(exporter.as_ref()),
+                traces,
+                0,
+                Some(NonNull::new_unchecked(&mut response).cast()),
+            );
+            mock_traces.assert();
+            assert_eq!(ret, None);
+            assert_eq!(response.assume_init().body.to_string_lossy(), response_body);
+
+            ddog_trace_exporter_free(exporter);
+            // It should receive 3 payloads: app-started, metrics and app-closing.
+            mock_metrics.assert_hits(3);
         }
     }
 }
