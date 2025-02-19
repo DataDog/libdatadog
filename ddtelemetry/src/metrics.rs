@@ -63,7 +63,7 @@ pub struct MetricBuckets {
     distributions: HashMap<BucketKey, DDSketch>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MetricBucketStats {
     pub buckets: u32,
     pub series: u32,

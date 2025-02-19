@@ -127,7 +127,7 @@ pub struct TelemetryWorker {
     data: TelemetryWorkerData,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct TelemetryWorkerStats {
     pub dependencies_stored: u32,
     pub dependencies_unflushed: u32,
