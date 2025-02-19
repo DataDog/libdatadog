@@ -136,13 +136,11 @@ impl DdApi {
         https_proxy: Option<String>,
         timeout: Duration,
     ) -> Self {
-        let client = match build_client(https_proxy, timeout) {
-            Ok(client) => Some(client),
-            Err(e) => {
+        let client = build_client(https_proxy, timeout)
+            .inspect_err(|e| {
                 error!("Unable to create client {:?}", e);
-                None
-            }
-        };
+            })
+            .ok();
         DdApi {
             api_key,
             metrics_intake_url_prefix,
