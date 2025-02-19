@@ -151,14 +151,9 @@ impl DdApi {
     /// Ship a serialized series to the API, blocking
     pub async fn ship_series(&self, series: &Series) -> Result<Response, ShippingError> {
         let url = format!("{}/api/v2/series", &self.metrics_intake_url_prefix);
-        if let Ok(safe_body) = serde_json::to_vec(&series) {
-            debug!("Sending body: {:?}", &series);
-            self.ship_data(url, safe_body, "application/json").await
-        } else {
-            Err(ShippingError::Payload(
-                "Failed to serialize series".to_string(),
-            ))
-        }
+        let safe_body = serde_json::to_vec(&series).map_err(|_| ShippingError::Payload("Failed to serialize series".to_string()))?;
+        debug!("Sending body: {:?}", &series);
+        self.ship_data(url, safe_body, "application/json").await
     }
 
     pub async fn ship_distributions(
