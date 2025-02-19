@@ -54,7 +54,7 @@ use datadog_live_debugger::sender::DebuggerType;
 use datadog_remote_config::fetch::{ConfigInvariants, MultiTargetStats};
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
 use ddcommon::tag::Tag;
-use dogstatsd_client::{new_flusher, DogStatsDActionOwned};
+use dogstatsd_client::{new, DogStatsDActionOwned};
 use tinybytes;
 
 type NoResponse = Ready<()>;
@@ -706,7 +706,7 @@ impl SidecarInterface for SidecarServer {
             cfg.set_endpoint(endpoint).ok();
         });
         session.configure_dogstatsd(|dogstatsd| {
-            let d = new_flusher(config.dogstatsd_endpoint.clone()).ok();
+            let d = new(config.dogstatsd_endpoint.clone()).ok();
             *dogstatsd = d;
         });
         session.modify_debugger_config(|cfg| {

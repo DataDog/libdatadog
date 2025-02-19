@@ -1298,8 +1298,6 @@ dependencies = [
  "bytes",
  "criterion",
  "datadog-ddsketch",
- "datadog-trace-normalization",
- "datadog-trace-obfuscation",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
  "ddcommon",
@@ -2074,6 +2072,7 @@ dependencies = [
  "ddcommon",
  "http 0.2.12",
  "serde",
+ "tokio",
  "tracing",
 ]
 
