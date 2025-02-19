@@ -66,7 +66,7 @@ unsafe impl<K, V> Sync for TemporarilyRetainedMap<K, V> where
 {
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TemporarilyRetainedMapStats {
     pub elements: u32,
     pub live_counters: u32,

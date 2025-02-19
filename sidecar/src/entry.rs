@@ -93,7 +93,8 @@ where
     let server = SidecarServer::default();
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
 
-    let watchdog_handle = Watchdog::from_receiver(shutdown_complete_rx).spawn_watchdog();
+    let watchdog_handle =
+        Watchdog::from_receiver(shutdown_complete_rx).spawn_watchdog(server.clone());
     let telemetry_handle = self_telemetry(server.clone(), watchdog_handle);
 
     listener(Box::new({
