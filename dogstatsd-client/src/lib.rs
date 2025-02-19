@@ -361,6 +361,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_thread_safety() {
         let socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
         let _ = socket.set_read_timeout(Some(Duration::from_millis(500)));
