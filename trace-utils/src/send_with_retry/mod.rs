@@ -21,11 +21,11 @@ pub type SendWithRetryResult = Result<(Response<Body>, Attempts), SendWithRetryE
 #[derive(Debug)]
 pub enum SendWithRetryError {
     /// The request received an error HTTP code.
-    Http((Response<Body>, Attempts)),
+    Http(Response<Body>, Attempts),
     /// Treats timeout errors originated in the transport layer.
     Timeout(Attempts),
     /// Treats errors coming from networking.
-    Network(Attempts),
+    Network(hyper::Error, Attempts),
     /// Treats errors coming from building the request
     Build(Attempts),
 }
@@ -33,9 +33,9 @@ pub enum SendWithRetryError {
 impl std::fmt::Display for SendWithRetryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SendWithRetryError::Http(_) => write!(f, "Http error code received"),
+            SendWithRetryError::Http(_, _) => write!(f, "Http error code received"),
             SendWithRetryError::Timeout(_) => write!(f, "Request timed out"),
-            SendWithRetryError::Network(_) => write!(f, "Network error"),
+            SendWithRetryError::Network(error, _) => write!(f, "Network error: {error}"),
             SendWithRetryError::Build(_) => {
                 write!(f, "Failed to build request due to invalid propery")
             }
@@ -49,7 +49,7 @@ impl SendWithRetryError {
     fn from_request_error(err: RequestError, request_attempt: Attempts) -> Self {
         match err {
             RequestError::Build => SendWithRetryError::Build(request_attempt),
-            RequestError::Network => SendWithRetryError::Network(request_attempt),
+            RequestError::Network(error) => SendWithRetryError::Network(error, request_attempt),
             RequestError::TimeoutSocket => SendWithRetryError::Timeout(request_attempt),
             RequestError::TimeoutApi => SendWithRetryError::Timeout(request_attempt),
         }
@@ -59,7 +59,7 @@ impl SendWithRetryError {
 #[derive(Debug)]
 enum RequestError {
     Build,
-    Network,
+    Network(hyper::Error),
     TimeoutSocket,
     TimeoutApi,
 }
@@ -69,7 +69,7 @@ impl std::fmt::Display for RequestError {
         match self {
             RequestError::TimeoutSocket => write!(f, "Socket timed out"),
             RequestError::TimeoutApi => write!(f, "Api timeout exhausted"),
-            RequestError::Network => write!(f, "Network error"),
+            RequestError::Network(error) => write!(f, "Network error: {error}"),
             RequestError::Build => write!(f, "Failed to build request due to invalid propery"),
         }
     }
@@ -147,7 +147,7 @@ pub async fn send_with_retry(
                         retry_strategy.delay(request_attempt).await;
                         continue;
                     } else {
-                        return Err(SendWithRetryError::Http((response, request_attempt)));
+                        return Err(SendWithRetryError::Http(response, request_attempt));
                     }
                 } else {
                     return Ok((response, request_attempt));
@@ -194,7 +194,7 @@ async fn send_request(
                 if e.is_timeout() {
                     Err(RequestError::TimeoutSocket)
                 } else {
-                    Err(RequestError::Network)
+                    Err(RequestError::Network(e))
                 }
             }
         },
@@ -250,7 +250,7 @@ mod tests {
             .await;
             assert!(result.is_err(), "Expected an error result");
             assert!(
-                matches!(result.unwrap_err(), SendWithRetryError::Http((_, 1))),
+                matches!(result.unwrap_err(), SendWithRetryError::Http(_, 1)),
                 "Expected an http error with one attempt"
             );
         });
@@ -345,7 +345,7 @@ mod tests {
             )
             .await;
             assert!(
-                matches!(result.unwrap_err(), SendWithRetryError::Http((_, attempts)) if attempts == expected_retry_attempts),
+                matches!(result.unwrap_err(), SendWithRetryError::Http(_, attempts) if attempts == expected_retry_attempts),
                 "Expected an error result after max retry attempts"
             );
         });
