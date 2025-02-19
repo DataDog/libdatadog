@@ -3,7 +3,17 @@
 
 #[cfg(target_os = "linux")]
 use memfd::{Memfd, MemfdOptions};
+#[cfg(target_os = "linux")]
+use rand::Rng;
+#[cfg(target_os = "linux")]
+use log::warn;
+#[cfg(target_os = "linux")]
+use std::io::Write;
+#[cfg(target_os = "linux")]
+use rand::distributions::Alphanumeric;
 use serde::Serialize;
+#[cfg(target_os = "linux")]
+use rmp_serde::Serializer;
 
 /// This struct MUST be backward compatible.
 #[derive(Serialize, Debug)]
@@ -52,21 +62,22 @@ pub fn store_tracer_metadata(data: TracerMetadata) -> Result<AnonymousFileHandle
         .close_on_exec(true)
         .allow_sealing(true)
         .create::<&str>(mfd_name.as_ref())
-        .map_err(|e| format!("Unable to create memfd: {}", e))?;
+        .map_err(|e| format!("unable to create memfd: {}", e))?;
 
     let mut buf = Vec::new();
     data.serialize(&mut Serializer::new(&mut buf).with_struct_map())
-        .unwrap();
+    .unwrap();
 
-    mfd.as_file().write_all(&buf).unwrap();
+    mfd.as_file().write_all(&buf)
+        .map_err(|e| format!("unable to write into memfd: {}", e))?;
     mfd.add_seals(&[
         memfd::FileSeal::SealShrink,
         memfd::FileSeal::SealGrow,
         memfd::FileSeal::SealSeal,
     ])
-    .map_err(|e| format!("Unable to seal: {}", e))?;
+    .unwrap_or_else(|e| warn!("Unable to seal: {}", e));
 
-    return Ok(AnonymousFileHandle::Linux(Box::new(mfd)));
+    Ok(AnonymousFileHandle::Linux(Box::new(mfd)))
 }
 
 #[cfg(not(target_os = "linux"))]
