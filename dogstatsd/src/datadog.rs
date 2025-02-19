@@ -116,7 +116,7 @@ impl MetricsIntakeUrlPrefix {
 
     #[inline]
     fn from_site(site: Site) -> Self {
-        Self(format!("https://api.{}", site))
+        Self(format!("https://api.{site}"))
     }
 }
 
@@ -185,25 +185,23 @@ impl DdApi {
         body: Vec<u8>,
         content_type: &str,
     ) -> Result<Response, ShippingError> {
-        if let Some(client) = &self.client {
-            let start = std::time::Instant::now();
+        let client = &self
+            .client
+            .as_ref()
+            .ok_or_else(|| ShippingError::Destination(None, "No client".to_string()))?;
+        let start = std::time::Instant::now();
 
-            let resp = client
-                .post(&url)
-                .header("DD-API-KEY", &self.api_key)
-                .header("Content-Type", content_type)
-                .body(body)
-                .send()
-                .await;
+        let resp = client
+            .post(&url)
+            .header("DD-API-KEY", &self.api_key)
+            .header("Content-Type", content_type)
+            .body(body)
+            .send()
+            .await;
 
-            let elapsed = start.elapsed();
-            debug!("Request to {} took {}ms", url, elapsed.as_millis());
-            resp.map_err(|e| {
-                ShippingError::Destination(e.status(), format!("Cannot reach {}", url))
-            })
-        } else {
-            Err(ShippingError::Destination(None, "No client".to_string()))
-        }
+        let elapsed = start.elapsed();
+        debug!("Request to {} took {}ms", url, elapsed.as_millis());
+        resp.map_err(|e| ShippingError::Destination(e.status(), format!("Cannot reach {url}")))
     }
 }
 
