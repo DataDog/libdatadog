@@ -152,7 +152,7 @@ impl DdApi {
     pub async fn ship_series(&self, series: &Series) -> Result<Response, ShippingError> {
         let url = format!("{}/api/v2/series", &self.metrics_intake_url_prefix);
         let safe_body = serde_json::to_vec(&series)
-            .map_err(|_| ShippingError::Payload("Failed to serialize series".to_string()))?;
+            .map_err(|e| ShippingError::Payload(format!("Failed to serialize series: {e}")))?;
         debug!("Sending body: {:?}", &series);
         self.ship_data(url, safe_body, "application/json").await
     }
@@ -162,15 +162,12 @@ impl DdApi {
         sketches: &SketchPayload,
     ) -> Result<Response, ShippingError> {
         let url = format!("{}/api/beta/sketches", &self.metrics_intake_url_prefix);
-        if let Ok(safe_body) = sketches.write_to_bytes() {
-            debug!("Sending distributions: {:?}", &sketches);
-            self.ship_data(url, safe_body, "application/x-protobuf")
-                .await
-        } else {
-            Err(ShippingError::Payload(
-                "Failed to serialize sketches".to_string(),
-            ))
-        }
+        let safe_body = sketches
+            .write_to_bytes()
+            .map_err(|e| ShippingError::Payload(format!("Failed to serialize series: {e}")))?;
+        debug!("Sending distributions: {:?}", &sketches);
+        self.ship_data(url, safe_body, "application/x-protobuf")
+            .await
         // TODO maybe go to coded output stream if we incrementally
         // add sketch payloads to the buffer
         // something like this, but fix the utf-8 encoding issue
