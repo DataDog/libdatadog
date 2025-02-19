@@ -17,8 +17,7 @@
       "metrics": {
         "_dd_metric1": 1.0,
         "_dd_metric2": 2.0
-      },
-      "type": ""
+      }
     },
     {
       "service": "test-service",
@@ -34,8 +33,7 @@
         "runtime-id": "test-runtime-id-value",
         "service": "test-service"
       },
-      "metrics": {},
-      "type": ""
+      "metrics": {}
     },
     {
       "service": "test-service",

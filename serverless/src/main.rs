@@ -51,9 +51,6 @@ pub async fn main() {
         .ok();
     debug!("Starting serverless trace mini agent");
 
-    let serverless_compat_version = env!("CARGO_PKG_VERSION").to_string();
-    env::set_var("DD_SERVERLESS_COMPAT_VERSION", serverless_compat_version);
-
     let env_filter = format!("h2=off,hyper=off,rustls=off,{}", log_level);
 
     let subscriber = tracing_subscriber::fmt::Subscriber::builder()
