@@ -83,7 +83,7 @@ pub struct ConfigFetcherState<S> {
     pub expire_unused_files: bool,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ConfigFetcherStateStats {
     pub active_files: u32,
 }
