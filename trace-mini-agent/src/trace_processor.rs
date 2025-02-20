@@ -103,6 +103,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 mini_agent_metadata: mini_agent_metadata.clone(),
             },
             true, // In mini agent, we always send agentless
+            false,
         );
 
         let send_data = SendData::new(body_size, payload, tracer_header_tags, &config.trace_intake);
