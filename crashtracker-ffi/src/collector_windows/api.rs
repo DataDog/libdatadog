@@ -6,6 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use datadog_crashtracker::{CrashInfoBuilder, StackFrame, StackTrace, ThreadData};
 use ddcommon::Endpoint;
 use ddcommon_ffi::slice::AsBytes;
+use ddcommon_ffi::CharSlice;
 use function_name::named;
 use serde::{Deserialize, Serialize};
 use std::ffi::{c_void, OsString};
@@ -15,19 +16,36 @@ use std::os::windows::ffi::OsStringExt;
 use std::ptr::{addr_of, read_unaligned};
 use windows::core::{w, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{BOOL, ERROR_SUCCESS, E_FAIL, HANDLE, HMODULE, S_OK, TRUE};
-use windows::Win32::System::Diagnostics::Debug::{AddrModeFlat, GetThreadContext, OutputDebugStringW, ReadProcessMemory, StackWalkEx, SymInitializeW, CONTEXT, IMAGE_DATA_DIRECTORY, IMAGE_DEBUG_DIRECTORY, IMAGE_DEBUG_TYPE_CODEVIEW, IMAGE_DIRECTORY_ENTRY_DEBUG, IMAGE_FILE_HEADER, IMAGE_NT_HEADERS32, IMAGE_NT_HEADERS64, IMAGE_OPTIONAL_HEADER_MAGIC, STACKFRAME_EX, SYM_STKWALK_DEFAULT};
 #[cfg(target_arch = "x86_64")]
-use windows::Win32::System::Diagnostics::Debug::{CONTEXT_FULL_AMD64};
+use windows::Win32::System::Diagnostics::Debug::CONTEXT_FULL_AMD64;
 #[cfg(target_arch = "x86")]
-use windows::Win32::System::Diagnostics::Debug::{CONTEXT_FULL_X86};
-use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32};
-use windows::Win32::System::ErrorReporting::{WerRegisterRuntimeExceptionModule, WER_RUNTIME_EXCEPTION_INFORMATION};
-use windows::Win32::System::ProcessStatus::{EnumProcessModules, GetModuleFileNameExW, GetModuleInformation, MODULEINFO};
-use windows::Win32::System::Registry::{RegCloseKey, RegCreateKeyExW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE};
-use windows::Win32::System::SystemInformation::{IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_I386};
-use windows::Win32::System::SystemServices::{IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_NT_SIGNATURE};
+use windows::Win32::System::Diagnostics::Debug::CONTEXT_FULL_X86;
+use windows::Win32::System::Diagnostics::Debug::{
+    AddrModeFlat, GetThreadContext, OutputDebugStringW, ReadProcessMemory, StackWalkEx,
+    SymInitializeW, CONTEXT, IMAGE_DATA_DIRECTORY, IMAGE_DEBUG_DIRECTORY,
+    IMAGE_DEBUG_TYPE_CODEVIEW, IMAGE_DIRECTORY_ENTRY_DEBUG, IMAGE_FILE_HEADER, IMAGE_NT_HEADERS32,
+    IMAGE_NT_HEADERS64, IMAGE_OPTIONAL_HEADER_MAGIC, STACKFRAME_EX, SYM_STKWALK_DEFAULT,
+};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+};
+use windows::Win32::System::ErrorReporting::{
+    WerRegisterRuntimeExceptionModule, WER_RUNTIME_EXCEPTION_INFORMATION,
+};
+use windows::Win32::System::ProcessStatus::{
+    EnumProcessModules, GetModuleFileNameExW, GetModuleInformation, MODULEINFO,
+};
+use windows::Win32::System::Registry::{
+    RegCloseKey, RegCreateKeyExW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
+    HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE,
+};
+use windows::Win32::System::SystemInformation::{
+    IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_I386,
+};
+use windows::Win32::System::SystemServices::{
+    IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_NT_SIGNATURE,
+};
 use windows::Win32::System::Threading::{GetProcessId, GetThreadId, OpenThread, THREAD_ALL_ACCESS};
-use ddcommon_ffi::CharSlice;
 
 #[no_mangle]
 #[must_use]
@@ -49,7 +67,10 @@ pub unsafe extern "C" fn ddog_crasht_init_windows(
 ) -> bool {
     let result: Result<(), _> = (|| {
         let endpoint = endpoint.map(|endpoint| endpoint.clone());
-        let error_context = ErrorContext { endpoint: endpoint, metadata: metadata.try_into()? };
+        let error_context = ErrorContext {
+            endpoint: endpoint,
+            metadata: metadata.try_into()?,
+        };
         let error_context_json = serde_json::to_string(&error_context)?;
         set_error_context(&error_context_json);
 
@@ -58,13 +79,21 @@ pub unsafe extern "C" fn ddog_crasht_init_windows(
 
         let mut wpath: Vec<u16> = path.encode_utf16().collect();
         wpath.push(0); // Ensure null termination
-        WerRegisterRuntimeExceptionModule(PCWSTR::from_raw(wpath.as_ptr()), &raw const WERCONTEXT as *const c_void)?;
+        WerRegisterRuntimeExceptionModule(
+            PCWSTR::from_raw(wpath.as_ptr()),
+            &raw const WERCONTEXT as *const c_void,
+        )?;
         Ok::<(), anyhow::Error>(())
     })();
 
-    if result.is_err()
-    {
-        output_debug_string(format!("ddog_crasht_init_windows failed: {}", result.err().unwrap().to_string()).as_str());
+    if result.is_err() {
+        output_debug_string(
+            format!(
+                "ddog_crasht_init_windows failed: {}",
+                result.err().unwrap().to_string()
+            )
+            .as_str(),
+        );
         return false;
     }
 
@@ -82,36 +111,19 @@ unsafe fn create_registry_key(path: &String) -> Result<()> {
     let name_pcwstr = PCWSTR::from_raw(name_wide.as_ptr());
 
     // Subkey path as wide string constant
-    let subkey = w!(
-        "SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\RuntimeExceptionHelperModules"
-    );
+    let subkey =
+        w!("SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\RuntimeExceptionHelperModules");
 
     // Check both HKEY_LOCAL_MACHINE and HKEY_CURRENT_USER
     for root in [HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER] {
         let mut hkey = HKEY::default();
 
         // Try to open the registry key
-        let open_result = unsafe {
-            RegOpenKeyExW(
-                root,
-                subkey,
-                None,
-                KEY_READ,
-                &mut hkey,
-            )
-        };
+        let open_result = unsafe { RegOpenKeyExW(root, subkey, None, KEY_READ, &mut hkey) };
 
         if open_result == ERROR_SUCCESS {
             // Check if the value exists
-            let query_result =
-                RegQueryValueExW(
-                    hkey,
-                    name_pcwstr,
-                    None,
-                    None,
-                    None,
-                    None,
-                );
+            let query_result = RegQueryValueExW(hkey, name_pcwstr, None, None, None, None);
 
             let _ = RegCloseKey(hkey);
 
@@ -145,13 +157,7 @@ unsafe fn create_registry_key(path: &String) -> Result<()> {
     // Create the DWORD value (0)
     let dword_value: u32 = 0;
     let dword_bytes = dword_value.to_ne_bytes();
-    let set_value_result = RegSetValueExW(
-        hkey,
-        name_pcwstr,
-        None,
-        REG_DWORD,
-        Some(&dword_bytes)
-    );
+    let set_value_result = RegSetValueExW(hkey, name_pcwstr, None, REG_DWORD, Some(&dword_bytes));
 
     if set_value_result != ERROR_SUCCESS {
         return Err(anyhow!("Failed to set registry value"));
@@ -182,26 +188,25 @@ fn set_error_context(message: &str) {
 #[derive(Serialize, Deserialize)]
 pub struct ErrorContext {
     endpoint: Option<Endpoint>,
-    metadata: datadog_crashtracker::Metadata
+    metadata: datadog_crashtracker::Metadata,
 }
 
 static mut WERCONTEXT: WerContext = WerContext {
     prefix: WER_CONTEXT_PREFIX,
     ptr: std::ptr::null(),
     len: 0,
-    suffix: WER_CONTEXT_SUFFIX
+    suffix: WER_CONTEXT_SUFFIX,
 };
 
 const WER_CONTEXT_PREFIX: u64 = 0xBABA_BABA_BABA_BABA;
 const WER_CONTEXT_SUFFIX: u64 = 0xEFEF_EFEF_EFEF_EFEF;
 
 #[repr(C)]
-pub struct WerContext
-{
+pub struct WerContext {
     prefix: u64,
     ptr: *const u8,
     len: usize,
-    suffix: u64
+    suffix: u64,
 }
 
 #[no_mangle]
@@ -215,8 +220,7 @@ pub unsafe extern "C" fn ddog_crasht_event_signature_callback(
     _name_size: *mut u32,
     _value: *mut u16,
     _value_size: *mut u32,
-) -> HRESULT
-{
+) -> HRESULT {
     output_debug_string("ddog_crasht_event_signature_callback");
     S_OK
 }
@@ -271,14 +275,22 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
             let stack_result = walk_thread_stack(exception_information.hProcess, thread, &modules);
 
             if stack_result.is_err() {
-                output_debug_string(format!("Failed to walk thread stack: {}", stack_result.err().unwrap().to_string()).as_str());
+                output_debug_string(
+                    format!(
+                        "Failed to walk thread stack: {}",
+                        stack_result.err().unwrap().to_string()
+                    )
+                    .as_str(),
+                );
                 stack = StackTrace::new_incomplete();
             } else {
                 stack = stack_result.unwrap();
             }
 
             if thread == crash_tid {
-                builder.with_stack(stack.clone()).context("Failed to add crashed thread info")?;
+                builder
+                    .with_stack(stack.clone())
+                    .context("Failed to add crashed thread info")?;
             }
 
             let thread_data = ThreadData {
@@ -288,12 +300,22 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
                 state: None,
             };
 
-            builder.with_thread(thread_data).context("Failed to add thread info")?;
+            builder
+                .with_thread(thread_data)
+                .context("Failed to add thread info")?;
         }
-        builder.with_kind(datadog_crashtracker::ErrorKind::Panic).context("Failed to add error kind")?;
-        builder.with_os_info_this_machine().context("Failed to add OS info")?;
-        builder.with_incomplete(false).context("Failed to set incomplete to false")?;
-        builder.with_metadata(error_context.metadata).context("Failed to add metadata")?;
+        builder
+            .with_kind(datadog_crashtracker::ErrorKind::Panic)
+            .context("Failed to add error kind")?;
+        builder
+            .with_os_info_this_machine()
+            .context("Failed to add OS info")?;
+        builder
+            .with_incomplete(false)
+            .context("Failed to set incomplete to false")?;
+        builder
+            .with_metadata(error_context.metadata)
+            .context("Failed to add metadata")?;
         let crash_info = builder.build().context("Failed to build crash info")?;
 
         crash_info
@@ -303,9 +325,14 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
         Ok::<(), anyhow::Error>(())
     })();
 
-    if result.is_err()
-    {
-        output_debug_string(format!("ddog_crasht_exception_event_callback failed: {}", result.err().unwrap().to_string()).as_str());
+    if result.is_err() {
+        output_debug_string(
+            format!(
+                "ddog_crasht_exception_event_callback failed: {}",
+                result.err().unwrap().to_string()
+            )
+            .as_str(),
+        );
         return E_FAIL;
     }
 
@@ -360,7 +387,7 @@ pub unsafe fn read_wer_context(process_handle: HANDLE, base_address: usize) -> R
         prefix: WER_CONTEXT_PREFIX,
         ptr: static_slice.as_ptr(),
         len: len,
-        suffix: WER_CONTEXT_SUFFIX
+        suffix: WER_CONTEXT_SUFFIX,
     };
 
     Ok(wer_context)
@@ -370,10 +397,14 @@ pub unsafe fn read_wer_context(process_handle: HANDLE, base_address: usize) -> R
 #[repr(align(16))]
 #[derive(Default)]
 struct AlignedContext {
-    ctx: CONTEXT
+    ctx: CONTEXT,
 }
 
-unsafe fn walk_thread_stack(process_handle: HANDLE, thread_id: u32, modules: &Vec<ModuleInfo>) -> Result<StackTrace> {
+unsafe fn walk_thread_stack(
+    process_handle: HANDLE,
+    thread_id: u32,
+    modules: &Vec<ModuleInfo>,
+) -> Result<StackTrace> {
     let mut stacktrace = StackTrace::new_incomplete();
     let thread_handle = OpenThread(THREAD_ALL_ACCESS, false, thread_id)?;
     let mut context = AlignedContext::default();
@@ -390,7 +421,7 @@ unsafe fn walk_thread_stack(process_handle: HANDLE, thread_id: u32, modules: &Ve
     GetThreadContext(thread_handle, &mut context.ctx)?;
 
     let mut native_frame = STACKFRAME_EX::default();
-    let machine_type:u32;
+    let machine_type: u32;
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -439,12 +470,16 @@ unsafe fn walk_thread_stack(process_handle: HANDLE, thread_id: u32, modules: &Ve
 
         // Find the module
         let module = modules.iter().find(|module| {
-            module.base_address <= native_frame.AddrPC.Offset && native_frame.AddrPC.Offset < module.base_address + module.size
+            module.base_address <= native_frame.AddrPC.Offset
+                && native_frame.AddrPC.Offset < module.base_address + module.size
         });
 
         if let Some(module) = module {
             frame.module_base_address = Some(format!("{:x}", module.base_address));
-            frame.symbol_address = Some(format!("{:x}", native_frame.AddrPC.Offset - module.base_address));
+            frame.symbol_address = Some(format!(
+                "{:x}",
+                native_frame.AddrPC.Offset - module.base_address
+            ));
             frame.path = module.path.clone();
 
             if let Some(pdb_info) = &module.pdb_info {
@@ -455,7 +490,9 @@ unsafe fn walk_thread_stack(process_handle: HANDLE, thread_id: u32, modules: &Ve
             }
         }
 
-        stacktrace.push_frame(frame, true).expect("Failed to add frame");
+        stacktrace
+            .push_frame(frame, true)
+            .expect("Failed to add frame");
     }
 
     stacktrace.set_complete()?;
@@ -466,7 +503,7 @@ struct ModuleInfo {
     base_address: u64,
     size: u64,
     path: Option<String>,
-    pdb_info: Option<PdbInfo>
+    pdb_info: Option<PdbInfo>,
 }
 
 struct PdbInfo {
@@ -480,13 +517,7 @@ unsafe fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>
 
     // Get the number of bytes required to store the array of module handles
     let mut cb_needed = 0;
-    if !EnumProcessModules(
-        process_handle,
-        std::ptr::null_mut(),
-        0,
-        &mut cb_needed,
-    ).is_ok()
-    {
+    if !EnumProcessModules(process_handle, std::ptr::null_mut(), 0, &mut cb_needed).is_ok() {
         return Err(anyhow!("Failed to get module list size"));
     }
 
@@ -500,7 +531,8 @@ unsafe fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>
         hmodules.as_mut_ptr(),
         cb_needed,
         &mut cb_actual,
-    ).is_ok()
+    )
+    .is_ok()
     {
         return Err(anyhow!("Failed to enumerate process modules"));
     }
@@ -515,13 +547,15 @@ unsafe fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>
             hmodule,
             &mut module_info,
             size_of::<MODULEINFO>() as u32,
-        ).is_err() {
+        )
+        .is_err()
+        {
             continue;
         }
 
         let module_path = get_module_path(process_handle, hmodule);
 
-         module_infos.push(ModuleInfo {
+        module_infos.push(ModuleInfo {
             base_address: module_info.lpBaseOfDll as u64,
             size: module_info.SizeOfImage as u64,
             path: module_path.ok(),
@@ -542,7 +576,8 @@ unsafe fn read_memory<T>(process_handle: HANDLE, address: u64) -> Result<T> {
         address as *const _,
         value.as_mut_ptr() as *mut _,
         size,
-        Some(&mut bytes_read));
+        Some(&mut bytes_read),
+    );
 
     if result.is_err() || bytes_read != size {
         return Err(anyhow!("Failed to read memory"));
@@ -560,7 +595,8 @@ unsafe fn read_memory_raw(process_handle: HANDLE, address: u64, size: usize) -> 
         address as *const _,
         buffer.as_mut_ptr() as *mut _,
         size,
-        Some(&mut bytes_read));
+        Some(&mut bytes_read),
+    );
 
     if result.is_err() || bytes_read != size {
         return Err(anyhow!("Failed to read memory"));
@@ -573,7 +609,7 @@ unsafe fn read_memory_raw(process_handle: HANDLE, address: u64, size: usize) -> 
 struct IMAGE_NT_HEADERS_GENERIC {
     pub signature: u32,
     pub file_header: IMAGE_FILE_HEADER,
-    pub magic: IMAGE_OPTIONAL_HEADER_MAGIC
+    pub magic: IMAGE_OPTIONAL_HEADER_MAGIC,
 }
 
 #[repr(C)]
@@ -593,10 +629,14 @@ impl fmt::LowerHex for GUID {
             self.data1,
             self.data2,
             self.data3,
-            self.data4[0], self.data4[1],
-            self.data4[2], self.data4[3],
-            self.data4[4], self.data4[5],
-            self.data4[6], self.data4[7]
+            self.data4[0],
+            self.data4[1],
+            self.data4[2],
+            self.data4[3],
+            self.data4[4],
+            self.data4[5],
+            self.data4[6],
+            self.data4[7]
         )
     }
 }
@@ -633,34 +673,39 @@ unsafe fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbI
 
     if is_pe32 {
         let nt_headers32: IMAGE_NT_HEADERS32 = read_memory(process_handle, nt_headers_address)?;
-        debug_data_dir = nt_headers32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG.0 as usize];
-    }
-    else {
+        debug_data_dir =
+            nt_headers32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG.0 as usize];
+    } else {
         let nt_headers64: IMAGE_NT_HEADERS64 = read_memory(process_handle, nt_headers_address)?;
-        debug_data_dir = nt_headers64.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG.0 as usize];
+        debug_data_dir =
+            nt_headers64.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG.0 as usize];
     }
 
     let debug_dir_buffer = read_memory_raw(
         process_handle,
         base_address + debug_data_dir.VirtualAddress as u64,
-        debug_data_dir.Size as usize
+        debug_data_dir.Size as usize,
     )?;
 
     let debug_dir = std::slice::from_raw_parts(
         debug_dir_buffer.as_ptr() as *const IMAGE_DEBUG_DIRECTORY,
-        debug_dir_buffer.len() / std::mem::size_of::<IMAGE_DEBUG_DIRECTORY>());
+        debug_dir_buffer.len() / std::mem::size_of::<IMAGE_DEBUG_DIRECTORY>(),
+    );
 
     for entry in debug_dir {
         if entry.Type != IMAGE_DEBUG_TYPE_CODEVIEW {
             continue;
         }
 
-        let cv_info: CV_INFO_PDB70 = read_memory(process_handle, base_address + entry.AddressOfRawData as u64)?;
+        let cv_info: CV_INFO_PDB70 =
+            read_memory(process_handle, base_address + entry.AddressOfRawData as u64)?;
 
-        if cv_info.signature == 0x53445352 /* 'RSDS' */ {
+        if cv_info.signature == 0x53445352
+        /* 'RSDS' */
+        {
             return Ok(PdbInfo {
                 age: cv_info.age,
-                signature: cv_info.guid
+                signature: cv_info.guid,
             });
         }
     }
@@ -668,13 +713,16 @@ unsafe fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbI
     Err(anyhow!("No CodeView entry found"))
 }
 
-unsafe fn get_module_path(process_handle: HANDLE, module_handle: HMODULE) -> anyhow::Result<String> {
+unsafe fn get_module_path(
+    process_handle: HANDLE,
+    module_handle: HMODULE,
+) -> anyhow::Result<String> {
     let mut module_name_buffer = vec![0u16; 1024];
 
     let len = GetModuleFileNameExW(
         Some(process_handle),
         Some(module_handle),
-        &mut *module_name_buffer
+        &mut *module_name_buffer,
     );
     if len <= 0 {
         return Err(anyhow!("GetModuleFileNameExW failed: {}", len));

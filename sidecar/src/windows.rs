@@ -7,6 +7,9 @@ use datadog_ipc::platform::{
     named_pipe_name_from_raw_handle, FileBackedHandle, MappedMem, NamedShmHandle,
 };
 
+use datadog_crashtracker_ffi::{ddog_crasht_init_windows, Metadata};
+use ddcommon::Endpoint;
+use ddcommon_ffi::CharSlice;
 use futures::FutureExt;
 use lazy_static::lazy_static;
 use manual_future::ManualFuture;
@@ -37,9 +40,6 @@ use winapi::{
 };
 use windows::core::PCWSTR;
 use windows::Win32::System::LibraryLoader::LoadLibraryW;
-use datadog_crashtracker_ffi::{ddog_crasht_init_windows, Metadata};
-use ddcommon::Endpoint;
-use ddcommon_ffi::CharSlice;
 
 #[no_mangle]
 pub extern "C" fn ddog_daemon_entry_point() {
@@ -135,7 +135,10 @@ pub fn setup_daemon_process(listener: OwnedHandle, spawn_cfg: &mut SpawnWorker) 
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_setup_crashtracking(endpoint: Option<&Endpoint>, metadata: Metadata,) -> bool {
+pub extern "C" fn ddog_setup_crashtracking(
+    endpoint: Option<&Endpoint>,
+    metadata: Metadata,
+) -> bool {
     // Ensure unique process names - we spawn one sidecar per console session id (see
     // setup/windows.rs for the reasoning)
     let result = write_crashtracking_trampoline(&format!(

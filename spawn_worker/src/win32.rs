@@ -12,7 +12,6 @@ use std::path::PathBuf;
 use std::process::ExitStatus;
 use std::ptr::null_mut;
 use std::{env, fs, io, io::Write};
-use anyhow::anyhow;
 use winapi::{
     DWORD, FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_DELETE_ON_CLOSE, FILE_SHARE_DELETE, FILE_SHARE_READ,
     FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE, LPCSTR, OPEN_EXISTING, SECURITY_ATTRIBUTES,
@@ -439,7 +438,6 @@ impl SpawnWorker {
             })
         }
     }
-
 }
 
 pub fn recv_passed_handle() -> Option<OwnedHandle> {
