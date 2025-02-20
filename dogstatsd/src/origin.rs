@@ -10,15 +10,17 @@ const AWS_LAMBDA_TAG_KEY: &str = "function_arn";
 const AWS_STEP_FUNCTIONS_TAG_KEY: &str = "statemachinearn";
 
 // Metric tag values
-const AZURE_APP_SERVICES_TAG_VALUE: &str = "appservice";
 const GOOGLE_CLOUD_RUN_TAG_VALUE: &str = "cloudrun";
+const AZURE_APP_SERVICES_TAG_VALUE: &str = "appservice";
 const AZURE_CONTAINER_APP_TAG_VALUE: &str = "containerapp";
+const AZURE_FUNCTIONS_TAG_VALUE: &str = "azurefunction";
 
 // Metric prefixes
 const DATADOG_PREFIX: &str = "datadog";
-const AZURE_APP_SERVICES_PREFIX: &str = "azure.app_services";
 const GOOGLE_CLOUD_RUN_PREFIX: &str = "gcp.run";
+const AZURE_APP_SERVICES_PREFIX: &str = "azure.app_services";
 const AZURE_CONTAINER_APP_PREFIX: &str = "azure.app_containerapps";
+const AZURE_FUNCTIONS_PREFIX: &str = "azure.functions";
 const AWS_LAMBDA_PREFIX: &str = "aws.lambda";
 const AWS_STEP_FUNCTIONS_PREFIX: &str = "aws.states";
 
@@ -46,6 +48,7 @@ pub enum OriginCategory {
     ContainerAppMetrics = 37,
     LambdaMetrics = 38,
     StepFunctionsMetrics = 41,
+    AzureFunctionsMetrics = 71,
 }
 
 impl From<OriginCategory> for u32 {
@@ -98,6 +101,14 @@ pub fn find_metric_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
             ..Default::default()
         });
     }
+    if is_azure_functions(&tags, &prefix) {
+        return Some(Origin {
+            origin_product: OriginProduct::Serverless.into(),
+            origin_category: OriginCategory::AzureFunctionsMetrics.into(),
+            origin_service: OriginService::Other.into(),
+            ..Default::default()
+        });
+    }
     if is_aws_lambda(&tags, &prefix) {
         return Some(Origin {
             origin_product: OriginProduct::Serverless.into(),
@@ -135,19 +146,24 @@ fn is_datadog_metric(prefix: &str) -> bool {
     prefix == DATADOG_PREFIX
 }
 
-fn is_azure_app_services(tags: &SortedTags, prefix: &str) -> bool {
-    get_first_tag_value(tags, DD_ORIGIN_TAG_KEY) == Some(AZURE_APP_SERVICES_TAG_VALUE)
-        && prefix != AZURE_APP_SERVICES_PREFIX
-}
-
 fn is_google_cloud_run(tags: &SortedTags, prefix: &str) -> bool {
     get_first_tag_value(tags, DD_ORIGIN_TAG_KEY) == Some(GOOGLE_CLOUD_RUN_TAG_VALUE)
         && prefix != GOOGLE_CLOUD_RUN_PREFIX
 }
 
+fn is_azure_app_services(tags: &SortedTags, prefix: &str) -> bool {
+    get_first_tag_value(tags, DD_ORIGIN_TAG_KEY) == Some(AZURE_APP_SERVICES_TAG_VALUE)
+        && prefix != AZURE_APP_SERVICES_PREFIX
+}
+
 fn is_azure_container_app(tags: &SortedTags, prefix: &str) -> bool {
     get_first_tag_value(tags, DD_ORIGIN_TAG_KEY) == Some(AZURE_CONTAINER_APP_TAG_VALUE)
         && prefix != AZURE_CONTAINER_APP_PREFIX
+}
+
+fn is_azure_functions(tags: &SortedTags, prefix: &str) -> bool {
+    get_first_tag_value(tags, DD_ORIGIN_TAG_KEY) == Some(AZURE_FUNCTIONS_TAG_VALUE)
+        && prefix != AZURE_FUNCTIONS_PREFIX
 }
 
 fn is_aws_lambda(tags: &SortedTags, prefix: &str) -> bool {
