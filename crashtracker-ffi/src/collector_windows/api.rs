@@ -8,7 +8,6 @@ use datadog_crashtracker::{CrashInfoBuilder, StackFrame, StackTrace, ThreadData}
 use ddcommon::Endpoint;
 use ddcommon_ffi::slice::AsBytes;
 use ddcommon_ffi::CharSlice;
-use function_name::named;
 use serde::{Deserialize, Serialize};
 use std::ffi::{c_void, OsString};
 use std::fmt;
@@ -81,7 +80,7 @@ pub unsafe extern "C" fn ddog_crasht_init_windows(
         wpath.push(0); // Ensure null termination
         WerRegisterRuntimeExceptionModule(
             PCWSTR::from_raw(wpath.as_ptr()),
-            &raw const WERCONTEXT as *const c_void,
+            addr_of!(WERCONTEXT) as *const c_void,
         )?;
         Ok::<(), anyhow::Error>(())
     })();
@@ -264,7 +263,6 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
         let mut builder = CrashInfoBuilder::new();
 
         for thread in threads.unwrap() {
-            let stack: StackTrace;
             let stack_result = walk_thread_stack(exception_information.hProcess, thread, &modules);
 
             let stack: StackTrace = if stack_result.is_err() {
