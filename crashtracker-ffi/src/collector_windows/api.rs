@@ -265,13 +265,10 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
         for thread in threads.unwrap() {
             let stack_result = walk_thread_stack(exception_information.hProcess, thread, &modules);
 
-            let stack: StackTrace = stack_result.map_or_else(
-                |e| {
-                    output_debug_string(format!("Failed to walk thread stack: {}", e).as_str());
-                    StackTrace::new_incomplete()
-                },
-                |stack| stack,
-            );
+            let stack: StackTrace = stack_result.unwrap_or_else(|e| {
+                output_debug_string(format!("Failed to walk thread stack: {}", e).as_str());
+                StackTrace::new_incomplete()
+            });
 
             if thread == crash_tid {
                 builder
