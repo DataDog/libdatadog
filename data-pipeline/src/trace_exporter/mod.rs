@@ -1328,7 +1328,7 @@ mod tests {
                 r#"{
                     "rate_by_service": {
                         "service:foo,env:staging": 1.0,
-                        "service:,env:": 0.8 
+                        "service:,env:": 0.8
                     }
                 }"#,
             );
@@ -1548,7 +1548,7 @@ mod tests {
                     r#"{
                     "rate_by_service": {
                         "service:foo,env:staging": 1.0,
-                        "service:,env:": 0.8 
+                        "service:,env:": 0.8
                     }
                 }"#,
                 );
@@ -1580,7 +1580,7 @@ mod tests {
                 r#"{
                     "rate_by_service": {
                         "service:foo,env:staging": 1.0,
-                        "service:,env:": 0.8 
+                        "service:,env:": 0.8
                     }
                 }"#
                 .to_string()
@@ -1695,7 +1695,7 @@ mod tests {
         let response_body = r#"{
                         "rate_by_service": {
                             "service:foo,env:staging": 1.0,
-                            "service:,env:": 0.8 
+                            "service:,env:": 0.8
                         }
                     }"#;
         let traces_endpoint = server.mock(|when, then| {
@@ -1741,5 +1741,86 @@ mod tests {
             })
         }
         metrics_endpoint.assert_hits(1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_agent_malfunction_info_4xx() {
+        test_agent_malfunction_info(404, r#"{"error":"Not Found"}"#, Duration::from_secs(0));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_agent_malfunction_info_5xx() {
+        test_agent_malfunction_info(500, r#"{"error":"Internal Server Error"}"#, Duration::from_secs(0));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_agent_malfunction_info_timeout() {
+        test_agent_malfunction_info(408, r#"{"error":"Internal Server Error"}"#, Duration::from_secs(600));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_agent_malfunction_info_wrong_answer() {
+        test_agent_malfunction_info(200, "WRONG_ANSWER", Duration::from_secs(0));
+    }
+
+    fn test_agent_malfunction_info(status: u16, response: &str, delay: Duration) {
+        let server = MockServer::start();
+
+        let mock_traces = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.4/traces");
+            then.status(200).body(
+                r#"{
+                    "rate_by_service": {
+                        "service:test,env:staging": 1.0,
+                    }
+                }"#,
+            );
+        });
+
+        let mock_info = server.mock(|when, then| {
+            when.method(GET).path("/info");
+            then.delay(delay).status(status).body(response);
+        });
+
+        let builder = TraceExporterBuilder::default();
+        let exporter = builder
+            .set_url(&server.url("/"))
+            .set_service("test")
+            .set_env("staging")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .enable_stats(Duration::from_secs(10))
+            .build()
+            .unwrap();
+
+        let trace_chunk = vec![Span {
+            duration: 10,
+            ..Default::default()
+        }];
+
+        let data = tinybytes::Bytes::from(rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap());
+
+        // Wait for the info fetcher to get the config
+        while mock_info.hits() == 0 {
+            exporter.runtime.block_on(async {
+                sleep(Duration::from_millis(100)).await;
+            })
+        }
+
+        let _ = exporter.send(data, 1).unwrap();
+
+        exporter.shutdown(None).unwrap();
+
+        mock_traces.assert();
     }
 }
