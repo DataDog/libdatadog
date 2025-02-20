@@ -57,7 +57,7 @@ pub unsafe extern "C" fn ddog_crasht_clear_trace_ids() -> VoidResult {
 /// No safety concerns.
 pub unsafe extern "C" fn ddog_crasht_insert_trace_id(id_high: u64, id_low: u64) -> Result<usize> {
     wrap_with_ffi_result!({
-        let id: u128 = (id_high as u128) << 64 | (id_low as u128);
+        let id: u128 = ((id_high as u128) << 64) | (id_low as u128);
         datadog_crashtracker::insert_trace(id)
     })
 }
@@ -86,7 +86,7 @@ pub unsafe extern "C" fn ddog_crasht_insert_trace_id(id_high: u64, id_low: u64) 
 /// No safety concerns.
 pub unsafe extern "C" fn ddog_crasht_insert_span_id(id_high: u64, id_low: u64) -> Result<usize> {
     wrap_with_ffi_result!({
-        let id: u128 = (id_high as u128) << 64 | (id_low as u128);
+        let id: u128 = ((id_high as u128) << 64) | (id_low as u128);
         datadog_crashtracker::insert_span(id)
     })
 }
@@ -120,7 +120,7 @@ pub unsafe extern "C" fn ddog_crasht_remove_span_id(
     idx: usize,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        let id: u128 = (id_high as u128) << 64 | (id_low as u128);
+        let id: u128 = ((id_high as u128) << 64) | (id_low as u128);
         datadog_crashtracker::remove_span(id, idx)?
     })
 }
@@ -154,7 +154,7 @@ pub unsafe extern "C" fn ddog_crasht_remove_trace_id(
     idx: usize,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        let id: u128 = (id_high as u128) << 64 | (id_low as u128);
+        let id: u128 = ((id_high as u128) << 64) | (id_low as u128);
         datadog_crashtracker::remove_trace(id, idx)?
     })
 }
