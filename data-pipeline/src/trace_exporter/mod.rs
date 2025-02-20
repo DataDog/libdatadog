@@ -1752,13 +1752,21 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_agent_malfunction_info_5xx() {
-        test_agent_malfunction_info(500, r#"{"error":"Internal Server Error"}"#, Duration::from_secs(0));
+        test_agent_malfunction_info(
+            500,
+            r#"{"error":"Internal Server Error"}"#,
+            Duration::from_secs(0),
+        );
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_agent_malfunction_info_timeout() {
-        test_agent_malfunction_info(408, r#"{"error":"Internal Server Error"}"#, Duration::from_secs(600));
+        test_agent_malfunction_info(
+            408,
+            r#"{"error":"Internal Server Error"}"#,
+            Duration::from_secs(600),
+        );
     }
 
     #[test]
