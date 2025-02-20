@@ -71,7 +71,7 @@ pub enum DogStatsDAction<'a, T: AsRef<str>, V: IntoIterator<Item = &'a Tag>> {
 /// A dogstatsd-client that flushes stats to a given endpoint.
 #[derive(Debug, Default)]
 pub struct Client {
-    client: Arc<Mutex<Option<StatsdClient>>>,
+    client: Mutex<Arc<Option<StatsdClient>>>,
     endpoint: Option<Endpoint>,
 }
 
@@ -90,7 +90,7 @@ impl Client {
     /// Send a vector of DogStatsDActionOwned, this is the same as `send` except it uses the "owned"
     /// version of DogStatsDAction. See the docs for DogStatsDActionOwned for details.
     pub fn send_owned(&self, actions: Vec<DogStatsDActionOwned>) {
-        let client_guard = match self.get_or_init_client() {
+        let client_opt = match self.get_or_init_client() {
             Ok(guard) => guard,
             Err(e) => {
                 error!("Failed to get client: {}", e);
@@ -98,7 +98,7 @@ impl Client {
             }
         };
 
-        if let Some(client) = &*client_guard {
+        if let Some(client) = &*client_opt {
             for action in actions {
                 if let Err(err) = match action {
                     DogStatsDActionOwned::Count(metric, value, tags) => {
@@ -129,14 +129,14 @@ impl Client {
         &self,
         actions: Vec<DogStatsDAction<'a, T, V>>,
     ) {
-        let client_guard = match self.get_or_init_client() {
+        let client_opt = match self.get_or_init_client() {
             Ok(guard) => guard,
             Err(e) => {
                 error!("Failed to get client: {}", e);
                 return;
             }
         };
-        if let Some(client) = &*client_guard {
+        if let Some(client) = &*client_opt {
             for action in actions {
                 if let Err(err) = match action {
                     DogStatsDAction::Count(metric, value, tags) => {
@@ -162,19 +162,21 @@ impl Client {
         }
     }
 
-    fn get_or_init_client(&self) -> anyhow::Result<std::sync::MutexGuard<Option<StatsdClient>>> {
-        let mut client_guard = self
-            .client
-            .lock()
-            .map_err(|e| anyhow!("Failed to acquire dogstatsd client lock: {}", e))?;
-
-        if client_guard.is_none() {
-            if let Some(endpoint) = &self.endpoint {
-                *client_guard = Some(create_client(endpoint)?);
-            }
+    fn get_or_init_client(&self) -> anyhow::Result<Arc<Option<StatsdClient>>> {
+        if let Some(endpoint) = &self.endpoint {
+            let mut client_guard = self.client.lock().map_err(|e| {
+                anyhow!("Failed to acquire dogstatsd client lock: {}", e.to_string())
+            })?;
+            return if client_guard.is_some() {
+                Ok(client_guard.clone())
+            } else {
+                let client = Arc::new(Some(create_client(endpoint)?));
+                *client_guard = client.clone();
+                Ok(client)
+            };
         }
 
-        Ok(client_guard)
+        Ok(None.into())
     }
 }
 
