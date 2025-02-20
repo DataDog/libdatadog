@@ -265,18 +265,13 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
         for thread in threads.unwrap() {
             let stack_result = walk_thread_stack(exception_information.hProcess, thread, &modules);
 
-            let stack: StackTrace = if stack_result.is_err() {
-                output_debug_string(
-                    format!(
-                        "Failed to walk thread stack: {}",
-                        stack_result.err().unwrap()
-                    )
-                    .as_str(),
-                );
-                StackTrace::new_incomplete()
-            } else {
-                stack_result.unwrap()
-            };
+            let stack: StackTrace = stack_result.map_or_else(
+                |e| {
+                    output_debug_string(format!("Failed to walk thread stack: {}", e).as_str());
+                    StackTrace::new_incomplete()
+                },
+                |stack| stack,
+            );
 
             if thread == crash_tid {
                 builder
@@ -471,7 +466,7 @@ unsafe fn walk_thread_stack(
                 "{:x}",
                 native_frame.AddrPC.Offset - module.base_address
             ));
-            frame.path = module.path.clone();
+            frame.path.clone_from(&module.path);
 
             if let Some(pdb_info) = &module.pdb_info {
                 frame.build_id = Some(format!("{:x}{:x}", pdb_info.signature, pdb_info.age));
