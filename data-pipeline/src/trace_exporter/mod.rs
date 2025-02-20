@@ -11,13 +11,11 @@ use crate::{
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
-use datadog_trace_utils::msgpack_decoder;
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryError};
-use datadog_trace_utils::span::v04::{
-    trace_utils::{compute_top_level_span, has_top_level},
-    SpanBytes,
-};
+use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::TracerHeaderTags;
+use datadog_trace_utils::tracer_payload::TraceCollection;
+use datadog_trace_utils::{msgpack_decoder, tracer_payload};
 use ddcommon::header::{
     APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
 };
@@ -43,11 +41,6 @@ const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] = ["client", "server", "produ
 const STATS_ENDPOINT: &str = "/v0.6/stats";
 const INFO_ENDPOINT: &str = "/info";
 
-// Keys used for sampling
-const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
-const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
-const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
-
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
@@ -59,6 +52,7 @@ pub enum TraceExporterInputFormat {
     #[allow(missing_docs)]
     #[default]
     V04,
+    V05,
 }
 
 /// TraceExporterOutputFormat represents the format of the output traces.
@@ -69,6 +63,7 @@ pub enum TraceExporterOutputFormat {
     #[allow(missing_docs)]
     #[default]
     V04,
+    V05,
     #[allow(missing_docs)]
     V07,
 }
@@ -80,6 +75,7 @@ impl TraceExporterOutputFormat {
             url,
             match self {
                 TraceExporterOutputFormat::V04 => "/v0.4/traces",
+                TraceExporterOutputFormat::V05 => "/v0.5/traces",
                 TraceExporterOutputFormat::V07 => "/v0.7/traces",
             },
         )
@@ -118,60 +114,6 @@ fn add_path(url: &Uri, path: &str) -> Uri {
     let mut parts = url.clone().into_parts();
     parts.path_and_query = Some(new_p_and_q);
     Uri::from_parts(parts).unwrap()
-}
-
-struct DroppedP0Counts {
-    pub dropped_p0_traces: usize,
-    pub dropped_p0_spans: usize,
-}
-
-/// Remove spans and chunks only keeping the ones that may be sampled by the agent
-fn drop_chunks(traces: &mut Vec<Vec<SpanBytes>>) -> DroppedP0Counts {
-    let mut dropped_p0_traces = 0;
-    let mut dropped_p0_spans = 0;
-    traces.retain_mut(|chunk| {
-        // List of spans to keep even if the chunk is dropped
-        let mut sampled_indexes = Vec::new();
-        for (index, span) in chunk.iter().enumerate() {
-            // ErrorSampler
-            if span.error == 1 {
-                // We send chunks containing an error
-                return true;
-            }
-            // PrioritySampler and NoPrioritySampler
-            let priority = span.metrics.get(SAMPLING_PRIORITY_KEY);
-            if has_top_level(span) && (priority.is_none() || priority.is_some_and(|p| *p > 0.0)) {
-                // We send chunks with positive priority or no priority
-                return true;
-            }
-            // SingleSpanSampler and AnalyzedSpansSampler
-            else if span
-                .metrics
-                .get(SAMPLING_SINGLE_SPAN_MECHANISM)
-                .is_some_and(|m| *m == 8.0)
-                || span.metrics.contains_key(SAMPLING_ANALYTICS_RATE_KEY)
-            {
-                // We send spans sampled by single-span sampling or analyzed spans
-                sampled_indexes.push(index);
-            }
-        }
-        dropped_p0_spans += chunk.len() - sampled_indexes.len();
-        if sampled_indexes.is_empty() {
-            // If no spans were sampled we can drop the whole chunk
-            dropped_p0_traces += 1;
-            return false;
-        }
-        let sampled_spans = sampled_indexes
-            .iter()
-            .map(|i| std::mem::take(&mut chunk[*i]))
-            .collect();
-        *chunk = sampled_spans;
-        true
-    });
-    DroppedP0Counts {
-        dropped_p0_traces,
-        dropped_p0_spans,
-    }
 }
 
 #[derive(Clone, Default, Debug)]
@@ -283,6 +225,7 @@ impl TraceExporter {
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
             TraceExporterInputFormat::V04 => self.send_deser_ser(data),
+            TraceExporterInputFormat::V05 => self.send_deser_ser(data),
         }
         .and_then(|res| {
             if res.is_empty() {
@@ -588,7 +531,7 @@ impl TraceExporter {
     /// Add all spans from the given iterator into the stats concentrator
     /// # Panic
     /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
-    fn add_spans_to_stats<'a>(&self, spans: impl Iterator<Item = &'a SpanBytes>) {
+    fn add_spans_to_stats(&self, collection: &TraceCollection) {
         if let StatsComputationStatus::Enabled {
             stats_concentrator,
             cancellation_token: _,
@@ -596,16 +539,27 @@ impl TraceExporter {
         } = &**self.client_side_stats.load()
         {
             let mut stats_concentrator = stats_concentrator.lock().unwrap();
-            for span in spans {
-                stats_concentrator.add_span(span);
+            match collection {
+                TraceCollection::TraceChunk(traces) => {
+                    let spans = traces.iter().flat_map(|trace| trace.iter());
+                    for span in spans {
+                        stats_concentrator.add_span(span);
+                    }
+                }
+                TraceCollection::V07(_) => todo!(),
             }
         }
     }
 
     fn send_deser_ser(&self, data: tinybytes::Bytes) -> Result<String, TraceExporterError> {
-        // TODO base on input format
-        let (mut traces, _) = match msgpack_decoder::v04::from_slice(data) {
-            Ok(res) => res,
+        let result = match self.input_format {
+            TraceExporterInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
+            TraceExporterInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
+            TraceExporterInputFormat::Proxy => todo!("Proxy not implemented"),
+        };
+
+        let (mut collection, _) = match result {
+            Ok((traces, size)) => (TraceCollection::TraceChunk(traces), size),
             Err(err) => {
                 error!("Error deserializing trace from request body: {err}");
                 self.emit_metric(
@@ -616,10 +570,8 @@ impl TraceExporter {
             }
         };
 
-        let num_traces = traces.len();
-
         self.emit_metric(
-            HealthMetric::Count(health_metrics::STAT_DESER_TRACES, traces.len() as i64),
+            HealthMetric::Count(health_metrics::STAT_DESER_TRACES, collection.len() as i64),
             None,
         );
 
@@ -628,130 +580,147 @@ impl TraceExporter {
         // Stats computation
         if let StatsComputationStatus::Enabled { .. } = &**self.client_side_stats.load() {
             if !self.client_computed_top_level {
-                for chunk in traces.iter_mut() {
-                    compute_top_level_span(chunk);
-                }
+                collection.set_top_level_spans();
             }
-            self.add_spans_to_stats(traces.iter().flat_map(|trace| trace.iter()));
+            self.add_spans_to_stats(&collection);
             // Once stats have been computed we can drop all chunks that are not going to be
             // sampled by the agent
-            let dropped_counts = drop_chunks(&mut traces);
+            let (dropped_p0_traces, dropped_p0_spans) = collection.drop_chunks();
 
             // Update the headers to indicate that stats have been computed and forward dropped
             // traces counts
             header_tags.client_computed_top_level = true;
             header_tags.client_computed_stats = true;
-            header_tags.dropped_p0_traces = dropped_counts.dropped_p0_traces;
-            header_tags.dropped_p0_spans = dropped_counts.dropped_p0_spans;
+            header_tags.dropped_p0_traces = dropped_p0_traces;
+            header_tags.dropped_p0_spans = dropped_p0_spans;
         }
 
-        match self.output_format {
-            TraceExporterOutputFormat::V04 => {
-                let payload = rmp_serde::to_vec_named(&traces).map_err(TraceExporterError::from)?;
-                let chunks = traces.len();
-                let payload_len = payload.len();
-                let endpoint = Endpoint {
-                    url: self.get_agent_url(),
-                    ..self.endpoint.clone()
-                };
-                let mut headers: HashMap<&str, String> = header_tags.into();
-                headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
-                headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
-                headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
+        let payload = match self.input_format {
+            TraceExporterInputFormat::V04 => match self.output_format {
+                TraceExporterOutputFormat::V04 => trace_utils::collect_trace_chunks(
+                    collection,
+                    &header_tags,
+                    &mut tracer_payload::DefaultTraceChunkProcessor,
+                    self.endpoint.api_key.is_some(),
+                    false,
+                ),
+                _ => todo!("Conversion from v04 to vXX not implemented"),
+            },
+            TraceExporterInputFormat::V05 => match self.output_format {
+                TraceExporterOutputFormat::V05 => trace_utils::collect_trace_chunks(
+                    collection,
+                    &header_tags,
+                    &mut tracer_payload::DefaultTraceChunkProcessor,
+                    self.endpoint.api_key.is_some(),
+                    true,
+                ),
+                _ => todo!("Conversion from v05 to vXX not implemented"),
+            },
+            _ => todo!("Input format not implemented"),
+        };
 
-                let strategy = RetryStrategy::default();
-                self.runtime.block_on(async {
-                    // Send traces to the agent
-                    let result =
-                        send_with_retry(&endpoint, payload, &headers, &strategy, None).await;
+        let chunks = payload.size();
+        let endpoint = Endpoint {
+            url: self.get_agent_url(),
+            ..self.endpoint.clone()
+        };
+        let mut headers: HashMap<&str, String> = header_tags.into();
+        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
+        headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
+        headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
 
-                    // Send telemetry for the payload sending
-                    if let Some(telemetry) = &self.telemetry {
-                        if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
-                            &result,
-                            payload_len as u64,
-                            chunks as u64,
-                        )) {
-                            error!("Error sending telemetry: {}", e.to_string());
-                        }
-                    }
+        let strategy = RetryStrategy::default();
+        let mp_payload = match &payload {
+            tracer_payload::TracerPayloadCollection::V04(p) => {
+                rmp_serde::to_vec_named(p).map_err(TraceExporterError::Serialization)?
+            }
+            tracer_payload::TracerPayloadCollection::V05(p) => {
+                rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)?
+            }
+            _ => todo!("Serialization for v07 not implemented"),
+        };
 
-                    // Handle the result
-                    match result {
-                        Ok((response, _)) => {
-                            let status = response.status();
-                            let body = match response.into_body().collect().await {
-                                Ok(body) => String::from_utf8_lossy(&body.to_bytes()).to_string(),
-                                Err(err) => {
-                                    error!("Error reading agent response body: {err}");
-                                    self.emit_metric(
-                                        HealthMetric::Count(
-                                            health_metrics::STAT_SEND_TRACES_ERRORS,
-                                            1,
-                                        ),
-                                        None,
-                                    );
-                                    return Err(TraceExporterError::from(err));
-                                }
-                            };
+        let payload_len = mp_payload.len();
 
-                            if status.is_success() {
-                                self.emit_metric(
-                                    HealthMetric::Count(
-                                        health_metrics::STAT_SEND_TRACES,
-                                        num_traces as i64,
-                                    ),
-                                    None,
-                                );
-                                Ok(body)
-                            } else {
-                                self.emit_metric(
-                                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                                    None,
-                                );
-                                Err(TraceExporterError::Request(RequestError::new(
-                                    status, &body,
-                                )))
-                            }
-                        }
+        self.runtime.block_on(async {
+            // Send traces to the agent
+            let result = send_with_retry(&endpoint, mp_payload, &headers, &strategy, None).await;
+
+            // Send telemetry for the payload sending
+            if let Some(telemetry) = &self.telemetry {
+                if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
+                    &result,
+                    payload_len as u64,
+                    chunks as u64,
+                )) {
+                    error!("Error sending telemetry: {}", e.to_string());
+                }
+            }
+
+            // Handle the result
+            match result {
+                Ok((response, _)) => {
+                    let status = response.status();
+                    let body = match response.into_body().collect().await {
+                        Ok(body) => String::from_utf8_lossy(&body.to_bytes()).to_string(),
                         Err(err) => {
-                            error!("Error sending traces: {err}");
+                            error!("Error reading agent response body: {err}");
                             self.emit_metric(
                                 HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
                                 None,
                             );
-                            match err {
-                                SendWithRetryError::Http(response, _) => {
-                                    let status = response.status();
-                                    let body = match response.into_body().collect().await {
-                                        Ok(body) => body.to_bytes(),
-                                        Err(err) => {
-                                            error!("Error reading agent response body: {err}");
-                                            return Err(TraceExporterError::from(err));
-                                        }
-                                    };
-                                    Err(TraceExporterError::Request(RequestError::new(
-                                        status,
-                                        &String::from_utf8_lossy(&body),
-                                    )))
-                                }
-                                SendWithRetryError::Timeout(_) => Err(TraceExporterError::from(
-                                    io::Error::from(io::ErrorKind::TimedOut),
-                                )),
-                                SendWithRetryError::Network(err, _) => {
-                                    Err(TraceExporterError::from(err))
-                                }
-                                SendWithRetryError::Build(_) => Err(TraceExporterError::from(
-                                    io::Error::from(io::ErrorKind::Other),
-                                )),
-                            }
+                            return Err(TraceExporterError::from(err));
                         }
-                    }
-                })
-            }
+                    };
 
-            TraceExporterOutputFormat::V07 => todo!("We don't support translating to v07 yet"),
-        }
+                    if status.is_success() {
+                        self.emit_metric(
+                            HealthMetric::Count(health_metrics::STAT_SEND_TRACES, chunks as i64),
+                            None,
+                        );
+                        Ok(body)
+                    } else {
+                        self.emit_metric(
+                            HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                            None,
+                        );
+                        Err(TraceExporterError::Request(RequestError::new(
+                            status, &body,
+                        )))
+                    }
+                }
+                Err(err) => {
+                    error!("Error sending traces: {err}");
+                    self.emit_metric(
+                        HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                        None,
+                    );
+                    match err {
+                        SendWithRetryError::Http(response, _) => {
+                            let status = response.status();
+                            let body = match response.into_body().collect().await {
+                                Ok(body) => body.to_bytes(),
+                                Err(err) => {
+                                    error!("Error reading agent response body: {err}");
+                                    return Err(TraceExporterError::from(err));
+                                }
+                            };
+                            Err(TraceExporterError::Request(RequestError::new(
+                                status,
+                                &String::from_utf8_lossy(&body),
+                            )))
+                        }
+                        SendWithRetryError::Timeout(_) => Err(TraceExporterError::from(
+                            io::Error::from(io::ErrorKind::TimedOut),
+                        )),
+                        SendWithRetryError::Network(err, _) => Err(TraceExporterError::from(err)),
+                        SendWithRetryError::Build(_) => Err(TraceExporterError::from(
+                            io::Error::from(io::ErrorKind::Other),
+                        )),
+                    }
+                }
+            }
+        })
     }
 
     fn get_agent_url(&self) -> Uri {
@@ -1064,7 +1033,8 @@ mod tests {
     use self::error::AgentErrorKind;
     use self::error::BuilderErrorKind;
     use super::*;
-    use datadog_trace_utils::span::v04::SpanBytes;
+    use datadog_trace_utils::span::v05;
+    use datadog_trace_utils::span::SpanBytes;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::collections::HashMap;
@@ -1072,8 +1042,6 @@ mod tests {
     use std::time::Duration;
     use tinybytes::BytesString;
     use tokio::time::sleep;
-
-    const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 
     #[cfg_attr(miri, ignore)]
     #[test]
@@ -1185,120 +1153,6 @@ mod tests {
         assert!(hashmap.contains_key("datadog-client-computed-stats"));
         assert!(hashmap.contains_key("datadog-client-computed-top-level"));
     }
-
-    #[test]
-    fn test_drop_chunks() {
-        let chunk_with_priority = vec![
-            SpanBytes {
-                span_id: 1,
-                metrics: HashMap::from([
-                    (SAMPLING_PRIORITY_KEY.into(), 1.0),
-                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
-                ..Default::default()
-            },
-            SpanBytes {
-                span_id: 2,
-                parent_id: 1,
-                ..Default::default()
-            },
-        ];
-        let chunk_with_null_priority = vec![
-            SpanBytes {
-                span_id: 1,
-                metrics: HashMap::from([
-                    (SAMPLING_PRIORITY_KEY.into(), 0.0),
-                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
-                ..Default::default()
-            },
-            SpanBytes {
-                span_id: 2,
-                parent_id: 1,
-                ..Default::default()
-            },
-        ];
-        let chunk_without_priority = vec![
-            SpanBytes {
-                span_id: 1,
-                metrics: HashMap::from([(TRACER_TOP_LEVEL_KEY.into(), 1.0)]),
-                ..Default::default()
-            },
-            SpanBytes {
-                span_id: 2,
-                parent_id: 1,
-                ..Default::default()
-            },
-        ];
-        let chunk_with_error = vec![
-            SpanBytes {
-                span_id: 1,
-                error: 1,
-                metrics: HashMap::from([
-                    (SAMPLING_PRIORITY_KEY.into(), 0.0),
-                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
-                ..Default::default()
-            },
-            SpanBytes {
-                span_id: 2,
-                parent_id: 1,
-                ..Default::default()
-            },
-        ];
-        let chunk_with_a_single_span = vec![
-            SpanBytes {
-                span_id: 1,
-                metrics: HashMap::from([
-                    (SAMPLING_PRIORITY_KEY.into(), 0.0),
-                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
-                ..Default::default()
-            },
-            SpanBytes {
-                span_id: 2,
-                parent_id: 1,
-                metrics: HashMap::from([(SAMPLING_SINGLE_SPAN_MECHANISM.into(), 8.0)]),
-                ..Default::default()
-            },
-        ];
-        let chunk_with_analyzed_span = vec![
-            SpanBytes {
-                span_id: 1,
-                metrics: HashMap::from([
-                    (SAMPLING_PRIORITY_KEY.into(), 0.0),
-                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
-                ..Default::default()
-            },
-            SpanBytes {
-                span_id: 2,
-                parent_id: 1,
-                metrics: HashMap::from([(SAMPLING_ANALYTICS_RATE_KEY.into(), 1.0)]),
-                ..Default::default()
-            },
-        ];
-
-        let chunks_and_expected_sampled_spans = vec![
-            (chunk_with_priority, 2),
-            (chunk_with_null_priority, 0),
-            (chunk_without_priority, 2),
-            (chunk_with_error, 2),
-            (chunk_with_a_single_span, 1),
-            (chunk_with_analyzed_span, 1),
-        ];
-
-        for (chunk, expected_count) in chunks_and_expected_sampled_spans.into_iter() {
-            let mut traces = vec![chunk];
-            drop_chunks(&mut traces);
-            if expected_count == 0 {
-                assert!(traces.is_empty());
-            } else {
-                assert_eq!(traces[0].len(), expected_count);
-            }
-        }
-    }
-
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_shutdown() {
@@ -1448,7 +1302,12 @@ mod tests {
         datagram.trim_matches(char::from(0)).to_string()
     }
 
-    fn build_test_exporter(url: String, dogstatsd_url: String) -> TraceExporter {
+    fn build_test_exporter(
+        url: String,
+        dogstatsd_url: String,
+        input: TraceExporterInputFormat,
+        output: TraceExporterOutputFormat,
+    ) -> TraceExporter {
         TraceExporterBuilder::default()
             .set_url(&url)
             .set_service("test")
@@ -1458,6 +1317,8 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8")
+            .set_input_format(input)
+            .set_output_format(output)
             .build()
             .unwrap()
     }
@@ -1478,6 +1339,8 @@ mod tests {
         let exporter = build_test_exporter(
             fake_agent.url("/v0.4/traces"),
             stats_socket.local_addr().unwrap().to_string(),
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V04,
         );
 
         let traces: Vec<Vec<SpanBytes>> = vec![
@@ -1523,6 +1386,8 @@ mod tests {
         let exporter = build_test_exporter(
             fake_agent.url("/v0.4/traces"),
             stats_socket.local_addr().unwrap().to_string(),
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V04,
         );
 
         let bad_payload = tinybytes::Bytes::copy_from_slice(b"some_bad_payload".as_ref());
@@ -1555,6 +1420,8 @@ mod tests {
         let exporter = build_test_exporter(
             fake_agent.url("/v0.4/traces"),
             stats_socket.local_addr().unwrap().to_string(),
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V04,
         );
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
@@ -1743,7 +1610,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn exporter_metrics() {
+    fn exporter_metrics_v4() {
         let server = MockServer::start();
         let response_body = r#"{
                         "rate_by_service": {
@@ -1783,6 +1650,64 @@ mod tests {
             .unwrap();
 
         let traces = vec![0x90];
+        let bytes = tinybytes::Bytes::from(traces);
+        let result = exporter.send(bytes, 1).unwrap();
+        assert_eq!(result.body, response_body);
+
+        traces_endpoint.assert_hits(1);
+        while metrics_endpoint.hits() == 0 {
+            exporter.runtime.block_on(async {
+                sleep(Duration::from_millis(100)).await;
+            })
+        }
+        metrics_endpoint.assert_hits(1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn exporter_metrics_v5() {
+        let server = MockServer::start();
+        let response_body = r#"{
+                        "rate_by_service": {
+                            "service:foo,env:staging": 1.0,
+                            "service:,env:": 0.8
+                        }
+                    }"#;
+        let traces_endpoint = server.mock(|when, then| {
+            when.method(POST).path("/v0.5/traces");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(response_body);
+        });
+
+        let metrics_endpoint = server.mock(|when, then| {
+            when.method(POST)
+                .body_contains("\"metric\":\"trace_api.bytes\"")
+                .path("/telemetry/proxy/api/v2/apmtelemetry");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("");
+        });
+
+        let exporter = TraceExporterBuilder::default()
+            .set_url(&server.url("/"))
+            .set_service("foo")
+            .set_env("foo-env")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .enable_telemetry(Some(TelemetryConfig {
+                heartbeat: 100,
+                ..Default::default()
+            }))
+            .set_input_format(TraceExporterInputFormat::V05)
+            .set_output_format(TraceExporterOutputFormat::V05)
+            .build()
+            .unwrap();
+
+        let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (vec![], vec![]);
+        let traces = rmp_serde::to_vec(&v5).unwrap();
         let bytes = tinybytes::Bytes::from(traces);
         let result = exporter.send(bytes, 1).unwrap();
         assert_eq!(result.body, response_body);
