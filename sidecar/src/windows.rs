@@ -14,7 +14,7 @@ use futures::FutureExt;
 use lazy_static::lazy_static;
 use manual_future::ManualFuture;
 use spawn_worker::{write_crashtracking_trampoline, SpawnWorker, Stdio};
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::io::{self, Error};
 use std::os::windows::io::{AsRawHandle, IntoRawHandle, OwnedHandle};
 use std::ptr::null_mut;
@@ -38,8 +38,6 @@ use winapi::{
         winnt::{TokenUser, HANDLE, TOKEN_QUERY, TOKEN_USER},
     },
 };
-use windows::core::PCWSTR;
-use windows::Win32::System::LibraryLoader::LoadLibraryW;
 
 #[no_mangle]
 pub extern "C" fn ddog_daemon_entry_point() {

@@ -251,7 +251,7 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
 
         let pid = GetProcessId(exception_information.hProcess);
         let crash_tid = GetThreadId(exception_information.hThread);
-        let threads = list_threads(pid);
+        let threads = list_threads(pid).expect("Failed to list threads");
         let modules = list_modules(exception_information.hProcess).unwrap_or_else(|_| Vec::new());
 
         let wer_context = read_wer_context(exception_information.hProcess, context as usize)?;
@@ -262,7 +262,7 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
 
         let mut builder = CrashInfoBuilder::new();
 
-        for thread in threads.unwrap() {
+        for thread in threads {
             let stack_result = walk_thread_stack(exception_information.hProcess, thread, &modules);
 
             let stack: StackTrace = stack_result.unwrap_or_else(|e| {
