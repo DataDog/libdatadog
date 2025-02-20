@@ -2277,4 +2277,64 @@ mod api_tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn test_regression_managed_string_table_correctly_maps_ids() {
+        let storage = Rc::new(RwLock::new(ManagedStringStorage::new()));
+        let hello_id: u32;
+        let world_id: u32;
+
+        {
+            let mut storage_guard = storage.write().unwrap();
+            hello_id = storage_guard.intern("hello").unwrap();
+            world_id = storage_guard.intern("world").unwrap();
+        }
+
+        let sample_types = [api::ValueType::new("samples", "count")];
+        let mut profile =
+            Profile::with_string_storage(SystemTime::now(), &sample_types, None, storage.clone());
+
+        let location = api::StringIdLocation {
+            function: api::StringIdFunction {
+                name: api::ManagedStringId { value: hello_id },
+                filename: api::ManagedStringId { value: world_id },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let sample = api::StringIdSample {
+            locations: vec![location],
+            values: vec![1],
+            labels: vec![],
+        };
+
+        profile.add_string_id_sample(sample.clone(), None).unwrap();
+        let pprof_first_profile =
+            pprof::roundtrip_to_pprof(profile.reset_and_return_previous(None).unwrap()).unwrap();
+
+        assert!(pprof_first_profile
+            .string_table
+            .iter()
+            .any(|s| s == "hello"));
+        assert!(pprof_first_profile
+            .string_table
+            .iter()
+            .any(|s| s == "world"));
+
+        // If the cache invalidation on the managed string table is working correctly, these strings
+        // get correctly re-added to the profile's string table
+
+        profile.add_string_id_sample(sample.clone(), None).unwrap();
+        let pprof_second_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+
+        assert!(pprof_second_profile
+            .string_table
+            .iter()
+            .any(|s| s == "hello"));
+        assert!(pprof_second_profile
+            .string_table
+            .iter()
+            .any(|s| s == "world"));
+    }
 }
