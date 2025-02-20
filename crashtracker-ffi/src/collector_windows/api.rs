@@ -49,6 +49,7 @@ use windows::Win32::System::Threading::{GetProcessId, GetThreadId, OpenThread, T
 
 #[no_mangle]
 #[must_use]
+#[cfg(target_os = "windows")]
 /// Initialize the crash-tracking infrastructure.
 ///
 /// # Preconditions
@@ -205,7 +206,7 @@ pub struct WerContext {
 }
 
 #[no_mangle]
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 pub unsafe extern "C" fn ddog_crasht_event_signature_callback(
     _context: *const c_void,
     _exception_information: *const WER_RUNTIME_EXCEPTION_INFORMATION,
@@ -220,7 +221,7 @@ pub unsafe extern "C" fn ddog_crasht_event_signature_callback(
 }
 
 #[no_mangle]
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 pub unsafe extern "C" fn ddog_crasht_debugger_launch_callback(
     _context: *const c_void,
     _exception_information: *const WER_RUNTIME_EXCEPTION_INFORMATION,
@@ -234,7 +235,7 @@ pub unsafe extern "C" fn ddog_crasht_debugger_launch_callback(
 }
 
 #[no_mangle]
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
     context: *const c_void,
     exception_information: *const WER_RUNTIME_EXCEPTION_INFORMATION,

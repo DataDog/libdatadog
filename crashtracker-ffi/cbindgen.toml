@@ -23,6 +23,9 @@ after_includes = """
 
 """
 
+[defines]
+"target_os = windows" = "_WIN32"
+
 [export]
 prefix = "ddog_crasht_"
 renaming_overrides_prefixing = true
