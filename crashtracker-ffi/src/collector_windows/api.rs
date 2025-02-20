@@ -3,6 +3,7 @@
 
 use crate::Metadata;
 use anyhow::{anyhow, Context, Result};
+use core::mem::size_of;
 use datadog_crashtracker::{CrashInfoBuilder, StackFrame, StackTrace, ThreadData};
 use ddcommon::Endpoint;
 use ddcommon_ffi::slice::AsBytes;
@@ -49,7 +50,6 @@ use windows::Win32::System::Threading::{GetProcessId, GetThreadId, OpenThread, T
 
 #[no_mangle]
 #[must_use]
-#[named]
 /// Initialize the crash-tracking infrastructure.
 ///
 /// # Preconditions
@@ -66,9 +66,9 @@ pub unsafe extern "C" fn ddog_crasht_init_windows(
     metadata: Metadata,
 ) -> bool {
     let result: Result<(), _> = (|| {
-        let endpoint = endpoint.map(|endpoint| endpoint.clone());
+        let endpoint = endpoint.cloned();
         let error_context = ErrorContext {
-            endpoint: endpoint,
+            endpoint,
             metadata: metadata.try_into()?,
         };
         let error_context_json = serde_json::to_string(&error_context)?;
@@ -88,11 +88,7 @@ pub unsafe extern "C" fn ddog_crasht_init_windows(
 
     if result.is_err() {
         output_debug_string(
-            format!(
-                "ddog_crasht_init_windows failed: {}",
-                result.err().unwrap().to_string()
-            )
-            .as_str(),
+            format!("ddog_crasht_init_windows failed: {}", result.err().unwrap()).as_str(),
         );
         return false;
     }
@@ -100,10 +96,10 @@ pub unsafe extern "C" fn ddog_crasht_init_windows(
     true
 }
 
-unsafe fn create_registry_key(path: &String) -> Result<()> {
-    // First, check if there is already a key named "path" in SOFTWARE\Microsoft\Windows\Windows Error Reporting\RuntimeExceptionHelperModules,
-    // in either HKEY_LOCAL_MACHINE or HKEY_CURRENT_USER.
-    // If not, create it in HKEY_CURRENT_USER.
+unsafe fn create_registry_key(path: &str) -> Result<()> {
+    // First, check if there is already a key named "path" in SOFTWARE\Microsoft\Windows\Windows
+    // Error Reporting\RuntimeExceptionHelperModules, in either HKEY_LOCAL_MACHINE or
+    // HKEY_CURRENT_USER. If not, create it in HKEY_CURRENT_USER.
 
     // Convert value name to null-terminated wide string
     let mut name_wide: Vec<u16> = path.encode_utf16().collect();
@@ -210,7 +206,6 @@ pub struct WerContext {
 }
 
 #[no_mangle]
-#[named]
 #[cfg(windows)]
 pub unsafe extern "C" fn ddog_crasht_event_signature_callback(
     _context: *const c_void,
@@ -226,7 +221,6 @@ pub unsafe extern "C" fn ddog_crasht_event_signature_callback(
 }
 
 #[no_mangle]
-#[named]
 #[cfg(windows)]
 pub unsafe extern "C" fn ddog_crasht_debugger_launch_callback(
     _context: *const c_void,
@@ -241,7 +235,6 @@ pub unsafe extern "C" fn ddog_crasht_debugger_launch_callback(
 }
 
 #[no_mangle]
-#[named]
 #[cfg(windows)]
 pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
     context: *const c_void,
@@ -274,18 +267,18 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
             let stack: StackTrace;
             let stack_result = walk_thread_stack(exception_information.hProcess, thread, &modules);
 
-            if stack_result.is_err() {
+            let stack: StackTrace = if stack_result.is_err() {
                 output_debug_string(
                     format!(
                         "Failed to walk thread stack: {}",
-                        stack_result.err().unwrap().to_string()
+                        stack_result.err().unwrap()
                     )
                     .as_str(),
                 );
-                stack = StackTrace::new_incomplete();
+                StackTrace::new_incomplete()
             } else {
-                stack = stack_result.unwrap();
-            }
+                stack_result.unwrap()
+            };
 
             if thread == crash_tid {
                 builder
@@ -296,7 +289,7 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
             let thread_data = ThreadData {
                 crashed: thread == crash_tid,
                 name: format!("{}", thread),
-                stack: stack,
+                stack,
                 state: None,
             };
 
@@ -329,7 +322,7 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
         output_debug_string(
             format!(
                 "ddog_crasht_exception_event_callback failed: {}",
-                result.err().unwrap().to_string()
+                result.err().unwrap()
             )
             .as_str(),
         );
@@ -386,7 +379,7 @@ pub unsafe fn read_wer_context(process_handle: HANDLE, base_address: usize) -> R
     let wer_context = WerContext {
         prefix: WER_CONTEXT_PREFIX,
         ptr: static_slice.as_ptr(),
-        len: len,
+        len,
         suffix: WER_CONTEXT_SUFFIX,
     };
 
@@ -403,7 +396,7 @@ struct AlignedContext {
 unsafe fn walk_thread_stack(
     process_handle: HANDLE,
     thread_id: u32,
-    modules: &Vec<ModuleInfo>,
+    modules: &[ModuleInfo],
 ) -> Result<StackTrace> {
     let mut stacktrace = StackTrace::new_incomplete();
     let thread_handle = OpenThread(THREAD_ALL_ACCESS, false, thread_id)?;
@@ -426,11 +419,11 @@ unsafe fn walk_thread_stack(
     #[cfg(target_arch = "x86_64")]
     {
         machine_type = IMAGE_FILE_MACHINE_AMD64.0 as u32;
-        native_frame.AddrPC.Offset = context.ctx.Rip as u64;
+        native_frame.AddrPC.Offset = context.ctx.Rip;
         native_frame.AddrPC.Mode = AddrModeFlat;
-        native_frame.AddrStack.Offset = context.ctx.Rsp as u64;
+        native_frame.AddrStack.Offset = context.ctx.Rsp;
         native_frame.AddrStack.Mode = AddrModeFlat;
-        native_frame.AddrFrame.Offset = context.ctx.Rbp as u64;
+        native_frame.AddrFrame.Offset = context.ctx.Rbp;
         native_frame.AddrFrame.Mode = AddrModeFlat;
     }
 
@@ -508,7 +501,7 @@ struct ModuleInfo {
 
 struct PdbInfo {
     age: u32,
-    signature: GUID,
+    signature: Guid,
 }
 
 unsafe fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>> {
@@ -517,25 +510,21 @@ unsafe fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>
 
     // Get the number of bytes required to store the array of module handles
     let mut cb_needed = 0;
-    if !EnumProcessModules(process_handle, std::ptr::null_mut(), 0, &mut cb_needed).is_ok() {
-        return Err(anyhow!("Failed to get module list size"));
-    }
+    EnumProcessModules(process_handle, std::ptr::null_mut(), 0, &mut cb_needed)
+        .context("Failed to get module list size")?;
 
     // Allocate enough space for the module handles
     let modules_count = cb_needed as usize / size_of::<HMODULE>();
     let mut hmodules: Vec<HMODULE> = Vec::with_capacity(modules_count);
     let mut cb_actual = 0;
 
-    if !EnumProcessModules(
+    EnumProcessModules(
         process_handle,
         hmodules.as_mut_ptr(),
         cb_needed,
         &mut cb_actual,
     )
-    .is_ok()
-    {
-        return Err(anyhow!("Failed to enumerate process modules"));
-    }
+    .context("Failed to enumerate process modules")?;
 
     hmodules.set_len(cb_actual as usize / size_of::<HMODULE>());
 
@@ -614,14 +603,14 @@ struct IMAGE_NT_HEADERS_GENERIC {
 
 #[repr(C)]
 #[derive(Debug)]
-struct GUID {
+struct Guid {
     pub data1: u32,
     pub data2: u16,
     pub data3: u16,
     pub data4: [u8; 8],
 }
 
-impl fmt::LowerHex for GUID {
+impl fmt::LowerHex for Guid {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
@@ -644,7 +633,7 @@ impl fmt::LowerHex for GUID {
 #[repr(C)]
 struct CV_INFO_PDB70 {
     pub signature: u32,
-    pub guid: GUID,
+    pub guid: Guid,
     pub age: u32,
 }
 
@@ -669,17 +658,13 @@ unsafe fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbI
         return Err(anyhow!("Invalid machine type"));
     }
 
-    let debug_data_dir: IMAGE_DATA_DIRECTORY;
-
-    if is_pe32 {
+    let debug_data_dir: IMAGE_DATA_DIRECTORY = if is_pe32 {
         let nt_headers32: IMAGE_NT_HEADERS32 = read_memory(process_handle, nt_headers_address)?;
-        debug_data_dir =
-            nt_headers32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG.0 as usize];
+        nt_headers32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG.0 as usize]
     } else {
         let nt_headers64: IMAGE_NT_HEADERS64 = read_memory(process_handle, nt_headers_address)?;
-        debug_data_dir =
-            nt_headers64.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG.0 as usize];
-    }
+        nt_headers64.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG.0 as usize]
+    };
 
     let debug_dir_buffer = read_memory_raw(
         process_handle,
@@ -722,9 +707,10 @@ unsafe fn get_module_path(
     let len = GetModuleFileNameExW(
         Some(process_handle),
         Some(module_handle),
-        &mut *module_name_buffer,
+        &mut module_name_buffer,
     );
-    if len <= 0 {
+
+    if len == 0 {
         return Err(anyhow!("GetModuleFileNameExW failed: {}", len));
     }
 
@@ -740,8 +726,10 @@ unsafe fn list_threads(pid: u32) -> anyhow::Result<Vec<u32>> {
 
     let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, pid)?;
 
-    let mut thread_entry = THREADENTRY32::default();
-    thread_entry.dwSize = size_of::<THREADENTRY32>() as u32;
+    let mut thread_entry = THREADENTRY32 {
+        dwSize: size_of::<THREADENTRY32>() as u32,
+        ..Default::default()
+    };
 
     if Thread32First(snapshot, &mut thread_entry).is_ok() {
         loop {
@@ -749,7 +737,7 @@ unsafe fn list_threads(pid: u32) -> anyhow::Result<Vec<u32>> {
                 thread_ids.push(thread_entry.th32ThreadID);
             }
 
-            if !Thread32Next(snapshot, &mut thread_entry).is_ok() {
+            if Thread32Next(snapshot, &mut thread_entry).is_err() {
                 break;
             }
         }
