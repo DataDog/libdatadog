@@ -17,7 +17,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::ops::Add;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tokio::select;
 use tokio::sync::Semaphore;
@@ -54,7 +54,7 @@ where
     fetcher_semaphore: Semaphore,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct MultiTargetStats {
     known_runtimes: u32,
     starting_fetchers: u32,
@@ -109,6 +109,10 @@ pub trait MultiTargetHandlers<S> {
 
     fn expired(&self, target: &Arc<Target>);
 
+    /// Called when a fetcher has no active runtimes.
+    /// Beware: This function may be called at any time, e.g. another thread might be attempting to
+    /// call add_runtime() right when no other runtime was left. Be careful with the locking here.
+    /// Will not be called multiple times, unless this specific case was encountered.
     fn dead(&self);
 }
 
@@ -162,7 +166,12 @@ where
         uuid::Uuid::new_v4().to_string()
     }
 
-    fn remove_target(self: &Arc<Self>, runtime_id: &str, target: &Arc<Target>) {
+    fn remove_target(
+        self: &Arc<Self>,
+        runtime_id: &str,
+        target: &Arc<Target>,
+        runtimes: MutexGuard<HashMap<String, RuntimeInfo<N>>>,
+    ) {
         let mut services = self.services.lock().unwrap();
         // "goto" like handling to drop the known_service borrow and be able to change services
         'service_handling: {
@@ -181,7 +190,8 @@ where
                                     let target = target.clone();
                                     tokio::spawn(async move {
                                         future.await;
-                                        this.remove_target(runtime_id.as_str(), &target);
+                                        let runtimes = this.runtimes.lock().unwrap();
+                                        this.remove_target(runtime_id.as_str(), &target, runtimes);
                                     });
                                     return;
                                 }
@@ -213,7 +223,7 @@ where
                         _ => {
                             if *known_service.fetcher.runtime_id.lock().unwrap() == runtime_id {
                                 'changed_rt_id: {
-                                    for (id, runtime) in self.runtimes.lock().unwrap().iter() {
+                                    for (id, runtime) in runtimes.iter() {
                                         if runtime.targets.len() == 1
                                             && runtime.targets.contains_key(target)
                                         {
@@ -366,7 +376,7 @@ where
                         notify_target,
                         targets: HashMap::from([(target.clone(), 1)]),
                     };
-                    self.add_target(info.targets.len() > 1, e.key(), target.clone());
+                    self.add_target(false, e.key(), target.clone());
                     e.insert(info);
                 }
             }
@@ -375,31 +385,29 @@ where
 
     pub fn delete_runtime(self: &Arc<Self>, runtime_id: &str, target: &Arc<Target>) {
         trace!("Removing remote config runtime: {target:?} with runtime id {runtime_id}");
-        {
-            let mut runtimes = self.runtimes.lock().unwrap();
-            let last_removed = {
-                let info = match runtimes.get_mut(runtime_id) {
-                    None => return,
-                    Some(i) => i,
-                };
-                match info.targets.entry(target.clone()) {
-                    Entry::Occupied(mut e) => {
-                        if *e.get() == 1 {
-                            e.remove();
-                        } else {
-                            *e.get_mut() -= 1;
-                            return;
-                        }
-                    }
-                    Entry::Vacant(_) => unreachable!("Missing target runtime"),
-                }
-                info.targets.is_empty()
+        let mut runtimes = self.runtimes.lock().unwrap();
+        let last_removed = {
+            let info = match runtimes.get_mut(runtime_id) {
+                None => return,
+                Some(i) => i,
             };
-            if last_removed {
-                runtimes.remove(runtime_id);
+            match info.targets.entry(target.clone()) {
+                Entry::Occupied(mut e) => {
+                    if *e.get() == 1 {
+                        e.remove();
+                    } else {
+                        *e.get_mut() -= 1;
+                        return;
+                    }
+                }
+                Entry::Vacant(_) => unreachable!("Missing target runtime"),
             }
+            info.targets.is_empty()
+        };
+        if last_removed {
+            runtimes.remove(runtime_id);
         }
-        Self::remove_target(self, runtime_id, target);
+        Self::remove_target(self, runtime_id, target, runtimes);
     }
 
     /// Sets the apply state on a stored file.
@@ -510,7 +518,7 @@ where
 
             this.storage.storage.expired(&fetcher.target);
 
-            {
+            let is_dead = {
                 // scope lock before await
                 trace!(
                     "Remove {:?} from services map at fetcher end",
@@ -518,10 +526,10 @@ where
                 );
                 let mut services = this.services.lock().unwrap();
                 services.remove(&fetcher.target);
-                if services.is_empty() && this.pending_async_insertions.load(Ordering::Relaxed) == 0
-                {
-                    this.storage.storage.dead();
-                }
+                services.is_empty() && this.pending_async_insertions.load(Ordering::Relaxed) == 0
+            };
+            if is_dead {
+                this.storage.storage.dead();
             }
             remove_completer.complete(()).await;
         });
@@ -570,7 +578,7 @@ where
             (starting, active, inactive, removing)
         };
         MultiTargetStats {
-            known_runtimes: self.runtimes.lock().unwrap().len() as u32,
+            known_runtimes: self.active_runtimes() as u32,
             starting_fetchers,
             active_fetchers,
             inactive_fetchers,

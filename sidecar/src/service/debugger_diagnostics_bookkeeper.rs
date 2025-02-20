@@ -136,7 +136,7 @@ impl Drop for DebuggerDiagnosticsBookkeeper {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DebuggerDiagnosticsBookkeeperStats {
     runtime_ids: u32,
     total_probes: u32,
