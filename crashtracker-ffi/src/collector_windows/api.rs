@@ -1,31 +1,33 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use anyhow::{anyhow, Result};
+use crate::Metadata;
+use anyhow::{anyhow, Context, Result};
 use datadog_crashtracker::{CrashInfoBuilder, StackFrame, StackTrace, ThreadData};
 use ddcommon::Endpoint;
+use ddcommon_ffi::slice::AsBytes;
 use function_name::named;
+use serde::{Deserialize, Serialize};
 use std::ffi::{c_void, OsString};
 use std::fmt;
 use std::mem::MaybeUninit;
-use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::os::windows::ffi::OsStringExt;
 use std::ptr::{addr_of, read_unaligned};
-use windows::core::{s, w, HRESULT, PCWSTR};
-use windows::Win32::Foundation::{GetLastError, BOOL, ERROR_SUCCESS, HANDLE, HMODULE, MAX_PATH, S_OK, TRUE};
-use windows::Win32::System::Diagnostics::Debug::{AddrModeFlat, GetThreadContext, OutputDebugStringA, OutputDebugStringW, ReadProcessMemory, StackWalkEx, SymInitializeW, CONTEXT, CONTEXT_FULL_AMD64, CONTEXT_FULL_X86, IMAGE_DATA_DIRECTORY, IMAGE_DEBUG_DIRECTORY, IMAGE_DEBUG_TYPE_CODEVIEW, IMAGE_DIRECTORY_ENTRY_DEBUG, IMAGE_FILE_HEADER, IMAGE_NT_HEADERS32, IMAGE_NT_HEADERS64, IMAGE_OPTIONAL_HEADER_MAGIC, STACKFRAME_EX, SYM_STKWALK_DEFAULT};
+use windows::core::{w, HRESULT, PCWSTR};
+use windows::Win32::Foundation::{BOOL, ERROR_SUCCESS, E_FAIL, HANDLE, HMODULE, S_OK, TRUE};
+use windows::Win32::System::Diagnostics::Debug::{AddrModeFlat, GetThreadContext, OutputDebugStringW, ReadProcessMemory, StackWalkEx, SymInitializeW, CONTEXT, IMAGE_DATA_DIRECTORY, IMAGE_DEBUG_DIRECTORY, IMAGE_DEBUG_TYPE_CODEVIEW, IMAGE_DIRECTORY_ENTRY_DEBUG, IMAGE_FILE_HEADER, IMAGE_NT_HEADERS32, IMAGE_NT_HEADERS64, IMAGE_OPTIONAL_HEADER_MAGIC, STACKFRAME_EX, SYM_STKWALK_DEFAULT};
+#[cfg(target_arch = "x86_64")]
+use windows::Win32::System::Diagnostics::Debug::{CONTEXT_FULL_AMD64};
+#[cfg(target_arch = "x86")]
+use windows::Win32::System::Diagnostics::Debug::{CONTEXT_FULL_X86};
 use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32};
 use windows::Win32::System::ErrorReporting::{WerRegisterRuntimeExceptionModule, WER_RUNTIME_EXCEPTION_INFORMATION};
 use windows::Win32::System::ProcessStatus::{EnumProcessModules, GetModuleFileNameExW, GetModuleInformation, MODULEINFO};
+use windows::Win32::System::Registry::{RegCloseKey, RegCreateKeyExW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE};
 use windows::Win32::System::SystemInformation::{IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_I386};
 use windows::Win32::System::SystemServices::{IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_NT_SIGNATURE};
-use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessId, GetThreadId, OpenThread, THREAD_ALL_ACCESS};
-use ddcommon_ffi::{wrap_with_void_ffi_result, CharSlice, Slice, VoidResult};
-use serde::{Deserialize, Serialize};
-use log::error;
-use windows::core::imp::HSTRING;
-use windows::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, RegQueryValueExW, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE};
-use ddcommon_ffi::slice::AsBytes;
-use crate::Metadata;
+use windows::Win32::System::Threading::{GetProcessId, GetThreadId, OpenThread, THREAD_ALL_ACCESS};
+use ddcommon_ffi::CharSlice;
 
 #[no_mangle]
 #[must_use]
@@ -41,50 +43,32 @@ use crate::Metadata;
 ///   This function is not atomic. A crash during its execution may lead to
 ///   unexpected crash-handling behaviour.
 pub unsafe extern "C" fn ddog_crasht_init_windows(
-    module: HMODULE,
-    endpoint: Option<&mut Endpoint>,
+    module: CharSlice,
+    endpoint: Option<&Endpoint>,
     metadata: Metadata,
 ) -> bool {
-    OutputDebugStringW(w!("ddog_crasht_init_windows"));
     let result: Result<(), _> = (|| {
-        let endpoint_option = if endpoint.is_none() {
-            None
-        } else {
-            Some(endpoint.unwrap().clone())
-        };
-
-        let error_context = ErrorContext { endpoint: endpoint_option, metadata: metadata.try_into()? };
-        let error_context_json = serde_json::to_string(&error_context).unwrap();
+        let endpoint = endpoint.map(|endpoint| endpoint.clone());
+        let error_context = ErrorContext { endpoint: endpoint, metadata: metadata.try_into()? };
+        let error_context_json = serde_json::to_string(&error_context)?;
         set_error_context(&error_context_json);
 
-        let path = get_module_path(GetCurrentProcess(), module)?;
-
+        let path = module.try_to_string()?;
         create_registry_key(&path)?;
 
         let mut wpath: Vec<u16> = path.encode_utf16().collect();
         wpath.push(0); // Ensure null termination
-        WerRegisterRuntimeExceptionModule(PCWSTR::from_raw(wpath.as_ptr()), &WERCONTEXT as *const WerContext as *const c_void)?;
-        OutputDebugStringW(PCWSTR::from_raw(wpath.as_ptr()));
+        WerRegisterRuntimeExceptionModule(PCWSTR::from_raw(wpath.as_ptr()), &raw const WERCONTEXT as *const c_void)?;
         Ok::<(), anyhow::Error>(())
     })();
 
     if result.is_err()
     {
-        OutputDebugStringW(w!("ddog_crasht_init_windows failed"));
-        output_debug_string(result.err().unwrap().to_string());
-
+        output_debug_string(format!("ddog_crasht_init_windows failed: {}", result.err().unwrap().to_string()).as_str());
         return false;
     }
 
-    OutputDebugStringW(w!("ddog_crasht_init_windows succeeded"));
     true
-}
-
-#[no_mangle]
-#[must_use]
-#[named]
-pub unsafe extern "C" fn ddog_crasht_get_wercontext_for_tests() -> *const c_void {
-    return &WERCONTEXT as *const WerContext as *const c_void;
 }
 
 unsafe fn create_registry_key(path: &String) -> Result<()> {
@@ -178,7 +162,7 @@ unsafe fn create_registry_key(path: &String) -> Result<()> {
     Ok(())
 }
 
-unsafe fn output_debug_string(message: String) {
+unsafe fn output_debug_string(message: &str) {
     let mut wstr: Vec<u16> = message.encode_utf16().collect();
     wstr.push(0); // Ensure null termination
     OutputDebugStringW(PCWSTR::from_raw(wstr.as_ptr()));
@@ -224,16 +208,16 @@ pub struct WerContext
 #[named]
 #[cfg(windows)]
 pub unsafe extern "C" fn ddog_crasht_event_signature_callback(
-    pContext: *const c_void,
-    pExceptionInformation: *const WER_RUNTIME_EXCEPTION_INFORMATION,
-    dwIndex: i32,
-    pwszName: *mut u16,
-    pchSize: *mut u32,
-    pwszValue: *mut u16,
-    pchValue: *mut u32,
+    _context: *const c_void,
+    _exception_information: *const WER_RUNTIME_EXCEPTION_INFORMATION,
+    _index: i32,
+    _name: *mut u16,
+    _name_size: *mut u32,
+    _value: *mut u16,
+    _value_size: *mut u32,
 ) -> HRESULT
 {
-    OutputDebugStringW(w!("ddog_crasht_event_signature_callback"));
+    output_debug_string("ddog_crasht_event_signature_callback");
     S_OK
 }
 
@@ -241,14 +225,14 @@ pub unsafe extern "C" fn ddog_crasht_event_signature_callback(
 #[named]
 #[cfg(windows)]
 pub unsafe extern "C" fn ddog_crasht_debugger_launch_callback(
-    pContext: *const c_void,
-    pExceptionInformation: *const WER_RUNTIME_EXCEPTION_INFORMATION,
-    pbIsCustomDebugger: *mut BOOL,
-    pwszDebuggerLaunch: *mut u16,
-    pchDebuggerLaunch: *mut u32,
-    pbIsDebuggerAutolaunch: *mut BOOL,
+    _context: *const c_void,
+    _exception_information: *const WER_RUNTIME_EXCEPTION_INFORMATION,
+    _is_custom_debugger: *mut BOOL,
+    _debugger_launch: *mut u16,
+    _debugger_launch_size: *mut u32,
+    _is_debugger_auto_launch: *mut BOOL,
 ) -> HRESULT {
-    OutputDebugStringW(w!("ddog_crasht_debugger_launch_callback"));
+    output_debug_string("ddog_crasht_debugger_launch_callback");
     S_OK
 }
 
@@ -256,70 +240,77 @@ pub unsafe extern "C" fn ddog_crasht_debugger_launch_callback(
 #[named]
 #[cfg(windows)]
 pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
-    pContext: *const c_void,
-    pExceptionInformation: *const WER_RUNTIME_EXCEPTION_INFORMATION,
-    pbOwnershipClaimed: *mut BOOL,
-    pwszEventName: *mut u16,
-    pchSize: *mut u32,
-    pdwSignatureCount: *mut u32,
+    context: *const c_void,
+    exception_information: *const WER_RUNTIME_EXCEPTION_INFORMATION,
+    _ownership_claimed: *mut BOOL,
+    _event_name: *mut u16,
+    _size: *mut u32,
+    _signature_count: *mut u32,
 ) -> HRESULT {
-    OutputDebugStringW(w!("ddog_crasht_exception_event_callback"));
-    let exception_information = *pExceptionInformation;
-    let sym_init_result = SymInitializeW(exception_information.hProcess, PCWSTR::null(), true);
+    output_debug_string("ddog_crasht_exception_event_callback");
 
-    if sym_init_result.is_err() {
-        return HRESULT::from_win32(sym_init_result.err().unwrap().code().0 as u32);
+    let result: Result<(), _> = (|| {
+        let exception_information = *exception_information;
+        SymInitializeW(exception_information.hProcess, PCWSTR::null(), true)?;
+
+        let pid = GetProcessId(exception_information.hProcess);
+        let crash_tid = GetThreadId(exception_information.hThread);
+        let threads = list_threads(pid);
+        let modules = list_modules(exception_information.hProcess).unwrap_or_else(|_| Vec::new());
+
+        let wer_context = read_wer_context(exception_information.hProcess, context as usize)?;
+
+        let error_context_json = std::slice::from_raw_parts(wer_context.ptr, wer_context.len);
+        let error_context_str = std::str::from_utf8(error_context_json)?;
+        let error_context: ErrorContext = serde_json::from_str(error_context_str)?;
+
+        let mut builder = CrashInfoBuilder::new();
+
+        for thread in threads.unwrap() {
+            let stack: StackTrace;
+            let stack_result = walk_thread_stack(exception_information.hProcess, thread, &modules);
+
+            if stack_result.is_err() {
+                output_debug_string(format!("Failed to walk thread stack: {}", stack_result.err().unwrap().to_string()).as_str());
+                stack = StackTrace::new_incomplete();
+            } else {
+                stack = stack_result.unwrap();
+            }
+
+            if thread == crash_tid {
+                builder.with_stack(stack.clone()).context("Failed to add crashed thread info")?;
+            }
+
+            let thread_data = ThreadData {
+                crashed: thread == crash_tid,
+                name: format!("{}", thread),
+                stack: stack,
+                state: None,
+            };
+
+            builder.with_thread(thread_data).context("Failed to add thread info")?;
+        }
+        builder.with_kind(datadog_crashtracker::ErrorKind::Panic).context("Failed to add error kind")?;
+        builder.with_os_info_this_machine().context("Failed to add OS info")?;
+        builder.with_incomplete(false).context("Failed to set incomplete to false")?;
+        builder.with_metadata(error_context.metadata).context("Failed to add metadata")?;
+        let crash_info = builder.build().context("Failed to build crash info")?;
+
+        crash_info
+            .upload_to_endpoint(&error_context.endpoint)
+            .context("Failed to upload crash info")?;
+
+        Ok::<(), anyhow::Error>(())
+    })();
+
+    if result.is_err()
+    {
+        output_debug_string(format!("ddog_crasht_exception_event_callback failed: {}", result.err().unwrap().to_string()).as_str());
+        return E_FAIL;
     }
 
-    let pid = GetProcessId(exception_information.hProcess);
-    let crash_tid = GetThreadId(exception_information.hThread);
-    let threads = list_threads(pid);
-    let modules = list_modules(exception_information.hProcess).unwrap_or_else(|_| Vec::new());
-
-    let wer_context = read_wer_context(exception_information.hProcess, pContext as usize).unwrap();
-
-    let error_context_json = std::slice::from_raw_parts(wer_context.ptr, wer_context.len);
-    let error_context_str = std::str::from_utf8(error_context_json).unwrap();
-    let error_context: ErrorContext = serde_json::from_str(error_context_str).unwrap();
-
-    let mut builder = CrashInfoBuilder::new();
-
-    for thread in threads.unwrap() {
-        let stack: StackTrace;
-        let stack_result = walk_thread_stack(exception_information.hProcess, thread, &modules);
-
-        if stack_result.is_err() {
-            OutputDebugStringW(w!("Failed to walk thread stack"));
-            output_debug_string(stack_result.err().unwrap().to_string());
-            stack = StackTrace::new_incomplete();
-        } else {
-            stack = stack_result.unwrap();
-        }
-
-        if thread == crash_tid {
-            builder.with_stack(stack.clone()).expect("Failed to add crashed thread info");
-        }
-
-        let thread_data = ThreadData {
-            crashed: thread == crash_tid,
-            name: format!("{}", thread),
-            stack: stack,
-            state: None,
-        };
-
-        builder.with_thread(thread_data).expect("Failed to add thread info");
-    }
-    builder.with_kind(datadog_crashtracker::ErrorKind::Panic).expect("Failed to add error kind");
-    builder.with_os_info_this_machine().expect("Failed to add OS info");
-    builder.with_incomplete(false).expect("Failed to set incomplete to false");
-    builder.with_metadata(error_context.metadata).expect("Failed to add metadata");
-    let crash_info = builder.build().expect("Failed to build crash info");
-
-    crash_info
-        .upload_to_endpoint(&error_context.endpoint)
-        .expect("Failed to upload crash info");
-
-    return S_OK;
+    output_debug_string("ddog_crasht_exception_event_callback succeeded");
+    S_OK
 }
 
 pub unsafe fn read_wer_context(process_handle: HANDLE, base_address: usize) -> Result<WerContext> {
@@ -365,7 +356,7 @@ pub unsafe fn read_wer_context(process_handle: HANDLE, base_address: usize) -> R
     let static_slice = Box::leak(boxed_slice);
 
     // Create a new WerContext with the leaked static reference
-    let mut wer_context = WerContext {
+    let wer_context = WerContext {
         prefix: WER_CONTEXT_PREFIX,
         ptr: static_slice.as_ptr(),
         len: len,
@@ -382,7 +373,7 @@ struct AlignedContext {
     ctx: CONTEXT
 }
 
-pub unsafe fn walk_thread_stack(process_handle: HANDLE, thread_id: u32, modules: &Vec<ModuleInfo>) -> Result<StackTrace> {
+unsafe fn walk_thread_stack(process_handle: HANDLE, thread_id: u32, modules: &Vec<ModuleInfo>) -> Result<StackTrace> {
     let mut stacktrace = StackTrace::new_incomplete();
     let thread_handle = OpenThread(THREAD_ALL_ACCESS, false, thread_id)?;
     let mut context = AlignedContext::default();
@@ -483,7 +474,7 @@ struct PdbInfo {
     signature: GUID,
 }
 
-pub unsafe fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>> {
+unsafe fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>> {
     // Use EnumProcessModules to get a list of modules
     let mut module_infos = Vec::new();
 
@@ -538,7 +529,7 @@ pub unsafe fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleI
         });
     }
 
-    return Ok(module_infos);
+    Ok(module_infos)
 }
 
 unsafe fn read_memory<T>(process_handle: HANDLE, address: u64) -> Result<T> {
@@ -579,7 +570,7 @@ unsafe fn read_memory_raw(process_handle: HANDLE, address: u64, size: usize) -> 
 }
 
 #[repr(C)]
-pub struct IMAGE_NT_HEADERS_GENERIC {
+struct IMAGE_NT_HEADERS_GENERIC {
     pub signature: u32,
     pub file_header: IMAGE_FILE_HEADER,
     pub magic: IMAGE_OPTIONAL_HEADER_MAGIC
@@ -587,7 +578,7 @@ pub struct IMAGE_NT_HEADERS_GENERIC {
 
 #[repr(C)]
 #[derive(Debug)]
-pub struct GUID {
+struct GUID {
     pub data1: u32,
     pub data2: u16,
     pub data3: u16,
@@ -611,7 +602,7 @@ impl fmt::LowerHex for GUID {
 }
 
 #[repr(C)]
-pub struct CV_INFO_PDB70 {
+struct CV_INFO_PDB70 {
     pub signature: u32,
     pub guid: GUID,
     pub age: u32,
@@ -693,10 +684,10 @@ unsafe fn get_module_path(process_handle: HANDLE, module_handle: HMODULE) -> any
         .to_string_lossy()
         .into_owned();
 
-    return Ok(module_name);
+    Ok(module_name)
 }
 
-pub unsafe fn list_threads(pid: u32) -> anyhow::Result<Vec<u32>> {
+unsafe fn list_threads(pid: u32) -> anyhow::Result<Vec<u32>> {
     let mut thread_ids = Vec::new();
 
     let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, pid)?;
@@ -716,5 +707,5 @@ pub unsafe fn list_threads(pid: u32) -> anyhow::Result<Vec<u32>> {
         }
     }
 
-    return Ok(thread_ids);
+    Ok(thread_ids)
 }

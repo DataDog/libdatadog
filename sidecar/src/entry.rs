@@ -208,11 +208,6 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn start_crashtracking() -> anyhow::Result<()> {
-    ddog_setup_crashtracking();
-    Ok(())
-}
-
 pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTransport> {
     let liaison = match cfg.ipc_mode {
         config::IpcMode::Shared => setup::DefaultLiason::ipc_shared(),

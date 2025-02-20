@@ -6,6 +6,7 @@ use crate::setup::pid_shm_path;
 use datadog_ipc::platform::{
     named_pipe_name_from_raw_handle, FileBackedHandle, MappedMem, NamedShmHandle,
 };
+
 use futures::FutureExt;
 use lazy_static::lazy_static;
 use manual_future::ManualFuture;
@@ -34,6 +35,11 @@ use winapi::{
         winnt::{TokenUser, HANDLE, TOKEN_QUERY, TOKEN_USER},
     },
 };
+use windows::core::PCWSTR;
+use windows::Win32::System::LibraryLoader::LoadLibraryW;
+use datadog_crashtracker_ffi::{ddog_crasht_init_windows, Metadata};
+use ddcommon::Endpoint;
+use ddcommon_ffi::CharSlice;
 
 #[no_mangle]
 pub extern "C" fn ddog_daemon_entry_point() {
@@ -129,7 +135,7 @@ pub fn setup_daemon_process(listener: OwnedHandle, spawn_cfg: &mut SpawnWorker) 
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_setup_crashtracking() -> *mut libc::c_char {
+pub extern "C" fn ddog_setup_crashtracking(endpoint: Option<&Endpoint>, metadata: Metadata,) -> bool {
     // Ensure unique process names - we spawn one sidecar per console session id (see
     // setup/windows.rs for the reasoning)
     let result = write_crashtracking_trampoline(&format!(
@@ -138,12 +144,14 @@ pub extern "C" fn ddog_setup_crashtracking() -> *mut libc::c_char {
     ));
 
     if result.is_ok() {
-        // TODO: initialize crashtracking
         let path = result.unwrap().0.into_os_string().into_string().unwrap();
-        return CString::new(path).unwrap().into_raw();
+
+        unsafe {
+            return ddog_crasht_init_windows(CharSlice::from(path.as_str()), endpoint, metadata);
+        }
     }
 
-    return null_mut();
+    false
 }
 
 lazy_static! {

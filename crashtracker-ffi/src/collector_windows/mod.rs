@@ -2,4 +2,4 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(windows)]
 
-mod api;
+pub mod api;

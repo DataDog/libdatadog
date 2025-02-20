@@ -10,6 +10,7 @@ mod demangler;
 mod receiver;
 #[cfg(all(windows, feature = "collector"))]
 mod collector_windows;
+pub use collector_windows::api::ddog_crasht_init_windows;
 #[cfg(all(unix, feature = "collector"))]
 pub use collector::*;
 pub use crash_info::*;
