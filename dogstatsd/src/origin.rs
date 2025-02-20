@@ -118,31 +118,45 @@ pub fn find_metric_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
     None
 }
 
+fn get_first_tag_value<'a>(tags: &'a SortedTags, key: &str) -> Option<&'a str> {
+    tags.find_all(key)
+        .iter()
+        .filter_map(|value| {
+            if !value.is_empty() {
+                Some(value.as_str())
+            } else {
+                None
+            }
+        })
+        .next()
+}
+
 fn is_datadog_metric(prefix: &str) -> bool {
     prefix == DATADOG_PREFIX
 }
 
 fn is_azure_app_services(tags: &SortedTags, prefix: &str) -> bool {
-    tags.get(DD_ORIGIN_TAG_KEY) == Some(AZURE_APP_SERVICES_TAG_VALUE)
+    get_first_tag_value(tags, DD_ORIGIN_TAG_KEY) == Some(AZURE_APP_SERVICES_TAG_VALUE)
         && prefix != AZURE_APP_SERVICES_PREFIX
 }
 
 fn is_google_cloud_run(tags: &SortedTags, prefix: &str) -> bool {
-    tags.get(DD_ORIGIN_TAG_KEY) == Some(GOOGLE_CLOUD_RUN_TAG_VALUE)
+    get_first_tag_value(tags, DD_ORIGIN_TAG_KEY) == Some(GOOGLE_CLOUD_RUN_TAG_VALUE)
         && prefix != GOOGLE_CLOUD_RUN_PREFIX
 }
 
 fn is_azure_container_app(tags: &SortedTags, prefix: &str) -> bool {
-    tags.get(DD_ORIGIN_TAG_KEY) == Some(AZURE_CONTAINER_APP_TAG_VALUE)
+    get_first_tag_value(tags, DD_ORIGIN_TAG_KEY) == Some(AZURE_CONTAINER_APP_TAG_VALUE)
         && prefix != AZURE_CONTAINER_APP_PREFIX
 }
 
 fn is_aws_lambda(tags: &SortedTags, prefix: &str) -> bool {
-    tags.get(AWS_LAMBDA_TAG_KEY).is_some() && prefix != AWS_LAMBDA_PREFIX
+    get_first_tag_value(tags, AWS_LAMBDA_TAG_KEY).is_some() && prefix != AWS_LAMBDA_PREFIX
 }
 
 fn is_aws_step_functions(tags: &SortedTags, prefix: &str) -> bool {
-    tags.get(AWS_STEP_FUNCTIONS_TAG_KEY).is_some() && prefix != AWS_STEP_FUNCTIONS_PREFIX
+    get_first_tag_value(tags, AWS_STEP_FUNCTIONS_TAG_KEY).is_some()
+        && prefix != AWS_STEP_FUNCTIONS_PREFIX
 }
 
 #[cfg(test)]
@@ -201,5 +215,14 @@ mod tests {
                 ..Default::default()
             })
         );
+    }
+
+    #[test]
+    fn test_get_first_tag_value() {
+        let tags = SortedTags::parse("a,a:1,b:2,c:3").unwrap();
+        assert_eq!(get_first_tag_value(&tags, "a"), Some("1"));
+        assert_eq!(get_first_tag_value(&tags, "b"), Some("2"));
+        assert_eq!(get_first_tag_value(&tags, "c"), Some("3"));
+        assert_eq!(get_first_tag_value(&tags, "d"), None);
     }
 }
