@@ -469,8 +469,7 @@ unsafe fn walk_thread_stack(
             if let Some(pdb_info) = &module.pdb_info {
                 frame.build_id = Some(format!("{:x}{:x}", pdb_info.signature, pdb_info.age));
                 frame.build_id_type = Some(datadog_crashtracker::BuildIdType::PDB);
-                frame.file_type = Some(datadog_crashtracker::FileType::PDB);
-                frame.build_id_type = Some(datadog_crashtracker::BuildIdType::PDB);
+                frame.file_type = Some(datadog_crashtracker::FileType::PE);
             }
         }
 
