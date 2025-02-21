@@ -48,7 +48,7 @@ mod linux {
   use rand::distributions::Alphanumeric;
 
   /// Create a memfd file storing the tracer metadata.
-  pub fn store_tracer_metadata(data: super::TracerMetadata) -> Result<super::AnonymousFileHandle, String> {
+  pub fn store_tracer_metadata(data: &super::TracerMetadata) -> Result<super::AnonymousFileHandle, String> {
     let uid: String = rand::thread_rng()
         .sample_iter(&Alphanumeric)
         .take(8)
@@ -82,8 +82,8 @@ mod linux {
 
 #[cfg(not(target_os = "linux"))]
 mod other {
-  pub fn store_tracer_metadata() -> Result<super::AnonymousFileHandle, String> {
-    Ok(super::AnonymousFileHandle::Other(()));
+  pub fn store_tracer_metadata(_data: &super::TracerMetadata) -> Result<super::AnonymousFileHandle, String> {
+    Ok(super::AnonymousFileHandle::Other(()))
   }
 }
 
