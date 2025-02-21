@@ -369,7 +369,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
 mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;
-    use datadog_trace_utils::span::v04::Span;
+    use datadog_trace_utils::span::v04::SpanBytes;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::{borrow::Borrow, mem::MaybeUninit};
@@ -758,7 +758,7 @@ mod tests {
 
             assert_eq!(ret, None);
 
-            let data = rmp_serde::to_vec_named::<Vec<Vec<Span>>>(&vec![vec![]]).unwrap();
+            let data = rmp_serde::to_vec_named::<Vec<Vec<SpanBytes>>>(&vec![vec![]]).unwrap();
             let traces = ByteSlice::new(&data);
             ret = ddog_trace_exporter_send(
                 Some(exporter.as_ref()),
