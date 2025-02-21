@@ -23,7 +23,7 @@ use ddcommon::header::{
 };
 use ddcommon::tag::Tag;
 use ddcommon::{connector, tag, Endpoint};
-use dogstatsd_client::{new_flusher, Client, DogStatsDAction};
+use dogstatsd_client::{new, Client, DogStatsDAction};
 use either::Either;
 use hyper::body::HttpBody;
 use hyper::http::uri::PathAndQuery;
@@ -921,8 +921,8 @@ impl TraceExporterBuilder {
             .build()?;
 
         let dogstatsd = self.dogstatsd_url.and_then(|u| {
-            new_flusher(Endpoint::from_slice(&u)).ok() // If we couldn't set the endpoint return
-                                                       // None
+            new(Endpoint::from_slice(&u)).ok() // If we couldn't set the endpoint return
+                                               // None
         });
 
         let base_url = self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL);
