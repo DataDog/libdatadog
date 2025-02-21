@@ -1811,7 +1811,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let trace_chunk = vec![Span {
+        let trace_chunk = vec![SpanBytes {
             duration: 10,
             ..Default::default()
         }];
