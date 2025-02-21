@@ -3,17 +3,7 @@
 
 #[cfg(target_os = "linux")]
 use memfd::{Memfd, MemfdOptions};
-#[cfg(target_os = "linux")]
-use rand::Rng;
-#[cfg(target_os = "linux")]
-use log::warn;
-#[cfg(target_os = "linux")]
-use std::io::Write;
-#[cfg(target_os = "linux")]
-use rand::distributions::Alphanumeric;
 use serde::Serialize;
-#[cfg(target_os = "linux")]
-use rmp_serde::Serializer;
 
 /// This struct MUST be backward compatible.
 #[derive(Serialize, Debug)]
@@ -48,39 +38,56 @@ pub enum AnonymousFileHandle {
     Other(()),
 }
 
-/// Create the anonymous file storing the tracer metadata.
 #[cfg(target_os = "linux")]
-pub fn store_tracer_metadata(data: TracerMetadata) -> Result<AnonymousFileHandle, String> {
+mod linux {
+  use serde::ser::Serialize;
+  use rand::Rng;
+  use log::warn;
+  use std::io::Write;
+  use rmp_serde::Serializer;
+  use rand::distributions::Alphanumeric;
+
+  /// Create a memfd file storing the tracer metadata.
+  pub fn store_tracer_metadata(data: super::TracerMetadata) -> Result<super::AnonymousFileHandle, String> {
     let uid: String = rand::thread_rng()
         .sample_iter(&Alphanumeric)
         .take(8)
         .map(char::from)
         .collect();
-    let mfd_name: String = format!("{}-{}", "datadog-tracer-info", uid);
 
-    let mfd = MemfdOptions::default()
+    let mfd_name: String = format!("datadog-tracer-info-{}", uid);
+
+    let mfd = super::MemfdOptions::default()
         .close_on_exec(true)
         .allow_sealing(true)
         .create::<&str>(mfd_name.as_ref())
         .map_err(|e| format!("unable to create memfd: {}", e))?;
 
     let mut buf = Vec::new();
-    data.serialize(&mut Serializer::new(&mut buf).with_struct_map())
-    .unwrap();
+    data.serialize(&mut Serializer::new(&mut buf).with_struct_map()).unwrap();
 
     mfd.as_file().write_all(&buf)
         .map_err(|e| format!("unable to write into memfd: {}", e))?;
+
     mfd.add_seals(&[
         memfd::FileSeal::SealShrink,
         memfd::FileSeal::SealGrow,
         memfd::FileSeal::SealSeal,
     ])
-    .unwrap_or_else(|e| warn!("Unable to seal: {}", e));
+    .unwrap_or_else(|e| warn!("unable to seal: {}", e));
 
-    Ok(AnonymousFileHandle::Linux(Box::new(mfd)))
+    Ok(super::AnonymousFileHandle::Linux(Box::new(mfd)))
+  }
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn store_tracer_metadata(_data: TracerMetadata) -> Result<AnonymousFileHandle, String> {
-    return Ok(AnonymousFileHandle::Other(()));
+mod other {
+  pub fn store_tracer_metadata() -> Result<super::AnonymousFileHandle, String> {
+    Ok(super::AnonymousFileHandle::Other(()));
+  }
 }
+
+#[cfg(target_os = "linux")]
+pub use linux::*;
+#[cfg(not(target_os = "linux"))]
+pub use other::*;
