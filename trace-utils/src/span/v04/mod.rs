@@ -5,4 +5,4 @@ mod span;
 
 pub mod trace_utils;
 
-pub use span::{Span, SpanBytes, SpanKey, SpanKeyParseError, SpanLink, SpanLinkBytes, SpanValue};
+pub use span::{Span, SpanBytes, SpanKey, SpanKeyParseError, SpanLink, SpanLinkBytes, SpanText};

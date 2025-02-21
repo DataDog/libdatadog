@@ -53,12 +53,12 @@ impl FromStr for SpanKey {
 
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
-/// from a static str.
-pub trait SpanValue: Eq + Hash + Borrow<str> {}
-/// Implement the SpanValue trait for any type which satisfies the sub trait.
-impl<T: Eq + Hash + Borrow<str>> SpanValue for T {}
+/// from a static str and check if the string is empty.
+pub trait SpanText: Eq + Hash + Borrow<str> {}
+/// Implement the SpanText trait for any type which satisfies the sub traits.
+impl<T: Eq + Hash + Borrow<str>> SpanText for T {}
 
-/// Checks if the `value` represents an empty string. Used to skip serializing empty strings in
+/// Checks if the `value` represents an empty string. Used to skip serializing empty strings
 /// with serde.
 fn is_empty_str<T: Borrow<str>>(value: &T) -> bool {
     value.borrow().is_empty()
@@ -70,15 +70,15 @@ fn is_empty_str<T: Borrow<str>>(value: &T) -> bool {
 /// or borrowed (e.g. &str). To define a generic function taking any `Span<T>` you can use the
 /// [`SpanValue`] trait:
 /// ```
-/// use datadog_trace_utils::span::v04::{Span, SpanValue};
-/// fn foo<T: SpanValue>(span: Span<T>) {
+/// use datadog_trace_utils::span::v04::{Span, SpanText};
+/// fn foo<T: SpanText>(span: Span<T>) {
 ///     let _ = span.meta.get("foo");
 /// }
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Span<T>
 where
-    T: SpanValue,
+    T: SpanText,
 {
     pub service: T,
     pub name: T,
@@ -108,7 +108,7 @@ where
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct SpanLink<T>
 where
-    T: SpanValue,
+    T: SpanText,
 {
     pub trace_id: u64,
     pub trace_id_high: u64,
