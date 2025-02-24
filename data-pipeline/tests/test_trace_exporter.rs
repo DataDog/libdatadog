@@ -19,17 +19,19 @@ mod tracing_integration_tests {
 
         let relative_snapshot_path = "data-pipeline/tests/snapshots/";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
-        // let test_agent_url = test_agent
-        //     .get_uri_for_endpoint("v0.4/traces", Some("compare_v04_trace_snapshot_test"))
-        //     .await;
+        let test_agent_url = test_agent
+            .get_uri_for_endpoint("v0.4/traces", Some("compare_v04_trace_snapshot_test"))
+            .await;
 
-        let test_agent_endpoint_uri = test_agent.get_uri_for_endpoint("v0.4/traces", None).await;
+        // let test_agent_endpoint_uri = test_agent.get_uri_for_endpoint("v0.4/traces", None).await;
         // TODO: EK - This is a hack to get the base url and port for now
-        let test_agent_endpoint_full_url = test_agent_endpoint_uri.to_string();
+        let test_agent_endpoint_full_url = test_agent_url.to_string();
+        println!("test agent endpoint: {}", test_agent_endpoint_full_url);
         let base_and_port = test_agent_endpoint_full_url
             .split("/v0.4/traces")
             .collect::<Vec<&str>>()[0];
         let url = base_and_port.to_string();
+        // let url = test_agent_endpoint_full_url;
         println!("Test agent url: {}", url);
 
         let res = task::spawn_blocking(move || {
@@ -42,6 +44,7 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
+                .set_query_params("test_session_token=compare_v04_trace_snapshot_test")
                 .build()
                 .expect("Unable to build TraceExporter");
 
@@ -64,5 +67,6 @@ mod tracing_integration_tests {
         .await;
 
         let _response = res.unwrap();
+        assert_eq!(1, 2);
     }
 }
