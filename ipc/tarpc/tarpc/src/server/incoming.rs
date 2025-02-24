@@ -4,7 +4,7 @@ use super::{
 };
 use futures::prelude::*;
 use std::{fmt, hash::Hash};
-
+use std::fmt::Debug;
 #[cfg(feature = "tokio1")]
 use super::{tokio::TokioServerExecutor, Serve};
 
@@ -13,6 +13,7 @@ pub trait Incoming<C>
 where
     Self: Sized + Stream<Item = C>,
     C: Channel,
+    C::Req: Debug,
 {
     /// Enforces channel per-key limits.
     fn max_channels_per_key<K, KF>(self, n: u32, keymaker: KF) -> MaxChannelsPerKey<Self, K, KF>
@@ -45,5 +46,6 @@ impl<S, C> Incoming<C> for S
 where
     S: Sized + Stream<Item = C>,
     C: Channel,
+    C::Req: Debug,
 {
 }

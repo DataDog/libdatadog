@@ -24,6 +24,7 @@ use futures::{
 use in_flight_requests::{AlreadyExistsError, InFlightRequests};
 use pin_project::pin_project;
 use std::{error::Error, fmt, marker::PhantomData, pin::Pin};
+use std::fmt::Debug;
 use tracing::{info_span, instrument::Instrument, Span};
 
 mod in_flight_requests;
@@ -60,7 +61,7 @@ impl Default for Config {
 
 impl Config {
     /// Returns a channel backed by `transport` and configured with `self`.
-    pub fn channel<Req, Resp, T>(self, transport: T) -> BaseChannel<Req, Resp, T>
+    pub fn channel<Req: Debug, Resp, T>(self, transport: T) -> BaseChannel<Req, Resp, T>
     where
         T: Transport<Response<Resp>, ClientMessage<Req>>,
     {
@@ -69,7 +70,7 @@ impl Config {
 }
 
 /// Equivalent to a `FnOnce(Req) -> impl Future<Output = Resp>`.
-pub trait Serve<Req> {
+pub trait Serve<Req: Debug> {
     /// Type of response.
     type Resp;
 
@@ -85,7 +86,7 @@ pub trait Serve<Req> {
     fn serve(self, ctx: context::Context, req: Req) -> Self::Fut;
 }
 
-impl<Req, Resp, Fut, F> Serve<Req> for F
+impl<Req: Debug, Resp, Fut, F> Serve<Req> for F
 where
     F: FnOnce(context::Context, Req) -> Fut,
     Fut: Future<Output = Resp>,
@@ -109,7 +110,7 @@ where
 /// messages. Instead, it internally handles them by cancelling corresponding requests (removing
 /// the corresponding in-flight requests and aborting their handlers).
 #[pin_project]
-pub struct BaseChannel<Req, Resp, T> {
+pub struct BaseChannel<Req: Debug, Resp, T> {
     config: Config,
     /// Writes responses to the wire and reads requests off the wire.
     #[pin]
@@ -125,7 +126,7 @@ pub struct BaseChannel<Req, Resp, T> {
     ghost: PhantomData<(Req, Resp)>,
 }
 
-impl<Req, Resp, T> BaseChannel<Req, Resp, T>
+impl<Req: Debug, Resp, T> BaseChannel<Req, Resp, T>
 where
     T: Transport<Response<Resp>, ClientMessage<Req>>,
 {
@@ -220,7 +221,7 @@ where
     }
 }
 
-impl<Req, Resp, T> fmt::Debug for BaseChannel<Req, Resp, T> {
+impl<Req: Debug, Resp, T> fmt::Debug for BaseChannel<Req, Resp, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "BaseChannel")
     }
@@ -346,7 +347,7 @@ where
         Self: Sized,
         S: Serve<Self::Req, Resp = Self::Resp> + Send + 'static,
         S::Fut: Send,
-        Self::Req: Send + 'static,
+        Self::Req: Send + Debug + 'static,
         Self::Resp: Send + 'static,
     {
         self.requests().execute(serve)
@@ -367,7 +368,7 @@ where
     Timer(#[source] ::tokio::time::error::Error),
 }
 
-impl<Req, Resp, T> Stream for BaseChannel<Req, Resp, T>
+impl<Req: Debug, Resp, T> Stream for BaseChannel<Req, Resp, T>
 where
     T: Transport<Response<Resp>, ClientMessage<Req>>,
 {
@@ -472,7 +473,7 @@ where
     }
 }
 
-impl<Req, Resp, T> Sink<RequestResponse<Resp>> for BaseChannel<Req, Resp, T>
+impl<Req: Debug, Resp, T> Sink<RequestResponse<Resp>> for BaseChannel<Req, Resp, T>
 where
     T: Transport<Response<Resp>, ClientMessage<Req>>,
     T::Error: Error,
@@ -530,13 +531,13 @@ where
     }
 }
 
-impl<Req, Resp, T> AsRef<T> for BaseChannel<Req, Resp, T> {
+impl<Req: Debug, Resp, T> AsRef<T> for BaseChannel<Req, Resp, T> {
     fn as_ref(&self) -> &T {
         self.transport.get_ref()
     }
 }
 
-impl<Req, Resp, T> Channel for BaseChannel<Req, Resp, T>
+impl<Req: Debug, Resp, T> Channel for BaseChannel<Req, Resp, T>
 where
     T: Transport<Response<Resp>, ClientMessage<Req>>,
 {
@@ -721,7 +722,7 @@ pub struct InFlightRequest<Req, Res> {
     response_tx: mpsc::Sender<RequestResponse<Res>>,
 }
 
-impl<Req, Res> InFlightRequest<Req, Res> {
+impl<Req: Debug, Res> InFlightRequest<Req, Res> {
     /// Returns a reference to the request.
     pub fn get(&self) -> &Request<Req> {
         &self.request
