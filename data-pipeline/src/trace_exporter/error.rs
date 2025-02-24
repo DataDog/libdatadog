@@ -9,8 +9,10 @@ use rmp_serde::encode::Error as EncodeError;
 use std::error::Error;
 use std::fmt::{Debug, Display};
 
+/// Represents different kinds of errors that can occur when interacting with the agent.
 #[derive(Debug, PartialEq)]
 pub enum AgentErrorKind {
+    /// Indicates that the agent returned an empty response.
     EmptyResponse,
 }
 
@@ -22,35 +24,48 @@ impl Display for AgentErrorKind {
     }
 }
 
+/// Represents different kinds of errors that can occur during the builder process.
 #[derive(Debug, PartialEq)]
 pub enum BuilderErrorKind {
-    InvalidUri,
+    /// Represents an error when an invalid URI is provided.
+    /// The associated `String` contains underlying error message.
+    InvalidUri(String),
+    /// Indicates that the telemetry configuration is invalid.
     InvalidTelemetryConfig,
 }
 
 impl Display for BuilderErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BuilderErrorKind::InvalidUri => write!(f, "Invalid URI"),
+            BuilderErrorKind::InvalidUri(msg) => write!(f, "Invalid URI: {}", msg),
             BuilderErrorKind::InvalidTelemetryConfig => {
                 write!(f, "Invalid telemetry configuration")
             }
         }
     }
 }
-
+/// Represents different kinds of network errors.
 #[derive(Copy, Clone, Debug)]
 pub enum NetworkErrorKind {
+    /// Indicates an error with the body of the request/response.
     Body,
+    /// Indicates that the request was canceled.
     Canceled,
+    /// Indicates that the connection was closed.
     ConnectionClosed,
+    /// Indicates that the message is too large.
     MessageTooLarge,
+    /// Indicates a parsing error.
     Parse,
+    /// Indicates that the request timed out.
     TimedOut,
+    /// Indicates an unknown error.
     Unknown,
+    /// Indicates that the status code is incorrect.
     WrongStatus,
 }
 
+/// Represents a network error, containing the kind of error and the source error.
 #[derive(Debug)]
 pub struct NetworkError {
     kind: NetworkErrorKind,
@@ -134,8 +149,8 @@ impl From<EncodeError> for TraceExporterError {
 }
 
 impl From<hyper::http::uri::InvalidUri> for TraceExporterError {
-    fn from(_value: hyper::http::uri::InvalidUri) -> Self {
-        TraceExporterError::Builder(BuilderErrorKind::InvalidUri)
+    fn from(value: hyper::http::uri::InvalidUri) -> Self {
+        TraceExporterError::Builder(BuilderErrorKind::InvalidUri(value.to_string()))
     }
 }
 

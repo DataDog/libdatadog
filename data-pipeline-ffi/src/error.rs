@@ -85,7 +85,7 @@ impl From<TraceExporterError> for ExporterError {
                 AgentErrorKind::EmptyResponse => ExporterErrorCode::HttpEmptyBody,
             },
             TraceExporterError::Builder(e) => match e {
-                BuilderErrorKind::InvalidUri => ExporterErrorCode::InvalidUrl,
+                BuilderErrorKind::InvalidUri(_) => ExporterErrorCode::InvalidUrl,
                 BuilderErrorKind::InvalidTelemetryConfig => ExporterErrorCode::InvalidArgument,
             },
             TraceExporterError::Deserialization(_) => ExporterErrorCode::Serde,
