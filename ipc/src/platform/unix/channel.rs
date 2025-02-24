@@ -93,20 +93,25 @@ impl Write for Channel {
             }
 
             let fds: Vec<RawFd> = handles.iter().map(AsRawFd::as_raw_fd).collect();
-            match socket.send_with_fd(buf, &fds) {
-                Ok(0) => {
-                    self.metadata.reenqueue_for_sending(handles);
-                    return Err(io::Error::new(
-                        ErrorKind::WriteZero,
-                        "failed to write whole buffer",
-                    ));
-                }
-                Ok(n) => buf = &buf[n..],
-                Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
-                Err(e) => {
-                    self.metadata.reenqueue_for_sending(handles);
+            loop {
+                match socket.send_with_fd(buf, &fds) {
+                    Ok(0) => {
+                        self.metadata.reenqueue_for_sending(handles);
+                        return Err(io::Error::new(
+                            ErrorKind::WriteZero,
+                            "failed to write whole buffer",
+                        ));
+                    }
+                    Ok(n) => {
+                        buf = &buf[n..];
+                        break;
+                    },
+                    Err(ref e) if e.kind() == ErrorKind::Interrupted => { /* retry */ }
+                    Err(e) => {
+                        self.metadata.reenqueue_for_sending(handles);
 
-                    return Err(e);
+                        return Err(e);
+                    }
                 }
             }
         }
