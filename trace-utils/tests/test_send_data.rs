@@ -4,13 +4,11 @@
 #[cfg(test)]
 mod tracing_integration_tests {
     use datadog_trace_utils::send_data::SendData;
+    use datadog_trace_utils::test_utils::create_test_json_span;
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
-    use datadog_trace_utils::test_utils::{
-        create_test_json_span, create_test_no_alloc_span, create_test_span,
-    };
     use datadog_trace_utils::trace_utils::TracerHeaderTags;
     use datadog_trace_utils::tracer_payload::{
-        DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadCollection, TracerPayloadParams,
+        DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadParams,
     };
     #[cfg(target_os = "linux")]
     use ddcommon::connector::uds::socket_path_to_uri;
@@ -22,7 +20,6 @@ mod tracing_integration_tests {
     use std::fs::Permissions;
     #[cfg(target_os = "linux")]
     use std::os::unix::fs::PermissionsExt;
-    use tinybytes::BytesString;
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
