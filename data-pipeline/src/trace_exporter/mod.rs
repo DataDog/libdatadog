@@ -22,9 +22,10 @@ use ddcommon::header::{
     APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
 };
 use ddcommon::tag::Tag;
-use ddcommon::{connector, tag, Endpoint};
+use ddcommon::{connector, parse_uri, tag, Endpoint};
 use dogstatsd_client::{new, Client, DogStatsDAction};
 use either::Either;
+use error::BuilderErrorKind;
 use hyper::body::HttpBody;
 use hyper::http::uri::PathAndQuery;
 use hyper::{header::CONTENT_TYPE, Body, Method, Uri};
@@ -781,7 +782,18 @@ pub struct TraceExporterBuilder {
 }
 
 impl TraceExporterBuilder {
-    /// Set url of the agent
+    /// Sets the URL of the agent.
+    ///
+    /// The agent supports the following URL schemes:
+    ///
+    /// - **TCP:** `http://<host>:<port>`
+    ///   - Example: `set_url("http://localhost:8126")`
+    ///
+    /// - **UDS (Unix Domain Socket):** `unix://<path>`
+    ///   - Example: `set_url("unix://var/run/datadog/apm.socket")`
+    ///
+    /// - **Windows Named Pipe:** `windows:\\.\pipe\<name>`
+    ///   - Example: `set_url(r"windows:\\.\pipe\datadog-apm")`
     pub fn set_url(mut self, url: &str) -> Self {
         self.url = Some(url.to_owned());
         self
@@ -926,7 +938,10 @@ impl TraceExporterBuilder {
         });
 
         let base_url = self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL);
-        let agent_url: hyper::Uri = base_url.parse()?;
+
+        let agent_url: hyper::Uri = parse_uri(base_url).map_err(|e: anyhow::Error| {
+            TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
+        })?;
 
         let libdatadog_version = tag!("libdatadog_version", env!("CARGO_PKG_VERSION"));
         let mut stats = StatsComputationStatus::Disabled;
@@ -1608,7 +1623,10 @@ mod tests {
             _ => None,
         };
 
-        assert_eq!(err.unwrap(), BuilderErrorKind::InvalidUri);
+        assert_eq!(
+            err.unwrap(),
+            BuilderErrorKind::InvalidUri("empty string".to_string())
+        );
     }
 
     #[test]
