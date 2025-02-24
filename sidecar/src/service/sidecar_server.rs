@@ -133,6 +133,7 @@ impl SidecarServer {
     /// * `async_channel`: An `AsyncChannel` that represents the connection to the client.
     #[cfg_attr(not(windows), allow(unused_mut))]
     pub async fn accept_connection(mut self, async_channel: AsyncChannel) {
+        let handle = async_channel.handle();
         #[cfg(windows)]
         {
             self.process_handle = async_channel
@@ -164,7 +165,7 @@ impl SidecarServer {
         ));
 
         if let Err(e) = executor.await {
-            warn!("Error from executor: {e:?}");
+            warn!("Error from executor for handle {handle}: {e:?}");
         }
 
         self.process_interceptor_response(session_interceptor.await)
@@ -804,6 +805,7 @@ impl SidecarInterface for SidecarServer {
         _len: usize,
         headers: SerializedTracerHeaderTags,
     ) -> Self::SendTraceV04ShmFut {
+        
         if let Some(endpoint) = self
             .get_session(&instance_id.session_id)
             .get_trace_config()
@@ -819,6 +821,8 @@ impl SidecarInterface for SidecarServer {
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }
             });
+        } else {
+            warn!("Received trace data ({handle:?}) for missing session {}", instance_id.session_id);
         }
 
         no_response()
@@ -843,6 +847,8 @@ impl SidecarInterface for SidecarServer {
                 let bytes = tinybytes::Bytes::from(data);
                 self.send_trace_v04(&headers, bytes, &endpoint);
             });
+        } else {
+            warn!("Received trace data for missing session {}", instance_id.session_id);
         }
 
         no_response()

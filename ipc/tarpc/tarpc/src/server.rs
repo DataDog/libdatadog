@@ -193,7 +193,7 @@ where
             request.context.trace_context.new_child()
         });
         let entered = span.enter();
-        tracing::debug!("ReceiveRequest");
+        tracing::debug!("ReceiveRequest {request:?}");
         let start = self.in_flight_requests_mut().start_request(
             request.id,
             request.context.deadline,
@@ -767,21 +767,21 @@ impl<Req: Debug, Res> InFlightRequest<Req, Res> {
         span.record("otel.name", &method.unwrap_or(""));
         let _ = Abortable::new(
             async move {
-                tracing::info!("BeginRequest");
+                tracing::info!("BeginRequest for request {request_id}");
                 let response = serve.serve(context, message).await;
 
                 tracing::info!("CompleteRequest");
                 if context.discard_response {
                     let response = RequestResponse::Discarded { request_id };
                     let _ = response_tx.send(response).await;
-                    tracing::debug!("DiscardingResponse");
+                    tracing::debug!("DiscardingResponse for request {request_id}");
                 } else {
                     let response = RequestResponse::Response(Response {
                         request_id,
                         message: Ok(response),
                     });
                     let _ = response_tx.send(response).await;
-                    tracing::debug!("BufferResponse");
+                    tracing::debug!("BufferResponse for request {request_id}");
                 }
             },
             abort_registration,

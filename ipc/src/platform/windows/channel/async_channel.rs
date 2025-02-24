@@ -36,10 +36,10 @@ pub struct AsyncChannel {
 }
 
 macro_rules! use_inner {
-    ($base:expr, $method:ident($($args:expr),+)) => {
+    ($base:expr, $method:ident($($args:expr),*)) => {
         match $base.inner {
-            NamedPipe::Client(ref client) => client.$method($($args),+),
-            NamedPipe::Server(ref server) => server.$method($($args),+),
+            NamedPipe::Client(ref client) => client.$method($($args),*),
+            NamedPipe::Server(ref server) => server.$method($($args),*),
         }
     }
 }
@@ -60,6 +60,10 @@ impl AsyncChannel {
 
     pub fn try_write(&self, buf: &[u8]) -> io::Result<usize> {
         use_inner!(self, try_write(buf))
+    }
+
+    pub fn handle(&self) -> i32 {
+        use_inner!(self, as_raw_handle()) as i32
     }
 }
 
