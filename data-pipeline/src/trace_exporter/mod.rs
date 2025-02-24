@@ -290,6 +290,7 @@ impl TraceExporter {
                     error::AgentErrorKind::EmptyResponse,
                 ));
             }
+
             Ok(AgentResponse::from(res))
         })
     }
@@ -693,6 +694,7 @@ impl TraceExporter {
                                     return Err(TraceExporterError::from(err));
                                 }
                             };
+
                             if status.is_success() {
                                 self.emit_metric(
                                     HealthMetric::Count(
