@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::send_data::SendData;
-use crate::span::v04::Span;
+use crate::span::v04::SpanBytes;
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use datadog_trace_protobuf::pb;
@@ -23,8 +23,8 @@ pub fn create_test_no_alloc_span(
     parent_id: u64,
     start: i64,
     is_top_level: bool,
-) -> Span {
-    let mut span = Span {
+) -> SpanBytes {
+    let mut span = SpanBytes {
         trace_id,
         span_id,
         service: BytesString::from_slice("test-service".as_ref()).unwrap(),
