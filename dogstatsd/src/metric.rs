@@ -169,16 +169,28 @@ pub struct Metric {
 
     /// ID given a name and tagset.
     pub id: u64,
+    // Timestamp
+    pub timestamp: i64,
 }
 
 impl Metric {
-    pub fn new(name: Ustr, value: MetricValue, tags: Option<SortedTags>) -> Metric {
+    pub fn new(name: Ustr, value: MetricValue, tags: Option<SortedTags>, timestamp: Option<i64>) -> Metric {
         let id = id(name, &tags);
+        let timestamp = timestamp.unwrap_or_else(|| {
+            std::time::UNIX_EPOCH
+                .elapsed()
+                .expect("unable to poll clock, unrecoverable")
+                .as_secs()
+                .try_into()
+                .unwrap_or_default()
+        });
+        
         Metric {
             name,
             value,
             tags,
             id,
+            timestamp,
         }
     }
 }
@@ -222,13 +234,16 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
                 return Err(ParseError::Raw(format!("Invalid metric type: {t}")));
             }
         };
+        // TODO parse timestamp
         let name = Ustr::from(caps.name("name").unwrap().as_str());
         let id = id(name, &tags);
+        let now = std::time::UNIX_EPOCH.elapsed().expect("unable to poll clock, unrecoverable").as_secs().try_into().unwrap_or_default();
         return Ok(Metric {
             name,
             value: metric_value,
             tags,
             id,
+            timestamp: now,
         });
     }
     Err(ParseError::Raw(format!("Invalid metric format {input}")))

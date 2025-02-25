@@ -117,19 +117,13 @@ impl Aggregator {
 
     #[must_use]
     pub fn distributions_to_protobuf(&self) -> SketchPayload {
-        let now = time::UNIX_EPOCH
-            .elapsed()
-            .expect("unable to poll clock, unrecoverable")
-            .as_secs()
-            .try_into()
-            .unwrap_or_default();
         let mut sketch_payload = SketchPayload::new();
 
         sketch_payload.sketches = self
             .map
             .iter()
             .filter_map(|entry| match entry.value {
-                MetricValue::Distribution(_) => build_sketch(now, entry, self.tags.clone()),
+                MetricValue::Distribution(_) => build_sketch(entry, self.tags.clone()),
                 _ => None,
             })
             .collect();
@@ -138,12 +132,6 @@ impl Aggregator {
 
     #[must_use]
     pub fn consume_distributions(&mut self) -> Vec<SketchPayload> {
-        let now = time::UNIX_EPOCH
-            .elapsed()
-            .expect("unable to poll clock, unrecoverable")
-            .as_secs()
-            .try_into()
-            .unwrap_or_default();
         let mut batched_payloads = Vec::new();
         let mut sketch_payload = SketchPayload::new();
         let mut this_batch_size = 0u64;
@@ -155,7 +143,7 @@ impl Aggregator {
                 }
                 false
             })
-            .filter_map(|entry| build_sketch(now, &entry, self.tags.clone()))
+            .filter_map(|entry| build_sketch(&entry, self.tags.clone()))
         {
             let next_chunk_size = sketch.compute_size();
 
@@ -254,12 +242,12 @@ impl Aggregator {
     }
 }
 
-fn build_sketch(now: i64, entry: &Metric, mut base_tag_vec: SortedTags) -> Option<Sketch> {
+fn build_sketch(entry: &Metric, mut base_tag_vec: SortedTags) -> Option<Sketch> {
     let sketch = entry.value.get_sketch()?;
     let mut dogsketch = Dogsketch::default();
     sketch.merge_to_dogsketch(&mut dogsketch);
     // TODO(Astuyve) allow users to specify timestamp
-    dogsketch.set_ts(now);
+    dogsketch.set_ts(entry.timestamp);
     let mut sketch = Sketch::default();
     sketch.set_dogsketches(vec![dogsketch]);
     let name = entry.name.to_string();
