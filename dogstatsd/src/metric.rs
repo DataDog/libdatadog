@@ -117,6 +117,13 @@ impl SortedTags {
         tags_as_vec
     }
 
+    pub fn find_all(&self, tag_key: &str) -> Vec<&Ustr> {
+        self.values
+            .iter()
+            .filter_map(|(k, v)| if k == tag_key { Some(v) } else { None })
+            .collect()
+    }
+
     pub(crate) fn to_resources(&self) -> Vec<datadog::Resource> {
         let mut resources = Vec::with_capacity(constants::MAX_TAGS);
         for (key, val) in &self.values {
@@ -560,5 +567,14 @@ mod tests {
         let first_element = tags.values.first().unwrap();
         assert_eq!(first_element.0, Ustr::from("a"));
         assert_eq!(first_element.1, Ustr::from("a1"));
+    }
+
+    #[test]
+    fn sorted_tags_find_all() {
+        let tags = SortedTags::parse("a,a:1,b:2,c:3").unwrap();
+        assert_eq!(tags.find_all("a"), vec![&Ustr::from(""), &Ustr::from("1")]);
+        assert_eq!(tags.find_all("b"), vec![&Ustr::from("2")]);
+        assert_eq!(tags.find_all("c"), vec![&Ustr::from("3")]);
+        assert_eq!(tags.find_all("d"), Vec::<&Ustr>::new());
     }
 }
