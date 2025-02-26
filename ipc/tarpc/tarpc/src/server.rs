@@ -23,8 +23,8 @@ use futures::{
 };
 use in_flight_requests::{AlreadyExistsError, InFlightRequests};
 use pin_project::pin_project;
-use std::{error::Error, fmt, marker::PhantomData, pin::Pin};
 use std::fmt::Debug;
+use std::{error::Error, fmt, marker::PhantomData, pin::Pin};
 use tracing::{info_span, instrument::Instrument, Span};
 
 mod in_flight_requests;
@@ -837,9 +837,9 @@ mod tests {
         Future,
     };
     use futures_test::task::noop_context;
-    use std::{pin::Pin, task::Poll};
+    use std::{fmt::Debug, pin::Pin, task::Poll};
 
-    fn test_channel<Req, Resp>() -> (
+    fn test_channel<Req: Debug, Resp>() -> (
         Pin<Box<BaseChannel<Req, Resp, UnboundedChannel<ClientMessage<Req>, Response<Resp>>>>>,
         UnboundedChannel<Response<Resp>, ClientMessage<Req>>,
     ) {
@@ -847,7 +847,7 @@ mod tests {
         (Box::pin(BaseChannel::new(Config::default(), rx)), tx)
     }
 
-    fn test_requests<Req, Resp>() -> (
+    fn test_requests<Req: Debug, Resp>() -> (
         Pin<
             Box<
                 Requests<
@@ -864,7 +864,7 @@ mod tests {
         )
     }
 
-    fn test_bounded_requests<Req, Resp>(
+    fn test_bounded_requests<Req: Debug, Resp>(
         capacity: usize,
     ) -> (
         Pin<
@@ -884,7 +884,7 @@ mod tests {
         (Box::pin(BaseChannel::new(config, rx).requests()), tx)
     }
 
-    fn fake_request<Req>(req: Req) -> ClientMessage<Req> {
+    fn fake_request<Req: Debug>(req: Req) -> ClientMessage<Req> {
         ClientMessage::Request(Request {
             context: context::current(),
             id: 0,

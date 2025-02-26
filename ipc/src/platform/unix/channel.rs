@@ -105,7 +105,7 @@ impl Write for Channel {
                     Ok(n) => {
                         buf = &buf[n..];
                         break;
-                    },
+                    }
                     Err(ref e) if e.kind() == ErrorKind::Interrupted => { /* retry */ }
                     Err(e) => {
                         self.metadata.reenqueue_for_sending(handles);

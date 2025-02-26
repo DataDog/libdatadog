@@ -1,12 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use futures::{ready, Future, Stream};
+use std::fmt::Debug;
 use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use std::fmt::Debug;
-use futures::{ready, Future, Stream};
 use tarpc::server::{Channel, InFlightRequest, Requests, Serve};
 
 #[allow(type_alias_bounds)]

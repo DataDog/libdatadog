@@ -1,7 +1,7 @@
-use std::fmt::Debug;
 use super::{Channel, Requests, Serve};
 use futures::{prelude::*, ready, task::*};
 use pin_project::pin_project;
+use std::fmt::Debug;
 use std::pin::Pin;
 
 /// A future that drives the server by [spawning](tokio::spawn) a [`TokioChannelExecutor`](TokioChannelExecutor)

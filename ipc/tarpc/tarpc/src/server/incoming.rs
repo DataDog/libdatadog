@@ -2,11 +2,11 @@ use super::{
     limits::{channels_per_key::MaxChannelsPerKey, requests_per_channel::MaxRequestsPerChannel},
     Channel,
 };
-use futures::prelude::*;
-use std::{fmt, hash::Hash};
-use std::fmt::Debug;
 #[cfg(feature = "tokio1")]
 use super::{tokio::TokioServerExecutor, Serve};
+use futures::prelude::*;
+use std::fmt::Debug;
+use std::{fmt, hash::Hash};
 
 /// An extension trait for [streams](futures::prelude::Stream) of [`Channels`](Channel).
 pub trait Incoming<C>

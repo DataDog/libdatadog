@@ -805,7 +805,6 @@ impl SidecarInterface for SidecarServer {
         _len: usize,
         headers: SerializedTracerHeaderTags,
     ) -> Self::SendTraceV04ShmFut {
-        
         if let Some(endpoint) = self
             .get_session(&instance_id.session_id)
             .get_trace_config()
@@ -822,7 +821,10 @@ impl SidecarInterface for SidecarServer {
                 }
             });
         } else {
-            warn!("Received trace data ({handle:?}) for missing session {}", instance_id.session_id);
+            warn!(
+                "Received trace data ({handle:?}) for missing session {}",
+                instance_id.session_id
+            );
         }
 
         no_response()
@@ -848,7 +850,10 @@ impl SidecarInterface for SidecarServer {
                 self.send_trace_v04(&headers, bytes, &endpoint);
             });
         } else {
-            warn!("Received trace data for missing session {}", instance_id.session_id);
+            warn!(
+                "Received trace data for missing session {}",
+                instance_id.session_id
+            );
         }
 
         no_response()
