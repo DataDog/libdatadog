@@ -69,13 +69,26 @@ The simplest way to install [cargo-nextest][nt] is to use `cargo install` like t
 cargo install --locked 'cargo-nextest@0.9.85'
 ```
 
+#### Dev Containers
+
+##### Prerequisites
+
+- Install the [Dev Containers Extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) in VS Code.
+
+##### Steps
+
+1. Open a local VS Code window on the cloned repository.
+2. Open the command palette (`Ctrl+Shift+P` or `Cmd+Shift+P` on macOS) and select **"Dev Containers: Reopen in Container"**.
+3. Choose the **Rust Container**.
+4. VS Code will open a new window connected to the selected container.
+
 #### Docker container
 A dockerfile is provided to run tests in a Ubuntu linux environment. This is particularly useful for running and debugging linux-only tests on macOS.
 
 To build the docker image, from the root directory of the libdatadog project run
 ```bash
 docker build -f local-linux.Dockerfile -t libdatadog-linux .
-``` 
+```
 
 To start the docker container, you can run
 ```bash
@@ -88,6 +101,7 @@ This will:
 1. Mount a named volume `cargo-cache` to cache the cargo dependencies at ~/.cargo. This is helpful to avoid re-downloading dependencies every time you start the container, but isn't absolutely necessary.
 
 The `$CARGO_TARGET_DIR` environment variable is set to `/libdatadog/docker-linux-target` in the container, so cargo will use the target directory in the mounted volume to avoid conflicts with the host's default target directory of `libdatadog/target`.
+
 #### Skipping tracing integration tests
 
 Tracing integration tests require docker to be installed and running. If you don't have docker installed or you want to skip these tests, you can run:
