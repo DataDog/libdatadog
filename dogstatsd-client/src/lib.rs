@@ -91,7 +91,7 @@ impl Client {
     /// version of DogStatsDAction. See the docs for DogStatsDActionOwned for details.
     pub fn send_owned(&self, actions: Vec<DogStatsDActionOwned>) {
         let client_opt = match self.get_or_init_client() {
-            Ok(guard) => guard,
+            Ok(client) => client,
             Err(e) => {
                 error!("Failed to get client: {}", e);
                 return;
@@ -130,7 +130,7 @@ impl Client {
         actions: Vec<DogStatsDAction<'a, T, V>>,
     ) {
         let client_opt = match self.get_or_init_client() {
-            Ok(guard) => guard,
+            Ok(client) => client,
             Err(e) => {
                 error!("Failed to get client: {}", e);
                 return;
