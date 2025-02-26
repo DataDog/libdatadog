@@ -74,7 +74,7 @@ impl InFlightRequests {
             self.request_data.compact(0.1);
             abort_handle.abort();
             self.deadlines.remove(&deadline_key);
-            tracing::info!("ReceiveCancel");
+            tracing::info!("ReceiveCancel for request {request_id}");
             true
         } else {
             false
@@ -109,7 +109,7 @@ impl InFlightRequests {
                 let _entered = span.enter();
                 self.request_data.compact(0.1);
                 abort_handle.abort();
-                tracing::error!("DeadlineExceeded");
+                tracing::error!("DeadlineExceeded for request {}", expired.get_ref());
             }
             Some(expired.into_inner())
         })
