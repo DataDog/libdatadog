@@ -13,8 +13,11 @@ use reqwest;
 use reqwest::{Client, Response};
 use serde::{Serialize, Serializer};
 use serde_json;
+use std::error::Error;
+use std::io::Write;
 use std::time::Duration;
 use tracing::{debug, error};
+use zstd::stream::write::Encoder;
 
 lazy_static! {
     static ref SITE_RE: Regex = Regex::new(r"^[a-zA-Z0-9._:-]+$").expect("invalid regex");
@@ -190,12 +193,32 @@ impl DdApi {
             .as_ref()
             .ok_or_else(|| ShippingError::Destination(None, "No client".to_string()))?;
         let start = std::time::Instant::now();
+        let final_body = {
+            let result = (|| -> Result<Vec<u8>, Box<dyn Error>> {
+                let mut encoder =
+                    Encoder::new(Vec::new(), 6).map_err(|e| Box::new(e) as Box<dyn Error>)?;
+
+                encoder
+                    .write_all(&body)
+                    .map_err(|e| Box::new(e) as Box<dyn Error>)?;
+
+                encoder.finish().map_err(|e| Box::new(e) as Box<dyn Error>)
+            })();
+
+            if let Ok(compressed_data) = result {
+                compressed_data
+            } else {
+                debug!("Failed to compress data, sending uncompressed data");
+                body
+            }
+        };
 
         let resp = client
             .post(&url)
             .header("DD-API-KEY", &self.api_key)
             .header("Content-Type", content_type)
-            .body(body)
+            .header("Content-Encoding", "zstd")
+            .body(final_body)
             .send()
             .await;
 
