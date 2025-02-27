@@ -83,12 +83,12 @@ pub unsafe extern "C" fn ddog_crasht_init_windows(
             PCWSTR::from_raw(wpath.as_ptr()),
             addr_of!(WERCONTEXT) as *const c_void,
         )?;
-        Ok::<(), anyhow::Error>(())
+        anyhow::Ok(())
     })();
 
-    if result.is_err() {
+    if let Err(e) = result {
         output_debug_string(
-            format!("ddog_crasht_init_windows failed: {}", result.err().unwrap()).as_str(),
+            format!("ddog_crasht_init_windows failed: {}", e).as_str(),
         );
         return false;
     }
@@ -146,18 +146,14 @@ unsafe fn create_registry_key(path: &str) -> Result<()> {
         None,
     );
 
-    if create_result != ERROR_SUCCESS {
-        return Err(anyhow!("Failed to create registry key"));
-    }
+    anyhow::ensure!(create_result == ERROR_SUCCESS, "Failed to create registry key {path}");
 
     // Create the DWORD value (0)
     let dword_value: u32 = 0;
     let dword_bytes = dword_value.to_ne_bytes();
     let set_value_result = RegSetValueExW(hkey, name_pcwstr, None, REG_DWORD, Some(&dword_bytes));
 
-    if set_value_result != ERROR_SUCCESS {
-        return Err(anyhow!("Failed to set registry value"));
-    }
+    anyhow::ensure!(set_value_result == ERROR_SUCCESS, "Failed to set registry value");
 
     let _ = RegCloseKey(hkey);
 
@@ -216,6 +212,8 @@ pub unsafe extern "C" fn ddog_crasht_event_signature_callback(
     _value: *mut u16,
     _value_size: *mut u32,
 ) -> HRESULT {
+    // This callback is not supposed to be called by WER because we don't claim the crash,
+    // but we need to define it anyway because WER checks for its presence.
     output_debug_string("ddog_crasht_event_signature_callback");
     S_OK
 }
@@ -230,6 +228,8 @@ pub unsafe extern "C" fn ddog_crasht_debugger_launch_callback(
     _debugger_launch_size: *mut u32,
     _is_debugger_auto_launch: *mut BOOL,
 ) -> HRESULT {
+    // This callback is not supposed to be called by WER because we don't claim the crash,
+    // but we need to define it anyway because WER checks for its presence.
     output_debug_string("ddog_crasht_debugger_launch_callback");
     S_OK
 }
@@ -247,13 +247,17 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
     output_debug_string("ddog_crasht_exception_event_callback");
 
     let result: Result<(), _> = (|| {
+        anyhow::ensure!(!exception_information.is_null(),
+            "exception_information is null"
+        );
+
         let exception_information = *exception_information;
         SymInitializeW(exception_information.hProcess, PCWSTR::null(), true)?;
 
         let pid = GetProcessId(exception_information.hProcess);
         let crash_tid = GetThreadId(exception_information.hThread);
-        let threads = list_threads(pid).expect("Failed to list threads");
-        let modules = list_modules(exception_information.hProcess).unwrap_or_else(|_| Vec::new());
+        let threads = list_threads(pid).context("Failed to list threads")?;
+        let modules = list_modules(exception_information.hProcess).unwrap_or_default();
 
         let wer_context = read_wer_context(exception_information.hProcess, context as usize)?;
 
@@ -279,7 +283,7 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
 
             let thread_data = ThreadData {
                 crashed: thread == crash_tid,
-                name: format!("{}", thread),
+                name: thread.to_string(),
                 stack,
                 state: None,
             };
@@ -306,14 +310,14 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
             .upload_to_endpoint(&error_context.endpoint)
             .context("Failed to upload crash info")?;
 
-        Ok::<(), anyhow::Error>(())
+        anyhow::Ok(())
     })();
 
-    if result.is_err() {
+    if let Err(e) = result {
         output_debug_string(
             format!(
                 "ddog_crasht_exception_event_callback failed: {}",
-                result.err().unwrap()
+                e
             )
             .as_str(),
         );
@@ -327,9 +331,7 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
 pub unsafe fn read_wer_context(process_handle: HANDLE, base_address: usize) -> Result<WerContext> {
     let buffer = read_memory_raw(process_handle, base_address as u64, size_of::<WerContext>())?;
 
-    if buffer.len() != size_of::<WerContext>() {
-        return Err(anyhow!("Failed to read the full WerContext, wrong size"));
-    }
+    anyhow::ensure!(buffer.len() == size_of::<WerContext>(), "Failed to read the full WerContext, wrong size");
 
     // Create a MaybeUninit to hold the WerContext
     let mut wer_context = MaybeUninit::<WerContext>::uninit();
@@ -346,16 +348,14 @@ pub unsafe fn read_wer_context(process_handle: HANDLE, base_address: usize) -> R
     let prefix = read_unaligned(addr_of!((*raw_ptr).prefix));
     let suffix = read_unaligned(addr_of!((*raw_ptr).suffix));
 
-    if prefix != WER_CONTEXT_PREFIX || suffix != WER_CONTEXT_SUFFIX {
-        return Err(anyhow!("Invalid WER context"));
-    }
+    anyhow::ensure!(
+        prefix == WER_CONTEXT_PREFIX && suffix == WER_CONTEXT_SUFFIX,
+        "Invalid WER context");
 
     let ptr = read_unaligned(addr_of!((*raw_ptr).ptr));
     let len = read_unaligned(addr_of!((*raw_ptr).len));
 
-    if ptr.is_null() || len == 0 {
-        return Err(anyhow!("Invalid WER context"));
-    }
+    anyhow::ensure!(!ptr.is_null() && len > 0, "Invalid WER context");
 
     // Read the memory in the target process pointed by ptr
     let buffer = read_memory_raw(process_handle, ptr as u64, len)?;
@@ -429,8 +429,7 @@ unsafe fn walk_thread_stack(
         native_frame.AddrFrame.Mode = AddrModeFlat;
     }
 
-    loop {
-        let result = StackWalkEx(
+    while let TRUE = StackWalkEx(
             machine_type,
             process_handle,
             thread_handle,
@@ -441,12 +440,7 @@ unsafe fn walk_thread_stack(
             None,
             None,
             SYM_STKWALK_DEFAULT,
-        );
-
-        if result != TRUE {
-            break;
-        }
-
+        ) {
         let mut frame = StackFrame::new();
 
         frame.ip = Some(format!("{:x}", native_frame.AddrPC.Offset));
@@ -475,7 +469,7 @@ unsafe fn walk_thread_stack(
 
         stacktrace
             .push_frame(frame, true)
-            .expect("Failed to add frame");
+            .context("Failed to add frame")?;
     }
 
     stacktrace.set_complete()?;
@@ -558,9 +552,7 @@ unsafe fn read_memory<T>(process_handle: HANDLE, address: u64) -> Result<T> {
         Some(&mut bytes_read),
     );
 
-    if result.is_err() || bytes_read != size {
-        return Err(anyhow!("Failed to read memory"));
-    }
+    anyhow::ensure!(result.is_ok() && bytes_read == size, "Failed to read memory");
 
     Ok(value.assume_init())
 }
@@ -685,7 +677,7 @@ unsafe fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbI
         }
     }
 
-    Err(anyhow!("No CodeView entry found"))
+    anyhow::bail!("No CodeView entry found");
 }
 
 unsafe fn get_module_path(

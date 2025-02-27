@@ -139,16 +139,21 @@ pub extern "C" fn ddog_setup_crashtracking(
 ) -> bool {
     // Ensure unique process names - we spawn one sidecar per console session id (see
     // setup/windows.rs for the reasoning)
-    let result = write_crashtracking_trampoline(&format!(
+    match write_crashtracking_trampoline(&format!(
         "datadog-crashtracking-{}",
         primary_sidecar_identifier()
-    ));
-
-    if result.is_ok() {
-        let path = result.unwrap().0.into_os_string().into_string().unwrap();
-
-        unsafe {
-            return ddog_crasht_init_windows(CharSlice::from(path.as_str()), endpoint, metadata);
+    )) {
+        Ok((path, _)) => {
+            if let Some(path_str) = path.into_os_string().into_string().ok() {
+                unsafe {
+                    return ddog_crasht_init_windows(CharSlice::from(path_str.as_str()), endpoint, metadata);
+                }
+            } else {
+                error!("Failed to convert path to string");
+            }
+        }
+        Err(e) => {
+            error!("Failed to write crashtracking trampoline: {}", e);
         }
     }
 

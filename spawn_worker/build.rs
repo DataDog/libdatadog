@@ -39,7 +39,8 @@ fn main() {
             .unwrap();
     }
 
-    if cfg!(target_os = "windows") {
+    #[cfg(target_os = "windows")]
+    {
         cc_utils::ImprovedBuild::new()
             .file("src/crashtracking_trampoline.cpp") // Path to your C++ file
             .warnings(true)
