@@ -45,9 +45,9 @@ use windows::Win32::System::SystemInformation::{
 use windows::Win32::System::SystemServices::{
     IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_NT_SIGNATURE,
 };
-use windows::Win32::System::Threading::{GetProcessId, GetThreadId, OpenThread, THREAD_ALL_ACCESS};
 #[cfg(test)]
 use windows::Win32::System::Threading::GetCurrentProcess;
+use windows::Win32::System::Threading::{GetProcessId, GetThreadId, OpenThread, THREAD_ALL_ACCESS};
 
 #[no_mangle]
 #[must_use]

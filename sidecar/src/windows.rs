@@ -144,7 +144,7 @@ pub extern "C" fn ddog_setup_crashtracking(
         primary_sidecar_identifier()
     )) {
         Ok((path, _)) => {
-            if let Some(path_str) = path.into_os_string().into_string() {
+            if let Ok(path_str) = path.into_os_string().into_string() {
                 unsafe {
                     return ddog_crasht_init_windows(
                         CharSlice::from(path_str.as_str()),
