@@ -280,10 +280,7 @@ fn build_metric(entry: &Metric, mut base_tag_vec: SortedTags) -> Option<MetricTo
     let point = datadog::Point {
         value: entry.value.get_value()?,
         // TODO(astuyve) allow user to specify timestamp
-        timestamp: time::UNIX_EPOCH
-            .elapsed()
-            .expect("unable to poll clock, unrecoverable")
-            .as_secs(),
+        timestamp: entry.timestamp as u64,
     };
 
     if let Some(tags) = entry.tags.clone() {

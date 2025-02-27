@@ -180,7 +180,8 @@ impl Metric {
         tags: Option<SortedTags>,
         timestamp: Option<i64>,
     ) -> Metric {
-        let mut timestamp = timestamp.unwrap_or_else(|| {
+        let mut parsed_timestamp = timestamp.unwrap_or_else(|| {
+            println!("can't parse timestamp, using default");
             std::time::UNIX_EPOCH
                 .elapsed()
                 .expect("unable to poll clock, unrecoverable")
@@ -188,15 +189,15 @@ impl Metric {
                 .try_into()
                 .unwrap_or_default()
         });
-        timestamp = (timestamp / 10) * 10;
+        parsed_timestamp = (parsed_timestamp / 10) * 10;
 
-        let id = id(name, &tags, timestamp);
+        let id = id(name, &tags, parsed_timestamp);
         Metric {
             name,
             value,
             tags,
             id,
-            timestamp,
+            timestamp: parsed_timestamp,
         }
     }
 }
