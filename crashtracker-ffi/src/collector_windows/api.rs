@@ -815,7 +815,7 @@ fn test_get_pdb_info() {
     let base_address = module_info.lpBaseOfDll as u64;
     let path = unsafe { get_module_path(process_handle, module_handle).unwrap() };
 
-    let file = std::fs::read(&path).unwrap();
+    let file = std::fs::read(path).unwrap();
     let pe = PE::parse(&file).unwrap();
 
     let expected_debug_id = pe.debug_data.unwrap().codeview_pdb70_debug_info.unwrap();
