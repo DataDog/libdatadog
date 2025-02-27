@@ -8,6 +8,8 @@ use datadog_crashtracker::{CrashInfoBuilder, StackFrame, StackTrace, ThreadData}
 use ddcommon::Endpoint;
 use ddcommon_ffi::slice::AsBytes;
 use ddcommon_ffi::CharSlice;
+#[cfg(test)]
+use goblin::pe::PE;
 use serde::{Deserialize, Serialize};
 use std::ffi::{c_void, OsString};
 use std::fmt;
@@ -32,6 +34,8 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 use windows::Win32::System::ErrorReporting::{
     WerRegisterRuntimeExceptionModule, WER_RUNTIME_EXCEPTION_INFORMATION,
 };
+#[cfg(test)]
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::ProcessStatus::{
     EnumProcessModules, GetModuleFileNameExW, GetModuleInformation, MODULEINFO,
 };
@@ -773,25 +777,60 @@ fn test_invalid_wercontext() {
         suffix: 0,
     };
 
+    let process_handle = unsafe { GetCurrentProcess() };
+
+    // Valid prefix, invalid suffix
+    context.prefix = WER_CONTEXT_PREFIX;
+    context.suffix = 0;
+    let result = unsafe { read_wer_context(process_handle, &context as *const _ as usize) };
+    assert!(result.is_err());
+
+    // Invalid prefix, valid suffix
+    context.suffix = WER_CONTEXT_SUFFIX;
+    context.prefix = 0;
+    let result = unsafe { read_wer_context(process_handle, &context as *const _ as usize) };
+    assert!(result.is_err());
+
+    // Valid prefix, valid suffix
+    context.suffix = WER_CONTEXT_SUFFIX;
+    context.prefix = WER_CONTEXT_PREFIX;
+    let result = unsafe { read_wer_context(process_handle, &context as *const _ as usize) };
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_get_pdb_info() {
+    let process_handle = unsafe { GetCurrentProcess() };
+    let module_handle = unsafe { GetModuleHandleW(None).unwrap() };
+    let mut module_info = MODULEINFO::default();
     unsafe {
-        let process_handle = GetCurrentProcess();
-
-        // Valid prefix, invalid suffix
-        context.prefix = WER_CONTEXT_PREFIX;
-        context.suffix = 0;
-        let result = read_wer_context(process_handle, &context as *const _ as usize);
-        assert!(result.is_err());
-
-        // Invalid prefix, valid suffix
-        context.suffix = WER_CONTEXT_SUFFIX;
-        context.prefix = 0;
-        let result = read_wer_context(process_handle, &context as *const _ as usize);
-        assert!(result.is_err());
-
-        // Valid prefix, valid suffix
-        context.suffix = WER_CONTEXT_SUFFIX;
-        context.prefix = WER_CONTEXT_PREFIX;
-        let result = read_wer_context(process_handle, &context as *const _ as usize);
-        assert!(result.is_ok());
+        GetModuleInformation(
+            process_handle,
+            module_handle,
+            &mut module_info,
+            size_of::<MODULEINFO>() as u32,
+        )
     }
+    .unwrap();
+    let base_address = module_info.lpBaseOfDll as u64;
+    let path = unsafe { get_module_path(process_handle, module_handle).unwrap() };
+
+    let file = std::fs::read(&path).unwrap();
+    let pe = PE::parse(&file).unwrap();
+
+    let expected_debug_id = pe.debug_data.unwrap().codeview_pdb70_debug_info.unwrap();
+    let expected_pdb_signature = expected_debug_id.signature;
+    let expected_pdb_age = expected_debug_id.age;
+
+    let actual_pdb_info = unsafe { get_pdb_info(process_handle, base_address).unwrap() };
+
+    assert_eq!(actual_pdb_info.age, expected_pdb_age);
+
+    let bytes = unsafe {
+        std::slice::from_raw_parts(
+            &actual_pdb_info.signature as *const Guid as *const u8,
+            size_of::<Guid>(),
+        )
+    };
+    assert_eq!(bytes, expected_pdb_signature);
 }
