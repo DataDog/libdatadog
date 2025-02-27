@@ -414,12 +414,12 @@ impl Profile {
     fn add_location(&mut self, location: &api::Location) -> anyhow::Result<LocationId> {
         let mapping_id = self.add_mapping(&location.mapping);
         let function_id = self.add_function(&location.function);
-        Ok(self.locations.dedup(Location {
+        self.locations.checked_dedup(Location {
             mapping_id,
             function_id,
             address: location.address,
             line: location.line,
-        }))
+        })
     }
 
     fn add_string_id_location(
@@ -428,12 +428,12 @@ impl Profile {
     ) -> anyhow::Result<LocationId> {
         let mapping_id = self.add_string_id_mapping(&location.mapping)?;
         let function_id = self.add_string_id_function(&location.function)?;
-        Ok(self.locations.dedup(Location {
+        self.locations.checked_dedup(Location {
             mapping_id,
             function_id,
             address: location.address,
             line: location.line,
-        }))
+        })
     }
 
     fn add_mapping(&mut self, mapping: &api::Mapping) -> MappingId {
