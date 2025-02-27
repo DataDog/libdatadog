@@ -381,11 +381,7 @@ impl Profile {
     /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids being present in
     /// emitted profiles. We're doing extra checks here so that if we see incorrect ids again,
     /// we are 100% sure they were not introduced prior to this stage.
-    fn check_location_ids_are_valid(
-        &self,
-        location_ids: &[u64],
-        len: usize,
-    ) -> anyhow::Result<()> {
+    fn check_location_ids_are_valid(&self, location_ids: &[u64], len: usize) -> anyhow::Result<()> {
         let len: u64 = u64::try_from(len)?;
         for id in location_ids.iter() {
             let id = *id;
