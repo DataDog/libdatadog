@@ -102,11 +102,10 @@ impl Profile {
             })
             .collect();
 
-        let locations = sample
-            .locations
-            .iter()
-            .map(|l| self.add_location(l))
-            .collect();
+        let mut locations = Vec::with_capacity(sample.locations.len());
+        for location in &sample.locations {
+            locations.push(self.add_location(location)?);
+        }
 
         self.add_sample_internal(sample.values, labels, locations, timestamp)
     }
@@ -412,15 +411,15 @@ impl Profile {
         }))
     }
 
-    fn add_location(&mut self, location: &api::Location) -> LocationId {
+    fn add_location(&mut self, location: &api::Location) -> anyhow::Result<LocationId> {
         let mapping_id = self.add_mapping(&location.mapping);
         let function_id = self.add_function(&location.function);
-        self.locations.dedup(Location {
+        Ok(self.locations.dedup(Location {
             mapping_id,
             function_id,
             address: location.address,
             line: location.line,
-        })
+        }))
     }
 
     fn add_string_id_location(
