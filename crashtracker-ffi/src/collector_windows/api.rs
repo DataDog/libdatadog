@@ -765,7 +765,7 @@ fn test_wercontext() {
 
 #[test]
 fn test_invalid_wercontext() {
-    let data = vec![0x01, 0x02, 0x03, 0x04];
+    let data = [0x01, 0x02, 0x03, 0x04];
     let mut context = WerContext {
         prefix: 0,
         len: data.len() * size_of::<u8>(),
