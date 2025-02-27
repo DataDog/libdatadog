@@ -45,7 +45,9 @@ use windows::Win32::System::SystemInformation::{
 use windows::Win32::System::SystemServices::{
     IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_NT_SIGNATURE,
 };
-use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessId, GetThreadId, OpenThread, THREAD_ALL_ACCESS};
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, GetProcessId, GetThreadId, OpenThread, THREAD_ALL_ACCESS,
+};
 
 #[no_mangle]
 #[must_use]
@@ -87,9 +89,7 @@ pub unsafe extern "C" fn ddog_crasht_init_windows(
     })();
 
     if let Err(e) = result {
-        output_debug_string(
-            format!("ddog_crasht_init_windows failed: {}", e).as_str(),
-        );
+        output_debug_string(format!("ddog_crasht_init_windows failed: {}", e).as_str());
         return false;
     }
 
@@ -146,14 +146,20 @@ unsafe fn create_registry_key(path: &str) -> Result<()> {
         None,
     );
 
-    anyhow::ensure!(create_result == ERROR_SUCCESS, "Failed to create registry key {path}");
+    anyhow::ensure!(
+        create_result == ERROR_SUCCESS,
+        "Failed to create registry key {path}"
+    );
 
     // Create the DWORD value (0)
     let dword_value: u32 = 0;
     let dword_bytes = dword_value.to_ne_bytes();
     let set_value_result = RegSetValueExW(hkey, name_pcwstr, None, REG_DWORD, Some(&dword_bytes));
 
-    anyhow::ensure!(set_value_result == ERROR_SUCCESS, "Failed to set registry value");
+    anyhow::ensure!(
+        set_value_result == ERROR_SUCCESS,
+        "Failed to set registry value"
+    );
 
     let _ = RegCloseKey(hkey);
 
@@ -247,7 +253,8 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
     output_debug_string("ddog_crasht_exception_event_callback");
 
     let result: Result<(), _> = (|| {
-        anyhow::ensure!(!exception_information.is_null(),
+        anyhow::ensure!(
+            !exception_information.is_null(),
             "exception_information is null"
         );
 
@@ -314,13 +321,7 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
     })();
 
     if let Err(e) = result {
-        output_debug_string(
-            format!(
-                "ddog_crasht_exception_event_callback failed: {}",
-                e
-            )
-            .as_str(),
-        );
+        output_debug_string(format!("ddog_crasht_exception_event_callback failed: {}", e).as_str());
         return E_FAIL;
     }
 
@@ -331,7 +332,10 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
 pub unsafe fn read_wer_context(process_handle: HANDLE, base_address: usize) -> Result<WerContext> {
     let buffer = read_memory_raw(process_handle, base_address as u64, size_of::<WerContext>())?;
 
-    anyhow::ensure!(buffer.len() == size_of::<WerContext>(), "Failed to read the full WerContext, wrong size");
+    anyhow::ensure!(
+        buffer.len() == size_of::<WerContext>(),
+        "Failed to read the full WerContext, wrong size"
+    );
 
     // Create a MaybeUninit to hold the WerContext
     let mut wer_context = MaybeUninit::<WerContext>::uninit();
@@ -350,7 +354,8 @@ pub unsafe fn read_wer_context(process_handle: HANDLE, base_address: usize) -> R
 
     anyhow::ensure!(
         prefix == WER_CONTEXT_PREFIX && suffix == WER_CONTEXT_SUFFIX,
-        "Invalid WER context");
+        "Invalid WER context"
+    );
 
     let ptr = read_unaligned(addr_of!((*raw_ptr).ptr));
     let len = read_unaligned(addr_of!((*raw_ptr).len));
@@ -430,17 +435,17 @@ unsafe fn walk_thread_stack(
     }
 
     while let TRUE = StackWalkEx(
-            machine_type,
-            process_handle,
-            thread_handle,
-            &mut native_frame,
-            &mut context as *mut _ as *mut c_void,
-            None,
-            None,
-            None,
-            None,
-            SYM_STKWALK_DEFAULT,
-        ) {
+        machine_type,
+        process_handle,
+        thread_handle,
+        &mut native_frame,
+        &mut context as *mut _ as *mut c_void,
+        None,
+        None,
+        None,
+        None,
+        SYM_STKWALK_DEFAULT,
+    ) {
         let mut frame = StackFrame::new();
 
         frame.ip = Some(format!("{:x}", native_frame.AddrPC.Offset));
@@ -552,7 +557,10 @@ unsafe fn read_memory<T>(process_handle: HANDLE, address: u64) -> Result<T> {
         Some(&mut bytes_read),
     );
 
-    anyhow::ensure!(result.is_ok() && bytes_read == size, "Failed to read memory");
+    anyhow::ensure!(
+        result.is_ok() && bytes_read == size,
+        "Failed to read memory"
+    );
 
     Ok(value.assume_init())
 }

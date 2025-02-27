@@ -146,7 +146,11 @@ pub extern "C" fn ddog_setup_crashtracking(
         Ok((path, _)) => {
             if let Some(path_str) = path.into_os_string().into_string().ok() {
                 unsafe {
-                    return ddog_crasht_init_windows(CharSlice::from(path_str.as_str()), endpoint, metadata);
+                    return ddog_crasht_init_windows(
+                        CharSlice::from(path_str.as_str()),
+                        endpoint,
+                        metadata,
+                    );
                 }
             } else {
                 error!("Failed to convert path to string");
