@@ -313,6 +313,7 @@ impl Profile {
                 .iter()
                 .map(Id::to_raw_id)
                 .collect();
+            self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
             self.upscaling_rules.upscale_values(&mut values, &labels)?;
 
             let labels = labels.into_iter().map(pprof::Label::from).collect();
@@ -375,6 +376,28 @@ impl Profile {
             buffer: encoder.finish()?,
             endpoints_stats,
         })
+    }
+
+    /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids being present in
+    /// emitted profiles. We're doing extra checks here so that if we see incorrect ids again,
+    /// we are 100% sure they were not introduced prior to this stage.
+    fn check_location_ids_are_valid(
+        &self,
+        location_ids: &[u64],
+        len: usize,
+    ) -> anyhow::Result<()> {
+        let len: u64 = u64::try_from(len)?;
+        for id in location_ids.iter() {
+            let id = *id;
+            // Location ids start from 1, that's why they're <= len instead of < len
+            anyhow::ensure!(
+                id > 0 && id <= len,
+                "invalid location id found during serialization {:?}, len was {:?}",
+                id,
+                len
+            )
+        }
+        Ok(())
     }
 }
 
