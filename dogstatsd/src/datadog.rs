@@ -193,34 +193,27 @@ impl DdApi {
             .as_ref()
             .ok_or_else(|| ShippingError::Destination(None, "No client".to_string()))?;
         let start = std::time::Instant::now();
-        let final_body = {
-            let result = (|| -> Result<Vec<u8>, Box<dyn Error>> {
-                let mut encoder =
-                    Encoder::new(Vec::new(), 6).map_err(|e| Box::new(e) as Box<dyn Error>)?;
 
-                encoder
-                    .write_all(&body)
-                    .map_err(|e| Box::new(e) as Box<dyn Error>)?;
+        let result = (|| -> std::io::Result<Vec<u8>> {
+            let mut encoder = Encoder::new(Vec::new(), 6)?;
+            encoder.write_all(&body)?;
+            encoder.finish()
+        })();
 
-                encoder.finish().map_err(|e| Box::new(e) as Box<dyn Error>)
-            })();
+        let mut builder = client
+            .post(&url)
+            .header("DD-API-KEY", &self.api_key)
+            .header("Content-Type", content_type);
 
-            if let Ok(compressed_data) = result {
-                compressed_data
-            } else {
-                debug!("Failed to compress data, sending uncompressed data");
-                body
+        builder = match result {
+            Ok(compressed) => builder.header("Content-Encoding", "zstd").body(compressed),
+            Err(err) => {
+                debug!("Sending uncompressed data, failed to compress: {err}");
+                builder.body(body)
             }
         };
 
-        let resp = client
-            .post(&url)
-            .header("DD-API-KEY", &self.api_key)
-            .header("Content-Type", content_type)
-            .header("Content-Encoding", "zstd")
-            .body(final_body)
-            .send()
-            .await;
+        let resp = builder.send().await;
 
         let elapsed = start.elapsed();
         debug!("Request to {} took {}ms", url, elapsed.as_millis());
