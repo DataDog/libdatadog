@@ -45,7 +45,7 @@ use windows::Win32::System::SystemInformation::{
 use windows::Win32::System::SystemServices::{
     IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_NT_SIGNATURE,
 };
-use windows::Win32::System::Threading::{GetProcessId, GetThreadId, OpenThread, THREAD_ALL_ACCESS};
+use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessId, GetThreadId, OpenThread, THREAD_ALL_ACCESS};
 
 #[no_mangle]
 #[must_use]
@@ -190,8 +190,8 @@ static mut WERCONTEXT: WerContext = WerContext {
     suffix: WER_CONTEXT_SUFFIX,
 };
 
-const WER_CONTEXT_PREFIX: u64 = 0xBABA_BABA_BABA_BABA;
-const WER_CONTEXT_SUFFIX: u64 = 0xEFEF_EFEF_EFEF_EFEF;
+pub const WER_CONTEXT_PREFIX: u64 = 0xBABA_BABA_BABA_BABA;
+pub const WER_CONTEXT_SUFFIX: u64 = 0xEFEF_EFEF_EFEF_EFEF;
 
 #[repr(C)]
 pub struct WerContext {
@@ -726,4 +726,64 @@ unsafe fn list_threads(pid: u32) -> anyhow::Result<Vec<u32>> {
     }
 
     Ok(thread_ids)
+}
+
+#[test]
+fn test_wercontext() {
+    let expected_data = vec![0x01, 0x02, 0x03, 0x04];
+    let expected_size = expected_data.len() * size_of::<u8>();
+    let expected_context = WerContext {
+        prefix: WER_CONTEXT_PREFIX,
+        len: expected_size,
+        ptr: expected_data.as_ptr(),
+        suffix: WER_CONTEXT_SUFFIX,
+    };
+
+    unsafe {
+        let process_handle = GetCurrentProcess();
+        let result = read_wer_context(process_handle, &expected_context as *const _ as usize);
+        let actual_context = result.unwrap();
+
+        assert_eq!(actual_context.prefix, WER_CONTEXT_PREFIX);
+        assert_eq!(actual_context.len, expected_size);
+        assert_eq!(actual_context.suffix, WER_CONTEXT_SUFFIX);
+        // read_wer_context makes a copy, so the address should be different
+        assert_ne!(actual_context.ptr, expected_context.ptr);
+
+        let buffer = std::slice::from_raw_parts(actual_context.ptr, actual_context.len);
+        assert_eq!(buffer, expected_data);
+    }
+}
+
+#[test]
+fn test_invalid_wercontext() {
+    let data = vec![0x01, 0x02, 0x03, 0x04];
+    let mut context = WerContext {
+        prefix: 0,
+        len: data.len() * size_of::<u8>(),
+        ptr: data.as_ptr(),
+        suffix: 0,
+    };
+
+    unsafe {
+        let process_handle = GetCurrentProcess();
+
+        // Valid prefix, invalid suffix
+        context.prefix = WER_CONTEXT_PREFIX;
+        context.suffix = 0;
+        let result = read_wer_context(process_handle, &context as *const _ as usize);
+        assert!(result.is_err());
+
+        // Invalid prefix, valid suffix
+        context.suffix = WER_CONTEXT_SUFFIX;
+        context.prefix = 0;
+        let result = read_wer_context(process_handle, &context as *const _ as usize);
+        assert!(result.is_err());
+
+        // Valid prefix, valid suffix
+        context.suffix = WER_CONTEXT_SUFFIX;
+        context.prefix = WER_CONTEXT_PREFIX;
+        let result = read_wer_context(process_handle, &context as *const _ as usize);
+        assert!(result.is_ok());
+    }
 }
