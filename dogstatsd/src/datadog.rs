@@ -13,7 +13,6 @@ use reqwest;
 use reqwest::{Client, Response};
 use serde::{Serialize, Serializer};
 use serde_json;
-use std::error::Error;
 use std::io::Write;
 use std::time::Duration;
 use tracing::{debug, error};
