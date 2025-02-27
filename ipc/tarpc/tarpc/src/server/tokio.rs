@@ -1,6 +1,7 @@
 use super::{Channel, Requests, Serve};
 use futures::{prelude::*, ready, task::*};
 use pin_project::pin_project;
+use std::fmt::Debug;
 use std::pin::Pin;
 
 /// A future that drives the server by [spawning](tokio::spawn) a [`TokioChannelExecutor`](TokioChannelExecutor)
@@ -50,7 +51,7 @@ impl<T, S> TokioChannelExecutor<T, S> {
 impl<C> Requests<C>
 where
     C: Channel,
-    C::Req: Send + 'static,
+    C::Req: Send + Debug + 'static,
     C::Resp: Send + 'static,
 {
     /// Executes all requests using the given service function. Requests are handled concurrently
@@ -67,7 +68,7 @@ impl<St, C, Se> Future for TokioServerExecutor<St, Se>
 where
     St: Sized + Stream<Item = C>,
     C: Channel + Send + 'static,
-    C::Req: Send + 'static,
+    C::Req: Send + Debug + 'static,
     C::Resp: Send + 'static,
     Se: Serve<C::Req, Resp = C::Resp> + Send + 'static + Clone,
     Se::Fut: Send,
@@ -86,7 +87,7 @@ where
 impl<C, S> Future for TokioChannelExecutor<Requests<C>, S>
 where
     C: Channel + 'static,
-    C::Req: Send + 'static,
+    C::Req: Send + Debug + 'static,
     C::Resp: Send + 'static,
     S: Serve<C::Req, Resp = C::Resp> + Send + 'static + Clone,
     S::Fut: Send,

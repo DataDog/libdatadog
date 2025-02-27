@@ -41,6 +41,7 @@ cargo_metadata = { version = "0.18.1", optional = true }
 # Dependency of cargo metadata, but 0.1.8 requires too new of a rust version.
 cargo-platform = { version = "=0.1.7", optional = true }
 tinybytes =  { path = "../tinybytes", features = ["bytes_string", "serialization"] }
+urlencoding = { version="2.1.3", optional= true }
 
 [dev-dependencies]
 bolero = "0.10.1"
@@ -54,5 +55,5 @@ tempfile = "3.3.0"
 
 [features]
 default = ["proxy"]
-test-utils = ["httpmock", "testcontainers", "cargo_metadata", "cargo-platform"]
+test-utils = ["httpmock", "testcontainers", "cargo_metadata", "cargo-platform", "urlencoding"]
 proxy = ["hyper-proxy"]
