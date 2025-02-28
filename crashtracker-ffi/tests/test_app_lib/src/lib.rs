@@ -39,12 +39,11 @@ pub unsafe extern "C" fn init_crashtracking(crash_path: CharSlice) -> bool {
         return false;
     }
 
-/*
     let module_name = OsString::from_wide(&module_name_buffer[..len as usize])
         .to_string_lossy()
         .into_owned();
-*/
-    let module_name = "D:\\a\\libdatadog\\libdatadog\\target\\release\\deps\\test_app_lib.dll";
+
+    // let module_name = "D:\\a\\libdatadog\\libdatadog\\target\\release\\deps\\test_app_lib.dll";
 
     println!(
         "Registering crash handler with module name: {}",
