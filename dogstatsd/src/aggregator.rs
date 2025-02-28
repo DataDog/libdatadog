@@ -421,15 +421,10 @@ pub mod tests {
     #[cfg_attr(miri, ignore)]
     fn clear() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
-        let mut now = std::time::UNIX_EPOCH
-            .elapsed()
-            .expect("unable to poll clock, unrecoverable")
-            .as_secs()
-            .try_into()
-            .unwrap_or_default();
+        let mut now = 1656581409;
         now = (now / 10) * 10;
-        let metric1 = parse("test:3|c|#k1:v1").expect("metric parse failed");
-        let metric2 = parse("foo:5|c|#k2:v2").expect("metric parse failed");
+        let metric1 = parse("test:3|c|#k1:v1|T1656581409").expect("metric parse failed");
+        let metric2 = parse("foo:5|c|#k2:v2|T1656581409").expect("metric parse failed");
 
         assert!(aggregator.insert(metric1).is_ok());
         assert!(aggregator.insert(metric2).is_ok());
