@@ -13,6 +13,8 @@ use goblin::pe::PE;
 use serde::{Deserialize, Serialize};
 use std::ffi::{c_void, OsString};
 use std::fmt;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::mem::MaybeUninit;
 use std::os::windows::ffi::OsStringExt;
 use std::ptr::{addr_of, read_unaligned};
@@ -94,10 +96,22 @@ pub unsafe extern "C" fn ddog_crasht_init_windows(
 
     if let Err(e) = result {
         output_debug_string(format!("ddog_crasht_init_windows failed: {}", e).as_str());
+        append_to_file(format!("ddog_crasht_init_windows failed: {}\n", e).as_str());
         return false;
     }
 
+    append_to_file("ddog_crasht_init_windows succeeded\n");
+
     true
+}
+
+fn append_to_file(content: &str) {
+    let _ = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open("C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\wer_log.txt")
+        .and_then(|mut file| file.write_all(content.as_bytes()))
+        .map_err(|e| eprintln!("Failed to write to file: {}", e));
 }
 
 unsafe fn create_registry_key(path: &str) -> Result<()> {
@@ -171,6 +185,8 @@ unsafe fn create_registry_key(path: &str) -> Result<()> {
 }
 
 unsafe fn output_debug_string(message: &str) {
+    append_to_file(message);
+
     let mut wstr: Vec<u16> = message.encode_utf16().collect();
     wstr.push(0); // Ensure null termination
     OutputDebugStringW(PCWSTR::from_raw(wstr.as_ptr()));

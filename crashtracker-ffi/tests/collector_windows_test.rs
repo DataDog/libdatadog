@@ -25,6 +25,13 @@ fn test_test() {
 
     println!("Test output: {}", String::from_utf8_lossy(&output.stdout));
 
+    let log_path = r"C:\Users\RUNNER~1\AppData\Local\Temp\wer_log.txt";
+
+    match fs::read_to_string(log_path) {
+        Ok(contents) => println!("{}", contents),
+        Err(e) => eprintln!("Failed to read the file: {}", e),
+    }
+
     assert!(!output.status.success());
 
     println!("Crash path: {:?}", crash_path);
@@ -36,7 +43,7 @@ fn test_test() {
         .context("deserializing crash report to json")
         .unwrap();
 
-    println!("Crash payload: {:?}", crash_payload);
+    //println!("Crash payload: {:?}", crash_payload);
 
     assert_eq!(&crash_payload["error"]["is_crash"], true);
     assert_eq!(&crash_payload["error"]["kind"], "Panic");
