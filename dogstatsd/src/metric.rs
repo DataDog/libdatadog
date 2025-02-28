@@ -190,7 +190,6 @@ impl Metric {
                 .unwrap_or_default()
         }));
 
-        println!("parsed_timestamp: {}", parsed_timestamp);
         let id = id(name, &tags, parsed_timestamp);
         Metric {
             name,
@@ -459,7 +458,6 @@ mod tests {
             let result = parse(&input);
 
             let verify = result.unwrap_err().to_string();
-            println!("{}", verify);
             assert!(verify.starts_with("parse failure: Invalid metric format "));
         }
 
