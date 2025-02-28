@@ -70,7 +70,7 @@ pub unsafe extern "C" fn init_crashtracking(crash_path: CharSlice) -> bool {
 
     let module_name_str = module_name;
     datadog_crashtracker_ffi::ddog_crasht_init_windows(
-        CharSlice::from(module_name_str),
+        CharSlice::from(module_name_str.as_str()),
         Some(&endpoint),
         metadata,
     )
