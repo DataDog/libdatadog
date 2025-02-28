@@ -11,6 +11,7 @@ use std::os::windows::ffi::OsStringExt;
 use std::path::Path;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::HMODULE;
+use windows::Win32::System::Diagnostics::Debug::{GetErrorMode, SetErrorMode, THREAD_ERROR_MODE};
 use windows::Win32::System::LibraryLoader::{
     GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
 };
@@ -23,6 +24,11 @@ use windows::Win32::System::Threading::GetCurrentProcess;
 #[no_mangle]
 pub unsafe extern "C" fn init_crashtracking(crash_path: CharSlice) -> bool {
     println!("init_crashtracking");
+
+    let error_mode = GetErrorMode();
+    println!("Error mode: {:?}", error_mode);
+
+    SetErrorMode(THREAD_ERROR_MODE(0x0001));
 
     let process_handle = GetCurrentProcess();
     let module_handle = get_hmodule();

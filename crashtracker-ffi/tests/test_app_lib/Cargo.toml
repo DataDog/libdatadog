@@ -10,4 +10,4 @@ crate-type = ["cdylib"]
 datadog-crashtracker-ffi = { path = "../../", features = ["collector", "collector_windows"] }
 ddcommon = { path = "../../../ddcommon" }
 ddcommon-ffi = { path = "../../../ddcommon-ffi", default-features = false }
-windows = { version = "0.59.0", features = ["Win32_System_LibraryLoader", "Win32_System_ProcessStatus"] }
+windows = { version = "0.59.0", features = ["Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_System_ProcessStatus"] }
