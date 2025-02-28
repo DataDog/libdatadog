@@ -190,6 +190,7 @@ impl Metric {
                 .unwrap_or_default()
         }));
 
+        println!("parsed_timestamp: {}", parsed_timestamp);
         let id = id(name, &tags, parsed_timestamp);
         Metric {
             name,
@@ -248,8 +249,8 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
             .unwrap_or_default();
         // let Metric::new() handle bucketing the timestamp
         let parsed_timestamp: i64 = match caps.name("timestamp") {
-            Some(ts) => ts.as_str().parse().unwrap_or_else(|_| now),
-            None => now,
+            Some(ts) => timestamp_to_bucket(ts.as_str().parse().unwrap_or_else(|_| now)),
+            None => timestamp_to_bucket(now),
         };
         let metric_value = match t {
             "c" => MetricValue::Count(val),
@@ -331,10 +332,7 @@ mod tests {
     use proptest::{collection, option, strategy::Strategy, string::string_regex};
     use ustr::Ustr;
 
-    use crate::{
-        datadog::Metric,
-        metric::{id, parse, timestamp_to_bucket, MetricValue, SortedTags},
-    };
+    use crate::metric::{id, parse, timestamp_to_bucket, MetricValue, SortedTags};
 
     use super::ParseError;
 
