@@ -194,7 +194,7 @@ mod tests {
 
         let start = get_current_timestamp_nanos();
 
-        let json_span = create_test_json_span(11, 222, 333, start);
+        let json_span = create_test_json_span(11, 222, 333, start, false);
 
         let bytes = rmp_serde::to_vec(&vec![vec![json_span]]).unwrap();
         let request = Request::builder()

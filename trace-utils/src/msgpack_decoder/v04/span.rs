@@ -46,7 +46,7 @@ pub fn decode_span(buffer: &mut Bytes) -> Result<SpanBytes, DecodeError> {
 fn fill_span(span: &mut SpanBytes, buf: &mut Bytes) -> Result<(), DecodeError> {
     let key = read_string_ref(unsafe { buf.as_mut_slice() })?
         .parse::<SpanKey>()
-        .map_err(|_| DecodeError::InvalidFormat("Invalid span key".to_owned()))?;
+        .map_err(|e| DecodeError::InvalidFormat(e.message))?;
 
     match key {
         SpanKey::Service => span.service = read_nullable_string_bytes(buf)?,

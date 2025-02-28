@@ -22,9 +22,10 @@ use ddcommon::header::{
     APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
 };
 use ddcommon::tag::Tag;
-use ddcommon::{connector, tag, Endpoint};
+use ddcommon::{connector, parse_uri, tag, Endpoint};
 use dogstatsd_client::{new, Client, DogStatsDAction};
 use either::Either;
+use error::BuilderErrorKind;
 use hyper::body::HttpBody;
 use hyper::http::uri::PathAndQuery;
 use hyper::{header::CONTENT_TYPE, Body, Method, Uri};
@@ -83,6 +84,16 @@ impl TraceExporterOutputFormat {
             },
         )
     }
+
+    #[cfg(feature = "test-utils")]
+    // This function is only intended for testing purposes so we don't need to go to all the trouble
+    // of breaking the uri down and parsing it as rigorously as we would if we were using it in
+    // production code.
+    fn add_query(&self, url: &Uri, query: &str) -> Uri {
+        let url = format!("{}?{}", url, query);
+
+        Uri::from_str(&url).expect("Failed to create Uri from string")
+    }
 }
 
 /// Add a path to the URL.
@@ -95,11 +106,10 @@ fn add_path(url: &Uri, path: &str) -> Uri {
     let p_and_q = url.path_and_query();
     let new_p_and_q = match p_and_q {
         Some(pq) => {
-            let mut p = pq.path().to_string();
-            if p.ends_with('/') {
-                p.pop();
-            }
+            let p = pq.path();
+            let mut p = p.strip_suffix('/').unwrap_or(p).to_owned();
             p.push_str(path);
+
             PathAndQuery::from_str(p.as_str())
         }
         None => PathAndQuery::from_str(path),
@@ -252,6 +262,8 @@ pub struct TraceExporter {
     agent_info: AgentInfoArc,
     previous_info_state: ArcSwapOption<String>,
     telemetry: Option<TelemetryClient>,
+    #[cfg(feature = "test-utils")]
+    query_params: Option<String>,
 }
 
 impl TraceExporter {
@@ -639,7 +651,7 @@ impl TraceExporter {
                 let chunks = traces.len();
                 let payload_len = payload.len();
                 let endpoint = Endpoint {
-                    url: self.output_format.add_path(&self.endpoint.url),
+                    url: self.get_agent_url(),
                     ..self.endpoint.clone()
                 };
                 let mut headers: HashMap<&str, String> = header_tags.into();
@@ -741,6 +753,18 @@ impl TraceExporter {
             TraceExporterOutputFormat::V07 => todo!("We don't support translating to v07 yet"),
         }
     }
+
+    fn get_agent_url(&self) -> Uri {
+        #[cfg(feature = "test-utils")]
+        {
+            if let Some(query) = &self.query_params {
+                let url = self.output_format.add_path(&self.endpoint.url);
+                return self.output_format.add_query(&url, query);
+            }
+        }
+
+        self.output_format.add_path(&self.endpoint.url)
+    }
 }
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
@@ -770,7 +794,9 @@ pub struct TraceExporterBuilder {
     dogstatsd_url: Option<String>,
     client_computed_stats: bool,
     client_computed_top_level: bool,
-
+    #[cfg(feature = "test-utils")]
+    /// not supported in production, but useful for interacting with the test-agent
+    query_params: Option<String>,
     // Stats specific fields
     /// A Some value enables stats-computation, None if it is disabled
     stats_bucket_size: Option<Duration>,
@@ -781,7 +807,18 @@ pub struct TraceExporterBuilder {
 }
 
 impl TraceExporterBuilder {
-    /// Set url of the agent
+    /// Sets the URL of the agent.
+    ///
+    /// The agent supports the following URL schemes:
+    ///
+    /// - **TCP:** `http://<host>:<port>`
+    ///   - Example: `set_url("http://localhost:8126")`
+    ///
+    /// - **UDS (Unix Domain Socket):** `unix://<path>`
+    ///   - Example: `set_url("unix://var/run/datadog/apm.socket")`
+    ///
+    /// - **Windows Named Pipe:** `windows:\\.\pipe\<name>`
+    ///   - Example: `set_url(r"windows:\\.\pipe\datadog-apm")`
     pub fn set_url(mut self, url: &str) -> Self {
         self.url = Some(url.to_owned());
         self
@@ -914,6 +951,14 @@ impl TraceExporterBuilder {
         self
     }
 
+    #[cfg(feature = "test-utils")]
+    /// Set query parameters to be used in the URL when communicating with the test-agent. This is
+    /// not supported in production as the real agent doesn't accept query params.
+    pub fn set_query_params(mut self, query_params: &str) -> Self {
+        self.query_params = Some(query_params.to_owned());
+        self
+    }
+
     #[allow(missing_docs)]
     pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -926,7 +971,10 @@ impl TraceExporterBuilder {
         });
 
         let base_url = self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL);
-        let agent_url: hyper::Uri = base_url.parse()?;
+
+        let agent_url: hyper::Uri = parse_uri(base_url).map_err(|e: anyhow::Error| {
+            TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
+        })?;
 
         let libdatadog_version = tag!("libdatadog_version", env!("CARGO_PKG_VERSION"));
         let mut stats = StatsComputationStatus::Disabled;
@@ -999,6 +1047,8 @@ impl TraceExporterBuilder {
             agent_info,
             previous_info_state: ArcSwapOption::new(None),
             telemetry,
+            #[cfg(feature = "test-utils")]
+            query_params: self.query_params,
         })
     }
 }
@@ -1608,7 +1658,10 @@ mod tests {
             _ => None,
         };
 
-        assert_eq!(err.unwrap(), BuilderErrorKind::InvalidUri);
+        assert_eq!(
+            err.unwrap(),
+            BuilderErrorKind::InvalidUri("empty string".to_string())
+        );
     }
 
     #[test]

@@ -13,8 +13,10 @@ use reqwest;
 use reqwest::{Client, Response};
 use serde::{Serialize, Serializer};
 use serde_json;
+use std::io::Write;
 use std::time::Duration;
 use tracing::{debug, error};
+use zstd::stream::write::Encoder;
 
 lazy_static! {
     static ref SITE_RE: Regex = Regex::new(r"^[a-zA-Z0-9._:-]+$").expect("invalid regex");
@@ -191,13 +193,26 @@ impl DdApi {
             .ok_or_else(|| ShippingError::Destination(None, "No client".to_string()))?;
         let start = std::time::Instant::now();
 
-        let resp = client
+        let result = (|| -> std::io::Result<Vec<u8>> {
+            let mut encoder = Encoder::new(Vec::new(), 6)?;
+            encoder.write_all(&body)?;
+            encoder.finish()
+        })();
+
+        let mut builder = client
             .post(&url)
             .header("DD-API-KEY", &self.api_key)
-            .header("Content-Type", content_type)
-            .body(body)
-            .send()
-            .await;
+            .header("Content-Type", content_type);
+
+        builder = match result {
+            Ok(compressed) => builder.header("Content-Encoding", "zstd").body(compressed),
+            Err(err) => {
+                debug!("Sending uncompressed data, failed to compress: {err}");
+                builder.body(body)
+            }
+        };
+
+        let resp = builder.send().await;
 
         let elapsed = start.elapsed();
         debug!("Request to {} took {}ms", url, elapsed.as_millis());
