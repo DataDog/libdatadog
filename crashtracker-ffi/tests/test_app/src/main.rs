@@ -1,8 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#![cfg(windows)]
-
 use ddcommon_ffi::CharSlice;
 use libloading::{Library, Symbol};
 
@@ -11,6 +9,7 @@ fn main() {
     panic!("This test is only supported on Windows");
 }
 
+#[cfg(windows)]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
