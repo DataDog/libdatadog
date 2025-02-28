@@ -222,10 +222,17 @@ impl TraceExporter {
         trace_count: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
+
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
-            TraceExporterInputFormat::V04 => self.send_deser_ser(data),
-            TraceExporterInputFormat::V05 => self.send_deser_ser(data),
+            TraceExporterInputFormat::V04 => match msgpack_decoder::v04::from_slice(data) {
+                Ok((traces, _)) => self.send_deser_ser(TraceCollection::TraceChunk(traces)),
+                Err(e) => Err(TraceExporterError::Deserialization(e)),
+            },
+            TraceExporterInputFormat::V05 => match msgpack_decoder::v05::from_slice(data) {
+                Ok((traces, _)) => self.send_deser_ser(TraceCollection::TraceChunk(traces)),
+                Err(e) => Err(TraceExporterError::Deserialization(e)),
+            },
         }
         .and_then(|res| {
             if res.is_empty() {
@@ -235,6 +242,16 @@ impl TraceExporter {
             }
 
             Ok(AgentResponse::from(res))
+        })
+        .map_err(|err| {
+            if let TraceExporterError::Deserialization(ref e) = err {
+                error!("Error deserializing trace from request body: {e}");
+                self.emit_metric(
+                    HealthMetric::Count(health_metrics::STAT_DESER_TRACES_ERRORS, 1),
+                    None,
+                );
+            }
+            err
         })
     }
 
@@ -551,25 +568,10 @@ impl TraceExporter {
         }
     }
 
-    fn send_deser_ser(&self, data: tinybytes::Bytes) -> Result<String, TraceExporterError> {
-        let result = match self.input_format {
-            TraceExporterInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
-            TraceExporterInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
-            TraceExporterInputFormat::Proxy => todo!("Proxy not implemented"),
-        };
-
-        let (mut collection, _) = match result {
-            Ok((traces, size)) => (TraceCollection::TraceChunk(traces), size),
-            Err(err) => {
-                error!("Error deserializing trace from request body: {err}");
-                self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_DESER_TRACES_ERRORS, 1),
-                    None,
-                );
-                return Err(TraceExporterError::Deserialization(err));
-            }
-        };
-
+    fn send_deser_ser(
+        &self,
+        mut collection: TraceCollection,
+    ) -> Result<String, TraceExporterError> {
         self.emit_metric(
             HealthMetric::Count(health_metrics::STAT_DESER_TRACES, collection.len() as i64),
             None,
