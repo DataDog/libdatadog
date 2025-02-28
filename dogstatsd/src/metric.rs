@@ -249,7 +249,7 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
             .unwrap_or_default();
         // let Metric::new() handle bucketing the timestamp
         let parsed_timestamp: i64 = match caps.name("timestamp") {
-            Some(ts) => timestamp_to_bucket(ts.as_str().parse().unwrap_or_else(|_| now)),
+            Some(ts) => timestamp_to_bucket(ts.as_str().parse().unwrap_or(now)),
             None => timestamp_to_bucket(now),
         };
         let metric_value = match t {
