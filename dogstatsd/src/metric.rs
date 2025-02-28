@@ -13,6 +13,7 @@ use ustr::Ustr;
 
 pub const EMPTY_TAGS: SortedTags = SortedTags { values: Vec::new() };
 
+// https://docs.datadoghq.com/developers/dogstatsd/datagram_shell?tab=metrics#dogstatsd-protocol-v13
 lazy_static! {
     static ref METRIC_REGEX: Regex = Regex::new(
         r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[a-zA-Z]+)(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?(?:\|c:(?P<container_id>[^|]+))?(?:\|T(?P<timestamp>[^|]+))?$",
