@@ -56,7 +56,7 @@ pub enum TraceExporterInputFormat {
 }
 
 /// TraceExporterOutputFormat represents the format of the output traces.
-/// The output format can be either V0.4 or v0.7, where V0.4 is the default.
+/// The output format can be either V0.4 or v0.5, where V0.4 is the default.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(C)]
 pub enum TraceExporterOutputFormat {
@@ -64,8 +64,6 @@ pub enum TraceExporterOutputFormat {
     #[default]
     V04,
     V05,
-    #[allow(missing_docs)]
-    V07,
 }
 
 impl TraceExporterOutputFormat {
@@ -76,7 +74,6 @@ impl TraceExporterOutputFormat {
             match self {
                 TraceExporterOutputFormat::V04 => "/v0.4/traces",
                 TraceExporterOutputFormat::V05 => "/v0.5/traces",
-                TraceExporterOutputFormat::V07 => "/v0.7/traces",
             },
         )
     }
@@ -932,6 +929,14 @@ impl TraceExporterBuilder {
 
     #[allow(missing_docs)]
     pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
+        if !Self::is_mode_allowed(self.input_format, self.output_format) {
+            return Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(
+                    "Combination of input and output formats not allowed".to_string(),
+                ),
+            ));
+        }
+
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -1022,6 +1027,14 @@ impl TraceExporterBuilder {
             query_params: self.query_params,
         })
     }
+
+    fn is_mode_allowed(input: TraceExporterInputFormat, output: TraceExporterOutputFormat) -> bool {
+        match input {
+            TraceExporterInputFormat::Proxy => true,
+            TraceExporterInputFormat::V04 => matches!(output, TraceExporterOutputFormat::V04),
+            TraceExporterInputFormat::V05 => matches!(output, TraceExporterOutputFormat::V05),
+        }
+    }
 }
 
 #[allow(missing_docs)]
@@ -1058,7 +1071,7 @@ mod tests {
             .set_language_interpreter_vendor("node")
             .set_git_commit_sha("797e9ea")
             .set_input_format(TraceExporterInputFormat::Proxy)
-            .set_output_format(TraceExporterOutputFormat::V07)
+            .set_output_format(TraceExporterOutputFormat::V04)
             .set_client_computed_stats()
             .enable_telemetry(Some(TelemetryConfig {
                 heartbeat: 1000,
@@ -1072,7 +1085,7 @@ mod tests {
                 .output_format
                 .add_path(&exporter.endpoint.url)
                 .to_string(),
-            "http://192.168.1.1:8127/v0.7/traces"
+            "http://192.168.1.1:8127/v0.4/traces"
         );
         assert_eq!(exporter.input_format, TraceExporterInputFormat::Proxy);
         assert_eq!(exporter.metadata.tracer_version, "v0.1");
