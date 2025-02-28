@@ -213,7 +213,7 @@ pub struct WerContext {
 
 #[no_mangle]
 #[cfg(target_os = "windows")]
-pub unsafe extern "C" fn ddog_crasht_event_signature_callback(
+pub unsafe extern "C" fn OutOfProcessExceptionEventSignatureCallback(
     _context: *const c_void,
     _exception_information: *const WER_RUNTIME_EXCEPTION_INFORMATION,
     _index: i32,
@@ -224,13 +224,13 @@ pub unsafe extern "C" fn ddog_crasht_event_signature_callback(
 ) -> HRESULT {
     // This callback is not supposed to be called by WER because we don't claim the crash,
     // but we need to define it anyway because WER checks for its presence.
-    output_debug_string("ddog_crasht_event_signature_callback");
+    output_debug_string("OutOfProcessExceptionEventSignatureCallback");
     S_OK
 }
 
 #[no_mangle]
 #[cfg(target_os = "windows")]
-pub unsafe extern "C" fn ddog_crasht_debugger_launch_callback(
+pub unsafe extern "C" fn OutOfProcessExceptionEventDebuggerLaunchCallback(
     _context: *const c_void,
     _exception_information: *const WER_RUNTIME_EXCEPTION_INFORMATION,
     _is_custom_debugger: *mut BOOL,
@@ -240,13 +240,13 @@ pub unsafe extern "C" fn ddog_crasht_debugger_launch_callback(
 ) -> HRESULT {
     // This callback is not supposed to be called by WER because we don't claim the crash,
     // but we need to define it anyway because WER checks for its presence.
-    output_debug_string("ddog_crasht_debugger_launch_callback");
+    output_debug_string("OutOfProcessExceptionEventDebuggerLaunchCallback");
     S_OK
 }
 
 #[no_mangle]
 #[cfg(target_os = "windows")]
-pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
+pub unsafe extern "C" fn OutOfProcessExceptionEventCallback(
     context: *const c_void,
     exception_information: *const WER_RUNTIME_EXCEPTION_INFORMATION,
     _ownership_claimed: *mut BOOL,
@@ -254,7 +254,7 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
     _size: *mut u32,
     _signature_count: *mut u32,
 ) -> HRESULT {
-    output_debug_string("ddog_crasht_exception_event_callback");
+    output_debug_string("OutOfProcessExceptionEventCallback");
 
     let result: Result<(), _> = (|| {
         anyhow::ensure!(
@@ -325,11 +325,11 @@ pub unsafe extern "C" fn ddog_crasht_exception_event_callback(
     })();
 
     if let Err(e) = result {
-        output_debug_string(format!("ddog_crasht_exception_event_callback failed: {}", e).as_str());
+        output_debug_string(format!("OutOfProcessExceptionEventCallback failed: {}", e).as_str());
         return E_FAIL;
     }
 
-    output_debug_string("ddog_crasht_exception_event_callback succeeded");
+    output_debug_string("OutOfProcessExceptionEventCallback succeeded");
     S_OK
 }
 

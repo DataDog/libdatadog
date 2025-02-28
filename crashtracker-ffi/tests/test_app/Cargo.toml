@@ -1,0 +1,12 @@
+[package]
+name = "test_app"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "test_app"
+path = "src/main.rs"
+
+[dependencies]
+ddcommon-ffi = { path = "../../../ddcommon-ffi", default-features = false }
+libloading = "0.8.6"
