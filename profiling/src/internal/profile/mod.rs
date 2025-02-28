@@ -9,7 +9,7 @@ use super::*;
 use crate::api;
 use crate::api::ManagedStringId;
 use crate::collections::identifiable::*;
-use crate::collections::string_storage::ManagedStringStorage;
+use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::StringTable;
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::pprof::sliced_proto::*;
@@ -43,6 +43,7 @@ pub struct Profile {
     start_time: SystemTime,
     strings: StringTable,
     string_storage: Option<Rc<RwLock<ManagedStringStorage>>>,
+    string_storage_cached_profile_id: Option<CachedProfileId>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
 }
@@ -199,14 +200,33 @@ impl Profile {
             return Ok(StringId::ZERO); // Both string tables use zero for the empty string
         };
 
-        self.string_storage
+        let string_storage = self.string_storage
             .as_ref()
             // Safety: We always get here through a direct or indirect call to add_string_id_sample,
             // which already ensured that the string storage exists.
-            .ok_or_else(|| anyhow::anyhow!("Current sample makes use of ManagedStringIds but profile was not created using a string table"))?
+            .ok_or_else(|| anyhow::anyhow!("Current sample makes use of ManagedStringIds but profile was not created using a string table"))?;
+
+        let cached_profile_id = match self.string_storage_cached_profile_id.as_ref() {
+            Some(cached_profile_id) => cached_profile_id,
+            None => {
+                let new_id = string_storage
+                    .write()
+                    .map_err(|_| {
+                        anyhow::anyhow!(
+                            "acquisition of write lock on string storage should succeed"
+                        )
+                    })?
+                    .next_cached_profile_id()?;
+                self.string_storage_cached_profile_id.get_or_insert(new_id)
+            }
+        };
+
+        string_storage
             .read()
-            .map_err(|_| anyhow::anyhow!("acquisition of read lock on string storage should succeed"))?
-            .get_seq_num(non_empty_string_id, &mut self.strings)
+            .map_err(|_| {
+                anyhow::anyhow!("acquisition of read lock on string storage should succeed")
+            })?
+            .get_seq_num(non_empty_string_id, &mut self.strings, cached_profile_id)
     }
 
     /// Creates a profile with `start_time`.
@@ -577,6 +597,8 @@ impl Profile {
             start_time,
             strings: Default::default(),
             string_storage,
+            string_storage_cached_profile_id: None, /* Never reuse an id! See comments on
+                                                     * CachedProfileId for why. */
             timestamp_key: Default::default(),
             upscaling_rules: Default::default(),
         };
@@ -2276,5 +2298,68 @@ mod api_tests {
             assert_eq!(sample.labels, labels);
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_regression_managed_string_table_correctly_maps_ids() {
+        let storage = Rc::new(RwLock::new(ManagedStringStorage::new()));
+        let hello_id: u32;
+        let world_id: u32;
+
+        {
+            let mut storage_guard = storage.write().unwrap();
+            hello_id = storage_guard.intern("hello").unwrap();
+            world_id = storage_guard.intern("world").unwrap();
+        }
+
+        let sample_types = [api::ValueType::new("samples", "count")];
+        let mut profile =
+            Profile::with_string_storage(SystemTime::now(), &sample_types, None, storage.clone());
+
+        let location = api::StringIdLocation {
+            function: api::StringIdFunction {
+                name: api::ManagedStringId { value: hello_id },
+                filename: api::ManagedStringId { value: world_id },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let sample = api::StringIdSample {
+            locations: vec![location],
+            values: vec![1],
+            labels: vec![],
+        };
+
+        profile.add_string_id_sample(sample.clone(), None).unwrap();
+        profile.add_string_id_sample(sample.clone(), None).unwrap();
+
+        let pprof_first_profile =
+            pprof::roundtrip_to_pprof(profile.reset_and_return_previous(None).unwrap()).unwrap();
+
+        assert!(pprof_first_profile
+            .string_table
+            .iter()
+            .any(|s| s == "hello"));
+        assert!(pprof_first_profile
+            .string_table
+            .iter()
+            .any(|s| s == "world"));
+
+        // If the cache invalidation on the managed string table is working correctly, these strings
+        // get correctly re-added to the profile's string table
+
+        profile.add_string_id_sample(sample.clone(), None).unwrap();
+        profile.add_string_id_sample(sample.clone(), None).unwrap();
+        let pprof_second_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+
+        assert!(pprof_second_profile
+            .string_table
+            .iter()
+            .any(|s| s == "hello"));
+        assert!(pprof_second_profile
+            .string_table
+            .iter()
+            .any(|s| s == "world"));
     }
 }
