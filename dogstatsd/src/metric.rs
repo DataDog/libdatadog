@@ -204,6 +204,15 @@ impl Metric {
 // Round down to the nearest 10 seconds
 // to form a bucket of metric contexts aggregated per 10s
 pub fn timestamp_to_bucket(timestamp: i64) -> i64 {
+    let now_seconds: i64 = std::time::UNIX_EPOCH
+        .elapsed()
+        .expect("unable to poll clock, unrecoverable")
+        .as_secs()
+        .try_into()
+        .unwrap_or_default();
+    if timestamp > now_seconds {
+        return (now_seconds / 10) * 10;
+    }
     (timestamp / 10) * 10
 }
 
@@ -237,9 +246,10 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
             .as_secs()
             .try_into()
             .unwrap_or_default();
+        // let Metric::new() handle bucketing the timestamp
         let parsed_timestamp: i64 = match caps.name("timestamp") {
-            Some(ts) => timestamp_to_bucket(ts.as_str().parse().unwrap_or_else(|_| now)),
-            None => timestamp_to_bucket(now),
+            Some(ts) => ts.as_str().parse().unwrap_or_else(|_| now),
+            None => now,
         };
         let metric_value = match t {
             "c" => MetricValue::Count(val),
