@@ -180,15 +180,14 @@ impl Metric {
         tags: Option<SortedTags>,
         timestamp: Option<i64>,
     ) -> Metric {
-        let mut parsed_timestamp = timestamp.unwrap_or_else(|| {
+        let parsed_timestamp = timestamp_to_bucket(timestamp.unwrap_or_else(|| {
             std::time::UNIX_EPOCH
                 .elapsed()
                 .expect("unable to poll clock, unrecoverable")
                 .as_secs()
                 .try_into()
                 .unwrap_or_default()
-        });
-        parsed_timestamp = (parsed_timestamp / 10) * 10;
+        }));
 
         let id = id(name, &tags, parsed_timestamp);
         Metric {
@@ -199,6 +198,12 @@ impl Metric {
             timestamp: parsed_timestamp,
         }
     }
+}
+
+// Round down to the nearest 10 seconds
+// to form a bucket of metric contexts aggregated per 10s
+pub fn timestamp_to_bucket(timestamp: i64) -> i64 {
+    (timestamp / 10) * 10
 }
 
 /// Parse a metric from given input.
@@ -225,21 +230,15 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
         }
         let val = first_value(caps.name("values").unwrap().as_str())?;
         let t = caps.name("type").unwrap().as_str();
-        let mut now: i64 = match caps.name("timestamp") {
-            Some(ts) => ts.as_str().parse().unwrap_or_else(|_| {
-                std::time::UNIX_EPOCH
-                    .elapsed()
-                    .expect("unable to poll clock, unrecoverable")
-                    .as_secs()
-                    .try_into()
-                    .unwrap_or_default()
-            }),
-            None => std::time::UNIX_EPOCH
-                .elapsed()
-                .expect("unable to poll clock, unrecoverable")
-                .as_secs()
-                .try_into()
-                .unwrap_or_default(),
+        let now = std::time::UNIX_EPOCH
+            .elapsed()
+            .expect("unable to poll clock, unrecoverable")
+            .as_secs()
+            .try_into()
+            .unwrap_or_default();
+        let parsed_timestamp: i64 = match caps.name("timestamp") {
+            Some(ts) => timestamp_to_bucket(ts.as_str().parse().unwrap_or_else(|_| now)),
+            None => timestamp_to_bucket(now),
         };
         let metric_value = match t {
             "c" => MetricValue::Count(val),
@@ -256,16 +255,14 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
                 return Err(ParseError::Raw(format!("Invalid metric type: {t}")));
             }
         };
-        // TODO parse timestamp
         let name = Ustr::from(caps.name("name").unwrap().as_str());
-        now = (now / 10) * 10;
         let id = id(name, &tags, now);
         return Ok(Metric {
             name,
             value: metric_value,
             tags,
             id,
-            timestamp: now,
+            timestamp: parsed_timestamp,
         });
     }
     Err(ParseError::Raw(format!("Invalid metric format {input}")))
@@ -323,7 +320,10 @@ mod tests {
     use proptest::{collection, option, strategy::Strategy, string::string_regex};
     use ustr::Ustr;
 
-    use crate::metric::{id, parse, MetricValue, SortedTags};
+    use crate::{
+        datadog::Metric,
+        metric::{id, parse, timestamp_to_bucket, MetricValue, SortedTags},
+    };
 
     use super::ParseError;
 
@@ -485,8 +485,7 @@ mod tests {
                          mut tags in metric_tags()) {
             let mut tagset1 = String::new();
             let mut tagset2 = String::new();
-            let mut now = std::time::UNIX_EPOCH.elapsed().expect("unable to poll clock, unrecoverable").as_secs().try_into().unwrap_or_default();
-            now = (now / 10) * 10;
+            let now = timestamp_to_bucket(std::time::UNIX_EPOCH.elapsed().expect("unable to poll clock, unrecoverable").as_secs().try_into().unwrap_or_default());
 
             for (k,v) in &tags {
                 tagset1.push_str(k);
