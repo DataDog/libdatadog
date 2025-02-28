@@ -11,7 +11,7 @@ use std::os::windows::ffi::OsStringExt;
 use std::path::Path;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::HMODULE;
-use windows::Win32::System::Diagnostics::Debug::{GetErrorMode, SetErrorMode, THREAD_ERROR_MODE};
+use windows::Win32::System::Diagnostics::Debug::{SetErrorMode, THREAD_ERROR_MODE};
 use windows::Win32::System::LibraryLoader::{
     GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
 };
@@ -25,9 +25,7 @@ use windows::Win32::System::Threading::GetCurrentProcess;
 pub unsafe extern "C" fn init_crashtracking(crash_path: CharSlice) -> bool {
     println!("init_crashtracking");
 
-    let error_mode = GetErrorMode();
-    println!("Error mode: {:?}", error_mode);
-
+    // Make sure WER is enabled
     SetErrorMode(THREAD_ERROR_MODE(0x0001));
 
     let process_handle = GetCurrentProcess();
@@ -48,8 +46,6 @@ pub unsafe extern "C" fn init_crashtracking(crash_path: CharSlice) -> bool {
     let module_name = OsString::from_wide(&module_name_buffer[..len as usize])
         .to_string_lossy()
         .into_owned();
-
-    // let module_name = "D:\\a\\libdatadog\\libdatadog\\target\\release\\deps\\test_app_lib.dll";
 
     println!(
         "Registering crash handler with module name: {}",
