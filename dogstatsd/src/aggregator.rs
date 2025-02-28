@@ -7,7 +7,6 @@ use crate::constants;
 use crate::datadog::{self, Metric as MetricToShip, Series};
 use crate::errors;
 use crate::metric::{self, Metric, MetricValue, SortedTags};
-use std::time;
 
 use datadog_protos::metrics::{Dogsketch, Sketch, SketchPayload};
 use ddsketch_agent::DDSketch;
