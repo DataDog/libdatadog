@@ -8,6 +8,7 @@ use ddcommon::Endpoint;
 use ddcommon_ffi::CharSlice;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
+use std::path::Path;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::HMODULE;
 use windows::Win32::System::LibraryLoader::{
@@ -49,6 +50,15 @@ pub unsafe extern "C" fn init_crashtracking(crash_path: CharSlice) -> bool {
         "Registering crash handler with module name: {}",
         module_name
     );
+
+    // Check if file exists
+    let path = Path::new(&module_name);
+    if !path.exists() {
+        println!("File does not exist: {:?}", path);
+        return false;
+    }
+
+    println!("Using crash path: {}", crash_path);
 
     let endpoint = Endpoint::from_slice(format!("file://{}", crash_path).as_str());
 
