@@ -181,7 +181,6 @@ impl Metric {
         timestamp: Option<i64>,
     ) -> Metric {
         let mut parsed_timestamp = timestamp.unwrap_or_else(|| {
-            println!("can't parse timestamp, using default");
             std::time::UNIX_EPOCH
                 .elapsed()
                 .expect("unable to poll clock, unrecoverable")
