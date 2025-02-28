@@ -4,13 +4,14 @@
 #![cfg(windows)]
 
 use anyhow::Context;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{env, fs, process};
 
 #[test]
 fn test_test() {
     let test_app_path = build_test_app().unwrap();
-    println!("Test app path: {:?}", test_app_path);
+    let test_app_folder = test_app_path.parent().map(Path::to_path_buf).unwrap();
+    println!("Test app path: {:?} (in {:?})", test_app_path, test_app_folder);
 
     let tmpdir = tempfile::TempDir::new().unwrap();
     let dirpath = tmpdir.path();
@@ -18,6 +19,7 @@ fn test_test() {
 
     let output = process::Command::new(test_app_path)
         .arg(crash_path.to_str().unwrap())
+        .current_dir(test_app_folder)
         .output()
         .unwrap();
 
