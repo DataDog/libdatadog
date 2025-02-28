@@ -32,6 +32,8 @@ pub enum BuilderErrorKind {
     InvalidUri(String),
     /// Indicates that the telemetry configuration is invalid.
     InvalidTelemetryConfig,
+    /// Indicates any incompatible configuration
+    InvalidConfiguration(String),
 }
 
 impl Display for BuilderErrorKind {
@@ -40,6 +42,9 @@ impl Display for BuilderErrorKind {
             BuilderErrorKind::InvalidUri(msg) => write!(f, "Invalid URI: {}", msg),
             BuilderErrorKind::InvalidTelemetryConfig => {
                 write!(f, "Invalid telemetry configuration")
+            }
+            BuilderErrorKind::InvalidConfiguration(msg) => {
+                write!(f, "Invalid configuration: {}", msg)
             }
         }
     }
