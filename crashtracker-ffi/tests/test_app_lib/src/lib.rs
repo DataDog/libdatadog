@@ -16,6 +16,9 @@ use windows::Win32::System::LibraryLoader::{
 use windows::Win32::System::ProcessStatus::GetModuleFileNameExW;
 use windows::Win32::System::Threading::GetCurrentProcess;
 
+/// # Safety
+///
+/// This function is unsafe because it relies on Win32 APIs.
 #[no_mangle]
 pub unsafe extern "C" fn init_crashtracking(crash_path: CharSlice) -> bool {
     println!("init_crashtracking");
@@ -44,7 +47,7 @@ pub unsafe extern "C" fn init_crashtracking(crash_path: CharSlice) -> bool {
         module_name
     );
 
-    let endpoint = Endpoint::from_slice(format!("file://{}", crash_path.to_string()).as_str());
+    let endpoint = Endpoint::from_slice(format!("file://{}", crash_path).as_str());
 
     let metadata = Metadata {
         family: CharSlice::from("test_family"),

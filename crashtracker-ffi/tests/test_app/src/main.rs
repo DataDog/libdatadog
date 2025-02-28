@@ -6,6 +6,11 @@
 use ddcommon_ffi::CharSlice;
 use libloading::{Library, Symbol};
 
+#[cfg(not(windows))]
+fn main() {
+    panic!("This test is only supported on Windows");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
