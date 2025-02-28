@@ -268,7 +268,7 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
             }
         };
         let name = Ustr::from(caps.name("name").unwrap().as_str());
-        let id = id(name, &tags, now);
+        let id = id(name, &tags, parsed_timestamp);
         return Ok(Metric {
             name,
             value: metric_value,
