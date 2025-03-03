@@ -597,51 +597,29 @@ pub fn collect_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
     process_chunk: &mut T,
     is_agentless: bool,
     deduplicate_strings: bool,
-) -> TracerPayloadCollection {
+) -> anyhow::Result<TracerPayloadCollection> {
     match traces {
         TraceCollection::TraceChunk(traces) => {
             if deduplicate_strings {
                 let mut shared_dict = SharedDict::default();
                 let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
                 for trace in traces {
-                    let v05_trace = trace
-                        .iter()
-                        .map(|span| v05::Span {
-                            service: shared_dict.get_or_insert(&span.service),
-                            name: shared_dict.get_or_insert(&span.name),
-                            resource: shared_dict.get_or_insert(&span.resource),
-                            trace_id: span.trace_id,
-                            span_id: span.span_id,
-                            parent_id: span.parent_id,
-                            start: span.start,
-                            duration: span.duration,
-                            error: span.error,
-                            meta: span
-                                .meta
-                                .iter()
-                                .map(|(k, v)| {
-                                    let idx_k = shared_dict.get_or_insert(k);
-                                    let idx_v = shared_dict.get_or_insert(v);
-                                    (idx_k, idx_v)
-                                })
-                                .collect(),
-                            metrics: span
-                                .metrics
-                                .iter()
-                                .map(|(k, v)| {
-                                    let idx_k = shared_dict.get_or_insert(k);
-                                    (idx_k, *v)
-                                })
-                                .collect(),
-                            r#type: shared_dict.get_or_insert(&span.r#type),
-                        })
-                        .collect();
+                    let v05_trace = trace.iter().try_fold(
+                        Vec::with_capacity(trace.len()),
+                        |mut acc, span| -> anyhow::Result<Vec<v05::Span>> {
+                            acc.push(v05::from_span_bytes(span, &mut shared_dict)?);
+                            Ok(acc)
+                        },
+                    )?;
 
                     v05_traces.push(v05_trace);
                 }
-                TracerPayloadCollection::V05((shared_dict.dict(), v05_traces))
+                Ok(TracerPayloadCollection::V05((
+                    shared_dict.dict(),
+                    v05_traces,
+                )))
             } else {
-                TracerPayloadCollection::V04(traces)
+                Ok(TracerPayloadCollection::V04(traces))
             }
         }
         TraceCollection::V07(mut traces) => {
@@ -702,11 +680,9 @@ pub fn collect_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
                 }
             }
 
-            TracerPayloadCollection::V07(vec![construct_tracer_payload(
-                trace_chunks,
-                tracer_header_tags,
-                root_span_tags,
-            )])
+            Ok(TracerPayloadCollection::V07(vec![
+                construct_tracer_payload(trace_chunks, tracer_header_tags, root_span_tags),
+            ]))
         }
     }
 }
@@ -1149,7 +1125,8 @@ mod tests {
             &mut tracer_payload::DefaultTraceChunkProcessor,
             false,
             true,
-        );
+        )
+        .unwrap();
 
         let (dict, traces) = match collection {
             TracerPayloadCollection::V05(payload) => payload,
