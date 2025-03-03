@@ -103,11 +103,10 @@ impl Profile {
             })
             .collect();
 
-        let locations = sample
-            .locations
-            .iter()
-            .map(|l| self.add_location(l))
-            .collect();
+        let mut locations = Vec::with_capacity(sample.locations.len());
+        for location in &sample.locations {
+            locations.push(self.add_location(location)?);
+        }
 
         self.add_sample_internal(sample.values, labels, locations, timestamp)
     }
@@ -334,6 +333,7 @@ impl Profile {
                 .iter()
                 .map(Id::to_raw_id)
                 .collect();
+            self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
             self.upscaling_rules.upscale_values(&mut values, &labels)?;
 
             let labels = labels.into_iter().map(pprof::Label::from).collect();
@@ -397,6 +397,24 @@ impl Profile {
             endpoints_stats,
         })
     }
+
+    /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids being present in
+    /// emitted profiles. We're doing extra checks here so that if we see incorrect ids again,
+    /// we are 100% sure they were not introduced prior to this stage.
+    fn check_location_ids_are_valid(&self, location_ids: &[u64], len: usize) -> anyhow::Result<()> {
+        let len: u64 = u64::try_from(len)?;
+        for id in location_ids.iter() {
+            let id = *id;
+            // Location ids start from 1, that's why they're <= len instead of < len
+            anyhow::ensure!(
+                id > 0 && id <= len,
+                "invalid location id found during serialization {:?}, len was {:?}",
+                id,
+                len
+            )
+        }
+        Ok(())
+    }
 }
 
 /// Private helper functions
@@ -432,10 +450,10 @@ impl Profile {
         }))
     }
 
-    fn add_location(&mut self, location: &api::Location) -> LocationId {
+    fn add_location(&mut self, location: &api::Location) -> anyhow::Result<LocationId> {
         let mapping_id = self.add_mapping(&location.mapping);
         let function_id = self.add_function(&location.function);
-        self.locations.dedup(Location {
+        self.locations.checked_dedup(Location {
             mapping_id,
             function_id,
             address: location.address,
@@ -449,12 +467,12 @@ impl Profile {
     ) -> anyhow::Result<LocationId> {
         let mapping_id = self.add_string_id_mapping(&location.mapping)?;
         let function_id = self.add_string_id_function(&location.function)?;
-        Ok(self.locations.dedup(Location {
+        self.locations.checked_dedup(Location {
             mapping_id,
             function_id,
             address: location.address,
             line: location.line,
-        }))
+        })
     }
 
     fn add_mapping(&mut self, mapping: &api::Mapping) -> MappingId {
@@ -516,7 +534,7 @@ impl Profile {
         );
 
         let local_root_span_id = if let LabelValue::Num { num, .. } = label.get_value() {
-            // Safety: the value is a u64, but pprof only has signed values, so we
+            // Safety: the value is an u64, but pprof only has signed values, so we
             // transmute it; the backend does the same.
             unsafe { std::intrinsics::transmute::<i64, u64>(*num) }
         } else {
@@ -1084,7 +1102,7 @@ mod api_tests {
     }
 
     #[test]
-    fn lazy_endpoints() -> anyhow::Result<()> {
+    fn lazy_endpoints() {
         let sample_types = [
             api::ValueType::new("samples", "count"),
             api::ValueType::new("wall-time", "nanoseconds"),
@@ -1129,7 +1147,7 @@ mod api_tests {
 
         profile.add_sample(sample2, None).expect("add to success");
 
-        profile.add_endpoint(10, Cow::from("my endpoint"))?;
+        profile.add_endpoint(10, Cow::from("my endpoint")).unwrap();
 
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         assert_eq!(serialized_profile.samples.len(), 2);
@@ -1190,7 +1208,6 @@ mod api_tests {
         // The trace endpoint label shouldn't be added to second sample because the span id doesn't
         // match
         assert_eq!(s2.labels.len(), 2);
-        Ok(())
     }
 
     #[test]
@@ -1456,7 +1473,7 @@ mod api_tests {
 
         profile.add_sample(sample1, None).expect("add to success");
 
-        // invalid sampling_distance vaue
+        // invalid sampling_distance value
         let upscaling_info = UpscalingInfo::Poisson {
             sum_value_offset: 1,
             count_value_offset: 2,
@@ -2157,7 +2174,7 @@ mod api_tests {
     }
 
     #[test]
-    fn test_fails_when_adding_byvalue_rule_collinding_on_offset_with_existing_bylabel_rule() {
+    fn test_fails_when_adding_byvalue_rule_colliding_on_offset_with_existing_bylabel_rule() {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
@@ -2194,7 +2211,7 @@ mod api_tests {
     }
 
     #[test]
-    fn local_root_span_id_label_as_i64() -> anyhow::Result<()> {
+    fn local_root_span_id_label_as_i64() {
         let sample_types = vec![
             api::ValueType {
                 r#type: "samples",
@@ -2216,7 +2233,7 @@ mod api_tests {
         };
 
         let large_span_id = u64::MAX;
-        // Safety: a u64 can fit into an i64, and we're testing that it's not mis-handled.
+        // Safety: an u64 can fit into an i64, and we're testing that it's not mis-handled.
         let large_num: i64 = unsafe { std::intrinsics::transmute(large_span_id) };
 
         let id2_label = api::Label {
@@ -2241,8 +2258,10 @@ mod api_tests {
         profile.add_sample(sample1, None).expect("add to success");
         profile.add_sample(sample2, None).expect("add to success");
 
-        profile.add_endpoint(10, Cow::from("endpoint 10"))?;
-        profile.add_endpoint(large_span_id, Cow::from("large endpoint"))?;
+        profile.add_endpoint(10, Cow::from("endpoint 10")).unwrap();
+        profile
+            .add_endpoint(large_span_id, Cow::from("large endpoint"))
+            .unwrap();
 
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         assert_eq!(serialized_profile.samples.len(), 2);
@@ -2297,7 +2316,6 @@ mod api_tests {
         {
             assert_eq!(sample.labels, labels);
         }
-        Ok(())
     }
 
     #[test]
