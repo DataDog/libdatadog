@@ -46,7 +46,6 @@ use windows::Win32::System::SystemServices::{
 };
 use windows::Win32::System::Threading::{GetProcessId, GetThreadId, OpenThread, THREAD_ALL_ACCESS};
 
-#[must_use]
 #[cfg(target_os = "windows")]
 /// Initialize the crash-tracking infrastructure.
 ///
@@ -64,10 +63,7 @@ pub fn init_crashtracking_windows(
     metadata: Metadata,
 ) -> Result<()> {
     let endpoint = endpoint.cloned();
-    let error_context = ErrorContext {
-        endpoint,
-        metadata: metadata.try_into()?,
-    };
+    let error_context = ErrorContext { endpoint, metadata };
     let error_context_json = serde_json::to_string(&error_context)?;
     set_error_context(&error_context_json)?;
 
