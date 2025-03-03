@@ -1352,6 +1352,7 @@ dependencies = [
  "chrono",
  "ddcommon",
  "ddtelemetry",
+ "goblin",
  "http 0.2.12",
  "hyper 0.14.31",
  "libc",
@@ -1368,6 +1369,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "uuid",
+ "windows 0.59.0",
 ]
 
 [[package]]
@@ -1380,7 +1382,6 @@ dependencies = [
  "ddcommon",
  "ddcommon-ffi",
  "function_name",
- "goblin",
  "hyper 0.14.31",
  "libc",
  "log",
