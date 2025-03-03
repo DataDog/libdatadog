@@ -26,7 +26,9 @@ fn main() {
 
     // Force a segfault to crash
     let ptr = std::ptr::null_mut::<i32>();
-    unsafe { *ptr = 42; }
+    unsafe {
+        *ptr = 42;
+    }
 
     println!("Test app exiting (failed to crash?)");
 }
