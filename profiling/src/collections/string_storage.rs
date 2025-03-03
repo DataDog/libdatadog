@@ -1,6 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use anyhow::Context;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
@@ -78,7 +79,7 @@ impl ManagedStringStorage {
         self.next_cached_profile_id = InternalCachedProfileId {
             id: next_id
                 .checked_add(1)
-                .ok_or_else(|| anyhow::anyhow!("Ran out of cached_profile_ids!"))?,
+                .context("Ran out of cached_profile_ids!")?,
         };
         Ok(CachedProfileId { id: next_id })
     }
