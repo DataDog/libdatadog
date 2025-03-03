@@ -4,7 +4,7 @@
 #![cfg(windows)]
 
 use anyhow::Context;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::{env, fs, process};
 
 #[test]
