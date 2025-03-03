@@ -6,6 +6,7 @@ edition = "2021"
 [[bin]]
 name = "test_app"
 path = "src/main.rs"
+bench = false
 
 [dependencies]
 ddcommon-ffi = { path = "../../../ddcommon-ffi", default-features = false }

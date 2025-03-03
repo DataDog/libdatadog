@@ -18,26 +18,25 @@ use windows::Win32::System::LibraryLoader::{
 use windows::Win32::System::ProcessStatus::GetModuleFileNameExW;
 use windows::Win32::System::Threading::GetCurrentProcess;
 
-/// # Safety
-///
-/// This function is unsafe because it relies on Win32 APIs.
 #[no_mangle]
-pub unsafe extern "C" fn init_crashtracking(crash_path: CharSlice) -> bool {
+pub extern "C" fn init_crashtracking(crash_path: CharSlice) -> bool {
     println!("init_crashtracking");
 
     // Make sure WER is enabled
-    SetErrorMode(THREAD_ERROR_MODE(0x0001));
+    unsafe { SetErrorMode(THREAD_ERROR_MODE(0x0001)) };
 
-    let process_handle = GetCurrentProcess();
+    let process_handle = unsafe { GetCurrentProcess() };
     let module_handle = get_hmodule();
 
     let mut module_name_buffer = vec![0u16; 1024];
 
-    let len = GetModuleFileNameExW(
-        Some(process_handle),
-        Some(module_handle),
-        &mut module_name_buffer,
-    );
+    let len = unsafe {
+        GetModuleFileNameExW(
+            Some(process_handle),
+            Some(module_handle),
+            &mut module_name_buffer,
+        )
+    };
 
     if len == 0 {
         return false;

@@ -8,15 +8,13 @@ use datadog_crashtracker::{CrashInfoBuilder, StackFrame, StackTrace, ThreadData}
 use ddcommon::Endpoint;
 use ddcommon_ffi::slice::AsBytes;
 use ddcommon_ffi::CharSlice;
-#[cfg(test)]
-use goblin::pe::PE;
 use serde::{Deserialize, Serialize};
 use std::ffi::{c_void, OsString};
 use std::fmt;
 use std::mem::MaybeUninit;
 use std::os::windows::ffi::OsStringExt;
 use std::ptr::{addr_of, read_unaligned};
-use windows::core::{w, HRESULT, PCWSTR};
+use windows::core::{w, HRESULT, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{BOOL, ERROR_SUCCESS, E_FAIL, HANDLE, HMODULE, S_OK, TRUE};
 #[cfg(target_arch = "x86_64")]
 use windows::Win32::System::Diagnostics::Debug::CONTEXT_FULL_AMD64;
@@ -34,8 +32,6 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 use windows::Win32::System::ErrorReporting::{
     WerRegisterRuntimeExceptionModule, WER_RUNTIME_EXCEPTION_INFORMATION,
 };
-#[cfg(test)]
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::ProcessStatus::{
     EnumProcessModules, GetModuleFileNameExW, GetModuleInformation, MODULEINFO,
 };
@@ -49,8 +45,6 @@ use windows::Win32::System::SystemInformation::{
 use windows::Win32::System::SystemServices::{
     IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_NT_SIGNATURE,
 };
-#[cfg(test)]
-use windows::Win32::System::Threading::GetCurrentProcess;
 use windows::Win32::System::Threading::{GetProcessId, GetThreadId, OpenThread, THREAD_ALL_ACCESS};
 
 #[no_mangle]
@@ -66,7 +60,7 @@ use windows::Win32::System::Threading::{GetProcessId, GetThreadId, OpenThread, T
 /// # Atomicity
 ///   This function is not atomic. A crash during its execution may lead to
 ///   unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_crasht_init_windows(
+pub extern "C" fn ddog_crasht_init_windows(
     module: CharSlice,
     endpoint: Option<&Endpoint>,
     metadata: Metadata,
@@ -83,12 +77,12 @@ pub unsafe extern "C" fn ddog_crasht_init_windows(
         let path = module.try_to_string()?;
         create_registry_key(&path)?;
 
-        let mut wpath: Vec<u16> = path.encode_utf16().collect();
-        wpath.push(0); // Ensure null termination
-        WerRegisterRuntimeExceptionModule(
-            PCWSTR::from_raw(wpath.as_ptr()),
-            addr_of!(WERCONTEXT) as *const c_void,
-        )?;
+        unsafe {
+            WerRegisterRuntimeExceptionModule(
+                &HSTRING::from(path),
+                addr_of!(WERCONTEXT) as *const c_void,
+            )?
+        };
         anyhow::Ok(())
     })();
 
@@ -100,15 +94,12 @@ pub unsafe extern "C" fn ddog_crasht_init_windows(
     true
 }
 
-unsafe fn create_registry_key(path: &str) -> Result<()> {
+fn create_registry_key(path: &str) -> Result<()> {
     // First, check if there is already a key named "path" in SOFTWARE\Microsoft\Windows\Windows
     // Error Reporting\RuntimeExceptionHelperModules, in either HKEY_LOCAL_MACHINE or
     // HKEY_CURRENT_USER. If not, create it in HKEY_CURRENT_USER.
 
-    // Convert value name to null-terminated wide string
-    let mut name_wide: Vec<u16> = path.encode_utf16().collect();
-    name_wide.push(0); // Add null terminator
-    let name_pcwstr = PCWSTR::from_raw(name_wide.as_ptr());
+    let name = HSTRING::from(path);
 
     // Subkey path as wide string constant
     let subkey =
@@ -123,9 +114,9 @@ unsafe fn create_registry_key(path: &str) -> Result<()> {
 
         if open_result == ERROR_SUCCESS {
             // Check if the value exists
-            let query_result = RegQueryValueExW(hkey, name_pcwstr, None, None, None, None);
+            let query_result = unsafe { RegQueryValueExW(hkey, &name, None, None, None, None) };
 
-            let _ = RegCloseKey(hkey);
+            let _ = unsafe { RegCloseKey(hkey) };
 
             if query_result == ERROR_SUCCESS {
                 // Value exists in either hive, exit successfully
@@ -138,17 +129,19 @@ unsafe fn create_registry_key(path: &str) -> Result<()> {
     let mut hkey = HKEY::default();
 
     // Create or open the key with write access
-    let create_result = RegCreateKeyExW(
-        HKEY_CURRENT_USER,
-        subkey,
-        None,
-        None,
-        REG_OPTION_NON_VOLATILE,
-        KEY_WRITE,
-        None,
-        &mut hkey,
-        None,
-    );
+    let create_result = unsafe {
+        RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            subkey,
+            None,
+            None,
+            REG_OPTION_NON_VOLATILE,
+            KEY_WRITE,
+            None,
+            &mut hkey,
+            None,
+        )
+    };
 
     anyhow::ensure!(
         create_result == ERROR_SUCCESS,
@@ -158,22 +151,21 @@ unsafe fn create_registry_key(path: &str) -> Result<()> {
     // Create the DWORD value (0)
     let dword_value: u32 = 0;
     let dword_bytes = dword_value.to_ne_bytes();
-    let set_value_result = RegSetValueExW(hkey, name_pcwstr, None, REG_DWORD, Some(&dword_bytes));
+    let set_value_result =
+        unsafe { RegSetValueExW(hkey, &name, None, REG_DWORD, Some(&dword_bytes)) };
 
     anyhow::ensure!(
         set_value_result == ERROR_SUCCESS,
         "Failed to set registry value"
     );
 
-    let _ = RegCloseKey(hkey);
+    let _ = unsafe { RegCloseKey(hkey) };
 
     Ok(())
 }
 
-unsafe fn output_debug_string(message: &str) {
-    let mut wstr: Vec<u16> = message.encode_utf16().collect();
-    wstr.push(0); // Ensure null termination
-    OutputDebugStringW(PCWSTR::from_raw(wstr.as_ptr()));
+fn output_debug_string(message: &str) {
+    unsafe { OutputDebugStringW(&HSTRING::from(message)) };
 }
 
 fn set_error_context(message: &str) {
@@ -200,6 +192,8 @@ static mut WERCONTEXT: WerContext = WerContext {
     suffix: WER_CONTEXT_SUFFIX,
 };
 
+// There is no meaning to those patterns, they are just used to validate the WerContext
+// If needed, they can be repurposed for versioning
 pub const WER_CONTEXT_PREFIX: u64 = 0xBABA_BABA_BABA_BABA;
 pub const WER_CONTEXT_SUFFIX: u64 = 0xEFEF_EFEF_EFEF_EFEF;
 
@@ -213,7 +207,7 @@ pub struct WerContext {
 
 #[no_mangle]
 #[cfg(target_os = "windows")]
-pub unsafe extern "C" fn OutOfProcessExceptionEventSignatureCallback(
+pub extern "C" fn OutOfProcessExceptionEventSignatureCallback(
     _context: *const c_void,
     _exception_information: *const WER_RUNTIME_EXCEPTION_INFORMATION,
     _index: i32,
@@ -230,7 +224,7 @@ pub unsafe extern "C" fn OutOfProcessExceptionEventSignatureCallback(
 
 #[no_mangle]
 #[cfg(target_os = "windows")]
-pub unsafe extern "C" fn OutOfProcessExceptionEventDebuggerLaunchCallback(
+pub extern "C" fn OutOfProcessExceptionEventDebuggerLaunchCallback(
     _context: *const c_void,
     _exception_information: *const WER_RUNTIME_EXCEPTION_INFORMATION,
     _is_custom_debugger: *mut BOOL,
@@ -246,7 +240,7 @@ pub unsafe extern "C" fn OutOfProcessExceptionEventDebuggerLaunchCallback(
 
 #[no_mangle]
 #[cfg(target_os = "windows")]
-pub unsafe extern "C" fn OutOfProcessExceptionEventCallback(
+pub extern "C" fn OutOfProcessExceptionEventCallback(
     context: *const c_void,
     exception_information: *const WER_RUNTIME_EXCEPTION_INFORMATION,
     _ownership_claimed: *mut BOOL,
@@ -262,17 +256,18 @@ pub unsafe extern "C" fn OutOfProcessExceptionEventCallback(
             "exception_information is null"
         );
 
-        let exception_information = *exception_information;
-        SymInitializeW(exception_information.hProcess, PCWSTR::null(), true)?;
+        let exception_information = unsafe { *exception_information };
+        unsafe { SymInitializeW(exception_information.hProcess, PCWSTR::null(), true)? };
 
-        let pid = GetProcessId(exception_information.hProcess);
-        let crash_tid = GetThreadId(exception_information.hThread);
+        let pid = unsafe { GetProcessId(exception_information.hProcess) };
+        let crash_tid = unsafe { GetThreadId(exception_information.hThread) };
         let threads = list_threads(pid).context("Failed to list threads")?;
         let modules = list_modules(exception_information.hProcess).unwrap_or_default();
 
         let wer_context = read_wer_context(exception_information.hProcess, context as usize)?;
 
-        let error_context_json = std::slice::from_raw_parts(wer_context.ptr, wer_context.len);
+        let error_context_json =
+            unsafe { std::slice::from_raw_parts(wer_context.ptr, wer_context.len) };
         let error_context_str = std::str::from_utf8(error_context_json)?;
         let error_context: ErrorContext = serde_json::from_str(error_context_str)?;
 
@@ -333,7 +328,7 @@ pub unsafe extern "C" fn OutOfProcessExceptionEventCallback(
     S_OK
 }
 
-pub unsafe fn read_wer_context(process_handle: HANDLE, base_address: usize) -> Result<WerContext> {
+fn read_wer_context(process_handle: HANDLE, base_address: usize) -> Result<WerContext> {
     let buffer = read_memory_raw(process_handle, base_address as u64, size_of::<WerContext>())?;
 
     anyhow::ensure!(
@@ -346,23 +341,23 @@ pub unsafe fn read_wer_context(process_handle: HANDLE, base_address: usize) -> R
 
     // Copy the raw bytes from the Vec<u8> into the MaybeUninit<WerContext>
     let ptr = wer_context.as_mut_ptr();
-    std::ptr::copy_nonoverlapping(buffer.as_ptr(), ptr as *mut u8, buffer.len());
+    unsafe { std::ptr::copy_nonoverlapping(buffer.as_ptr(), ptr as *mut u8, buffer.len()) };
 
     // Validate prefix and suffix
     let raw_ptr = wer_context.as_ptr();
 
     // We can't call assume_init yet because ptr hasn't been set,
     // and apparently (*raw_ptr).prefix before calling assume_init is undefined behavior
-    let prefix = read_unaligned(addr_of!((*raw_ptr).prefix));
-    let suffix = read_unaligned(addr_of!((*raw_ptr).suffix));
+    let prefix = unsafe { read_unaligned(addr_of!((*raw_ptr).prefix)) };
+    let suffix = unsafe { read_unaligned(addr_of!((*raw_ptr).suffix)) };
 
     anyhow::ensure!(
         prefix == WER_CONTEXT_PREFIX && suffix == WER_CONTEXT_SUFFIX,
         "Invalid WER context"
     );
 
-    let ptr = read_unaligned(addr_of!((*raw_ptr).ptr));
-    let len = read_unaligned(addr_of!((*raw_ptr).len));
+    let ptr = unsafe { read_unaligned(addr_of!((*raw_ptr).ptr)) };
+    let len = unsafe { read_unaligned(addr_of!((*raw_ptr).len)) };
 
     anyhow::ensure!(!ptr.is_null() && len > 0, "Invalid WER context");
 
@@ -393,13 +388,13 @@ struct AlignedContext {
     ctx: CONTEXT,
 }
 
-unsafe fn walk_thread_stack(
+fn walk_thread_stack(
     process_handle: HANDLE,
     thread_id: u32,
     modules: &[ModuleInfo],
 ) -> Result<StackTrace> {
     let mut stacktrace = StackTrace::new_incomplete();
-    let thread_handle = OpenThread(THREAD_ALL_ACCESS, false, thread_id)?;
+    let thread_handle = unsafe { OpenThread(THREAD_ALL_ACCESS, false, thread_id)? };
     let mut context = AlignedContext::default();
 
     #[cfg(target_arch = "x86_64")]
@@ -411,7 +406,7 @@ unsafe fn walk_thread_stack(
         context.ctx.ContextFlags = CONTEXT_FULL_X86;
     }
 
-    GetThreadContext(thread_handle, &mut context.ctx)?;
+    unsafe { GetThreadContext(thread_handle, &mut context.ctx)? };
 
     let mut native_frame = STACKFRAME_EX::default();
     let machine_type: u32;
@@ -438,18 +433,20 @@ unsafe fn walk_thread_stack(
         native_frame.AddrFrame.Mode = AddrModeFlat;
     }
 
-    while let TRUE = StackWalkEx(
-        machine_type,
-        process_handle,
-        thread_handle,
-        &mut native_frame,
-        &mut context as *mut _ as *mut c_void,
-        None,
-        None,
-        None,
-        None,
-        SYM_STKWALK_DEFAULT,
-    ) {
+    while let TRUE = unsafe {
+        StackWalkEx(
+            machine_type,
+            process_handle,
+            thread_handle,
+            &mut native_frame,
+            &mut context as *mut _ as *mut c_void,
+            None,
+            None,
+            None,
+            None,
+            SYM_STKWALK_DEFAULT,
+        )
+    } {
         let mut frame = StackFrame::new();
 
         frame.ip = Some(format!("{:x}", native_frame.AddrPC.Offset));
@@ -497,13 +494,13 @@ struct PdbInfo {
     signature: Guid,
 }
 
-unsafe fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>> {
+fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>> {
     // Use EnumProcessModules to get a list of modules
     let mut module_infos = Vec::new();
 
     // Get the number of bytes required to store the array of module handles
     let mut cb_needed = 0;
-    EnumProcessModules(process_handle, std::ptr::null_mut(), 0, &mut cb_needed)
+    unsafe { EnumProcessModules(process_handle, std::ptr::null_mut(), 0, &mut cb_needed) }
         .context("Failed to get module list size")?;
 
     // Allocate enough space for the module handles
@@ -511,25 +508,29 @@ unsafe fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>
     let mut hmodules: Vec<HMODULE> = Vec::with_capacity(modules_count);
     let mut cb_actual = 0;
 
-    EnumProcessModules(
-        process_handle,
-        hmodules.as_mut_ptr(),
-        cb_needed,
-        &mut cb_actual,
-    )
+    unsafe {
+        EnumProcessModules(
+            process_handle,
+            hmodules.as_mut_ptr(),
+            cb_needed,
+            &mut cb_actual,
+        )
+    }
     .context("Failed to enumerate process modules")?;
 
-    hmodules.set_len(cb_actual as usize / size_of::<HMODULE>());
+    unsafe { hmodules.set_len(cb_actual as usize / size_of::<HMODULE>()) };
 
     // Iterate through the module handles and retrieve information
     for &hmodule in hmodules.iter() {
         let mut module_info = MODULEINFO::default();
-        if GetModuleInformation(
-            process_handle,
-            hmodule,
-            &mut module_info,
-            size_of::<MODULEINFO>() as u32,
-        )
+        if unsafe {
+            GetModuleInformation(
+                process_handle,
+                hmodule,
+                &mut module_info,
+                size_of::<MODULEINFO>() as u32,
+            )
+        }
         .is_err()
         {
             continue;
@@ -548,18 +549,25 @@ unsafe fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>
     Ok(module_infos)
 }
 
+/// Read a value from the target process memory.
+/// # Safety
+/// This function reads memory from another process and casts it to an arbitrary type.
+/// Make sure to perform proper validation on the data before using it, and don't use it for
+/// types that have references, because the references are relative to the target process.
 unsafe fn read_memory<T>(process_handle: HANDLE, address: u64) -> Result<T> {
     let mut bytes_read = 0;
     let mut value = MaybeUninit::<T>::uninit();
     let size = size_of::<T>();
 
-    let result = ReadProcessMemory(
-        process_handle,
-        address as *const _,
-        value.as_mut_ptr() as *mut _,
-        size,
-        Some(&mut bytes_read),
-    );
+    let result = unsafe {
+        ReadProcessMemory(
+            process_handle,
+            address as *const _,
+            value.as_mut_ptr() as *mut _,
+            size,
+            Some(&mut bytes_read),
+        )
+    };
 
     anyhow::ensure!(
         result.is_ok() && bytes_read == size,
@@ -569,17 +577,19 @@ unsafe fn read_memory<T>(process_handle: HANDLE, address: u64) -> Result<T> {
     Ok(value.assume_init())
 }
 
-unsafe fn read_memory_raw(process_handle: HANDLE, address: u64, size: usize) -> Result<Vec<u8>> {
+fn read_memory_raw(process_handle: HANDLE, address: u64, size: usize) -> Result<Vec<u8>> {
     let mut buffer = vec![0u8; size];
     let mut bytes_read = 0;
 
-    let result = ReadProcessMemory(
-        process_handle,
-        address as *const _,
-        buffer.as_mut_ptr() as *mut _,
-        size,
-        Some(&mut bytes_read),
-    );
+    let result = unsafe {
+        ReadProcessMemory(
+            process_handle,
+            address as *const _,
+            buffer.as_mut_ptr() as *mut _,
+            size,
+            Some(&mut bytes_read),
+        )
+    };
 
     if result.is_err() || bytes_read != size {
         return Err(anyhow!("Failed to read memory"));
@@ -589,7 +599,7 @@ unsafe fn read_memory_raw(process_handle: HANDLE, address: u64, size: usize) -> 
 }
 
 #[repr(C)]
-struct IMAGE_NT_HEADERS_GENERIC {
+struct ImageNtHeadersGeneric {
     pub signature: u32,
     pub file_header: IMAGE_FILE_HEADER,
     pub magic: IMAGE_OPTIONAL_HEADER_MAGIC,
@@ -625,21 +635,22 @@ impl fmt::LowerHex for Guid {
 }
 
 #[repr(C)]
-struct CV_INFO_PDB70 {
+struct CvInfoPdb70 {
     pub signature: u32,
     pub guid: Guid,
     pub age: u32,
 }
 
-unsafe fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbInfo> {
-    let dos_header: IMAGE_DOS_HEADER = read_memory(process_handle, base_address)?;
+fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbInfo> {
+    let dos_header: IMAGE_DOS_HEADER = unsafe { read_memory(process_handle, base_address)? };
 
     if dos_header.e_magic != IMAGE_DOS_SIGNATURE {
         return Err(anyhow!("Invalid DOS header"));
     }
 
     let nt_headers_address = base_address + dos_header.e_lfanew as u64;
-    let nt_headers: IMAGE_NT_HEADERS_GENERIC = read_memory(process_handle, nt_headers_address)?;
+    let nt_headers: ImageNtHeadersGeneric =
+        unsafe { read_memory(process_handle, nt_headers_address)? };
 
     if nt_headers.signature != IMAGE_NT_SIGNATURE {
         return Err(anyhow!("Invalid NT headers"));
@@ -653,10 +664,12 @@ unsafe fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbI
     }
 
     let debug_data_dir: IMAGE_DATA_DIRECTORY = if is_pe32 {
-        let nt_headers32: IMAGE_NT_HEADERS32 = read_memory(process_handle, nt_headers_address)?;
+        let nt_headers32: IMAGE_NT_HEADERS32 =
+            unsafe { read_memory(process_handle, nt_headers_address)? };
         nt_headers32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG.0 as usize]
     } else {
-        let nt_headers64: IMAGE_NT_HEADERS64 = read_memory(process_handle, nt_headers_address)?;
+        let nt_headers64: IMAGE_NT_HEADERS64 =
+            unsafe { read_memory(process_handle, nt_headers_address)? };
         nt_headers64.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG.0 as usize]
     };
 
@@ -666,18 +679,20 @@ unsafe fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbI
         debug_data_dir.Size as usize,
     )?;
 
-    let debug_dir = std::slice::from_raw_parts(
-        debug_dir_buffer.as_ptr() as *const IMAGE_DEBUG_DIRECTORY,
-        debug_dir_buffer.len() / std::mem::size_of::<IMAGE_DEBUG_DIRECTORY>(),
-    );
+    let debug_dir = unsafe {
+        std::slice::from_raw_parts(
+            debug_dir_buffer.as_ptr() as *const IMAGE_DEBUG_DIRECTORY,
+            debug_dir_buffer.len() / std::mem::size_of::<IMAGE_DEBUG_DIRECTORY>(),
+        )
+    };
 
     for entry in debug_dir {
         if entry.Type != IMAGE_DEBUG_TYPE_CODEVIEW {
             continue;
         }
 
-        let cv_info: CV_INFO_PDB70 =
-            read_memory(process_handle, base_address + entry.AddressOfRawData as u64)?;
+        let cv_info: CvInfoPdb70 =
+            unsafe { read_memory(process_handle, base_address + entry.AddressOfRawData as u64)? };
 
         if cv_info.signature == 0x53445352
         /* 'RSDS' */
@@ -692,17 +707,16 @@ unsafe fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbI
     anyhow::bail!("No CodeView entry found");
 }
 
-unsafe fn get_module_path(
-    process_handle: HANDLE,
-    module_handle: HMODULE,
-) -> anyhow::Result<String> {
+fn get_module_path(process_handle: HANDLE, module_handle: HMODULE) -> Result<String> {
     let mut module_name_buffer = vec![0u16; 1024];
 
-    let len = GetModuleFileNameExW(
-        Some(process_handle),
-        Some(module_handle),
-        &mut module_name_buffer,
-    );
+    let len = unsafe {
+        GetModuleFileNameExW(
+            Some(process_handle),
+            Some(module_handle),
+            &mut module_name_buffer,
+        )
+    };
 
     if len == 0 {
         return Err(anyhow!("GetModuleFileNameExW failed: {}", len));
@@ -715,23 +729,23 @@ unsafe fn get_module_path(
     Ok(module_name)
 }
 
-unsafe fn list_threads(pid: u32) -> anyhow::Result<Vec<u32>> {
+fn list_threads(pid: u32) -> Result<Vec<u32>> {
     let mut thread_ids = Vec::new();
 
-    let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, pid)?;
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, pid)? };
 
     let mut thread_entry = THREADENTRY32 {
         dwSize: size_of::<THREADENTRY32>() as u32,
         ..Default::default()
     };
 
-    if Thread32First(snapshot, &mut thread_entry).is_ok() {
+    if unsafe { Thread32First(snapshot, &mut thread_entry) }.is_ok() {
         loop {
             if thread_entry.th32OwnerProcessID == pid {
                 thread_ids.push(thread_entry.th32ThreadID);
             }
 
-            if Thread32Next(snapshot, &mut thread_entry).is_err() {
+            if unsafe { Thread32Next(snapshot, &mut thread_entry) }.is_err() {
                 break;
             }
         }
@@ -740,19 +754,26 @@ unsafe fn list_threads(pid: u32) -> anyhow::Result<Vec<u32>> {
     Ok(thread_ids)
 }
 
-#[test]
-fn test_wercontext() {
-    let expected_data = vec![0x01, 0x02, 0x03, 0x04];
-    let expected_size = expected_data.len() * size_of::<u8>();
-    let expected_context = WerContext {
-        prefix: WER_CONTEXT_PREFIX,
-        len: expected_size,
-        ptr: expected_data.as_ptr(),
-        suffix: WER_CONTEXT_SUFFIX,
-    };
+#[cfg(test)]
+mod tests {
+    use crate::collector_windows::api::*;
+    use goblin::pe::PE;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::System::ProcessStatus::{GetModuleInformation, MODULEINFO};
+    use windows::Win32::System::Threading::GetCurrentProcess;
 
-    unsafe {
-        let process_handle = GetCurrentProcess();
+    #[test]
+    fn test_wercontext() {
+        let expected_data = vec![0x01, 0x02, 0x03, 0x04];
+        let expected_size = expected_data.len() * size_of::<u8>();
+        let expected_context = WerContext {
+            prefix: WER_CONTEXT_PREFIX,
+            len: expected_size,
+            ptr: expected_data.as_ptr(),
+            suffix: WER_CONTEXT_SUFFIX,
+        };
+
+        let process_handle = unsafe { GetCurrentProcess() };
         let result = read_wer_context(process_handle, &expected_context as *const _ as usize);
         let actual_context = result.unwrap();
 
@@ -762,75 +783,75 @@ fn test_wercontext() {
         // read_wer_context makes a copy, so the address should be different
         assert_ne!(actual_context.ptr, expected_context.ptr);
 
-        let buffer = std::slice::from_raw_parts(actual_context.ptr, actual_context.len);
+        let buffer = unsafe { std::slice::from_raw_parts(actual_context.ptr, actual_context.len) };
         assert_eq!(buffer, expected_data);
     }
-}
 
-#[test]
-fn test_invalid_wercontext() {
-    let data = [0x01, 0x02, 0x03, 0x04];
-    let mut context = WerContext {
-        prefix: 0,
-        len: data.len() * size_of::<u8>(),
-        ptr: data.as_ptr(),
-        suffix: 0,
-    };
+    #[test]
+    fn test_invalid_wercontext() {
+        let data = [0x01, 0x02, 0x03, 0x04];
+        let mut context = WerContext {
+            prefix: 0,
+            len: data.len() * size_of::<u8>(),
+            ptr: data.as_ptr(),
+            suffix: 0,
+        };
 
-    let process_handle = unsafe { GetCurrentProcess() };
+        let process_handle = unsafe { GetCurrentProcess() };
 
-    // Valid prefix, invalid suffix
-    context.prefix = WER_CONTEXT_PREFIX;
-    context.suffix = 0;
-    let result = unsafe { read_wer_context(process_handle, &context as *const _ as usize) };
-    assert!(result.is_err());
+        // Valid prefix, invalid suffix
+        context.prefix = WER_CONTEXT_PREFIX;
+        context.suffix = 0;
+        let result = read_wer_context(process_handle, &context as *const _ as usize);
+        assert!(result.is_err());
 
-    // Invalid prefix, valid suffix
-    context.suffix = WER_CONTEXT_SUFFIX;
-    context.prefix = 0;
-    let result = unsafe { read_wer_context(process_handle, &context as *const _ as usize) };
-    assert!(result.is_err());
+        // Invalid prefix, valid suffix
+        context.suffix = WER_CONTEXT_SUFFIX;
+        context.prefix = 0;
+        let result = read_wer_context(process_handle, &context as *const _ as usize);
+        assert!(result.is_err());
 
-    // Valid prefix, valid suffix
-    context.suffix = WER_CONTEXT_SUFFIX;
-    context.prefix = WER_CONTEXT_PREFIX;
-    let result = unsafe { read_wer_context(process_handle, &context as *const _ as usize) };
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_get_pdb_info() {
-    let process_handle = unsafe { GetCurrentProcess() };
-    let module_handle = unsafe { GetModuleHandleW(None).unwrap() };
-    let mut module_info = MODULEINFO::default();
-    unsafe {
-        GetModuleInformation(
-            process_handle,
-            module_handle,
-            &mut module_info,
-            size_of::<MODULEINFO>() as u32,
-        )
+        // Valid prefix, valid suffix
+        context.suffix = WER_CONTEXT_SUFFIX;
+        context.prefix = WER_CONTEXT_PREFIX;
+        let result = read_wer_context(process_handle, &context as *const _ as usize);
+        assert!(result.is_ok());
     }
-    .unwrap();
-    let base_address = module_info.lpBaseOfDll as u64;
-    let path = unsafe { get_module_path(process_handle, module_handle).unwrap() };
 
-    let file = std::fs::read(path).unwrap();
-    let pe = PE::parse(&file).unwrap();
+    #[test]
+    fn test_get_pdb_info() {
+        let process_handle = unsafe { GetCurrentProcess() };
+        let module_handle = unsafe { GetModuleHandleW(None).unwrap() };
+        let mut module_info = MODULEINFO::default();
+        unsafe {
+            GetModuleInformation(
+                process_handle,
+                module_handle,
+                &mut module_info,
+                size_of::<MODULEINFO>() as u32,
+            )
+        }
+        .unwrap();
+        let base_address = module_info.lpBaseOfDll as u64;
+        let path = get_module_path(process_handle, module_handle).unwrap();
 
-    let expected_debug_id = pe.debug_data.unwrap().codeview_pdb70_debug_info.unwrap();
-    let expected_pdb_signature = expected_debug_id.signature;
-    let expected_pdb_age = expected_debug_id.age;
+        let file = std::fs::read(path).unwrap();
+        let pe = PE::parse(&file).unwrap();
 
-    let actual_pdb_info = unsafe { get_pdb_info(process_handle, base_address).unwrap() };
+        let expected_debug_id = pe.debug_data.unwrap().codeview_pdb70_debug_info.unwrap();
+        let expected_pdb_signature = expected_debug_id.signature;
+        let expected_pdb_age = expected_debug_id.age;
 
-    assert_eq!(actual_pdb_info.age, expected_pdb_age);
+        let actual_pdb_info = get_pdb_info(process_handle, base_address).unwrap();
 
-    let bytes = unsafe {
-        std::slice::from_raw_parts(
-            &actual_pdb_info.signature as *const Guid as *const u8,
-            size_of::<Guid>(),
-        )
-    };
-    assert_eq!(bytes, expected_pdb_signature);
+        assert_eq!(actual_pdb_info.age, expected_pdb_age);
+
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                &actual_pdb_info.signature as *const Guid as *const u8,
+                size_of::<Guid>(),
+            )
+        };
+        assert_eq!(bytes, expected_pdb_signature);
+    }
 }
