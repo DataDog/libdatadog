@@ -10,6 +10,12 @@ license.workspace = true
 
 [lib]
 bench = false
+crate-type = ["lib", "cdylib"]
+
+[[bin]]
+name = "test_app"
+path = "tests/test_app/src/main.rs"
+bench = false
 
 [features]
 default = ["cbindgen", "collector", "collector_windows", "demangler", "receiver"]

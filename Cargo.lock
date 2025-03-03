@@ -5582,24 +5582,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "test_app"
-version = "0.1.0"
-dependencies = [
- "ddcommon-ffi",
- "libloading",
-]
-
-[[package]]
-name = "test_app_lib"
-version = "0.1.0"
-dependencies = [
- "datadog-crashtracker-ffi",
- "ddcommon",
- "ddcommon-ffi",
- "windows 0.59.0",
-]
-
-[[package]]
 name = "test_spawn_from_lib"
 version = "0.0.1"
 dependencies = [

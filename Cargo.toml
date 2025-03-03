@@ -7,8 +7,6 @@ members = [
   "builder",
   "crashtracker",
   "crashtracker-ffi",
-  "crashtracker-ffi/tests/test_app",
-  "crashtracker-ffi/tests/test_app_lib",
   "profiling",
   "profiling-ffi",
   "profiling-replayer",

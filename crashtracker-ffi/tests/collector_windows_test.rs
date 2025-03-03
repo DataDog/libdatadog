@@ -9,17 +9,24 @@ use std::{env, fs, process};
 
 #[test]
 fn test_test() {
-    let test_app_path = build_test_app().unwrap();
-    let test_app_folder = test_app_path.parent().map(Path::to_path_buf).unwrap();
-    println!("Test app path: {:?}", test_app_path);
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
+
+    println!("Profile: {:?}", profile);
 
     let tmpdir = tempfile::TempDir::new().unwrap();
     let dirpath = tmpdir.path();
     let crash_path = dirpath.join("crash");
 
+    let test_app_path = get_artifact_dir().join(profile).join("test_app.exe");
+
+    println!("Test app path: {:?}", test_app_path);
+
     let output = process::Command::new(test_app_path)
         .arg(crash_path.to_str().unwrap())
-        .current_dir(test_app_folder)
         .output()
         .unwrap();
 
@@ -47,48 +54,25 @@ fn test_test() {
     assert_eq!(&crash_payload["metadata"]["family"], "test_family");
 }
 
-fn build_test_app() -> anyhow::Result<PathBuf> {
-    let mut build_cmd = process::Command::new(env!("CARGO"));
-    build_cmd.arg("build");
-    build_cmd.arg("--release");
-    build_cmd.arg("-p");
-    build_cmd.arg("test_app");
-
-    let output = build_cmd.output().unwrap();
-    if !output.status.success() {
-        anyhow::bail!(
-            "Cargo build failed: status code {:?}\nstderr:\n {}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
+fn get_artifact_dir() -> PathBuf {
     // This variable contains the path in which cargo puts it's build artifacts
     // This relies on the assumption that the current binary is assumed to not have been moved from
     // its directory
-    let artifact_dir = (|| {
-        // If the CARGO_TARGET_DIR env var is set, then just use that.
-        if let Ok(env_target_dir) = env::var("CARGO_TARGET_DIR") {
-            return PathBuf::from(env_target_dir);
+    // If the CARGO_TARGET_DIR env var is set, then just use that.
+    if let Ok(env_target_dir) = env::var("CARGO_TARGET_DIR") {
+        return PathBuf::from(env_target_dir);
+    }
+
+    let test_bin_location = PathBuf::from(env::args().next().unwrap());
+    let mut location_components = test_bin_location.components().rev().peekable();
+    loop {
+        let Some(c) = location_components.peek() else {
+            break;
+        };
+        if c.as_os_str() == "target" {
+            break;
         }
-
-        let test_bin_location = PathBuf::from(env::args().next().unwrap());
-        let mut location_components = test_bin_location.components().rev().peekable();
-        loop {
-            let Some(c) = location_components.peek() else {
-                break;
-            };
-            if c.as_os_str() == "target" {
-                break;
-            }
-            location_components.next();
-        }
-        location_components.rev().collect::<PathBuf>()
-    })();
-
-    let mut artifact_path = artifact_dir.clone();
-    artifact_path.push("release");
-    artifact_path.push("test_app.exe");
-
-    Ok(artifact_path)
+        location_components.next();
+    }
+    location_components.rev().collect::<PathBuf>()
 }
