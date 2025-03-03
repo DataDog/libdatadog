@@ -11,6 +11,7 @@ use crate::{
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
+use datadog_trace_utils::msgpack_decoder::decode::error::DecodeError;
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryError};
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::TracerHeaderTags;
@@ -602,7 +603,10 @@ impl TraceExporter {
                     &mut tracer_payload::DefaultTraceChunkProcessor,
                     self.endpoint.api_key.is_some(),
                     false,
-                ),
+                )
+                .map_err(|e| {
+                    TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
+                })?,
                 _ => todo!("Conversion from v04 to vXX not implemented"),
             },
             TraceExporterInputFormat::V05 => match self.output_format {
@@ -612,7 +616,10 @@ impl TraceExporter {
                     &mut tracer_payload::DefaultTraceChunkProcessor,
                     self.endpoint.api_key.is_some(),
                     true,
-                ),
+                )
+                .map_err(|e| {
+                    TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
+                })?,
                 _ => todo!("Conversion from v05 to vXX not implemented"),
             },
             _ => todo!("Input format not implemented"),

@@ -372,7 +372,7 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
                     self.chunk_processor,
                     self.is_agentless,
                     false,
-                ))
+                )?)
             },
             TraceEncoding::V05 => {
                 let (traces, size) = match msgpack_decoder::v05::from_slice(self.data) {
@@ -392,7 +392,7 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
                     self.chunk_processor,
                     self.is_agentless,
                     true,
-                ))
+                )?)
             },
             _ => todo!("Encodings other than TraceEncoding::V04 and TraceEncoding::V05 not implemented yet."),
         }
