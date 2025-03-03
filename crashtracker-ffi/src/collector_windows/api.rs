@@ -14,6 +14,7 @@ use std::fmt;
 use std::mem::MaybeUninit;
 use std::os::windows::ffi::OsStringExt;
 use std::ptr::{addr_of, read_unaligned};
+use std::sync::Mutex;
 use windows::core::{w, HRESULT, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{BOOL, ERROR_SUCCESS, E_FAIL, HANDLE, HMODULE, S_OK, TRUE};
 #[cfg(target_arch = "x86_64")]
@@ -72,17 +73,22 @@ pub extern "C" fn ddog_crasht_init_windows(
             metadata: metadata.try_into()?,
         };
         let error_context_json = serde_json::to_string(&error_context)?;
-        set_error_context(&error_context_json);
+        set_error_context(&error_context_json)?;
 
         let path = module.try_to_string()?;
         create_registry_key(&path)?;
 
         unsafe {
-            WerRegisterRuntimeExceptionModule(
-                &HSTRING::from(path),
-                addr_of!(WERCONTEXT) as *const c_void,
-            )?
-        };
+            match WERCONTEXT.lock() {
+                Ok(mut wercontext) => {
+                    WerRegisterRuntimeExceptionModule(
+                        &HSTRING::from(path),
+                        addr_of!(*wercontext) as *const c_void,
+                    )?;
+                }
+                Err(e) => return Err(anyhow!("Failed to lock WERCONTEXT: {}", e)),
+            }
+        }
         anyhow::Ok(())
     })();
 
@@ -168,14 +174,18 @@ fn output_debug_string(message: &str) {
     unsafe { OutputDebugStringW(&HSTRING::from(message)) };
 }
 
-fn set_error_context(message: &str) {
+fn set_error_context(message: &str) -> Result<()> {
     let bytes = message.as_bytes();
     let boxed_slice = bytes.to_vec().into_boxed_slice();
     let static_slice = Box::leak(boxed_slice);
 
-    unsafe {
-        WERCONTEXT.ptr = static_slice.as_ptr();
-        WERCONTEXT.len = static_slice.len();
+    match WERCONTEXT.lock() {
+        Ok(mut wercontext) => {
+            wercontext.ptr = static_slice.as_ptr() as usize;
+            wercontext.len = static_slice.len();
+            Ok(())
+        }
+        Err(e) => Err(anyhow::anyhow!("Failed to lock WERCONTEXT: {}", e)),
     }
 }
 
@@ -185,12 +195,12 @@ pub struct ErrorContext {
     metadata: datadog_crashtracker::Metadata,
 }
 
-static mut WERCONTEXT: WerContext = WerContext {
+static WERCONTEXT: Mutex<WerContext> = Mutex::new(WerContext {
     prefix: WER_CONTEXT_PREFIX,
-    ptr: std::ptr::null(),
+    ptr: 0,
     len: 0,
     suffix: WER_CONTEXT_SUFFIX,
-};
+});
 
 // There is no meaning to those patterns, they are just used to validate the WerContext
 // If needed, they can be repurposed for versioning
@@ -200,7 +210,7 @@ pub const WER_CONTEXT_SUFFIX: u64 = 0xEFEF_EFEF_EFEF_EFEF;
 #[repr(C)]
 pub struct WerContext {
     prefix: u64,
-    ptr: *const u8,
+    ptr: usize,
     len: usize,
     suffix: u64,
 }
@@ -267,7 +277,7 @@ pub extern "C" fn OutOfProcessExceptionEventCallback(
         let wer_context = read_wer_context(exception_information.hProcess, context as usize)?;
 
         let error_context_json =
-            unsafe { std::slice::from_raw_parts(wer_context.ptr, wer_context.len) };
+            unsafe { std::slice::from_raw_parts(wer_context.ptr as *const u8, wer_context.len) };
         let error_context_str = std::str::from_utf8(error_context_json)?;
         let error_context: ErrorContext = serde_json::from_str(error_context_str)?;
 
@@ -359,7 +369,7 @@ fn read_wer_context(process_handle: HANDLE, base_address: usize) -> Result<WerCo
     let ptr = unsafe { read_unaligned(addr_of!((*raw_ptr).ptr)) };
     let len = unsafe { read_unaligned(addr_of!((*raw_ptr).len)) };
 
-    anyhow::ensure!(!ptr.is_null() && len > 0, "Invalid WER context");
+    anyhow::ensure!(ptr != 0 && len > 0, "Invalid WER context");
 
     // Read the memory in the target process pointed by ptr
     let buffer = read_memory_raw(process_handle, ptr as u64, len)?;
@@ -373,7 +383,7 @@ fn read_wer_context(process_handle: HANDLE, base_address: usize) -> Result<WerCo
     // Create a new WerContext with the leaked static reference
     let wer_context = WerContext {
         prefix: WER_CONTEXT_PREFIX,
-        ptr: static_slice.as_ptr(),
+        ptr: static_slice.as_ptr() as usize,
         len,
         suffix: WER_CONTEXT_SUFFIX,
     };
@@ -769,7 +779,7 @@ mod tests {
         let expected_context = WerContext {
             prefix: WER_CONTEXT_PREFIX,
             len: expected_size,
-            ptr: expected_data.as_ptr(),
+            ptr: expected_data.as_ptr() as usize,
             suffix: WER_CONTEXT_SUFFIX,
         };
 
@@ -783,7 +793,9 @@ mod tests {
         // read_wer_context makes a copy, so the address should be different
         assert_ne!(actual_context.ptr, expected_context.ptr);
 
-        let buffer = unsafe { std::slice::from_raw_parts(actual_context.ptr, actual_context.len) };
+        let buffer = unsafe {
+            std::slice::from_raw_parts(actual_context.ptr as *const u8, actual_context.len)
+        };
         assert_eq!(buffer, expected_data);
     }
 
@@ -793,7 +805,7 @@ mod tests {
         let mut context = WerContext {
             prefix: 0,
             len: data.len() * size_of::<u8>(),
-            ptr: data.as_ptr(),
+            ptr: data.as_ptr() as usize,
             suffix: 0,
         };
 
