@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::{env, fs, process};
 
 #[test]
-fn test_test() {
+fn test_crash() {
     let profile = if cfg!(debug_assertions) {
         "debug"
     } else {
