@@ -12,7 +12,8 @@ use std::{
 };
 
 use datadog_trace_protobuf::pb;
-use ddcommon::{connector, Endpoint};
+use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
+use ddcommon::Endpoint;
 use hyper;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
@@ -29,7 +30,6 @@ pub struct StatsExporter {
     endpoint: Endpoint,
     meta: TracerMetadata,
     sequence_id: AtomicU64,
-    client: ddcommon::HttpClient,
     cancellation_token: CancellationToken,
 }
 
@@ -55,7 +55,6 @@ impl StatsExporter {
             endpoint,
             meta,
             sequence_id: AtomicU64::new(0),
-            client: hyper::Client::builder().build(connector::Connector::default()),
             cancellation_token,
         }
     }
@@ -82,30 +81,25 @@ impl StatsExporter {
         }
         let body = rmp_serde::encode::to_vec_named(&payload)?;
 
-        let headers: HashMap<&'static str, String> = self.meta.borrow().into();
+        let mut headers: HashMap<&'static str, String> = self.meta.borrow().into();
 
-        let mut req_builder = self
-            .endpoint
-            .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
-            .header(
-                hyper::header::CONTENT_TYPE,
-                ddcommon::header::APPLICATION_MSGPACK,
-            )
-            .method(hyper::Method::POST);
+        headers.insert(
+            hyper::header::CONTENT_TYPE.as_str(),
+            ddcommon::header::APPLICATION_MSGPACK_STR.to_string(),
+        );
 
-        for (key, value) in &headers {
-            req_builder = req_builder.header(*key, value);
-        }
+        let strategy = RetryStrategy::default();
 
-        let req = req_builder.body(hyper::Body::from(body))?;
+        let result =
+            send_with_retry(&self.endpoint, body, &headers, &strategy, None).await;
 
-        let resp = self.client.request(req).await?;
-
-        if !resp.status().is_success() {
-            anyhow::bail!(
-                "received {} status code from the agent",
-                resp.status().as_u16()
-            );
+        if let Ok((resp, _)) = result {
+            if !resp.status().is_success() {
+                anyhow::bail!(
+                    "received {} status code from the agent",
+                    resp.status().as_u16()
+                );
+            }
         }
         Ok(())
     }
