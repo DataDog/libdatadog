@@ -111,7 +111,12 @@ impl ManagedStringStorage {
                         anyhow::anyhow!("BUG: id_to_data and str_to_id should be in sync")
                     })?
                     .usage_count;
-                usage_count.set(usage_count.get() + 1);
+                usage_count.set(
+                    usage_count
+                        .get()
+                        .checked_add(1)
+                        .context("Usage_count overflow")?,
+                );
                 Ok(*id)
             }
             None => self.intern_new(item),
@@ -142,7 +147,12 @@ impl ManagedStringStorage {
     pub fn unintern(&mut self, id: NonZeroU32) -> anyhow::Result<()> {
         let data = self.get_data(id.into())?;
         let usage_count = &data.usage_count;
-        usage_count.set(usage_count.get() - 1);
+        usage_count.set(
+            usage_count
+                .get()
+                .checked_sub(1)
+                .context("Usage_count underflow")?,
+        );
         Ok(())
     }
 
