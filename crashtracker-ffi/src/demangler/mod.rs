@@ -4,7 +4,7 @@ mod datatypes;
 pub use datatypes::*;
 
 use ::function_name::named;
-use ddcommon_ffi::{slice::AsBytes, wrap_with_ffi_result, CharSlice, Result, StringWrapper};
+use ddcommon_ffi::{slice::AsBytes, wrap_with_ffi_result, CharSlice, StringWrapperResult};
 use symbolic_common::Name;
 use symbolic_demangle::Demangle;
 
@@ -20,7 +20,7 @@ use symbolic_demangle::Demangle;
 pub unsafe extern "C" fn ddog_crasht_demangle(
     name: CharSlice,
     options: DemangleOptions,
-) -> Result<StringWrapper> {
+) -> StringWrapperResult {
     wrap_with_ffi_result!({
         let name = name.to_utf8_lossy();
         let name = Name::from(name);
@@ -28,7 +28,7 @@ pub unsafe extern "C" fn ddog_crasht_demangle(
             DemangleOptions::Complete => symbolic_demangle::DemangleOptions::complete(),
             DemangleOptions::NameOnly => symbolic_demangle::DemangleOptions::name_only(),
         };
-        anyhow::Ok(name.demangle(options).unwrap_or_default().into())
+        anyhow::Ok(name.demangle(options).unwrap_or_default())
     })
 }
 

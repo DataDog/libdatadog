@@ -4,14 +4,15 @@
 
 mod entry_points;
 pub use entry_points::{
-    async_receiver_entry_point_unix_socket, receiver_entry_point_stdin,
-    receiver_entry_point_unix_socket,
+    async_receiver_entry_point_unix_listener, async_receiver_entry_point_unix_socket,
+    get_receiver_unix_socket, receiver_entry_point_stdin, receiver_entry_point_unix_socket,
 };
 mod receive_report;
 
 #[cfg(test)]
 mod tests {
     use super::receive_report::*;
+    use crate::collector::default_signals;
     use crate::crash_info::{SiCodes, SigInfo, SignalNames};
     use crate::shared::constants::*;
     use crate::{CrashtrackerConfiguration, StacktraceCollection};
@@ -54,6 +55,7 @@ mod tests {
                 false,
                 None,
                 StacktraceCollection::Disabled,
+                default_signals(),
                 3000,
                 None,
             )?)?,

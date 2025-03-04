@@ -4,9 +4,10 @@
 use crate::aggregator::Aggregator;
 use crate::datadog;
 use datadog::{DdApi, MetricsIntakeUrlPrefix};
+use reqwest::{Response, StatusCode};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tracing::debug;
+use tracing::{debug, error};
 
 pub struct Flusher {
     dd_api: DdApi,
@@ -50,14 +51,63 @@ impl Flusher {
 
         debug!("Flushing {n_series} series and {n_distributions} distributions");
 
-        // TODO: client timeout is for each invocation, so NxM times with N time series batches and
-        // M distro batches
-        for a_batch in all_series {
-            self.dd_api.ship_series(&a_batch).await;
-            // TODO(astuyve) retry and do not panic
+        let dd_api_clone = self.dd_api.clone();
+        let series_handle = tokio::spawn(async move {
+            for a_batch in all_series {
+                let continue_shipping =
+                    should_try_next_batch(dd_api_clone.ship_series(&a_batch).await).await;
+                if !continue_shipping {
+                    break;
+                }
+            }
+        });
+        let dd_api_clone = self.dd_api.clone();
+        let distributions_handle = tokio::spawn(async move {
+            for a_batch in all_distributions {
+                let continue_shipping =
+                    should_try_next_batch(dd_api_clone.ship_distributions(&a_batch).await).await;
+                if !continue_shipping {
+                    break;
+                }
+            }
+        });
+
+        match tokio::try_join!(series_handle, distributions_handle) {
+            Ok(_) => {
+                debug!("Successfully flushed {n_series} series and {n_distributions} distributions")
+            }
+            Err(err) => {
+                error!("Failed to flush metrics{err}")
+            }
+        };
+    }
+}
+
+pub enum ShippingError {
+    Payload(String),
+    Destination(Option<StatusCode>, String),
+}
+
+async fn should_try_next_batch(resp: Result<Response, ShippingError>) -> bool {
+    match resp {
+        Ok(resp_payload) => match resp_payload.status() {
+            StatusCode::ACCEPTED => true,
+            unexpected_status_code => {
+                error!(
+                    "{}: Failed to push to API: {:?}",
+                    unexpected_status_code,
+                    resp_payload.text().await.unwrap_or_default()
+                );
+                true
+            }
+        },
+        Err(ShippingError::Payload(msg)) => {
+            error!("Failed to prepare payload. Data dropped: {}", msg);
+            true
         }
-        for a_batch in all_distributions {
-            self.dd_api.ship_distributions(&a_batch).await;
+        Err(ShippingError::Destination(sc, msg)) => {
+            error!("Error shipping data: {:?} {}", sc, msg);
+            false
         }
     }
 }

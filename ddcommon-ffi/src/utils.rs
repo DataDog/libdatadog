@@ -28,3 +28,13 @@ macro_rules! wrap_with_void_ffi_result {
         .into()
     }};
 }
+
+pub trait ToHexStr {
+    fn to_hex_str(&self) -> String;
+}
+
+impl ToHexStr for usize {
+    fn to_hex_str(&self) -> String {
+        format!("0x{:X}", self)
+    }
+}

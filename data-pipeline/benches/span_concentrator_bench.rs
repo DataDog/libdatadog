@@ -7,14 +7,14 @@ use std::{
 
 use criterion::{criterion_group, Criterion};
 use data_pipeline::span_concentrator::SpanConcentrator;
-use datadog_trace_utils::span_v04::Span;
+use datadog_trace_utils::span::v04::SpanBytes;
 
 fn get_bucket_start(now: SystemTime, n: u64) -> i64 {
     let start = now.duration_since(time::UNIX_EPOCH).unwrap() + Duration::from_secs(10 * n);
     start.as_nanos() as i64
 }
 
-fn get_span(now: SystemTime, trace_id: u64, span_id: u64) -> Span {
+fn get_span(now: SystemTime, trace_id: u64, span_id: u64) -> SpanBytes {
     let mut metrics = HashMap::from([("_dd.measured".into(), 1.0)]);
     if span_id == 1 {
         metrics.insert("_dd.top_level".into(), 1.0);
@@ -23,7 +23,7 @@ fn get_span(now: SystemTime, trace_id: u64, span_id: u64) -> Span {
     if span_id % 3 == 0 {
         meta.insert("bucket_s3".into(), "aws_bucket".into());
     }
-    Span {
+    SpanBytes {
         trace_id,
         span_id,
         service: "test-service".into(),

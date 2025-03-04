@@ -30,7 +30,7 @@ const DEFAULT_MIN_FORCE_DROP_SIZE_BYTES: u32 = 10_000_000;
 /// `TraceFlusherStats` holds stats of the trace flusher like the count of allocated shared memory
 /// for agent config, agent config writers, last used entries in agent configs, and the size of send
 /// data.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct TraceFlusherStats {
     pub(crate) agent_config_allocated_shm: u32,
     pub(crate) agent_config_writers: u32,
@@ -255,7 +255,7 @@ impl TraceFlusher {
                         Err(e) => error!("Error receiving agent configuration: {e:?}"),
                     }
                 }
-                info!("Successfully flushed traces to {}", endpoint.url);
+                info!("Successfully flushed traces to {endpoint:?}");
             }
             Err(e) => {
                 error!("Error sending trace: {e:?}");

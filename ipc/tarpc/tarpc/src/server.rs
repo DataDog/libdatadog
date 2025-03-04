@@ -23,6 +23,7 @@ use futures::{
 };
 use in_flight_requests::{AlreadyExistsError, InFlightRequests};
 use pin_project::pin_project;
+use std::fmt::Debug;
 use std::{error::Error, fmt, marker::PhantomData, pin::Pin};
 use tracing::{info_span, instrument::Instrument, Span};
 
@@ -60,7 +61,7 @@ impl Default for Config {
 
 impl Config {
     /// Returns a channel backed by `transport` and configured with `self`.
-    pub fn channel<Req, Resp, T>(self, transport: T) -> BaseChannel<Req, Resp, T>
+    pub fn channel<Req: Debug, Resp, T>(self, transport: T) -> BaseChannel<Req, Resp, T>
     where
         T: Transport<Response<Resp>, ClientMessage<Req>>,
     {
@@ -69,7 +70,7 @@ impl Config {
 }
 
 /// Equivalent to a `FnOnce(Req) -> impl Future<Output = Resp>`.
-pub trait Serve<Req> {
+pub trait Serve<Req: Debug> {
     /// Type of response.
     type Resp;
 
@@ -85,7 +86,7 @@ pub trait Serve<Req> {
     fn serve(self, ctx: context::Context, req: Req) -> Self::Fut;
 }
 
-impl<Req, Resp, Fut, F> Serve<Req> for F
+impl<Req: Debug, Resp, Fut, F> Serve<Req> for F
 where
     F: FnOnce(context::Context, Req) -> Fut,
     Fut: Future<Output = Resp>,
@@ -109,7 +110,7 @@ where
 /// messages. Instead, it internally handles them by cancelling corresponding requests (removing
 /// the corresponding in-flight requests and aborting their handlers).
 #[pin_project]
-pub struct BaseChannel<Req, Resp, T> {
+pub struct BaseChannel<Req: Debug, Resp, T> {
     config: Config,
     /// Writes responses to the wire and reads requests off the wire.
     #[pin]
@@ -125,7 +126,7 @@ pub struct BaseChannel<Req, Resp, T> {
     ghost: PhantomData<(Req, Resp)>,
 }
 
-impl<Req, Resp, T> BaseChannel<Req, Resp, T>
+impl<Req: Debug, Resp, T> BaseChannel<Req, Resp, T>
 where
     T: Transport<Response<Resp>, ClientMessage<Req>>,
 {
@@ -192,7 +193,7 @@ where
             request.context.trace_context.new_child()
         });
         let entered = span.enter();
-        tracing::debug!("ReceiveRequest");
+        tracing::debug!("ReceiveRequest {request:?}");
         let start = self.in_flight_requests_mut().start_request(
             request.id,
             request.context.deadline,
@@ -220,7 +221,7 @@ where
     }
 }
 
-impl<Req, Resp, T> fmt::Debug for BaseChannel<Req, Resp, T> {
+impl<Req: Debug, Resp, T> fmt::Debug for BaseChannel<Req, Resp, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "BaseChannel")
     }
@@ -346,7 +347,7 @@ where
         Self: Sized,
         S: Serve<Self::Req, Resp = Self::Resp> + Send + 'static,
         S::Fut: Send,
-        Self::Req: Send + 'static,
+        Self::Req: Send + Debug + 'static,
         Self::Resp: Send + 'static,
     {
         self.requests().execute(serve)
@@ -367,7 +368,7 @@ where
     Timer(#[source] ::tokio::time::error::Error),
 }
 
-impl<Req, Resp, T> Stream for BaseChannel<Req, Resp, T>
+impl<Req: Debug, Resp, T> Stream for BaseChannel<Req, Resp, T>
 where
     T: Transport<Response<Resp>, ClientMessage<Req>>,
 {
@@ -472,7 +473,7 @@ where
     }
 }
 
-impl<Req, Resp, T> Sink<RequestResponse<Resp>> for BaseChannel<Req, Resp, T>
+impl<Req: Debug, Resp, T> Sink<RequestResponse<Resp>> for BaseChannel<Req, Resp, T>
 where
     T: Transport<Response<Resp>, ClientMessage<Req>>,
     T::Error: Error,
@@ -530,13 +531,13 @@ where
     }
 }
 
-impl<Req, Resp, T> AsRef<T> for BaseChannel<Req, Resp, T> {
+impl<Req: Debug, Resp, T> AsRef<T> for BaseChannel<Req, Resp, T> {
     fn as_ref(&self) -> &T {
         self.transport.get_ref()
     }
 }
 
-impl<Req, Resp, T> Channel for BaseChannel<Req, Resp, T>
+impl<Req: Debug, Resp, T> Channel for BaseChannel<Req, Resp, T>
 where
     T: Transport<Response<Resp>, ClientMessage<Req>>,
 {
@@ -721,7 +722,7 @@ pub struct InFlightRequest<Req, Res> {
     response_tx: mpsc::Sender<RequestResponse<Res>>,
 }
 
-impl<Req, Res> InFlightRequest<Req, Res> {
+impl<Req: Debug, Res> InFlightRequest<Req, Res> {
     /// Returns a reference to the request.
     pub fn get(&self) -> &Request<Req> {
         &self.request
@@ -766,21 +767,21 @@ impl<Req, Res> InFlightRequest<Req, Res> {
         span.record("otel.name", &method.unwrap_or(""));
         let _ = Abortable::new(
             async move {
-                tracing::info!("BeginRequest");
+                tracing::info!("BeginRequest for request {request_id}");
                 let response = serve.serve(context, message).await;
 
                 tracing::info!("CompleteRequest");
                 if context.discard_response {
                     let response = RequestResponse::Discarded { request_id };
                     let _ = response_tx.send(response).await;
-                    tracing::debug!("DiscardingResponse");
+                    tracing::debug!("DiscardingResponse for request {request_id}");
                 } else {
                     let response = RequestResponse::Response(Response {
                         request_id,
                         message: Ok(response),
                     });
                     let _ = response_tx.send(response).await;
-                    tracing::debug!("BufferResponse");
+                    tracing::debug!("BufferResponse for request {request_id}");
                 }
             },
             abort_registration,
@@ -836,9 +837,9 @@ mod tests {
         Future,
     };
     use futures_test::task::noop_context;
-    use std::{pin::Pin, task::Poll};
+    use std::{fmt::Debug, pin::Pin, task::Poll};
 
-    fn test_channel<Req, Resp>() -> (
+    fn test_channel<Req: Debug, Resp>() -> (
         Pin<Box<BaseChannel<Req, Resp, UnboundedChannel<ClientMessage<Req>, Response<Resp>>>>>,
         UnboundedChannel<Response<Resp>, ClientMessage<Req>>,
     ) {
@@ -846,7 +847,7 @@ mod tests {
         (Box::pin(BaseChannel::new(Config::default(), rx)), tx)
     }
 
-    fn test_requests<Req, Resp>() -> (
+    fn test_requests<Req: Debug, Resp>() -> (
         Pin<
             Box<
                 Requests<
@@ -863,7 +864,7 @@ mod tests {
         )
     }
 
-    fn test_bounded_requests<Req, Resp>(
+    fn test_bounded_requests<Req: Debug, Resp>(
         capacity: usize,
     ) -> (
         Pin<
@@ -883,7 +884,7 @@ mod tests {
         (Box::pin(BaseChannel::new(config, rx).requests()), tx)
     }
 
-    fn fake_request<Req>(req: Req) -> ClientMessage<Req> {
+    fn fake_request<Req: Debug>(req: Req) -> ClientMessage<Req> {
         ClientMessage::Request(Request {
             context: context::current(),
             id: 0,

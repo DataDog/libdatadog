@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::{DerefMut, Sub};
 use std::path::PathBuf;
-use std::sync::{Mutex, RwLock};
+use std::sync::{Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 use std::{env, io};
 use tracing::level_filters::LevelFilter;
@@ -66,7 +66,7 @@ unsafe impl<K, V> Sync for TemporarilyRetainedMap<K, V> where
 {
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TemporarilyRetainedMapStats {
     pub elements: u32,
     pub live_counters: u32,
@@ -365,6 +365,8 @@ lazy_static! {
     pub static ref MULTI_LOG_FILTER: MultiEnvFilter = MultiEnvFilter::default();
     pub static ref MULTI_LOG_WRITER: MultiWriter = MultiWriter::default();
 }
+static PERMANENT_MIN_LOG_LEVEL: OnceLock<TemporarilyRetainedMapGuard<String, EnvFilter>> =
+    OnceLock::new();
 
 pub(crate) fn enable_logging() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -383,7 +385,8 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
     }
     let config = config::Config::get();
     if !config.log_level.is_empty() {
-        MULTI_LOG_FILTER.add(config.log_level.clone());
+        let filter = MULTI_LOG_FILTER.add(config.log_level.clone());
+        _ = PERMANENT_MIN_LOG_LEVEL.set(filter);
     }
     MULTI_LOG_WRITER.add(config.log_method); // same than MULTI_LOG_FILTER
 

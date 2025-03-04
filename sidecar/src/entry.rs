@@ -73,11 +73,18 @@ where
     #[cfg(unix)]
     tokio::spawn(async move {
         let socket_path = crashtracker_unix_socket_path();
-        let _ = datadog_crashtracker::async_receiver_entry_point_unix_socket(
+        match datadog_crashtracker::get_receiver_unix_socket(
             socket_path.to_str().unwrap_or_default(),
-            false,
-        )
-        .await;
+        ) {
+            Ok(listener) => loop {
+                if let Err(e) =
+                    datadog_crashtracker::async_receiver_entry_point_unix_listener(&listener).await
+                {
+                    tracing::warn!("Got error while receiving crash report: {e}");
+                }
+            },
+            Err(e) => tracing::error!("Failed setting up the crashtracker listener: {e}"),
+        }
     });
 
     // Init. Early, before we start listening.
@@ -86,7 +93,8 @@ where
     let server = SidecarServer::default();
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
 
-    let watchdog_handle = Watchdog::from_receiver(shutdown_complete_rx).spawn_watchdog();
+    let watchdog_handle =
+        Watchdog::from_receiver(shutdown_complete_rx).spawn_watchdog(server.clone());
     let telemetry_handle = self_telemetry(server.clone(), watchdog_handle);
 
     listener(Box::new({

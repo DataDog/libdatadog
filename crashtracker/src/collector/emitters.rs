@@ -5,8 +5,7 @@ use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::{emit_spans, emit_traces};
 use crate::shared::constants::*;
-use crate::CrashtrackerConfiguration;
-use crate::StacktraceCollection;
+use crate::{translate_si_code, CrashtrackerConfiguration, SignalNames, StacktraceCollection};
 use anyhow::Context;
 use backtrace::Frame;
 use libc::{siginfo_t, ucontext_t};
@@ -185,36 +184,32 @@ fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> anyhow::Resul
     anyhow::ensure!(!sig_info.is_null());
 
     let si_signo = unsafe { (*sig_info).si_signo };
-    let si_signo_human_readable = match si_signo {
-        libc::SIGABRT => "SIGABRT",
-        libc::SIGBUS => "SIGBUS",
-        libc::SIGSEGV => "SIGSEGV",
-        libc::SIGSYS => "SIGSYS",
-        _ => "UNKNOWN",
-    };
+    let si_signo_human_readable: SignalNames = si_signo.into();
 
     // Derive the faulting address from `sig_info`
-    let si_addr: Option<usize> = if si_signo == libc::SIGSEGV || si_signo == libc::SIGBUS {
-        unsafe { Some((*sig_info).si_addr() as usize) }
-    } else {
-        None
+    // https://man7.org/linux/man-pages/man2/sigaction.2.html
+    // SIGILL, SIGFPE, SIGSEGV, SIGBUS, and SIGTRAP fill in si_addr with the address of the fault.
+    let si_addr: Option<usize> = match si_signo {
+        libc::SIGILL | libc::SIGFPE | libc::SIGSEGV | libc::SIGBUS | libc::SIGTRAP => {
+            Some(unsafe { (*sig_info).si_addr() as usize })
+        }
+        _ => None,
     };
 
     let si_code = unsafe { (*sig_info).si_code };
-    // TODO
-    let si_code_human_readable = "UNKNOWN";
+    let si_code_human_readable = translate_si_code(si_signo, si_code);
 
     writeln!(w, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
     write!(w, "{{")?;
     write!(w, "\"si_code\": {si_code}")?;
     write!(
         w,
-        ", \"si_code_human_readable\": \"{si_code_human_readable}\""
+        ", \"si_code_human_readable\": \"{si_code_human_readable:?}\""
     )?;
     write!(w, ", \"si_signo\": {si_signo}")?;
     write!(
         w,
-        ", \"si_signo_human_readable\": \"{si_signo_human_readable}\""
+        ", \"si_signo_human_readable\": \"{si_signo_human_readable:?}\""
     )?;
     if let Some(si_addr) = si_addr {
         write!(w, ", \"si_addr\": \"{si_addr:#018x}\"")?;

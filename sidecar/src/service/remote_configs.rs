@@ -115,7 +115,18 @@ impl RemoteConfigs {
                 e.insert(ShmRemoteConfigs::new(
                     invariants.clone(),
                     Box::new(move || {
-                        this.lock().unwrap().remove(&invariants);
+                        // try_lock: if the lock is held _right now_, it means that an insertion is
+                        // in progress. In that case we can just ignore the Err() and leave it.
+                        // Otherwise we have to check whether it's actually really dead and possibly
+                        // re-insert.
+
+                        if let Ok(mut unlocked) = this.try_lock() {
+                            if let Some(active) = unlocked.remove(&invariants) {
+                                if !active.is_dead() {
+                                    unlocked.insert(invariants.clone(), active);
+                                }
+                            }
+                        }
                     }),
                     poll_interval,
                 ))

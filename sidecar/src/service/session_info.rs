@@ -272,14 +272,16 @@ impl SessionInfo {
             }
         }
 
-        let invariants = self.get_remote_config_invariants();
-        let version = invariants
-            .as_ref()
-            .map(|i| i.tracer_version.as_str())
-            .unwrap_or("0.0.0");
         if let Some(runtime) = self.lock_runtimes().get(runtime_id) {
             if let Some(app) = runtime.lock_applications().get_mut(&queue_id) {
-                let (tags, new_tags) = app.get_debugger_tags(&version, runtime_id);
+                let (tags, new_tags) = {
+                    let invariants = self.get_remote_config_invariants();
+                    let version = invariants
+                        .as_ref()
+                        .map(|i| i.tracer_version.as_str())
+                        .unwrap_or("0.0.0");
+                    app.get_debugger_tags(&version, runtime_id)
+                };
                 let sender = match debugger_type {
                     DebuggerType::Diagnostics => app.debugger_diagnostics_payload_sender.clone(),
                     DebuggerType::Logs => app.debugger_logs_payload_sender.clone(),

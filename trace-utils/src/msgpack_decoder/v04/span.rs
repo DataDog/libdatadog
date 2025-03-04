@@ -1,13 +1,14 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{
-    read_meta_struct, read_metrics, read_nullable_str_map_to_bytes_strings,
-    read_nullable_string_bytes, read_string_ref, span_link::read_span_links,
+use crate::msgpack_decoder::decode::error::DecodeError;
+use crate::msgpack_decoder::decode::number::read_nullable_number_bytes;
+use crate::msgpack_decoder::decode::span_link::read_span_links;
+use crate::msgpack_decoder::decode::string::{
+    read_nullable_str_map_to_bytes_strings, read_nullable_string_bytes, read_string_ref,
 };
-use crate::msgpack_decoder::v04::error::DecodeError;
-use crate::msgpack_decoder::v04::number::read_nullable_number_bytes;
-use crate::span_v04::{Span, SpanKey};
+use crate::msgpack_decoder::decode::{meta_struct::read_meta_struct, metrics::read_metrics};
+use crate::span::v04::{SpanBytes, SpanKey};
 use tinybytes::Bytes;
 
 /// Decodes a slice of bytes into a `Span` object.
@@ -26,8 +27,8 @@ use tinybytes::Bytes;
 /// This function will return an error if:
 /// - The map length cannot be read.
 /// - Any key or value cannot be decoded.
-pub fn decode_span(buffer: &mut Bytes) -> Result<Span, DecodeError> {
-    let mut span = Span::default();
+pub fn decode_span(buffer: &mut Bytes) -> Result<SpanBytes, DecodeError> {
+    let mut span = SpanBytes::default();
 
     let span_size = rmp::decode::read_map_len(unsafe { buffer.as_mut_slice() }).map_err(|_| {
         DecodeError::InvalidFormat("Unable to get map len for span size".to_owned())
@@ -42,10 +43,10 @@ pub fn decode_span(buffer: &mut Bytes) -> Result<Span, DecodeError> {
 
 // Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
 // BytesStrings
-fn fill_span(span: &mut Span, buf: &mut Bytes) -> Result<(), DecodeError> {
+fn fill_span(span: &mut SpanBytes, buf: &mut Bytes) -> Result<(), DecodeError> {
     let key = read_string_ref(unsafe { buf.as_mut_slice() })?
         .parse::<SpanKey>()
-        .map_err(|_| DecodeError::InvalidFormat("Invalid span key".to_owned()))?;
+        .map_err(|e| DecodeError::InvalidFormat(e.message))?;
 
     match key {
         SpanKey::Service => span.service = read_nullable_string_bytes(buf)?,
@@ -69,7 +70,7 @@ fn fill_span(span: &mut Span, buf: &mut Bytes) -> Result<(), DecodeError> {
 #[cfg(test)]
 mod tests {
     use super::SpanKey;
-    use crate::span_v04::SpanKeyParseError;
+    use crate::span::v04::SpanKeyParseError;
     use std::str::FromStr;
 
     #[test]

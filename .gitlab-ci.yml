@@ -29,6 +29,7 @@ report_failure:
   allow_failure: true
   script:
     - echo "STATUS=1" >> .env
+    - exit 1 # if this job completes it should always be considered a failure
   artifacts:
     reports:
       dotenv: .env
