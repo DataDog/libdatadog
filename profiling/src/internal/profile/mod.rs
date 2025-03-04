@@ -206,27 +206,19 @@ impl Profile {
             // which already ensured that the string storage exists.
             .ok_or_else(|| anyhow::anyhow!("Current sample makes use of ManagedStringIds but profile was not created using a string table"))?;
 
+        let mut write_locked_storage = string_storage
+            .write()
+            .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
+
         let cached_profile_id = match self.string_storage_cached_profile_id.as_ref() {
             Some(cached_profile_id) => cached_profile_id,
             None => {
-                let new_id = string_storage
-                    .write()
-                    .map_err(|_| {
-                        anyhow::anyhow!(
-                            "acquisition of write lock on string storage should succeed"
-                        )
-                    })?
-                    .next_cached_profile_id()?;
+                let new_id = write_locked_storage.next_cached_profile_id()?;
                 self.string_storage_cached_profile_id.get_or_insert(new_id)
             }
         };
 
-        string_storage
-            .read()
-            .map_err(|_| {
-                anyhow::anyhow!("acquisition of read lock on string storage should succeed")
-            })?
-            .get_seq_num(non_empty_string_id, &mut self.strings, cached_profile_id)
+        write_locked_storage.get_seq_num(non_empty_string_id, &mut self.strings, cached_profile_id)
     }
 
     /// Creates a profile with `start_time`.

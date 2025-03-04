@@ -158,7 +158,7 @@ impl ManagedStringStorage {
     // entire call can be skipped
     // See comment on `struct CachedProfileId` for details on how to use it.
     pub fn get_seq_num(
-        &self,
+        &mut self,
         id: NonZeroU32,
         profile_strings: &mut StringTable,
         cached_profile_id: &CachedProfileId,
