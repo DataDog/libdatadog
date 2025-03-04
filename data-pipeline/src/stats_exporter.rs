@@ -90,8 +90,7 @@ impl StatsExporter {
 
         let strategy = RetryStrategy::default();
 
-        let result =
-            send_with_retry(&self.endpoint, body, &headers, &strategy, None).await;
+        let result = send_with_retry(&self.endpoint, body, &headers, &strategy, None).await;
 
         if let Ok((resp, _)) = result {
             if !resp.status().is_success() {
