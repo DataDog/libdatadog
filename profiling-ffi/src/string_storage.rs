@@ -157,7 +157,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
     let result = (|| {
         let storage = get_inner_string_storage(storage, true)?;
 
-        let write_locked_storage = storage
+        let mut write_locked_storage = storage
             .write()
             .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
 
@@ -180,7 +180,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern_all(
     let result = (|| {
         let storage = get_inner_string_storage(storage, true)?;
 
-        let write_locked_storage = storage
+        let mut write_locked_storage = storage
             .write()
             .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
 

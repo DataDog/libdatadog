@@ -139,7 +139,7 @@ impl ManagedStringStorage {
 
     // Here id is a NonZeroU32 because an id of 0 is the empty string and that can never be
     // uninterned (and it should be skipped instead in the caller)
-    pub fn unintern(&self, id: NonZeroU32) -> anyhow::Result<()> {
+    pub fn unintern(&mut self, id: NonZeroU32) -> anyhow::Result<()> {
         let data = self.get_data(id.into())?;
         let usage_count = &data.usage_count;
         usage_count.set(usage_count.get() - 1);
