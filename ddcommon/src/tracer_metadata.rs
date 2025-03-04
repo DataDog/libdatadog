@@ -1,12 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(target_os = "linux")]
-use memfd::{Memfd, MemfdOptions};
-use serde::Serialize;
-
 /// This struct MUST be backward compatible.
-#[derive(Serialize, Debug)]
+#[derive(serde::Serialize, Debug)]
 #[repr(C)]
 pub struct TracerMetadata {
     /// Version of the schema.
@@ -33,58 +29,59 @@ pub struct TracerMetadata {
 
 pub enum AnonymousFileHandle {
     #[cfg(target_os = "linux")]
-    Linux(Box<Memfd>),
+    Linux(Box<memfd::Memfd>),
     #[cfg(not(target_os = "linux"))]
     Other(()),
 }
 
 #[cfg(target_os = "linux")]
 mod linux {
-  use serde::ser::Serialize;
-  use rand::Rng;
-  use log::warn;
-  use std::io::Write;
-  use rmp_serde::Serializer;
-  use rand::distributions::Alphanumeric;
+    use anyhow::Context;
+    use rand::distributions::Alphanumeric;
+    use rand::Rng;
+    use std::io::Write;
 
-  /// Create a memfd file storing the tracer metadata.
-  pub fn store_tracer_metadata(data: &super::TracerMetadata) -> Result<super::AnonymousFileHandle, String> {
-    let uid: String = rand::thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(8)
-        .map(char::from)
-        .collect();
+    /// Create a memfd file storing the tracer metadata.
+    pub fn store_tracer_metadata(
+        data: &super::TracerMetadata,
+    ) -> anyhow::Result<super::AnonymousFileHandle> {
+        let uid: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(8)
+            .map(char::from)
+            .collect();
 
-    let mfd_name: String = format!("datadog-tracer-info-{}", uid);
+        let mfd_name: String = format!("datadog-tracer-info-{}", uid);
 
-    let mfd = super::MemfdOptions::default()
-        .close_on_exec(true)
-        .allow_sealing(true)
-        .create::<&str>(mfd_name.as_ref())
-        .map_err(|e| format!("unable to create memfd: {}", e))?;
+        let mfd = memfd::MemfdOptions::default()
+            .close_on_exec(true)
+            .allow_sealing(true)
+            .create::<&str>(mfd_name.as_ref())
+            .context("unable to create memfd")?;
 
-    let mut buf = Vec::new();
-    data.serialize(&mut Serializer::new(&mut buf).with_struct_map()).unwrap();
+        let buf = rmp_serde::to_vec_named(data).context("failed serialization")?;
+        mfd.as_file()
+            .write_all(&buf)
+            .context("unable to write into memfd")?;
 
-    mfd.as_file().write_all(&buf)
-        .map_err(|e| format!("unable to write into memfd: {}", e))?;
+        mfd.add_seals(&[
+            memfd::FileSeal::SealShrink,
+            memfd::FileSeal::SealGrow,
+            memfd::FileSeal::SealSeal,
+        ])
+        .context("unable to seal memfd")?;
 
-    mfd.add_seals(&[
-        memfd::FileSeal::SealShrink,
-        memfd::FileSeal::SealGrow,
-        memfd::FileSeal::SealSeal,
-    ])
-    .unwrap_or_else(|e| warn!("unable to seal: {}", e));
-
-    Ok(super::AnonymousFileHandle::Linux(Box::new(mfd)))
-  }
+        Ok(super::AnonymousFileHandle::Linux(Box::new(mfd)))
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
 mod other {
-  pub fn store_tracer_metadata(_data: &super::TracerMetadata) -> Result<super::AnonymousFileHandle, String> {
-    Ok(super::AnonymousFileHandle::Other(()))
-  }
+    pub fn store_tracer_metadata(
+        _data: &super::TracerMetadata,
+    ) -> anyhow::Result<super::AnonymousFileHandle> {
+        Ok(super::AnonymousFileHandle::Other(()))
+    }
 }
 
 #[cfg(target_os = "linux")]
