@@ -184,7 +184,17 @@ impl ManagedStringStorage {
 
     fn get_data(&self, id: u32) -> anyhow::Result<&ManagedStringData> {
         match self.id_to_data.get(&id) {
-            Some(v) => Ok(v),
+            Some(v) => {
+                if v.usage_count.get() > 0 {
+                    Ok(v)
+                } else {
+                    Err(anyhow::anyhow!(
+                        "Tried to read data for id {} ('{}') but usage count was zero",
+                        id,
+                        v.str
+                    ))
+                }
+            }
             None => Err(anyhow::anyhow!("ManagedStringId {} is not valid", id)),
         }
     }
