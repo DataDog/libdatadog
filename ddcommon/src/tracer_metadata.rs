@@ -10,7 +10,8 @@ pub struct TracerMetadata {
     /// Runtime UUID.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_id: Option<String>,
-    /// Programming language of the tracer library (e.g., “python”). Refers to telemetry        for valid values.
+    /// Programming language of the tracer library (e.g., “python”). Refers to telemetry
+    /// for valid values.
     pub tracer_language: String,
     /// Version of the tracer (e.g., "1.0.0").
     pub tracer_version: String,
