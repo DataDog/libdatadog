@@ -107,9 +107,7 @@ impl ManagedStringStorage {
                 let usage_count = &self
                     .id_to_data
                     .get(id)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("BUG: id_to_data and str_to_id should be in sync")
-                    })?
+                    .context("BUG: id_to_data and str_to_id should be in sync")?
                     .usage_count;
                 usage_count.set(
                     usage_count
@@ -134,7 +132,7 @@ impl ManagedStringStorage {
         self.next_id = self
             .next_id
             .checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("Ran out of string ids!"))?;
+            .context("Ran out of string ids!")?;
         let old_value = self.str_to_id.insert(str.clone(), id);
         debug_assert_eq!(old_value, None);
         let old_value = self.id_to_data.insert(id, data);
