@@ -15,16 +15,17 @@ use datadog_trace_utils::msgpack_decoder;
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryError};
 use datadog_trace_utils::span::v04::{
     trace_utils::{compute_top_level_span, has_top_level},
-    Span,
+    SpanBytes,
 };
 use datadog_trace_utils::trace_utils::TracerHeaderTags;
 use ddcommon::header::{
     APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
 };
 use ddcommon::tag::Tag;
-use ddcommon::{connector, tag, Endpoint};
+use ddcommon::{connector, parse_uri, tag, Endpoint};
 use dogstatsd_client::{new, Client, DogStatsDAction};
 use either::Either;
+use error::BuilderErrorKind;
 use hyper::body::HttpBody;
 use hyper::http::uri::PathAndQuery;
 use hyper::{header::CONTENT_TYPE, Body, Method, Uri};
@@ -83,6 +84,16 @@ impl TraceExporterOutputFormat {
             },
         )
     }
+
+    #[cfg(feature = "test-utils")]
+    // This function is only intended for testing purposes so we don't need to go to all the trouble
+    // of breaking the uri down and parsing it as rigorously as we would if we were using it in
+    // production code.
+    fn add_query(&self, url: &Uri, query: &str) -> Uri {
+        let url = format!("{}?{}", url, query);
+
+        Uri::from_str(&url).expect("Failed to create Uri from string")
+    }
 }
 
 /// Add a path to the URL.
@@ -95,11 +106,10 @@ fn add_path(url: &Uri, path: &str) -> Uri {
     let p_and_q = url.path_and_query();
     let new_p_and_q = match p_and_q {
         Some(pq) => {
-            let mut p = pq.path().to_string();
-            if p.ends_with('/') {
-                p.pop();
-            }
+            let p = pq.path();
+            let mut p = p.strip_suffix('/').unwrap_or(p).to_owned();
             p.push_str(path);
+
             PathAndQuery::from_str(p.as_str())
         }
         None => PathAndQuery::from_str(path),
@@ -116,7 +126,7 @@ struct DroppedP0Counts {
 }
 
 /// Remove spans and chunks only keeping the ones that may be sampled by the agent
-fn drop_chunks(traces: &mut Vec<Vec<Span>>) -> DroppedP0Counts {
+fn drop_chunks(traces: &mut Vec<Vec<SpanBytes>>) -> DroppedP0Counts {
     let mut dropped_p0_traces = 0;
     let mut dropped_p0_spans = 0;
     traces.retain_mut(|chunk| {
@@ -252,6 +262,8 @@ pub struct TraceExporter {
     agent_info: AgentInfoArc,
     previous_info_state: ArcSwapOption<String>,
     telemetry: Option<TelemetryClient>,
+    #[cfg(feature = "test-utils")]
+    query_params: Option<String>,
 }
 
 impl TraceExporter {
@@ -576,7 +588,7 @@ impl TraceExporter {
     /// Add all spans from the given iterator into the stats concentrator
     /// # Panic
     /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
-    fn add_spans_to_stats<'a>(&self, spans: impl Iterator<Item = &'a Span>) {
+    fn add_spans_to_stats<'a>(&self, spans: impl Iterator<Item = &'a SpanBytes>) {
         if let StatsComputationStatus::Enabled {
             stats_concentrator,
             cancellation_token: _,
@@ -639,7 +651,7 @@ impl TraceExporter {
                 let chunks = traces.len();
                 let payload_len = payload.len();
                 let endpoint = Endpoint {
-                    url: self.output_format.add_path(&self.endpoint.url),
+                    url: self.get_agent_url(),
                     ..self.endpoint.clone()
                 };
                 let mut headers: HashMap<&str, String> = header_tags.into();
@@ -741,6 +753,18 @@ impl TraceExporter {
             TraceExporterOutputFormat::V07 => todo!("We don't support translating to v07 yet"),
         }
     }
+
+    fn get_agent_url(&self) -> Uri {
+        #[cfg(feature = "test-utils")]
+        {
+            if let Some(query) = &self.query_params {
+                let url = self.output_format.add_path(&self.endpoint.url);
+                return self.output_format.add_query(&url, query);
+            }
+        }
+
+        self.output_format.add_path(&self.endpoint.url)
+    }
 }
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
@@ -770,7 +794,9 @@ pub struct TraceExporterBuilder {
     dogstatsd_url: Option<String>,
     client_computed_stats: bool,
     client_computed_top_level: bool,
-
+    #[cfg(feature = "test-utils")]
+    /// not supported in production, but useful for interacting with the test-agent
+    query_params: Option<String>,
     // Stats specific fields
     /// A Some value enables stats-computation, None if it is disabled
     stats_bucket_size: Option<Duration>,
@@ -781,7 +807,18 @@ pub struct TraceExporterBuilder {
 }
 
 impl TraceExporterBuilder {
-    /// Set url of the agent
+    /// Sets the URL of the agent.
+    ///
+    /// The agent supports the following URL schemes:
+    ///
+    /// - **TCP:** `http://<host>:<port>`
+    ///   - Example: `set_url("http://localhost:8126")`
+    ///
+    /// - **UDS (Unix Domain Socket):** `unix://<path>`
+    ///   - Example: `set_url("unix://var/run/datadog/apm.socket")`
+    ///
+    /// - **Windows Named Pipe:** `windows:\\.\pipe\<name>`
+    ///   - Example: `set_url(r"windows:\\.\pipe\datadog-apm")`
     pub fn set_url(mut self, url: &str) -> Self {
         self.url = Some(url.to_owned());
         self
@@ -914,6 +951,14 @@ impl TraceExporterBuilder {
         self
     }
 
+    #[cfg(feature = "test-utils")]
+    /// Set query parameters to be used in the URL when communicating with the test-agent. This is
+    /// not supported in production as the real agent doesn't accept query params.
+    pub fn set_query_params(mut self, query_params: &str) -> Self {
+        self.query_params = Some(query_params.to_owned());
+        self
+    }
+
     #[allow(missing_docs)]
     pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -926,7 +971,10 @@ impl TraceExporterBuilder {
         });
 
         let base_url = self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL);
-        let agent_url: hyper::Uri = base_url.parse()?;
+
+        let agent_url: hyper::Uri = parse_uri(base_url).map_err(|e: anyhow::Error| {
+            TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
+        })?;
 
         let libdatadog_version = tag!("libdatadog_version", env!("CARGO_PKG_VERSION"));
         let mut stats = StatsComputationStatus::Disabled;
@@ -999,6 +1047,8 @@ impl TraceExporterBuilder {
             agent_info,
             previous_info_state: ArcSwapOption::new(None),
             telemetry,
+            #[cfg(feature = "test-utils")]
+            query_params: self.query_params,
         })
     }
 }
@@ -1014,7 +1064,7 @@ mod tests {
     use self::error::AgentErrorKind;
     use self::error::BuilderErrorKind;
     use super::*;
-    use datadog_trace_utils::span::v04::Span;
+    use datadog_trace_utils::span::v04::SpanBytes;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::collections::HashMap;
@@ -1139,7 +1189,7 @@ mod tests {
     #[test]
     fn test_drop_chunks() {
         let chunk_with_priority = vec![
-            Span {
+            SpanBytes {
                 span_id: 1,
                 metrics: HashMap::from([
                     (SAMPLING_PRIORITY_KEY.into(), 1.0),
@@ -1147,14 +1197,14 @@ mod tests {
                 ]),
                 ..Default::default()
             },
-            Span {
+            SpanBytes {
                 span_id: 2,
                 parent_id: 1,
                 ..Default::default()
             },
         ];
         let chunk_with_null_priority = vec![
-            Span {
+            SpanBytes {
                 span_id: 1,
                 metrics: HashMap::from([
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
@@ -1162,26 +1212,26 @@ mod tests {
                 ]),
                 ..Default::default()
             },
-            Span {
+            SpanBytes {
                 span_id: 2,
                 parent_id: 1,
                 ..Default::default()
             },
         ];
         let chunk_without_priority = vec![
-            Span {
+            SpanBytes {
                 span_id: 1,
                 metrics: HashMap::from([(TRACER_TOP_LEVEL_KEY.into(), 1.0)]),
                 ..Default::default()
             },
-            Span {
+            SpanBytes {
                 span_id: 2,
                 parent_id: 1,
                 ..Default::default()
             },
         ];
         let chunk_with_error = vec![
-            Span {
+            SpanBytes {
                 span_id: 1,
                 error: 1,
                 metrics: HashMap::from([
@@ -1190,14 +1240,14 @@ mod tests {
                 ]),
                 ..Default::default()
             },
-            Span {
+            SpanBytes {
                 span_id: 2,
                 parent_id: 1,
                 ..Default::default()
             },
         ];
         let chunk_with_a_single_span = vec![
-            Span {
+            SpanBytes {
                 span_id: 1,
                 metrics: HashMap::from([
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
@@ -1205,7 +1255,7 @@ mod tests {
                 ]),
                 ..Default::default()
             },
-            Span {
+            SpanBytes {
                 span_id: 2,
                 parent_id: 1,
                 metrics: HashMap::from([(SAMPLING_SINGLE_SPAN_MECHANISM.into(), 8.0)]),
@@ -1213,7 +1263,7 @@ mod tests {
             },
         ];
         let chunk_with_analyzed_span = vec![
-            Span {
+            SpanBytes {
                 span_id: 1,
                 metrics: HashMap::from([
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
@@ -1221,7 +1271,7 @@ mod tests {
                 ]),
                 ..Default::default()
             },
-            Span {
+            SpanBytes {
                 span_id: 2,
                 parent_id: 1,
                 metrics: HashMap::from([(SAMPLING_ANALYTICS_RATE_KEY.into(), 1.0)]),
@@ -1291,7 +1341,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let trace_chunk = vec![Span {
+        let trace_chunk = vec![SpanBytes {
             duration: 10,
             ..Default::default()
         }];
@@ -1364,7 +1414,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let trace_chunk = vec![Span {
+        let trace_chunk = vec![SpanBytes {
             service: "test".into(),
             name: "test".into(),
             resource: "test".into(),
@@ -1430,12 +1480,12 @@ mod tests {
             stats_socket.local_addr().unwrap().to_string(),
         );
 
-        let traces: Vec<Vec<Span>> = vec![
-            vec![Span {
+        let traces: Vec<Vec<SpanBytes>> = vec![
+            vec![SpanBytes {
                 name: BytesString::from_slice(b"test").unwrap(),
                 ..Default::default()
             }],
-            vec![Span {
+            vec![SpanBytes {
                 name: BytesString::from_slice(b"test2").unwrap(),
                 ..Default::default()
             }],
@@ -1507,7 +1557,7 @@ mod tests {
             stats_socket.local_addr().unwrap().to_string(),
         );
 
-        let traces: Vec<Vec<Span>> = vec![vec![Span {
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
@@ -1565,7 +1615,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let traces: Vec<Vec<Span>> = vec![vec![Span {
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
@@ -1608,7 +1658,10 @@ mod tests {
             _ => None,
         };
 
-        assert_eq!(err.unwrap(), BuilderErrorKind::InvalidUri);
+        assert_eq!(
+            err.unwrap(),
+            BuilderErrorKind::InvalidUri("empty string".to_string())
+        );
     }
 
     #[test]
@@ -1632,7 +1685,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let traces: Vec<Vec<Span>> = vec![vec![Span {
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
@@ -1669,7 +1722,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let traces: Vec<Vec<Span>> = vec![vec![Span {
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
@@ -1811,7 +1864,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let trace_chunk = vec![Span {
+        let trace_chunk = vec![SpanBytes {
             duration: 10,
             ..Default::default()
         }];

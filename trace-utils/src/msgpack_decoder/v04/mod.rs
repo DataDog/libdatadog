@@ -5,7 +5,7 @@ mod span;
 
 use self::span::decode_span;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::v04::Span;
+use crate::span::v04::SpanBytes;
 
 /// Decodes a slice of bytes into a vector of `TracerPayloadV04` objects.
 ///
@@ -49,7 +49,7 @@ use crate::span::v04::Span;
 /// let decoded_span = &decoded_traces[0][0];
 /// assert_eq!("test-span", decoded_span.name.as_str());
 /// ```
-pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<Span>>, usize), DecodeError> {
+pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize), DecodeError> {
     let trace_count =
         rmp::decode::read_array_len(unsafe { data.as_mut_slice() }).map_err(|_| {
             DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn test_decoder_size() {
-        let span = Span {
+        let span = SpanBytes {
             name: BytesString::from_slice("span_name".as_ref()).unwrap(),
             ..Default::default()
         };
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn test_decoder_read_string_success() {
         let expected_string = "test-service-name";
-        let span = Span {
+        let span = SpanBytes {
             name: BytesString::from_slice(expected_string.as_ref()).unwrap(),
             ..Default::default()
         };
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn test_decoder_read_null_string_success() {
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["name"] = json!(null);
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn test_decoder_read_number_success() {
-        let span = create_test_json_span(1, 2, 0, 0);
+        let span = create_test_json_span(1, 2, 0, 0, false);
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
         let (decoded_traces, _) =
@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn test_decoder_read_null_number_success() {
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["trace_id"] = json!(null);
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         encoded_data.extend_from_slice(&[0, 0, 0, 0]); // some garbage, to be ignored
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn test_decoder_meta_struct_null_map_success() {
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["meta_struct"] = json!(null);
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -231,7 +231,7 @@ mod tests {
             generate_meta_struct_element(1),
         ]);
 
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["meta_struct"] = json!(expected_meta_struct.clone());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -255,7 +255,7 @@ mod tests {
         let expected_meta_struct: HashMap<String, Vec<u8>> =
             (0..20).map(generate_meta_struct_element).collect();
 
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["meta_struct"] = json!(expected_meta_struct.clone());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -281,7 +281,7 @@ mod tests {
             ("key2".to_string(), "value2".to_string()),
         ]);
 
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["meta"] = json!(expected_meta.clone());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn test_decoder_meta_null_map_success() {
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["meta"] = json!(null);
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -327,7 +327,7 @@ mod tests {
             })
             .collect();
 
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["meta"] = json!(expected_meta.clone());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -350,7 +350,7 @@ mod tests {
     fn test_decoder_metrics_fixed_map_success() {
         let expected_metrics = HashMap::from([("metric1", 1.23), ("metric2", 4.56)]);
 
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["metrics"] = json!(expected_metrics.clone());
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
@@ -374,7 +374,7 @@ mod tests {
             .map(|i| (format!("metric{}", i), i as f64))
             .collect();
 
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["metrics"] = json!(expected_metrics.clone());
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_decoder_metrics_null_success() {
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["metrics"] = json!(null);
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
@@ -420,7 +420,7 @@ mod tests {
             "flags": 0b101
         });
 
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["span_links"] = json!([expected_span_link]);
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -467,7 +467,7 @@ mod tests {
 
     #[test]
     fn test_decoder_null_span_link_success() {
-        let mut span = create_test_json_span(1, 2, 0, 0);
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["span_links"] = json!(null);
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
@@ -483,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_decoder_read_string_wrong_format() {
-        let span = Span {
+        let span = SpanBytes {
             service: BytesString::from_slice("my_service".as_ref()).unwrap(),
             ..Default::default()
         };
@@ -508,7 +508,7 @@ mod tests {
         let invalid_seq = vec![0, 159, 146, 150];
         let invalid_str = unsafe { String::from_utf8_unchecked(invalid_seq) };
         let invalid_str_as_bytes = tinybytes::Bytes::from(invalid_str);
-        let span = Span {
+        let span = SpanBytes {
             name: unsafe { BytesString::from_bytes_unchecked(invalid_str_as_bytes) },
             ..Default::default()
         };
@@ -528,7 +528,7 @@ mod tests {
 
     #[test]
     fn test_decoder_invalid_marker_for_trace_count_read() {
-        let span = Span::default();
+        let span = SpanBytes::default();
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         // This changes the entire payload to a map with 12 keys in order to trigger an error when
         // reading the array len of traces
@@ -549,7 +549,7 @@ mod tests {
 
     #[test]
     fn test_decoder_invalid_marker_for_span_count_read() {
-        let span = Span::default();
+        let span = SpanBytes::default();
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         // This changes the entire payload to a map with 12 keys in order to trigger an error when
         // reading the array len of spans
@@ -571,7 +571,7 @@ mod tests {
 
     #[test]
     fn test_decoder_read_string_type_mismatch() {
-        let span = Span::default();
+        let span = SpanBytes::default();
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         // Modify the encoded data to cause a type mismatch by changing the marker for the `name`
         // field to an integer marker
@@ -624,7 +624,7 @@ mod tests {
                     parent_id,
                     start,
                 )| {
-                    let span = Span {
+                    let span = SpanBytes {
                         name: BytesString::from_slice(name.as_ref()).unwrap(),
                         service: BytesString::from_slice(service.as_ref()).unwrap(),
                         resource: BytesString::from_slice(resource.as_ref()).unwrap(),

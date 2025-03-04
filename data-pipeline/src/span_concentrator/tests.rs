@@ -32,12 +32,12 @@ fn get_test_span(
     service: &str,
     resource: &str,
     error: i32,
-) -> Span {
+) -> SpanBytes {
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
         BUCKET_SIZE,
     );
-    Span {
+    SpanBytes {
         span_id,
         parent_id,
         duration,
@@ -63,7 +63,7 @@ fn get_test_span_with_meta(
     error: i32,
     meta: &[(&str, &str)],
     metrics: &[(&str, f64)],
-) -> Span {
+) -> SpanBytes {
     let mut span = get_test_span(
         now, span_id, parent_id, duration, offset, service, resource, error,
     );
@@ -877,121 +877,121 @@ fn test_peer_tags_aggregation() {
 
 #[test]
 fn test_compute_stats_for_span_kind() {
-    let test_cases: Vec<(Span, bool)> = vec![
+    let test_cases: Vec<(SpanBytes, bool)> = vec![
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "server".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "consumer".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "client".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "producer".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "internal".into())]),
                 ..Default::default()
             },
             false,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "SERVER".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "CONSUMER".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "CLIENT".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "PRODUCER".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "INTERNAL".into())]),
                 ..Default::default()
             },
             false,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "SerVER".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "ConSUMeR".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "CLiENT".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "PROducER".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "INtERNAL".into())]),
                 ..Default::default()
             },
             false,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([("span.kind".into(), "".into())]),
                 ..Default::default()
             },
             false,
         ),
         (
-            Span {
+            SpanBytes {
                 meta: HashMap::from([]),
                 ..Default::default()
             },

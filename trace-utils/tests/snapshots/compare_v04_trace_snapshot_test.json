@@ -32,8 +32,7 @@
         "env": "test-env",
         "runtime-id": "test-runtime-id-value",
         "service": "test-service"
-      },
-      "metrics": {}
+      }
     },
     {
       "service": "test-service",
