@@ -136,9 +136,9 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     async fn test_dogstatsd_multi_distribution() {
         let locked_aggregator = setup_dogstatsd(
-            "single_machine_performance.rouster.api.series_v2.payload_size_bytes:269942|d
-single_machine_performance.rouster.metrics_min_timestamp_latency:1426.90870216|d
-single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
+            "single_machine_performance.rouster.api.series_v2.payload_size_bytes:269942|d|T1656581409
+single_machine_performance.rouster.metrics_min_timestamp_latency:1426.90870216|d|T1656581409
+single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d|T1656581409
 ",
         )
         .await;
@@ -154,24 +154,38 @@ single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
             &locked_aggregator,
             "single_machine_performance.rouster.api.series_v2.payload_size_bytes",
             269_942_f64,
+            1656581400,
         );
         assert_sketch(
             &locked_aggregator,
             "single_machine_performance.rouster.metrics_min_timestamp_latency",
             1_426.908_702_16,
+            1656581400,
         );
         assert_sketch(
             &locked_aggregator,
             "single_machine_performance.rouster.metrics_max_timestamp_latency",
             1_376.908_702_16,
+            1656581400,
         );
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_dogstatsd_multi_metric() {
+        let mut now = std::time::UNIX_EPOCH
+            .elapsed()
+            .expect("unable to poll clock, unrecoverable")
+            .as_secs()
+            .try_into()
+            .unwrap_or_default();
+        now = (now / 10) * 10;
         let locked_aggregator = setup_dogstatsd(
-            "metric3:3|c|#tag3:val3,tag4:val4\nmetric1:1|c\nmetric2:2|c|#tag2:val2\n",
+            format!(
+                "metric3:3|c|#tag3:val3,tag4:val4\nmetric1:1|c\nmetric2:2|c|#tag2:val2|T{:}\n",
+                now
+            )
+            .as_str(),
         )
         .await;
         let aggregator = locked_aggregator.lock().expect("lock poisoned");
@@ -182,15 +196,21 @@ single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
         assert_eq!(aggregator.distributions_to_protobuf().sketches.len(), 0);
         drop(aggregator);
 
-        assert_value(&locked_aggregator, "metric1", 1.0, "");
-        assert_value(&locked_aggregator, "metric2", 2.0, "tag2:val2");
-        assert_value(&locked_aggregator, "metric3", 3.0, "tag3:val3,tag4:val4");
+        assert_value(&locked_aggregator, "metric1", 1.0, "", now);
+        assert_value(&locked_aggregator, "metric2", 2.0, "tag2:val2", now);
+        assert_value(
+            &locked_aggregator,
+            "metric3",
+            3.0,
+            "tag3:val3,tag4:val4",
+            now,
+        );
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_dogstatsd_single_metric() {
-        let locked_aggregator = setup_dogstatsd("metric123:99123|c").await;
+        let locked_aggregator = setup_dogstatsd("metric123:99123|c|T1656581409").await;
         let aggregator = locked_aggregator.lock().expect("lock poisoned");
         let parsed_metrics = aggregator.to_series();
 
@@ -198,7 +218,7 @@ single_machine_performance.rouster.metrics_max_timestamp_latency:1376.90870216|d
         assert_eq!(aggregator.distributions_to_protobuf().sketches.len(), 0);
         drop(aggregator);
 
-        assert_value(&locked_aggregator, "metric123", 99_123.0, "");
+        assert_value(&locked_aggregator, "metric123", 99_123.0, "", 1656581400);
     }
 
     #[tokio::test]
