@@ -4,11 +4,17 @@
 use env_logger::Builder;
 use log::{debug, error, info};
 use std::{env, str::FromStr, sync::Arc, sync::Mutex};
-use tokio::time::{interval, Duration};
+use tokio::{
+    sync::Mutex as TokioMutex,
+    time::{interval, Duration},
+};
 use tracing_subscriber::EnvFilter;
 
 use datadog_trace_mini_agent::{
-    aggregator::TraceAggregator, config, env_verifier, mini_agent, stats_flusher, stats_processor, trace_flusher::{self, TraceFlusher}, trace_processor
+    aggregator::TraceAggregator,
+    config, env_verifier, mini_agent, stats_flusher, stats_processor,
+    trace_flusher::{self, TraceFlusher},
+    trace_processor,
 };
 
 use dogstatsd::{
@@ -77,18 +83,21 @@ pub async fn main() {
     let stats_processor = Arc::new(stats_processor::ServerlessStatsProcessor {});
 
     let config = match config::Config::new() {
-        Ok(c) => c,
+        Ok(c) => Arc::new(c),
         Err(e) => {
             error!("Error creating config on serverless trace mini agent startup: {e}");
             return;
         }
     };
 
-    let trace_aggregator = Arc::new(Mutex::new(TraceAggregator::default()));
-    let trace_flusher = Arc::new(trace_flusher::ServerlessTraceFlusher::new(trace_aggregator, config));
+    let trace_aggregator = Arc::new(TokioMutex::new(TraceAggregator::default()));
+    let trace_flusher = Arc::new(trace_flusher::ServerlessTraceFlusher::new(
+        trace_aggregator,
+        Arc::clone(&config),
+    ));
 
     let mini_agent = Box::new(mini_agent::MiniAgent {
-        config: Arc::new(config),
+        config: Arc::clone(&config),
         env_verifier,
         trace_processor,
         trace_flusher,
