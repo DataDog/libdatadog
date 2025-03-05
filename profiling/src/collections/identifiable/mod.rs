@@ -3,7 +3,7 @@
 
 mod string_id;
 
-use anyhow::anyhow;
+use anyhow::Context;
 use std::hash::{BuildHasherDefault, Hash};
 use std::num::NonZeroU32;
 
@@ -91,7 +91,7 @@ impl<T: Item> Dedup<T> for FxIndexSet<T> {
             id,
             self.len()
         );
-        small_non_zero_pprof_id(id).ok_or_else(|| anyhow!("invalid id generated {:?}", id))?;
+        small_non_zero_pprof_id(id).with_context(|| format!("invalid id generated {:?}", id))?;
 
         Ok(<T as Item>::Id::from_offset(id))
     }
