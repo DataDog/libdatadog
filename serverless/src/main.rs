@@ -8,8 +8,7 @@ use tokio::time::{interval, Duration};
 use tracing_subscriber::EnvFilter;
 
 use datadog_trace_mini_agent::{
-    config, env_verifier, mini_agent, stats_flusher, stats_processor, trace_flusher,
-    trace_processor,
+    aggregator::TraceAggregator, config, env_verifier, mini_agent, stats_flusher, stats_processor, trace_flusher::{self, TraceFlusher}, trace_processor
 };
 
 use dogstatsd::{
@@ -72,7 +71,6 @@ pub async fn main() {
 
     let env_verifier = Arc::new(env_verifier::ServerlessEnvVerifier::default());
 
-    let trace_flusher = Arc::new(trace_flusher::ServerlessTraceFlusher {});
     let trace_processor = Arc::new(trace_processor::ServerlessTraceProcessor {});
 
     let stats_flusher = Arc::new(stats_flusher::ServerlessStatsFlusher {});
@@ -85,6 +83,9 @@ pub async fn main() {
             return;
         }
     };
+
+    let trace_aggregator = Arc::new(Mutex::new(TraceAggregator::default()));
+    let trace_flusher = Arc::new(trace_flusher::ServerlessTraceFlusher::new(trace_aggregator, config));
 
     let mini_agent = Box::new(mini_agent::MiniAgent {
         config: Arc::new(config),
