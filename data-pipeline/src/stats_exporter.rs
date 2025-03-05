@@ -15,6 +15,7 @@ use datadog_trace_protobuf::pb;
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
 use ddcommon::Endpoint;
 use hyper;
+use log::error;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 
@@ -88,19 +89,23 @@ impl StatsExporter {
             ddcommon::header::APPLICATION_MSGPACK_STR.to_string(),
         );
 
-        let strategy = RetryStrategy::default();
+        let result = send_with_retry(
+            &self.endpoint,
+            body,
+            &headers,
+            &RetryStrategy::default(),
+            None,
+        )
+        .await;
 
-        let result = send_with_retry(&self.endpoint, body, &headers, &strategy, None).await;
-
-        if let Ok((resp, _)) = result {
-            if !resp.status().is_success() {
-                anyhow::bail!(
-                    "received {} status code from the agent",
-                    resp.status().as_u16()
-                );
+        // After
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                error!("Error with the retry: {err}");
+                anyhow::bail!("received SendWithRetryError: {err}");
             }
         }
-        Ok(())
     }
 
     /// Flush stats from the concentrator into a payload
@@ -181,6 +186,7 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<hyper::Uri> {
 mod tests {
     use super::*;
     use datadog_trace_utils::span::v04::{trace_utils, SpanBytes};
+    use datadog_trace_utils::test_utils::poll_for_mock_hit;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use time::Duration;
@@ -263,6 +269,36 @@ mod tests {
         send_status.unwrap();
 
         mock.assert_async().await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_send_stats_fail() {
+        let server = MockServer::start_async().await;
+
+        let mut mock = server
+            .mock_async(|_when, then| {
+                then.status(503)
+                    .header("content-type", "application/json")
+                    .body(r#"{"status":"error"}"#);
+            })
+            .await;
+
+        let stats_exporter = StatsExporter::new(
+            BUCKETS_DURATION,
+            Arc::new(Mutex::new(get_test_concentrator())),
+            get_test_metadata(),
+            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+            CancellationToken::new(),
+        );
+
+        let send_status = stats_exporter.send(true).await;
+        send_status.unwrap_err();
+
+        assert!(
+            poll_for_mock_hit(&mut mock, 10, 100, 5 as usize, true).await,
+            "Expected max retry attempts"
+        );
     }
 
     #[cfg_attr(miri, ignore)]
