@@ -101,8 +101,8 @@ impl StatsExporter {
         match result {
             Ok(_) => Ok(()),
             Err(err) => {
-                error!("Error with the retry: {err}");
-                anyhow::bail!("received SendWithRetryError: {err}");
+                error!("Error with the StateExporter when sending: {err}");
+                anyhow::bail!("Failed to send stats: {err}");
             }
         }
     }
