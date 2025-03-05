@@ -136,7 +136,7 @@ pub enum UpscalingInfo {
         count_value_offset: usize,
         sampling_distance: u64,
     },
-    PoissonCount {
+    PoissonNonSampleTypeCount {
         // sum_value_offset is an offset in the profile values type array
         sum_value_offset: usize,
         count_value: u64,
@@ -159,7 +159,7 @@ impl std::fmt::Display for UpscalingInfo {
                 "Poisson = sum_value_offset: {}, count_value_offset: {}, sampling_distance: {}",
                 sum_value_offset, count_value_offset, sampling_distance
             ),
-            UpscalingInfo::PoissonCount {
+            UpscalingInfo::PoissonNonSampleTypeCount {
                 sum_value_offset,
                 count_value,
                 sampling_distance,
@@ -196,7 +196,7 @@ impl UpscalingInfo {
                     sampling_distance
                 )
             }
-            UpscalingInfo::PoissonCount {
+            UpscalingInfo::PoissonNonSampleTypeCount {
                 sum_value_offset,
                 count_value,
                 sampling_distance,

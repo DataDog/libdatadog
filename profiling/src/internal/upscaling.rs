@@ -28,7 +28,7 @@ impl UpscalingRule {
                 let avg = values[sum_value_offset] as f64 / values[count_value_offset] as f64;
                 1_f64 / (1_f64 - (-avg / sampling_distance as f64).exp())
             }
-            UpscalingInfo::PoissonCount {
+            UpscalingInfo::PoissonNonSampleTypeCount {
                 sum_value_offset,
                 count_value,
                 sampling_distance,

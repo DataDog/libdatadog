@@ -1235,7 +1235,7 @@ mod api_tests {
 
         profile.add_sample(sample1, None).expect("add to success");
 
-        let upscaling_info = UpscalingInfo::PoissonCount {
+        let upscaling_info = UpscalingInfo::PoissonNonSampleTypeCount {
             sum_value_offset: 1,
             count_value: 29,
             sampling_distance: 10,
