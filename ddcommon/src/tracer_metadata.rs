@@ -30,7 +30,7 @@ pub struct TracerMetadata {
 
 pub enum AnonymousFileHandle {
     #[cfg(target_os = "linux")]
-    Linux(Box<memfd::Memfd>),
+    Linux(memfd::Memfd),
     #[cfg(not(target_os = "linux"))]
     Other(()),
 }
@@ -72,7 +72,7 @@ mod linux {
         ])
         .context("unable to seal memfd")?;
 
-        Ok(super::AnonymousFileHandle::Linux(Box::new(mfd)))
+        Ok(super::AnonymousFileHandle::Linux(mfd))
     }
 }
 
