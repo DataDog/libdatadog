@@ -98,7 +98,6 @@ impl StatsExporter {
         )
         .await;
 
-        // After
         match result {
             Ok(_) => Ok(()),
             Err(err) => {
@@ -296,7 +295,7 @@ mod tests {
         send_status.unwrap_err();
 
         assert!(
-            poll_for_mock_hit(&mut mock, 10, 100, 5 as usize, true).await,
+            poll_for_mock_hit(&mut mock, 10, 100, 5, true).await,
             "Expected max retry attempts"
         );
     }
