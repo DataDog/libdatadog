@@ -11,7 +11,8 @@ use bytes::Bytes;
 use ddcommon::{connector, Endpoint, HttpRequestBuilder};
 use hyper::{Body, Client, Method, Response};
 use hyper_proxy::{Intercept, Proxy, ProxyConnector};
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, time::Duration, io::Write};
+use zstd::stream::write::Encoder;
 
 pub type Attempts = u32;
 
@@ -171,7 +172,18 @@ async fn send_request(
     payload: Bytes,
     http_proxy: Option<&str>,
 ) -> Result<Response<Body>, RequestError> {
-    let req = req.body(Body::from(payload)).or(Err(RequestError::Build))?;
+    let result = (|| -> std::io::Result<Vec<u8>> {
+        let mut encoder = Encoder::new(Vec::new(), 6)?;
+        encoder.write_all(&payload)?;
+        encoder.finish()
+    })();
+
+    let req = match result {
+        Ok(payload) => {
+            req.header("Content-Encoding", "zstd").body(Body::from(payload)).or(Err(RequestError::Build))?
+        },
+        Err(_) => req.body(Body::from(payload)).or(Err(RequestError::Build))?,
+    };
 
     match tokio::time::timeout(
         timeout,
