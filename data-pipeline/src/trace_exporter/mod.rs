@@ -11,12 +11,10 @@ use crate::{
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
-use datadog_trace_utils::msgpack_decoder::decode::error::DecodeError;
+use datadog_trace_utils::msgpack_decoder::{self, decode::error::DecodeError};
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryError};
-use datadog_trace_utils::trace_utils;
-use datadog_trace_utils::trace_utils::TracerHeaderTags;
-use datadog_trace_utils::tracer_payload::TraceCollection;
-use datadog_trace_utils::{msgpack_decoder, tracer_payload};
+use datadog_trace_utils::trace_utils::{self, TracerHeaderTags};
+use datadog_trace_utils::tracer_payload::{self, TraceCollection};
 use ddcommon::header::{
     APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
 };
@@ -108,9 +106,11 @@ fn add_path(url: &Uri, path: &str) -> Uri {
         }
         None => PathAndQuery::from_str(path),
     }
+    // TODO: APMSP-18190
     .unwrap();
     let mut parts = url.clone().into_parts();
     parts.path_and_query = Some(new_p_and_q);
+    // TODO: APMSP-18190
     Uri::from_parts(parts).unwrap()
 }
 
@@ -461,6 +461,7 @@ impl TraceExporter {
                 .header("X-Datadog-Trace-Count", trace_count.to_string().as_str());
             let req = req_builder
                 .body(Body::from(Bytes::copy_from_slice(data)))
+                // TODO: APMSP-18190
                 .unwrap();
 
             match hyper::Client::builder()
@@ -471,7 +472,7 @@ impl TraceExporter {
                 Ok(response) => {
                     let response_status = response.status();
                     if !response_status.is_success() {
-                        // TODO: remove unwrap
+                        // TODO: APMSP-1819
                         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
                         let response_body =
                             String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
@@ -561,6 +562,7 @@ impl TraceExporter {
                         stats_concentrator.add_span(span);
                     }
                 }
+                // TODO: APMSP-18190
                 TraceCollection::V07(_) => todo!(),
             }
         }
@@ -629,11 +631,13 @@ impl TraceExporter {
                 .map_err(|e| {
                     TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
                 })?,
+                // TODO: APMSP-18190
                 _ => todo!(
                     "Conversion from v05 to {:?} not implemented",
                     self.output_format
                 ),
             },
+            // TODO: APMSP-18190
             _ => todo!("Input format not implemented"),
         };
 
@@ -655,6 +659,7 @@ impl TraceExporter {
             tracer_payload::TracerPayloadCollection::V05(p) => {
                 rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)?
             }
+            // TODO: APMSP-18190
             _ => todo!("Serialization for v07 not implemented"),
         };
 

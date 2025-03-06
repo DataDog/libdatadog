@@ -9,6 +9,10 @@ use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashMap;
 
+/// Structure that represent a TraceChunk Span which String fields are interned in a shared
+/// dictionary. The number of elements is fixed by the spec and they all need to be serialized, in
+/// case of adding more items the constant msgpack_decoder::v05::SPAN_ELEM_COUNT need to be
+/// updated.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Span {
     pub service: u32,

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod trace_utils;
-pub mod v04;
 pub mod v05;
 
 use serde::Serialize;
