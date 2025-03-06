@@ -9,7 +9,7 @@ use super::*;
 use crate::api;
 use crate::api::ManagedStringId;
 use crate::collections::identifiable::*;
-use crate::collections::string_storage::ManagedStringStorage;
+use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::StringTable;
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::pprof::sliced_proto::*;
@@ -43,6 +43,7 @@ pub struct Profile {
     start_time: SystemTime,
     strings: StringTable,
     string_storage: Option<Rc<RwLock<ManagedStringStorage>>>,
+    string_storage_cached_profile_id: Option<CachedProfileId>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
 }
@@ -102,11 +103,10 @@ impl Profile {
             })
             .collect();
 
-        let locations = sample
-            .locations
-            .iter()
-            .map(|l| self.add_location(l))
-            .collect();
+        let mut locations = Vec::with_capacity(sample.locations.len());
+        for location in &sample.locations {
+            locations.push(self.add_location(location)?);
+        }
 
         self.add_sample_internal(sample.values, labels, locations, timestamp)
     }
@@ -199,14 +199,33 @@ impl Profile {
             return Ok(StringId::ZERO); // Both string tables use zero for the empty string
         };
 
-        self.string_storage
+        let string_storage = self.string_storage
             .as_ref()
             // Safety: We always get here through a direct or indirect call to add_string_id_sample,
             // which already ensured that the string storage exists.
-            .ok_or_else(|| anyhow::anyhow!("Current sample makes use of ManagedStringIds but profile was not created using a string table"))?
+            .ok_or_else(|| anyhow::anyhow!("Current sample makes use of ManagedStringIds but profile was not created using a string table"))?;
+
+        let cached_profile_id = match self.string_storage_cached_profile_id.as_ref() {
+            Some(cached_profile_id) => cached_profile_id,
+            None => {
+                let new_id = string_storage
+                    .write()
+                    .map_err(|_| {
+                        anyhow::anyhow!(
+                            "acquisition of write lock on string storage should succeed"
+                        )
+                    })?
+                    .next_cached_profile_id()?;
+                self.string_storage_cached_profile_id.get_or_insert(new_id)
+            }
+        };
+
+        string_storage
             .read()
-            .map_err(|_| anyhow::anyhow!("acquisition of read lock on string storage should succeed"))?
-            .get_seq_num(non_empty_string_id, &mut self.strings)
+            .map_err(|_| {
+                anyhow::anyhow!("acquisition of read lock on string storage should succeed")
+            })?
+            .get_seq_num(non_empty_string_id, &mut self.strings, cached_profile_id)
     }
 
     /// Creates a profile with `start_time`.
@@ -314,6 +333,7 @@ impl Profile {
                 .iter()
                 .map(Id::to_raw_id)
                 .collect();
+            self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
             self.upscaling_rules.upscale_values(&mut values, &labels)?;
 
             let labels = labels.into_iter().map(pprof::Label::from).collect();
@@ -377,6 +397,24 @@ impl Profile {
             endpoints_stats,
         })
     }
+
+    /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids being present in
+    /// emitted profiles. We're doing extra checks here so that if we see incorrect ids again,
+    /// we are 100% sure they were not introduced prior to this stage.
+    fn check_location_ids_are_valid(&self, location_ids: &[u64], len: usize) -> anyhow::Result<()> {
+        let len: u64 = u64::try_from(len)?;
+        for id in location_ids.iter() {
+            let id = *id;
+            // Location ids start from 1, that's why they're <= len instead of < len
+            anyhow::ensure!(
+                id > 0 && id <= len,
+                "invalid location id found during serialization {:?}, len was {:?}",
+                id,
+                len
+            )
+        }
+        Ok(())
+    }
 }
 
 /// Private helper functions
@@ -412,10 +450,10 @@ impl Profile {
         }))
     }
 
-    fn add_location(&mut self, location: &api::Location) -> LocationId {
+    fn add_location(&mut self, location: &api::Location) -> anyhow::Result<LocationId> {
         let mapping_id = self.add_mapping(&location.mapping);
         let function_id = self.add_function(&location.function);
-        self.locations.dedup(Location {
+        self.locations.checked_dedup(Location {
             mapping_id,
             function_id,
             address: location.address,
@@ -429,12 +467,12 @@ impl Profile {
     ) -> anyhow::Result<LocationId> {
         let mapping_id = self.add_string_id_mapping(&location.mapping)?;
         let function_id = self.add_string_id_function(&location.function)?;
-        Ok(self.locations.dedup(Location {
+        self.locations.checked_dedup(Location {
             mapping_id,
             function_id,
             address: location.address,
             line: location.line,
-        }))
+        })
     }
 
     fn add_mapping(&mut self, mapping: &api::Mapping) -> MappingId {
@@ -496,7 +534,7 @@ impl Profile {
         );
 
         let local_root_span_id = if let LabelValue::Num { num, .. } = label.get_value() {
-            // Safety: the value is a u64, but pprof only has signed values, so we
+            // Safety: the value is an u64, but pprof only has signed values, so we
             // transmute it; the backend does the same.
             unsafe { std::intrinsics::transmute::<i64, u64>(*num) }
         } else {
@@ -577,6 +615,8 @@ impl Profile {
             start_time,
             strings: Default::default(),
             string_storage,
+            string_storage_cached_profile_id: None, /* Never reuse an id! See comments on
+                                                     * CachedProfileId for why. */
             timestamp_key: Default::default(),
             upscaling_rules: Default::default(),
         };
@@ -1434,7 +1474,7 @@ mod api_tests {
 
         profile.add_sample(sample1, None).expect("add to success");
 
-        // invalid sampling_distance vaue
+        // invalid sampling_distance value
         let upscaling_info = UpscalingInfo::Poisson {
             sum_value_offset: 1,
             count_value_offset: 2,
@@ -2135,7 +2175,7 @@ mod api_tests {
     }
 
     #[test]
-    fn test_fails_when_adding_byvalue_rule_collinding_on_offset_with_existing_bylabel_rule() {
+    fn test_fails_when_adding_byvalue_rule_colliding_on_offset_with_existing_bylabel_rule() {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
@@ -2194,7 +2234,7 @@ mod api_tests {
         };
 
         let large_span_id = u64::MAX;
-        // Safety: a u64 can fit into an i64, and we're testing that it's not mis-handled.
+        // Safety: an u64 can fit into an i64, and we're testing that it's not mis-handled.
         let large_num: i64 = unsafe { std::intrinsics::transmute(large_span_id) };
 
         let id2_label = api::Label {
@@ -2276,5 +2316,68 @@ mod api_tests {
             assert_eq!(sample.labels, labels);
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_regression_managed_string_table_correctly_maps_ids() {
+        let storage = Rc::new(RwLock::new(ManagedStringStorage::new()));
+        let hello_id: u32;
+        let world_id: u32;
+
+        {
+            let mut storage_guard = storage.write().unwrap();
+            hello_id = storage_guard.intern("hello").unwrap();
+            world_id = storage_guard.intern("world").unwrap();
+        }
+
+        let sample_types = [api::ValueType::new("samples", "count")];
+        let mut profile =
+            Profile::with_string_storage(SystemTime::now(), &sample_types, None, storage.clone());
+
+        let location = api::StringIdLocation {
+            function: api::StringIdFunction {
+                name: api::ManagedStringId { value: hello_id },
+                filename: api::ManagedStringId { value: world_id },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let sample = api::StringIdSample {
+            locations: vec![location],
+            values: vec![1],
+            labels: vec![],
+        };
+
+        profile.add_string_id_sample(sample.clone(), None).unwrap();
+        profile.add_string_id_sample(sample.clone(), None).unwrap();
+
+        let pprof_first_profile =
+            pprof::roundtrip_to_pprof(profile.reset_and_return_previous(None).unwrap()).unwrap();
+
+        assert!(pprof_first_profile
+            .string_table
+            .iter()
+            .any(|s| s == "hello"));
+        assert!(pprof_first_profile
+            .string_table
+            .iter()
+            .any(|s| s == "world"));
+
+        // If the cache invalidation on the managed string table is working correctly, these strings
+        // get correctly re-added to the profile's string table
+
+        profile.add_string_id_sample(sample.clone(), None).unwrap();
+        profile.add_string_id_sample(sample.clone(), None).unwrap();
+        let pprof_second_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+
+        assert!(pprof_second_profile
+            .string_table
+            .iter()
+            .any(|s| s == "hello"));
+        assert!(pprof_second_profile
+            .string_table
+            .iter()
+            .any(|s| s == "world"));
     }
 }
