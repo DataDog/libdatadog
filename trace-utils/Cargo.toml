@@ -42,7 +42,7 @@ cargo_metadata = { version = "0.18.1", optional = true }
 cargo-platform = { version = "=0.1.7", optional = true }
 tinybytes =  { path = "../tinybytes", features = ["bytes_string", "serialization"] }
 urlencoding = { version="2.1.3", optional= true }
-zstd = { version = "0.13.3", default-features = false }
+zstd = { version = "0.13.3", default-features = false, optional = true }
 
 [dev-dependencies]
 bolero = "0.10.1"
@@ -58,3 +58,4 @@ tempfile = "3.3.0"
 default = ["proxy"]
 test-utils = ["httpmock", "testcontainers", "cargo_metadata", "cargo-platform", "urlencoding"]
 proxy = ["hyper-proxy"]
+compression = ["zstd"]
