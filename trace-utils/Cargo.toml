@@ -55,7 +55,7 @@ datadog-trace-utils = { path = ".", features = ["test-utils"] }
 tempfile = "3.3.0"
 
 [features]
-default = ["proxy", "compression"]
+default = ["proxy"]
 test-utils = ["httpmock", "testcontainers", "cargo_metadata", "cargo-platform", "urlencoding"]
 proxy = ["hyper-proxy"]
 compression = ["zstd"]
