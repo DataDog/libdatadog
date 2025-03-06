@@ -107,11 +107,14 @@ impl ManagedStringStorage {
                 let usage_count = &self
                     .id_to_data
                     .get(id)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("BUG: id_to_data and str_to_id should be in sync")
-                    })?
+                    .context("BUG: id_to_data and str_to_id should be in sync")?
                     .usage_count;
-                usage_count.set(usage_count.get() + 1);
+                usage_count.set(
+                    usage_count
+                        .get()
+                        .checked_add(1)
+                        .context("Usage_count overflow")?,
+                );
                 Ok(*id)
             }
             None => self.intern_new(item),
@@ -129,7 +132,7 @@ impl ManagedStringStorage {
         self.next_id = self
             .next_id
             .checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("Ran out of string ids!"))?;
+            .context("Ran out of string ids!")?;
         let old_value = self.str_to_id.insert(str.clone(), id);
         debug_assert_eq!(old_value, None);
         let old_value = self.id_to_data.insert(id, data);
@@ -139,10 +142,15 @@ impl ManagedStringStorage {
 
     // Here id is a NonZeroU32 because an id of 0 is the empty string and that can never be
     // uninterned (and it should be skipped instead in the caller)
-    pub fn unintern(&self, id: NonZeroU32) -> anyhow::Result<()> {
+    pub fn unintern(&mut self, id: NonZeroU32) -> anyhow::Result<()> {
         let data = self.get_data(id.into())?;
         let usage_count = &data.usage_count;
-        usage_count.set(usage_count.get() - 1);
+        usage_count.set(
+            usage_count
+                .get()
+                .checked_sub(1)
+                .context("Usage_count underflow")?,
+        );
         Ok(())
     }
 
@@ -150,7 +158,7 @@ impl ManagedStringStorage {
     // entire call can be skipped
     // See comment on `struct CachedProfileId` for details on how to use it.
     pub fn get_seq_num(
-        &self,
+        &mut self,
         id: NonZeroU32,
         profile_strings: &mut StringTable,
         cached_profile_id: &CachedProfileId,
@@ -176,7 +184,17 @@ impl ManagedStringStorage {
 
     fn get_data(&self, id: u32) -> anyhow::Result<&ManagedStringData> {
         match self.id_to_data.get(&id) {
-            Some(v) => Ok(v),
+            Some(v) => {
+                if v.usage_count.get() > 0 {
+                    Ok(v)
+                } else {
+                    Err(anyhow::anyhow!(
+                        "Tried to read data for id {} ('{}') but usage count was zero",
+                        id,
+                        v.str
+                    ))
+                }
+            }
             None => Err(anyhow::anyhow!("ManagedStringId {} is not valid", id)),
         }
     }

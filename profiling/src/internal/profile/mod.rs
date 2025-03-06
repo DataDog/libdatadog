@@ -18,7 +18,7 @@ use anyhow::Context;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::RwLock;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 pub struct Profile {
@@ -42,7 +42,7 @@ pub struct Profile {
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
-    string_storage: Option<Rc<RwLock<ManagedStringStorage>>>,
+    string_storage: Option<Rc<Mutex<ManagedStringStorage>>>,
     string_storage_cached_profile_id: Option<CachedProfileId>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
@@ -205,27 +205,19 @@ impl Profile {
             // which already ensured that the string storage exists.
             .ok_or_else(|| anyhow::anyhow!("Current sample makes use of ManagedStringIds but profile was not created using a string table"))?;
 
+        let mut write_locked_storage = string_storage
+            .lock()
+            .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
+
         let cached_profile_id = match self.string_storage_cached_profile_id.as_ref() {
             Some(cached_profile_id) => cached_profile_id,
             None => {
-                let new_id = string_storage
-                    .write()
-                    .map_err(|_| {
-                        anyhow::anyhow!(
-                            "acquisition of write lock on string storage should succeed"
-                        )
-                    })?
-                    .next_cached_profile_id()?;
+                let new_id = write_locked_storage.next_cached_profile_id()?;
                 self.string_storage_cached_profile_id.get_or_insert(new_id)
             }
         };
 
-        string_storage
-            .read()
-            .map_err(|_| {
-                anyhow::anyhow!("acquisition of read lock on string storage should succeed")
-            })?
-            .get_seq_num(non_empty_string_id, &mut self.strings, cached_profile_id)
+        write_locked_storage.get_seq_num(non_empty_string_id, &mut self.strings, cached_profile_id)
     }
 
     /// Creates a profile with `start_time`.
@@ -254,7 +246,7 @@ impl Profile {
         start_time: SystemTime,
         sample_types: &[api::ValueType],
         period: Option<api::Period>,
-        string_storage: Rc<RwLock<ManagedStringStorage>>,
+        string_storage: Rc<Mutex<ManagedStringStorage>>,
     ) -> Self {
         Self::new_internal(
             Self::backup_period(period),
@@ -597,7 +589,7 @@ impl Profile {
         owned_period: Option<owned_types::Period>,
         owned_sample_types: Option<Box<[owned_types::ValueType]>>,
         start_time: SystemTime,
-        string_storage: Option<Rc<RwLock<ManagedStringStorage>>>,
+        string_storage: Option<Rc<Mutex<ManagedStringStorage>>>,
     ) -> Self {
         let mut profile = Self {
             owned_period,
@@ -2352,12 +2344,12 @@ mod api_tests {
 
     #[test]
     fn test_regression_managed_string_table_correctly_maps_ids() {
-        let storage = Rc::new(RwLock::new(ManagedStringStorage::new()));
+        let storage = Rc::new(Mutex::new(ManagedStringStorage::new()));
         let hello_id: u32;
         let world_id: u32;
 
         {
-            let mut storage_guard = storage.write().unwrap();
+            let mut storage_guard = storage.lock().unwrap();
             hello_id = storage_guard.intern("hello").unwrap();
             world_id = storage_guard.intern("world").unwrap();
         }
