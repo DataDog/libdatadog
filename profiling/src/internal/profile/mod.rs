@@ -1222,6 +1222,38 @@ mod api_tests {
     }
 
     #[test]
+    fn test_upscaling_by_value_on_one_value_with_poisson_count() {
+        let sample_types = create_samples_types();
+
+        let mut profile = Profile::new(SystemTime::now(), &sample_types, None);
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: vec![1, 16, 29],
+            labels: vec![],
+        };
+
+        profile.add_sample(sample1, None).expect("add to success");
+
+        let upscaling_info = UpscalingInfo::PoissonNonSampleTypeCount {
+            sum_value_offset: 1,
+            count_value: 29,
+            sampling_distance: 10,
+        };
+        let values_offset: Vec<usize> = vec![1];
+        profile
+            .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
+            .expect("Rule added");
+
+        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+
+        assert_eq!(serialized_profile.samples.len(), 1);
+        let first = serialized_profile.samples.first().expect("one sample");
+
+        assert_eq!(first.values, vec![1, 298, 29]);
+    }
+
+    #[test]
     fn test_upscaling_by_value_on_zero_value_with_poisson() {
         let sample_types = create_samples_types();
 
