@@ -607,7 +607,16 @@ impl TraceExporter {
                 .map_err(|e| {
                     TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
                 })?,
-                _ => todo!("Conversion from v04 to vXX not implemented"),
+                TraceExporterOutputFormat::V05 => trace_utils::collect_trace_chunks(
+                    collection,
+                    &header_tags,
+                    &mut tracer_payload::DefaultTraceChunkProcessor,
+                    self.endpoint.api_key.is_some(),
+                    true,
+                )
+                .map_err(|e| {
+                    TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
+                })?,
             },
             TraceExporterInputFormat::V05 => match self.output_format {
                 TraceExporterOutputFormat::V05 => trace_utils::collect_trace_chunks(
@@ -620,7 +629,10 @@ impl TraceExporter {
                 .map_err(|e| {
                     TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
                 })?,
-                _ => todo!("Conversion from v05 to vXX not implemented"),
+                _ => todo!(
+                    "Conversion from v05 to {:?} not implemented",
+                    self.output_format
+                ),
             },
             _ => todo!("Input format not implemented"),
         };
@@ -1038,7 +1050,10 @@ impl TraceExporterBuilder {
     fn is_mode_allowed(input: TraceExporterInputFormat, output: TraceExporterOutputFormat) -> bool {
         match input {
             TraceExporterInputFormat::Proxy => true,
-            TraceExporterInputFormat::V04 => matches!(output, TraceExporterOutputFormat::V04),
+            TraceExporterInputFormat::V04 => matches!(
+                output,
+                TraceExporterOutputFormat::V04 | TraceExporterOutputFormat::V05
+            ),
             TraceExporterInputFormat::V05 => matches!(output, TraceExporterOutputFormat::V05),
         }
     }
@@ -1064,6 +1079,9 @@ mod tests {
     use std::time::Duration;
     use tinybytes::BytesString;
     use tokio::time::sleep;
+
+    // v05 messagepack empty payload -> [[""], []]
+    const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
 
     #[cfg_attr(miri, ignore)]
     #[test]
@@ -1730,6 +1748,66 @@ mod tests {
 
         let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (vec![], vec![]);
         let traces = rmp_serde::to_vec(&v5).unwrap();
+        let bytes = tinybytes::Bytes::from(traces);
+        let result = exporter.send(bytes, 1).unwrap();
+        assert_eq!(result.body, response_body);
+
+        traces_endpoint.assert_hits(1);
+        while metrics_endpoint.hits() == 0 {
+            exporter.runtime.block_on(async {
+                sleep(Duration::from_millis(100)).await;
+            })
+        }
+        metrics_endpoint.assert_hits(1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn exporter_metrics_v4_to_v5() {
+        let server = MockServer::start();
+        let response_body = r#"{
+                        "rate_by_service": {
+                            "service:foo,env:staging": 1.0,
+                            "service:,env:": 0.8
+                        }
+                    }"#;
+        let traces_endpoint = server.mock(|when, then| {
+            when.method(POST).path("/v0.5/traces").matches(|req| {
+                let bytes = tinybytes::Bytes::copy_from_slice(req.body.as_ref().unwrap());
+                bytes.to_vec() == V5_EMPTY
+            });
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(response_body);
+        });
+
+        let metrics_endpoint = server.mock(|when, then| {
+            when.method(POST)
+                .body_contains("\"metric\":\"trace_api.bytes\"")
+                .path("/telemetry/proxy/api/v2/apmtelemetry");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("");
+        });
+
+        let exporter = TraceExporterBuilder::default()
+            .set_url(&server.url("/"))
+            .set_service("foo")
+            .set_env("foo-env")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .enable_telemetry(Some(TelemetryConfig {
+                heartbeat: 100,
+                ..Default::default()
+            }))
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V05)
+            .build()
+            .unwrap();
+
+        let traces = vec![0x90];
         let bytes = tinybytes::Bytes::from(traces);
         let result = exporter.send(bytes, 1).unwrap();
         assert_eq!(result.body, response_body);
