@@ -9,47 +9,64 @@ use tracing::{debug, error};
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::SendData;
 
+use crate::aggregator::TraceAggregator;
 use crate::config::Config;
 
 #[async_trait]
 pub trait TraceFlusher {
+    fn new(aggregator: Arc<Mutex<TraceAggregator>>, config: Arc<Config>) -> Self
+    where
+        Self: Sized;
     /// Starts a trace flusher that listens for trace payloads sent to the tokio mpsc Receiver,
     /// implementing flushing logic that calls flush_traces.
-    async fn start_trace_flusher(&self, config: Arc<Config>, mut rx: Receiver<SendData>);
-    /// Flushes traces to the Datadog trace intake.
-    async fn flush_traces(&self, traces: Vec<SendData>, config: Arc<Config>);
+    async fn start_trace_flusher(&self, mut rx: Receiver<SendData>);
+    /// Given a `Vec<SendData>`, a tracer payload, send it to the Datadog intake endpoint.
+    async fn send(&self, traces: Vec<SendData>);
+
+    /// Flushes traces by getting every available batch on the aggregator.
+    async fn flush(&self);
 }
 
 #[derive(Clone)]
-pub struct ServerlessTraceFlusher {}
+#[allow(clippy::module_name_repetitions)]
+pub struct ServerlessTraceFlusher {
+    pub aggregator: Arc<Mutex<TraceAggregator>>,
+    pub config: Arc<Config>,
+}
 
 #[async_trait]
 impl TraceFlusher for ServerlessTraceFlusher {
-    async fn start_trace_flusher(&self, config: Arc<Config>, mut rx: Receiver<SendData>) {
-        let buffer: Arc<Mutex<Vec<SendData>>> = Arc::new(Mutex::new(Vec::new()));
+    fn new(aggregator: Arc<Mutex<TraceAggregator>>, config: Arc<Config>) -> Self {
+        ServerlessTraceFlusher { aggregator, config }
+    }
 
-        let buffer_producer = buffer.clone();
-        let buffer_consumer = buffer.clone();
-
+    async fn start_trace_flusher(&self, mut rx: Receiver<SendData>) {
+        let aggregator = Arc::clone(&self.aggregator);
         tokio::spawn(async move {
             while let Some(tracer_payload) = rx.recv().await {
-                let mut buffer = buffer_producer.lock().await;
-                buffer.push(tracer_payload);
+                let mut guard = aggregator.lock().await;
+                guard.add(tracer_payload);
             }
         });
 
         loop {
-            tokio::time::sleep(time::Duration::from_secs(config.trace_flush_interval)).await;
-
-            let mut buffer = buffer_consumer.lock().await;
-            if !buffer.is_empty() {
-                self.flush_traces(buffer.to_vec(), config.clone()).await;
-                buffer.clear();
-            }
+            tokio::time::sleep(time::Duration::from_secs(self.config.trace_flush_interval)).await;
+            self.flush().await;
         }
     }
 
-    async fn flush_traces(&self, traces: Vec<SendData>, config: Arc<Config>) {
+    async fn flush(&self) {
+        let mut guard = self.aggregator.lock().await;
+
+        let mut traces = guard.get_batch();
+        while !traces.is_empty() {
+            self.send(traces).await;
+
+            traces = guard.get_batch();
+        }
+    }
+
+    async fn send(&self, traces: Vec<SendData>) {
         if traces.is_empty() {
             return;
         }
@@ -57,7 +74,7 @@ impl TraceFlusher for ServerlessTraceFlusher {
 
         for traces in trace_utils::coalesce_send_data(traces) {
             match traces
-                .send_proxy(config.proxy_url.as_deref())
+                .send_proxy(self.config.proxy_url.as_deref())
                 .await
                 .last_result
             {
