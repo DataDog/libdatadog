@@ -196,6 +196,12 @@ pub enum UpscalingInfo {
         count_value_offset: usize,
         sampling_distance: u64,
     },
+    PoissonNonSampleTypeCount {
+        // sum_value_offset is an offset in the profile values type array
+        sum_value_offset: usize,
+        count_value: u64,
+        sampling_distance: u64,
+    },
     Proportional {
         scale: f64,
     },
@@ -212,6 +218,15 @@ impl std::fmt::Display for UpscalingInfo {
                 f,
                 "Poisson = sum_value_offset: {}, count_value_offset: {}, sampling_distance: {}",
                 sum_value_offset, count_value_offset, sampling_distance
+            ),
+            UpscalingInfo::PoissonNonSampleTypeCount {
+                sum_value_offset,
+                count_value,
+                sampling_distance,
+            } => write!(
+                f,
+                "Poisson = sum_value_offset: {}, count_value: {}, sampling_distance: {}",
+                sum_value_offset, count_value, sampling_distance
             ),
             UpscalingInfo::Proportional { scale } => {
                 write!(f, "Proportional = scale: {}", scale)
@@ -234,6 +249,28 @@ impl UpscalingInfo {
                     sum_value_offset,
                     count_value_offset,
                     number_of_values
+                );
+                anyhow::ensure!(
+                    sampling_distance != &0,
+                    "sampling_distance {} must be greater than 0",
+                    sampling_distance
+                )
+            }
+            UpscalingInfo::PoissonNonSampleTypeCount {
+                sum_value_offset,
+                count_value,
+                sampling_distance,
+            } => {
+                anyhow::ensure!(
+                    sum_value_offset < &number_of_values,
+                    "sum_value_offset {} must be strictly less than {}",
+                    sum_value_offset,
+                    number_of_values
+                );
+                anyhow::ensure!(
+                    count_value != &0,
+                    "count_value {} must be greater than 0",
+                    count_value
                 );
                 anyhow::ensure!(
                     sampling_distance != &0,
