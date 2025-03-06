@@ -176,7 +176,7 @@ async fn send_request(
     http_proxy: Option<&str>,
 ) -> Result<Response<Body>, RequestError> {
     #[cfg(feature = "zstd")]
-    {
+    let req = {
         let result = (|| -> std::io::Result<Vec<u8>> {
             let mut encoder = Encoder::new(Vec::new(), 6)?;
             encoder.write_all(&payload)?;
@@ -190,7 +190,8 @@ async fn send_request(
                 .or(Err(RequestError::Build))?,
             Err(_) => req.body(Body::from(payload)).or(Err(RequestError::Build))?,
         };
-    }
+        req
+    };
 
     #[cfg(not(feature = "zstd"))]
     let req = req.body(Body::from(payload)).or(Err(RequestError::Build))?;
