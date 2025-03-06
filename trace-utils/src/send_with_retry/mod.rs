@@ -183,7 +183,6 @@ async fn send_request(
             encoder.finish()
         })();
 
-        
         match result {
             Ok(payload) => req
                 .header("Content-Encoding", "zstd")
