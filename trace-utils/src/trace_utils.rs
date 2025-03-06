@@ -596,11 +596,11 @@ pub fn collect_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
     tracer_header_tags: &TracerHeaderTags,
     process_chunk: &mut T,
     is_agentless: bool,
-    deduplicate_strings: bool,
+    use_v05_format: bool,
 ) -> anyhow::Result<TracerPayloadCollection> {
     match traces {
         TraceCollection::TraceChunk(traces) => {
-            if deduplicate_strings {
+            if use_v05_format {
                 let mut shared_dict = SharedDict::default();
                 let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
                 for trace in traces {

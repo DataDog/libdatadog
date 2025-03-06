@@ -11,12 +11,10 @@ use crate::{
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
-use datadog_trace_utils::msgpack_decoder::decode::error::DecodeError;
+use datadog_trace_utils::msgpack_decoder::{self, decode::error::DecodeError};
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryError};
-use datadog_trace_utils::trace_utils;
-use datadog_trace_utils::trace_utils::TracerHeaderTags;
-use datadog_trace_utils::tracer_payload::TraceCollection;
-use datadog_trace_utils::{msgpack_decoder, tracer_payload};
+use datadog_trace_utils::trace_utils::{self, TracerHeaderTags};
+use datadog_trace_utils::tracer_payload::{self, TraceCollection};
 use ddcommon::header::{
     APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
 };
@@ -108,9 +106,11 @@ fn add_path(url: &Uri, path: &str) -> Uri {
         }
         None => PathAndQuery::from_str(path),
     }
+    // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
     .unwrap();
     let mut parts = url.clone().into_parts();
     parts.path_and_query = Some(new_p_and_q);
+    // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
     Uri::from_parts(parts).unwrap()
 }
 
@@ -461,6 +461,7 @@ impl TraceExporter {
                 .header("X-Datadog-Trace-Count", trace_count.to_string().as_str());
             let req = req_builder
                 .body(Body::from(Bytes::copy_from_slice(data)))
+                // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
                 .unwrap();
 
             match hyper::Client::builder()
@@ -471,7 +472,8 @@ impl TraceExporter {
                 Ok(response) => {
                     let response_status = response.status();
                     if !response_status.is_success() {
-                        // TODO: remove unwrap
+                        // TODO: Properly handle non-OK states to prevent possible panics
+                        // (APMSP-18190).
                         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
                         let response_body =
                             String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
@@ -561,7 +563,8 @@ impl TraceExporter {
                         stats_concentrator.add_span(span);
                     }
                 }
-                TraceCollection::V07(_) => todo!(),
+                // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+                TraceCollection::V07(_) => unreachable!(),
             }
         }
     }
@@ -629,12 +632,14 @@ impl TraceExporter {
                 .map_err(|e| {
                     TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
                 })?,
-                _ => todo!(
+                // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+                _ => unreachable!(
                     "Conversion from v05 to {:?} not implemented",
                     self.output_format
                 ),
             },
-            _ => todo!("Input format not implemented"),
+            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            _ => unreachable!("Input format not implemented"),
         };
 
         let chunks = payload.size();
@@ -655,7 +660,8 @@ impl TraceExporter {
             tracer_payload::TracerPayloadCollection::V05(p) => {
                 rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)?
             }
-            _ => todo!("Serialization for v07 not implemented"),
+            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            _ => unreachable!("Serialization for v07 not implemented"),
         };
 
         let payload_len = mp_payload.len();
@@ -948,7 +954,7 @@ impl TraceExporterBuilder {
 
     #[allow(missing_docs)]
     pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
-        if !Self::is_mode_allowed(self.input_format, self.output_format) {
+        if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
                     "Combination of input and output formats not allowed".to_string(),
@@ -1047,7 +1053,10 @@ impl TraceExporterBuilder {
         })
     }
 
-    fn is_mode_allowed(input: TraceExporterInputFormat, output: TraceExporterOutputFormat) -> bool {
+    fn is_inputs_outputs_formats_compatible(
+        input: TraceExporterInputFormat,
+        output: TraceExporterOutputFormat,
+    ) -> bool {
         match input {
             TraceExporterInputFormat::Proxy => true,
             TraceExporterInputFormat::V04 => matches!(
@@ -1085,7 +1094,7 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[test]
-    fn new() {
+    fn test_new() {
         let builder = TraceExporterBuilder::default();
         let exporter = builder
             .set_url("http://192.168.1.1:8127/")
@@ -1125,7 +1134,7 @@ mod tests {
 
     #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     #[test]
-    fn new_defaults() {
+    fn test_new_defaults() {
         let builder = TraceExporterBuilder::default();
         let exporter = builder.build().unwrap();
 
@@ -1344,28 +1353,39 @@ mod tests {
 
     fn build_test_exporter(
         url: String,
-        dogstatsd_url: String,
+        dogstatsd_url: Option<String>,
         input: TraceExporterInputFormat,
         output: TraceExporterOutputFormat,
+        enable_telemrty: bool,
     ) -> TraceExporter {
-        TraceExporterBuilder::default()
+        let mut builder = TraceExporterBuilder::default()
             .set_url(&url)
             .set_service("test")
             .set_env("staging")
-            .set_dogstatsd_url(&dogstatsd_url)
             .set_tracer_version("v0.1")
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8")
             .set_input_format(input)
-            .set_output_format(output)
-            .build()
-            .unwrap()
+            .set_output_format(output);
+
+        if let Some(url) = dogstatsd_url {
+            builder = builder.set_dogstatsd_url(&url);
+        };
+
+        if enable_telemrty {
+            builder = builder.enable_telemetry(Some(TelemetryConfig {
+                heartbeat: 100,
+                ..Default::default()
+            }))
+        }
+
+        builder.build().unwrap()
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn health_metrics() {
+    fn test_health_metrics() {
         let stats_socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
         let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
 
@@ -1378,9 +1398,10 @@ mod tests {
 
         let exporter = build_test_exporter(
             fake_agent.url("/v0.4/traces"),
-            stats_socket.local_addr().unwrap().to_string(),
+            Some(stats_socket.local_addr().unwrap().to_string()),
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
+            false,
         );
 
         let traces: Vec<Vec<SpanBytes>> = vec![
@@ -1417,7 +1438,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn invalid_traces() {
+    fn test_invalid_traces() {
         let stats_socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
         let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
 
@@ -1425,9 +1446,10 @@ mod tests {
 
         let exporter = build_test_exporter(
             fake_agent.url("/v0.4/traces"),
-            stats_socket.local_addr().unwrap().to_string(),
+            Some(stats_socket.local_addr().unwrap().to_string()),
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
+            false,
         );
 
         let bad_payload = tinybytes::Bytes::copy_from_slice(b"some_bad_payload".as_ref());
@@ -1446,7 +1468,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn health_metrics_error() {
+    fn test_health_metrics_error() {
         let stats_socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
         let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
 
@@ -1459,9 +1481,10 @@ mod tests {
 
         let exporter = build_test_exporter(
             fake_agent.url("/v0.4/traces"),
-            stats_socket.local_addr().unwrap().to_string(),
+            Some(stats_socket.local_addr().unwrap().to_string()),
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
+            false,
         );
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
@@ -1496,7 +1519,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn agent_response_parse_default() {
+    fn test_agent_response_parse_default() {
         let server = MockServer::start();
         let _agent = server.mock(|_, then| {
             then.status(200)
@@ -1547,7 +1570,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn builder_error() {
+    fn test_builder_error() {
         let exporter = TraceExporterBuilder::default()
             .set_url("")
             .set_service("foo")
@@ -1573,7 +1596,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn agent_response_error() {
+    fn test_agent_response_error() {
         let server = MockServer::start();
         let _agent = server.mock(|_, then| {
             then.status(500)
@@ -1610,7 +1633,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn agent_empty_response_error() {
+    fn test_agent_empty_response_error() {
         let server = MockServer::start();
         let _agent = server.mock(|_, then| {
             then.status(200)
@@ -1650,7 +1673,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn exporter_metrics_v4() {
+    fn test_exporter_metrics_v4() {
         let server = MockServer::start();
         let response_body = r#"{
                         "rate_by_service": {
@@ -1705,7 +1728,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn exporter_metrics_v5() {
+    fn test_exporter_metrics_v5() {
         let server = MockServer::start();
         let response_body = r#"{
                         "rate_by_service": {
@@ -1729,22 +1752,13 @@ mod tests {
                 .body("");
         });
 
-        let exporter = TraceExporterBuilder::default()
-            .set_url(&server.url("/"))
-            .set_service("foo")
-            .set_env("foo-env")
-            .set_tracer_version("v0.1")
-            .set_language("nodejs")
-            .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .enable_telemetry(Some(TelemetryConfig {
-                heartbeat: 100,
-                ..Default::default()
-            }))
-            .set_input_format(TraceExporterInputFormat::V05)
-            .set_output_format(TraceExporterOutputFormat::V05)
-            .build()
-            .unwrap();
+        let exporter = build_test_exporter(
+            server.url("/"),
+            None,
+            TraceExporterInputFormat::V05,
+            TraceExporterOutputFormat::V05,
+            true,
+        );
 
         let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (vec![], vec![]);
         let traces = rmp_serde::to_vec(&v5).unwrap();
@@ -1763,7 +1777,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn exporter_metrics_v4_to_v5() {
+    fn test_exporter_metrics_v4_to_v5() {
         let server = MockServer::start();
         let response_body = r#"{
                         "rate_by_service": {

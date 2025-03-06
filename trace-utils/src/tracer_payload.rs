@@ -11,8 +11,11 @@ use std::cmp::Ordering;
 use std::iter::Iterator;
 use tinybytes;
 
+type DroppedP0Traces = usize;
+type DroppedP0Spans = usize;
 pub type TracerPayloadV04 = Vec<SpanBytes>;
 pub type TracerPayloadV05 = Vec<v05::Span>;
+pub type DroppedP0Stats = (DroppedP0Traces, DroppedP0Spans);
 
 // Keys used for sampling
 const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
@@ -32,7 +35,13 @@ pub enum TraceEncoding {
 
 /// A collection of traces before they are turned into TraceChunks.
 pub enum TraceCollection {
+    /// Collection of traces using protobuf representation of trace chunks. Used for V07
+    /// implementation.
     V07(Vec<Vec<pb::Span>>),
+    /// Collection of traces using the SpanBytes representation of trace chunks. This
+    /// representation allows the use of ByteString for representing Strings in order to avoid
+    /// unnecessary cloning during the processing of the chunks. Used for V04 and V05
+    /// implementations.
     TraceChunk(Vec<Vec<SpanBytes>>),
 }
 
@@ -58,12 +67,21 @@ impl TraceCollection {
                     trace_utils::compute_top_level_span(chunk);
                 }
             }
-            TraceCollection::V07(_) => todo!("set_top_level_spans not implemented for v07"),
+            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            TraceCollection::V07(_) => {
+                unimplemented!("set_top_level_spans not implemented for v07")
+            }
         }
     }
 
-    /// Remove spans and chunks only keeping the ones that may be sampled by the agent
-    pub fn drop_chunks(&mut self) -> (usize, usize) {
+    /// Remove spans and chunks from a TraceCollection only keeping the ones that may be sampled by
+    /// the agent.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing the dropped p0 stats, the first value correspond the amount of traces
+    /// dropped and the latter to the spans dropped.
+    pub fn drop_chunks(&mut self) -> DroppedP0Stats {
         let mut dropped_p0_traces = 0;
         let mut dropped_p0_spans = 0;
 
@@ -111,7 +129,8 @@ impl TraceCollection {
                     true
                 });
             }
-            TraceCollection::V07(_) => todo!("drop_chunks not implemented for v07"),
+            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            TraceCollection::V07(_) => unimplemented!("drop_chunks not implemented for v07"),
         }
 
         (dropped_p0_traces, dropped_p0_spans)
@@ -157,7 +176,8 @@ impl TracerPayloadCollection {
                     dest.append(src)
                 }
             }
-            TracerPayloadCollection::V05(_) => todo!("Append for V05 not implemented"),
+            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            TracerPayloadCollection::V05(_) => unimplemented!("Append for V05 not implemented"),
         }
     }
 
@@ -316,7 +336,8 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
     /// processing through `process_chunk`, and assembling the resulting data into
     /// a `TracerPayloadCollection`.
     ///
-    /// Note: Currently only the `TraceEncoding::V04` encoding type is supported.
+    /// Note: Currently only the `TraceEncoding::V04` and `TraceEncoding::V05` encoding types are
+    /// supported.
     ///
     /// # Returns
     ///
@@ -394,7 +415,8 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
                     true,
                 )?)
             },
-            _ => todo!("Encodings other than TraceEncoding::V04 and TraceEncoding::V05 not implemented yet."),
+            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            _ => unimplemented!("Encodings other than TraceEncoding::V04 and TraceEncoding::V05 not implemented yet."),
         }
     }
 }

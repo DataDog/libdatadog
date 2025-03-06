@@ -9,6 +9,10 @@ use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashMap;
 
+/// Structure that represent a TraceChunk Span which String fields are interned in a shared
+/// dictionary. The number of elements is fixed by the spec and they all need to be serialized, in
+/// case of adding more items the constant msgpack_decoder::v05::SPAN_ELEM_COUNT need to be
+/// updated.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Span {
     pub service: u32,
@@ -52,4 +56,74 @@ pub fn from_span_bytes(span: &SpanBytes, dict: &mut SharedDict) -> Result<Span> 
         )?,
         r#type: dict.get_or_insert(&span.r#type)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tinybytes::BytesString;
+
+    #[test]
+    fn from_span_bytes_test() {
+        let span = SpanBytes {
+            service: BytesString::from("service"),
+            name: BytesString::from("name"),
+            resource: BytesString::from("resource"),
+            r#type: BytesString::from("type"),
+            trace_id: 1,
+            span_id: 1,
+            parent_id: 0,
+            start: 1,
+            duration: 111,
+            error: 0,
+            meta: HashMap::from([(
+                BytesString::from("meta_field"),
+                BytesString::from("meta_value"),
+            )]),
+            metrics: HashMap::from([(BytesString::from("metrics_field"), 1.1)]),
+            meta_struct: HashMap::new(),
+            span_links: vec![],
+        };
+
+        let mut dict = SharedDict::default();
+        let v05_span = from_span_bytes(&span, &mut dict).unwrap();
+
+        let dict = dict.dict();
+
+        let get_index_from_str = |str: &str| -> u32 {
+            dict.iter()
+                .position(|s| s.as_str() == str)
+                .unwrap()
+                .try_into()
+                .unwrap()
+        };
+
+        assert_eq!(v05_span.service, get_index_from_str("service"));
+        assert_eq!(v05_span.name, get_index_from_str("name"));
+        assert_eq!(v05_span.resource, get_index_from_str("resource"));
+        assert_eq!(v05_span.r#type, get_index_from_str("type"));
+        assert_eq!(v05_span.trace_id, 1);
+        assert_eq!(v05_span.span_id, 1);
+        assert_eq!(v05_span.parent_id, 0);
+        assert_eq!(v05_span.start, 1);
+        assert_eq!(v05_span.duration, 111);
+        assert_eq!(v05_span.error, 0);
+        assert_eq!(v05_span.meta.len(), 1);
+        assert_eq!(v05_span.metrics.len(), 1);
+
+        assert_eq!(
+            *v05_span
+                .meta
+                .get(&get_index_from_str("meta_field"))
+                .unwrap(),
+            get_index_from_str("meta_value")
+        );
+        assert_eq!(
+            *v05_span
+                .metrics
+                .get(&get_index_from_str("metrics_field"))
+                .unwrap(),
+            1.1
+        );
+    }
 }

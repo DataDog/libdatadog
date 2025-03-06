@@ -41,25 +41,7 @@ const SPAN_ELEM_COUNT: u32 = 12;
 /// use std::collections::HashMap;
 /// use tinybytes;
 ///
-/// let data: (
-///     Vec<String>,
-///     Vec<
-///         Vec<(
-///             u8,
-///             u8,
-///             u8,
-///             u64,
-///             u64,
-///             u64,
-///             i64,
-///             i64,
-///             i32,
-///             HashMap<u8, u8>,
-///             HashMap<u8, f64>,
-///             u8,
-///         )>,
-///     >,
-/// ) = (
+/// let data = (
 ///     vec!["".to_string()],
 ///     vec![vec![(
 ///         0,
@@ -71,8 +53,8 @@ const SPAN_ELEM_COUNT: u32 = 12;
 ///         4,
 ///         5,
 ///         6,
-///         HashMap::new(),
-///         HashMap::new(),
+///         HashMap::<u32, u32>::new(),
+///         HashMap::<u32, f64>::new(),
 ///         0,
 ///     )]],
 /// );

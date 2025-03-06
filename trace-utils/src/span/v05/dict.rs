@@ -4,12 +4,22 @@
 use std::collections::HashMap;
 use tinybytes::{Bytes, BytesString};
 
+/// This struct represents the shared dictionary used for interning all the strings belonging to a
+/// v05 trace chunk.
 pub struct SharedDict {
+    /// Map strings with their index (O(1) retrieval complexity).
     string_map: HashMap<BytesString, usize>,
+    /// Since the collection needs to be ordered an additional vector to keep the insertion order.
     dict: Vec<BytesString>,
 }
 
 impl SharedDict {
+    /// Gets the index of the interned string. If the string is not part of the dictionary it is
+    /// added and its corresponding index returned.
+    ///
+    /// # Arguments:
+    ///
+    /// * `str`: string to look up in the dictionary.
     pub fn get_or_insert(&mut self, str: &BytesString) -> Result<u32, std::num::TryFromIntError> {
         if let Some(index) = self.string_map.get(str) {
             (*index).try_into()
@@ -21,17 +31,9 @@ impl SharedDict {
         }
     }
 
-    pub fn dict(&mut self) -> Vec<BytesString> {
-        let dict = std::mem::take(&mut self.dict);
-        self.string_map.retain(|k, _| {
-            if k.as_str() == "" {
-                self.dict.push(k.clone());
-                true
-            } else {
-                false
-            }
-        });
-        dict
+    /// Returns the dictionary. This method consumes the structure.
+    pub fn dict(mut self) -> Vec<BytesString> {
+        std::mem::take(&mut self.dict)
     }
 }
 
@@ -79,9 +81,5 @@ mod tests {
         assert_eq!(res[0].as_str(), "");
         assert_eq!(res[1].as_str(), "foo");
         assert_eq!(res[2].as_str(), "bar");
-
-        assert_eq!(dict.string_map.len(), 1);
-        assert_eq!(dict.dict.len(), 1);
-        assert_eq!(dict.dict[0].as_str(), "");
     }
 }
