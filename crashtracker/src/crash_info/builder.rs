@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use super::*;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct ErrorDataBuilder {
     pub kind: Option<ErrorKind>,
     pub message: Option<String>,
@@ -87,10 +87,11 @@ impl ErrorDataBuilder {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct CrashInfoBuilder {
     pub counters: Option<HashMap<String, i64>>,
     pub error: ErrorDataBuilder,
+    pub experimental: Option<Experimental>,
     pub files: Option<HashMap<String, Vec<String>>>,
     pub fingerprint: Option<String>,
     pub incomplete: Option<bool>,
@@ -110,9 +111,10 @@ impl CrashInfoBuilder {
         let counters = self.counters.unwrap_or_default();
         let data_schema_version = CrashInfo::current_schema_version().to_string();
         let (error, incomplete_error) = self.error.build()?;
+        let experimental = self.experimental;
         let files = self.files.unwrap_or_default();
         let fingerprint = self.fingerprint;
-        let incomplete = incomplete_error; // TODO
+        let incomplete = incomplete_error || self.incomplete.unwrap_or(false);
         let log_messages = self.log_messages.unwrap_or_default();
         let metadata = self.metadata.unwrap_or_else(Metadata::unknown_value);
         let os_info = self.os_info.unwrap_or_else(OsInfo::unknown_value);
@@ -126,6 +128,7 @@ impl CrashInfoBuilder {
             counters,
             data_schema_version,
             error,
+            experimental,
             files,
             fingerprint,
             incomplete,
@@ -139,6 +142,10 @@ impl CrashInfoBuilder {
             trace_ids,
             uuid,
         })
+    }
+
+    pub fn has_data(&self) -> bool {
+        *self != Self::default()
     }
 
     pub fn new() -> Self {
@@ -158,6 +165,27 @@ impl CrashInfoBuilder {
 
     pub fn with_counters(&mut self, counters: HashMap<String, i64>) -> anyhow::Result<&mut Self> {
         self.counters = Some(counters);
+        Ok(self)
+    }
+
+    pub fn with_experimental_additional_tags(
+        &mut self,
+        additional_tags: Vec<String>,
+    ) -> anyhow::Result<&mut Self> {
+        if let Some(experimental) = &mut self.experimental {
+            experimental.additional_tags = additional_tags;
+        } else {
+            self.experimental = Some(Experimental::new().with_additional_tags(additional_tags));
+        }
+        Ok(self)
+    }
+
+    pub fn with_experimental_ucontext(&mut self, ucontext: String) -> anyhow::Result<&mut Self> {
+        if let Some(experimental) = &mut self.experimental {
+            experimental.ucontext = Some(ucontext);
+        } else {
+            self.experimental = Some(Experimental::new().with_ucontext(ucontext));
+        }
         Ok(self)
     }
 
@@ -204,7 +232,15 @@ impl CrashInfoBuilder {
     }
 
     /// Appends the given message to the current set of messages in the builder.
-    pub fn with_log_message(&mut self, message: String) -> anyhow::Result<&mut Self> {
+    pub fn with_log_message(
+        &mut self,
+        message: String,
+        also_print: bool,
+    ) -> anyhow::Result<&mut Self> {
+        if also_print {
+            eprintln!("{message}");
+        }
+
         if let Some(ref mut messages) = &mut self.log_messages {
             messages.push(message);
         } else {

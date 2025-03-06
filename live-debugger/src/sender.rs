@@ -150,7 +150,7 @@ impl PayloadSender {
         url = Uri::from_parts(parts)?;
 
         let mut req = endpoint
-            .into_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))?
+            .to_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))?
             .method(Method::POST)
             .uri(url);
 

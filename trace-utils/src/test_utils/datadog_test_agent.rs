@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
@@ -21,10 +22,14 @@ const TEST_AGENT_READY_MSG: &str =
     "INFO:ddapm_test_agent.agent:Trace request stall seconds setting set to 0.0.";
 
 const TEST_AGENT_PORT: u16 = 8126;
+const SAMPLE_RATE_QUERY_PARAM_KEY: &str = "agent_sample_rate_by_service";
+const SESSION_TEST_TOKEN_QUERY_PARAM_KEY: &str = "test_session_token";
+const SESSION_START_ENDPOINT: &str = "test/session/start";
 
 #[derive(Debug)]
 struct DatadogTestAgentContainer {
     mounts: Vec<Mount>,
+    env_vars: HashMap<String, String>,
 }
 
 impl Image for DatadogTestAgentContainer {
@@ -54,30 +59,50 @@ impl Image for DatadogTestAgentContainer {
     fn mounts(&self) -> Box<dyn Iterator<Item = &Mount> + '_> {
         Box::new(self.mounts.iter())
     }
+
     fn expose_ports(&self) -> Vec<u16> {
         vec![TEST_AGENT_PORT]
+    }
+
+    fn env_vars(&self) -> Box<dyn Iterator<Item = (&String, &String)> + '_> {
+        Box::new(self.env_vars.iter())
     }
 }
 
 impl DatadogTestAgentContainer {
-    fn new(relative_snapshot_path: Option<&str>) -> Self {
-        if let Some(relative_snapshot_path) = relative_snapshot_path {
-            let mount = Mount::bind_mount(
-                DatadogTestAgentContainer::calculate_snapshot_absolute_path(relative_snapshot_path),
-                "/snapshots",
-            )
-            .with_access_mode(AccessMode::ReadWrite);
+    fn new(relative_snapshot_path: Option<&str>, absolute_socket_path: Option<&str>) -> Self {
+        let mut env_vars = HashMap::new();
+        let mut mounts = Vec::new();
 
-            DatadogTestAgentContainer {
-                mounts: vec![mount],
-            }
-        } else {
-            DatadogTestAgentContainer { mounts: vec![] }
+        if let Some(absolute_socket_path) = absolute_socket_path {
+            env_vars.insert(
+                "DD_APM_RECEIVER_SOCKET".to_string(),
+                "/tmp/ddsockets/apm.socket".to_owned(),
+            );
+
+            mounts.push(
+                Mount::bind_mount(absolute_socket_path, "/tmp/ddsockets")
+                    .with_access_mode(AccessMode::ReadWrite),
+            );
         }
+
+        if let Some(relative_snapshot_path) = relative_snapshot_path {
+            mounts.push(
+                Mount::bind_mount(
+                    DatadogTestAgentContainer::calculate_volume_absolute_path(
+                        relative_snapshot_path,
+                    ),
+                    "/snapshots",
+                )
+                .with_access_mode(AccessMode::ReadWrite),
+            );
+        }
+
+        DatadogTestAgentContainer { mounts, env_vars }
     }
     // The docker image requires an absolute path when mounting a volume. This function gets the
     // absolute path of the workspace and appends the provided relative path.
-    fn calculate_snapshot_absolute_path(relative_snapshot_path: &str) -> String {
+    fn calculate_volume_absolute_path(relative_snapshot_path: &str) -> String {
         let metadata = MetadataCommand::new()
             .exec()
             .expect("Failed to fetch metadata");
@@ -115,7 +140,7 @@ impl DatadogTestAgentContainer {
 /// #[tokio::main]
 /// async fn main() {
 ///     // Create a new DatadogTestAgent instance
-///     let test_agent = DatadogTestAgent::new(Some("relative/path/to/snapshot")).await;
+///     let test_agent = DatadogTestAgent::new(Some("relative/path/to/snapshot"), None).await;
 ///
 ///     // Get the URI for a specific endpoint
 ///     let uri = test_agent
@@ -154,12 +179,19 @@ impl DatadogTestAgent {
     ///   test-agent. The relative path should include the crate name. If no relative path is
     ///   provided, no snapshot directory will be mounted.
     ///
+    /// * `absolute_socket_path` - An optional string slice that holds the absolute path to the
+    ///   socket directory. This directory will get mounted in the docker container running the
+    ///   test-agent. It is recommended to use a temporary directory for this purpose. If no socket
+    ///   path is provided the test agent will not be configured for UDS transport.
     /// # Returns
     ///
     /// A new `DatadogTestAgent`.
-    pub async fn new(relative_snapshot_path: Option<&str>) -> Self {
+    pub async fn new(
+        relative_snapshot_path: Option<&str>,
+        absolute_socket_path: Option<&str>,
+    ) -> Self {
         DatadogTestAgent {
-            container: DatadogTestAgentContainer::new(relative_snapshot_path)
+            container: DatadogTestAgentContainer::new(relative_snapshot_path, absolute_socket_path)
                 .start()
                 .await
                 .expect("Unable to start DatadogTestAgent, is the Docker Daemon running?"),
@@ -203,6 +235,45 @@ impl DatadogTestAgent {
         Uri::from_str(&uri_string).expect("Invalid URI")
     }
 
+    async fn get_uri_for_endpoint_and_params(
+        &self,
+        endpoint: &str,
+        query_params: HashMap<&str, &str>,
+    ) -> Uri {
+        let base_uri = self.get_base_uri().await;
+        let mut parts = base_uri.into_parts();
+
+        let query_string = if !query_params.is_empty() {
+            let query = query_params
+                .iter()
+                .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+                .collect::<Vec<_>>()
+                .join("&");
+            format!("?{}", query)
+        } else {
+            String::new()
+        };
+
+        parts.path_and_query = Some(
+            format!("/{}{}", endpoint.trim_start_matches('/'), query_string)
+                .parse()
+                .expect("Invalid path and query"),
+        );
+
+        Uri::from_parts(parts).expect("Invalid URI")
+    }
+
+    /// Returns the URI for the Datadog Test Agent's base URL and port.
+    /// The docker-image dynamically assigns what port the test-agent's 8126 port is forwarded to.
+    ///
+    /// # Returns
+    ///
+    /// A `Uri` object representing the URI of the specified endpoint.
+    pub async fn get_base_uri(&self) -> Uri {
+        let base_uri_string = self.get_base_uri_string().await;
+        Uri::from_str(&base_uri_string).expect("Invalid URI")
+    }
+
     /// Asserts that the snapshot for a given token matches the expected snapshot. This should be
     /// called after sending data to the test-agent with the same token.
     ///
@@ -228,6 +299,65 @@ impl DatadogTestAgent {
             status_code, 200,
             "Expected status 200, but got {}. Response body: {}",
             status_code, body_string
+        );
+    }
+    /// Starts a new session with the Datadog Test Agent using the provided session token and
+    /// optional sampling rates. This should be called before sending data to the test-agent to
+    /// configure the session parameters. Please refer to
+    /// https://github.com/DataDog/dd-apm-test-agent for more details on sessions.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_token` - A string slice that holds the session token for identifying this test
+    ///   session.
+    /// * `agent_sample_rates_by_service` - An optional string slice that holds JSON-formatted
+    ///   sampling rates by service. The format should be a JSON object mapping service and
+    ///   environment pairs to sampling rates. Example: `{"service:test,env:test_env": 0.5,
+    ///   "service:test2,env:prod": 0.2}`
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```no_run
+    /// use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let test_agent = DatadogTestAgent::new(Some("relative/path/to/snapshot"), None).await;
+    ///     let session_token = "test_session_token";
+    ///     let sample_rates = "{\"service:test,env:test_env\": 0.5, \"service:test2,env:prod\": 0.2}";
+    ///
+    ///     test_agent
+    ///         .start_session(session_token, Some(sample_rates))
+    ///         .await;
+    /// }
+    /// ```
+    pub async fn start_session(
+        &self,
+        session_token: &str,
+        agent_sample_rates_by_service: Option<&str>,
+    ) {
+        let client = Client::new();
+
+        let mut query_params_map = HashMap::new();
+        query_params_map.insert(SESSION_TEST_TOKEN_QUERY_PARAM_KEY, session_token);
+        if let Some(agent_sample_rates_by_service) = agent_sample_rates_by_service {
+            query_params_map.insert(SAMPLE_RATE_QUERY_PARAM_KEY, agent_sample_rates_by_service);
+        }
+
+        let uri = self
+            .get_uri_for_endpoint_and_params(SESSION_START_ENDPOINT, query_params_map)
+            .await;
+
+        let res = client.get(uri).await.expect("Request failed");
+
+        assert_eq!(
+            res.status(),
+            200,
+            "Expected status 200 for test agent {}, but got {}",
+            SESSION_START_ENDPOINT,
+            res.status()
         );
     }
 }

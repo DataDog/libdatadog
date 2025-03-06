@@ -7,7 +7,9 @@ mod fuzz_tests;
 use self::api::UpscalingInfo;
 use super::*;
 use crate::api;
+use crate::api::ManagedStringId;
 use crate::collections::identifiable::*;
+use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::StringTable;
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::pprof::sliced_proto::*;
@@ -15,6 +17,8 @@ use crate::serializer::CompressedProtobufSerializer;
 use anyhow::Context;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::RwLock;
 use std::time::{Duration, SystemTime};
 
 pub struct Profile {
@@ -38,6 +42,8 @@ pub struct Profile {
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
+    string_storage: Option<Rc<RwLock<ManagedStringStorage>>>,
+    string_storage_cached_profile_id: Option<CachedProfileId>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
 }
@@ -78,13 +84,6 @@ impl Profile {
         sample: api::Sample,
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            sample.values.len() == self.sample_types.len(),
-            "expected {} sample types, but sample had {} sample types",
-            self.sample_types.len(),
-            sample.values.len(),
-        );
-
         self.validate_sample_labels(&sample)?;
         let labels: Vec<_> = sample
             .labels
@@ -103,17 +102,73 @@ impl Profile {
                 self.labels.dedup(internal_label)
             })
             .collect();
-        let labels = self.label_sets.dedup(LabelSet::new(labels));
 
-        let locations = sample
-            .locations
-            .iter()
-            .map(|l| self.add_location(l))
-            .collect();
+        let mut locations = Vec::with_capacity(sample.locations.len());
+        for location in &sample.locations {
+            locations.push(self.add_location(location)?);
+        }
+
+        self.add_sample_internal(sample.values, labels, locations, timestamp)
+    }
+
+    pub fn add_string_id_sample(
+        &mut self,
+        sample: api::StringIdSample,
+        timestamp: Option<Timestamp>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.string_storage.is_some(),
+            "Current sample makes use of ManagedStringIds but profile was not created using a string table"
+        );
+
+        self.validate_string_id_sample_labels(&sample)?;
+
+        let mut labels = Vec::with_capacity(sample.labels.len());
+        for label in &sample.labels {
+            let key = self.resolve(label.key)?;
+            let internal_label = if let Some(s) = label.str {
+                let str = self.resolve(s)?;
+                Label::str(key, str)
+            } else {
+                let num = label.num;
+                let num_unit = if let Some(s) = label.num_unit {
+                    Some(self.resolve(s)?)
+                } else {
+                    None
+                };
+                Label::num(key, num, num_unit)
+            };
+
+            labels.push(self.labels.dedup(internal_label));
+        }
+
+        let mut locations = Vec::with_capacity(sample.locations.len());
+        for location in &sample.locations {
+            locations.push(self.add_string_id_location(location)?);
+        }
+
+        self.add_sample_internal(sample.values, labels, locations, timestamp)
+    }
+
+    fn add_sample_internal(
+        &mut self,
+        values: Vec<i64>,
+        labels: Vec<LabelId>,
+        locations: Vec<LocationId>,
+        timestamp: Option<Timestamp>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            values.len() == self.sample_types.len(),
+            "expected {} sample types, but sample had {} sample types",
+            self.sample_types.len(),
+            values.len(),
+        );
+
+        let labels = self.label_sets.dedup(LabelSet::new(labels));
 
         let stacktrace = self.add_stacktrace(locations);
         self.observations
-            .add(Sample::new(labels, stacktrace), timestamp, sample.values)?;
+            .add(Sample::new(labels, stacktrace), timestamp, values)?;
         Ok(())
     }
 
@@ -137,6 +192,42 @@ impl Profile {
         Ok(())
     }
 
+    pub fn resolve(&mut self, id: ManagedStringId) -> anyhow::Result<StringId> {
+        let non_empty_string_id = if let Some(valid_id) = NonZeroU32::new(id.value) {
+            valid_id
+        } else {
+            return Ok(StringId::ZERO); // Both string tables use zero for the empty string
+        };
+
+        let string_storage = self.string_storage
+            .as_ref()
+            // Safety: We always get here through a direct or indirect call to add_string_id_sample,
+            // which already ensured that the string storage exists.
+            .ok_or_else(|| anyhow::anyhow!("Current sample makes use of ManagedStringIds but profile was not created using a string table"))?;
+
+        let cached_profile_id = match self.string_storage_cached_profile_id.as_ref() {
+            Some(cached_profile_id) => cached_profile_id,
+            None => {
+                let new_id = string_storage
+                    .write()
+                    .map_err(|_| {
+                        anyhow::anyhow!(
+                            "acquisition of write lock on string storage should succeed"
+                        )
+                    })?
+                    .next_cached_profile_id()?;
+                self.string_storage_cached_profile_id.get_or_insert(new_id)
+            }
+        };
+
+        string_storage
+            .read()
+            .map_err(|_| {
+                anyhow::anyhow!("acquisition of read lock on string storage should succeed")
+            })?
+            .get_seq_num(non_empty_string_id, &mut self.strings, cached_profile_id)
+    }
+
     /// Creates a profile with `start_time`.
     /// Initializes the string table to hold:
     ///  - "" (the empty string)
@@ -154,6 +245,22 @@ impl Profile {
             Self::backup_period(period),
             Self::backup_sample_types(sample_types),
             start_time,
+            None,
+        )
+    }
+
+    #[inline]
+    pub fn with_string_storage(
+        start_time: SystemTime,
+        sample_types: &[api::ValueType],
+        period: Option<api::Period>,
+        string_storage: Rc<RwLock<ManagedStringStorage>>,
+    ) -> Self {
+        Self::new_internal(
+            Self::backup_period(period),
+            Self::backup_sample_types(sample_types),
+            start_time,
+            Some(string_storage),
         )
     }
 
@@ -168,6 +275,7 @@ impl Profile {
             self.owned_period.take(),
             self.owned_sample_types.take(),
             start_time.unwrap_or_else(SystemTime::now),
+            self.string_storage.clone(),
         );
 
         std::mem::swap(&mut *self, &mut profile);
@@ -225,6 +333,7 @@ impl Profile {
                 .iter()
                 .map(Id::to_raw_id)
                 .collect();
+            self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
             self.upscaling_rules.upscale_values(&mut values, &labels)?;
 
             let labels = labels.into_iter().map(pprof::Label::from).collect();
@@ -288,6 +397,24 @@ impl Profile {
             endpoints_stats,
         })
     }
+
+    /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids being present in
+    /// emitted profiles. We're doing extra checks here so that if we see incorrect ids again,
+    /// we are 100% sure they were not introduced prior to this stage.
+    fn check_location_ids_are_valid(&self, location_ids: &[u64], len: usize) -> anyhow::Result<()> {
+        let len: u64 = u64::try_from(len)?;
+        for id in location_ids.iter() {
+            let id = *id;
+            // Location ids start from 1, that's why they're <= len instead of < len
+            anyhow::ensure!(
+                id > 0 && id <= len,
+                "invalid location id found during serialization {:?}, len was {:?}",
+                id,
+                len
+            )
+        }
+        Ok(())
+    }
 }
 
 /// Private helper functions
@@ -306,10 +433,41 @@ impl Profile {
         })
     }
 
-    fn add_location(&mut self, location: &api::Location) -> LocationId {
+    fn add_string_id_function(
+        &mut self,
+        function: &api::StringIdFunction,
+    ) -> anyhow::Result<FunctionId> {
+        let name = self.resolve(function.name)?;
+        let system_name = self.resolve(function.system_name)?;
+        let filename = self.resolve(function.filename)?;
+
+        let start_line = function.start_line;
+        Ok(self.functions.dedup(Function {
+            name,
+            system_name,
+            filename,
+            start_line,
+        }))
+    }
+
+    fn add_location(&mut self, location: &api::Location) -> anyhow::Result<LocationId> {
         let mapping_id = self.add_mapping(&location.mapping);
         let function_id = self.add_function(&location.function);
-        self.locations.dedup(Location {
+        self.locations.checked_dedup(Location {
+            mapping_id,
+            function_id,
+            address: location.address,
+            line: location.line,
+        })
+    }
+
+    fn add_string_id_location(
+        &mut self,
+        location: &api::StringIdLocation,
+    ) -> anyhow::Result<LocationId> {
+        let mapping_id = self.add_string_id_mapping(&location.mapping)?;
+        let function_id = self.add_string_id_function(&location.function)?;
+        self.locations.checked_dedup(Location {
             mapping_id,
             function_id,
             address: location.address,
@@ -328,6 +486,22 @@ impl Profile {
             filename,
             build_id,
         })
+    }
+
+    fn add_string_id_mapping(
+        &mut self,
+        mapping: &api::StringIdMapping,
+    ) -> anyhow::Result<MappingId> {
+        let filename = self.resolve(mapping.filename)?;
+        let build_id = self.resolve(mapping.build_id)?;
+
+        Ok(self.mappings.dedup(Mapping {
+            memory_start: mapping.memory_start,
+            memory_limit: mapping.memory_limit,
+            file_offset: mapping.file_offset,
+            filename,
+            build_id,
+        }))
     }
 
     fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {
@@ -360,7 +534,7 @@ impl Profile {
         );
 
         let local_root_span_id = if let LabelValue::Num { num, .. } = label.get_value() {
-            // Safety: the value is a u64, but pprof only has signed values, so we
+            // Safety: the value is an u64, but pprof only has signed values, so we
             // transmute it; the backend does the same.
             unsafe { std::intrinsics::transmute::<i64, u64>(*num) }
         } else {
@@ -423,6 +597,7 @@ impl Profile {
         owned_period: Option<owned_types::Period>,
         owned_sample_types: Option<Box<[owned_types::ValueType]>>,
         start_time: SystemTime,
+        string_storage: Option<Rc<RwLock<ManagedStringStorage>>>,
     ) -> Self {
         let mut profile = Self {
             owned_period,
@@ -439,6 +614,9 @@ impl Profile {
             stack_traces: Default::default(),
             start_time,
             strings: Default::default(),
+            string_storage,
+            string_storage_cached_profile_id: None, /* Never reuse an id! See comments on
+                                                     * CachedProfileId for why. */
             timestamp_key: Default::default(),
             upscaling_rules: Default::default(),
         };
@@ -496,7 +674,6 @@ impl Profile {
             .collect()
     }
 
-    /// Validates labels
     fn validate_sample_labels(&mut self, sample: &api::Sample) -> anyhow::Result<()> {
         let mut seen: HashMap<&str, &api::Label> = HashMap::new();
 
@@ -515,6 +692,36 @@ impl Profile {
 
             anyhow::ensure!(
                 label.key != "end_timestamp_ns",
+                "Timestamp should not be passed as a label {:?}",
+                label
+            );
+        }
+        Ok(())
+    }
+
+    fn validate_string_id_sample_labels(
+        &mut self,
+        sample: &api::StringIdSample,
+    ) -> anyhow::Result<()> {
+        let mut seen: HashMap<ManagedStringId, &api::StringIdLabel> = HashMap::new();
+
+        for label in sample.labels.iter() {
+            if let Some(duplicate) = seen.insert(label.key, label) {
+                anyhow::bail!("Duplicate label on sample: {:?} {:?}", duplicate, label);
+            }
+
+            let key_id: StringId = self.resolve(label.key)?;
+
+            if key_id == self.endpoints.local_root_span_id_label {
+                anyhow::ensure!(
+                    label.str.is_none() && label.num != 0,
+                    "Invalid \"local root span id\" label: {:?}",
+                    label
+                );
+            }
+
+            anyhow::ensure!(
+                key_id != self.timestamp_key,
                 "Timestamp should not be passed as a label {:?}",
                 label
             );
@@ -1299,7 +1506,7 @@ mod api_tests {
 
         profile.add_sample(sample1, None).expect("add to success");
 
-        // invalid sampling_distance vaue
+        // invalid sampling_distance value
         let upscaling_info = UpscalingInfo::Poisson {
             sum_value_offset: 1,
             count_value_offset: 2,
@@ -2000,7 +2207,7 @@ mod api_tests {
     }
 
     #[test]
-    fn test_fails_when_adding_byvalue_rule_collinding_on_offset_with_existing_bylabel_rule() {
+    fn test_fails_when_adding_byvalue_rule_colliding_on_offset_with_existing_bylabel_rule() {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
@@ -2059,7 +2266,7 @@ mod api_tests {
         };
 
         let large_span_id = u64::MAX;
-        // Safety: a u64 can fit into an i64, and we're testing that it's not mis-handled.
+        // Safety: an u64 can fit into an i64, and we're testing that it's not mis-handled.
         let large_num: i64 = unsafe { std::intrinsics::transmute(large_span_id) };
 
         let id2_label = api::Label {
@@ -2141,5 +2348,68 @@ mod api_tests {
             assert_eq!(sample.labels, labels);
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_regression_managed_string_table_correctly_maps_ids() {
+        let storage = Rc::new(RwLock::new(ManagedStringStorage::new()));
+        let hello_id: u32;
+        let world_id: u32;
+
+        {
+            let mut storage_guard = storage.write().unwrap();
+            hello_id = storage_guard.intern("hello").unwrap();
+            world_id = storage_guard.intern("world").unwrap();
+        }
+
+        let sample_types = [api::ValueType::new("samples", "count")];
+        let mut profile =
+            Profile::with_string_storage(SystemTime::now(), &sample_types, None, storage.clone());
+
+        let location = api::StringIdLocation {
+            function: api::StringIdFunction {
+                name: api::ManagedStringId { value: hello_id },
+                filename: api::ManagedStringId { value: world_id },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let sample = api::StringIdSample {
+            locations: vec![location],
+            values: vec![1],
+            labels: vec![],
+        };
+
+        profile.add_string_id_sample(sample.clone(), None).unwrap();
+        profile.add_string_id_sample(sample.clone(), None).unwrap();
+
+        let pprof_first_profile =
+            pprof::roundtrip_to_pprof(profile.reset_and_return_previous(None).unwrap()).unwrap();
+
+        assert!(pprof_first_profile
+            .string_table
+            .iter()
+            .any(|s| s == "hello"));
+        assert!(pprof_first_profile
+            .string_table
+            .iter()
+            .any(|s| s == "world"));
+
+        // If the cache invalidation on the managed string table is working correctly, these strings
+        // get correctly re-added to the profile's string table
+
+        profile.add_string_id_sample(sample.clone(), None).unwrap();
+        profile.add_string_id_sample(sample.clone(), None).unwrap();
+        let pprof_second_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+
+        assert!(pprof_second_profile
+            .string_table
+            .iter()
+            .any(|s| s == "hello"));
+        assert!(pprof_second_profile
+            .string_table
+            .iter()
+            .any(|s| s == "world"));
     }
 }

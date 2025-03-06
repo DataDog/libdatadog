@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::iter::Sum;
 use std::ops::Add;
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 /// `EnqueuedTelemetryStats`contains the count of stored and unflushed dependencies, configurations,
 /// and integrations. It also keeps track of the count of metrics, points, actions, and computed
 /// dependencies.

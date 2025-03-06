@@ -25,6 +25,10 @@ static PREFIX_REGEX: OnceLock<Regex> = OnceLock::new();
 ///
 /// The quantized value is return as a `Cow` containing the input slice `s` if no modification was
 /// done or a new String if the value has been modified.
+///
+/// This quantization is used to reduce cardinality on peer tags in trace metrics. As such it is
+/// not exhaustive and some ip format may not be obfuscated.
+/// The reference implementation lives in [dd-go](https://github.com/DataDog/dd-go/blob/393e6de733807b20597d80b1e5103d6e823d8a0c/trace/pkg/peertags/peer_tags.go#L56)
 pub fn quantize_peer_ip_addresses<'a>(s: &'a str) -> Cow<'a, str> {
     let values = s.split(',');
     let mut should_return_new_string = false; // Set to true if the function should return a modified

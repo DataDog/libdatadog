@@ -1,15 +1,17 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+mod additional_tags;
 mod counters;
 mod datatypes;
 mod spans;
 
 use super::crash_info::Metadata;
+pub use additional_tags::*;
 use anyhow::Context;
 pub use counters::*;
-use datadog_crashtracker::CrashtrackerReceiverConfig;
+use datadog_crashtracker::{CrashtrackerReceiverConfig, DEFAULT_SYMBOLS};
 pub use datatypes::*;
-use ddcommon_ffi::{wrap_with_void_ffi_result, VoidResult};
+use ddcommon_ffi::{wrap_with_void_ffi_result, Slice, VoidResult};
 use function_name::named;
 pub use spans::*;
 
@@ -130,4 +132,10 @@ pub unsafe extern "C" fn ddog_crasht_init_without_receiver(
             metadata.try_into()?,
         )?
     })
+}
+
+#[no_mangle]
+/// Returns a list of signals suitable for use in a crashtracker config.
+pub extern "C" fn ddog_crasht_default_signals() -> Slice<'static, libc::c_int> {
+    Slice::new(&DEFAULT_SYMBOLS)
 }

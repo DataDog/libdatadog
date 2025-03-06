@@ -24,7 +24,7 @@ int setenv(const char *name, const char *value, int overwrite) {
   ((ddog_Slice_CharSlice){.ptr = arr, .len = sizeof(arr) / sizeof(arr[0])})
 
 int main(int argc, const char *const *argv) {
-  ddog_Configurator *configurator = ddog_library_configurator_new(true);
+  ddog_Configurator *configurator = ddog_library_configurator_new(true, DDOG_CHARSLICE_C("java"));
 
   ddog_CharSlice args[] = {
       DDOG_CHARSLICE_C("/bin/true"),
@@ -32,10 +32,12 @@ int main(int argc, const char *const *argv) {
   ddog_CharSlice envp[] = {
       DDOG_CHARSLICE_C("FOO=BAR"),
   };
-  ddog_Result_VecLibraryConfig config_result = ddog_library_configurator_get(
+  ddog_library_configurator_with_process_info(
       configurator, (ddog_ProcessInfo){.args = DDOG_SLICE_CHARSLICE(args),
                                        .envp = DDOG_SLICE_CHARSLICE(envp),
                                        .language = DDOG_CHARSLICE_C("java")});
+  ddog_Result_VecLibraryConfig config_result = ddog_library_configurator_get(configurator);
+
   if (config_result.tag == DDOG_RESULT_VEC_LIBRARY_CONFIG_ERR_VEC_LIBRARY_CONFIG) {
     ddog_Error err = config_result.err;
     fprintf(stderr, "%.*s", (int)err.message.len, err.message.ptr);

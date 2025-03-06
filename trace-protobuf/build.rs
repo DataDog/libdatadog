@@ -54,6 +54,10 @@ fn generate_protobuf() {
     config.type_attribute("TraceChunk", "#[derive(Deserialize, Serialize)]");
 
     config.type_attribute("SpanLink", "#[derive(Deserialize, Serialize)]");
+    config.field_attribute(".pb.SpanLink.traceID_high", "#[serde(default)]");
+    config.field_attribute(".pb.SpanLink.attributes", "#[serde(default)]");
+    config.field_attribute(".pb.SpanLink.tracestate", "#[serde(default)]");
+    config.field_attribute(".pb.SpanLink.flags", "#[serde(default)]");
 
     config.type_attribute("Span", "#[derive(Deserialize, Serialize)]");
     config.field_attribute(

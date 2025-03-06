@@ -4,7 +4,7 @@
 //! This includes the aggregation key to group spans together and the computation of stats from a
 //! span.
 use datadog_trace_protobuf::pb;
-use datadog_trace_utils::span_v04::{trace_utils, Span};
+use datadog_trace_utils::span::v04::{trace_utils, SpanBytes};
 use std::borrow::Borrow;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -108,7 +108,7 @@ impl<'a> AggregationKey<'a> {
     ///
     /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
     /// key.
-    pub(super) fn from_span(span: &'a Span, peer_tag_keys: &'a [String]) -> Self {
+    pub(super) fn from_span(span: &'a SpanBytes, peer_tag_keys: &'a [String]) -> Self {
         let span_kind = span
             .meta
             .get(TAG_SPANKIND)
@@ -183,7 +183,7 @@ impl From<pb::ClientGroupedStats> for AggregationKey<'static> {
 }
 
 /// Return the status code of a span based on the metrics and meta tags.
-fn get_status_code(span: &Span) -> u32 {
+fn get_status_code(span: &SpanBytes) -> u32 {
     if let Some(status_code) = span.metrics.get(TAG_STATUS_CODE) {
         *status_code as u32
     } else if let Some(status_code) = span.meta.get(TAG_STATUS_CODE) {
@@ -200,7 +200,10 @@ fn client_or_producer(span_kind: &str) -> bool {
 
 /// Parse the meta tags of a span and return a list of the peer tags based on the list of
 /// `peer_tag_keys`
-fn get_peer_tags<'k, 'v>(span: &'v Span, peer_tag_keys: &'k [String]) -> Vec<(&'k str, &'v str)> {
+fn get_peer_tags<'k, 'v>(
+    span: &'v SpanBytes,
+    peer_tag_keys: &'k [String],
+) -> Vec<(&'k str, &'v str)> {
     peer_tag_keys
         .iter()
         .filter_map(|key| Some((key.as_str(), span.meta.get(key.as_str())?.as_str())))
@@ -220,7 +223,7 @@ pub(super) struct GroupedStats {
 
 impl GroupedStats {
     /// Update the stats of a GroupedStats by inserting a span.
-    fn insert(&mut self, value: &Span) {
+    fn insert(&mut self, value: &SpanBytes) {
         self.hits += 1;
         self.duration += value.duration as u64;
 
@@ -255,7 +258,7 @@ impl StatsBucket {
 
     /// Insert a value as stats in the group corresponding to the aggregation key, if it does
     /// not exist it creates it.
-    pub(super) fn insert(&mut self, key: AggregationKey<'_>, value: &Span) {
+    pub(super) fn insert(&mut self, key: AggregationKey<'_>, value: &SpanBytes) {
         if let Some(grouped_stats) = self.data.get_mut(&key as &dyn BorrowableAggregationKey) {
             grouped_stats.insert(value);
         } else {
@@ -321,10 +324,10 @@ mod tests {
 
     #[test]
     fn test_aggregation_key_from_span() {
-        let test_cases: Vec<(Span, AggregationKey)> = vec![
+        let test_cases: Vec<(SpanBytes, AggregationKey)> = vec![
             // Root span
             (
-                Span {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -342,7 +345,7 @@ mod tests {
             ),
             // Span with span kind
             (
-                Span {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -362,7 +365,7 @@ mod tests {
             ),
             // Span with peer tags but peertags aggregation disabled
             (
-                Span {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -385,7 +388,7 @@ mod tests {
             ),
             // Span with multiple peer tags but peertags aggregation disabled
             (
-                Span {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -411,7 +414,7 @@ mod tests {
             // Span with multiple peer tags but peertags aggregation disabled and span kind is
             // server
             (
-                Span {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -436,7 +439,7 @@ mod tests {
             ),
             // Span from synthetics
             (
-                Span {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -456,7 +459,7 @@ mod tests {
             ),
             // Span with status code in meta
             (
-                Span {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -477,7 +480,7 @@ mod tests {
             ),
             // Span with invalid status code in meta
             (
-                Span {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -497,7 +500,7 @@ mod tests {
             ),
             // Span with status code in metrics
             (
-                Span {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -524,10 +527,10 @@ mod tests {
             "db.system".to_string(),
         ];
 
-        let test_cases_with_peer_tags: Vec<(Span, AggregationKey)> = vec![
+        let test_cases_with_peer_tags: Vec<(SpanBytes, AggregationKey)> = vec![
             // Span with peer tags with peertags aggregation enabled
             (
-                Span {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -551,7 +554,7 @@ mod tests {
             ),
             // Span with multiple peer tags with peertags aggregation enabled
             (
-                Span {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -582,7 +585,7 @@ mod tests {
             // Span with multiple peer tags with peertags aggregation enabled and span kind is
             // server
             (
-                Span {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),

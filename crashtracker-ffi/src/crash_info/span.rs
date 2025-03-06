@@ -9,7 +9,7 @@ pub struct Span<'a> {
     pub thread_name: CharSlice<'a>,
 }
 
-impl<'a> TryFrom<Span<'a>> for datadog_crashtracker::rfc5_crash_info::Span {
+impl<'a> TryFrom<Span<'a>> for datadog_crashtracker::Span {
     type Error = anyhow::Error;
     fn try_from(value: Span<'a>) -> anyhow::Result<Self> {
         Ok(Self {

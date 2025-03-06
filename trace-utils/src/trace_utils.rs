@@ -46,10 +46,6 @@ pub async fn get_traces_from_request_body(
         }
     };
 
-    if traces.is_empty() {
-        anyhow::bail!("No traces deserialized from the request body.")
-    }
-
     Ok((size, traces))
 }
 
@@ -490,7 +486,7 @@ impl Default for MiniAgentMetadata {
             azure_spring_app_name: Default::default(),
             gcp_project_id: Default::default(),
             gcp_region: Default::default(),
-            version: env::var("DD_MINI_AGENT_VERSION").ok(),
+            version: env::var("DD_SERVERLESS_COMPAT_VERSION").ok(),
         }
     }
 }
@@ -509,10 +505,10 @@ pub fn enrich_span_with_mini_agent_metadata(
         span.meta
             .insert("asa.name".to_string(), azure_spring_app_name.to_string());
     }
-    if let Some(mini_agent_version) = &mini_agent_metadata.version {
+    if let Some(serverless_compat_version) = &mini_agent_metadata.version {
         span.meta.insert(
-            "_dd.mini_agent_version".to_string(),
-            mini_agent_version.to_string(),
+            "_dd.serverless_compat_version".to_string(),
+            serverless_compat_version.to_string(),
         );
     }
 }
@@ -904,6 +900,64 @@ mod tests {
             assert!(res.is_ok());
             assert_eq!(res.unwrap().1, output);
         }
+    }
+
+    #[tokio::test]
+    async fn test_get_traces_from_request_body_with_span_links() {
+        let trace_input = json!([[{
+            "service": "test-service",
+            "name": "test-name",
+            "resource": "test-resource",
+            "trace_id": 111,
+            "span_id": 222,
+            "parent_id": 333,
+            "start": 1,
+            "duration": 5,
+            "error": 0,
+            "meta": {},
+            "metrics": {},
+            "span_links": [{
+                "trace_id": 999,
+                "span_id": 888,
+                "trace_id_high": 777,
+                "attributes": {"key": "value"},
+                "tracestate": "vendor=value"
+                // flags field intentionally omitted
+            }]
+        }]]);
+
+        let expected_output = vec![vec![pb::Span {
+            service: "test-service".to_string(),
+            name: "test-name".to_string(),
+            resource: "test-resource".to_string(),
+            trace_id: 111,
+            span_id: 222,
+            parent_id: 333,
+            start: 1,
+            duration: 5,
+            error: 0,
+            meta: HashMap::new(),
+            metrics: HashMap::new(),
+            meta_struct: HashMap::new(),
+            r#type: String::new(),
+            span_links: vec![pb::SpanLink {
+                trace_id: 999,
+                span_id: 888,
+                trace_id_high: 777,
+                attributes: HashMap::from([("key".to_string(), "value".to_string())]),
+                tracestate: "vendor=value".to_string(),
+                flags: 0, // Should default to 0 when omitted
+            }],
+        }]];
+
+        let bytes = rmp_serde::to_vec(&trace_input).unwrap();
+        let request = Request::builder()
+            .body(hyper::body::Body::from(bytes))
+            .unwrap();
+
+        let res = get_traces_from_request_body(request.into_body()).await;
+        assert!(res.is_ok(), "Failed to deserialize: {:?}", res);
+        assert_eq!(res.unwrap().1, expected_output);
     }
 
     #[test]

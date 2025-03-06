@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span_v04::Span;
+use crate::span::v04::SpanBytes;
 use crate::{
     msgpack_decoder,
     trace_utils::{cmp_send_data_payloads, collect_trace_chunks, TracerHeaderTags},
@@ -10,7 +10,7 @@ use datadog_trace_protobuf::pb;
 use std::cmp::Ordering;
 use tinybytes;
 
-pub type TracerPayloadV04 = Vec<Span>;
+pub type TracerPayloadV04 = Vec<SpanBytes>;
 
 #[derive(Debug, Clone)]
 /// Enumerates the different encoding types.
@@ -24,7 +24,7 @@ pub enum TraceEncoding {
 /// A collection of traces before they are turned into TraceChunks.
 pub enum TraceCollection {
     V07(Vec<Vec<pb::Span>>),
-    V04(Vec<Vec<Span>>),
+    V04(Vec<Vec<SpanBytes>>),
 }
 
 #[derive(Debug, Clone)]
@@ -260,7 +260,7 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
     fn try_into(self) -> Result<TracerPayloadCollection, Self::Error> {
         match self.encoding_type {
             TraceEncoding::V04 => {
-                let (traces, size) = match msgpack_decoder::v04::decoder::from_slice(self.data) {
+                let (traces, size) = match msgpack_decoder::v04::from_slice(self.data) {
                     Ok(res) => res,
                     Err(e) => {
                         anyhow::bail!("Error deserializing trace from request body: {e}")
@@ -269,10 +269,6 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
 
                 if let Some(size_ref) = self.size {
                     *size_ref = size;
-                }
-
-                if traces.is_empty() {
-                    anyhow::bail!("No traces deserialized from the request body.");
                 }
 
                 Ok(collect_trace_chunks(
@@ -317,7 +313,7 @@ mod tests {
         }])
     }
 
-    fn create_trace() -> Vec<Span> {
+    fn create_trace() -> Vec<SpanBytes> {
         vec![
             // create a root span with metrics
             create_test_no_alloc_span(1234, 12341, 0, 1, true),
@@ -392,7 +388,7 @@ mod tests {
             "type": "serverless",
         }]);
 
-        let expected_serialized_span_data1 = vec![Span {
+        let expected_serialized_span_data1 = vec![SpanBytes {
             service: BytesString::from_slice("test-service".as_ref()).unwrap(),
             name: BytesString::from_slice("test-service-name".as_ref()).unwrap(),
             resource: BytesString::from_slice("test-service-resource".as_ref()).unwrap(),
@@ -424,7 +420,7 @@ mod tests {
             "type": "",
         }]);
 
-        let expected_serialized_span_data2 = vec![Span {
+        let expected_serialized_span_data2 = vec![SpanBytes {
             service: BytesString::from_slice("test-service".as_ref()).unwrap(),
             name: BytesString::from_slice("test-service-name".as_ref()).unwrap(),
             resource: BytesString::from_slice("test-service-resource".as_ref()).unwrap(),
@@ -467,6 +463,29 @@ mod tests {
         } else {
             panic!("Invalid collection type returned for try_into");
         }
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_try_into_empty() {
+        let empty_data = vec![0x90];
+        let data = tinybytes::Bytes::from(empty_data);
+
+        let tracer_header_tags = &TracerHeaderTags::default();
+
+        let result: anyhow::Result<TracerPayloadCollection> = TracerPayloadParams::new(
+            data,
+            tracer_header_tags,
+            &mut DefaultTraceChunkProcessor,
+            false,
+            TraceEncoding::V04,
+        )
+        .try_into();
+
+        assert!(result.is_ok());
+
+        let collection = result.unwrap();
+        assert_eq!(0, collection.size());
     }
 
     #[test]

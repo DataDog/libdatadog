@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::error::DecodeError;
+use crate::msgpack_decoder::decode::error::DecodeError;
 use rmp::{decode::RmpRead, Marker};
 use std::fmt;
 use tinybytes::Bytes;

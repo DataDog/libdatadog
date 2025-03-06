@@ -5,7 +5,7 @@
 use crate::{
     clear_spans, clear_traces,
     collector::crash_handler::{configure_receiver, register_crash_handlers, restore_old_handlers},
-    crash_info::CrashtrackerMetadata,
+    crash_info::Metadata,
     reset_counters,
     shared::configuration::CrashtrackerReceiverConfig,
     update_config, update_metadata, CrashtrackerConfiguration,
@@ -31,6 +31,13 @@ pub fn shutdown_crash_handler() -> anyhow::Result<()> {
     Ok(())
 }
 
+pub static DEFAULT_SYMBOLS: [libc::c_int; 4] =
+    [libc::SIGBUS, libc::SIGABRT, libc::SIGSEGV, libc::SIGILL];
+
+pub fn default_signals() -> Vec<libc::c_int> {
+    Vec::from(DEFAULT_SYMBOLS)
+}
+
 /// Reinitialize the crash-tracking infrastructure after a fork.
 /// This should be one of the first things done after a fork, to minimize the
 /// chance that a crash occurs between the fork, and this call.
@@ -48,7 +55,7 @@ pub fn shutdown_crash_handler() -> anyhow::Result<()> {
 pub fn on_fork(
     config: CrashtrackerConfiguration,
     receiver_config: CrashtrackerReceiverConfig,
-    metadata: CrashtrackerMetadata,
+    metadata: Metadata,
 ) -> anyhow::Result<()> {
     clear_spans()?;
     clear_traces()?;
@@ -77,12 +84,12 @@ pub fn on_fork(
 pub fn init(
     config: CrashtrackerConfiguration,
     receiver_config: CrashtrackerReceiverConfig,
-    metadata: CrashtrackerMetadata,
+    metadata: Metadata,
 ) -> anyhow::Result<()> {
     update_metadata(metadata)?;
-    update_config(config)?;
+    update_config(config.clone())?;
     configure_receiver(receiver_config);
-    register_crash_handlers()?;
+    register_crash_handlers(&config)?;
     Ok(())
 }
 
@@ -128,10 +135,11 @@ fn test_crash() -> anyhow::Result<()> {
         use_alt_stack,
         endpoint,
         resolve_frames,
+        default_signals(),
         timeout_ms,
         None,
     )?;
-    let metadata = CrashtrackerMetadata::new(
+    let metadata = Metadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),
@@ -145,11 +153,11 @@ fn test_crash() -> anyhow::Result<()> {
     super::insert_trace(99399939399939393993)?;
 
     let tag = tag!("apple", "banana");
-    let metadata2 = CrashtrackerMetadata::new(
+    let metadata2 = Metadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),
-        vec![tag],
+        vec![tag.to_string()],
     );
     update_metadata(metadata2).expect("metadata");
 
@@ -185,6 +193,7 @@ fn test_altstack_paradox() -> anyhow::Result<()> {
         use_alt_stack,
         endpoint,
         resolve_frames,
+        default_signals(),
         timeout_ms,
         None,
     );
@@ -239,6 +248,7 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
+    let signals = default_signals();
     let timeout_ms = 10_000;
     let receiver_config = CrashtrackerReceiverConfig::new(
         vec![],
@@ -253,10 +263,11 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
         use_alt_stack,
         endpoint,
         resolve_frames,
+        signals,
         timeout_ms,
         None,
     )?;
-    let metadata = CrashtrackerMetadata::new(
+    let metadata = Metadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),
@@ -299,26 +310,22 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
                 sa_restorer: None,
             };
 
-            // First, SIGBUS
-            let res = unsafe { libc::sigaction(libc::SIGBUS, std::ptr::null(), &mut sigaction) };
-            if res != 0 {
-                eprintln!("Failed to get SIGBUS handler");
-                std::process::exit(-6);
-            }
-            if sigaction.sa_flags & libc::SA_ONSTACK != libc::SA_ONSTACK {
-                eprintln!("Expected SIGBUS handler to have SA_ONSTACK");
-                std::process::exit(-7);
-            }
+            let mut exit_code = -5;
 
-            // Second, SIGSEGV
-            let res = unsafe { libc::sigaction(libc::SIGSEGV, std::ptr::null(), &mut sigaction) };
-            if res != 0 {
-                eprintln!("Failed to get SIGSEGV handler");
-                std::process::exit(-8);
-            }
-            if sigaction.sa_flags & libc::SA_ONSTACK != libc::SA_ONSTACK {
-                eprintln!("Expected SIGSEGV handler to have SA_ONSTACK");
-                std::process::exit(-9);
+            for signal in default_signals() {
+                let signame = crate::signal_from_signum(signal)?;
+                exit_code -= 1;
+                let res = unsafe { libc::sigaction(signal, std::ptr::null(), &mut sigaction) };
+                if res != 0 {
+                    eprintln!("Failed to get {signame:?} handler");
+                    std::process::exit(exit_code);
+                }
+
+                exit_code -= 1;
+                if sigaction.sa_flags & libc::SA_ONSTACK != libc::SA_ONSTACK {
+                    eprintln!("Expected {signame:?} handler to have SA_ONSTACK");
+                    std::process::exit(exit_code);
+                }
             }
 
             // OK, we're done
@@ -366,6 +373,7 @@ fn test_altstack_use_nocreate() -> anyhow::Result<()> {
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
+    let signals = default_signals();
     let timeout_ms = 10_000;
     let receiver_config = CrashtrackerReceiverConfig::new(
         vec![],
@@ -380,10 +388,11 @@ fn test_altstack_use_nocreate() -> anyhow::Result<()> {
         use_alt_stack,
         endpoint,
         resolve_frames,
+        signals,
         timeout_ms,
         None,
     )?;
-    let metadata = CrashtrackerMetadata::new(
+    let metadata = Metadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),
@@ -493,6 +502,7 @@ fn test_altstack_nouse() -> anyhow::Result<()> {
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
+    let signals = default_signals();
     let timeout_ms = 10_000;
     let receiver_config = CrashtrackerReceiverConfig::new(
         vec![],
@@ -507,10 +517,11 @@ fn test_altstack_nouse() -> anyhow::Result<()> {
         use_alt_stack,
         endpoint,
         resolve_frames,
+        signals,
         timeout_ms,
         None,
     )?;
-    let metadata = CrashtrackerMetadata::new(
+    let metadata = Metadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),
@@ -655,6 +666,7 @@ fn test_waitall_nohang() -> anyhow::Result<()> {
     let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
     let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
     let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
+    let signals = default_signals();
     let timeout_ms = 10_000;
     let receiver_config = CrashtrackerReceiverConfig::new(
         vec![],
@@ -669,11 +681,12 @@ fn test_waitall_nohang() -> anyhow::Result<()> {
         use_alt_stack,
         endpoint,
         resolve_frames,
+        signals,
         timeout_ms,
         None,
     )?;
 
-    let metadata = CrashtrackerMetadata::new(
+    let metadata = Metadata::new(
         "libname".to_string(),
         "version".to_string(),
         "family".to_string(),

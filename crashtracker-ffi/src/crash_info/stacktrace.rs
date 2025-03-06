@@ -2,20 +2,27 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use ::function_name::named;
-use datadog_crashtracker::rfc5_crash_info::{StackFrame, StackTrace};
-use ddcommon_ffi::{wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResult};
+use datadog_crashtracker::{StackFrame, StackTrace};
+use ddcommon_ffi::{wrap_with_void_ffi_result, Error, Handle, ToInner, VoidResult};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                              FFI API                                           //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[allow(dead_code)]
+#[repr(C)]
+pub enum StackTraceNewResult {
+    Ok(Handle<StackTrace>),
+    Err(Error),
+}
 
 /// Create a new StackTrace, and returns an opaque reference to it.
 /// # Safety
 /// No safety issues.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_crasht_StackTrace_new() -> Result<Handle<StackTrace>> {
-    ddcommon_ffi::Result::Ok(StackTrace::new_incomplete().into())
+pub unsafe extern "C" fn ddog_crasht_StackTrace_new() -> StackTraceNewResult {
+    StackTraceNewResult::Ok(StackTrace::new_incomplete().into())
 }
 
 /// # Safety

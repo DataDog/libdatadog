@@ -13,9 +13,10 @@ use ustr::Ustr;
 
 pub const EMPTY_TAGS: SortedTags = SortedTags { values: Vec::new() };
 
+// https://docs.datadoghq.com/developers/dogstatsd/datagram_shell?tab=metrics#dogstatsd-protocol-v13
 lazy_static! {
     static ref METRIC_REGEX: Regex = Regex::new(
-        r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[a-zA-Z]+)(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?(?:\|c:(?P<container_id>[^|]+))?$",
+        r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[a-zA-Z]+)(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?(?:\|c:(?P<container_id>[^|]+))?(?:\|T(?P<timestamp>[^|]+))?$",
     ).expect("Failed to create metric regex");
 }
 
@@ -73,9 +74,8 @@ impl SortedTags {
                 return Err(ParseError::Raw(format!("Too many tags, more than {i}")));
             }
             if !part.contains(':') {
-                return Err(ParseError::Raw("Invalid tag format".to_string()));
-            }
-            if let Some((k, v)) = part.split_once(':') {
+                parsed_tags.push((Ustr::from(part), Ustr::from("")));
+            } else if let Some((k, v)) = part.split_once(':') {
                 parsed_tags.push((Ustr::from(k), Ustr::from(v)));
             }
         }
@@ -89,7 +89,15 @@ impl SortedTags {
     pub fn to_chars(&self) -> Vec<Chars> {
         let mut tags_as_chars = Vec::new();
         for (k, v) in &self.values {
-            tags_as_chars.push(format!("{}:{}", k, v).into());
+            if v.is_empty() {
+                tags_as_chars.push(Chars::from(k.to_string()));
+            } else {
+                let mut a_tag = String::with_capacity(k.len() + v.len() + 1);
+                a_tag.push_str(k);
+                a_tag.push(':');
+                a_tag.push_str(v);
+                tags_as_chars.push(a_tag.into());
+            }
         }
         tags_as_chars
     }
@@ -97,19 +105,33 @@ impl SortedTags {
     pub fn to_strings(&self) -> Vec<String> {
         let mut tags_as_vec = Vec::new();
         for (k, v) in &self.values {
-            tags_as_vec.push(format!("{}:{}", k, v));
+            if v.is_empty() {
+                tags_as_vec.push(k.to_string());
+            } else {
+                let mut a_tag = String::with_capacity(k.len() + v.len() + 1);
+                a_tag.push_str(k);
+                a_tag.push(':');
+                a_tag.push_str(v);
+                tags_as_vec.push(a_tag);
+            }
         }
         tags_as_vec
     }
 
     pub(crate) fn to_resources(&self) -> Vec<datadog::Resource> {
         let mut resources = Vec::with_capacity(constants::MAX_TAGS);
-        for (kind, name) in &self.values {
-            let resource = datadog::Resource {
-                name: name.as_str(), // val
-                kind: kind.as_str(), // key
-            };
-            resources.push(resource);
+        for (key, val) in &self.values {
+            if key == "dd.internal.resource" {
+                //anything coming in via dd.internal.resource:<value> has to be a key/value pair
+                // (e.g., dd.internal.resource:key:value)
+                if let Some(valid_name_kind) = val.split_once(':') {
+                    let resource = datadog::Resource {
+                        name: valid_name_kind.0.to_string(),
+                        kind: valid_name_kind.1.to_string(),
+                    };
+                    resources.push(resource);
+                }
+            }
         }
         resources
     }
@@ -148,18 +170,50 @@ pub struct Metric {
 
     /// ID given a name and tagset.
     pub id: u64,
+    // Timestamp
+    pub timestamp: i64,
 }
 
 impl Metric {
-    pub fn new(name: Ustr, value: MetricValue, tags: Option<SortedTags>) -> Metric {
-        let id = id(name, &tags);
+    pub fn new(
+        name: Ustr,
+        value: MetricValue,
+        tags: Option<SortedTags>,
+        timestamp: Option<i64>,
+    ) -> Metric {
+        let parsed_timestamp = timestamp_to_bucket(timestamp.unwrap_or_else(|| {
+            std::time::UNIX_EPOCH
+                .elapsed()
+                .expect("unable to poll clock, unrecoverable")
+                .as_secs()
+                .try_into()
+                .unwrap_or_default()
+        }));
+
+        let id = id(name, &tags, parsed_timestamp);
         Metric {
             name,
             value,
             tags,
             id,
+            timestamp: parsed_timestamp,
         }
     }
+}
+
+// Round down to the nearest 10 seconds
+// to form a bucket of metric contexts aggregated per 10s
+pub fn timestamp_to_bucket(timestamp: i64) -> i64 {
+    let now_seconds: i64 = std::time::UNIX_EPOCH
+        .elapsed()
+        .expect("unable to poll clock, unrecoverable")
+        .as_secs()
+        .try_into()
+        .unwrap_or_default();
+    if timestamp > now_seconds {
+        return (now_seconds / 10) * 10;
+    }
+    (timestamp / 10) * 10
 }
 
 /// Parse a metric from given input.
@@ -186,6 +240,17 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
         }
         let val = first_value(caps.name("values").unwrap().as_str())?;
         let t = caps.name("type").unwrap().as_str();
+        let now = std::time::UNIX_EPOCH
+            .elapsed()
+            .expect("unable to poll clock, unrecoverable")
+            .as_secs()
+            .try_into()
+            .unwrap_or_default();
+        // let Metric::new() handle bucketing the timestamp
+        let parsed_timestamp: i64 = match caps.name("timestamp") {
+            Some(ts) => timestamp_to_bucket(ts.as_str().parse().unwrap_or(now)),
+            None => timestamp_to_bucket(now),
+        };
         let metric_value = match t {
             "c" => MetricValue::Count(val),
             "g" => MetricValue::Gauge(val),
@@ -202,12 +267,13 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
             }
         };
         let name = Ustr::from(caps.name("name").unwrap().as_str());
-        let id = id(name, &tags);
+        let id = id(name, &tags, parsed_timestamp);
         return Ok(Metric {
             name,
             value: metric_value,
             tags,
             id,
+            timestamp: parsed_timestamp,
         });
     }
     Err(ParseError::Raw(format!("Invalid metric format {input}")))
@@ -237,10 +303,11 @@ fn first_value(values: &str) -> Result<f64, ParseError> {
 /// from the point of view of this function.
 #[inline]
 #[must_use]
-pub fn id(name: Ustr, tags: &Option<SortedTags>) -> u64 {
+pub fn id(name: Ustr, tags: &Option<SortedTags>, timestamp: i64) -> u64 {
     let mut hasher = FnvHasher::default();
 
     name.hash(&mut hasher);
+    timestamp.hash(&mut hasher);
     if let Some(tags_present) = tags {
         for kv in tags_present.values.iter() {
             kv.0.as_bytes().hash(&mut hasher);
@@ -250,7 +317,7 @@ pub fn id(name: Ustr, tags: &Option<SortedTags>) -> u64 {
     hasher.finish()
 }
 // <METRIC_NAME>:<VALUE>:<VALUE>:<VALUE>|<TYPE>|@<SAMPLE_RATE>|#<TAG_KEY_1>:<TAG_VALUE_1>,
-// <TAG_KEY_2>:<TAG_VALUE_2>|T<METRIC_TIMESTAMP>|c:<CONTAINER_ID>
+// <TAG_KEY_2>:<TAG_VALUE_2>,<TAG_NO_VALUE_3>|T<METRIC_TIMESTAMP>|c:<CONTAINER_ID>
 //
 // Types:
 //  * c -- COUNT, allows packed values, summed
@@ -264,7 +331,7 @@ mod tests {
     use proptest::{collection, option, strategy::Strategy, string::string_regex};
     use ustr::Ustr;
 
-    use crate::metric::{id, parse, MetricValue, SortedTags};
+    use crate::metric::{id, parse, timestamp_to_bucket, MetricValue, SortedTags};
 
     use super::ParseError;
 
@@ -391,7 +458,6 @@ mod tests {
             let result = parse(&input);
 
             let verify = result.unwrap_err().to_string();
-            println!("{}", verify);
             assert!(verify.starts_with("parse failure: Invalid metric format "));
         }
 
@@ -426,6 +492,7 @@ mod tests {
                          mut tags in metric_tags()) {
             let mut tagset1 = String::new();
             let mut tagset2 = String::new();
+            let now = timestamp_to_bucket(std::time::UNIX_EPOCH.elapsed().expect("unable to poll clock, unrecoverable").as_secs().try_into().unwrap_or_default());
 
             for (k,v) in &tags {
                 tagset1.push_str(k);
@@ -445,8 +512,8 @@ mod tests {
                 tagset2.pop();
             }
 
-            let id1 = id(Ustr::from(&name), &Some(SortedTags::parse(&tagset1).unwrap()));
-            let id2 = id(Ustr::from(&name), &Some(SortedTags::parse(&tagset2).unwrap()));
+            let id1 = id(Ustr::from(&name), &Some(SortedTags::parse(&tagset1).unwrap()), now);
+            let id2 = id(Ustr::from(&name), &Some(SortedTags::parse(&tagset2).unwrap()), now);
 
             assert_eq!(id1, id2);
         }
@@ -497,6 +564,29 @@ mod tests {
     }
 
     #[test]
+    fn parse_tag_no_value() {
+        let result = parse("datadog.tracer.flush_triggered:1|c|#lang:go,lang_version:go1.22.10,_dd.origin:lambda,runtime-id:d66f501c-d09b-4d0d-970f-515235c4eb56,v1.65.1,service:aws.lambda,reason:scheduled");
+        assert!(result.is_ok());
+        assert!(result
+            .unwrap()
+            .tags
+            .unwrap()
+            .values
+            .iter()
+            .any(|(k, v)| k == "v1.65.1" && v.is_empty()));
+    }
+
+    #[test]
+    fn parse_tag_multi_column() {
+        let result = parse("datadog.tracer.flush_triggered:1|c|#lang:go:and:something:else");
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap().tags.unwrap().values[0],
+            (Ustr::from("lang"), Ustr::from("go:and:something:else"))
+        );
+    }
+
+    #[test]
     fn parse_tracer_metric() {
         let input = "datadog.tracer.flush_duration:0.785551|ms|#lang:go,lang_version:go1.23.2,env:redacted_env,_dd.origin:lambda,runtime-id:redacted_runtime,tracer_version:v1.70.1,service:redacted_service,env:redacted_env,service:redacted_service,version:redacted_version";
         let expected_error = "ms".to_string();
@@ -505,5 +595,43 @@ mod tests {
         } else {
             panic!("Expected UnsupportedType error");
         }
+    }
+
+    #[test]
+    fn parse_metric_timestamp() {
+        // Important to test that we round down to the nearest 10 seconds
+        // for our buckets
+        let input = "page.views:15|c|#env:dev|T1656581409";
+        let metric = parse(input).unwrap();
+        assert_eq!(metric.timestamp, 1656581400);
+    }
+
+    #[test]
+    fn parse_metric_no_timestamp() {
+        // *wince* this could be a race condition
+        // we round the timestamp down to a 10s bucket and I want to test now
+        // but if the timestamp rolls over to the next bucket time and the test
+        // is somehow slower than 1s then the test will fail.
+        // come bug me if I wrecked your CI run
+        let input = "page.views:15|c|#env:dev";
+        let metric = parse(input).unwrap();
+        let now: i64 = std::time::UNIX_EPOCH
+            .elapsed()
+            .expect("unable to poll clock, unrecoverable")
+            .as_secs()
+            .try_into()
+            .unwrap_or_default();
+        assert_eq!(metric.timestamp, (now / 10) * 10);
+    }
+
+    #[test]
+    fn sorting_tags() {
+        let mut tags = SortedTags::parse("z:z0,b:b2,c:c3").unwrap();
+        tags.extend(&SortedTags::parse("z1:z11,d:d4,e:e5,f:f6").unwrap());
+        tags.extend(&SortedTags::parse("a:a1").unwrap());
+        assert_eq!(tags.values.len(), 8);
+        let first_element = tags.values.first().unwrap();
+        assert_eq!(first_element.0, Ustr::from("a"));
+        assert_eq!(first_element.1, Ustr::from("a1"));
     }
 }

@@ -538,6 +538,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     remote_config_products_count: usize,
     remote_config_capabilities: *const RemoteConfigCapabilities,
     remote_config_capabilities_count: usize,
+    is_fork: bool,
 ) -> MaybeError {
     #[cfg(unix)]
     let remote_config_notify_target = libc::getpid();
@@ -580,6 +581,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             .as_slice()
             .to_vec(),
         },
+        is_fork
     ));
 
     MaybeError::None

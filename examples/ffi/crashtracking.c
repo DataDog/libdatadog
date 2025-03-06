@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#define INIT_FROM_SLICE(s) {.ptr = s.ptr, .len = s.len}
+
 void example_segfault_handler(int signal) {
   printf("Segmentation fault caught. Signal number: %d\n", signal);
   exit(-1);
@@ -40,11 +42,10 @@ int main(int argc, char **argv) {
   ddog_crasht_ReceiverConfig receiver_config = {
       .args = {},
       .env = {},
-      .path_to_receiver_binary = DDOG_CHARSLICE_C("SET ME TO THE ACTUAL PATH ON YOUR MACHINE"),
-      // E.g. on my machine, where I run ./build-profiling-ffi.sh build-ffi
-      // .path_to_receiver_binary =
-      //     DDOG_CHARSLICE_C("/Users/daniel.schwartznarbonne/go/src/github.com/DataDog/libdatadog/"
-      //                      "build-ffi/bin/libdatadog-crashtracking-receiver"),
+      //.path_to_receiver_binary = DDOG_CHARSLICE_C("SET ME TO THE ACTUAL PATH ON YOUR MACHINE"),
+      // E.g. on my machine, where I run ./build-profiling-ffi.sh /tmp/libdatadog
+      .path_to_receiver_binary =
+          DDOG_CHARSLICE_C("/tmp/libdatadog/bin/libdatadog-crashtracking-receiver"),
       .optional_stderr_filename = DDOG_CHARSLICE_C("/tmp/crashreports/stderr.txt"),
       .optional_stdout_filename = DDOG_CHARSLICE_C("/tmp/crashreports/stdout.txt"),
   };
@@ -55,10 +56,14 @@ int main(int argc, char **argv) {
   //  struct ddog_Endpoint * endpoint =
   //      ddog_endpoint_from_url(DDOG_CHARSLICE_C("http://localhost:8126"));
 
+  // Get the default signals and explicitly use them.
+  // We could also pass an empty list here, which would also use the default signals.
+  struct ddog_crasht_Slice_CInt signals = ddog_crasht_default_signals();
   ddog_crasht_Config config = {
       .create_alt_stack = false,
       .endpoint = endpoint,
       .resolve_frames = DDOG_CRASHT_STACKTRACE_COLLECTION_ENABLED_WITH_INPROCESS_SYMBOLS,
+      .signals = INIT_FROM_SLICE(signals),
   };
 
   ddog_crasht_Metadata metadata = {
@@ -74,6 +79,8 @@ int main(int argc, char **argv) {
   handle_result(ddog_crasht_begin_op(DDOG_CRASHT_OP_TYPES_PROFILER_COLLECTING_SAMPLE));
   handle_uintptr_t_result(ddog_crasht_insert_span_id(0, 42));
   handle_uintptr_t_result(ddog_crasht_insert_trace_id(1, 1));
+  handle_uintptr_t_result(ddog_crasht_insert_additional_tag(DDOG_CHARSLICE_C("This is a very informative extra bit of info")));
+  handle_uintptr_t_result(ddog_crasht_insert_additional_tag(DDOG_CHARSLICE_C("This message will for sure help us debug the crash")));
 
 #ifdef EXPLICIT_RAISE_SEGV
   // Test raising SEGV explicitly, to ensure chaining works

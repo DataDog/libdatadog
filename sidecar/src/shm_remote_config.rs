@@ -119,7 +119,7 @@ struct ConfigFileStorage {
     /// All writers
     writers: Arc<Mutex<HashMap<Arc<Target>, RemoteConfigWriter>>>,
     #[allow(clippy::type_complexity)]
-    on_dead: Arc<Mutex<Option<Box<dyn FnOnce() + Sync + Send>>>>,
+    on_dead: Arc<Mutex<Option<Box<dyn Fn() + Sync + Send>>>>,
 }
 
 struct StoredShmFile {
@@ -260,7 +260,7 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
             .on_dead
             .lock()
             .unwrap()
-            .take()
+            .as_ref()
             .expect("The MultiTargetHandler must not be used anymore once on_dead is called"))(
         );
     }
@@ -303,9 +303,13 @@ pub struct ShmRemoteConfigs<N: NotifyTarget + 'static>(
 // pertaining to that env refcounting RemoteConfigIdentifier tuples by their unique runtime_id
 
 impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
+    /// The on_dead arg will be called when a fetcher has no active runtimes.
+    /// Beware: This function may be called at any time, e.g. another thread might be attempting to
+    /// call add_runtime() right when no other runtime was left. Be careful with the locking here.
+    /// Will not be called multiple times, unless this specific case was encountered.
     pub fn new(
         invariants: ConfigInvariants,
-        on_dead: Box<dyn FnOnce() + Sync + Send>,
+        on_dead: Box<dyn Fn() + Sync + Send>,
         interval: Duration,
     ) -> Self {
         let storage = ConfigFileStorage {
@@ -641,10 +645,13 @@ mod tests {
         let server = RemoteConfigServer::spawn();
 
         let (on_dead, on_dead_completer) = ManualFuture::new();
+        let on_dead_completer = Arc::new(Mutex::new(Some(on_dead_completer)));
         let shm = ShmRemoteConfigs::new(
             server.dummy_invariants(),
-            Box::new(|| {
-                tokio::spawn(on_dead_completer.complete(()));
+            Box::new(move || {
+                if let Some(completer) = on_dead_completer.lock().unwrap().take() {
+                    tokio::spawn(completer.complete(()));
+                }
             }),
             Duration::from_millis(10),
         );

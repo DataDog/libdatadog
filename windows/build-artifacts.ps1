@@ -26,7 +26,8 @@ $features = @(
     "datadog-profiling-ffi/crashtracker-collector",
     "datadog-profiling-ffi/crashtracker-receiver",
     "datadog-profiling-ffi/ddtelemetry-ffi",
-    "datadog-profiling-ffi/demangler"
+    "datadog-profiling-ffi/demangler",
+    "datadog-library-config-ffi"
 ) -join ","
 
 Write-Host "Building for features: $features" -ForegroundColor Magenta
@@ -49,6 +50,7 @@ Invoke-Call -ScriptBlock { cbindgen --crate datadog-profiling-ffi --config profi
 Invoke-Call -ScriptBlock { cbindgen --crate ddtelemetry-ffi --config ddtelemetry-ffi/cbindgen.toml --output $output_dir\telemetry.h }
 Invoke-Call -ScriptBlock { cbindgen --crate data-pipeline-ffi --config data-pipeline-ffi/cbindgen.toml --output $output_dir"\data-pipeline.h" }
 Invoke-Call -ScriptBlock { cbindgen --crate datadog-crashtracker-ffi --config crashtracker-ffi/cbindgen.toml --output $output_dir"\crashtracker.h" }
-Invoke-Call -ScriptBlock { .\target\release\dedup_headers $output_dir"\common.h"  $output_dir"\profiling.h" $output_dir"\telemetry.h" $output_dir"\data-pipeline.h" $output_dir"\crashtracker.h"}
+Invoke-Call -ScriptBlock { cbindgen --crate datadog-library-config-ffi --config library-config-ffi/cbindgen.toml --output $output_dir"\library-config.h" }
+Invoke-Call -ScriptBlock { .\target\release\dedup_headers $output_dir"\common.h"  $output_dir"\profiling.h" $output_dir"\telemetry.h" $output_dir"\data-pipeline.h" $output_dir"\crashtracker.h" $output_dir"\library-config.h"}
 
 Write-Host "Build finished"  -ForegroundColor Magenta

@@ -1,150 +1,261 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(unix)]
+use blazesym::{
+    helper::ElfResolver,
+    normalize::Normalizer,
+    symbolize::{Input, Source, Symbolized, Symbolizer, TranslateFileOffset},
+    Pid,
+};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub struct StackFrameNames {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub colno: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub filename: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub lineno: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub name: Option<String>,
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct StackTrace {
+    pub format: String,
+    pub frames: Vec<StackFrame>,
+    pub incomplete: bool,
 }
 
-/// All fields are hex encoded integers.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StackFrame {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub ip: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub module_base_address: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub names: Option<Vec<StackFrameNames>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub normalized_ip: Option<NormalizedAddress>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub sp: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default)]
-    pub symbol_address: Option<String>,
+const FORMAT_STRING: &str = "Datadog Crashtracker 1.0";
+
+impl StackTrace {
+    pub fn empty() -> Self {
+        Self {
+            format: FORMAT_STRING.to_string(),
+            frames: vec![],
+            incomplete: false,
+        }
+    }
+
+    pub fn from_frames(frames: Vec<StackFrame>, incomplete: bool) -> Self {
+        Self {
+            format: FORMAT_STRING.to_string(),
+            frames,
+            incomplete,
+        }
+    }
+
+    pub fn new_incomplete() -> Self {
+        Self {
+            format: FORMAT_STRING.to_string(),
+            frames: vec![],
+            incomplete: true,
+        }
+    }
+
+    pub fn missing() -> Self {
+        Self {
+            format: FORMAT_STRING.to_string(),
+            frames: vec![],
+            incomplete: true,
+        }
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum NormalizedAddressMeta {
-    Apk(PathBuf),
-    Elf {
-        path: PathBuf,
-        build_id: Option<Vec<u8>>,
-    },
-    Pdb {
-        path: PathBuf,
-        guid: Option<Vec<u8>>,
-        age: u64,
-    },
-    Unknown,
-    Unexpected(String),
-}
+impl StackTrace {
+    pub fn set_complete(&mut self) -> anyhow::Result<()> {
+        self.incomplete = false;
+        Ok(())
+    }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct NormalizedAddress {
-    pub file_offset: u64,
-    pub meta: NormalizedAddressMeta,
+    pub fn push_frame(&mut self, frame: StackFrame, incomplete: bool) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.incomplete,
+            "Can't push a new frame onto a complete stack"
+        );
+        self.frames.push(frame);
+        self.incomplete = incomplete;
+        Ok(())
+    }
 }
 
 #[cfg(unix)]
-mod unix {
-    use super::*;
-    use anyhow::anyhow;
-    use blazesym::{
-        helper::ElfResolver,
-        normalize::{Normalizer, UserMeta},
-        symbolize::{Input, Source, Sym, Symbolized, Symbolizer, TranslateFileOffset},
-        Pid,
-    };
-
-    impl<'src> From<&UserMeta<'src>> for NormalizedAddressMeta {
-        fn from(value: &UserMeta<'src>) -> Self {
-            match value {
-                UserMeta::Apk(a) => Self::Apk(a.path.clone()),
-                UserMeta::Elf(e) => Self::Elf {
-                    path: e.path.clone(),
-                    build_id: e.build_id.as_ref().map(|cow| cow.clone().into_owned()),
-                },
-                UserMeta::Unknown(_) => Self::Unknown,
-                _ => Self::Unexpected(format!("{value:?}")),
-            }
+impl StackTrace {
+    pub fn normalize_ips(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
+        for frame in &mut self.frames {
+            // TODO: Should this keep going on failure, and report at the end?
+            frame.normalize_ip(normalizer, pid)?;
         }
+        Ok(())
     }
 
-    impl From<Sym<'_>> for StackFrameNames {
-        fn from(value: Sym) -> Self {
-            let mut rval = Self::default();
-            if let Some(c) = value.code_info {
-                rval.lineno = c.line;
-                rval.filename = Some(c.to_path().display().to_string());
-                rval.colno = c.column.map(|c| c.into());
-            }
-            rval.name = Some(value.name.into_owned());
-            rval
+    pub fn resolve_names(&mut self, src: &Source, symbolizer: &Symbolizer) -> anyhow::Result<()> {
+        for frame in &mut self.frames {
+            // TODO: Should this keep going on failure, and report at the end?
+            frame.resolve_names(src, symbolizer)?;
         }
+        Ok(())
+    }
+}
+
+impl Default for StackTrace {
+    fn default() -> Self {
+        Self::missing()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Default)]
+pub struct StackFrame {
+    // Absolute addresses
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_base_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sp: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_address: Option<String>,
+
+    // Relative addresses
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_id_type: Option<BuildIdType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_type: Option<FileType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relative_address: Option<String>,
+
+    // Debug Info
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub function: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+}
+
+impl StackFrame {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[cfg(unix)]
+impl StackFrame {
+    pub fn normalize_ip(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
+        use anyhow::Context;
+        if let Some(ip) = &self.ip {
+            let ip = ip.trim_start_matches("0x");
+            let ip = u64::from_str_radix(ip, 16)?;
+            let normed = normalizer.normalize_user_addrs(pid, &[ip])?;
+            anyhow::ensure!(normed.outputs.len() == 1);
+            let (file_offset, meta_idx) = normed.outputs[0];
+            let meta = &normed.meta[meta_idx];
+            let elf = meta.as_elf().context("Not elf")?;
+            let resolver = ElfResolver::open(&elf.path)?;
+            let virt_address = resolver
+                .file_offset_to_virt_offset(file_offset)?
+                .context("No matching segment found")?;
+
+            self.build_id = elf.build_id.as_ref().map(|x| byte_slice_as_hex(x.as_ref()));
+            self.build_id_type = Some(BuildIdType::GNU);
+            self.file_type = Some(FileType::ELF);
+            self.path = Some(elf.path.to_string_lossy().to_string());
+            self.relative_address = Some(format!("{virt_address:#018x}"));
+        }
+        Ok(())
     }
 
-    impl StackFrame {
-        pub fn normalize_ip(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
-            if let Some(ip) = &self.ip {
-                let ip = ip.trim_start_matches("0x");
-                let ip = u64::from_str_radix(ip, 16)?;
-                let normed = normalizer.normalize_user_addrs(pid, &[ip])?;
-                anyhow::ensure!(normed.outputs.len() == 1);
-                let (file_offset, meta_idx) = normed.outputs[0];
-                let meta = &normed.meta[meta_idx];
-                let elf = meta.as_elf().ok_or(anyhow::anyhow!("Not elf"))?;
-                let resolver = ElfResolver::open(&elf.path)?;
-                let virt_address = resolver
-                    .file_offset_to_virt_offset(file_offset)?
-                    .ok_or(anyhow!("No matching segment found"))?;
-                self.normalized_ip = Some(NormalizedAddress {
-                    file_offset: virt_address,
-                    meta: meta.into(),
-                });
-            }
-            Ok(())
-        }
-
-        pub fn resolve_names(
-            &mut self,
-            src: &Source,
-            symbolizer: &Symbolizer,
-        ) -> anyhow::Result<()> {
-            if let Some(ip) = &self.ip {
-                let ip = ip.trim_start_matches("0x");
-                let ip = u64::from_str_radix(ip, 16)?;
-                let input = Input::AbsAddr(ip);
-                match symbolizer.symbolize_single(src, input)? {
-                    Symbolized::Sym(s) => {
-                        //TODO: handle
-                        self.names = Some(vec![s.into()]);
+    pub fn resolve_names(&mut self, src: &Source, symbolizer: &Symbolizer) -> anyhow::Result<()> {
+        if let Some(ip) = &self.ip {
+            let ip = ip.trim_start_matches("0x");
+            let ip = u64::from_str_radix(ip, 16)?;
+            let input = Input::AbsAddr(ip);
+            match symbolizer.symbolize_single(src, input)? {
+                Symbolized::Sym(s) => {
+                    if let Some(c) = s.code_info {
+                        self.column = c.column.map(u32::from);
+                        self.file = Some(c.to_path().display().to_string());
+                        self.line = c.line;
                     }
-                    Symbolized::Unknown(reason) => {
-                        anyhow::bail!("Couldn't symbolize {ip}: {reason}");
-                    }
+                    self.function = Some(s.name.into_owned());
+                }
+                Symbolized::Unknown(reason) => {
+                    anyhow::bail!("Couldn't symbolize {ip}: {reason}");
                 }
             }
-            Ok(())
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[allow(clippy::upper_case_acronyms)]
+#[repr(C)]
+pub enum BuildIdType {
+    GNU,
+    GO,
+    PDB,
+    SHA1,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[allow(clippy::upper_case_acronyms)]
+#[repr(C)]
+pub enum FileType {
+    APK,
+    ELF,
+    PE,
+}
+
+#[cfg(unix)]
+fn byte_slice_as_hex(bv: &[u8]) -> String {
+    use std::fmt::Write;
+
+    let mut s = String::new();
+    for byte in bv {
+        let _ = write!(&mut s, "{byte:X}");
+    }
+    s
+}
+
+#[cfg(test)]
+impl super::test_utils::TestInstance for StackTrace {
+    fn test_instance(_seed: u64) -> Self {
+        let frames = (0..10).map(StackFrame::test_instance).collect();
+        Self::from_frames(frames, false)
+    }
+}
+
+#[cfg(test)]
+impl super::test_utils::TestInstance for StackFrame {
+    fn test_instance(seed: u64) -> Self {
+        let ip = Some(format!("{seed:#x}"));
+        let module_base_address = None;
+        let sp = None;
+        let symbol_address = None;
+
+        let build_id = Some(format!("abcde{seed:#x}"));
+        let build_id_type = Some(BuildIdType::GNU);
+        let file_type = Some(FileType::ELF);
+        let path = Some(format!("/usr/bin/foo{seed}"));
+        let relative_address = None;
+
+        let column = Some(2 * seed as u32);
+        let file = Some(format!("banana{seed}.rs"));
+        let function = Some(format!("Bar::baz{seed}"));
+        let line = Some((2 * seed + 1) as u32);
+        Self {
+            ip,
+            module_base_address,
+            sp,
+            symbol_address,
+            build_id,
+            build_id_type,
+            file_type,
+            path,
+            relative_address,
+            column,
+            file,
+            function,
+            line,
         }
     }
 }

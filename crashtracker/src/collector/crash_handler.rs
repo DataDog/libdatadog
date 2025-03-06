@@ -6,19 +6,21 @@
 
 use super::emitters::emit_crashreport;
 use super::saguard::SaGuard;
-use crate::crash_info::CrashtrackerMetadata;
+use crate::crash_info::Metadata;
 use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
 use crate::shared::constants::*;
+use crate::signal_from_signum;
 use anyhow::Context;
 use libc::{
-    c_void, execve, mmap, nfds_t, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE,
-    PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ,
+    c_void, execve, mmap, nfds_t, sigaltstack, siginfo_t, ucontext_t, MAP_ANON, MAP_FAILED,
+    MAP_PRIVATE, PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ,
 };
 use libc::{poll, pollfd, POLLHUP};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use nix::sys::socket;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{close, Pid};
+use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -53,12 +55,6 @@ use libc::fork as vfork;
 
 #[cfg(target_os = "linux")]
 use libc::vfork;
-
-#[derive(Debug)]
-struct OldHandlers {
-    pub sigbus: SigAction,
-    pub sigsegv: SigAction,
-}
 
 struct Receiver {
     receiver_uds: RawFd,
@@ -255,8 +251,9 @@ fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
 // This means that we can always clean up the memory inside one of these using
 // `Box::from_raw` to recreate the box, then dropping it.
 static ALTSTACK_INIT: AtomicBool = AtomicBool::new(false);
-static OLD_HANDLERS: AtomicPtr<OldHandlers> = AtomicPtr::new(ptr::null_mut());
-static METADATA: AtomicPtr<(CrashtrackerMetadata, String)> = AtomicPtr::new(ptr::null_mut());
+static OLD_HANDLERS: AtomicPtr<HashMap<i32, (signal::Signal, SigAction)>> =
+    AtomicPtr::new(ptr::null_mut());
+static METADATA: AtomicPtr<(Metadata, String)> = AtomicPtr::new(ptr::null_mut());
 static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
 static RECEIVER_CONFIG: AtomicPtr<CrashtrackerReceiverConfig> = AtomicPtr::new(ptr::null_mut());
 static RECEIVER_ARGS: AtomicPtr<PreparedExecve> = AtomicPtr::new(ptr::null_mut());
@@ -316,7 +313,7 @@ fn make_receiver(config: &CrashtrackerReceiverConfig) -> anyhow::Result<Receiver
 ///     No other crash-handler functions should be called concurrently.
 /// ATOMICITY:
 ///     This function uses a swap on an atomic pointer.
-pub fn update_metadata(metadata: CrashtrackerMetadata) -> anyhow::Result<()> {
+pub fn update_metadata(metadata: Metadata) -> anyhow::Result<()> {
     let metadata_string = serde_json::to_string(&metadata)?;
     let box_ptr = Box::into_raw(Box::new((metadata, metadata_string)));
     let old = METADATA.swap(box_ptr, SeqCst);
@@ -390,53 +387,43 @@ pub fn configure_receiver(config: CrashtrackerReceiverConfig) {
 extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucontext: *mut c_void) {
     // Handle the signal.  Note this has a guard to ensure that we only generate
     // one crash report per process.
-    let _ = handle_posix_signal_impl(signum, sig_info);
+    let _ = handle_posix_signal_impl(sig_info, ucontext as *mut ucontext_t);
 
     // Once we've handled the signal, chain to any previous handlers.
     // SAFETY: This was created by [register_crash_handlers].  There is a tiny
     // instant of time between when the handlers are registered, and the
     // `OLD_HANDLERS` are set.  This should be very short, but is hard to fully
     // eliminate given the existing POSIX APIs.
-    let old_handlers = unsafe { &*OLD_HANDLERS.load(SeqCst) };
-    let old_sigaction = if signum == libc::SIGSEGV {
-        old_handlers.sigsegv
-    } else if signum == libc::SIGBUS {
-        old_handlers.sigbus
-    } else {
-        unreachable!("The only signals we're registered for are SEGV and BUS")
-    };
+    let old_handlers = unsafe { &*OLD_HANDLERS.swap(std::ptr::null_mut(), SeqCst) };
 
-    // How we chain depends on what kind of handler we're chaining to.
-    // https://www.gnu.org/software/libc/manual/html_node/Signal-Handling.html
-    // https://man7.org/linux/man-pages/man2/sigaction.2.html
-    // Follow the approach here:
-    // https://stackoverflow.com/questions/6015498/executing-default-signal-handler
-    match old_sigaction.handler() {
-        SigHandler::SigDfl => {
-            // In the case of a default handler, we want to invoke it so that
-            // the core-dump can be generated.  Restoring the handler then
-            // re-raising the signal accomplishes that.
-            let signal = if signum == libc::SIGSEGV {
-                signal::SIGSEGV
-            } else if signum == libc::SIGBUS {
-                signal::SIGBUS
-            } else {
-                unreachable!("The only signals we're registered for are SEGV and BUS")
-            };
-            unsafe { signal::sigaction(signal, &old_sigaction) }
-                .unwrap_or_else(|_| std::process::abort());
-            // Signals are only delivered once.
-            // In the case where we were invoked because of a crash, returning
-            // is technically UB but in practice re-invokes the crashing instr
-            // and re-raises the signal. In the case where we were invoked by
-            // `raise(SIGSEGV)` we need to re-raise the signal, or the default
-            // handler will never receive it.
-            unsafe { libc::raise(signum) };
-        }
-        SigHandler::SigIgn => (), // Return and ignore the signal.
-        SigHandler::Handler(f) => f(signum),
-        SigHandler::SigAction(f) => f(signum, sig_info, ucontext),
-    };
+    if let Some((signal, sigaction)) = old_handlers.get(&signum) {
+        // How we chain depends on what kind of handler we're chaining to.
+        // https://www.gnu.org/software/libc/manual/html_node/Signal-Handling.html
+        // https://man7.org/linux/man-pages/man2/sigaction.2.html
+        // Follow the approach here:
+        // https://stackoverflow.com/questions/6015498/executing-default-signal-handler
+        match sigaction.handler() {
+            SigHandler::SigDfl => {
+                // In the case of a default handler, we want to invoke it so that
+                // the core-dump can be generated.  Restoring the handler then
+                // re-raising the signal accomplishes that.
+                unsafe { signal::sigaction(*signal, sigaction) }
+                    .unwrap_or_else(|_| std::process::abort());
+                // Signals are only delivered once.
+                // In the case where we were invoked because of a crash, returning
+                // is technically UB but in practice re-invokes the crashing instr
+                // and re-raises the signal. In the case where we were invoked by
+                // `raise(SIGSEGV)` we need to re-raise the signal, or the default
+                // handler will never receive it.
+                unsafe { libc::raise(signum) };
+            }
+            SigHandler::SigIgn => (), // Return and ignore the signal.
+            SigHandler::Handler(f) => f(signum),
+            SigHandler::SigAction(f) => f(signum, sig_info, ucontext),
+        };
+    } else {
+        eprintln!("Unexpected signal number {signum}, can't chain the handlers");
+    }
 }
 
 fn receiver_from_socket(unix_socket_path: &str) -> anyhow::Result<Receiver> {
@@ -496,7 +483,10 @@ fn receiver_finish(receiver: Receiver, start_time: Instant, timeout_ms: u32) {
     }
 }
 
-fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Result<()> {
+fn handle_posix_signal_impl(
+    sig_info: *const siginfo_t,
+    ucontext: *const ucontext_t,
+) -> anyhow::Result<()> {
     // If this is a SIGSEGV signal, it could be called due to a stack overflow. In that case, since
     // this signal allocates to the stack and cannot guarantee it is running without SA_NODEFER, it
     // is possible that we will re-emit the signal. Contemporary unices handle this just fine (no
@@ -538,14 +528,6 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
     let timeout_ms = config.timeout_ms;
     let start_time = Instant::now(); // This is the time at which the signal was received
 
-    // Derive the faulting address from `sig_info`
-    let faulting_address: Option<usize> =
-        if !sig_info.is_null() && (signum == libc::SIGSEGV || signum == libc::SIGBUS) {
-            unsafe { Some((*sig_info).si_addr() as usize) }
-        } else {
-            None
-        };
-
     // During the execution of this signal handler, block ALL other signals, especially because we
     // cannot control whether or not we run with SA_NODEFER (crashtracker might have been chained).
     // The especially problematic signals are SIGCHLD and SIGPIPE, which are possibly delivered due
@@ -581,8 +563,8 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
         config,
         config_str,
         metadata_string,
-        signum,
-        faulting_address,
+        sig_info,
+        ucontext,
     );
 
     let _ = unix_stream.flush();
@@ -616,29 +598,35 @@ fn handle_posix_signal_impl(signum: i32, sig_info: *mut siginfo_t) -> anyhow::Re
 ///     will not yet be stored.  This would lead to unexpected behaviour for the
 ///     user.  This should only matter if something crashes concurrently with
 ///     this function executing.
-pub fn register_crash_handlers() -> anyhow::Result<()> {
+pub fn register_crash_handlers(config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
     if !OLD_HANDLERS.load(SeqCst).is_null() {
         return Ok(());
     }
 
-    let config_ptr = CONFIG.load(SeqCst);
-    anyhow::ensure!(!config_ptr.is_null(), "No crashtracking config");
-    let (config, _config_str) = unsafe { config_ptr.as_ref().context("config ptr")? };
-
-    unsafe {
-        if config.create_alt_stack {
-            create_alt_stack()?;
-        }
-        let sigbus = register_signal_handler(signal::SIGBUS, config)?;
-        let sigsegv = register_signal_handler(signal::SIGSEGV, config)?;
-        let boxed_ptr = Box::into_raw(Box::new(OldHandlers { sigbus, sigsegv }));
-
-        let res = OLD_HANDLERS.compare_exchange(ptr::null_mut(), boxed_ptr, SeqCst, SeqCst);
-        anyhow::ensure!(
-            res.is_ok(),
-            "TOCTTOU error in crashtracker::register_crash_handlers"
-        );
+    if config.create_alt_stack {
+        unsafe { create_alt_stack()? };
     }
+    let mut old_handlers = HashMap::new();
+    // TODO: if this fails, we end in a situation where handlers have been registered with no chain
+    for signum in &config.signals {
+        let signal = signal_from_signum(*signum)?;
+        anyhow::ensure!(
+            !old_handlers.contains_key(signum),
+            "Handler already registered for {signal}"
+        );
+        let handler = unsafe { register_signal_handler(signal, config)? };
+        old_handlers.insert(*signum, (signal, handler));
+    }
+    let boxed_ptr = Box::into_raw(Box::new(old_handlers));
+
+    let res = OLD_HANDLERS.compare_exchange(ptr::null_mut(), boxed_ptr, SeqCst, SeqCst);
+    // Note this doesn't restore the old setup, and leaks `old_handlers`, but hard to recover here
+    // and the leak is small.
+    anyhow::ensure!(
+        res.is_ok(),
+        "TOCTTOU error in crashtracker::register_crash_handlers"
+    );
+
     Ok(())
 }
 
@@ -679,9 +667,11 @@ pub fn restore_old_handlers(inside_signal_handler: bool) -> anyhow::Result<()> {
     anyhow::ensure!(!prev.is_null(), "No crashtracking previous signal handlers");
     // Safety: The only nonnull pointer stored here comes from Box::into_raw()
     let prev = unsafe { Box::from_raw(prev) };
-    // Safety: The value restored here was returned from a previous sigaction call
-    unsafe { signal::sigaction(signal::SIGBUS, &prev.sigbus)? };
-    unsafe { signal::sigaction(signal::SIGSEGV, &prev.sigsegv)? };
+    for (_signum, (signal, sigaction)) in prev.iter() {
+        // Safety: The value restored here was returned from a previous sigaction call
+        unsafe { signal::sigaction(*signal, sigaction)? };
+    }
+
     // We want to avoid freeing memory inside the handler, so just leak it
     // This is fine since we're crashing anyway at this point
     if inside_signal_handler {
