@@ -183,14 +183,13 @@ async fn send_request(
             encoder.finish()
         })();
 
-        let req = match result {
+        match result {
             Ok(payload) => req
                 .header("Content-Encoding", "zstd")
                 .body(Body::from(payload))
                 .or(Err(RequestError::Build))?,
             Err(_) => req.body(Body::from(payload)).or(Err(RequestError::Build))?,
-        };
-        req
+        }
     };
 
     #[cfg(not(feature = "zstd"))]
