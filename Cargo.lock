@@ -1814,6 +1814,7 @@ dependencies = [
  "tinybytes",
  "tokio",
  "urlencoding",
+ "zstd",
 ]
 
 [[package]]
