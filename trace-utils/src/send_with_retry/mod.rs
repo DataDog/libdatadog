@@ -11,10 +11,10 @@ use bytes::Bytes;
 use ddcommon::{connector, Endpoint, HttpRequestBuilder};
 use hyper::{Body, Client, Method, Response};
 use hyper_proxy::{Intercept, Proxy, ProxyConnector};
-#[cfg(feature = "zstd")]
+#[cfg(feature = "compression")]
 use std::io::Write;
 use std::{collections::HashMap, time::Duration};
-#[cfg(feature = "zstd")]
+#[cfg(feature = "compression")]
 use zstd::stream::write::Encoder;
 
 pub type Attempts = u32;
@@ -175,7 +175,7 @@ async fn send_request(
     payload: Bytes,
     http_proxy: Option<&str>,
 ) -> Result<Response<Body>, RequestError> {
-    #[cfg(feature = "zstd")]
+    #[cfg(feature = "compression")]
     let req = {
         let result = (|| -> std::io::Result<Vec<u8>> {
             let mut encoder = Encoder::new(Vec::new(), 6)?;
@@ -192,7 +192,7 @@ async fn send_request(
         }
     };
 
-    #[cfg(not(feature = "zstd"))]
+    #[cfg(not(feature = "compression"))]
     let req = req.body(Body::from(payload)).or(Err(RequestError::Build))?;
 
     match tokio::time::timeout(
