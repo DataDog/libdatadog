@@ -544,6 +544,7 @@ mod tests {
             meta_struct: HashMap::new(),
             r#type: BytesString::from_slice("serverless".as_ref()).unwrap(),
             span_links: vec![],
+            span_events: vec![],
         }];
 
         let span_data2 = json!([{
@@ -576,6 +577,7 @@ mod tests {
             meta_struct: HashMap::new(),
             r#type: BytesString::default(),
             span_links: vec![],
+            span_events: vec![],
         }];
 
         let data = rmp_serde::to_vec(&vec![span_data1, span_data2])

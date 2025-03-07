@@ -114,6 +114,7 @@ mod tests {
             r#type: "".into(),
             meta_struct: HashMap::new(),
             span_links: vec![],
+            span_events: vec![],
         };
         if is_top_level {
             span.metrics.insert("_top_level".into(), 1.0);

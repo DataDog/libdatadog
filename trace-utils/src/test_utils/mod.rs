@@ -54,6 +54,7 @@ pub fn create_test_no_alloc_span(
         r#type: BytesString::default(),
         meta_struct: HashMap::new(),
         span_links: vec![],
+        span_events: vec![],
     };
     if is_top_level {
         span.metrics
