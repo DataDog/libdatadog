@@ -399,9 +399,9 @@ mod tests {
 
 #[cfg(test)]
 mod tests {
-    use super::SpanEventKey;
     use super::AttributeAnyKey;
     use super::AttributeArrayKey;
+    use super::SpanEventKey;
     use crate::msgpack_decoder::decode::error::DecodeError;
     use std::str::FromStr;
 
@@ -412,10 +412,7 @@ mod tests {
             SpanEventKey::from_str("time_unix_nano").unwrap(),
             SpanEventKey::TimeUnixNano
         );
-        assert_eq!(
-            SpanEventKey::from_str("name").unwrap(),
-            SpanEventKey::Name
-        );
+        assert_eq!(SpanEventKey::from_str("name").unwrap(), SpanEventKey::Name);
         assert_eq!(
             SpanEventKey::from_str("attributes").unwrap(),
             SpanEventKey::Attributes
@@ -451,7 +448,10 @@ mod tests {
             AttributeAnyKey::from_str("double_value").unwrap(),
             AttributeAnyKey::DoubleValue
         );
-        assert_eq!(AttributeAnyKey::from_str("array_value").unwrap(), AttributeAnyKey::ArrayValue);
+        assert_eq!(
+            AttributeAnyKey::from_str("array_value").unwrap(),
+            AttributeAnyKey::ArrayValue
+        );
 
         // Invalid case
         assert!(matches!(
