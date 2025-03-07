@@ -131,7 +131,6 @@ impl FromStr for AttributeAnyKey {
     }
 }
 
-// TODO : find a way to decode it by checking the `type` thing to get the type of the value
 fn decode_attribute_any(buf: &mut Bytes) -> Result<AttributeAnyValueBytes, DecodeError> {
     let mut attribute: Option<AttributeAnyValueBytes> = None;
     let attribute_size =
@@ -181,7 +180,7 @@ fn decode_attribute_any(buf: &mut Bytes) -> Result<AttributeAnyValueBytes, Decod
             ))
         }
     } else {
-        Err(DecodeError::InvalidFormat("todo".to_owned()))
+        Err(DecodeError::InvalidFormat("Invalid attribute".to_owned()))
     }
 }
 
@@ -300,7 +299,7 @@ fn decode_attribute_array(
             ))
         }
     } else {
-        Err(DecodeError::InvalidFormat("todo".to_owned()))
+        Err(DecodeError::InvalidFormat("Invalid attribute".to_owned()))
     }
 }
 

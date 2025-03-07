@@ -64,7 +64,6 @@ fn fill_span(span: &mut SpanBytes, buf: &mut Bytes) -> Result<(), DecodeError> {
         SpanKey::Metrics => span.metrics = read_metrics(buf)?,
         SpanKey::MetaStruct => span.meta_struct = read_meta_struct(buf)?,
         SpanKey::SpanLinks => span.span_links = read_span_links(buf)?,
-        // TODO : call the read_span_events function when it is done
         SpanKey::SpanEvents => span.span_events = read_span_events(buf)?,
     }
     Ok(())
