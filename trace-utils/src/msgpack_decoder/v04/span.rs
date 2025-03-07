@@ -3,6 +3,7 @@
 
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::number::read_nullable_number_bytes;
+use crate::msgpack_decoder::decode::span_event::read_span_events;
 use crate::msgpack_decoder::decode::span_link::read_span_links;
 use crate::msgpack_decoder::decode::string::{
     read_nullable_str_map_to_bytes_strings, read_nullable_string_bytes, read_string_ref,
@@ -63,6 +64,7 @@ fn fill_span(span: &mut SpanBytes, buf: &mut Bytes) -> Result<(), DecodeError> {
         SpanKey::Metrics => span.metrics = read_metrics(buf)?,
         SpanKey::MetaStruct => span.meta_struct = read_meta_struct(buf)?,
         SpanKey::SpanLinks => span.span_links = read_span_links(buf)?,
+        SpanKey::SpanEvents => span.span_events = read_span_events(buf)?,
     }
     Ok(())
 }
@@ -92,6 +94,10 @@ mod tests {
             SpanKey::MetaStruct
         );
         assert_eq!(SpanKey::from_str("span_links").unwrap(), SpanKey::SpanLinks);
+        assert_eq!(
+            SpanKey::from_str("span_events").unwrap(),
+            SpanKey::SpanEvents
+        );
 
         let invalid_result = SpanKey::from_str("invalid_key");
         let msg = format!("SpanKeyParseError: Invalid span key: {}", "invalid_key");

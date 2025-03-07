@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use serde::ser::SerializeStruct;
 use serde::Serialize;
 use std::borrow::Borrow;
 use std::collections::HashMap;
@@ -25,6 +26,7 @@ pub enum SpanKey {
     Type,
     MetaStruct,
     SpanLinks,
+    SpanEvents,
 }
 
 impl FromStr for SpanKey {
@@ -46,6 +48,7 @@ impl FromStr for SpanKey {
             "type" => Ok(SpanKey::Type),
             "meta_struct" => Ok(SpanKey::MetaStruct),
             "span_links" => Ok(SpanKey::SpanLinks),
+            "span_events" => Ok(SpanKey::SpanEvents),
             _ => Err(SpanKeyParseError::new(format!("Invalid span key: {}", s))),
         }
     }
@@ -54,9 +57,9 @@ impl FromStr for SpanKey {
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.
-pub trait SpanText: Eq + Hash + Borrow<str> {}
+pub trait SpanText: Eq + Hash + Borrow<str> + Serialize {}
 /// Implement the SpanText trait for any type which satisfies the sub traits.
-impl<T: Eq + Hash + Borrow<str>> SpanText for T {}
+impl<T: Eq + Hash + Borrow<str> + Serialize> SpanText for T {}
 
 /// Checks if the `value` represents an empty string. Used to skip serializing empty strings
 /// with serde.
@@ -101,6 +104,8 @@ where
     pub meta_struct: HashMap<T, Vec<u8>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub span_links: Vec<SpanLink<T>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub span_events: Vec<SpanEvent<T>>,
 }
 
 /// The generic representation of a V04 span link.
@@ -121,8 +126,117 @@ where
     pub flags: u64,
 }
 
+/// The generic representation of a V04 span event.
+/// `T` is the type used to represent strings in the span event.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct SpanEvent<T>
+where
+    T: SpanText,
+{
+    pub time_unix_nano: u64,
+    pub name: T,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub attributes: HashMap<T, AttributeAnyValue<T>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AttributeAnyValue<T>
+where
+    T: SpanText,
+{
+    String(T),
+    Boolean(bool),
+    Integer(i64),
+    Double(f64),
+    Array(Vec<AttributeArrayValue<T>>),
+}
+
+impl<T> Serialize for AttributeAnyValue<T>
+where
+    T: SpanText,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("AttributeAnyValue", 2)?;
+
+        match self {
+            AttributeAnyValue::String(value) => {
+                state.serialize_field("type", &0)?;
+                state.serialize_field("string_value", value)?;
+            }
+            AttributeAnyValue::Boolean(value) => {
+                state.serialize_field("type", &1)?;
+                state.serialize_field("bool_value", value)?;
+            }
+            AttributeAnyValue::Integer(value) => {
+                state.serialize_field("type", &2)?;
+                state.serialize_field("int_value", value)?;
+            }
+            AttributeAnyValue::Double(value) => {
+                state.serialize_field("type", &3)?;
+                state.serialize_field("double_value", value)?;
+            }
+            AttributeAnyValue::Array(value) => {
+                state.serialize_field("type", &4)?;
+                state.serialize_field("array_value", value)?;
+            }
+        }
+
+        state.end()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AttributeArrayValue<T>
+where
+    T: SpanText,
+{
+    String(T),
+    Boolean(bool),
+    Integer(i64),
+    Double(f64),
+}
+
+impl<T> Serialize for AttributeArrayValue<T>
+where
+    T: SpanText,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("AttributeArrayValue", 2)?;
+
+        match self {
+            AttributeArrayValue::String(value) => {
+                state.serialize_field("type", &0)?;
+                state.serialize_field("string_value", value)?;
+            }
+            AttributeArrayValue::Boolean(value) => {
+                state.serialize_field("type", &1)?;
+                state.serialize_field("bool_value", value)?;
+            }
+            AttributeArrayValue::Integer(value) => {
+                state.serialize_field("type", &2)?;
+                state.serialize_field("int_value", value)?;
+            }
+            AttributeArrayValue::Double(value) => {
+                state.serialize_field("type", &3)?;
+                state.serialize_field("double_value", value)?;
+            }
+        }
+
+        state.end()
+    }
+}
+
 pub type SpanBytes = Span<BytesString>;
 pub type SpanLinkBytes = SpanLink<BytesString>;
+pub type SpanEventBytes = SpanEvent<BytesString>;
+pub type AttributeAnyValueBytes = AttributeAnyValue<BytesString>;
+pub type AttributeArrayValueBytes = AttributeArrayValue<BytesString>;
 
 #[derive(Debug)]
 pub struct SpanKeyParseError {
