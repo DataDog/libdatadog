@@ -125,7 +125,8 @@ where
     pub flags: u64,
 }
 
-/// TODO : SpanEvent
+/// The generic representation of a V04 span event.
+/// `T` is the type used to represent strings in the span event.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct SpanEvent<T>
 where
@@ -136,26 +137,24 @@ where
     pub attributes: HashMap<T, AttributeAnyValue<T>>,
 }
 
-/// TODO : AttributeAnyValue
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum AttributeAnyValue<T>
 where
     T: SpanText,
 {
-    String(T), // StringValue maybe ? and so on
+    String(T),
     Boolean(bool),
     Integer(i64),
     Double(f64),
     Array(Vec<AttributeArrayValue<T>>),
 }
 
-/// TODO : AttributeArrayValue
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum AttributeArrayValue<T>
 where
     T: SpanText,
 {
-    String(T), // StringValue maybe ? and so on
+    String(T),
     Boolean(bool),
     Integer(i64),
     Double(f64),
