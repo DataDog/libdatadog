@@ -4,6 +4,10 @@
 pub(crate) const TRAMPOLINE_BIN: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/trampoline.bin"));
 
+#[cfg(target_os = "windows")]
+pub(crate) const CRASHTRACKING_TRAMPOLINE_BIN: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/crashtracking_trampoline.bin"));
+
 pub(crate) static ENV_PASS_FD_KEY: &str = "__DD_INTERNAL_PASSED_FD";
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
