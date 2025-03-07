@@ -25,6 +25,7 @@ pub enum SpanKey {
     Type,
     MetaStruct,
     SpanLinks,
+    SpanEvents,
 }
 
 impl FromStr for SpanKey {
@@ -46,6 +47,7 @@ impl FromStr for SpanKey {
             "type" => Ok(SpanKey::Type),
             "meta_struct" => Ok(SpanKey::MetaStruct),
             "span_links" => Ok(SpanKey::SpanLinks),
+            "span_events" => Ok(SpanKey::SpanEvents),
             _ => Err(SpanKeyParseError::new(format!("Invalid span key: {}", s))),
         }
     }
@@ -101,6 +103,8 @@ where
     pub meta_struct: HashMap<T, Vec<u8>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub span_links: Vec<SpanLink<T>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub span_events: Vec<SpanEvent<T>>,
 }
 
 /// The generic representation of a V04 span link.
@@ -121,8 +125,47 @@ where
     pub flags: u64,
 }
 
+/// TODO : SpanEvent
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct SpanEvent<T>
+where
+    T: SpanText,
+{
+    pub time_unix_nano: u64,
+    pub name: T,
+    pub attributes: HashMap<T, AttributeAnyValue<T>>,
+}
+
+/// TODO : AttributeAnyValue
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub enum AttributeAnyValue<T>
+where
+    T: SpanText,
+{
+    String(T), // StringValue maybe ? and so on
+    Boolean(bool),
+    Integer(i64),
+    Double(f64),
+    Array(Vec<AttributeArrayValue<T>>),
+}
+
+/// TODO : AttributeArrayValue
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub enum AttributeArrayValue<T>
+where
+    T: SpanText,
+{
+    String(T), // StringValue maybe ? and so on
+    Boolean(bool),
+    Integer(i64),
+    Double(f64),
+}
+
 pub type SpanBytes = Span<BytesString>;
 pub type SpanLinkBytes = SpanLink<BytesString>;
+pub type SpanEventBytes = SpanEvent<BytesString>;
+pub type AttributeAnyValueBytes = AttributeAnyValue<BytesString>;
+pub type AttributeArrayValueBytes = AttributeArrayValue<BytesString>;
 
 #[derive(Debug)]
 pub struct SpanKeyParseError {
