@@ -396,3 +396,98 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SpanEventKey;
+    use super::AttributeAnyKey;
+    use super::AttributeArrayKey;
+    use crate::msgpack_decoder::decode::error::DecodeError;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_span_event_key_from_str() {
+        // Valid cases
+        assert_eq!(
+            SpanEventKey::from_str("time_unix_nano").unwrap(),
+            SpanEventKey::TimeUnixNano
+        );
+        assert_eq!(
+            SpanEventKey::from_str("name").unwrap(),
+            SpanEventKey::Name
+        );
+        assert_eq!(
+            SpanEventKey::from_str("attributes").unwrap(),
+            SpanEventKey::Attributes
+        );
+
+        // Invalid case
+        assert!(matches!(
+            SpanEventKey::from_str("invalid_key"),
+            Err(DecodeError::InvalidFormat(_))
+        ));
+    }
+
+    #[test]
+    fn test_attribute_any_key_from_str() {
+        // Valid cases
+        assert_eq!(
+            AttributeAnyKey::from_str("type").unwrap(),
+            AttributeAnyKey::Type
+        );
+        assert_eq!(
+            AttributeAnyKey::from_str("string_value").unwrap(),
+            AttributeAnyKey::StringValue
+        );
+        assert_eq!(
+            AttributeAnyKey::from_str("bool_value").unwrap(),
+            AttributeAnyKey::BoolValue
+        );
+        assert_eq!(
+            AttributeAnyKey::from_str("int_value").unwrap(),
+            AttributeAnyKey::IntValue
+        );
+        assert_eq!(
+            AttributeAnyKey::from_str("double_value").unwrap(),
+            AttributeAnyKey::DoubleValue
+        );
+        assert_eq!(AttributeAnyKey::from_str("array_value").unwrap(), AttributeAnyKey::ArrayValue);
+
+        // Invalid case
+        assert!(matches!(
+            AttributeAnyKey::from_str("invalid_key"),
+            Err(DecodeError::InvalidFormat(_))
+        ));
+    }
+
+    #[test]
+    fn test_attribute_array_key_from_str() {
+        // Valid cases
+        assert_eq!(
+            AttributeArrayKey::from_str("type").unwrap(),
+            AttributeArrayKey::Type
+        );
+        assert_eq!(
+            AttributeArrayKey::from_str("string_value").unwrap(),
+            AttributeArrayKey::StringValue
+        );
+        assert_eq!(
+            AttributeArrayKey::from_str("bool_value").unwrap(),
+            AttributeArrayKey::BoolValue
+        );
+        assert_eq!(
+            AttributeArrayKey::from_str("int_value").unwrap(),
+            AttributeArrayKey::IntValue
+        );
+        assert_eq!(
+            AttributeArrayKey::from_str("double_value").unwrap(),
+            AttributeArrayKey::DoubleValue
+        );
+
+        // Invalid case
+        assert!(matches!(
+            AttributeArrayKey::from_str("invalid_key"),
+            Err(DecodeError::InvalidFormat(_))
+        ));
+    }
+}
