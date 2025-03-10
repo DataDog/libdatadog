@@ -534,7 +534,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
     .into()
 }
 
-unsafe fn profile_ptr_to_inner<'a>(
+pub(crate) unsafe fn profile_ptr_to_inner<'a>(
     profile_ptr: *mut Profile,
 ) -> anyhow::Result<&'a mut internal::Profile> {
     match profile_ptr.as_mut() {

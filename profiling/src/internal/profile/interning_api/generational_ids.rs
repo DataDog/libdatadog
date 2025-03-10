@@ -25,6 +25,7 @@ impl Default for Generation {
     }
 }
 
+#[repr(C)]
 pub struct GenerationalId<T: Copy> {
     generation: Generation,
     id: T,

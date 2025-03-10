@@ -51,12 +51,12 @@ impl Profile {
         Ok(GenerationalId::new(id, self.generation))
     }
 
-    pub fn intern_label_set(
+    pub fn intern_labelset(
         &mut self,
-        labels: Vec<GenerationalId<LabelId>>,
+        labels: &[GenerationalId<LabelId>],
     ) -> anyhow::Result<GenerationalId<LabelSetId>> {
         let labels = labels
-            .into_iter()
+            .iter()
             .map(|l| l.get(self.generation))
             .collect::<anyhow::Result<Vec<_>>>()?;
         let labels = LabelSet::new(labels);
@@ -123,10 +123,10 @@ impl Profile {
 
     pub fn intern_stacktrace(
         &mut self,
-        locations: Vec<GenerationalId<LocationId>>,
+        locations: &[GenerationalId<LocationId>],
     ) -> anyhow::Result<GenerationalId<StackTraceId>> {
         let locations = locations
-            .into_iter()
+            .iter()
             .map(|l| l.get(self.generation))
             .collect::<anyhow::Result<Vec<_>>>()?;
         let stacktrace = StackTrace { locations };
