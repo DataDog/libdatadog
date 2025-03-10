@@ -1832,7 +1832,6 @@ dependencies = [
  "hyper-rustls 0.27.3",
  "hyper-util",
  "indexmap 2.6.0",
- "lazy_static",
  "libc",
  "log",
  "maplit",

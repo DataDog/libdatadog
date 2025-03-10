@@ -29,7 +29,7 @@ pub(crate) fn get_container_regex() -> &'static Regex {
         Regex::new(&format!(
             r"({UUID_SOURCE}|{CONTAINER_SOURCE}|{TASK_SOURCE})(?:.scope)? *$"
         ))
-            .unwrap()
+        .unwrap()
     })
 }
 
@@ -41,7 +41,6 @@ fn parse_line(line: &str) -> Option<&str> {
         .and_then(|captures| get_container_regex().captures(captures.get(1).unwrap().as_str()))
         .map(|captures| captures.get(1).unwrap().as_str())
 }
-
 
 /// Extract container id contained in the cgroup file located at `cgroup_path`
 pub fn extract_container_id(cgroup_path: &Path) -> Result<String, CgroupFileParsingError> {

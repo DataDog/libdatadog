@@ -11,8 +11,8 @@ use hyper_rustls::ConfigBuilderExt;
 use rustls::ClientConfig;
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{Context, Poll};
 use std::sync::OnceLock;
+use std::task::{Context, Poll};
 
 #[cfg(unix)]
 pub mod uds;
