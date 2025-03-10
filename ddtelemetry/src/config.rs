@@ -37,7 +37,11 @@ fn endpoint_with_telemetry_path(
     direct_submission_enabled: bool,
 ) -> anyhow::Result<Endpoint> {
     let mut uri_parts = endpoint.url.into_parts();
-    if uri_parts.scheme.is_some() && uri_parts.scheme.as_ref().unwrap().as_str() != "file" {
+    if uri_parts
+        .scheme
+        .as_ref()
+        .is_some_and(|scheme| scheme.as_str() != "file")
+    {
         uri_parts.path_and_query = Some(PathAndQuery::from_static(
             if endpoint.api_key.is_some() && direct_submission_enabled {
                 DIRECT_TELEMETRY_URL_PATH
