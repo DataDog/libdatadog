@@ -2054,7 +2054,6 @@ dependencies = [
  "derive_more",
  "fnv",
  "hashbrown 0.14.5",
- "lazy_static",
  "mockito",
  "proptest",
  "protobuf",
