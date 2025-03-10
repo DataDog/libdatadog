@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 #[cfg(test)]
 mod tracing_integration_tests {
-    use data_pipeline::trace_exporter::TraceExporter;
-    use datadog_trace_utils::test_utils::create_test_json_span;
+    use data_pipeline::trace_exporter::{
+        TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
+    };
+    use datadog_trace_utils::span::v05::dict::SharedDict;
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
+    use datadog_trace_utils::test_utils::{create_test_json_span, create_test_v05_span};
     use serde_json::json;
     #[cfg(target_os = "linux")]
     use std::fs::Permissions;
@@ -27,6 +30,37 @@ mod tracing_integration_tests {
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
 
+        tinybytes::Bytes::from(encoded_data)
+    }
+
+    fn get_v05_trace_snapshot_test_payload() -> Bytes {
+        let mut dict = SharedDict::default();
+
+        let span_1 = create_test_v05_span(
+            1234,
+            12342,
+            12341,
+            1,
+            false,
+            &mut dict,
+            Some(vec![
+                ("_dd_metric1".to_string(), 1.1),
+                ("_dd_metric2".to_string(), 2.2),
+            ]),
+        );
+        let span_2 = create_test_v05_span(1234, 12343, 12341, 1, false, &mut dict, None);
+        let root_span = create_test_v05_span(
+            1234,
+            12341,
+            0,
+            0,
+            true,
+            &mut dict,
+            Some(vec![("_top_level".to_string(), 1.0)]),
+        );
+
+        let traces = (dict.dict(), vec![vec![span_1, span_2, root_span]]);
+        let encoded_data = rmp_serde::to_vec(&traces).unwrap();
         tinybytes::Bytes::from(encoded_data)
     }
 
@@ -68,6 +102,92 @@ mod tracing_integration_tests {
 
         test_agent
             .assert_snapshot("compare_v04_trace_snapshot_test")
+            .await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn compare_v04_to_v05_trace_snapshot_test() {
+        let relative_snapshot_path = "data-pipeline/tests/snapshots/";
+        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
+        let url = test_agent.get_base_uri().await;
+        let rate_param = "{\"service:test,env:test_env\": 0.5, \"service:test2,env:prod\": 0.2}";
+        test_agent
+            .start_session("compare_v04_to_v05_trace_snapshot_test", Some(rate_param))
+            .await;
+
+        let task_result = task::spawn_blocking(move || {
+            let trace_exporter = TraceExporter::builder()
+                .set_url(url.to_string().as_ref())
+                .set_language("test-lang")
+                .set_language_version("2.0")
+                .set_language_interpreter_vendor("vendor")
+                .set_language_interpreter("interpreter")
+                .set_tracer_version("1.0")
+                .set_env("test_env")
+                .set_service("test")
+                .set_query_params("test_session_token=compare_v04_to_v05_trace_snapshot_test")
+                .set_input_format(TraceExporterInputFormat::V04)
+                .set_output_format(TraceExporterOutputFormat::V05)
+                .build()
+                .expect("Unable to build TraceExporter");
+
+            let data = get_v04_trace_snapshot_test_payload();
+            let response = trace_exporter.send(data, 1);
+            let expected_response = format!("{{\"rate_by_service\": {}}}", rate_param);
+
+            assert!(response.is_ok());
+            assert_eq!(response.unwrap().body, expected_response)
+        })
+        .await;
+
+        assert!(task_result.is_ok());
+
+        test_agent
+            .assert_snapshot("compare_v04_to_v05_trace_snapshot_test")
+            .await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn compare_v05_trace_snapshot_test() {
+        let relative_snapshot_path = "data-pipeline/tests/snapshots/";
+        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
+        let url = test_agent.get_base_uri().await;
+        let rate_param = "{\"service:test,env:test_env\": 0.5, \"service:test2,env:prod\": 0.2}";
+        test_agent
+            .start_session("compare_v05_trace_snapshot_test", Some(rate_param))
+            .await;
+
+        let task_result = task::spawn_blocking(move || {
+            let trace_exporter = TraceExporter::builder()
+                .set_url(url.to_string().as_ref())
+                .set_language("test-lang")
+                .set_language_version("2.0")
+                .set_language_interpreter_vendor("vendor")
+                .set_language_interpreter("interpreter")
+                .set_tracer_version("1.0")
+                .set_env("test_env")
+                .set_service("test")
+                .set_query_params("test_session_token=compare_v05_trace_snapshot_test")
+                .set_input_format(TraceExporterInputFormat::V05)
+                .set_output_format(TraceExporterOutputFormat::V05)
+                .build()
+                .expect("Unable to build TraceExporter");
+
+            let data = get_v05_trace_snapshot_test_payload();
+            let response = trace_exporter.send(data, 1);
+            let expected_response = format!("{{\"rate_by_service\": {}}}", rate_param);
+
+            assert!(response.is_ok());
+            assert_eq!(response.unwrap().body, expected_response)
+        })
+        .await;
+
+        assert!(task_result.is_ok());
+
+        test_agent
+            .assert_snapshot("compare_v05_trace_snapshot_test")
             .await;
     }
 
