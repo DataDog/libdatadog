@@ -55,3 +55,8 @@ impl From<SystemTime> for Timespec {
         Self::from(datetime)
     }
 }
+
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
