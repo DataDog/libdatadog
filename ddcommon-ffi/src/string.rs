@@ -30,6 +30,7 @@ impl From<String> for StringWrapper {
 impl From<StringWrapper> for String {
     fn from(mut value: StringWrapper) -> Self {
         let msg = std::mem::take(&mut value.message);
+        #[allow(clippy::unwrap_used)]
         String::from_utf8(msg.into()).unwrap()
     }
 }
@@ -86,6 +87,7 @@ impl StringWrapperResult {
     pub fn unwrap(self) -> StringWrapper {
         match self {
             StringWrapperResult::Ok(s) => s,
+            #[allow(clippy::panic)]
             StringWrapperResult::Err(e) => panic!("{e}"),
         }
     }
