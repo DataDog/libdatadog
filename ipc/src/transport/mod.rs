@@ -66,6 +66,7 @@ where
             .poll_next(cx)
             .map(|res| match res {
                 Some(Ok(message)) => Some(
+                    #[allow(clippy::unwrap_used)]
                     this.channel_metadata
                         .lock()
                         .unwrap()
@@ -96,6 +97,7 @@ where
 
     fn start_send(self: Pin<&mut Self>, item: SinkItem) -> io::Result<()> {
         let this = self.project();
+        #[allow(clippy::unwrap_used)]
         let mut message = this.channel_metadata.lock().unwrap();
         let message = message.create_message(item)?;
 
