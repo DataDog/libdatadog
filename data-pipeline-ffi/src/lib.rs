@@ -4,3 +4,4 @@
 mod error;
 mod response;
 mod trace_exporter;
+mod ffi_logger;
