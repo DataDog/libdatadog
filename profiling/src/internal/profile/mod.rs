@@ -4,6 +4,8 @@
 #[cfg(test)]
 mod fuzz_tests;
 
+pub mod interning_api;
+
 use self::api::UpscalingInfo;
 use super::*;
 use crate::api;
@@ -15,6 +17,7 @@ use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::pprof::sliced_proto::*;
 use crate::serializer::CompressedProtobufSerializer;
 use anyhow::Context;
+use interning_api::Generation;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -32,6 +35,7 @@ pub struct Profile {
     owned_period: Option<owned_types::Period>,
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
+    generation: interning_api::Generation,
     labels: FxIndexSet<Label>,
     label_sets: FxIndexSet<LabelSet>,
     locations: FxIndexSet<Location>,
@@ -596,6 +600,7 @@ impl Profile {
             owned_sample_types,
             endpoints: Default::default(),
             functions: Default::default(),
+            generation: Generation::new(),
             labels: Default::default(),
             label_sets: Default::default(),
             locations: Default::default(),
