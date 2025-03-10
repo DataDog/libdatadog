@@ -55,8 +55,9 @@ int main(void) {
     }
   }
 
-  //   printf("Press any key to reset and drop...");
-  //   getchar();
+  // Having this printf here seems to trigger memory bloat and the rss doesn't go down at the end of the app;
+  // removing this printf makes this behavior go away for me
+  printf("Press any key to reset and drop...\n");
 
   ddog_prof_Profile_Result reset_result = ddog_prof_Profile_reset(profile, NULL);
   if (reset_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
