@@ -107,7 +107,7 @@ mod tests {
     lazy_static! {
         static ref IN_REGEX: Regex = Regex::new(r"in-\d+").unwrap();
         static ref CI_REGEX: Regex =
-            Regex::new(&format!(r"ci-{}", container_id::CONTAINER_REGEX.as_str())).unwrap();
+            Regex::new(&format!(r"ci-{}", container_id::get_container_regex().as_str())).unwrap();
     }
 
     /// The following test can only be run in isolation because of caching behaviour introduced

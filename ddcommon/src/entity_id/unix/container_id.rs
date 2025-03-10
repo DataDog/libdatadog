@@ -3,32 +3,45 @@
 
 //! This module provides functions to parse the container id from the cgroup file
 use super::CgroupFileParsingError;
-use lazy_static::lazy_static;
 use regex::Regex;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+use std::sync::OnceLock;
 
 const UUID_SOURCE: &str =
     r"[0-9a-f]{8}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{12}";
 const CONTAINER_SOURCE: &str = r"[0-9a-f]{64}";
 const TASK_SOURCE: &str = r"[0-9a-f]{32}-\d+";
 
-lazy_static! {
-    static ref LINE_REGEX: Regex = Regex::new(r"^\d+:[^:]*:(.+)$").unwrap();
-    pub static ref CONTAINER_REGEX: Regex = Regex::new(&format!(
-        r"({UUID_SOURCE}|{CONTAINER_SOURCE}|{TASK_SOURCE})(?:.scope)? *$"
-    ))
-    .unwrap();
+// TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
+static LINE_REGEX: OnceLock<Regex> = OnceLock::new();
+static CONTAINER_REGEX: OnceLock<Regex> = OnceLock::new();
+
+fn get_line_regex() -> &'static Regex {
+    #[allow(clippy::unwrap_used)]
+    LINE_REGEX.get_or_init(|| Regex::new(r"^\d+:[^:]*:(.+)$").unwrap())
+}
+
+pub(crate) fn get_container_regex() -> &'static Regex {
+    #[allow(clippy::unwrap_used)]
+    CONTAINER_REGEX.get_or_init(|| {
+        Regex::new(&format!(
+            r"({UUID_SOURCE}|{CONTAINER_SOURCE}|{TASK_SOURCE})(?:.scope)? *$"
+        ))
+            .unwrap()
+    })
 }
 
 fn parse_line(line: &str) -> Option<&str> {
     // unwrap is OK since if regex matches then the groups must exist
-    LINE_REGEX
+    #[allow(clippy::unwrap_used)]
+    get_line_regex()
         .captures(line)
-        .and_then(|captures| CONTAINER_REGEX.captures(captures.get(1).unwrap().as_str()))
+        .and_then(|captures| get_container_regex().captures(captures.get(1).unwrap().as_str()))
         .map(|captures| captures.get(1).unwrap().as_str())
 }
+
 
 /// Extract container id contained in the cgroup file located at `cgroup_path`
 pub fn extract_container_id(cgroup_path: &Path) -> Result<String, CgroupFileParsingError> {

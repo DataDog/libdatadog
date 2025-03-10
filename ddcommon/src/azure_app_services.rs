@@ -102,6 +102,7 @@ impl AzureMetadata {
     }
 
     fn extract_resource_group(s: Option<String>) -> Option<String> {
+        #[allow(clippy::unwrap_used)]
         let re: Regex = Regex::new(r".+\+(.+)-.+webspace(-Linux)?").unwrap();
 
         s.as_ref().and_then(|text| {
