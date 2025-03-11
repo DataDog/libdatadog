@@ -106,10 +106,7 @@ fn read_attributes_map(
 #[derive(Debug, PartialEq)]
 enum AttributeAnyKey {
     Type,
-    StringValue,
-    BoolValue,
-    IntValue,
-    DoubleValue,
+    SingleValue(AttributeArrayKey),
     ArrayValue,
 }
 
@@ -119,21 +116,20 @@ impl FromStr for AttributeAnyKey {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "type" => Ok(AttributeAnyKey::Type),
-            "string_value" => Ok(AttributeAnyKey::StringValue),
-            "bool_value" => Ok(AttributeAnyKey::BoolValue),
-            "int_value" => Ok(AttributeAnyKey::IntValue),
-            "double_value" => Ok(AttributeAnyKey::DoubleValue),
             "array_value" => Ok(AttributeAnyKey::ArrayValue),
-            _ => Err(DecodeError::InvalidFormat(
-                format!("Invalid attribute any key: {}", s).to_owned(),
-            )),
+            s => {
+                let r = AttributeArrayKey::from_str(s);
+                match r {
+                    Ok(key) => Ok(AttributeAnyKey::SingleValue(key)),
+                    Err(e) => Err(e),
+                }
+            }
         }
     }
 }
 
 pub fn read_boolean_bytes(buf: &mut Bytes) -> Result<bool, ValueReadError> {
     rmp::decode::read_bool(unsafe { buf.as_mut_slice() })
-    // read_number(unsafe { buf.as_mut_slice() }, false)?.try_into()
 }
 
 fn decode_attribute_any(buf: &mut Bytes) -> Result<AttributeAnyValueBytes, DecodeError> {
@@ -153,25 +149,10 @@ fn decode_attribute_any(buf: &mut Bytes) -> Result<AttributeAnyValueBytes, Decod
     for _ in 0..attribute_size {
         match read_string_ref(unsafe { buf.as_mut_slice() })?.parse::<AttributeAnyKey>()? {
             AttributeAnyKey::Type => attribute_type = Some(read_number_bytes(buf)?),
-            AttributeAnyKey::StringValue => {
-                attribute = Some(AttributeAnyValueBytes::String(read_string_bytes(buf)?))
-            }
-            AttributeAnyKey::BoolValue => {
-                let boolean = read_boolean_bytes(buf);
-                if let Ok(value) = boolean {
-                    match value {
-                        true => attribute = Some(AttributeAnyValueBytes::Boolean(true)),
-                        false => attribute = Some(AttributeAnyValueBytes::Boolean(false)),
-                    }
-                } else {
-                    return Err(DecodeError::InvalidType("Invalid boolean field".to_owned()));
-                }
-            }
-            AttributeAnyKey::IntValue => {
-                attribute = Some(AttributeAnyValueBytes::Integer(read_number_bytes(buf)?))
-            }
-            AttributeAnyKey::DoubleValue => {
-                attribute = Some(AttributeAnyValueBytes::Double(read_number_bytes(buf)?))
+            AttributeAnyKey::SingleValue(key) => {
+                attribute = Some(AttributeAnyValueBytes::SingleValue(get_attribute_from_key(
+                    buf, key,
+                )?))
             }
             AttributeAnyKey::ArrayValue => {
                 attribute = Some(AttributeAnyValueBytes::Array(read_attributes_array(buf)?))
@@ -200,10 +181,7 @@ fn decode_attribute_any(buf: &mut Bytes) -> Result<AttributeAnyValueBytes, Decod
 
 fn type_from_attribute(attribute: &AttributeAnyValueBytes) -> u8 {
     match attribute {
-        AttributeAnyValueBytes::String(_) => 0,
-        AttributeAnyValueBytes::Boolean(_) => 1,
-        AttributeAnyValueBytes::Integer(_) => 2,
-        AttributeAnyValueBytes::Double(_) => 3,
+        AttributeAnyValueBytes::SingleValue(value) => type_from_attribute_array(value),
         AttributeAnyValueBytes::Array(_) => 4,
     }
 }
@@ -252,9 +230,38 @@ impl FromStr for AttributeArrayKey {
             "int_value" => Ok(AttributeArrayKey::IntValue),
             "double_value" => Ok(AttributeArrayKey::DoubleValue),
             _ => Err(DecodeError::InvalidFormat(
-                format!("Invalid attribute array key: {}", s).to_owned(),
+                format!("Invalid attribute key: {}", s).to_owned(),
             )),
         }
+    }
+}
+
+fn get_attribute_from_key(
+    buf: &mut Bytes,
+    key: AttributeArrayKey,
+) -> Result<AttributeArrayValueBytes, DecodeError> {
+    match key {
+        AttributeArrayKey::StringValue => {
+            Ok(AttributeArrayValueBytes::String(read_string_bytes(buf)?))
+        }
+        AttributeArrayKey::BoolValue => {
+            let boolean = read_boolean_bytes(buf);
+            if let Ok(value) = boolean {
+                match value {
+                    true => Ok(AttributeArrayValueBytes::Boolean(true)),
+                    false => Ok(AttributeArrayValueBytes::Boolean(false)),
+                }
+            } else {
+                return Err(DecodeError::InvalidType("Invalid boolean field".to_owned()));
+            }
+        }
+        AttributeArrayKey::IntValue => {
+            Ok(AttributeArrayValueBytes::Integer(read_number_bytes(buf)?))
+        }
+        AttributeArrayKey::DoubleValue => {
+            Ok(AttributeArrayValueBytes::Double(read_number_bytes(buf)?))
+        }
+        _ => Err(DecodeError::InvalidFormat("Invalid attribute".to_owned())),
     }
 }
 
@@ -278,26 +285,7 @@ fn decode_attribute_array(
     for _ in 0..attribute_size {
         match read_string_ref(unsafe { buf.as_mut_slice() })?.parse::<AttributeArrayKey>()? {
             AttributeArrayKey::Type => attribute_type = Some(read_number_bytes(buf)?),
-            AttributeArrayKey::StringValue => {
-                attribute = Some(AttributeArrayValueBytes::String(read_string_bytes(buf)?))
-            }
-            AttributeArrayKey::BoolValue => {
-                let boolean = read_boolean_bytes(buf);
-                if let Ok(value) = boolean {
-                    match value {
-                        true => attribute = Some(AttributeArrayValueBytes::Boolean(true)),
-                        false => attribute = Some(AttributeArrayValueBytes::Boolean(false)),
-                    }
-                } else {
-                    return Err(DecodeError::InvalidType("Invalid boolean field".to_owned()));
-                }
-            }
-            AttributeArrayKey::IntValue => {
-                attribute = Some(AttributeArrayValueBytes::Integer(read_number_bytes(buf)?))
-            }
-            AttributeArrayKey::DoubleValue => {
-                attribute = Some(AttributeArrayValueBytes::Double(read_number_bytes(buf)?))
-            }
+            key => attribute = Some(get_attribute_from_key(buf, key)?),
         }
     }
 
@@ -373,19 +361,19 @@ mod tests {
         );
         assert_eq!(
             AttributeAnyKey::from_str("string_value").unwrap(),
-            AttributeAnyKey::StringValue
+            AttributeAnyKey::SingleValue(AttributeArrayKey::StringValue)
         );
         assert_eq!(
             AttributeAnyKey::from_str("bool_value").unwrap(),
-            AttributeAnyKey::BoolValue
+            AttributeAnyKey::SingleValue(AttributeArrayKey::BoolValue)
         );
         assert_eq!(
             AttributeAnyKey::from_str("int_value").unwrap(),
-            AttributeAnyKey::IntValue
+            AttributeAnyKey::SingleValue(AttributeArrayKey::IntValue)
         );
         assert_eq!(
             AttributeAnyKey::from_str("double_value").unwrap(),
-            AttributeAnyKey::DoubleValue
+            AttributeAnyKey::SingleValue(AttributeArrayKey::DoubleValue)
         );
         assert_eq!(
             AttributeAnyKey::from_str("array_value").unwrap(),
