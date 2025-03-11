@@ -85,8 +85,9 @@ impl From<TraceExporterError> for ExporterError {
                 AgentErrorKind::EmptyResponse => ExporterErrorCode::HttpEmptyBody,
             },
             TraceExporterError::Builder(e) => match e {
-                BuilderErrorKind::InvalidUri => ExporterErrorCode::InvalidUrl,
+                BuilderErrorKind::InvalidUri(_) => ExporterErrorCode::InvalidUrl,
                 BuilderErrorKind::InvalidTelemetryConfig => ExporterErrorCode::InvalidArgument,
+                BuilderErrorKind::InvalidConfiguration(_) => ExporterErrorCode::InvalidArgument,
             },
             TraceExporterError::Deserialization(_) => ExporterErrorCode::Serde,
             TraceExporterError::Io(e) => match e.kind() {
@@ -119,7 +120,7 @@ impl From<TraceExporterError> for ExporterError {
                     ExporterErrorCode::HttpUnknown
                 }
             }
-            TraceExporterError::Serde(_) => ExporterErrorCode::Serde,
+            TraceExporterError::Serialization(_) => ExporterErrorCode::Serde,
         };
         ExporterError::new(code, &value.to_string())
     }

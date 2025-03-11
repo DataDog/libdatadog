@@ -6,12 +6,15 @@ pub mod error;
 pub mod metrics;
 use crate::telemetry::error::TelemetryError;
 use crate::telemetry::metrics::Metrics;
-use datadog_trace_utils::trace_utils::SendDataResult;
+use datadog_trace_utils::{
+    send_with_retry::{SendWithRetryError, SendWithRetryResult},
+    trace_utils::SendDataResult,
+};
 use ddcommon::tag::Tag;
 use ddtelemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
 };
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 use tokio::task::JoinHandle;
 
 /// Structure to build a Telemetry client.
@@ -108,13 +111,83 @@ pub struct TelemetryClient {
     handle: JoinHandle<()>,
 }
 
+/// Telemetry describing the sending of a trace payload
+/// It can be produced from a [`SendWithRetryResult`] or from a [`SendDataResult`].
+#[derive(PartialEq, Debug, Default)]
+pub struct SendPayloadTelemetry {
+    requests_count: u64,
+    errors_network: u64,
+    errors_timeout: u64,
+    errors_status_code: u64,
+    bytes_sent: u64,
+    chunks_sent: u64,
+    chunks_dropped: u64,
+    responses_count_per_code: HashMap<u16, u64>,
+}
+
+impl From<&SendDataResult> for SendPayloadTelemetry {
+    fn from(value: &SendDataResult) -> Self {
+        Self {
+            requests_count: value.requests_count,
+            errors_network: value.errors_network,
+            errors_timeout: value.errors_timeout,
+            errors_status_code: value.errors_status_code,
+            bytes_sent: value.bytes_sent,
+            chunks_sent: value.chunks_sent,
+            chunks_dropped: value.chunks_dropped,
+            responses_count_per_code: value.responses_count_per_code.clone(),
+        }
+    }
+}
+
+impl SendPayloadTelemetry {
+    /// Create a [`SendPayloadTelemetry`] from a [`SendWithRetryResult`].
+    pub fn from_retry_result(value: &SendWithRetryResult, bytes_sent: u64, chunks: u64) -> Self {
+        let mut telemetry = Self::default();
+        match value {
+            Ok((response, attempts)) => {
+                telemetry.chunks_sent = chunks;
+                telemetry.bytes_sent = bytes_sent;
+                telemetry
+                    .responses_count_per_code
+                    .insert(response.status().into(), 1);
+                telemetry.requests_count = *attempts as u64;
+            }
+            Err(err) => {
+                telemetry.chunks_dropped = chunks;
+                match err {
+                    SendWithRetryError::Http(response, attempts) => {
+                        telemetry.errors_status_code = 1;
+                        telemetry
+                            .responses_count_per_code
+                            .insert(response.status().into(), 1);
+                        telemetry.requests_count = *attempts as u64;
+                    }
+                    SendWithRetryError::Timeout(attempts) => {
+                        telemetry.errors_timeout = 1;
+                        telemetry.requests_count = *attempts as u64;
+                    }
+                    SendWithRetryError::Network(_, attempts) => {
+                        telemetry.errors_network = 1;
+                        telemetry.requests_count = *attempts as u64;
+                    }
+                    SendWithRetryError::Build(attempts) => {
+                        telemetry.requests_count = *attempts as u64;
+                    }
+                }
+            }
+        };
+        telemetry
+    }
+}
+
 impl TelemetryClient {
     /// Sends metrics to the agent using a telemetry worker handle.
     ///
     /// # Arguments:
     ///
     /// * `telemetry_handle`: telemetry worker handle used to enqueue metrics.
-    pub fn send(&self, data: &SendDataResult) -> Result<(), TelemetryError> {
+    pub fn send(&self, data: &SendPayloadTelemetry) -> Result<(), TelemetryError> {
         if data.requests_count > 0 {
             let key = self.metrics.get(metrics::MetricKind::ApiRequest);
             self.worker
@@ -188,10 +261,23 @@ impl TelemetryClient {
 mod tests {
     use httpmock::Method::POST;
     use httpmock::MockServer;
+    use hyper::{Response, StatusCode};
     use regex::Regex;
-    use std::collections::HashMap;
 
     use super::*;
+
+    async fn get_test_client(url: &str) -> TelemetryClient {
+        TelemetryClientBuilder::default()
+            .set_service_name("test_service")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_url(url)
+            .set_hearbeat(100)
+            .build()
+            .await
+            .unwrap()
+    }
 
     #[test]
     fn builder_test() {
@@ -244,25 +330,12 @@ mod tests {
             })
             .await;
 
-        let result = TelemetryClientBuilder::default()
-            .set_service_name("test_service")
-            .set_language("test_language")
-            .set_language_version("test_language_version")
-            .set_tracer_version("test_tracer_version")
-            .set_url(&server.url("/"))
-            .set_hearbeat(100)
-            .build()
-            .await;
-
-        assert!(result.is_ok());
-
-        let data = SendDataResult {
-            last_result: Ok(hyper::Response::default()),
+        let data = SendPayloadTelemetry {
             bytes_sent: 1,
             ..Default::default()
         };
 
-        let client = result.unwrap();
+        let client = get_test_client(&server.url("/")).await;
 
         client.start().await;
         let _ = client.send(&data);
@@ -283,25 +356,12 @@ mod tests {
             })
             .await;
 
-        let result = TelemetryClientBuilder::default()
-            .set_service_name("test_service")
-            .set_language("test_language")
-            .set_language_version("test_language_version")
-            .set_tracer_version("test_tracer_version")
-            .set_url(&server.url("/"))
-            .set_hearbeat(100)
-            .build()
-            .await;
-
-        assert!(result.is_ok());
-
-        let data = SendDataResult {
-            last_result: Ok(hyper::Response::default()),
+        let data = SendPayloadTelemetry {
             requests_count: 1,
             ..Default::default()
         };
 
-        let client = result.unwrap();
+        let client = get_test_client(&server.url("/")).await;
 
         client.start().await;
         let _ = client.send(&data);
@@ -322,25 +382,12 @@ mod tests {
             })
             .await;
 
-        let result = TelemetryClientBuilder::default()
-            .set_service_name("test_service")
-            .set_language("test_language")
-            .set_language_version("test_language_version")
-            .set_tracer_version("test_tracer_version")
-            .set_url(&server.url("/"))
-            .set_hearbeat(100)
-            .build()
-            .await;
-
-        assert!(result.is_ok());
-
-        let data = SendDataResult {
-            last_result: Ok(hyper::Response::default()),
+        let data = SendPayloadTelemetry {
             responses_count_per_code: HashMap::from([(200, 1)]),
             ..Default::default()
         };
 
-        let client = result.unwrap();
+        let client = get_test_client(&server.url("/")).await;
 
         client.start().await;
         let _ = client.send(&data);
@@ -361,25 +408,12 @@ mod tests {
             })
             .await;
 
-        let result = TelemetryClientBuilder::default()
-            .set_service_name("test_service")
-            .set_language("test_language")
-            .set_language_version("test_language_version")
-            .set_tracer_version("test_tracer_version")
-            .set_url(&server.url("/"))
-            .set_hearbeat(100)
-            .build()
-            .await;
-
-        assert!(result.is_ok());
-
-        let data = SendDataResult {
-            last_result: Ok(hyper::Response::default()),
+        let data = SendPayloadTelemetry {
             errors_timeout: 1,
             ..Default::default()
         };
 
-        let client = result.unwrap();
+        let client = get_test_client(&server.url("/")).await;
 
         client.start().await;
         let _ = client.send(&data);
@@ -400,25 +434,12 @@ mod tests {
             })
             .await;
 
-        let result = TelemetryClientBuilder::default()
-            .set_service_name("test_service")
-            .set_language("test_language")
-            .set_language_version("test_language_version")
-            .set_tracer_version("test_tracer_version")
-            .set_url(&server.url("/"))
-            .set_hearbeat(100)
-            .build()
-            .await;
-
-        assert!(result.is_ok());
-
-        let data = SendDataResult {
-            last_result: Ok(hyper::Response::default()),
+        let data = SendPayloadTelemetry {
             errors_network: 1,
             ..Default::default()
         };
 
-        let client = result.unwrap();
+        let client = get_test_client(&server.url("/")).await;
 
         client.start().await;
         let _ = client.send(&data);
@@ -439,25 +460,12 @@ mod tests {
             })
             .await;
 
-        let result = TelemetryClientBuilder::default()
-            .set_service_name("test_service")
-            .set_language("test_language")
-            .set_language_version("test_language_version")
-            .set_tracer_version("test_tracer_version")
-            .set_url(&server.url("/"))
-            .set_hearbeat(100)
-            .build()
-            .await;
-
-        assert!(result.is_ok());
-
-        let data = SendDataResult {
-            last_result: Ok(hyper::Response::default()),
+        let data = SendPayloadTelemetry {
             errors_status_code: 1,
             ..Default::default()
         };
 
-        let client = result.unwrap();
+        let client = get_test_client(&server.url("/")).await;
 
         client.start().await;
         let _ = client.send(&data);
@@ -467,7 +475,7 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn errors_chunks_sent_test() {
+    async fn chunks_sent_test() {
         let payload = Regex::new(r#""metric":"trace_chunk_sent","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
         let server = MockServer::start_async().await;
 
@@ -478,25 +486,12 @@ mod tests {
             })
             .await;
 
-        let result = TelemetryClientBuilder::default()
-            .set_service_name("test_service")
-            .set_language("test_language")
-            .set_language_version("test_language_version")
-            .set_tracer_version("test_tracer_version")
-            .set_url(&server.url("/"))
-            .set_hearbeat(100)
-            .build()
-            .await;
-
-        assert!(result.is_ok());
-
-        let data = SendDataResult {
-            last_result: Ok(hyper::Response::default()),
+        let data = SendPayloadTelemetry {
             chunks_sent: 1,
             ..Default::default()
         };
 
-        let client = result.unwrap();
+        let client = get_test_client(&server.url("/")).await;
 
         client.start().await;
         let _ = client.send(&data);
@@ -506,7 +501,7 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn errors_chunks_dropped_test() {
+    async fn chunks_dropped_test() {
         let payload = Regex::new(r#""metric":"trace_chunk_dropped","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
         let server = MockServer::start_async().await;
 
@@ -517,30 +512,131 @@ mod tests {
             })
             .await;
 
-        let result = TelemetryClientBuilder::default()
-            .set_service_name("test_service")
-            .set_language("test_language")
-            .set_language_version("test_language_version")
-            .set_tracer_version("test_tracer_version")
-            .set_url(&server.url("/"))
-            .set_hearbeat(100)
-            .build()
-            .await;
-
-        assert!(result.is_ok());
-
-        let data = SendDataResult {
-            last_result: Ok(hyper::Response::default()),
+        let data = SendPayloadTelemetry {
             chunks_dropped: 1,
             ..Default::default()
         };
 
-        let client = result.unwrap();
+        let client = get_test_client(&server.url("/")).await;
 
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
         telemetry_srv.assert_hits_async(1).await;
+    }
+
+    #[test]
+    fn telemetry_from_ok_response_test() {
+        let result = Ok((Response::default(), 3));
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5);
+        assert_eq!(
+            telemetry,
+            SendPayloadTelemetry {
+                bytes_sent: 4,
+                chunks_sent: 5,
+                requests_count: 3,
+                responses_count_per_code: HashMap::from([(200, 1)]),
+                ..Default::default()
+            }
+        )
+    }
+
+    #[test]
+    fn telemetry_from_request_error_test() {
+        let mut error_response = Response::default();
+        *error_response.status_mut() = StatusCode::BAD_REQUEST;
+        let result = Err(SendWithRetryError::Http(error_response, 5));
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
+        assert_eq!(
+            telemetry,
+            SendPayloadTelemetry {
+                chunks_dropped: 2,
+                requests_count: 5,
+                errors_status_code: 1,
+                responses_count_per_code: HashMap::from([(400, 1)]),
+                ..Default::default()
+            }
+        )
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn telemetry_from_network_error_test() {
+        // Create an hyper error by calling an undefined service
+        let hyper_error = hyper::Client::new()
+            .get(hyper::Uri::from_static("localhost:12345"))
+            .await
+            .unwrap_err();
+
+        let result = Err(SendWithRetryError::Network(hyper_error, 5));
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
+        assert_eq!(
+            telemetry,
+            SendPayloadTelemetry {
+                chunks_dropped: 2,
+                requests_count: 5,
+                errors_network: 1,
+                ..Default::default()
+            }
+        )
+    }
+
+    #[test]
+    fn telemetry_from_timeout_error_test() {
+        let result = Err(SendWithRetryError::Timeout(5));
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
+        assert_eq!(
+            telemetry,
+            SendPayloadTelemetry {
+                chunks_dropped: 2,
+                requests_count: 5,
+                errors_timeout: 1,
+                ..Default::default()
+            }
+        )
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn telemetry_from_build_error_test() {
+        let result = Err(SendWithRetryError::Build(5));
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
+        assert_eq!(
+            telemetry,
+            SendPayloadTelemetry {
+                chunks_dropped: 2,
+                requests_count: 5,
+                ..Default::default()
+            }
+        )
+    }
+
+    #[test]
+    fn telemetry_from_send_data_result_test() {
+        let result = SendDataResult {
+            requests_count: 10,
+            responses_count_per_code: HashMap::from([(200, 3)]),
+            errors_timeout: 1,
+            errors_network: 2,
+            errors_status_code: 3,
+            bytes_sent: 4,
+            chunks_sent: 5,
+            chunks_dropped: 6,
+            ..Default::default()
+        };
+
+        let expected_telemetry = SendPayloadTelemetry {
+            requests_count: 10,
+            errors_network: 2,
+            errors_timeout: 1,
+            errors_status_code: 3,
+            bytes_sent: 4,
+            chunks_sent: 5,
+            chunks_dropped: 6,
+            responses_count_per_code: HashMap::from([(200, 3)]),
+        };
+
+        assert_eq!(SendPayloadTelemetry::from(&result), expected_telemetry)
     }
 
     #[cfg_attr(miri, ignore)]
@@ -565,8 +661,6 @@ mod tests {
             .set_runtime_id("foo")
             .build()
             .await;
-
-        assert!(result.is_ok());
 
         let client = result.unwrap();
 

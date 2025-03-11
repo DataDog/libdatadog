@@ -7,7 +7,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::send_data::SendData;
-use crate::span_v04::Span;
+use crate::span::v05;
+use crate::span::v05::dict::SharedDict;
+use crate::span::SpanBytes;
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use datadog_trace_protobuf::pb;
@@ -23,8 +25,8 @@ pub fn create_test_no_alloc_span(
     parent_id: u64,
     start: i64,
     is_top_level: bool,
-) -> Span {
-    let mut span = Span {
+) -> SpanBytes {
+    let mut span = SpanBytes {
         trace_id,
         span_id,
         service: BytesString::from_slice("test-service".as_ref()).unwrap(),
@@ -212,13 +214,93 @@ pub fn create_test_gcp_json_span(
     )
 }
 
+pub fn create_test_v05_span(
+    trace_id: u64,
+    span_id: u64,
+    parent_id: u64,
+    start: i64,
+    is_top_level: bool,
+    dict: &mut SharedDict,
+    metrics: Option<Vec<(String, f64)>>,
+) -> v05::Span {
+    let mut meta = HashMap::from([
+        (
+            dict.get_or_insert(&BytesString::from("service")).unwrap(),
+            dict.get_or_insert(&BytesString::from("test-service"))
+                .unwrap(),
+        ),
+        (
+            dict.get_or_insert(&BytesString::from("env")).unwrap(),
+            dict.get_or_insert(&BytesString::from("test-env")).unwrap(),
+        ),
+        (
+            dict.get_or_insert(&BytesString::from("runtime-id"))
+                .unwrap(),
+            dict.get_or_insert(&BytesString::from("test-runtime-id-value"))
+                .unwrap(),
+        ),
+    ]);
+
+    if is_top_level {
+        meta.extend([
+            (
+                dict.get_or_insert(&BytesString::from("functionname"))
+                    .unwrap(),
+                dict.get_or_insert(&BytesString::from("dummy_function_name"))
+                    .unwrap(),
+            ),
+            (
+                dict.get_or_insert(&BytesString::from("_dd.origin"))
+                    .unwrap(),
+                dict.get_or_insert(&BytesString::from("cloudfunction"))
+                    .unwrap(),
+            ),
+            (
+                dict.get_or_insert(&BytesString::from("origin")).unwrap(),
+                dict.get_or_insert(&BytesString::from("cloudfunction"))
+                    .unwrap(),
+            ),
+        ]);
+    }
+    v05::Span {
+        service: dict
+            .get_or_insert(&BytesString::from("test-service"))
+            .unwrap(),
+        name: dict.get_or_insert(&BytesString::from("test_name")).unwrap(),
+        resource: dict
+            .get_or_insert(&BytesString::from("test-resource"))
+            .unwrap(),
+        trace_id,
+        span_id,
+        parent_id,
+        start,
+        duration: 5,
+        error: 0,
+        meta,
+        metrics: if let Some(metrics) = metrics {
+            metrics
+                .into_iter()
+                .map(|(k, v)| (dict.get_or_insert(&BytesString::from(k)).unwrap(), v))
+                .collect()
+        } else {
+            HashMap::new()
+        },
+        r#type: if is_top_level {
+            dict.get_or_insert(&BytesString::from("web")).unwrap()
+        } else {
+            dict.get_or_insert(&BytesString::from("")).unwrap()
+        },
+    }
+}
+
 pub fn create_test_json_span(
     trace_id: u64,
     span_id: u64,
     parent_id: u64,
     start: i64,
+    is_top_level: bool,
 ) -> serde_json::Value {
-    json!(
+    let mut span = json!(
         {
             "trace_id": trace_id,
             "span_id": span_id,
@@ -237,7 +319,32 @@ pub fn create_test_json_span(
             "metrics": {},
             "meta_struct": {},
         }
-    )
+    );
+
+    if is_top_level {
+        let additional_meta = json!(
+            {
+                "functionname": "dummy_function_name",
+                "_dd.origin": "cloudfunction",
+                "origin": "cloudfunction",
+            }
+        );
+        span.get_mut("meta")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .extend(additional_meta.as_object().unwrap().clone());
+
+        span["type"] = json!("serverless");
+
+        span["metrics"] = json!(
+            {
+                "_top_level": 1.0,
+            }
+        );
+    }
+
+    span
 }
 
 /// This is a helper function for observing if a httpmock object has been "hit" the expected number

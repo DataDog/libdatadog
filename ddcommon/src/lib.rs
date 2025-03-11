@@ -18,17 +18,33 @@ pub mod cstr;
 pub mod config;
 pub mod rate_limiter;
 pub mod tag;
+pub mod tracer_metadata;
 
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
     use hyper::{header::HeaderName, http::HeaderValue};
+
+    // These strings are defined separately to be used in context where &str are used to represent
+    // headers (e.g. SendData) while keeping a single source of truth.
+    pub const DATADOG_SEND_REAL_HTTP_STATUS_STR: &str = "datadog-send-real-http-status";
+    pub const DATADOG_TRACE_COUNT_STR: &str = "x-datadog-trace-count";
+    pub const APPLICATION_MSGPACK_STR: &str = "application/msgpack";
+    pub const APPLICATION_PROTOBUF_STR: &str = "application/x-protobuf";
+
     pub const DATADOG_CONTAINER_ID: HeaderName = HeaderName::from_static("datadog-container-id");
     pub const DATADOG_ENTITY_ID: HeaderName = HeaderName::from_static("datadog-entity-id");
     pub const DATADOG_EXTERNAL_ENV: HeaderName = HeaderName::from_static("datadog-external-env");
     pub const DATADOG_TRACE_COUNT: HeaderName = HeaderName::from_static("x-datadog-trace-count");
+    /// Signal to the agent to send 429 responses when a payload is dropped
+    /// If this is not set then the agent will always return a 200 regardless if the payload is
+    /// dropped.
+    pub const DATADOG_SEND_REAL_HTTP_STATUS: HeaderName =
+        HeaderName::from_static(DATADOG_SEND_REAL_HTTP_STATUS_STR);
     pub const DATADOG_API_KEY: HeaderName = HeaderName::from_static("dd-api-key");
     pub const APPLICATION_JSON: HeaderValue = HeaderValue::from_static("application/json");
-    pub const APPLICATION_MSGPACK: HeaderValue = HeaderValue::from_static("application/msgpack");
+    pub const APPLICATION_MSGPACK: HeaderValue = HeaderValue::from_static(APPLICATION_MSGPACK_STR);
+    pub const APPLICATION_PROTOBUF: HeaderValue =
+        HeaderValue::from_static(APPLICATION_PROTOBUF_STR);
     pub const X_DATADOG_TEST_SESSION_TOKEN: HeaderName =
         HeaderName::from_static("x-datadog-test-session-token");
 }

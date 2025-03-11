@@ -83,7 +83,7 @@ pub struct ConfigFetcherState<S> {
     pub expire_unused_files: bool,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ConfigFetcherStateStats {
     pub active_files: u32,
 }
@@ -855,7 +855,7 @@ pub mod tests {
         assert_eq!(state.encoded_capabilities.len(), 4);
         assert_eq!(
             state.encoded_capabilities,
-            (2u32 | 1 << 24 | 1 << 31).to_be_bytes()
+            (2u32 | (1 << 24) | (1 << 31)).to_be_bytes()
         );
     }
 }

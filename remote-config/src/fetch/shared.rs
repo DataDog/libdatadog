@@ -140,7 +140,7 @@ where
     run_id: Arc<RunnersGeneration>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct RefcountingStorageStats {
     pub inactive_files: u32,
     pub fetcher: ConfigFetcherStateStats,

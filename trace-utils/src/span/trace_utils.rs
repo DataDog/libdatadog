@@ -3,10 +3,8 @@
 
 //! Trace-utils functionalities implementation for tinybytes based spans
 
+use super::{Span, SpanText};
 use std::collections::HashMap;
-use tinybytes::BytesString;
-
-use super::Span;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -15,7 +13,10 @@ const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
-fn set_top_level_span(span: &mut Span, is_top_level: bool) {
+fn set_top_level_span<'a, T>(span: &mut Span<T>, is_top_level: bool)
+where
+    T: SpanText + From<&'a str>,
+{
     if is_top_level {
         span.metrics.insert(TOP_LEVEL_KEY.into(), 1.0);
     } else {
@@ -29,17 +30,21 @@ fn set_top_level_span(span: &mut Span, is_top_level: bool) {
 ///   - OR its parent is unknown (other part of the code, distributed trace)
 ///   - OR its parent belongs to another service (in that case it's a "local root" being the highest
 ///     ancestor of other spans belonging to this service and attached to it).
-pub fn compute_top_level_span(trace: &mut [Span]) {
-    let mut span_id_to_service: HashMap<u64, BytesString> = HashMap::new();
+pub fn compute_top_level_span<'a, T>(trace: &mut [Span<T>])
+where
+    T: SpanText + Clone + From<&'a str>,
+{
+    let mut span_id_to_service: HashMap<u64, T> = HashMap::new();
     for span in trace.iter() {
         span_id_to_service.insert(span.span_id, span.service.clone());
     }
     for span in trace.iter_mut() {
-        if span.parent_id == 0 {
+        let parent_id = span.parent_id;
+        if parent_id == 0 {
             set_top_level_span(span, true);
             continue;
         }
-        match span_id_to_service.get(&span.parent_id) {
+        match span_id_to_service.get(&parent_id) {
             Some(parent_span_service) => {
                 if !parent_span_service.eq(&span.service) {
                     // parent is not in the same service
@@ -55,7 +60,7 @@ pub fn compute_top_level_span(trace: &mut [Span]) {
 }
 
 /// Return true if the span has a top level key set
-pub fn has_top_level(span: &Span) -> bool {
+pub fn has_top_level<T: SpanText>(span: &Span<T>) -> bool {
     span.metrics
         .get(TRACER_TOP_LEVEL_KEY)
         .is_some_and(|v| *v == 1.0)
@@ -63,7 +68,7 @@ pub fn has_top_level(span: &Span) -> bool {
 }
 
 /// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
-pub fn is_measured(span: &Span) -> bool {
+pub fn is_measured<T: SpanText>(span: &Span<T>) -> bool {
     span.metrics.get(MEASURED_KEY).is_some_and(|v| *v == 1.0)
 }
 
@@ -72,7 +77,7 @@ pub fn is_measured(span: &Span) -> bool {
 /// When incomplete, a partial snapshot has a metric _dd.partial_version which is a positive
 /// integer. The metric usually increases each time a new version of the same span is sent by
 /// the tracer
-pub fn is_partial_snapshot(span: &Span) -> bool {
+pub fn is_partial_snapshot<T: SpanText>(span: &Span<T>) -> bool {
     span.metrics
         .get(PARTIAL_VERSION_KEY)
         .is_some_and(|v| *v >= 0.0)
@@ -81,6 +86,7 @@ pub fn is_partial_snapshot(span: &Span) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::span::SpanBytes;
 
     fn create_test_span(
         trace_id: u64,
@@ -88,8 +94,8 @@ mod tests {
         parent_id: u64,
         start: i64,
         is_top_level: bool,
-    ) -> Span {
-        let mut span = Span {
+    ) -> SpanBytes {
+        let mut span = SpanBytes {
             trace_id,
             span_id,
             service: "test-service".into(),

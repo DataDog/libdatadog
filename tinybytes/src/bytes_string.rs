@@ -114,6 +114,11 @@ impl BytesString {
     pub fn copy_to_string(&self) -> String {
         self.as_str().to_string()
     }
+
+    /// Returns `true` if the underlying bytes are empty.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
 }
 
 impl Default for BytesString {
@@ -155,6 +160,12 @@ impl hash::Hash for BytesString {
     #[inline]
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.as_str().hash(state);
+    }
+}
+
+impl PartialEq<&str> for BytesString {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
     }
 }
 

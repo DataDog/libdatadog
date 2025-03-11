@@ -25,6 +25,7 @@ tokio = { version = "1.37.0", default-features = false, features = ["macros", "r
 tokio-util = { version = "0.7.11", default-features = false }
 tracing = { version = "0.1.40", default-features = false }
 regex = { version = "1.10.6", default-features = false }
+zstd = { version = "0.13.3", default-features = false }
 
 [dev-dependencies]
 mockito = { version = "1.5.0", default-features = false }

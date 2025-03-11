@@ -40,14 +40,14 @@ pub(crate) fn next_code_point<'a, I: Iterator<Item = &'a u8>>(bytes: &mut I) -> 
         // so the iterator must produce a value here.
         let z = *bytes.next()?;
         let y_z = utf8_acc_cont_byte((y & CONT_MASK) as u32, z);
-        ch = init << 12 | y_z;
+        ch = (init << 12) | y_z;
         if x >= 0xF0 {
             // [x y z w] case
             // use only the lower 3 bits of `init`
             // SAFETY: `bytes` produces an UTF-8-like string,
             // so the iterator must produce a value here.
             let w = *bytes.next()?;
-            ch = (init & 7) << 18 | utf8_acc_cont_byte(y_z, w);
+            ch = ((init & 7) << 18) | utf8_acc_cont_byte(y_z, w);
         }
     }
 

@@ -8,7 +8,8 @@ use ddcommon_ffi::{CharSlice, Error, MaybeError, Slice, StringWrapperResult};
 use libc::c_void;
 use std::mem::MaybeUninit;
 use std::num::NonZeroU32;
-use std::{rc::Rc, sync::RwLock};
+use std::rc::Rc;
+use std::sync::Mutex;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(C)]
@@ -27,8 +28,8 @@ pub struct ManagedStringId {
 #[repr(C)]
 pub struct ManagedStringStorage {
     // This may be null, but if not it will point to a valid InternalManagedStringStorage.
-    inner: *const c_void, /* Actually *RwLock<InternalManagedStringStorage> but cbindgen doesn't
-                           * opaque RwLock */
+    inner: *const c_void, /* Actually Mutex<InternalManagedStringStorage> but we're making it
+                           * opaque for cbindgen */
 }
 
 #[allow(dead_code)]
@@ -45,7 +46,7 @@ pub extern "C" fn ddog_prof_ManagedStringStorage_new() -> ManagedStringStorageNe
     let storage = InternalManagedStringStorage::new();
 
     ManagedStringStorageNewResult::Ok(ManagedStringStorage {
-        inner: Rc::into_raw(Rc::new(RwLock::new(storage))) as *const c_void,
+        inner: Rc::into_raw(Rc::new(Mutex::new(storage))) as *const c_void,
     })
 }
 
@@ -80,7 +81,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
         let storage = get_inner_string_storage(storage, true)?;
 
         let string_id = storage
-            .write()
+            .lock()
             .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?
             .intern(string.try_to_utf8()?)?;
 
@@ -118,7 +119,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern_all(
         let storage = get_inner_string_storage(storage, true)?;
 
         let mut write_locked_storage = storage
-            .write()
+            .lock()
             .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
 
         let output_slice = core::slice::from_raw_parts_mut(output_ids, output_ids_size);
@@ -157,8 +158,8 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
     let result = (|| {
         let storage = get_inner_string_storage(storage, true)?;
 
-        let write_locked_storage = storage
-            .write()
+        let mut write_locked_storage = storage
+            .lock()
             .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
 
         write_locked_storage.unintern(non_empty_string_id)
@@ -180,8 +181,8 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern_all(
     let result = (|| {
         let storage = get_inner_string_storage(storage, true)?;
 
-        let write_locked_storage = storage
-            .write()
+        let mut write_locked_storage = storage
+            .lock()
             .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
 
         for non_empty_string_id in ids.iter().filter_map(|id| NonZeroU32::new(id.value)) {
@@ -212,7 +213,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
     (|| {
         let storage = get_inner_string_storage(storage, true)?;
         let string: String = (*storage
-            .read()
+            .lock()
             .map_err(|_| {
                 anyhow::anyhow!("acquisition of read lock on string storage should succeed")
             })?
@@ -234,7 +235,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_advance_gen(
         let storage = get_inner_string_storage(storage, true)?;
 
         storage
-            .write()
+            .lock()
             .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?
             .advance_gen();
 
@@ -254,7 +255,7 @@ pub unsafe fn get_inner_string_storage(
     // (E.g. we use this flag to know if we need to increment the refcount for the copy we create
     // or not).
     for_use: bool,
-) -> anyhow::Result<Rc<RwLock<InternalManagedStringStorage>>> {
+) -> anyhow::Result<Rc<Mutex<InternalManagedStringStorage>>> {
     if storage.inner.is_null() {
         anyhow::bail!("storage inner pointer is null");
     }
@@ -270,7 +271,7 @@ pub unsafe fn get_inner_string_storage(
         Rc::increment_strong_count(storage_ptr);
     }
     Ok(Rc::from_raw(
-        storage_ptr as *const RwLock<InternalManagedStringStorage>,
+        storage_ptr as *const Mutex<InternalManagedStringStorage>,
     ))
 }
 

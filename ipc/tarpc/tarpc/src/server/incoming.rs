@@ -2,17 +2,18 @@ use super::{
     limits::{channels_per_key::MaxChannelsPerKey, requests_per_channel::MaxRequestsPerChannel},
     Channel,
 };
-use futures::prelude::*;
-use std::{fmt, hash::Hash};
-
 #[cfg(feature = "tokio1")]
 use super::{tokio::TokioServerExecutor, Serve};
+use futures::prelude::*;
+use std::fmt::Debug;
+use std::{fmt, hash::Hash};
 
 /// An extension trait for [streams](futures::prelude::Stream) of [`Channels`](Channel).
 pub trait Incoming<C>
 where
     Self: Sized + Stream<Item = C>,
     C: Channel,
+    C::Req: Debug,
 {
     /// Enforces channel per-key limits.
     fn max_channels_per_key<K, KF>(self, n: u32, keymaker: KF) -> MaxChannelsPerKey<Self, K, KF>
@@ -45,5 +46,6 @@ impl<S, C> Incoming<C> for S
 where
     S: Sized + Stream<Item = C>,
     C: Channel,
+    C::Req: Debug,
 {
 }

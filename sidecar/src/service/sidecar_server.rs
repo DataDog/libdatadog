@@ -54,7 +54,7 @@ use datadog_live_debugger::sender::DebuggerType;
 use datadog_remote_config::fetch::{ConfigInvariants, MultiTargetStats};
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
 use ddcommon::tag::Tag;
-use dogstatsd_client::{new_flusher, DogStatsDActionOwned};
+use dogstatsd_client::{new, DogStatsDActionOwned};
 use tinybytes;
 
 type NoResponse = Ready<()>;
@@ -63,8 +63,8 @@ fn no_response() -> NoResponse {
     future::ready(())
 }
 
-#[derive(Serialize, Deserialize)]
-struct SidecarStats {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SidecarStats {
     trace_flusher: TraceFlusherStats,
     sessions: u32,
     session_counter_size: u32,
@@ -133,6 +133,7 @@ impl SidecarServer {
     /// * `async_channel`: An `AsyncChannel` that represents the connection to the client.
     #[cfg_attr(not(windows), allow(unused_mut))]
     pub async fn accept_connection(mut self, async_channel: AsyncChannel) {
+        let handle = async_channel.handle();
         #[cfg(windows)]
         {
             self.process_handle = async_channel
@@ -164,7 +165,7 @@ impl SidecarServer {
         ));
 
         if let Err(e) = executor.await {
-            warn!("Error from executor: {e:?}");
+            warn!("Error from executor for handle {handle}: {e:?}");
         }
 
         self.process_interceptor_response(session_interceptor.await)
@@ -306,7 +307,7 @@ impl SidecarServer {
         }
     }
 
-    async fn compute_stats(&self) -> SidecarStats {
+    pub async fn compute_stats(&self) -> SidecarStats {
         let mut telemetry_stats_errors = 0;
         let telemetry_stats = join_all({
             let sessions = self.lock_sessions();
@@ -706,7 +707,7 @@ impl SidecarInterface for SidecarServer {
             cfg.set_endpoint(endpoint).ok();
         });
         session.configure_dogstatsd(|dogstatsd| {
-            let d = new_flusher(config.dogstatsd_endpoint.clone()).ok();
+            let d = new(config.dogstatsd_endpoint.clone()).ok();
             *dogstatsd = d;
         });
         session.modify_debugger_config(|cfg| {
@@ -819,6 +820,11 @@ impl SidecarInterface for SidecarServer {
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }
             });
+        } else {
+            warn!(
+                "Received trace data ({handle:?}) for missing session {}",
+                instance_id.session_id
+            );
         }
 
         no_response()
@@ -843,6 +849,11 @@ impl SidecarInterface for SidecarServer {
                 let bytes = tinybytes::Bytes::from(data);
                 self.send_trace_v04(&headers, bytes, &endpoint);
             });
+        } else {
+            warn!(
+                "Received trace data for missing session {}",
+                instance_id.session_id
+            );
         }
 
         no_response()
@@ -943,25 +954,24 @@ impl SidecarInterface for SidecarServer {
         let notify_target = RemoteConfigNotifyTarget {
             pid: session.pid.load(Ordering::Relaxed),
         };
+        let invariants = session
+            .get_remote_config_invariants()
+            .as_ref()
+            .expect("Expecting remote config invariants to be set early")
+            .clone();
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
         let mut applications = runtime_info.lock_applications();
         let app = applications.entry(queue_id).or_default();
-        app.remote_config_guard = Some(
-            self.remote_configs.add_runtime(
-                session
-                    .get_remote_config_invariants()
-                    .as_ref()
-                    .expect("Expecting remote config invariants to be set early")
-                    .clone(),
-                *session.remote_config_interval.lock().unwrap(),
-                instance_id.runtime_id,
-                notify_target,
-                env_name.clone(),
-                service_name,
-                app_version.clone(),
-                global_tags.clone(),
-            ),
-        );
+        app.remote_config_guard = Some(self.remote_configs.add_runtime(
+            invariants,
+            *session.remote_config_interval.lock().unwrap(),
+            instance_id.runtime_id,
+            notify_target,
+            env_name.clone(),
+            service_name,
+            app_version.clone(),
+            global_tags.clone(),
+        ));
         app.set_metadata(env_name, app_version, global_tags);
 
         no_response()
