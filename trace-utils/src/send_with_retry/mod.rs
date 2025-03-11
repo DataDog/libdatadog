@@ -37,7 +37,7 @@ impl std::fmt::Display for SendWithRetryError {
             SendWithRetryError::Timeout(_) => write!(f, "Request timed out"),
             SendWithRetryError::Network(error, _) => write!(f, "Network error: {error}"),
             SendWithRetryError::Build(_) => {
-                write!(f, "Failed to build request due to invalid propery")
+                write!(f, "Failed to build request due to invalid property")
             }
         }
     }
@@ -70,7 +70,7 @@ impl std::fmt::Display for RequestError {
             RequestError::TimeoutSocket => write!(f, "Socket timed out"),
             RequestError::TimeoutApi => write!(f, "Api timeout exhausted"),
             RequestError::Network(error) => write!(f, "Network error: {error}"),
-            RequestError::Build => write!(f, "Failed to build request due to invalid propery"),
+            RequestError::Build => write!(f, "Failed to build request due to invalid property"),
         }
     }
 }
@@ -88,7 +88,7 @@ impl std::error::Error for RequestError {}
 /// # Returns
 ///
 /// Return a [`SendWithRetryResult`] containing the response and the number of attempts or an error
-/// describing the last attempt faillure.
+/// describing the last attempt failure.
 ///
 /// # Errors
 /// Fail if the request didn't succeed after applying the retry strategy.
@@ -173,6 +173,7 @@ async fn send_request(
 ) -> Result<Response<Body>, RequestError> {
     let req = req.body(Body::from(payload)).or(Err(RequestError::Build))?;
 
+    #[allow(clippy::unwrap_used)]
     match tokio::time::timeout(
         timeout,
         if let Some(proxy) = http_proxy {
