@@ -3,7 +3,7 @@
 
 use std::num::NonZeroI64;
 
-use super::{profile_ptr_to_inner, Profile};
+use super::datatypes::{profile_ptr_to_inner, Profile};
 use datadog_profiling::{
     collections::identifiable::StringId,
     internal::{
@@ -11,7 +11,10 @@ use datadog_profiling::{
         StackTraceId,
     },
 };
-use ddcommon_ffi::{slice::AsBytes, wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, Result, Slice, VoidResult};
+use ddcommon_ffi::{
+    slice::AsBytes, wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, Result, Slice,
+    VoidResult,
+};
 use function_name::named;
 
 /// This functions interns its argument into the profiler.
@@ -58,11 +61,31 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_label_num(
     profile: *mut Profile,
     key: GenerationalId<StringId>,
     val: i64,
-    unit: ddcommon_ffi::Option<GenerationalId<StringId>>,
 ) -> Result<GenerationalId<LabelId>> {
-    wrap_with_ffi_result!({
-        profile_ptr_to_inner(profile)?.intern_label_num(key, val, unit.into())
-    })
+    wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_label_num(key, val, None) })
+}
+
+/// This functions interns its argument into the profiler.
+/// If successful, it an opaque interning ID.
+/// This ID is valid for use on this profiler, until the profiler is reset.
+/// It is an error to use this id after the profiler has been reset, or on a different profiler.
+/// On error, it holds an error message in the error variant.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module.
+/// All other arguments must remain valid for the length of this call.
+/// This call is _NOT_ thread-safe.
+#[must_use]
+#[no_mangle]
+#[named]
+pub unsafe extern "C" fn ddog_prof_Profile_intern_label_num_with_unit(
+    profile: *mut Profile,
+    key: GenerationalId<StringId>,
+    val: i64,
+    unit: GenerationalId<StringId>,
+) -> Result<GenerationalId<LabelId>> {
+    wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_label_num(key, val, Some(unit)) })
 }
 
 /// This functions interns its argument into the profiler.
@@ -190,7 +213,12 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_sample(
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
         // TODO, this to_vec might not be necessary.
-        profile_ptr_to_inner(profile)?.intern_sample(stacktrace, values.to_vec(), labels, timestamp)?;
+        profile_ptr_to_inner(profile)?.intern_sample(
+            stacktrace,
+            values.to_vec(),
+            labels,
+            timestamp,
+        )?;
     })
 }
 

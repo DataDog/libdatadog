@@ -81,7 +81,7 @@ impl Item for Label {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[repr(transparent)]
+#[repr(C)]
 pub struct LabelId(u32);
 
 impl Id for LabelId {
@@ -128,7 +128,7 @@ impl Item for LabelSet {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(transparent)]
+#[repr(C)]
 #[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
 pub struct LabelSetId(u32);
 
