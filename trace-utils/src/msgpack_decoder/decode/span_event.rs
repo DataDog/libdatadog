@@ -252,7 +252,7 @@ fn get_attribute_from_key(
                     false => Ok(AttributeArrayValueBytes::Boolean(false)),
                 }
             } else {
-                return Err(DecodeError::InvalidType("Invalid boolean field".to_owned()));
+                Err(DecodeError::InvalidType("Invalid boolean field".to_owned()))
             }
         }
         AttributeArrayKey::IntValue => {
