@@ -257,6 +257,28 @@ impl SendData {
         self.target.api_key.is_some()
     }
 
+    #[cfg(feature = "compression")]
+    fn compress_payload(&self, payload: Vec<u8>, headers: &mut HashMap<&str, String>) -> Vec<u8> {
+        match self.compression {
+            Compression::Zstd(level) => {
+                let result = (|| -> std::io::Result<Vec<u8>> {
+                    let mut encoder = Encoder::new(Vec::new(), level)?;
+                    encoder.write_all(&payload)?;
+                    encoder.finish()
+                })();
+
+                match result {
+                    Ok(compressed_payload) => {
+                        headers.insert("Content-Encoding", "zstd".to_string());
+                        compressed_payload
+                    }
+                    Err(_) => payload,
+                }
+            }
+            _ => payload,
+        }
+    }
+
     async fn send_with_protobuf(&self, http_proxy: Option<&str>) -> SendDataResult {
         let mut result = SendDataResult::default();
         let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
@@ -273,24 +295,8 @@ impl SendData {
                 let mut request_headers = self.headers.clone();
 
                 #[cfg(feature = "compression")]
-                let final_payload = match self.compression {
-                    Compression::Zstd(level) => {
-                        let result = (|| -> std::io::Result<Vec<u8>> {
-                            let mut encoder = Encoder::new(Vec::new(), level)?;
-                            encoder.write_all(&serialized_trace_payload)?;
-                            encoder.finish()
-                        })();
-
-                        match result {
-                            Ok(payload) => {
-                                request_headers.insert("Content-Encoding", "zstd".to_string());
-                                payload
-                            }
-                            Err(_) => serialized_trace_payload,
-                        }
-                    }
-                    _ => serialized_trace_payload,
-                };
+                let final_payload =
+                    self.compress_payload(serialized_trace_payload, &mut request_headers);
 
                 #[cfg(not(feature = "compression"))]
                 let final_payload = serialized_trace_payload;
