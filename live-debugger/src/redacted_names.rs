@@ -121,6 +121,7 @@ fn get_redacted_wildcard_types_pattern() -> &'static String {
 }
 static REDACTED_TYPES_REGEX: OnceLock<Regex> = OnceLock::new();
 fn get_redacted_types_regex() -> &'static Regex {
+    #[allow(clippy::unwrap_used)]
     REDACTED_TYPES_REGEX.get_or_init(|| {
         REDACTED_TYPES_INITIALIZED.store(true, Ordering::Relaxed);
         Regex::new(get_redacted_wildcard_types_pattern()).unwrap()
@@ -128,6 +129,7 @@ fn get_redacted_types_regex() -> &'static Regex {
 }
 static ASSUMED_SAFE_NAME_LEN: OnceLock<usize> = OnceLock::new();
 fn get_assumed_safe_name_len() -> &'static usize {
+    #[allow(clippy::unwrap_used)]
     ASSUMED_SAFE_NAME_LEN.get_or_init(|| {
         REDACTED_NAMES_INITIALIZED.store(true, Ordering::Relaxed);
         get_redacted_names().iter().map(|n| n.len()).max().unwrap() + 5
