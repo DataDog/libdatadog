@@ -12,24 +12,34 @@ use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
 use ddcommon_ffi::{Error, Timespec};
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
+
+pub enum MaybeMutex {
+    Synchronized(Mutex<internal::Profile>),
+    Unsynchronized(internal::Profile),
+}
 
 /// Represents a profile. Do not access its member for any reason, only use
 /// the C API functions on this struct.
 #[repr(C)]
 pub struct Profile {
     // This may be null, but if not it will point to a valid Profile.
-    inner: *mut internal::Profile,
+    inner: *mut MaybeMutex,
 }
 
 impl Profile {
-    fn new(profile: internal::Profile) -> Self {
-        Profile {
-            inner: Box::into_raw(Box::new(profile)),
-        }
+    fn new(profile: internal::Profile, use_mutex: bool) -> Self {
+        let inner = if use_mutex {
+            MaybeMutex::Synchronized(Mutex::new(profile))
+        } else {
+            MaybeMutex::Unsynchronized(profile)
+        };
+        let inner = Box::into_raw(Box::new(inner));
+        Self { inner }
     }
 
-    fn take(&mut self) -> Option<Box<internal::Profile>> {
+    fn take(&mut self) -> Option<Box<MaybeMutex>> {
         // Leaving a null will help with double-free issues that can
         // arise in C. Of course, it's best to never get there in the
         // first place!
@@ -425,8 +435,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
     start_time: Option<&Timespec>,
+    with_mutex: bool,
 ) -> ProfileNewResult {
-    profile_new(sample_types, period, start_time, None)
+    profile_new(sample_types, period, start_time, None, with_mutex)
 }
 
 /// Same as `ddog_profile_new` but also configures a `string_storage` for the profile.
@@ -438,8 +449,15 @@ pub unsafe extern "C" fn ddog_prof_Profile_with_string_storage(
     period: Option<&Period>,
     start_time: Option<&Timespec>,
     string_storage: ManagedStringStorage,
+    with_mutex: bool,
 ) -> ProfileNewResult {
-    profile_new(sample_types, period, start_time, Some(string_storage))
+    profile_new(
+        sample_types,
+        period,
+        start_time,
+        Some(string_storage),
+        with_mutex,
+    )
 }
 
 unsafe fn profile_new(
@@ -447,6 +465,7 @@ unsafe fn profile_new(
     period: Option<&Period>,
     start_time: Option<&Timespec>,
     string_storage: Option<ManagedStringStorage>,
+    with_mutex: bool,
 ) -> ProfileNewResult {
     let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
     let start_time = start_time.map_or_else(SystemTime::now, SystemTime::from);
@@ -462,7 +481,7 @@ unsafe fn profile_new(
             internal::Profile::with_string_storage(start_time, &types, period, string_storage)
         }
     };
-    let ffi_profile = Profile::new(internal_profile);
+    let ffi_profile = Profile::new(internal_profile, with_mutex);
     ProfileNewResult::Ok(ffi_profile)
 }
 
@@ -518,32 +537,60 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
     timestamp: Option<NonZeroI64>,
 ) -> ProfileResult {
     (|| {
-        let profile = profile_ptr_to_inner(profile)?;
-        let uses_string_ids = sample
-            .labels
-            .first()
-            .is_some_and(|label| label.key.is_empty() && label.key_id.value > 0);
+        with_profile(profile, |profile| {
+            let uses_string_ids = sample
+                .labels
+                .first()
+                .is_some_and(|label| label.key.is_empty() && label.key_id.value > 0);
 
-        if uses_string_ids {
-            profile.add_string_id_sample(sample.into(), timestamp)
-        } else {
-            profile.add_sample(sample.try_into()?, timestamp)
-        }
+            if uses_string_ids {
+                profile.add_string_id_sample(sample.into(), timestamp)
+            } else {
+                profile.add_sample(sample.try_into()?, timestamp)
+            }
+        })
     })()
     .context("ddog_prof_Profile_add failed")
     .into()
 }
 
-unsafe fn profile_ptr_to_inner<'a>(
+#[allow(clippy::mut_mutex_lock)]
+unsafe fn with_profile_generic<R, F: FnOnce(&mut internal::Profile) -> anyhow::Result<R>>(
     profile_ptr: *mut Profile,
-) -> anyhow::Result<&'a mut internal::Profile> {
+    f: F,
+) -> anyhow::Result<R> {
     match profile_ptr.as_mut() {
         None => anyhow::bail!("profile pointer was null"),
         Some(inner_ptr) => match inner_ptr.inner.as_mut() {
-            Some(profile) => Ok(profile),
+            Some(maybe_mutex) => match maybe_mutex {
+                MaybeMutex::Synchronized(m) => {
+                    let mut p = m.lock().unwrap();
+                    f(&mut p)
+                }
+                MaybeMutex::Unsynchronized(p) => f(p),
+            },
+
             None => anyhow::bail!("profile's inner pointer was null (indicates use-after-free)"),
         },
     }
+}
+
+#[allow(clippy::mut_mutex_lock)]
+unsafe fn with_profile<F: FnOnce(&mut internal::Profile) -> anyhow::Result<()>>(
+    profile_ptr: *mut Profile,
+    f: F,
+) -> anyhow::Result<()> {
+    with_profile_generic::<(), F>(profile_ptr, f)
+}
+
+#[allow(clippy::mut_mutex_lock)]
+unsafe fn with_profile_result<
+    F: FnOnce(&mut internal::Profile) -> anyhow::Result<internal::Profile>,
+>(
+    profile_ptr: *mut Profile,
+    f: F,
+) -> anyhow::Result<internal::Profile> {
+    with_profile_generic::<internal::Profile, F>(profile_ptr, f)
 }
 
 /// Associate an endpoint to a given local root span id.
@@ -570,9 +617,10 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint(
     endpoint: CharSlice,
 ) -> ProfileResult {
     (|| {
-        let profile = profile_ptr_to_inner(profile)?;
         let endpoint = endpoint.to_utf8_lossy();
-        profile.add_endpoint(local_root_span_id, endpoint)
+        with_profile(profile, |profile| {
+            profile.add_endpoint(local_root_span_id, endpoint)
+        })
     })()
     .context("ddog_prof_Profile_set_endpoint failed")
     .into()
@@ -596,9 +644,10 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
     value: i64,
 ) -> ProfileResult {
     (|| {
-        let profile = profile_ptr_to_inner(profile)?;
         let endpoint = endpoint.to_utf8_lossy();
-        profile.add_endpoint_count(endpoint, value)
+        with_profile(profile, |profile| {
+            profile.add_endpoint_count(endpoint, value)
+        })
     })()
     .context("ddog_prof_Profile_set_endpoint failed")
     .into()
@@ -636,20 +685,21 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
     sampling_distance: u64,
 ) -> ProfileResult {
     (|| {
-        let profile = profile_ptr_to_inner(profile)?;
         anyhow::ensure!(sampling_distance != 0, "sampling_distance must not be 0");
         let upscaling_info = api::UpscalingInfo::Poisson {
             sum_value_offset,
             count_value_offset,
             sampling_distance,
         };
-        add_upscaling_rule(
-            profile,
-            offset_values,
-            label_name,
-            label_value,
-            upscaling_info,
-        )
+        with_profile(profile, |profile| {
+            add_upscaling_rule(
+                profile,
+                offset_values,
+                label_name,
+                label_value,
+                upscaling_info,
+            )
+        })
     })()
     .context("ddog_prof_Profile_add_upscaling_rule_proportional failed")
     .into()
@@ -684,19 +734,20 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_proportional(
     total_real: u64,
 ) -> ProfileResult {
     (|| {
-        let profile = profile_ptr_to_inner(profile)?;
         anyhow::ensure!(total_sampled != 0, "total_sampled must not be 0");
         anyhow::ensure!(total_real != 0, "total_real must not be 0");
         let upscaling_info = api::UpscalingInfo::Proportional {
             scale: total_real as f64 / total_sampled as f64,
         };
-        add_upscaling_rule(
-            profile,
-            offset_values,
-            label_name,
-            label_value,
-            upscaling_info,
-        )
+        with_profile(profile, |profile| {
+            add_upscaling_rule(
+                profile,
+                offset_values,
+                label_name,
+                label_value,
+                upscaling_info,
+            )
+        })
     })()
     .context("ddog_prof_Profile_add_upscaling_rule_proportional failed")
     .into()
@@ -787,17 +838,17 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     start_time: Option<&Timespec>,
 ) -> SerializeResult {
     (|| {
-        let profile = profile_ptr_to_inner(profile)?;
-
-        let start_time = start_time.map(SystemTime::from);
-        let old_profile = profile.reset_and_return_previous(start_time)?;
-        let end_time = end_time.map(SystemTime::from);
-        let duration = match duration_nanos {
-            None => None,
-            Some(x) if *x < 0 => None,
-            Some(x) => Some(Duration::from_nanos((*x) as u64)),
-        };
-        old_profile.serialize_into_compressed_pprof(end_time, duration)
+        with_profile_generic::<internal::EncodedProfile,_>(profile, |profile| {
+            let start_time = start_time.map(SystemTime::from);
+            let old_profile = profile.reset_and_return_previous(start_time)?;
+            let end_time = end_time.map(SystemTime::from);
+            let duration = match duration_nanos {
+                None => None,
+                Some(x) if *x < 0 => None,
+                Some(x) => Some(Duration::from_nanos((*x) as u64)),
+            };
+            old_profile.serialize_into_compressed_pprof(end_time, duration)
+        })
     })()
     .context("ddog_prof_Profile_serialize failed")
     .into()
@@ -828,8 +879,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(
     start_time: Option<&Timespec>,
 ) -> ProfileResult {
     (|| {
-        let profile = profile_ptr_to_inner(profile)?;
-        profile.reset_and_return_previous(start_time.map(SystemTime::from))?;
+        with_profile_result(profile, |profile| {
+            profile.reset_and_return_previous(start_time.map(SystemTime::from))
+        })?;
         anyhow::Ok(())
     })()
     .context("ddog_prof_Profile_reset failed")
