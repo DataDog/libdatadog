@@ -62,7 +62,7 @@ impl MetricData<'_> {
                 vec![],
             ),
         ];
-        for (level, count) in log::MULTI_LOG_FILTER
+        for (level, count) in log::get_multi_log_filter()
             .collect_logs_created_count()
             .into_iter()
         {

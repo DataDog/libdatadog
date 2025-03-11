@@ -3,7 +3,6 @@
 
 use crate::config;
 use chrono::{DateTime, Utc};
-use lazy_static::lazy_static;
 use priority_queue::PriorityQueue;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
@@ -318,17 +317,20 @@ where
 
 /// Have exactly one log writer per target file.
 /// Ensure that we can write for at least a few seconds after session disconnect.
-pub type MultiWriter = TemporarilyRetainedMap<config::LogMethod, Box<dyn io::Write>>;
+pub type MultiWriter = TemporarilyRetainedMap<config::LogMethod, Box<dyn io::Write + Send>>;
 pub type MultiWriterGuard<'a> =
-    TemporarilyRetainedMapGuard<'a, config::LogMethod, Box<dyn io::Write>>;
+    TemporarilyRetainedMapGuard<'a, config::LogMethod, Box<dyn io::Write + Send>>;
 
-impl TemporarilyRetainedKeyParser<Box<dyn io::Write>> for config::LogMethod {
-    fn parse(&self) -> Box<dyn io::Write> {
+impl TemporarilyRetainedKeyParser<Box<dyn io::Write + Send>> for config::LogMethod {
+    fn parse(&self) -> Box<dyn io::Write + Send> {
         match self {
             config::LogMethod::Stdout => Box::new(io::stdout.make_writer()),
             config::LogMethod::Stderr => Box::new(io::stderr.make_writer()),
             config::LogMethod::File(path) => create_logfile(path)
-                .map_or_else::<Box<dyn io::Write>, _, _>(|_| Box::new(io::sink()), |f| Box::new(f)),
+                .map_or_else::<Box<dyn io::Write + Send>, _, _>(
+                    |_| Box::new(io::sink()),
+                    |f| Box::new(f),
+                ),
             config::LogMethod::Disabled => Box::new(io::sink()),
         }
     }
@@ -361,10 +363,17 @@ impl<'writer> MakeWriter<'writer> for &MultiWriter {
     }
 }
 
-lazy_static! {
-    pub static ref MULTI_LOG_FILTER: MultiEnvFilter = MultiEnvFilter::default();
-    pub static ref MULTI_LOG_WRITER: MultiWriter = MultiWriter::default();
+static MULTI_LOG_FILTER: OnceLock<MultiEnvFilter> = OnceLock::new();
+static MULTI_LOG_WRITER: OnceLock<MultiWriter> = OnceLock::new();
+
+pub(crate) fn get_multi_log_filter() -> &'static MultiEnvFilter {
+    MULTI_LOG_FILTER.get_or_init(MultiEnvFilter::default)
 }
+
+pub(crate) fn get_multi_log_writer() -> &'static MultiWriter {
+    MULTI_LOG_WRITER.get_or_init(MultiWriter::default)
+}
+
 static PERMANENT_MIN_LOG_LEVEL: OnceLock<TemporarilyRetainedMapGuard<String, EnvFilter>> =
     OnceLock::new();
 
@@ -373,22 +382,23 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
         .with(
             tracing_subscriber::fmt::Layer::new()
                 .event_format(LogFormatter::default())
-                .with_writer(&*MULTI_LOG_WRITER)
-                .with_filter(&*MULTI_LOG_FILTER),
+                .with_writer(get_multi_log_writer())
+                .with_filter(get_multi_log_filter()),
         )
         .init();
 
     // Set initial log level if provided
     if let Ok(env) = env::var("DD_TRACE_LOG_LEVEL") {
-        MULTI_LOG_FILTER.add(env); // this also immediately drops it, but will retain it for few
-                                   // seconds during startup
+        get_multi_log_filter().add(env); // this also immediately drops it, but will retain it for
+                                         // few
+                                         // seconds during startup
     }
     let config = config::Config::get();
     if !config.log_level.is_empty() {
-        let filter = MULTI_LOG_FILTER.add(config.log_level.clone());
+        let filter = get_multi_log_filter().add(config.log_level.clone());
         _ = PERMANENT_MIN_LOG_LEVEL.set(filter);
     }
-    MULTI_LOG_WRITER.add(config.log_method); // same than MULTI_LOG_FILTER
+    get_multi_log_writer().add(config.log_method); // same than MULTI_LOG_FILTER
 
     LogTracer::init()?;
 
@@ -398,19 +408,25 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        enable_logging, TemporarilyRetainedKeyParser, TemporarilyRetainedMap, MULTI_LOG_FILTER,
+        enable_logging, get_multi_log_filter, TemporarilyRetainedKeyParser, TemporarilyRetainedMap,
     };
     use crate::log::MultiEnvFilter;
-    use lazy_static::lazy_static;
     use std::sync::atomic::{AtomicI32, Ordering};
+    use std::sync::OnceLock;
     use std::time::Duration;
     use tracing::subscriber::NoSubscriber;
     use tracing::{debug, error, warn, Level};
     use tracing_subscriber::layer::Filter;
 
-    lazy_static! {
-        static ref ENABLED: AtomicI32 = AtomicI32::default();
-        static ref DISABLED: AtomicI32 = AtomicI32::default();
+    static ENABLED: OnceLock<AtomicI32> = OnceLock::new();
+    static DISABLED: OnceLock<AtomicI32> = OnceLock::new();
+
+    fn get_enabled() -> &'static AtomicI32 {
+        ENABLED.get_or_init(AtomicI32::default)
+    }
+
+    fn get_disabled() -> &'static AtomicI32 {
+        DISABLED.get_or_init(AtomicI32::default)
     }
 
     impl TemporarilyRetainedKeyParser<i32> for String {
@@ -419,11 +435,11 @@ mod tests {
         }
 
         fn enable() {
-            ENABLED.fetch_add(1, Ordering::SeqCst);
+            get_enabled().fetch_add(1, Ordering::SeqCst);
         }
 
         fn disable() {
-            DISABLED.fetch_add(1, Ordering::SeqCst);
+            get_disabled().fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -435,7 +451,7 @@ mod tests {
         };
         let guard1 = map.add("1".to_string());
         assert_eq!(1, *map.maps.read().unwrap().get("1").unwrap());
-        assert_eq!(1, ENABLED.load(Ordering::SeqCst));
+        assert_eq!(1, get_enabled().load(Ordering::SeqCst));
 
         drop(map.add("1".to_string()));
 
@@ -456,27 +472,27 @@ mod tests {
         // actually dropped
         assert_eq!(None, map.maps.read().unwrap().get("1"));
 
-        assert_eq!(1, DISABLED.load(Ordering::SeqCst));
-        assert_eq!(2, ENABLED.load(Ordering::SeqCst));
+        assert_eq!(1, get_disabled().load(Ordering::SeqCst));
+        assert_eq!(2, get_enabled().load(Ordering::SeqCst));
     }
 
     #[test]
     fn test_logs_created_counter() {
         enable_logging().ok();
 
-        MULTI_LOG_FILTER.add("warn".to_string());
+        get_multi_log_filter().add("warn".to_string());
         debug!("hi");
         warn!("Bim");
         warn!("Bam");
         error!("Boom");
-        let map = MULTI_LOG_FILTER.collect_logs_created_count();
+        let map = get_multi_log_filter().collect_logs_created_count();
         assert_eq!(2, map.len());
         assert_eq!(map[&Level::WARN], 2);
         assert_eq!(map[&Level::ERROR], 1);
 
         debug!("hi");
         warn!("Bim");
-        let map = MULTI_LOG_FILTER.collect_logs_created_count();
+        let map = get_multi_log_filter().collect_logs_created_count();
         assert_eq!(1, map.len());
         assert_eq!(map[&Level::WARN], 1);
     }

@@ -1656,7 +1656,6 @@ dependencies = [
  "http 0.2.12",
  "httpmock",
  "hyper 0.14.31",
- "lazy_static",
  "libc",
  "manual_future",
  "memory-stats",

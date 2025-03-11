@@ -6,10 +6,15 @@ use datadog_ipc::rate_limiter::ShmLimiterMemory;
 use datadog_trace_utils::config_utils::trace_intake_url_prefixed;
 use ddcommon::Endpoint;
 use http::uri::PathAndQuery;
-use lazy_static::lazy_static;
 use std::ffi::CString;
 use std::str::FromStr;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
+
+static SHM_LIMITER: OnceLock<Mutex<ShmLimiterMemory>> = OnceLock::new();
+
+pub fn get_shm_limiter() -> &'static Mutex<ShmLimiterMemory> {
+    SHM_LIMITER.get_or_init(|| Mutex::new(ShmLimiterMemory::create(shm_limiter_path()).unwrap()))
+}
 
 #[derive(Default)]
 pub struct Config {
@@ -35,9 +40,4 @@ impl Config {
 
 pub fn shm_limiter_path() -> CString {
     CString::new(format!("/ddlimiters-{}", primary_sidecar_identifier())).unwrap()
-}
-
-lazy_static! {
-    pub static ref SHM_LIMITER: Mutex<ShmLimiterMemory> =
-        Mutex::new(ShmLimiterMemory::create(shm_limiter_path()).unwrap());
 }

@@ -5,7 +5,7 @@ use crate::one_way_shared_memory::{
     open_named_shm, OneWayShmReader, OneWayShmWriter, ReaderOpener,
 };
 use crate::primary_sidecar_identifier;
-use crate::tracer::SHM_LIMITER;
+use crate::tracer::get_shm_limiter;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
@@ -146,7 +146,7 @@ impl FileStorage for ConfigFileStorage {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(store_shm(version, &path, file)?),
             limiter: if path.product == RemoteConfigProduct::LiveDebugger {
-                Some(SHM_LIMITER.lock().unwrap().alloc())
+                Some(get_shm_limiter().lock().unwrap().alloc())
             } else {
                 None
             },
@@ -591,28 +591,42 @@ mod tests {
     use datadog_dynamic_configuration::{data::tests::dummy_dynamic_config, Configs};
     use datadog_remote_config::fetch::test_server::RemoteConfigServer;
     use datadog_remote_config::{RemoteConfigData, RemoteConfigProduct, RemoteConfigSource};
-    use lazy_static::lazy_static;
     use manual_future::ManualFuture;
+    use std::sync::OnceLock;
 
-    lazy_static! {
-        static ref PATH_FIRST: RemoteConfigPath = RemoteConfigPath {
+    static PATH_FIRST: OnceLock<RemoteConfigPath> = OnceLock::new();
+
+    fn get_path_first() -> &'static RemoteConfigPath {
+        PATH_FIRST.get_or_init(|| RemoteConfigPath {
             source: RemoteConfigSource::Employee,
             product: RemoteConfigProduct::ApmTracing,
             config_id: "1234".to_string(),
             name: "config".to_string(),
-        };
-        static ref PATH_SECOND: RemoteConfigPath = RemoteConfigPath {
+        })
+    }
+
+    static PATH_SECOND: OnceLock<RemoteConfigPath> = OnceLock::new();
+
+    fn get_path_second() -> &'static RemoteConfigPath {
+        PATH_SECOND.get_or_init(|| RemoteConfigPath {
             source: RemoteConfigSource::Employee,
             product: RemoteConfigProduct::ApmTracing,
             config_id: "9876".to_string(),
             name: "config".to_string(),
-        };
-        static ref DUMMY_TARGET: Arc<Target> = Arc::new(Target {
-            service: "service".to_string(),
-            env: "env".to_string(),
-            app_version: "1.3.5".to_string(),
-            tags: vec![],
-        });
+        })
+    }
+
+    static DUMMY_TARGET: OnceLock<Arc<Target>> = OnceLock::new();
+
+    fn get_dummy_target() -> &'static Arc<Target> {
+        DUMMY_TARGET.get_or_init(|| {
+            Arc::new(Target {
+                service: "service".to_string(),
+                env: "env".to_string(),
+                app_version: "1.3.5".to_string(),
+                tags: vec![],
+            })
+        })
     }
 
     #[derive(Debug, Clone)]
@@ -659,9 +673,9 @@ mod tests {
         let mut manager = RemoteConfigManager::new(server.dummy_invariants());
 
         server.files.lock().unwrap().insert(
-            PATH_FIRST.clone(),
+            get_path_first().clone(),
             (
-                vec![DUMMY_TARGET.clone()],
+                vec![get_dummy_target().clone()],
                 1,
                 serde_json::to_string(&dummy_dynamic_config(true)).unwrap(),
             ),
@@ -670,7 +684,7 @@ mod tests {
         // Nothing yet. (No target)
         assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
 
-        manager.track_target(&DUMMY_TARGET);
+        manager.track_target(get_dummy_target());
         // remote end has not fetched anything yet
         assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
 
@@ -679,18 +693,18 @@ mod tests {
         let shm_guard = shm.add_runtime(
             "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
             NotifyDummy(Arc::new(sender)),
-            DUMMY_TARGET.env.to_string(),
-            DUMMY_TARGET.service.to_string(),
-            DUMMY_TARGET.app_version.to_string(),
-            DUMMY_TARGET.tags.clone(),
+            get_dummy_target().env.to_string(),
+            get_dummy_target().service.to_string(),
+            get_dummy_target().app_version.to_string(),
+            get_dummy_target().tags.clone(),
         );
 
         receiver.recv().await;
 
         if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            assert_eq!(value.config_id, PATH_FIRST.config_id);
-            assert_eq!(value.source, PATH_FIRST.source);
-            assert_eq!(value.name, PATH_FIRST.name);
+            assert_eq!(value.config_id, get_path_first().config_id);
+            assert_eq!(value.source, get_path_first().source);
+            assert_eq!(value.name, get_path_first().name);
             if let RemoteConfigData::DynamicConfig(data) = value.data {
                 assert!(matches!(
                     <Vec<Configs>>::from(data.lib_config)[0],
@@ -706,10 +720,10 @@ mod tests {
         // just one update
         assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
 
-        manager.unload_configs(&[PATH_FIRST.product]);
+        manager.unload_configs(&[get_path_first().product]);
 
         if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            assert_eq!(value.config_id, PATH_FIRST.config_id);
+            assert_eq!(value.config_id, get_path_first().config_id);
         } else {
             unreachable!();
         }
@@ -720,17 +734,17 @@ mod tests {
         {
             let mut files = server.files.lock().unwrap();
             files.insert(
-                PATH_FIRST.clone(),
+                get_path_first().clone(),
                 (
-                    vec![DUMMY_TARGET.clone()],
+                    vec![get_dummy_target().clone()],
                     2,
                     serde_json::to_string(&dummy_dynamic_config(false)).unwrap(),
                 ),
             );
             files.insert(
-                PATH_SECOND.clone(),
+                get_path_second().clone(),
                 (
-                    vec![DUMMY_TARGET.clone()],
+                    vec![get_dummy_target().clone()],
                     1,
                     serde_json::to_string(&dummy_dynamic_config(true)).unwrap(),
                 ),
@@ -742,14 +756,14 @@ mod tests {
         // files must be first removed; avoids (in practice) two concurring settings to overlap
         let x = manager.fetch_update();
         if let RemoteConfigUpdate::Remove(update) = x {
-            assert_eq!(&update, &*PATH_FIRST);
+            assert_eq!(&update, get_path_first());
         } else {
             unreachable!();
         }
 
         // then the adds
         let was_second = if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            value.config_id == PATH_SECOND.config_id
+            value.config_id == get_path_second().config_id
         } else {
             unreachable!();
         };
@@ -757,9 +771,9 @@ mod tests {
             assert_eq!(
                 &value.config_id,
                 if was_second {
-                    &PATH_FIRST.config_id
+                    &get_path_first().config_id
                 } else {
-                    &PATH_SECOND.config_id
+                    &get_path_second().config_id
                 }
             );
         } else {
@@ -774,20 +788,20 @@ mod tests {
 
         // and start to remove
         let was_second = if let RemoteConfigUpdate::Remove(update) = manager.fetch_update() {
-            update == *PATH_SECOND
+            update == *get_path_second()
         } else {
             unreachable!();
         };
 
-        manager.track_target(&DUMMY_TARGET);
+        manager.track_target(get_dummy_target());
         // If we re-track it's added again immediately
         if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
             assert_eq!(
                 &value.config_id,
                 if was_second {
-                    &PATH_SECOND.config_id
+                    &get_path_second().config_id
                 } else {
-                    &PATH_FIRST.config_id
+                    &get_path_first().config_id
                 }
             );
         } else {
@@ -803,7 +817,7 @@ mod tests {
 
         // After proper shutdown it must be like all configs were removed
         let was_second = if let RemoteConfigUpdate::Remove(update) = manager.fetch_update() {
-            update == *PATH_SECOND
+            update == *get_path_second()
         } else {
             unreachable!();
         };
@@ -811,9 +825,9 @@ mod tests {
             assert_eq!(
                 &update,
                 if was_second {
-                    &*PATH_FIRST
+                    get_path_first()
                 } else {
-                    &*PATH_SECOND
+                    get_path_second()
                 }
             );
         } else {
