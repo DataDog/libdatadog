@@ -48,7 +48,6 @@ symbolic-demangle = { version = "12.8.0", default-features = false, features = [
 symbolic-common = "12.8.0"
 data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
 datadog-library-config-ffi = {  path = "../library-config-ffi", default-features = false, optional = true }
-
 # Note that in the top-level Cargo.toml we apply a patch to replace "libmimalloc-sys" (a dependency of mimalloc)
 # with our own fork that adds a few extra features.
 # Furthermore, we want really strict control over how much memory gets used by libdatadog when using mimalloc, so

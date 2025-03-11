@@ -1236,6 +1236,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cty"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b365fabc795046672053e29c954733ec3b05e4be654ab130fe8f1f94d7051f35"
+
+[[package]]
 name = "current_platform"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1531,6 +1537,7 @@ dependencies = [
  "hyper-multipart-rfc7578",
  "indexmap 2.6.0",
  "libc",
+ "libmimalloc-sys",
  "lz4_flex",
  "mime",
  "mime_guess",
@@ -3305,6 +3312,7 @@ version = "0.1.39"
 source = "git+https://github.com/datadog/mimalloc_rust.git?rev=2a4df61#2a4df61ec7b947de348c7f7acd87def5b0a50d7b"
 dependencies = [
  "cc",
+ "cty",
  "libc",
 ]
 

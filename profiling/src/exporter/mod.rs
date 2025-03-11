@@ -219,6 +219,39 @@ impl ProfileExporter {
             .map(|file| file.name.to_owned())
             .collect();
 
+        let mut internal: serde_json::value::Value = internal_metadata.unwrap_or_else(|| json!({}));
+        if let Some(map) = internal.as_object_mut() {
+            let mut current_rss: usize = 0;
+            let mut peak_rss: usize = 0;
+            let mut current_commit: usize = 0;
+            let mut peak_commit: usize = 0;
+            let mut page_faults: usize = 0;
+
+            unsafe {
+                libmimalloc_sys::mi_process_info(
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &mut current_rss,
+                    &mut peak_rss,
+                    &mut current_commit,
+                    &mut peak_commit,
+                    &mut page_faults,
+                )
+            };
+
+            map.insert(
+                "mimalloc".to_string(),
+                json!({
+                    "current_rss": current_rss,
+                    "peak_rss": peak_rss,
+                    "current_commit": current_commit,
+                    "peak_commit": peak_commit,
+                    "page_faults": page_faults,
+                }),
+            );
+        }
+
         let event = json!({
             "attachments": attachments,
             "tags_profiler": tags_profiler,
@@ -227,7 +260,7 @@ impl ProfileExporter {
             "family": self.family.as_ref(),
             "version": "4",
             "endpoint_counts" : endpoint_counts,
-            "internal": internal_metadata.unwrap_or_else(|| json!({})),
+            "internal": internal,
             "info": info.unwrap_or_else(|| json!({})),
         })
         .to_string();
