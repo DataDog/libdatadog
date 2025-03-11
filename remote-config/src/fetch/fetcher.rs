@@ -11,7 +11,7 @@ use datadog_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
     TargetFileHash, TargetFileMeta,
 };
-use ddcommon::{connector, Endpoint};
+use ddcommon::{connector, lock_or_panic, Endpoint};
 use http::uri::Scheme;
 use hyper::body::HttpBody;
 use hyper::http::uri::PathAndQuery;
@@ -153,13 +153,13 @@ impl<S> ConfigFetcherState<S> {
     pub fn files_lock(&self) -> ConfigFetcherFilesLock<S> {
         assert!(!self.expire_unused_files);
         ConfigFetcherFilesLock {
-            inner: self.target_files_by_path.lock().unwrap(),
+            inner: lock_or_panic(&self.target_files_by_path),
         }
     }
 
     /// Sets the apply state on a stored file.
     pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
-        if let Some(target_file) = self.target_files_by_path.lock().unwrap().get_mut(file) {
+        if let Some(target_file) = lock_or_panic(&self.target_files_by_path).get_mut(file) {
             match state {
                 ConfigApplyState::Unacknowledged => {
                     target_file.state.apply_state = 1;
@@ -179,7 +179,7 @@ impl<S> ConfigFetcherState<S> {
 
     pub fn stats(&self) -> ConfigFetcherStateStats {
         ConfigFetcherStateStats {
-            active_files: self.target_files_by_path.lock().unwrap().len() as u32,
+            active_files: lock_or_panic(&self.target_files_by_path).len() as u32,
         }
     }
 }
@@ -246,7 +246,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
         let mut config_states = vec![];
 
         {
-            let target_files = self.state.target_files_by_path.lock().unwrap();
+            let target_files = lock_or_panic(&self.state.target_files_by_path);
             for StoredTargetFile { meta, expiring, .. } in target_files.values() {
                 if !expiring {
                     cached_target_files.push(meta.clone());
@@ -374,7 +374,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
         // This lock must be held continuously at least between the existence check
         // (target_files.get()) and the insertion later on. Makes more sense to just hold it
         // continuously
-        let mut target_files = self.state.target_files_by_path.lock().unwrap();
+        let mut target_files = lock_or_panic(&self.state.target_files_by_path);
 
         let mut config_paths: HashSet<RemoteConfigPathRef<'static>> = HashSet::new();
         for path in response.client_configs.iter() {
@@ -505,6 +505,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
 
 fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
     let mut parts = endpoint.url.clone().into_parts();
+    #[allow(clippy::unwrap_used)]
     if parts.authority.is_some() && parts.scheme.is_none() {
         parts.scheme = Some(Scheme::HTTPS);
         parts.authority = Some(
@@ -514,6 +515,7 @@ fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
         );
     }
     parts.path_and_query = Some(PathAndQuery::from_static("/v0.7/config"));
+    #[allow(clippy::unwrap_used)]
     Endpoint {
         url: hyper::Uri::from_parts(parts).unwrap(),
         api_key: endpoint.api_key.clone(),
