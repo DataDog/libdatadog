@@ -6,14 +6,14 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
-
 use hyper::{
     header::HeaderValue,
     http::uri::{self},
 };
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::sync::{Mutex, MutexGuard};
+use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 pub mod azure_app_services;
 pub mod connector;
@@ -24,6 +24,48 @@ pub mod config;
 pub mod rate_limiter;
 pub mod tag;
 pub mod tracer_metadata;
+
+#[inline(always)]
+#[track_caller]
+/// Acquires a lock on a `Mutex`, panicking if the lock is poisoned.
+///
+/// This helper function is intended to be used to avoid having to add many
+/// `#[allow(clippy::unwrap_used)]` annotations if there are a lot of usages of `Mutex`.
+///
+/// # Arguments
+///
+/// * `mutex` - A reference to the `Mutex` to lock.
+///
+/// # Returns
+///
+/// A `MutexGuard` that provides access to the locked data.
+///
+/// # Panics
+///
+/// This function will panic if the `Mutex` is poisoned.
+///
+/// # Examples
+///
+/// ```
+/// use ddcommon::lock_or_panic;
+/// use std::sync::{Arc, Mutex};
+///
+/// let data = Arc::new(Mutex::new(5));
+/// let data_clone = Arc::clone(&data);
+///
+/// std::thread::spawn(move || {
+///     let mut num = lock_or_panic(&data_clone);
+///     *num += 1;
+/// })
+/// .join()
+/// .expect("Thread panicked");
+///
+/// assert_eq!(*lock_or_panic(&data), 6);
+/// ```
+pub fn lock_or_panic<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    #[allow(clippy::unwrap_used)]
+    mutex.lock().unwrap()
+}
 
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
