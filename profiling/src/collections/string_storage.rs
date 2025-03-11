@@ -77,6 +77,7 @@ impl ManagedStringStorage {
         };
         // Ensure empty string gets id 0 and always has usage > 0 so it's always retained
         // Safety: On an empty managed string table intern should never fail.
+        #[allow(clippy::expect_used)]
         storage.intern_new("").expect("Initialization to succeed");
         storage
     }
