@@ -5941,7 +5941,6 @@ dependencies = [
 name = "tools"
 version = "16.0.3"
 dependencies = [
- "lazy_static",
  "regex",
 ]
 
