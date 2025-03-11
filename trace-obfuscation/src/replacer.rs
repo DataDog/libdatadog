@@ -278,4 +278,38 @@ mod tests {
         let result = replacer::parse_rules_from_string(r#"[{"http.url", ")", "${1}?"}]"#);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_replace_rule_eq() {
+        let rule1 = replacer::ReplaceRule {
+            name: "http.url".to_string(),
+            re: regex::Regex::new("(token/)([^/]*)").unwrap(),
+            repl: "${1}?".to_string(),
+            no_expansion: false,
+        };
+        let rule2 = replacer::ReplaceRule {
+            name: "http.url".to_string(),
+            re: regex::Regex::new("(token/)([^/]*)").unwrap(),
+            repl: "${1}?".to_string(),
+            no_expansion: false,
+        };
+        assert_eq!(rule1, rule2);
+    }
+
+    #[test]
+    fn test_replace_rule_neq() {
+        let rule1 = replacer::ReplaceRule {
+            name: "http.url".to_string(),
+            re: regex::Regex::new("(token/)([^/]*)").unwrap(),
+            repl: "${1}?".to_string(),
+            no_expansion: false,
+        };
+        let rule2 = replacer::ReplaceRule {
+            name: "http.url".to_string(),
+            re: regex::Regex::new("(broken/)([^/]*)").unwrap(),
+            repl: "${1}?".to_string(),
+            no_expansion: false,
+        };
+        assert_ne!(rule1, rule2);
+    }
 }
