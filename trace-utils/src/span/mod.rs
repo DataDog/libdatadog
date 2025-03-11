@@ -76,7 +76,7 @@ fn is_empty_str<T: Borrow<str>>(value: &T) -> bool {
 /// or borrowed (e.g. &str). To define a generic function taking any `Span<T>` you can use the
 /// [`SpanValue`] trait:
 /// ```
-/// use datadog_trace_utils::span::v04::{Span, SpanText};
+/// use datadog_trace_utils::span::{Span, SpanText};
 /// fn foo<T: SpanText>(span: Span<T>) {
 ///     let _ = span.meta.get("foo");
 /// }
