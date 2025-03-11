@@ -5,17 +5,60 @@ use crate::platform::{
     FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, PlatformHandle, ShmHandle, ShmPath,
 };
 use io_lifetimes::OwnedFd;
-use libc::off_t;
-use nix::fcntl::OFlag;
-use nix::sys::mman::{mmap, munmap, shm_open, shm_unlink, MapFlags, ProtFlags};
+use libc::{chmod, off_t};
+use nix::errno::Errno;
+use nix::fcntl::{open, OFlag};
+use nix::sys::mman::{self, mmap, munmap, MapFlags, ProtFlags};
 use nix::sys::stat::Mode;
-use nix::unistd::ftruncate;
+use nix::unistd::{ftruncate, mkdir, unlink};
+use nix::NixPath;
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
 use std::num::NonZeroUsize;
 use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::{AtomicI32, Ordering};
+
+fn shm_open<P: ?Sized + NixPath>(
+    name: &P,
+    flag: OFlag,
+    mode: Mode,
+) -> nix::Result<std::os::unix::io::OwnedFd> {
+    mman::shm_open(name, flag, mode).or_else(|e| {
+        if e == Errno::ENOTSUP {
+            // The path has a leading slash
+            let path = name.with_nix_path(|cstr| {
+                let mut path = "/tmp/libdatadog".to_string().into_bytes();
+                path.extend_from_slice(cstr.to_bytes_with_nul());
+                unsafe { CString::from_vec_with_nul_unchecked(path) }
+            })?;
+            open(path.as_c_str(), flag, mode)
+                .or_else(|e| {
+                    if (flag & OFlag::O_CREAT) == OFlag::O_CREAT && e == Errno::ENOENT {
+                        mkdir(c"/tmp/libdatadog", Mode::from_bits(0o1777).unwrap())?;
+                        // work around umask(2).
+                        unsafe { chmod(c"/tmp/libdatadog".as_ptr(), 0o1777) };
+                        open(path.as_c_str(), flag, mode)
+                    } else {
+                        Err(e)
+                    }
+                })
+                .map(|fd| unsafe { std::os::fd::FromRawFd::from_raw_fd(fd) })
+        } else {
+            Err(e)
+        }
+    })
+}
+
+pub fn shm_unlink<P: ?Sized + NixPath>(name: &P) -> nix::Result<()> {
+    mman::shm_unlink(name).or_else(|e| {
+        if e == Errno::ENOTSUP {
+            unlink(name)
+        } else {
+            Err(e)
+        }
+    })
+}
 
 pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMem<T>> {
     let fd = handle.get_shm().handle.as_owned_fd()?;

@@ -8,7 +8,7 @@ use crate::msgpack_decoder::decode::string::{
     read_nullable_str_map_to_bytes_strings, read_nullable_string_bytes, read_string_ref,
 };
 use crate::msgpack_decoder::decode::{meta_struct::read_meta_struct, metrics::read_metrics};
-use crate::span::v04::{SpanBytes, SpanKey};
+use crate::span::{SpanBytes, SpanKey};
 use tinybytes::Bytes;
 
 /// Decodes a slice of bytes into a `Span` object.
@@ -70,7 +70,7 @@ fn fill_span(span: &mut SpanBytes, buf: &mut Bytes) -> Result<(), DecodeError> {
 #[cfg(test)]
 mod tests {
     use super::SpanKey;
-    use crate::span::v04::SpanKeyParseError;
+    use crate::span::SpanKeyParseError;
     use std::str::FromStr;
 
     #[test]

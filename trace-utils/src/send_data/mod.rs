@@ -335,13 +335,26 @@ impl SendData {
                     futures.push(self.send_payload(chunks, payload, headers, http_proxy));
                 }
             }
-            TracerPayloadCollection::V04(payloads) => {
+            TracerPayloadCollection::V04(payload) => {
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
                 let mut headers = self.headers.clone();
                 headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
                 headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
 
-                let payload = match rmp_serde::to_vec_named(payloads) {
+                let payload = match rmp_serde::to_vec_named(payload) {
+                    Ok(p) => p,
+                    Err(e) => return result.error(anyhow!(e)),
+                };
+
+                futures.push(self.send_payload(chunks, payload, headers, http_proxy));
+            }
+            TracerPayloadCollection::V05(payload) => {
+                let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
+                let mut headers = self.headers.clone();
+                headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
+                headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
+
+                let payload = match rmp_serde::to_vec(payload) {
                     Ok(p) => p,
                     Err(e) => return result.error(anyhow!(e)),
                 };
@@ -464,6 +477,7 @@ mod tests {
             TracerPayloadCollection::V04(payloads) => {
                 rmp_serde::to_vec_named(payloads).unwrap().len()
             }
+            TracerPayloadCollection::V05(payloads) => rmp_serde::to_vec(payloads).unwrap().len(),
         }
     }
 
