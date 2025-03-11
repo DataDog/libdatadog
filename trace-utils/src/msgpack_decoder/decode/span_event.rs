@@ -1,4 +1,4 @@
-// Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::msgpack_decoder::decode::error::DecodeError;
@@ -7,6 +7,7 @@ use crate::msgpack_decoder::decode::string::{
     handle_null_marker, read_string_bytes, read_string_ref,
 };
 use crate::span::v04::{AttributeAnyValueBytes, AttributeArrayValueBytes, SpanEventBytes};
+use rmp::decode::ValueReadError;
 use rmp::Marker;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -28,7 +29,6 @@ use tinybytes::{Bytes, BytesString};
 /// This function will return an error if:
 /// - The marker for the array length cannot be read.
 /// - Any `SpanEvent` cannot be decoded.
-/// ```
 pub(crate) fn read_span_events(buf: &mut Bytes) -> Result<Vec<SpanEventBytes>, DecodeError> {
     if let Some(empty_vec) = handle_null_marker(buf, Vec::default) {
         return Ok(empty_vec);
@@ -72,19 +72,19 @@ impl FromStr for SpanEventKey {
 }
 
 fn decode_span_event(buf: &mut Bytes) -> Result<SpanEventBytes, DecodeError> {
-    let mut span = SpanEventBytes::default();
-    let span_size = rmp::decode::read_map_len(unsafe { buf.as_mut_slice() })
+    let mut event = SpanEventBytes::default();
+    let event_size = rmp::decode::read_map_len(unsafe { buf.as_mut_slice() })
         .map_err(|_| DecodeError::InvalidType("Unable to get map len for span size".to_owned()))?;
 
-    for _ in 0..span_size {
+    for _ in 0..event_size {
         match read_string_ref(unsafe { buf.as_mut_slice() })?.parse::<SpanEventKey>()? {
-            SpanEventKey::TimeUnixNano => span.time_unix_nano = read_number_bytes(buf)?,
-            SpanEventKey::Name => span.name = read_string_bytes(buf)?,
-            SpanEventKey::Attributes => span.attributes = read_attributes_map(buf)?,
+            SpanEventKey::TimeUnixNano => event.time_unix_nano = read_number_bytes(buf)?,
+            SpanEventKey::Name => event.name = read_string_bytes(buf)?,
+            SpanEventKey::Attributes => event.attributes = read_attributes_map(buf)?,
         }
     }
 
-    Ok(span)
+    Ok(event)
 }
 
 fn read_attributes_map(
@@ -131,6 +131,11 @@ impl FromStr for AttributeAnyKey {
     }
 }
 
+pub fn read_boolean_bytes(buf: &mut Bytes) -> Result<bool, ValueReadError> {
+    rmp::decode::read_bool(unsafe { buf.as_mut_slice() })
+    // read_number(unsafe { buf.as_mut_slice() }, false)?.try_into()
+}
+
 fn decode_attribute_any(buf: &mut Bytes) -> Result<AttributeAnyValueBytes, DecodeError> {
     let mut attribute: Option<AttributeAnyValueBytes> = None;
     let attribute_size =
@@ -143,20 +148,23 @@ fn decode_attribute_any(buf: &mut Bytes) -> Result<AttributeAnyValueBytes, Decod
             "Invalid number of field for an attribute".to_owned(),
         ));
     }
-    let mut attribute_type = 5;
+    let mut attribute_type: Option<u8> = None;
 
     for _ in 0..attribute_size {
         match read_string_ref(unsafe { buf.as_mut_slice() })?.parse::<AttributeAnyKey>()? {
-            AttributeAnyKey::Type => attribute_type = read_number_bytes(buf)?,
+            AttributeAnyKey::Type => attribute_type = Some(read_number_bytes(buf)?),
             AttributeAnyKey::StringValue => {
                 attribute = Some(AttributeAnyValueBytes::String(read_string_bytes(buf)?))
             }
             AttributeAnyKey::BoolValue => {
-                let boolean = read_string_bytes(buf)?;
-                match boolean.as_str() {
-                    "true" => attribute = Some(AttributeAnyValueBytes::Boolean(true)),
-                    "false" => attribute = Some(AttributeAnyValueBytes::Boolean(false)),
-                    _ => return Err(DecodeError::InvalidType("Invalid boolean field".to_owned())),
+                let boolean = read_boolean_bytes(buf);
+                if let Ok(value) = boolean {
+                    match value {
+                        true => attribute = Some(AttributeAnyValueBytes::Boolean(true)),
+                        false => attribute = Some(AttributeAnyValueBytes::Boolean(false)),
+                    }
+                } else {
+                    return Err(DecodeError::InvalidType("Invalid boolean field".to_owned()));
                 }
             }
             AttributeAnyKey::IntValue => {
@@ -172,8 +180,14 @@ fn decode_attribute_any(buf: &mut Bytes) -> Result<AttributeAnyValueBytes, Decod
     }
 
     if let Some(value) = attribute {
-        if type_from_attribute(&value) == attribute_type {
-            Ok(value)
+        if let Some(attribute_type) = attribute_type {
+            if type_from_attribute(&value) == attribute_type {
+                Ok(value)
+            } else {
+                Err(DecodeError::InvalidFormat(
+                    "No type for attribute".to_owned(),
+                ))
+            }
         } else {
             Err(DecodeError::InvalidType(
                 "Type mismatch for attribute".to_owned(),
@@ -204,11 +218,11 @@ fn read_attributes_array(buf: &mut Bytes) -> Result<Vec<AttributeArrayValueBytes
     })? {
         Marker::FixArray(len) => {
             let mut vec: Vec<AttributeArrayValueBytes> = Vec::with_capacity(len.into());
-            let first = decode_attribute_array(buf, 4)?;
+            let first = decode_attribute_array(buf, None)?;
             let array_type = type_from_attribute_array(&first);
             vec.push(first);
             for _ in 1..len {
-                vec.push(decode_attribute_array(buf, array_type)?);
+                vec.push(decode_attribute_array(buf, Some(array_type))?);
             }
             Ok(vec)
         }
@@ -246,7 +260,7 @@ impl FromStr for AttributeArrayKey {
 
 fn decode_attribute_array(
     buf: &mut Bytes,
-    array_type: u8,
+    array_type: Option<u8>,
 ) -> Result<AttributeArrayValueBytes, DecodeError> {
     let mut attribute: Option<AttributeArrayValueBytes> = None;
     let attribute_size =
@@ -259,20 +273,23 @@ fn decode_attribute_array(
             "Invalid number of field for an attribute".to_owned(),
         ));
     }
-    let mut attribute_type = 5;
+    let mut attribute_type: Option<u8> = None;
 
     for _ in 0..attribute_size {
         match read_string_ref(unsafe { buf.as_mut_slice() })?.parse::<AttributeArrayKey>()? {
-            AttributeArrayKey::Type => attribute_type = read_number_bytes(buf)?,
+            AttributeArrayKey::Type => attribute_type = Some(read_number_bytes(buf)?),
             AttributeArrayKey::StringValue => {
                 attribute = Some(AttributeArrayValueBytes::String(read_string_bytes(buf)?))
             }
             AttributeArrayKey::BoolValue => {
-                let boolean = read_string_bytes(buf)?;
-                match boolean.as_str() {
-                    "true" => attribute = Some(AttributeArrayValueBytes::Boolean(true)),
-                    "false" => attribute = Some(AttributeArrayValueBytes::Boolean(false)),
-                    _ => return Err(DecodeError::InvalidType("Invalid boolean field".to_owned())),
+                let boolean = read_boolean_bytes(buf);
+                if let Ok(value) = boolean {
+                    match value {
+                        true => attribute = Some(AttributeArrayValueBytes::Boolean(true)),
+                        false => attribute = Some(AttributeArrayValueBytes::Boolean(false)),
+                    }
+                } else {
+                    return Err(DecodeError::InvalidType("Invalid boolean field".to_owned()));
                 }
             }
             AttributeArrayKey::IntValue => {
@@ -285,12 +302,19 @@ fn decode_attribute_array(
     }
 
     if let Some(value) = attribute {
-        if type_from_attribute_array(&value) == attribute_type {
-            if array_type == 4 || array_type == attribute_type {
+        if let Some(attribute_type) = attribute_type {
+            if type_from_attribute_array(&value) == attribute_type {
+                if let Some(array_type) = array_type {
+                    if array_type != attribute_type {
+                        return Err(DecodeError::InvalidType(
+                            "Array must have same type element".to_owned(),
+                        ));
+                    }
+                }
                 Ok(value)
             } else {
-                Err(DecodeError::InvalidType(
-                    "Array must have same type element".to_owned(),
+                Err(DecodeError::InvalidFormat(
+                    "No type for attribute".to_owned(),
                 ))
             }
         } else {
