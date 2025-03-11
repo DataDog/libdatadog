@@ -529,27 +529,42 @@ pub mod tests {
     use crate::RemoteConfigSource;
     use http::Response;
     use hyper::Body;
-    use lazy_static::lazy_static;
+    use std::sync::OnceLock;
 
-    lazy_static! {
-        pub static ref PATH_FIRST: RemoteConfigPath = RemoteConfigPath {
+    // TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
+    static PATH_FIRST: OnceLock<RemoteConfigPath> = OnceLock::new();
+
+    pub(crate) fn get_path_first() -> &'static RemoteConfigPath {
+        PATH_FIRST.get_or_init(|| RemoteConfigPath {
             source: RemoteConfigSource::Employee,
             product: RemoteConfigProduct::ApmTracing,
             config_id: "1234".to_string(),
             name: "config".to_string(),
-        };
-        pub static ref PATH_SECOND: RemoteConfigPath = RemoteConfigPath {
+        })
+    }
+
+    static PATH_SECOND: OnceLock<RemoteConfigPath> = OnceLock::new();
+
+    pub(crate) fn get_path_second() -> &'static RemoteConfigPath {
+        PATH_SECOND.get_or_init(|| RemoteConfigPath {
             source: RemoteConfigSource::Employee,
             product: RemoteConfigProduct::ApmTracing,
             config_id: "9876".to_string(),
             name: "config".to_string(),
-        };
-        pub static ref DUMMY_TARGET: Arc<Target> = Arc::new(Target {
-            service: "service".to_string(),
-            env: "env".to_string(),
-            app_version: "1.3.5".to_string(),
-            tags: vec![],
-        });
+        })
+    }
+
+    static DUMMY_TARGET: OnceLock<Arc<Target>> = OnceLock::new();
+
+    pub(crate) fn get_dummy_target() -> &'static Arc<Target> {
+        DUMMY_TARGET.get_or_init(|| {
+            Arc::new(Target {
+                service: "service".to_string(),
+                env: "env".to_string(),
+                app_version: "1.3.5".to_string(),
+                tags: vec![],
+            })
+        })
     }
 
     static DUMMY_RUNTIME_ID: &str = "3b43524b-a70c-45dc-921d-34504e50c5eb";
@@ -635,7 +650,7 @@ pub mod tests {
         let fetched = fetcher
             .fetch_once(
                 DUMMY_RUNTIME_ID,
-                DUMMY_TARGET.clone(),
+                get_dummy_target().clone(),
                 "foo",
                 &mut opaque_state,
             )
@@ -651,8 +666,8 @@ pub mod tests {
     async fn test_fetch_cache() {
         let server = RemoteConfigServer::spawn();
         server.files.lock().unwrap().insert(
-            PATH_FIRST.clone(),
-            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+            get_path_first().clone(),
+            (vec![get_dummy_target().clone()], 1, "v1".to_string()),
         );
 
         let storage = Arc::new(Storage::default());
@@ -679,7 +694,7 @@ pub mod tests {
             let fetched = fetcher
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
-                    DUMMY_TARGET.clone(),
+                    get_dummy_target().clone(),
                     "foo",
                     &mut opaque_state,
                 )
@@ -705,9 +720,9 @@ pub mod tests {
             assert!(state.backend_client_state.is_empty());
 
             let tracer = client.client_tracer.as_ref().unwrap();
-            assert_eq!(tracer.service, DUMMY_TARGET.service);
-            assert_eq!(tracer.env, DUMMY_TARGET.env);
-            assert_eq!(tracer.app_version, DUMMY_TARGET.app_version);
+            assert_eq!(tracer.service, get_dummy_target().service);
+            assert_eq!(tracer.env, get_dummy_target().env);
+            assert_eq!(tracer.app_version, get_dummy_target().app_version);
             assert_eq!(tracer.runtime_id, DUMMY_RUNTIME_ID);
             assert_eq!(tracer.language, "php");
             assert_eq!(tracer.tracer_version, "1.2.3");
@@ -721,7 +736,7 @@ pub mod tests {
 
             assert!(Arc::ptr_eq(
                 &fetched[0].data,
-                storage.files.lock().unwrap().get(&*PATH_FIRST).unwrap()
+                storage.files.lock().unwrap().get(get_path_first()).unwrap()
             ));
             assert_eq!(fetched[0].data.lock().unwrap().contents, "v1");
             assert_eq!(fetched[0].data.lock().unwrap().version, 1);
@@ -731,7 +746,7 @@ pub mod tests {
             let fetched = fetcher
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
-                    DUMMY_TARGET.clone(),
+                    get_dummy_target().clone(),
                     "foo",
                     &mut opaque_state,
                 )
@@ -756,25 +771,25 @@ pub mod tests {
             assert!(!state.backend_client_state.is_empty());
 
             let cached = &req.cached_target_files[0];
-            assert_eq!(cached.path, PATH_FIRST.to_string());
+            assert_eq!(cached.path, get_path_first().to_string());
             assert_eq!(cached.length, 2);
             assert_eq!(cached.hashes.len(), 1);
         }
 
         server.files.lock().unwrap().insert(
-            PATH_FIRST.clone(),
-            (vec![DUMMY_TARGET.clone()], 2, "v2".to_string()),
+            get_path_first().clone(),
+            (vec![get_dummy_target().clone()], 2, "v2".to_string()),
         );
         server.files.lock().unwrap().insert(
-            PATH_SECOND.clone(),
-            (vec![DUMMY_TARGET.clone()], 1, "X".to_string()),
+            get_path_second().clone(),
+            (vec![get_dummy_target().clone()], 1, "X".to_string()),
         );
 
         {
             let fetched = fetcher
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
-                    DUMMY_TARGET.clone(),
+                    get_dummy_target().clone(),
                     "foo",
                     &mut opaque_state,
                 )
@@ -792,14 +807,19 @@ pub mod tests {
 
             assert!(Arc::ptr_eq(
                 &fetched[first].data,
-                storage.files.lock().unwrap().get(&*PATH_FIRST).unwrap()
+                storage.files.lock().unwrap().get(get_path_first()).unwrap()
             ));
             assert_eq!(fetched[first].data.lock().unwrap().contents, "v2");
             assert_eq!(fetched[first].data.lock().unwrap().version, 2);
 
             assert!(Arc::ptr_eq(
                 &fetched[second].data,
-                storage.files.lock().unwrap().get(&*PATH_SECOND).unwrap()
+                storage
+                    .files
+                    .lock()
+                    .unwrap()
+                    .get(get_path_second())
+                    .unwrap()
             ));
             assert_eq!(fetched[second].data.lock().unwrap().contents, "X");
             assert_eq!(fetched[second].data.lock().unwrap().version, 1);
@@ -809,7 +829,7 @@ pub mod tests {
             let fetched = fetcher
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
-                    DUMMY_TARGET.clone(),
+                    get_dummy_target().clone(),
                     "foo",
                     &mut opaque_state,
                 )
@@ -818,13 +838,13 @@ pub mod tests {
             assert!(fetched.is_none()); // no change
         }
 
-        server.files.lock().unwrap().remove(&*PATH_FIRST);
+        server.files.lock().unwrap().remove(get_path_first());
 
         {
             let fetched = fetcher
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
-                    DUMMY_TARGET.clone(),
+                    get_dummy_target().clone(),
                     "foo",
                     &mut opaque_state,
                 )
