@@ -12,7 +12,13 @@ struct RawReplaceRule {
     repl: String,
 }
 
-#[derive(Debug)]
+impl PartialEq for ReplaceRule {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.repl == other.repl && self.re.as_str() == other.re.as_str()
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ReplaceRule {
     // name specifies the name of the tag that the replace rule addresses. However,
     // some exceptions apply such as:
