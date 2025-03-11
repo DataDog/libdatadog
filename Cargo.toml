@@ -91,3 +91,7 @@ codegen-units = 1
 # so benchmarks are not measuring the same thing as the release build. This patch removes
 # the default dependency on libm. A PR will be opened to proptest to make this optional.
 proptest = { git = 'https://github.com/bantonsson/proptest.git', branch = "ban/avoid-libm-in-std" }
+
+# A few of our own tweaks on top of the mimalloc crate.
+# This comes from the "ivoanjo/mimalloc-tweaks" branch, but we want to pin to specifically control when we upgrade this
+libmimalloc-sys = { version = "0.1.39", git = "https://github.com/datadog/mimalloc_rust.git", rev = "2a4df61" }
