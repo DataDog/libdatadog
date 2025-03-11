@@ -6,7 +6,7 @@ use crate::msgpack_decoder::decode::number::read_number_bytes;
 use crate::msgpack_decoder::decode::string::{
     handle_null_marker, read_string_bytes, read_string_ref,
 };
-use crate::span::v04::{AttributeAnyValueBytes, AttributeArrayValueBytes, SpanEventBytes};
+use crate::span::{AttributeAnyValueBytes, AttributeArrayValueBytes, SpanEventBytes};
 use rmp::decode::ValueReadError;
 use rmp::Marker;
 use std::collections::HashMap;
