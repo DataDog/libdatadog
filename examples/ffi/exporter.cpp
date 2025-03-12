@@ -39,7 +39,7 @@ int main(int argc, char *argv[]) {
   const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
   const ddog_prof_Period period = {wall_time, 60};
   ddog_prof_Profile_NewResult profile_new_result =
-      ddog_prof_Profile_new(sample_types, &period, nullptr);
+      ddog_prof_Profile_new(sample_types, &period, nullptr, true);
   if (profile_new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
     print_error("Failed to make new profile: ", profile_new_result.err);
     ddog_Error_drop(&profile_new_result.err);
@@ -110,9 +110,9 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  ddog_prof_Exporter_NewResult exporter_new_result =
-      ddog_prof_Exporter_new(DDOG_CHARSLICE_C_BARE("exporter-example"), DDOG_CHARSLICE_C_BARE("1.2.3"),
-                             DDOG_CHARSLICE_C_BARE("native"), &tags, endpoint);
+  ddog_prof_Exporter_NewResult exporter_new_result = ddog_prof_Exporter_new(
+      DDOG_CHARSLICE_C_BARE("exporter-example"), DDOG_CHARSLICE_C_BARE("1.2.3"),
+      DDOG_CHARSLICE_C_BARE("native"), &tags, endpoint);
   ddog_Vec_Tag_drop(tags);
 
   if (exporter_new_result.tag == DDOG_PROF_EXPORTER_NEW_RESULT_ERR) {
@@ -137,14 +137,15 @@ int main(int argc, char *argv[]) {
   ddog_CharSlice internal_metadata_example = DDOG_CHARSLICE_C_BARE(
       "{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");
 
-  ddog_CharSlice info_example = DDOG_CHARSLICE_C_BARE(
-      "{\"application\": {\"start_time\": \"2024-01-24T11:17:22+0000\"}, \"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
+  ddog_CharSlice info_example =
+      DDOG_CHARSLICE_C_BARE("{\"application\": {\"start_time\": \"2024-01-24T11:17:22+0000\"}, "
+                            "\"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
 
   auto res = ddog_prof_Exporter_set_timeout(exporter, 30000);
   if (res.tag == DDOG_PROF_OPTION_ERROR_SOME_ERROR) {
-          print_error("Failed to set the timeout", res.some);
-          ddog_Error_drop(&res.some);
-          return 1;
+    print_error("Failed to set the timeout", res.some);
+    ddog_Error_drop(&res.some);
+    return 1;
   }
 
   ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(
