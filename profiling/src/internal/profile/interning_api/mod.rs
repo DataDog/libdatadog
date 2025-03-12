@@ -137,4 +137,16 @@ impl Profile {
     pub fn intern_string(&mut self, s: &str) -> anyhow::Result<GenerationalId<StringId>> {
         Ok(GenerationalId::new(self.intern(s), self.generation))
     }
+
+    pub fn intern_strings(
+        &mut self,
+        s: &[&str],
+        out: &mut [GenerationalId<StringId>],
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(s.len() == out.len());
+        for i in 0..s.len() {
+            out[i] = GenerationalId::new(self.intern(s[i]), self.generation)
+        }
+        Ok(())
+    }
 }

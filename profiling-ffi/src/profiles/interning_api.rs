@@ -12,8 +12,8 @@ use datadog_profiling::{
     },
 };
 use ddcommon_ffi::{
-    slice::AsBytes, wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, Result, Slice,
-    VoidResult,
+    slice::AsBytes, wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, MutSlice, Result,
+    Slice, VoidResult,
 };
 use function_name::named;
 
@@ -264,4 +264,33 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_string(
     s: CharSlice,
 ) -> Result<GenerationalId<StringId>> {
     wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_string(s.try_to_utf8()?) })
+}
+
+/// This functions interns its argument into the profiler.
+/// If successful, it an opaque interning ID.
+/// This ID is valid for use on this profiler, until the profiler is reset.
+/// It is an error to use this id after the profiler has been reset, or on a different profiler.
+/// On error, it holds an error message in the error variant.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module.
+/// All other arguments must remain valid for the length of this call.
+/// This call is _NOT_ thread-safe.
+#[must_use]
+#[no_mangle]
+#[named]
+pub unsafe extern "C" fn ddog_prof_Profile_intern_strings(
+    profile: *mut Profile,
+    strings: Slice<CharSlice>,
+    mut out: MutSlice<GenerationalId<StringId>>,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        anyhow::ensure!(strings.len() == out.len());
+        let mut v = Vec::with_capacity(strings.len());
+        for s in strings.iter() {
+            v.push(s.try_to_utf8()?);
+        }
+        profile_ptr_to_inner(profile)?.intern_strings(&v, out.as_mut_slice())?;
+    })
 }
