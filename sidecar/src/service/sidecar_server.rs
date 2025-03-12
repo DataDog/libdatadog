@@ -674,6 +674,7 @@ impl SidecarInterface for SidecarServer {
             session.pid.store(pid, Ordering::Relaxed);
         }
         #[cfg(windows)]
+        #[allow(clippy::unwrap_used)]
         {
             *session.remote_config_notify_function.lock().unwrap() = remote_config_notify_function;
         }
@@ -919,6 +920,7 @@ impl SidecarInterface for SidecarServer {
 
         let session = self.get_session(&instance_id.session_id);
         #[cfg(windows)]
+        #[allow(clippy::unwrap_used)]
         let notify_target = if let Some(handle) = self.process_handle {
             RemoteConfigNotifyTarget {
                 process_handle: handle,

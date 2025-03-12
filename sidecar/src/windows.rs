@@ -6,6 +6,7 @@ use crate::setup::pid_shm_path;
 use datadog_ipc::platform::{
     named_pipe_name_from_raw_handle, FileBackedHandle, MappedMem, NamedShmHandle,
 };
+use ddcommon::MutexExt;
 use futures::FutureExt;
 use manual_future::ManualFuture;
 use spawn_worker::{SpawnWorker, Stdio};
@@ -66,7 +67,7 @@ pub extern "C" fn ddog_daemon_entry_point() {
             let pipe = NamedPipeServer::from_raw_handle(handle.into_raw_handle())?;
 
             let cancel = move || {
-                if let Some(completer) = close_completer.lock().unwrap().take() {
+                if let Some(completer) = close_completer.lock_or_panic().take() {
                     tokio::spawn(completer.complete(()));
                 }
             };
