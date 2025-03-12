@@ -46,7 +46,7 @@ serde_json = {version = "1.0"}
 tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
 byteorder = { version = "1.5", features = ["std"] }
-libmimalloc-sys = { version = "0.1.39", features = ["extended"] }
+libmimalloc-sys = { version = "0.1.39", features = ["extended", "stat"] }
 
 [dev-dependencies]
 bolero = "0.10.1"
