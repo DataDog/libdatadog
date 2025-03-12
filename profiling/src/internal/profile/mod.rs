@@ -21,6 +21,7 @@ use interning_api::Generation;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
@@ -33,6 +34,7 @@ pub struct Profile {
     /// When profiles are reset, the period needs to be preserved. This
     /// stores it in a way that does not depend on the string table.
     owned_period: Option<owned_types::Period>,
+    active_samples: AtomicU64,
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
     generation: interning_api::Generation,
@@ -602,6 +604,7 @@ impl Profile {
         let mut profile = Self {
             owned_period,
             owned_sample_types,
+            active_samples: Default::default(),
             endpoints: Default::default(),
             functions: Default::default(),
             generation: Generation::new(),

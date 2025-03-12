@@ -10,6 +10,7 @@ use crate::internal::{
     Function, FunctionId, Label, LabelId, LabelSet, LabelSetId, Location, LocationId, Mapping,
     MappingId, Profile, Sample, StackTrace, StackTraceId, Timestamp,
 };
+use std::sync::atomic::Ordering::SeqCst;
 
 impl Profile {
     pub fn intern_function(
@@ -169,5 +170,60 @@ impl Profile {
             out[i] = self.intern_string(s[i])?;
         }
         Ok(())
+    }
+
+    // Simple synchronization between samples and profile rotation/export.
+    // Interning a sample may require several calls to the profiler to intern intermediate values,
+    // which are not inherently atomic.  Since these intermediate values are tied to a particular
+    // profiler generation, and are invalidated when the generation changes, some coordination must
+    // occur between sampling and profile rotation/export.
+    // When the generation changes, one of three things can happen:
+    // 1. The sample can be dropped.
+    // 2. The sample can be recreated and interned into the new profile.
+    // 3. The profile rotation should wait until the sampling operation is complete.
+    //
+    // This API provides a mechanism for samples to pause rotation until they complete, and
+    // for samples to be notified that a rotation is in progress so they can wait to begin.
+    // There are probably better ways, and maybe we should have a notification mechanism.
+    // But for now this should be enough.
+    const FLAG: u64 = u32::MAX as u64;
+
+    /// Prevent any new samples from starting
+    pub fn sample_block(&mut self) -> anyhow::Result<()> {
+        self.active_samples.fetch_add(Self::FLAG, SeqCst);
+        Ok(())
+    }
+
+    pub fn sample_end(&mut self) -> anyhow::Result<()> {
+        self.active_samples.fetch_sub(1, SeqCst);
+        Ok(())
+    }
+
+    pub fn sample_start(&mut self) -> anyhow::Result<()> {
+        let old = self.active_samples.fetch_add(1, SeqCst);
+        if old >= Self::FLAG {
+            self.active_samples.fetch_sub(1, SeqCst);
+            anyhow::bail!("Can't start sample, export in progress");
+        }
+        Ok(())
+    }
+
+    pub fn samples_active(&mut self) -> anyhow::Result<u64> {
+        let current = self.active_samples.load(SeqCst);
+        if current >= Self::FLAG {
+            Ok(current - Self::FLAG)
+        } else {
+            Ok(current)
+        }
+    }
+
+    pub fn samples_are_blocked(&mut self) -> anyhow::Result<bool> {
+        let current = self.active_samples.load(SeqCst);
+        Ok(current >= Self::FLAG)
+    }
+
+    pub fn samples_are_drained(&mut self) -> anyhow::Result<bool> {
+        let current = self.active_samples.load(SeqCst);
+        Ok(current == Self::FLAG)
     }
 }
