@@ -149,10 +149,6 @@ pub unsafe fn add_redacted_name<I: Into<Vec<u8>>>(name: I) {
     let added_names = &mut (*(get_added_redacted_names() as *const Vec<Vec<u8>>).cast_mut());
     added_names.push(name.into());
 
-    if REDACTED_NAMES.get().is_none() {
-        let _ = get_redacted_names();
-    }
-
     let redacted_names = &mut (*(get_redacted_names() as *const HashSet<&'static [u8]>).cast_mut());
     redacted_names.insert(&added_names[added_names.len() - 1]);
 }
@@ -163,10 +159,6 @@ pub unsafe fn add_redacted_type<I: AsRef<[u8]>>(name: I) {
     let name = name.as_ref();
 
     if name.ends_with(b"*") {
-        if REDACTED_WILDCARD_TYPES_PATTERN.get().is_none() {
-            let _ = REDACTED_WILDCARD_TYPES_PATTERN.set("".to_string());
-        }
-
         let regex_str = &mut *(get_redacted_wildcard_types_pattern() as *const String).cast_mut();
         if !regex_str.is_empty() {
             regex_str.push('|')
@@ -175,16 +167,8 @@ pub unsafe fn add_redacted_type<I: AsRef<[u8]>>(name: I) {
         regex_str.push_str(regex::escape(&name[..name.len() - 1]).as_str());
         regex_str.push_str(".*");
     } else {
-        if ADDED_REDACTED_TYPES.get().is_none() {
-            let _ = get_added_redacted_types();
-        }
-
         let added_types = &mut (*(get_added_redacted_types() as *const Vec<Vec<u8>>).cast_mut());
         added_types.push(name.to_vec());
-
-        if REDACTED_TYPES.get().is_none() {
-            let _ = get_redacted_types();
-        }
 
         let redacted_types =
             &mut (*(get_redacted_types() as *const HashSet<&'static [u8]>).cast_mut());
