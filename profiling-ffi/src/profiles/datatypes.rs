@@ -382,7 +382,7 @@ impl<'a> TryFrom<Sample<'a>> for api::Sample<'a> {
             locations.push(location.try_into()?)
         }
 
-        let values: Vec<i64> = sample.values.into_slice().to_vec();
+        let values = sample.values.into_slice();
 
         let mut labels: Vec<api::Label> = Vec::with_capacity(sample.labels.len());
         for label in sample.labels.as_slice().iter() {
@@ -397,11 +397,11 @@ impl<'a> TryFrom<Sample<'a>> for api::Sample<'a> {
     }
 }
 
-impl From<Sample<'_>> for api::StringIdSample {
-    fn from(sample: Sample<'_>) -> Self {
+impl<'a> From<Sample<'a>> for api::StringIdSample<'a> {
+    fn from(sample: Sample<'a>) -> Self {
         Self {
             locations: sample.locations.as_slice().iter().map(Into::into).collect(),
-            values: sample.values.into_slice().to_vec(),
+            values: sample.values.into_slice(),
             labels: sample.labels.as_slice().iter().map(Into::into).collect(),
         }
     }

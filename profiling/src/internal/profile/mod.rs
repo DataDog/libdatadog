@@ -158,7 +158,7 @@ impl Profile {
 
     fn add_sample_internal(
         &mut self,
-        values: Vec<i64>,
+        values: &[i64],
         labels: Vec<LabelId>,
         locations: Vec<LocationId>,
         timestamp: Option<Timestamp>,
@@ -821,7 +821,7 @@ mod api_tests {
             .add_sample(
                 api::Sample {
                     locations,
-                    values: vec![1, 10000],
+                    values: &[1, 10000],
                     labels: vec![],
                 },
                 None,
@@ -870,7 +870,7 @@ mod api_tests {
             ..Default::default()
         }];
 
-        let values: Vec<i64> = vec![1];
+        let values = &[1];
         let labels = vec![api::Label {
             key: "pid",
             num: 101,
@@ -879,13 +879,13 @@ mod api_tests {
 
         let main_sample = api::Sample {
             locations: main_locations,
-            values: values.clone(),
+            values,
             labels: labels.clone(),
         };
 
         let test_sample = api::Sample {
             locations: test_locations,
-            values: values.clone(),
+            values,
             labels: labels.clone(),
         };
 
@@ -1104,7 +1104,7 @@ mod api_tests {
 
         let sample = api::Sample {
             locations: vec![],
-            values: vec![1, 10000],
+            values: &[1, 10000],
             labels: vec![id_label],
         };
 
@@ -1143,13 +1143,13 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000],
+            values: &[1, 10000],
             labels: vec![id_label, other_label],
         };
 
         let sample2 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000],
+            values: &[1, 10000],
             labels: vec![id2_label, other_label],
         };
 
@@ -1293,7 +1293,7 @@ mod api_tests {
 
         let sample = api::Sample {
             locations: vec![],
-            values: vec![10000],
+            values: &[10000],
             labels,
         };
 
@@ -1318,7 +1318,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000],
+            values: &[1, 10000],
             labels: vec![id_label],
         };
 
@@ -1358,7 +1358,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![0, 10000, 42],
+            values: &[0, 10000, 42],
             labels: vec![],
         };
 
@@ -1386,7 +1386,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![],
         };
 
@@ -1414,7 +1414,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 16, 29],
+            values: &[1, 16, 29],
             labels: vec![],
         };
 
@@ -1446,7 +1446,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 16, 29],
+            values: &[1, 16, 29],
             labels: vec![],
         };
 
@@ -1478,7 +1478,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 16, 0],
+            values: &[1, 16, 0],
             labels: vec![],
         };
 
@@ -1510,7 +1510,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 16, 0],
+            values: &[1, 16, 0],
             labels: vec![],
         };
 
@@ -1557,7 +1557,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 21],
+            values: &[1, 10000, 21],
             labels: vec![],
         };
 
@@ -1580,7 +1580,7 @@ mod api_tests {
 
         let sample2 = api::Sample {
             locations: main_locations,
-            values: vec![5, 24, 99],
+            values: &[5, 24, 99],
             labels: vec![],
         };
 
@@ -1614,7 +1614,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 21],
+            values: &[1, 10000, 21],
             labels: vec![],
         };
 
@@ -1636,7 +1636,7 @@ mod api_tests {
 
         let sample2 = api::Sample {
             locations: main_locations,
-            values: vec![5, 24, 99],
+            values: &[5, 24, 99],
             labels: vec![],
         };
 
@@ -1681,7 +1681,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![id_label],
         };
 
@@ -1737,7 +1737,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![id_label],
         };
 
@@ -1772,7 +1772,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![id_label],
         };
 
@@ -1794,7 +1794,7 @@ mod api_tests {
 
         let sample2 = api::Sample {
             locations: main_locations,
-            values: vec![5, 24, 99],
+            values: &[5, 24, 99],
             labels: vec![],
         };
 
@@ -1836,7 +1836,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![id_label, id_no_match_label],
         };
 
@@ -1865,7 +1865,7 @@ mod api_tests {
 
         let sample2 = api::Sample {
             locations: main_locations,
-            values: vec![5, 24, 99],
+            values: &[5, 24, 99],
             labels: vec![id_no_match_label, id_label2],
         };
 
@@ -1918,7 +1918,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![id_label],
         };
 
@@ -1954,7 +1954,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![id_label],
         };
 
@@ -2226,7 +2226,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![id_label],
         };
 
@@ -2288,13 +2288,13 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000],
+            values: &[1, 10000],
             labels: vec![id_label],
         };
 
         let sample2 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000],
+            values: &[1, 10000],
             labels: vec![id2_label],
         };
 
@@ -2387,7 +2387,7 @@ mod api_tests {
 
         let sample = api::StringIdSample {
             locations: vec![location],
-            values: vec![1],
+            values: &[1],
             labels: vec![],
         };
 

@@ -235,7 +235,7 @@ impl<'pprof> Replayer<'pprof> {
                 timestamp,
                 api::Sample {
                     locations: Self::sample_locations(profile_index, sample)?,
-                    values: sample.values.clone(),
+                    values: &(sample.values),
                     labels,
                 },
             ));
