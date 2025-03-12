@@ -202,11 +202,15 @@ mod tests {
     #[test]
     fn test_find_metric_origin_aws_lambda_standard_metric() {
         let tags = SortedTags::parse("function_arn:hello123").unwrap();
+        let mut now = 1656581409;
+        now = (now / 10) * 10;
+
         let metric = Metric {
             id: 0,
             name: "aws.lambda.enhanced.invocations".into(),
             value: MetricValue::Gauge(1.0),
             tags: Some(tags.clone()),
+            timestamp: now,
         };
         let origin = find_metric_origin(&metric, tags);
         assert_eq!(origin, None);
@@ -215,11 +219,20 @@ mod tests {
     #[test]
     fn test_find_metric_origin_aws_lambda_custom_metric() {
         let tags = SortedTags::parse("function_arn:hello123").unwrap();
+        let mut now = std::time::UNIX_EPOCH
+            .elapsed()
+            .expect("unable to poll clock, unrecoverable")
+            .as_secs()
+            .try_into()
+            .unwrap_or_default();
+        now = (now / 10) * 10;
+
         let metric = Metric {
             id: 0,
             name: "my.custom.aws.lambda.invocations".into(),
             value: MetricValue::Gauge(1.0),
             tags: Some(tags.clone()),
+            timestamp: now,
         };
         let origin = find_metric_origin(&metric, tags);
         assert_eq!(
