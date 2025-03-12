@@ -7,8 +7,8 @@ use super::datatypes::{profile_ptr_to_inner, Profile};
 use datadog_profiling::{
     collections::identifiable::StringId,
     internal::{
-        interning_api::GenerationalId, FunctionId, LabelId, LabelSetId, LocationId, MappingId,
-        StackTraceId,
+        interning_api::{Generation, GenerationalId},
+        FunctionId, LabelId, LabelSetId, LocationId, MappingId, StackTraceId,
     },
 };
 use ddcommon_ffi::{
@@ -293,4 +293,32 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_strings(
         }
         profile_ptr_to_inner(profile)?.intern_strings(&v, out.as_mut_slice())?;
     })
+}
+
+/// This functions returns the current generation of the profiler.
+/// On error, it holds an error message in the error variant.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module.
+/// This call is _NOT_ thread-safe.
+#[must_use]
+#[no_mangle]
+#[named]
+pub unsafe extern "C" fn ddog_prof_Profile_get_generation(
+    profile: *mut Profile,
+) -> Result<Generation> {
+    wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.get_generation() })
+}
+
+/// This functions returns whether the given generations are equal.
+///
+/// # Safety: No safety requirements
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_generations_are_equal(
+    a: Generation,
+    b: Generation,
+) -> bool {
+    a == b
 }

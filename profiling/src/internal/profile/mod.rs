@@ -196,6 +196,10 @@ impl Profile {
         Ok(())
     }
 
+    pub fn get_generation(&self) -> anyhow::Result<Generation> {
+        Ok(self.generation)
+    }
+
     pub fn resolve(&mut self, id: ManagedStringId) -> anyhow::Result<StringId> {
         let non_empty_string_id = if let Some(valid_id) = NonZeroU32::new(id.value) {
             valid_id
