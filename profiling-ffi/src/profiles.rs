@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![allow(clippy::redundant_closure_call)]
+
 use crate::string_storage::get_inner_string_storage;
 use crate::string_storage::ManagedStringStorage;
 use anyhow::Context;
@@ -838,7 +840,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     start_time: Option<&Timespec>,
 ) -> SerializeResult {
     (|| {
-        with_profile_generic::<internal::EncodedProfile,_>(profile, |profile| {
+        with_profile_generic::<internal::EncodedProfile, _>(profile, |profile| {
             let start_time = start_time.map(SystemTime::from);
             let old_profile = profile.reset_and_return_previous(start_time)?;
             let end_time = end_time.map(SystemTime::from);
@@ -892,6 +894,15 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(
 mod tests {
     use super::*;
 
+    fn only_for_testing_num_aggregated_samples_helper(profile: &Profile) -> usize {
+        match unsafe { profile.inner.as_ref().unwrap() } {
+            MaybeMutex::Synchronized(m) => {
+                m.lock().unwrap().only_for_testing_num_aggregated_samples()
+            }
+            MaybeMutex::Unsynchronized(p) => p.only_for_testing_num_aggregated_samples(),
+        }
+    }
+
     #[test]
     fn ctor_and_dtor() -> Result<(), Error> {
         unsafe {
@@ -900,6 +911,7 @@ mod tests {
                 Slice::from_raw_parts(sample_type, 1),
                 None,
                 None,
+                false,
             ))?;
             ddog_prof_Profile_drop(&mut profile);
             Ok(())
@@ -914,6 +926,7 @@ mod tests {
                 Slice::from_raw_parts(sample_type, 1),
                 None,
                 None,
+                true,
             ))?;
 
             // wrong number of values (doesn't match sample types)
@@ -943,6 +956,7 @@ mod tests {
                 Slice::from_raw_parts(sample_type, 1),
                 None,
                 None,
+                true,
             ))?;
 
             let mapping = Mapping {
@@ -977,24 +991,10 @@ mod tests {
             };
 
             Result::from(ddog_prof_Profile_add(&mut profile, sample, None))?;
-            assert_eq!(
-                profile
-                    .inner
-                    .as_ref()
-                    .unwrap()
-                    .only_for_testing_num_aggregated_samples(),
-                1
-            );
+            assert_eq!(only_for_testing_num_aggregated_samples_helper(&profile), 1);
 
             Result::from(ddog_prof_Profile_add(&mut profile, sample, None))?;
-            assert_eq!(
-                profile
-                    .inner
-                    .as_ref()
-                    .unwrap()
-                    .only_for_testing_num_aggregated_samples(),
-                1
-            );
+            assert_eq!(only_for_testing_num_aggregated_samples_helper(&profile), 1);
 
             ddog_prof_Profile_drop(&mut profile);
             Ok(())
@@ -1007,6 +1007,7 @@ mod tests {
             Slice::from_raw_parts(sample_type, 1),
             None,
             None,
+            false,
         ))
         .unwrap();
 
@@ -1066,24 +1067,10 @@ mod tests {
         };
 
         Result::from(ddog_prof_Profile_add(&mut profile, main_sample, None)).unwrap();
-        assert_eq!(
-            profile
-                .inner
-                .as_ref()
-                .unwrap()
-                .only_for_testing_num_aggregated_samples(),
-            1
-        );
+        assert_eq!(only_for_testing_num_aggregated_samples_helper(&profile), 1);
 
         Result::from(ddog_prof_Profile_add(&mut profile, test_sample, None)).unwrap();
-        assert_eq!(
-            profile
-                .inner
-                .as_ref()
-                .unwrap()
-                .only_for_testing_num_aggregated_samples(),
-            2
-        );
+        assert_eq!(only_for_testing_num_aggregated_samples_helper(&profile), 2);
 
         profile
     }
