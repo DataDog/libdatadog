@@ -125,7 +125,7 @@ impl Profile {
     pub fn intern_sample(
         &mut self,
         stacktrace: GenerationalId<StackTraceId>,
-        values: Vec<i64>,
+        values: &[i64],
         labels: GenerationalId<LabelSetId>,
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<()> {

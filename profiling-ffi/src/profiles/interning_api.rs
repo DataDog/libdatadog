@@ -263,7 +263,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_sample(
         // TODO, this to_vec might not be necessary.
         profile_ptr_to_inner(profile)?.intern_sample(
             stacktrace,
-            values.to_vec(),
+            values.as_slice(),
             labels,
             timestamp,
         )?;
