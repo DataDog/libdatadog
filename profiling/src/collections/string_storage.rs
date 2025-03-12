@@ -53,6 +53,9 @@ struct InternalCachedProfileId {
     id: u32,
 }
 
+// Enable Mutex<ManagedStringStorage> to be Send
+unsafe impl Send for ManagedStringStorage {}
+
 impl From<&CachedProfileId> for InternalCachedProfileId {
     fn from(cached: &CachedProfileId) -> Self {
         InternalCachedProfileId { id: cached.id }
