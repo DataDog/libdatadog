@@ -41,7 +41,7 @@ impl Observations {
         &mut self,
         sample: Sample,
         timestamp: Option<Timestamp>,
-        values: Vec<i64>,
+        values: &[i64],
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.inner.is_some(),
@@ -102,7 +102,7 @@ impl AggregatedObservations {
         }
     }
 
-    fn add(&mut self, sample: Sample, values: Vec<i64>) -> anyhow::Result<()> {
+    fn add(&mut self, sample: Sample, values: &[i64]) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.obs_len.eq(values.len()),
             "Observation length mismatch, expected {:?} values, got {} instead",
@@ -116,7 +116,7 @@ impl AggregatedObservations {
             unsafe { v.as_mut_slice(self.obs_len) }
                 .iter_mut()
                 .zip(values)
-                .for_each(|(a, b)| *a = a.saturating_add(b));
+                .for_each(|(a, b)| *a = a.saturating_add(*b));
         } else {
             let trimmed = TrimmedObservation::new(values, self.obs_len);
             self.data.insert(sample, trimmed);
@@ -217,11 +217,11 @@ mod tests {
         let t1 = Some(Timestamp::new(1).unwrap());
         let t2 = Some(Timestamp::new(2).unwrap());
 
-        o.add(s1, None, vec![1, 2, 3]).unwrap();
-        o.add(s1, None, vec![4, 5, 6]).unwrap();
-        o.add(s2, None, vec![7, 8, 9]).unwrap();
-        o.add(s3, t1, vec![10, 11, 12]).unwrap();
-        o.add(s2, t2, vec![13, 14, 15]).unwrap();
+        o.add(s1, None, &[1, 2, 3]).unwrap();
+        o.add(s1, None, &[4, 5, 6]).unwrap();
+        o.add(s2, None, &[7, 8, 9]).unwrap();
+        o.add(s3, t1, &[10, 11, 12]).unwrap();
+        o.add(s2, t2, &[13, 14, 15]).unwrap();
 
         // 2 because they aggregate together
         assert_eq!(2, o.aggregated_samples_count());
@@ -265,8 +265,8 @@ mod tests {
         };
 
         let mut o = Observations::new(3);
-        o.add(s1, None, vec![1, 2, 3]).unwrap();
-        o.add(s2, None, vec![4, 5]).unwrap_err();
+        o.add(s1, None, &[1, 2, 3]).unwrap();
+        o.add(s2, None, &[4, 5]).unwrap_err();
     }
 
     #[test]
@@ -277,8 +277,8 @@ mod tests {
         };
 
         let mut o = Observations::new(3);
-        o.add(s1, None, vec![1, 2, 3]).unwrap();
-        o.add(s1, None, vec![4, 5]).unwrap_err();
+        o.add(s1, None, &[1, 2, 3]).unwrap();
+        o.add(s1, None, &[4, 5]).unwrap_err();
     }
 
     #[test]
@@ -296,8 +296,8 @@ mod tests {
 
         let mut o = Observations::new(3);
         let ts = NonZeroI64::new(1).unwrap();
-        o.add(s1, Some(ts), vec![1, 2, 3]).unwrap();
-        o.add(s2, Some(ts), vec![4, 5]).unwrap_err();
+        o.add(s1, Some(ts), &[1, 2, 3]).unwrap();
+        o.add(s2, Some(ts), &[4, 5]).unwrap_err();
     }
 
     #[test]
@@ -309,8 +309,8 @@ mod tests {
 
         let mut o = Observations::new(3);
         let ts = NonZeroI64::new(1).unwrap();
-        o.add(s1, Some(ts), vec![1, 2, 3]).unwrap();
-        o.add(s1, Some(ts), vec![4, 5]).unwrap_err();
+        o.add(s1, Some(ts), &[1, 2, 3]).unwrap();
+        o.add(s1, Some(ts), &[4, 5]).unwrap_err();
     }
 
     #[test]
@@ -328,8 +328,8 @@ mod tests {
 
         let mut o = Observations::new(3);
         let ts = NonZeroI64::new(1).unwrap();
-        o.add(s1, None, vec![1, 2, 3]).unwrap();
-        o.add(s2, Some(ts), vec![4, 5]).unwrap_err();
+        o.add(s1, None, &[1, 2, 3]).unwrap();
+        o.add(s2, Some(ts), &[4, 5]).unwrap_err();
     }
 
     #[test]
@@ -342,9 +342,9 @@ mod tests {
 
         let mut o = Observations::new(3);
         let ts = NonZeroI64::new(1).unwrap();
-        o.add(s1, Some(ts), vec![1, 2, 3]).unwrap();
+        o.add(s1, Some(ts), &[1, 2, 3]).unwrap();
         // This should panic
-        o.add(s1, None, vec![4, 5]).unwrap();
+        o.add(s1, None, &[4, 5]).unwrap();
     }
 
     #[test]
@@ -366,10 +366,10 @@ mod tests {
         };
         let t1 = Some(Timestamp::new(1).unwrap());
 
-        o.add(s1, None, vec![1, 2, 3]).unwrap();
-        o.add(s1, None, vec![4, 5, 6]).unwrap();
-        o.add(s2, None, vec![7, 8, 9]).unwrap();
-        o.add(s3, t1, vec![1, 1, 2]).unwrap();
+        o.add(s1, None, &[1, 2, 3]).unwrap();
+        o.add(s1, None, &[4, 5, 6]).unwrap();
+        o.add(s2, None, &[7, 8, 9]).unwrap();
+        o.add(s3, t1, &[1, 1, 2]).unwrap();
 
         let mut count = 0;
         o.into_iter().for_each(|(k, ts, v)| {
@@ -405,10 +405,10 @@ mod tests {
 
         for (s, ts, v) in ts_samples {
             if v.len() == *observations_len {
-                o.add(*s, Some(*ts), v.clone()).unwrap();
+                o.add(*s, Some(*ts), v).unwrap();
                 ts_samples_added += 1;
             } else {
-                assert!(o.add(*s, Some(*ts), v.clone()).is_err());
+                assert!(o.add(*s, Some(*ts), v).is_err());
             }
         }
         assert_eq!(o.timestamped_samples_count(), ts_samples_added);
@@ -417,10 +417,10 @@ mod tests {
 
         for (s, v) in no_ts_samples {
             if v.len() == *observations_len {
-                o.add(*s, None, v.clone()).unwrap();
-                aggregated_observations.add(*s, v.clone()).unwrap();
+                o.add(*s, None, v).unwrap();
+                aggregated_observations.add(*s, v).unwrap();
             } else {
-                assert!(o.add(*s, None, v.clone()).is_err());
+                assert!(o.add(*s, None, v).is_err());
             }
         }
 

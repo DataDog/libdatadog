@@ -212,7 +212,7 @@ impl<'a> From<&'a Sample> for api::Sample<'a> {
     fn from(value: &'a Sample) -> Self {
         Self {
             locations: value.locations.iter().map(api::Location::from).collect(),
-            values: value.values.clone(),
+            values: &value.values,
             labels: value.labels.iter().map(api::Label::from).collect(),
         }
     }
