@@ -247,6 +247,20 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
     }
 }
 
+/// Set client-side stats computation status.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_compute_stats(
+    config: Option<&mut TraceExporterConfig>,
+    is_enabled: bool,
+) -> Option<Box<ExporterError>> {
+    if let Option::Some(config) = config {
+        config.compute_stats = is_enabled;
+        None
+    } else {
+        gen_error!(ErrorCode::InvalidArgument)
+    }
+}
+
 /// Create a new TraceExporter instance.
 ///
 /// # Arguments
@@ -355,7 +369,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
 mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;
-    use datadog_trace_utils::span_v04::Span;
+    use datadog_trace_utils::span::SpanBytes;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::{borrow::Borrow, mem::MaybeUninit};
@@ -744,7 +758,7 @@ mod tests {
 
             assert_eq!(ret, None);
 
-            let data = rmp_serde::to_vec_named::<Vec<Vec<Span>>>(&vec![vec![]]).unwrap();
+            let data = rmp_serde::to_vec_named::<Vec<Vec<SpanBytes>>>(&vec![vec![]]).unwrap();
             let traces = ByteSlice::new(&data);
             ret = ddog_trace_exporter_send(
                 Some(exporter.as_ref()),

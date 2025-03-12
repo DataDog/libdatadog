@@ -2,15 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::telemetry::error::TelemetryError;
-use crate::trace_exporter::msgpack_decoder::v04::error::DecodeError;
+use crate::trace_exporter::msgpack_decoder::decode::error::DecodeError;
 use hyper::http::StatusCode;
 use hyper::Error as HyperError;
-use serde_json::error::Error as SerdeError;
+use rmp_serde::encode::Error as EncodeError;
 use std::error::Error;
 use std::fmt::{Debug, Display};
 
+/// Represents different kinds of errors that can occur when interacting with the agent.
 #[derive(Debug, PartialEq)]
 pub enum AgentErrorKind {
+    /// Indicates that the agent returned an empty response.
     EmptyResponse,
 }
 
@@ -22,35 +24,53 @@ impl Display for AgentErrorKind {
     }
 }
 
+/// Represents different kinds of errors that can occur during the builder process.
 #[derive(Debug, PartialEq)]
 pub enum BuilderErrorKind {
-    InvalidUri,
+    /// Represents an error when an invalid URI is provided.
+    /// The associated `String` contains underlying error message.
+    InvalidUri(String),
+    /// Indicates that the telemetry configuration is invalid.
     InvalidTelemetryConfig,
+    /// Indicates any incompatible configuration
+    InvalidConfiguration(String),
 }
 
 impl Display for BuilderErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BuilderErrorKind::InvalidUri => write!(f, "Invalid URI"),
+            BuilderErrorKind::InvalidUri(msg) => write!(f, "Invalid URI: {}", msg),
             BuilderErrorKind::InvalidTelemetryConfig => {
                 write!(f, "Invalid telemetry configuration")
+            }
+            BuilderErrorKind::InvalidConfiguration(msg) => {
+                write!(f, "Invalid configuration: {}", msg)
             }
         }
     }
 }
-
+/// Represents different kinds of network errors.
 #[derive(Copy, Clone, Debug)]
 pub enum NetworkErrorKind {
+    /// Indicates an error with the body of the request/response.
     Body,
+    /// Indicates that the request was canceled.
     Canceled,
+    /// Indicates that the connection was closed.
     ConnectionClosed,
+    /// Indicates that the message is too large.
     MessageTooLarge,
+    /// Indicates a parsing error.
     Parse,
+    /// Indicates that the request timed out.
     TimedOut,
+    /// Indicates an unknown error.
     Unknown,
+    /// Indicates that the status code is incorrect.
     WrongStatus,
 }
 
+/// Represents a network error, containing the kind of error and the source error.
 #[derive(Debug)]
 pub struct NetworkError {
     kind: NetworkErrorKind,
@@ -111,24 +131,31 @@ impl RequestError {
 /// TraceExporterError holds different types of errors that occur when handling traces.
 #[derive(Debug)]
 pub enum TraceExporterError {
+    /// Error in agent response processing.
     Agent(AgentErrorKind),
+    /// Invalid builder input.
     Builder(BuilderErrorKind),
+    /// Error in deserialization of incoming trace payload.
     Deserialization(DecodeError),
+    /// Generic IO error.
     Io(std::io::Error),
+    /// Network related error (i.e. hyper error).
     Network(NetworkError),
+    /// Agent responded with an error code.
     Request(RequestError),
-    Serde(SerdeError),
+    /// Error in serialization of processed trace payload.
+    Serialization(EncodeError),
 }
 
-impl From<serde_json::error::Error> for TraceExporterError {
-    fn from(value: SerdeError) -> Self {
-        TraceExporterError::Serde(value)
+impl From<EncodeError> for TraceExporterError {
+    fn from(value: EncodeError) -> Self {
+        TraceExporterError::Serialization(value)
     }
 }
 
 impl From<hyper::http::uri::InvalidUri> for TraceExporterError {
-    fn from(_value: hyper::http::uri::InvalidUri) -> Self {
-        TraceExporterError::Builder(BuilderErrorKind::InvalidUri)
+    fn from(value: hyper::http::uri::InvalidUri) -> Self {
+        TraceExporterError::Builder(BuilderErrorKind::InvalidUri(value.to_string()))
     }
 }
 
@@ -188,7 +215,7 @@ impl Display for TraceExporterError {
             TraceExporterError::Io(e) => std::fmt::Display::fmt(e, f),
             TraceExporterError::Network(e) => std::fmt::Display::fmt(e, f),
             TraceExporterError::Request(e) => std::fmt::Display::fmt(e, f),
-            TraceExporterError::Serde(e) => std::fmt::Display::fmt(e, f),
+            TraceExporterError::Serialization(e) => std::fmt::Display::fmt(e, f),
         }
     }
 }

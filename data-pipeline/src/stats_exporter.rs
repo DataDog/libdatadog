@@ -12,8 +12,10 @@ use std::{
 };
 
 use datadog_trace_protobuf::pb;
-use ddcommon::{connector, Endpoint};
+use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
+use ddcommon::Endpoint;
 use hyper;
+use log::error;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 
@@ -29,7 +31,6 @@ pub struct StatsExporter {
     endpoint: Endpoint,
     meta: TracerMetadata,
     sequence_id: AtomicU64,
-    client: ddcommon::HttpClient,
     cancellation_token: CancellationToken,
 }
 
@@ -55,7 +56,6 @@ impl StatsExporter {
             endpoint,
             meta,
             sequence_id: AtomicU64::new(0),
-            client: hyper::Client::builder().build(connector::Connector::default()),
             cancellation_token,
         }
     }
@@ -82,32 +82,29 @@ impl StatsExporter {
         }
         let body = rmp_serde::encode::to_vec_named(&payload)?;
 
-        let headers: HashMap<&'static str, String> = self.meta.borrow().into();
+        let mut headers: HashMap<&'static str, String> = self.meta.borrow().into();
 
-        let mut req_builder = self
-            .endpoint
-            .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
-            .header(
-                hyper::header::CONTENT_TYPE,
-                ddcommon::header::APPLICATION_MSGPACK,
-            )
-            .method(hyper::Method::POST);
+        headers.insert(
+            hyper::header::CONTENT_TYPE.as_str(),
+            ddcommon::header::APPLICATION_MSGPACK_STR.to_string(),
+        );
 
-        for (key, value) in &headers {
-            req_builder = req_builder.header(*key, value);
+        let result = send_with_retry(
+            &self.endpoint,
+            body,
+            &headers,
+            &RetryStrategy::default(),
+            None,
+        )
+        .await;
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                error!("Error with the StateExporter when sending: {err}");
+                anyhow::bail!("Failed to send stats: {err}");
+            }
         }
-
-        let req = req_builder.body(hyper::Body::from(body))?;
-
-        let resp = self.client.request(req).await?;
-
-        if !resp.status().is_success() {
-            anyhow::bail!(
-                "received {} status code from the agent",
-                resp.status().as_u16()
-            );
-        }
-        Ok(())
     }
 
     /// Flush stats from the concentrator into a payload
@@ -187,7 +184,8 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<hyper::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_trace_utils::span_v04::{trace_utils, Span};
+    use datadog_trace_utils::span::{trace_utils, SpanBytes};
+    use datadog_trace_utils::test_utils::poll_for_mock_hit;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use time::Duration;
@@ -228,7 +226,7 @@ mod tests {
         let mut trace = vec![];
 
         for i in 1..100 {
-            trace.push(Span {
+            trace.push(SpanBytes {
                 service: "libdatadog-test".into(),
                 duration: i,
                 ..Default::default()
@@ -270,6 +268,36 @@ mod tests {
         send_status.unwrap();
 
         mock.assert_async().await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_send_stats_fail() {
+        let server = MockServer::start_async().await;
+
+        let mut mock = server
+            .mock_async(|_when, then| {
+                then.status(503)
+                    .header("content-type", "application/json")
+                    .body(r#"{"status":"error"}"#);
+            })
+            .await;
+
+        let stats_exporter = StatsExporter::new(
+            BUCKETS_DURATION,
+            Arc::new(Mutex::new(get_test_concentrator())),
+            get_test_metadata(),
+            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+            CancellationToken::new(),
+        );
+
+        let send_status = stats_exporter.send(true).await;
+        send_status.unwrap_err();
+
+        assert!(
+            poll_for_mock_hit(&mut mock, 10, 100, 5, true).await,
+            "Expected max retry attempts"
+        );
     }
 
     #[cfg_attr(miri, ignore)]

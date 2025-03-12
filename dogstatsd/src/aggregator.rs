@@ -10,7 +10,6 @@ use crate::datadog::{
 use crate::errors;
 use crate::metric::{self, Metric, MetricValue, SortedTags};
 use crate::origin::find_metric_origin;
-use std::time;
 
 use datadog_protos::metrics::{Dogsketch, Metadata, Sketch, SketchPayload};
 use ddsketch_agent::DDSketch;
@@ -94,13 +93,14 @@ impl Aggregator {
     /// Function will return overflow error if more than
     /// `min(constants::MAX_CONTEXTS, CONTEXTS)` is exceeded.
     pub fn insert(&mut self, metric: Metric) -> Result<(), errors::Insert> {
-        let id = metric::id(metric.name, &metric.tags);
+        let id = metric::id(metric.name, &metric.tags, metric.timestamp);
         let len = self.map.len();
 
-        match self
-            .map
-            .entry(id, |m| m.id == id, |m| metric::id(m.name, &m.tags))
-        {
+        match self.map.entry(
+            id,
+            |m| m.id == id,
+            |m| metric::id(m.name, &m.tags, m.timestamp),
+        ) {
             hash_table::Entry::Vacant(entry) => {
                 if len >= self.max_context {
                     return Err(errors::Insert::Overflow);
@@ -120,19 +120,13 @@ impl Aggregator {
 
     #[must_use]
     pub fn distributions_to_protobuf(&self) -> SketchPayload {
-        let now = time::UNIX_EPOCH
-            .elapsed()
-            .expect("unable to poll clock, unrecoverable")
-            .as_secs()
-            .try_into()
-            .unwrap_or_default();
         let mut sketch_payload = SketchPayload::new();
 
         sketch_payload.sketches = self
             .map
             .iter()
             .filter_map(|entry| match entry.value {
-                MetricValue::Distribution(_) => build_sketch(now, entry, self.tags.clone()),
+                MetricValue::Distribution(_) => build_sketch(entry, self.tags.clone()),
                 _ => None,
             })
             .collect();
@@ -141,12 +135,6 @@ impl Aggregator {
 
     #[must_use]
     pub fn consume_distributions(&mut self) -> Vec<SketchPayload> {
-        let now = time::UNIX_EPOCH
-            .elapsed()
-            .expect("unable to poll clock, unrecoverable")
-            .as_secs()
-            .try_into()
-            .unwrap_or_default();
         let mut batched_payloads = Vec::new();
         let mut sketch_payload = SketchPayload::new();
         let mut this_batch_size = 0u64;
@@ -158,7 +146,7 @@ impl Aggregator {
                 }
                 false
             })
-            .filter_map(|entry| build_sketch(now, &entry, self.tags.clone()))
+            .filter_map(|entry| build_sketch(&entry, self.tags.clone()))
         {
             let next_chunk_size = sketch.compute_size();
 
@@ -251,18 +239,23 @@ impl Aggregator {
         batched_payloads
     }
 
-    pub fn get_entry_by_id(&self, name: Ustr, tags: &Option<SortedTags>) -> Option<&Metric> {
-        let id = metric::id(name, tags);
+    pub fn get_entry_by_id(
+        &self,
+        name: Ustr,
+        tags: &Option<SortedTags>,
+        timestamp: i64,
+    ) -> Option<&Metric> {
+        let id = metric::id(name, tags, timestamp);
         self.map.find(id, |m| m.id == id)
     }
 }
 
-fn build_sketch(now: i64, entry: &Metric, mut base_tag_vec: SortedTags) -> Option<Sketch> {
+fn build_sketch(entry: &Metric, mut base_tag_vec: SortedTags) -> Option<Sketch> {
     let sketch = entry.value.get_sketch()?;
     let mut dogsketch = Dogsketch::default();
     sketch.merge_to_dogsketch(&mut dogsketch);
     // TODO(Astuyve) allow users to specify timestamp
-    dogsketch.set_ts(now);
+    dogsketch.set_ts(entry.timestamp);
     let mut sketch = Sketch::default();
     sketch.set_dogsketches(vec![dogsketch]);
     let name = entry.name.to_string();
@@ -297,10 +290,7 @@ fn build_metric(entry: &Metric, mut base_tag_vec: SortedTags) -> Option<MetricTo
     let point = datadog::Point {
         value: entry.value.get_value()?,
         // TODO(astuyve) allow user to specify timestamp
-        timestamp: time::UNIX_EPOCH
-            .elapsed()
-            .expect("unable to poll clock, unrecoverable")
-            .as_secs(),
+        timestamp: entry.timestamp as u64,
     };
 
     if let Some(tags) = entry.tags.clone() {
@@ -349,11 +339,14 @@ pub mod tests {
         metric_id: &str,
         value: f64,
         tags: &str,
+        timestamp: i64,
     ) {
         let aggregator = aggregator_mutex.lock().unwrap();
-        if let Some(e) =
-            aggregator.get_entry_by_id(metric_id.into(), &Some(SortedTags::parse(tags).unwrap()))
-        {
+        if let Some(e) = aggregator.get_entry_by_id(
+            metric_id.into(),
+            &Some(SortedTags::parse(tags).unwrap()),
+            timestamp,
+        ) {
             let metric = e.value.get_value().unwrap();
             assert!((metric - value).abs() < PRECISION);
         } else {
@@ -361,9 +354,14 @@ pub mod tests {
         }
     }
 
-    pub fn assert_sketch(aggregator_mutex: &Mutex<Aggregator>, metric_id: &str, value: f64) {
+    pub fn assert_sketch(
+        aggregator_mutex: &Mutex<Aggregator>,
+        metric_id: &str,
+        value: f64,
+        timestamp: i64,
+    ) {
         let aggregator = aggregator_mutex.lock().unwrap();
-        if let Some(e) = aggregator.get_entry_by_id(metric_id.into(), &None) {
+        if let Some(e) = aggregator.get_entry_by_id(metric_id.into(), &None, timestamp) {
             let metric = e.value.get_sketch().unwrap();
             assert!((metric.max().unwrap() - value).abs() < PRECISION);
             assert!((metric.min().unwrap() - value).abs() < PRECISION);
@@ -408,14 +406,20 @@ pub mod tests {
     #[cfg_attr(miri, ignore)]
     fn overflow() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
-
+        let mut now = std::time::UNIX_EPOCH
+            .elapsed()
+            .expect("unable to poll clock, unrecoverable")
+            .as_secs()
+            .try_into()
+            .unwrap_or_default();
+        now = (now / 10) * 10;
         let metric1 = parse("test:1|c|#k:v").expect("metric parse failed");
         let metric2 = parse("foo:1|c|#k:v").expect("metric parse failed");
         let metric3 = parse("bar:1|c|#k:v").expect("metric parse failed");
 
-        let id1 = metric::id(metric1.name, &metric1.tags);
-        let id2 = metric::id(metric2.name, &metric2.tags);
-        let id3 = metric::id(metric3.name, &metric3.tags);
+        let id1 = metric::id(metric1.name, &metric1.tags, now);
+        let id2 = metric::id(metric2.name, &metric2.tags, now);
+        let id3 = metric::id(metric3.name, &metric3.tags, now);
 
         assert_ne!(id1, id2);
         assert_ne!(id1, id3);
@@ -438,25 +442,30 @@ pub mod tests {
     #[cfg_attr(miri, ignore)]
     fn clear() {
         let mut aggregator = Aggregator::new(EMPTY_TAGS, 2).unwrap();
-
-        let metric1 = parse("test:3|c|#k1:v1").expect("metric parse failed");
-        let metric2 = parse("foo:5|c|#k2:v2").expect("metric parse failed");
+        let mut now = 1656581409;
+        now = (now / 10) * 10;
+        let metric1 = parse("test:3|c|#k1:v1|T1656581409").expect("metric parse failed");
+        let metric2 = parse("foo:5|c|#k2:v2|T1656581409").expect("metric parse failed");
 
         assert!(aggregator.insert(metric1).is_ok());
         assert!(aggregator.insert(metric2).is_ok());
 
         assert_eq!(aggregator.map.len(), 2);
-        if let Some(v) =
-            aggregator.get_entry_by_id("foo".into(), &Some(SortedTags::parse("k2:v2").unwrap()))
-        {
+        if let Some(v) = aggregator.get_entry_by_id(
+            "foo".into(),
+            &Some(SortedTags::parse("k2:v2").unwrap()),
+            now,
+        ) {
             assert_eq!(v.value.get_value().unwrap(), 5f64);
         } else {
             panic!("failed to get value by id");
         }
 
-        if let Some(v) =
-            aggregator.get_entry_by_id("test".into(), &Some(SortedTags::parse("k1:v1").unwrap()))
-        {
+        if let Some(v) = aggregator.get_entry_by_id(
+            "test".into(),
+            &Some(SortedTags::parse("k1:v1").unwrap()),
+            now,
+        ) {
             assert_eq!(v.value.get_value().unwrap(), 3f64);
         } else {
             panic!("failed to get value by id");

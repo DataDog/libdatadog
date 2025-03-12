@@ -4,27 +4,25 @@
 #[cfg(test)]
 mod tracing_integration_tests {
     use datadog_trace_utils::send_data::SendData;
-    use datadog_trace_utils::test_utils::create_test_no_alloc_span;
+    use datadog_trace_utils::test_utils::create_test_json_span;
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use datadog_trace_utils::trace_utils::TracerHeaderTags;
     use datadog_trace_utils::tracer_payload::{
-        DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadCollection, TracerPayloadParams,
+        DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadParams,
     };
     #[cfg(target_os = "linux")]
     use ddcommon::connector::uds::socket_path_to_uri;
     use ddcommon::Endpoint;
     #[cfg(target_os = "linux")]
     use hyper::Uri;
+    use serde_json::json;
     #[cfg(target_os = "linux")]
     use std::fs::Permissions;
     #[cfg(target_os = "linux")]
     use std::os::unix::fs::PermissionsExt;
-    use tinybytes::BytesString;
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    // TODO: APMSP-1779 - This test should call tracer_payload::TracerPayloadParams::try_into()
-    // instead of calling TracerPayloadCollection::V04 directly
     async fn compare_v04_trace_snapshot_test() {
         let relative_snapshot_path = "trace-utils/tests/snapshots/";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
@@ -44,29 +42,32 @@ mod tracing_integration_tests {
                 .get_uri_for_endpoint("v0.4/traces", Some("compare_v04_trace_snapshot_test"))
                 .await,
         );
-        let mut span_1 = create_test_no_alloc_span(1234, 12342, 12341, 1, false);
-        span_1.metrics.insert(
-            BytesString::from_slice("_dd_metric1".as_ref()).unwrap(),
-            1.0,
-        );
-        span_1.metrics.insert(
-            BytesString::from_slice("_dd_metric2".as_ref()).unwrap(),
-            2.0,
-        );
 
-        let span_2 = create_test_no_alloc_span(1234, 12343, 12341, 1, false);
+        let mut span_1 = create_test_json_span(1234, 12342, 12341, 1, false);
+        span_1["metrics"] = json!({
+            "_dd_metric1": 1.0,
+            "_dd_metric2": 2.0
+        });
 
-        let mut root_span = create_test_no_alloc_span(1234, 12341, 0, 0, true);
-        root_span.r#type = BytesString::from_slice("web".as_ref()).unwrap();
+        let span_2 = create_test_json_span(1234, 12343, 12341, 1, false);
+        let mut root_span = create_test_json_span(1234, 12341, 0, 0, true);
+        root_span["type"] = json!("web".to_owned());
 
-        let trace = vec![span_1, span_2, root_span];
+        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
 
-        let data = SendData::new(
-            300,
-            TracerPayloadCollection::V04(vec![trace.clone()]),
-            header_tags,
-            &endpoint,
-        );
+        let data = tinybytes::Bytes::from(encoded_data);
+
+        let payload_collection = TracerPayloadParams::new(
+            data,
+            &header_tags,
+            &mut DefaultTraceChunkProcessor,
+            false,
+            TraceEncoding::V04,
+        )
+        .try_into()
+        .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
+
+        let data = SendData::new(300, payload_collection, header_tags, &endpoint);
 
         let _result = data.send().await;
 
@@ -119,8 +120,6 @@ mod tracing_integration_tests {
     #[tokio::test]
     #[cfg(target_os = "linux")]
     // Validate that we can correctly send traces to the agent via UDS
-    // TODO: APMSP-1779 - This test should call tracer_payload::TracerPayloadParams::try_into()
-    // instead of calling TracerPayloadCollection::V04 directly
     async fn uds_snapshot_test() {
         let relative_snapshot_path = "trace-utils/tests/snapshots/";
 
@@ -180,29 +179,31 @@ mod tracing_integration_tests {
             ..Default::default()
         };
 
-        let mut span_1 = create_test_no_alloc_span(1234, 12342, 12341, 1, false);
-        span_1.metrics.insert(
-            BytesString::from_slice("_dd_metric1".as_ref()).unwrap(),
-            1.0,
-        );
-        span_1.metrics.insert(
-            BytesString::from_slice("_dd_metric2".as_ref()).unwrap(),
-            2.0,
-        );
+        let mut span_1 = create_test_json_span(1234, 12342, 12341, 1, false);
+        span_1["metrics"] = json!({
+            "_dd_metric1": 1.0,
+            "_dd_metric2": 2.0
+        });
 
-        let span_2 = create_test_no_alloc_span(1234, 12343, 12341, 1, false);
+        let span_2 = create_test_json_span(1234, 12343, 12341, 1, false);
+        let mut root_span = create_test_json_span(1234, 12341, 0, 0, true);
+        root_span["type"] = json!("web".to_owned());
 
-        let mut root_span = create_test_no_alloc_span(1234, 12341, 0, 0, true);
-        root_span.r#type = BytesString::from_slice("web".as_ref()).unwrap();
+        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
 
-        let trace = vec![span_1, span_2, root_span];
+        let data = tinybytes::Bytes::from(encoded_data);
 
-        let data = SendData::new(
-            300,
-            TracerPayloadCollection::V04(vec![trace.clone()]),
-            header_tags,
-            &endpoint,
-        );
+        let payload_collection = TracerPayloadParams::new(
+            data,
+            &header_tags,
+            &mut DefaultTraceChunkProcessor,
+            false,
+            TraceEncoding::V04,
+        )
+        .try_into()
+        .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
+
+        let data = SendData::new(300, payload_collection, header_tags, &endpoint);
 
         let _result = data.send().await;
 

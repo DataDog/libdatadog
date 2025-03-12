@@ -1,12 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use futures::{ready, Future, Stream};
+use std::fmt::Debug;
 use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-
-use futures::{ready, Future, Stream};
 use tarpc::server::{Channel, InFlightRequest, Requests, Serve};
 
 #[allow(type_alias_bounds)]
@@ -24,7 +24,7 @@ pub fn execute_sequential<C, S>(
 where
     C: Channel,
     S: Serve<C::Req, Resp = C::Resp> + Send + 'static,
-    C::Req: Send + 'static,
+    C::Req: Send + Debug + 'static,
     C::Resp: Send + 'static,
     S::Fut: Send,
 {
@@ -60,7 +60,7 @@ where
 impl<C, S> Future for SequentialExecutor<C, S>
 where
     C: Channel + 'static,
-    C::Req: Send + 'static,
+    C::Req: Send + Debug + 'static,
     C::Resp: Send + 'static,
     S: Serve<C::Req, Resp = C::Resp> + Send + 'static + Clone,
     S::Fut: Send,

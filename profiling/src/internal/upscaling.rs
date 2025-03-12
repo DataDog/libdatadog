@@ -28,6 +28,20 @@ impl UpscalingRule {
                 let avg = values[sum_value_offset] as f64 / values[count_value_offset] as f64;
                 1_f64 / (1_f64 - (-avg / sampling_distance as f64).exp())
             }
+            UpscalingInfo::PoissonNonSampleTypeCount {
+                sum_value_offset,
+                count_value,
+                sampling_distance,
+            } => {
+                // This should not happen, but if it happens,
+                // do not upscale
+                if values[sum_value_offset] == 0 || count_value == 0 {
+                    return 1_f64;
+                }
+
+                let avg = values[sum_value_offset] as f64 / count_value as f64;
+                1_f64 / (1_f64 - (-avg / sampling_distance as f64).exp())
+            }
             UpscalingInfo::Proportional { scale } => scale,
         }
     }

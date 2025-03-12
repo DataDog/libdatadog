@@ -135,3 +135,9 @@ impl AsyncRead for AsyncChannel {
         }
     }
 }
+
+impl AsyncChannel {
+    pub fn handle(&self) -> i32 {
+        self.inner.as_raw_fd()
+    }
+}

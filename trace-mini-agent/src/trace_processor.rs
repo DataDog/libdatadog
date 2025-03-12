@@ -95,7 +95,7 @@ impl TraceProcessor for ServerlessTraceProcessor {
             }
         };
 
-        let payload = trace_utils::collect_trace_chunks(
+        let payload = match trace_utils::collect_trace_chunks(
             TraceCollection::V07(traces),
             &tracer_header_tags,
             &mut ChunkProcessor {
@@ -103,7 +103,16 @@ impl TraceProcessor for ServerlessTraceProcessor {
                 mini_agent_metadata: mini_agent_metadata.clone(),
             },
             true, // In mini agent, we always send agentless
-        );
+            false,
+        ) {
+            Ok(res) => res,
+            Err(err) => {
+                return log_and_create_traces_success_http_response(
+                    &format!("Error processing trace chunks: {err}"),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                )
+            }
+        };
 
         let send_data = SendData::new(body_size, payload, tracer_header_tags, &config.trace_intake);
 
@@ -194,7 +203,7 @@ mod tests {
 
         let start = get_current_timestamp_nanos();
 
-        let json_span = create_test_json_span(11, 222, 333, start);
+        let json_span = create_test_json_span(11, 222, 333, start, false);
 
         let bytes = rmp_serde::to_vec(&vec![vec![json_span]]).unwrap();
         let request = Request::builder()

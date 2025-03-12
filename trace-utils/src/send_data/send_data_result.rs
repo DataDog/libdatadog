@@ -12,7 +12,7 @@ pub struct SendDataResult {
     pub last_result: anyhow::Result<Response<Body>>,
     /// Count metric for 'trace_api.requests'.
     pub requests_count: u64,
-    /// Count metric for 'trace_api.responses'. Each key maps  a different HTTP status code.
+    /// Count metric for 'trace_api.responses'. Each key maps a different HTTP status code.
     pub responses_count_per_code: HashMap<u16, u64>,
     /// Count metric for 'trace_api.errors' (type: timeout).
     pub errors_timeout: u64,
@@ -53,7 +53,7 @@ impl SendDataResult {
     /// * `res` -  [`SendWithRetryResult`].
     /// * `bytes_sent` -  Number of bytes in the payload sent.
     /// * `chunks` -  Number of chunks sent or dropped in the request.
-    pub(crate) async fn update(&mut self, res: SendWithRetryResult, bytes_sent: u64, chunks: u64) {
+    pub(crate) fn update(&mut self, res: SendWithRetryResult, bytes_sent: u64, chunks: u64) {
         match res {
             Ok((response, attempts)) => {
                 *self
@@ -66,7 +66,7 @@ impl SendDataResult {
                 self.requests_count += u64::from(attempts);
             }
             Err(err) => match err {
-                SendWithRetryError::Http((response, attempts)) => {
+                SendWithRetryError::Http(response, attempts) => {
                     let status_code = response.status().as_u16();
                     self.errors_status_code += 1;
                     *self
@@ -82,7 +82,7 @@ impl SendDataResult {
                     self.chunks_dropped += chunks;
                     self.requests_count += u64::from(attempts);
                 }
-                SendWithRetryError::Network(attempts) => {
+                SendWithRetryError::Network(_, attempts) => {
                     self.errors_network += 1;
                     self.chunks_dropped += chunks;
                     self.requests_count += u64::from(attempts);

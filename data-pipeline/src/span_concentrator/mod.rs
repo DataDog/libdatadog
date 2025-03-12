@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::time::{self, Duration, SystemTime};
 
 use datadog_trace_protobuf::pb;
-use datadog_trace_utils::span_v04::{trace_utils, Span};
+use datadog_trace_utils::span::{trace_utils, SpanBytes};
 
 use aggregation::{AggregationKey, StatsBucket};
 
@@ -25,7 +25,7 @@ fn align_timestamp(t: u64, bucket_size: u64) -> u64 {
 }
 
 /// Return true if the span has a span.kind that is eligible for stats computation
-fn compute_stats_for_span_kind(span: &Span, span_kinds_stats_computed: &[String]) -> bool {
+fn compute_stats_for_span_kind(span: &SpanBytes, span_kinds_stats_computed: &[String]) -> bool {
     !span_kinds_stats_computed.is_empty()
         && span.meta.get("span.kind").is_some_and(|span_kind| {
             span_kinds_stats_computed.contains(&span_kind.as_str().to_lowercase())
@@ -33,7 +33,7 @@ fn compute_stats_for_span_kind(span: &Span, span_kinds_stats_computed: &[String]
 }
 
 /// Return true if the span should be ignored for stats computation
-fn should_ignore_span(span: &Span, span_kinds_stats_computed: &[String]) -> bool {
+fn should_ignore_span(span: &SpanBytes, span_kinds_stats_computed: &[String]) -> bool {
     !(trace_utils::has_top_level(span)
         || trace_utils::is_measured(span)
         || compute_stats_for_span_kind(span, span_kinds_stats_computed))
@@ -113,7 +113,7 @@ impl SpanConcentrator {
 
     /// Add a span into the concentrator, by computing stats if the span is elligible for stats
     /// computation.
-    pub fn add_span(&mut self, span: &Span) {
+    pub fn add_span(&mut self, span: &SpanBytes) {
         // If the span is elligible for stats computation
         if !should_ignore_span(span, self.span_kinds_stats_computed.as_slice()) {
             let mut bucket_timestamp =

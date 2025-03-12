@@ -29,6 +29,7 @@ pub struct SpanLink {
     ///
     /// Optional. The high 64 bits of a referenced trace id.
     #[prost(uint64, tag = "2")]
+    #[serde(default)]
     pub trace_id_high: u64,
     /// @gotags: json:"span_id" msg:"span_id"
     ///
@@ -39,6 +40,7 @@ pub struct SpanLink {
     ///
     /// Optional. Simple mapping of keys to string values.
     #[prost(map = "string, string", tag = "4")]
+    #[serde(default)]
     pub attributes: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
@@ -47,11 +49,13 @@ pub struct SpanLink {
     ///
     /// Optional. W3C tracestate.
     #[prost(string, tag = "5")]
+    #[serde(default)]
     pub tracestate: ::prost::alloc::string::String,
     /// @gotags: msg:"flags,omitempty"
     ///
     /// Optional. W3C trace flags. If set, the high bit (bit 31) must be set.
     #[prost(uint32, tag = "6")]
+    #[serde(default)]
     pub flags: u32,
 }
 #[derive(Deserialize, Serialize)]
