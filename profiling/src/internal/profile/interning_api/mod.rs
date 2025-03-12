@@ -4,6 +4,7 @@
 mod generational_ids;
 pub use generational_ids::*;
 
+use crate::api::ManagedStringId;
 use crate::collections::identifiable::{Dedup, StringId};
 use crate::internal::{
     Function, FunctionId, Label, LabelId, LabelSet, LabelSetId, Location, LocationId, Mapping,
@@ -81,6 +82,26 @@ impl Profile {
         Ok(GenerationalId::new(id, self.generation))
     }
 
+    pub fn intern_managed_string(
+        &mut self,
+        s: ManagedStringId,
+    ) -> anyhow::Result<GenerationalId<StringId>> {
+        let id = self.resolve(s)?;
+        Ok(GenerationalId::new(id, self.generation))
+    }
+
+    pub fn intern_managed_strings(
+        &mut self,
+        s: &[ManagedStringId],
+        out: &mut [GenerationalId<StringId>],
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(s.len() == out.len());
+        for i in 0..s.len() {
+            out[i] = self.intern_managed_string(s[i])?;
+        }
+        Ok(())
+    }
+
     pub fn intern_mapping(
         &mut self,
         memory_start: u64,
@@ -145,7 +166,7 @@ impl Profile {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(s.len() == out.len());
         for i in 0..s.len() {
-            out[i] = GenerationalId::new(self.intern(s[i]), self.generation)
+            out[i] = self.intern_string(s[i])?;
         }
         Ok(())
     }

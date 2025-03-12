@@ -5,6 +5,7 @@ use std::num::NonZeroI64;
 
 use super::datatypes::{profile_ptr_to_inner, Profile};
 use datadog_profiling::{
+    api::ManagedStringId,
     collections::identifiable::StringId,
     internal::{
         interning_api::{Generation, GenerationalId},
@@ -154,6 +155,53 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_location(
 ) -> Result<GenerationalId<LocationId>> {
     wrap_with_ffi_result!({
         profile_ptr_to_inner(profile)?.intern_location(mapping_id, function_id, address, line)
+    })
+}
+
+/// This functions interns its argument into the profiler.
+/// If successful, it an opaque interning ID.
+/// This ID is valid for use on this profiler, until the profiler is reset.
+/// It is an error to use this id after the profiler has been reset, or on a different profiler.
+/// On error, it holds an error message in the error variant.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module.
+/// All other arguments must remain valid for the length of this call.
+/// This call is _NOT_ thread-safe.
+#[must_use]
+#[no_mangle]
+#[named]
+pub unsafe extern "C" fn ddog_prof_Profile_intern_managed_string(
+    profile: *mut Profile,
+    s: ManagedStringId,
+) -> Result<GenerationalId<StringId>> {
+    wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_managed_string(s) })
+}
+
+/// This functions interns its argument into the profiler.
+/// If successful, it an opaque interning ID.
+/// This ID is valid for use on this profiler, until the profiler is reset.
+/// It is an error to use this id after the profiler has been reset, or on a different profiler.
+/// On error, it holds an error message in the error variant.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module.
+/// All other arguments must remain valid for the length of this call.
+/// This call is _NOT_ thread-safe.
+#[must_use]
+#[no_mangle]
+#[named]
+pub unsafe extern "C" fn ddog_prof_Profile_intern_managed_strings(
+    profile: *mut Profile,
+    strings: Slice<ManagedStringId>,
+    mut out: MutSlice<GenerationalId<StringId>>,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        anyhow::ensure!(strings.len() == out.len());
+        profile_ptr_to_inner(profile)?
+            .intern_managed_strings(strings.as_slice(), out.as_mut_slice())?;
     })
 }
 
