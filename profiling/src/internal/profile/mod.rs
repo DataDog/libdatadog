@@ -273,6 +273,12 @@ impl Profile {
         &mut self,
         start_time: Option<SystemTime>,
     ) -> anyhow::Result<Profile> {
+        let current_active_samples = self.sample_block()?;
+        anyhow::ensure!(
+            current_active_samples == 0,
+            "Can't rotate the profile, there are still active samples. Drain them and try again."
+        );
+
         let mut profile = Profile::new_internal(
             self.owned_period.take(),
             self.owned_sample_types.take(),

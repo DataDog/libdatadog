@@ -383,7 +383,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_generations_are_equal(
 #[no_mangle]
 #[named]
 pub unsafe extern "C" fn ddog_prof_Profile_sample_end(profile: *mut Profile) -> VoidResult {
-    wrap_with_void_ffi_result!({ profile_ptr_to_inner(profile)?.sample_end()?; })
+    wrap_with_void_ffi_result!({
+        profile_ptr_to_inner(profile)?.sample_end()?;
+    })
 }
 
 /// This functions starts a sample and blocks the exporter from continuing.
@@ -396,5 +398,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_sample_end(profile: *mut Profile) -> 
 #[no_mangle]
 #[named]
 pub unsafe extern "C" fn ddog_prof_Profile_sample_start(profile: *mut Profile) -> VoidResult {
-    wrap_with_void_ffi_result!({ profile_ptr_to_inner(profile)?.sample_start()?; })
+    wrap_with_void_ffi_result!({
+        profile_ptr_to_inner(profile)?.sample_start()?;
+    })
 }

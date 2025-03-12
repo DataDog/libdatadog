@@ -188,10 +188,14 @@ impl Profile {
     // But for now this should be enough.
     const FLAG: u64 = u32::MAX as u64;
 
-    /// Prevent any new samples from starting
-    pub fn sample_block(&mut self) -> anyhow::Result<()> {
-        self.active_samples.fetch_add(Self::FLAG, SeqCst);
-        Ok(())
+    /// Prevent any new samples from starting.
+    /// Returns the number of remaining samples.
+    pub fn sample_block(&mut self) -> anyhow::Result<u64> {
+        let current = self.active_samples.fetch_add(Self::FLAG, SeqCst);
+        if current >= Self::FLAG {
+            self.active_samples.fetch_sub(Self::FLAG, SeqCst);
+        }
+        Ok(current % Self::FLAG)
     }
 
     pub fn sample_end(&mut self) -> anyhow::Result<()> {
@@ -210,11 +214,7 @@ impl Profile {
 
     pub fn samples_active(&mut self) -> anyhow::Result<u64> {
         let current = self.active_samples.load(SeqCst);
-        if current >= Self::FLAG {
-            Ok(current - Self::FLAG)
-        } else {
-            Ok(current)
-        }
+        Ok(current % Self::FLAG)
     }
 
     pub fn samples_are_blocked(&mut self) -> anyhow::Result<bool> {
@@ -224,6 +224,6 @@ impl Profile {
 
     pub fn samples_are_drained(&mut self) -> anyhow::Result<bool> {
         let current = self.active_samples.load(SeqCst);
-        Ok(current == Self::FLAG)
+        Ok(current % Self::FLAG == 0)
     }
 }

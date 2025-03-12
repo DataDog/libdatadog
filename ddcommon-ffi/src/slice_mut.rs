@@ -110,7 +110,8 @@ impl<'a> AsBytes<'a> for MutSlice<'a, i8> {
 impl<'a, T: 'a> MutSlice<'a, T> {
     /// Creates a valid empty slice (len=0, ptr is non-null).
     #[must_use]
-    pub const fn empty() -> Self {
+    // TODO: this can't be const under 1.78, but can under later versions.
+    pub fn empty() -> Self {
         Self {
             ptr: [].as_mut_ptr(),
             len: 0,
@@ -122,7 +123,7 @@ impl<'a, T: 'a> MutSlice<'a, T> {
     /// Uphold the same safety requirements as [std::str::from_raw_parts].
     /// However, it is allowed but not recommended to provide a null pointer
     /// when the len is 0.
-    pub const unsafe fn from_raw_parts(ptr: *mut T, len: usize) -> Self {
+    pub unsafe fn from_raw_parts(ptr: *mut T, len: usize) -> Self {
         Self {
             ptr,
             len,
@@ -130,7 +131,7 @@ impl<'a, T: 'a> MutSlice<'a, T> {
         }
     }
 
-    pub const fn new(slice: &mut [T]) -> Self {
+    pub fn new(slice: &mut [T]) -> Self {
         Self {
             ptr: slice.as_mut_ptr(),
             len: slice.len(),
