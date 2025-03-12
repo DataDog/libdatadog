@@ -4,7 +4,7 @@
 use crate::fetch::FileStorage;
 use crate::file_change_tracker::{FilePath, UpdatedFiles};
 use crate::{RemoteConfigData, RemoteConfigPath};
-use ddcommon::lock_or_panic;
+use ddcommon::MutexExt;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -30,7 +30,7 @@ where
 
 impl<P: ParseFile> UpdatedFiles<RawFile<P>, P> for RawFileStorage<P> {
     fn updated(&self) -> Vec<(Arc<RawFile<P>>, P)> {
-        std::mem::take(&mut *lock_or_panic(&self.updated))
+        std::mem::take(&mut *self.updated.lock_or_panic())
     }
 }
 
@@ -59,11 +59,11 @@ impl<P> Deref for RawFileContentsGuard<'_, P> {
 impl<P> RawFile<P> {
     /// Gets the contents behind a Deref impl (guarding a Mutex).
     pub fn contents(&self) -> RawFileContentsGuard<P> {
-        RawFileContentsGuard(lock_or_panic(&self.data))
+        RawFileContentsGuard(self.data.lock_or_panic())
     }
 
     pub fn version(&self) -> u64 {
-        lock_or_panic(&self.data).version
+        self.data.lock_or_panic().version
     }
 }
 
@@ -98,9 +98,9 @@ impl<P: ParseFile> FileStorage for RawFileStorage<P> {
         contents: Vec<u8>,
     ) -> anyhow::Result<()> {
         let mut contents = P::parse(&file.path, contents);
-        let mut data = lock_or_panic(&file.data);
+        let mut data = file.data.lock_or_panic();
         std::mem::swap(&mut data.contents, &mut contents);
-        lock_or_panic(&self.updated).push((file.clone(), contents));
+        self.updated.lock_or_panic().push((file.clone(), contents));
         data.version = version;
         Ok(())
     }

@@ -25,16 +25,15 @@ pub mod rate_limiter;
 pub mod tag;
 pub mod tracer_metadata;
 
-#[inline(always)]
-#[track_caller]
-/// Acquires a lock on a `Mutex`, panicking if the lock is poisoned.
+/// Extension trait for `Mutex` to provide a method that acquires a lock, panicking if the lock is
+/// poisoned.
 ///
 /// This helper function is intended to be used to avoid having to add many
 /// `#[allow(clippy::unwrap_used)]` annotations if there are a lot of usages of `Mutex`.
 ///
 /// # Arguments
 ///
-/// * `mutex` - A reference to the `Mutex` to lock.
+/// * `self` - A reference to the `Mutex` to lock.
 ///
 /// # Returns
 ///
@@ -47,24 +46,32 @@ pub mod tracer_metadata;
 /// # Examples
 ///
 /// ```
-/// use ddcommon::lock_or_panic;
+/// use ddcommon::MutexExt;
 /// use std::sync::{Arc, Mutex};
 ///
 /// let data = Arc::new(Mutex::new(5));
 /// let data_clone = Arc::clone(&data);
 ///
 /// std::thread::spawn(move || {
-///     let mut num = lock_or_panic(&data_clone);
+///     let mut num = data_clone.lock_or_panic();
 ///     *num += 1;
 /// })
 /// .join()
 /// .expect("Thread panicked");
 ///
-/// assert_eq!(*lock_or_panic(&data), 6);
+/// assert_eq!(*data.lock_or_panic(), 6);
 /// ```
-pub fn lock_or_panic<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    #[allow(clippy::unwrap_used)]
-    mutex.lock().unwrap()
+pub trait MutexExt<T> {
+    fn lock_or_panic(&self) -> MutexGuard<'_, T>;
+}
+
+impl<T> MutexExt<T> for Mutex<T> {
+    #[inline(always)]
+    #[track_caller]
+    fn lock_or_panic(&self) -> MutexGuard<'_, T> {
+        #[allow(clippy::unwrap_used)]
+        self.lock().unwrap()
+    }
 }
 
 pub mod header {

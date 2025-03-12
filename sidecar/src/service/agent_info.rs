@@ -15,7 +15,7 @@ use base64::Engine;
 use data_pipeline::agent_info::schema::AgentInfoStruct;
 use data_pipeline::agent_info::{fetch_info_with_state, FetchInfoStatus};
 use datadog_ipc::platform::NamedShmHandle;
-use ddcommon::{lock_or_panic, Endpoint};
+use ddcommon::{Endpoint, MutexExt};
 use futures::future::Shared;
 use futures::FutureExt;
 use http::uri::PathAndQuery;
@@ -35,7 +35,7 @@ impl AgentInfos {
     /// Ensures a fetcher for the endpoints agent info and keeps it alive for at least as long as
     /// the returned guard exists.
     pub fn query_for(&self, endpoint: Endpoint) -> AgentInfoGuard {
-        let mut infos_guard = lock_or_panic(&self.0);
+        let mut infos_guard = self.0.lock_or_panic();
         if let Some(info) = infos_guard.get_mut(&endpoint) {
             info.rc += 1;
         } else {
@@ -59,7 +59,7 @@ pub struct AgentInfoGuard {
 
 impl AgentInfoGuard {
     pub fn get(&self) -> Shared<ManualFuture<AgentInfoStruct>> {
-        let infos_guard = lock_or_panic(&self.infos.0);
+        let infos_guard = self.infos.0.lock_or_panic();
 
         #[allow(clippy::unwrap_used)]
         let infos = infos_guard.get(&self.endpoint).unwrap();
@@ -69,7 +69,7 @@ impl AgentInfoGuard {
 
 impl Drop for AgentInfoGuard {
     fn drop(&mut self) {
-        let mut infos_guard = lock_or_panic(&self.infos.0);
+        let mut infos_guard = self.infos.0.lock_or_panic();
 
         #[allow(clippy::unwrap_used)]
         let info = infos_guard.get_mut(&self.endpoint).unwrap();
@@ -104,7 +104,7 @@ impl AgentInfoFetcher {
                 let fetched = fetch_info_with_state(&fetch_endpoint, state.as_deref()).await;
                 let mut complete_fut = None;
                 {
-                    let mut infos_guard = lock_or_panic(&agent_infos.0);
+                    let mut infos_guard = agent_infos.0.lock_or_panic();
 
                     let infos = infos_guard.get_mut(&endpoint).unwrap();
                     if infos.rc == 0 && infos.last_update.elapsed().as_secs() > 60 {

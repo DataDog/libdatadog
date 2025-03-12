@@ -4,8 +4,7 @@ use crate::config::Config;
 use crate::log;
 use crate::service::SidecarServer;
 use crate::watchdog::WatchdogHandle;
-use ddcommon::tag::Tag;
-use ddcommon::{lock_or_panic, tag};
+use ddcommon::{tag, tag::Tag, MutexExt};
 use ddtelemetry::data::metrics::{MetricNamespace, MetricType};
 use ddtelemetry::metrics::ContextKey;
 use ddtelemetry::worker::{
@@ -153,7 +152,10 @@ pub fn self_telemetry(server: SidecarServer, watchdog_handle: WatchdogHandle) ->
     }
 
     let (future, completer) = ManualFuture::new();
-    lock_or_panic(&server.self_telemetry_config).replace(completer);
+    server
+        .self_telemetry_config
+        .lock_or_panic()
+        .replace(completer);
 
     tokio::spawn(async move {
         let submission_interval = tokio::time::interval(Duration::from_secs(60));

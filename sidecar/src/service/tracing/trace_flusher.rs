@@ -7,7 +7,7 @@ use datadog_ipc::platform::NamedShmHandle;
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::trace_utils::SendDataResult;
-use ddcommon::{lock_or_panic, Endpoint};
+use ddcommon::{Endpoint, MutexExt};
 use futures::future::join_all;
 use hyper::body::HttpBody;
 use manual_future::{ManualFuture, ManualFutureCompleter};
@@ -117,7 +117,7 @@ impl TraceFlusher {
     ///
     /// * `data` - A `SendData` instance that needs to be added to the traces.
     pub(crate) fn enqueue(self: &Arc<Self>, data: SendData) {
-        let mut flush_data = lock_or_panic(&self.inner);
+        let mut flush_data = self.inner.lock_or_panic();
         let flush_data = flush_data.deref_mut();
 
         flush_data.traces.send_data_size += data.len();
@@ -151,7 +151,7 @@ impl TraceFlusher {
     /// If the flusher task is not running, it returns `Ok`.
     pub(crate) async fn join(&self) -> anyhow::Result<(), JoinError> {
         let flusher = {
-            let mut flush_data = lock_or_panic(&self.inner);
+            let mut flush_data = self.inner.lock_or_panic();
             self.interval_ms.store(0, Ordering::SeqCst);
             flush_data.traces.flush();
             flush_data.deref_mut().flusher.take()
@@ -173,21 +173,21 @@ impl TraceFlusher {
     /// shared memory for agent config, agent config writers, last used entries in agent
     /// configs, and the size of send data.
     pub(crate) fn stats(&self) -> TraceFlusherStats {
-        let rc = lock_or_panic(&self.remote_config);
+        let rc = self.remote_config.lock_or_panic();
         TraceFlusherStats {
             agent_config_allocated_shm: rc.writers.values().map(|r| r.writer.size() as u32).sum(),
             agent_config_writers: rc.writers.len() as u32,
             agent_configs_last_used_entries: rc.last_used.len() as u32,
-            send_data_size: lock_or_panic(&self.inner).traces.send_data_size as u32,
+            send_data_size: self.inner.lock_or_panic().traces.send_data_size as u32,
         }
     }
 
     pub fn collect_metrics(&self) -> TraceFlusherMetrics {
-        std::mem::take(&mut lock_or_panic(&self.metrics))
+        std::mem::take(&mut self.metrics.lock_or_panic())
     }
 
     fn write_remote_configs(&self, endpoint: Endpoint, contents: Vec<u8>) {
-        let configs = &mut *lock_or_panic(&self.remote_config);
+        let configs = &mut *self.remote_config.lock_or_panic();
 
         let mut entry = configs.writers.entry(endpoint.clone());
         let writer = match entry {
@@ -228,7 +228,7 @@ impl TraceFlusher {
         completer: ManualFutureCompleter<Option<mpsc::Sender<()>>>,
     ) -> Vec<SendData> {
         let trace_buffer = std::mem::replace(
-            &mut lock_or_panic(&self.inner).traces,
+            &mut self.inner.lock_or_panic().traces,
             TraceSendData {
                 send_data: vec![],
                 send_data_size: 0,
@@ -244,7 +244,7 @@ impl TraceFlusher {
     async fn send_and_handle_trace(&self, send_data: SendData) {
         let endpoint = send_data.get_target().clone();
         let response = send_data.send().await;
-        lock_or_panic(&self.metrics).update(&response);
+        self.metrics.lock_or_panic().update(&response);
         match response.last_result {
             Ok(response) => {
                 if endpoint.api_key.is_none() {
@@ -280,7 +280,7 @@ impl TraceFlusher {
 
                 debug!(
                     "Start flushing {} bytes worth of traces",
-                    lock_or_panic(&self.inner).traces.send_data_size
+                    self.inner.lock_or_panic().traces.send_data_size
                 );
 
                 let (new_force_flush, completer) = ManualFuture::new();
@@ -291,7 +291,7 @@ impl TraceFlusher {
 
                 drop(flush_done_sender);
 
-                let mut data = lock_or_panic(&self.inner);
+                let mut data = self.inner.lock_or_panic();
                 let data = data.deref_mut();
                 if data.traces.send_data.is_empty() {
                     data.flusher = None;
@@ -303,7 +303,7 @@ impl TraceFlusher {
 
     /// Flushes immediately without delay.
     pub async fn flush(&self) {
-        let flush_done = lock_or_panic(&self.inner).traces.await_flush();
+        let flush_done = self.inner.lock_or_panic().traces.await_flush();
         flush_done.await
     }
 }

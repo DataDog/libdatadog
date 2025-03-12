@@ -15,8 +15,7 @@ use datadog_remote_config::fetch::{
     MultiTargetStats, NotifyTarget, RefcountedFile,
 };
 use datadog_remote_config::{RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target};
-use ddcommon::lock_or_panic;
-use ddcommon::tag::Tag;
+use ddcommon::{tag::Tag, MutexExt};
 use priority_queue::PriorityQueue;
 use sha2::{Digest, Sha224};
 use std::cmp::Reverse;
@@ -150,7 +149,7 @@ impl FileStorage for ConfigFileStorage {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(store_shm(version, &path, file)?),
             limiter: if path.product == RemoteConfigProduct::LiveDebugger {
-                Some(lock_or_panic(get_shm_limiter()).alloc())
+                Some(get_shm_limiter().lock_or_panic().alloc())
             } else {
                 None
             },
@@ -164,7 +163,7 @@ impl FileStorage for ConfigFileStorage {
         version: u64,
         contents: Vec<u8>,
     ) -> anyhow::Result<()> {
-        *lock_or_panic(&file.handle) = store_shm(version, &file.refcount.path, contents)?;
+        *file.handle.lock_or_panic() = store_shm(version, &file.refcount.path, contents)?;
         Ok(())
     }
 }
@@ -205,7 +204,7 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
         target: &Arc<Target>,
         files: &[Arc<StoredShmFile>],
     ) -> bool {
-        let mut writers = lock_or_panic(&self.writers);
+        let mut writers = self.writers.lock_or_panic();
         let writer = match writers.entry(target.clone()) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => e.insert(match RemoteConfigWriter::new(&self.invariants, target) {
@@ -222,7 +221,7 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
         serialized.extend_from_slice(runtime_id.as_bytes());
         serialized.push(b'\n');
         for file in files.iter() {
-            serialized.extend_from_slice(lock_or_panic(&file.handle).get_path());
+            serialized.extend_from_slice(file.handle.lock_or_panic().get_path());
             serialized.push(b':');
             if let Some(ref limiter) = file.limiter {
                 serialized.extend_from_slice(limiter.index().to_string().as_bytes());
@@ -253,7 +252,7 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
     }
 
     fn expired(&self, target: &Arc<Target>) {
-        if let Some(writer) = lock_or_panic(&self.writers).remove(target) {
+        if let Some(writer) = self.writers.lock_or_panic().remove(target) {
             // clear to signal it's no longer being fetched
             writer.write(&[]);
         }
@@ -261,7 +260,8 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
 
     fn dead(&self) {
         #[allow(clippy::expect_used)]
-        lock_or_panic(&self.on_dead)
+        self.on_dead
+            .lock_or_panic()
             .as_ref()
             .expect("The MultiTargetHandler must not be used anymore once on_dead is called")(
         );

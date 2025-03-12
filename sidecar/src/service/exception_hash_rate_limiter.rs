@@ -3,8 +3,7 @@
 
 use crate::primary_sidecar_identifier;
 use datadog_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory};
-use ddcommon::lock_or_panic;
-use ddcommon::rate_limiter::Limiter;
+use ddcommon::{rate_limiter::Limiter, MutexExt};
 use std::ffi::CString;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -34,7 +33,7 @@ impl ManagedExceptionHashRateLimiter {
                 let mut interval = tokio::time::interval(Duration::from_secs(60));
                 loop {
                     interval.tick().await;
-                    let mut this = lock_or_panic(get_exception_hash_limiter());
+                    let mut this = get_exception_hash_limiter().lock_or_panic();
                     this.active.retain_mut(|limiter| {
                         // This technically could discard
                         limiter.shm.update_rate() > 0. || !unsafe { limiter.shm.drop_if_rc_1() }

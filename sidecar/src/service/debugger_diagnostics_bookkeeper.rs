@@ -3,7 +3,7 @@
 use datadog_live_debugger::debugger_defs::{
     DebuggerData, DebuggerPayload, Diagnostics, ProbeStatus,
 };
-use ddcommon::lock_or_panic;
+use ddcommon::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -42,7 +42,7 @@ impl DebuggerDiagnosticsBookkeeper {
             loop {
                 select! {
                     _ = interval.tick() => {
-                        lock_or_panic(&active).retain(|_, active| {
+                        active.lock_or_panic().retain(|_, active| {
                             active.active_probes.retain(|_, status| {
                                 status.last_update.elapsed() < MAX_TIME_BEFORE_REMOVAL
                             });
@@ -72,7 +72,7 @@ impl DebuggerDiagnosticsBookkeeper {
                 );
             }
 
-            let mut buffers = lock_or_panic(&self.active_by_runtime_id);
+            let mut buffers = self.active_by_runtime_id.lock_or_panic();
             let runtime_id = diagnostics
                 .parent_id
                 .as_ref()
@@ -114,7 +114,7 @@ impl DebuggerDiagnosticsBookkeeper {
     }
 
     pub fn stats(&self) -> DebuggerDiagnosticsBookkeeperStats {
-        let buffers = lock_or_panic(&self.active_by_runtime_id);
+        let buffers = self.active_by_runtime_id.lock_or_panic();
         DebuggerDiagnosticsBookkeeperStats {
             runtime_ids: buffers.len() as u32,
             total_probes: buffers

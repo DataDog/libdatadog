@@ -3,7 +3,7 @@
 
 use crate::config;
 use chrono::{DateTime, Utc};
-use ddcommon::lock_or_panic;
+use ddcommon::MutexExt;
 use priority_queue::PriorityQueue;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
@@ -79,13 +79,13 @@ where
 {
     pub fn add<'a, 's: 'a>(&'s self, key: K) -> TemporarilyRetainedMapGuard<'a, K, V> {
         {
-            let mut live = lock_or_panic(&self.live_counter);
+            let mut live = self.live_counter.lock_or_panic();
             if let Some(count) = live.get_mut(&key) {
                 *count += 1;
             } else {
                 live.insert(key.clone(), 1);
 
-                if lock_or_panic(&self.pending_removal).remove(&key).is_none() {
+                if self.pending_removal.lock_or_panic().remove(&key).is_none() {
                     #[allow(clippy::unwrap_used)]
                     self.maps.write().unwrap().insert(key.clone(), key.parse());
                     <K as TemporarilyRetainedKeyParser<V>>::enable();
@@ -93,7 +93,7 @@ where
             }
         }
 
-        let mut pending = lock_or_panic(&self.pending_removal);
+        let mut pending = self.pending_removal.lock_or_panic();
 
         #[allow(clippy::unwrap_used)]
         while let Some((_, time)) = pending.peek() {
@@ -139,7 +139,7 @@ where
     K: TemporarilyRetainedKeyParser<V> + Clone + Eq + Hash,
 {
     fn drop(&mut self) {
-        let mut live = lock_or_panic(&self.map.live_counter);
+        let mut live = self.map.live_counter.lock_or_panic();
         #[allow(clippy::unwrap_used)]
         let rc = live.get_mut(&self.key).unwrap();
         *rc -= 1;
@@ -147,7 +147,10 @@ where
             #[allow(clippy::unwrap_used)]
             live.remove(&self.key).unwrap();
 
-            lock_or_panic(&self.map.pending_removal).push(self.key.clone(), Instant::now());
+            self.map
+                .pending_removal
+                .lock_or_panic()
+                .push(self.key.clone(), Instant::now());
         }
     }
 }
@@ -178,7 +181,7 @@ impl MultiEnvFilter {
     }
 
     pub fn collect_logs_created_count(&self) -> HashMap<Level, u32> {
-        let mut map = lock_or_panic(&self.logs_created);
+        let mut map = self.logs_created.lock_or_panic();
         std::mem::take(map.deref_mut())
     }
 }
@@ -237,7 +240,7 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
             .any(|f| (f as &dyn Filter<S>).event_enabled(event, cx));
 
         if enabled {
-            let mut map = lock_or_panic(&self.logs_created);
+            let mut map = self.logs_created.lock_or_panic();
             *map.entry(event.metadata().level().to_owned()).or_default() += 1;
         }
         enabled

@@ -6,7 +6,7 @@ use crate::fetch::{
     ConfigFetcherStateStats, ConfigInvariants, FileStorage,
 };
 use crate::{RemoteConfigPath, Target};
-use ddcommon::lock_or_panic;
+use ddcommon::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Add;
@@ -188,7 +188,7 @@ where
 
     fn expire_file(&mut self, file: Arc<S::StoredFile>) {
         let mut expire_lock = self.state.files_lock();
-        let mut inactive = lock_or_panic(&self.inactive);
+        let mut inactive = self.inactive.lock_or_panic();
         if file.refcount().rc.load(Ordering::Relaxed) != 0 {
             return; // Don't do anything if refcount was increased while acquiring the lock
         }
@@ -214,7 +214,7 @@ where
 
     pub fn stats(&self) -> RefcountingStorageStats {
         RefcountingStorageStats {
-            inactive_files: lock_or_panic(&self.inactive).len() as u32,
+            inactive_files: self.inactive.lock_or_panic().len() as u32,
             fetcher: self.state.stats(),
         }
     }
@@ -277,7 +277,7 @@ impl SharedFetcher {
         loop {
             let first_run_id = fetcher.file_storage.run_id.inc_runners();
 
-            let runtime_id = lock_or_panic(&self.runtime_id).clone();
+            let runtime_id = self.runtime_id.lock_or_panic().clone();
             let fetched = fetcher
                 .fetch_once(
                     runtime_id.as_str(),
@@ -289,7 +289,7 @@ impl SharedFetcher {
 
             let clean_inactive = || {
                 let run_range = first_run_id..=fetcher.file_storage.run_id.dec_runners();
-                let mut inactive = lock_or_panic(&fetcher.file_storage.inactive);
+                let mut inactive = fetcher.file_storage.inactive.lock_or_panic();
                 inactive.retain(|_, v| {
                     if run_range.contains(&v.get_expiring_run_id()) && v.delref() == 1 {
                         fetcher
@@ -310,7 +310,7 @@ impl SharedFetcher {
                     if !files.is_empty() || !last_files.is_empty() {
                         for file in files.iter() {
                             if file.get_expiring_run_id() != 0 {
-                                let mut inactive = lock_or_panic(&fetcher.file_storage.inactive);
+                                let mut inactive = fetcher.file_storage.inactive.lock_or_panic();
                                 if inactive.remove(&file.refcount().path).is_some() {
                                     file.setref(0);
                                     file.set_expiring_run_id(0);

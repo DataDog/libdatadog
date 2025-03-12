@@ -14,7 +14,7 @@ use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
 use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
 use datadog_remote_config::fetch::ConfigInvariants;
-use ddcommon::lock_or_panic;
+use ddcommon::MutexExt;
 use tracing::log::warn;
 use tracing::{debug, error, info, trace};
 
@@ -143,11 +143,11 @@ impl SessionInfo {
     }
 
     pub(crate) fn lock_runtimes(&self) -> MutexGuard<HashMap<String, RuntimeInfo>> {
-        lock_or_panic(&self.runtimes)
+        self.runtimes.lock_or_panic()
     }
 
     pub(crate) fn get_telemetry_config(&self) -> MutexGuard<Option<ddtelemetry::config::Config>> {
-        let mut cfg = lock_or_panic(&self.session_config);
+        let mut cfg = self.session_config.lock_or_panic();
 
         if (*cfg).is_none() {
             *cfg = Some(ddtelemetry::config::Config::from_env())
@@ -166,7 +166,7 @@ impl SessionInfo {
     }
 
     pub(crate) fn get_trace_config(&self) -> MutexGuard<tracer::Config> {
-        lock_or_panic(&self.tracer_config)
+        self.tracer_config.lock_or_panic()
     }
 
     pub(crate) fn modify_trace_config<F>(&self, f: F)
@@ -177,7 +177,7 @@ impl SessionInfo {
     }
 
     pub(crate) fn get_dogstatsd(&self) -> MutexGuard<Option<dogstatsd_client::Client>> {
-        lock_or_panic(&self.dogstatsd)
+        self.dogstatsd.lock_or_panic()
     }
 
     pub(crate) fn configure_dogstatsd<F>(&self, f: F)
@@ -188,7 +188,7 @@ impl SessionInfo {
     }
 
     pub fn get_debugger_config(&self) -> MutexGuard<datadog_live_debugger::sender::Config> {
-        lock_or_panic(&self.debugger_config)
+        self.debugger_config.lock_or_panic()
     }
 
     pub fn modify_debugger_config<F>(&self, mut f: F)
@@ -199,11 +199,11 @@ impl SessionInfo {
     }
 
     pub fn set_remote_config_invariants(&self, invariants: ConfigInvariants) {
-        *lock_or_panic(&self.remote_config_invariants) = Some(invariants);
+        *self.remote_config_invariants.lock_or_panic() = Some(invariants);
     }
 
     pub fn get_remote_config_invariants(&self) -> MutexGuard<Option<ConfigInvariants>> {
-        lock_or_panic(&self.remote_config_invariants)
+        self.remote_config_invariants.lock_or_panic()
     }
 
     pub fn send_debugger_data<R: AsRef<[u8]> + Sync + Send + 'static>(
@@ -237,7 +237,7 @@ impl SessionInfo {
                 }
             }
             if sender.is_none() {
-                let config = &*lock_or_panic(&config);
+                let config = &*config.lock_or_panic();
                 *sender = Some(PayloadSender::new(config, debugger_type, tags.as_str())?);
                 let guard = guard.clone();
                 spawn_map_err!(

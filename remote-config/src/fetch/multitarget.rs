@@ -6,7 +6,7 @@ use crate::fetch::{
     RefcountingStorage, RefcountingStorageStats, SharedFetcher,
 };
 use crate::Target;
-use ddcommon::lock_or_panic;
+use ddcommon::MutexExt;
 use futures_util::future::Shared;
 use futures_util::FutureExt;
 use manual_future::ManualFuture;
@@ -154,7 +154,7 @@ where
     }
 
     pub fn is_dead(&self) -> bool {
-        lock_or_panic(&self.services).is_empty()
+        self.services.lock_or_panic().is_empty()
             && self.pending_async_insertions.load(Ordering::Relaxed) == 0
     }
 
@@ -173,7 +173,7 @@ where
         target: &Arc<Target>,
         runtimes: MutexGuard<HashMap<String, RuntimeInfo<N>>>,
     ) {
-        let mut services = lock_or_panic(&self.services);
+        let mut services = self.services.lock_or_panic();
         // "goto" like handling to drop the known_service borrow and be able to change services
         'service_handling: {
             'drop_service: {
@@ -182,7 +182,7 @@ where
                         0 => {
                             // Handle the possible race condition where the service gets added AND
                             // removed while in Removing state.
-                            let status = lock_or_panic(&known_service.status);
+                            let status = known_service.status.lock_or_panic();
                             match *status {
                                 KnownTargetStatus::Removing(ref future) => {
                                     let future = future.clone();
@@ -191,7 +191,7 @@ where
                                     let target = target.clone();
                                     tokio::spawn(async move {
                                         future.await;
-                                        let runtimes = lock_or_panic(&this.runtimes);
+                                        let runtimes = this.runtimes.lock_or_panic();
                                         this.remove_target(runtime_id.as_str(), &target, runtimes);
                                     });
                                     return;
@@ -204,7 +204,7 @@ where
                         }
                         1 => {
                             known_service.runtimes.remove(runtime_id);
-                            let mut status = lock_or_panic(&known_service.status);
+                            let mut status = known_service.status.lock_or_panic();
                             *status = match *status {
                                 KnownTargetStatus::Pending => KnownTargetStatus::Alive, /* not really */
                                 KnownTargetStatus::Alive => KnownTargetStatus::RemoveAt(
@@ -222,19 +222,19 @@ where
                             0
                         }
                         _ => {
-                            if *lock_or_panic(&known_service.fetcher.runtime_id) == runtime_id {
+                            if *known_service.fetcher.runtime_id.lock_or_panic() == runtime_id {
                                 'changed_rt_id: {
                                     for (id, runtime) in runtimes.iter() {
                                         if runtime.targets.len() == 1
                                             && runtime.targets.contains_key(target)
                                         {
-                                            *lock_or_panic(&known_service.fetcher.runtime_id) =
+                                            *known_service.fetcher.runtime_id.lock_or_panic() =
                                                 id.to_string();
                                             break 'changed_rt_id;
                                         }
                                     }
                                     known_service.synthetic_id = true;
-                                    *lock_or_panic(&known_service.fetcher.runtime_id) =
+                                    *known_service.fetcher.runtime_id.lock_or_panic() =
                                         Self::generate_synthetic_id();
                                 }
                             }
@@ -248,7 +248,7 @@ where
             services.remove(target);
         }
 
-        let mut target_runtimes = lock_or_panic(&self.target_runtimes);
+        let mut target_runtimes = self.target_runtimes.lock_or_panic();
         if if let Some(target_runtime) = target_runtimes.get_mut(target) {
             target_runtime.remove(runtime_id);
             target_runtime.is_empty()
@@ -260,7 +260,7 @@ where
     }
 
     fn add_target(self: &Arc<Self>, synthetic_id: bool, runtime_id: &str, target: Arc<Target>) {
-        let mut target_runtimes = lock_or_panic(&self.target_runtimes);
+        let mut target_runtimes = self.target_runtimes.lock_or_panic();
         match target_runtimes.entry(target.clone()) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => e.insert(HashSet::new()),
@@ -268,19 +268,19 @@ where
         .insert(runtime_id.to_string());
         drop(target_runtimes); // unlock
 
-        let mut services = lock_or_panic(&self.services);
+        let mut services = self.services.lock_or_panic();
         match services.entry(target.clone()) {
             Entry::Occupied(mut e) => {
                 let known_target = &mut e.get_mut();
                 if known_target.refcount == 0 {
-                    let mut status = lock_or_panic(&known_target.status);
+                    let mut status = known_target.status.lock_or_panic();
                     match *status {
                         KnownTargetStatus::RemoveAt(_) => {
                             *status = KnownTargetStatus::Alive;
                             known_target.refcount = 1;
                             if synthetic_id && !known_target.synthetic_id {
                                 known_target.synthetic_id = true;
-                                *lock_or_panic(&known_target.fetcher.runtime_id) =
+                                *known_target.fetcher.runtime_id.lock_or_panic() =
                                     Self::generate_synthetic_id();
                             }
                             known_target.runtimes.insert(runtime_id.to_string());
@@ -305,7 +305,7 @@ where
                 }
                 if !synthetic_id && known_target.synthetic_id {
                     known_target.synthetic_id = false;
-                    *lock_or_panic(&known_target.fetcher.runtime_id) = runtime_id.into();
+                    *known_target.fetcher.runtime_id.lock_or_panic() = runtime_id.into();
                 }
             }
             Entry::Vacant(e) => {
@@ -336,7 +336,7 @@ where
         target: &Arc<Target>,
     ) {
         trace!("Adding remote config runtime: {target:?} with runtime id {runtime_id}");
-        match lock_or_panic(&self.runtimes).entry(runtime_id) {
+        match self.runtimes.lock_or_panic().entry(runtime_id) {
             Entry::Occupied(mut runtime_entry) => {
                 let info = runtime_entry.get_mut();
                 let primary_target = if info.targets.len() == 1 {
@@ -348,12 +348,12 @@ where
                     Entry::Occupied(mut e) => *e.get_mut() += 1,
                     Entry::Vacant(e) => {
                         if let Some(primary_target) = primary_target {
-                            let mut services = lock_or_panic(&self.services);
+                            let mut services = self.services.lock_or_panic();
                             if let Some(known_target) = services.get_mut(&primary_target) {
                                 // it's the second usage here
                                 if !known_target.synthetic_id {
                                     known_target.synthetic_id = true;
-                                    *lock_or_panic(&known_target.fetcher.runtime_id) =
+                                    *known_target.fetcher.runtime_id.lock_or_panic() =
                                         Self::generate_synthetic_id();
                                 }
                             }
@@ -386,7 +386,7 @@ where
 
     pub fn delete_runtime(self: &Arc<Self>, runtime_id: &str, target: &Arc<Target>) {
         trace!("Removing remote config runtime: {target:?} with runtime id {runtime_id}");
-        let mut runtimes = lock_or_panic(&self.runtimes);
+        let mut runtimes = self.runtimes.lock_or_panic();
         let last_removed = {
             let info = match runtimes.get_mut(runtime_id) {
                 None => return,
@@ -431,7 +431,7 @@ where
             #[allow(clippy::unwrap_used)]
             let _semaphore = this.fetcher_semaphore.acquire().await.unwrap();
             {
-                let mut status = lock_or_panic(&status);
+                let mut status = status.lock_or_panic();
                 if !matches!(*status, KnownTargetStatus::Pending) {
                     return;
                 }
@@ -448,7 +448,7 @@ where
                 .run(
                     this.storage.clone(),
                     Box::new(move |files| {
-                        let runtime_id = Arc::new(lock_or_panic(&inner_fetcher.runtime_id).clone());
+                        let runtime_id = Arc::new(inner_fetcher.runtime_id.lock_or_panic().clone());
                         let notify = inner_this.storage.storage.fetched(
                             &runtime_id,
                             &inner_fetcher.target,
@@ -459,12 +459,14 @@ where
                             // notify_targets is Hash + Eq + Clone, allowing us to deduplicate. Also
                             // avoid the lock during notifying
                             let mut notify_targets = HashSet::new();
-                            if let Some(runtimes) = lock_or_panic(&inner_this.target_runtimes)
+                            if let Some(runtimes) = inner_this
+                                .target_runtimes
+                                .lock_or_panic()
                                 .get(&inner_fetcher.target)
                             {
                                 for runtime_id in runtimes {
                                     if let Some(runtime) =
-                                        lock_or_panic(&inner_this.runtimes).get(runtime_id)
+                                        inner_this.runtimes.lock_or_panic().get(runtime_id)
                                     {
                                         notify_targets.insert(runtime.notify_target.clone());
                                     }
@@ -489,7 +491,7 @@ where
 
             loop {
                 {
-                    let mut status = lock_or_panic(&status);
+                    let mut status = status.lock_or_panic();
                     if let KnownTargetStatus::RemoveAt(instant) = *status {
                         // Voluntarily give up the semaphore for services in RemoveAt status if
                         // there are only few available permits
@@ -523,7 +525,7 @@ where
                     "Remove {:?} from services map at fetcher end",
                     fetcher.target
                 );
-                let mut services = lock_or_panic(&this.services);
+                let mut services = this.services.lock_or_panic();
                 services.remove(&fetcher.target);
                 services.is_empty() && this.pending_async_insertions.load(Ordering::Relaxed) == 0
             };
@@ -535,9 +537,9 @@ where
     }
 
     pub fn shutdown(&self) {
-        let services = lock_or_panic(&self.services);
+        let services = self.services.lock_or_panic();
         for (target, service) in services.iter() {
-            let mut status = lock_or_panic(&service.status);
+            let mut status = service.status.lock_or_panic();
             match *status {
                 KnownTargetStatus::Pending | KnownTargetStatus::Alive => {
                     error!("Trying to shutdown {:?} while still alive", target);
@@ -552,7 +554,7 @@ where
     }
 
     pub fn active_runtimes(&self) -> usize {
-        lock_or_panic(&self.runtimes).len()
+        self.runtimes.lock_or_panic().len()
     }
 
     pub fn invariants(&self) -> &ConfigInvariants {
@@ -561,13 +563,13 @@ where
 
     pub fn stats(&self) -> MultiTargetStats {
         let (starting_fetchers, active_fetchers, inactive_fetchers, removing_fetchers) = {
-            let services = lock_or_panic(&self.services);
+            let services = self.services.lock_or_panic();
             let mut starting = 0;
             let mut active = 0;
             let mut inactive = 0;
             let mut removing = 0;
             for (_, known_target) in services.iter() {
-                match *lock_or_panic(&known_target.status) {
+                match *known_target.status.lock_or_panic() {
                     KnownTargetStatus::Pending => starting += 1,
                     KnownTargetStatus::Alive => active += 1,
                     KnownTargetStatus::RemoveAt(_) => inactive += 1,

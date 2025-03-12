@@ -1,8 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon::lock_or_panic;
-use ddcommon::tag::Tag;
+use ddcommon::{tag::Tag, MutexExt};
 use ddtelemetry::metrics::{ContextKey, MetricContext};
 use ddtelemetry::worker::{TelemetryActions, TelemetryWorkerHandle};
 use futures::future::{BoxFuture, Shared};
@@ -25,7 +24,7 @@ impl AppInstance {
     ///
     /// * `metric` - The metric context to be registered.
     pub(crate) fn register_metric(&mut self, metric: MetricContext) {
-        let mut metrics = lock_or_panic(&self.telemetry_metrics);
+        let mut metrics = self.telemetry_metrics.lock_or_panic();
         if !metrics.contains_key(&metric.name) {
             metrics.insert(
                 metric.name.clone(),
@@ -59,7 +58,7 @@ impl AppInstance {
         #[allow(clippy::unwrap_used)]
         TelemetryActions::AddPoint((
             val,
-            *lock_or_panic(&self.telemetry_metrics).get(&name).unwrap(),
+            *self.telemetry_metrics.lock_or_panic().get(&name).unwrap(),
             tags,
         ))
     }

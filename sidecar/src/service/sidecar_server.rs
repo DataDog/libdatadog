@@ -18,7 +18,7 @@ use datadog_ipc::transport::Transport;
 use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::tracer_payload;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
-use ddcommon::{lock_or_panic, Endpoint};
+use ddcommon::{Endpoint, MutexExt};
 use ddtelemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerStats,
 };
@@ -179,7 +179,7 @@ impl SidecarServer {
     ///
     /// * `usize`: The number of active sessions.
     pub fn active_session_count(&self) -> usize {
-        lock_or_panic(&self.session_counter).len()
+        self.session_counter.lock_or_panic().len()
     }
 
     async fn process_interceptor_response(
@@ -190,7 +190,7 @@ impl SidecarServer {
             Ok((sessions, instances)) => {
                 for session in sessions {
                     let stop = {
-                        let mut counter = lock_or_panic(&self.session_counter);
+                        let mut counter = self.session_counter.lock_or_panic();
                         if let Entry::Occupied(mut entry) = counter.entry(session.to_owned()) {
                             if entry.insert(entry.get() - 1) == 1 {
                                 entry.remove();
@@ -207,7 +207,9 @@ impl SidecarServer {
                     }
                 }
                 for instance_id in instances {
-                    let maybe_session = lock_or_panic(&self.sessions)
+                    let maybe_session = self
+                        .sessions
+                        .lock_or_panic()
                         .get(&instance_id.session_id)
                         .cloned();
                     if let Some(session) = maybe_session {
@@ -223,7 +225,7 @@ impl SidecarServer {
     }
 
     fn get_session(&self, session_id: &String) -> SessionInfo {
-        let mut sessions = lock_or_panic(&self.sessions);
+        let mut sessions = self.sessions.lock_or_panic();
         match sessions.get(session_id) {
             Some(session) => session.clone(),
             None => {
@@ -242,7 +244,7 @@ impl SidecarServer {
     }
 
     async fn stop_session(&self, session_id: &String) {
-        let session = match lock_or_panic(&self.sessions).remove(session_id) {
+        let session = match self.sessions.lock_or_panic().remove(session_id) {
             Some(session) => session,
             None => return,
         };
@@ -301,7 +303,7 @@ impl SidecarServer {
     pub async fn compute_stats(&self) -> SidecarStats {
         let mut telemetry_stats_errors = 0;
         let telemetry_stats = join_all({
-            let sessions = lock_or_panic(&self.sessions);
+            let sessions = self.sessions.lock_or_panic();
             let mut futures = vec![];
             for (_, s) in sessions.iter() {
                 let runtimes = s.lock_runtimes();
@@ -320,11 +322,11 @@ impl SidecarServer {
             futures
         })
         .await;
-        let sessions = lock_or_panic(&self.sessions);
+        let sessions = self.sessions.lock_or_panic();
         SidecarStats {
             trace_flusher: self.trace_flusher.stats(),
             sessions: sessions.len() as u32,
-            session_counter_size: lock_or_panic(&self.session_counter).len() as u32,
+            session_counter_size: self.session_counter.lock_or_panic().len() as u32,
             runtimes: sessions
                 .values()
                 .map(|s| s.lock_runtimes().len() as u32)
@@ -404,7 +406,7 @@ impl SidecarServer {
                                 .values()
                                 .map(|a| {
                                     a.peek().unwrap_or(&None).as_ref().map_or(0, |w| {
-                                        lock_or_panic(&w.telemetry_metrics).len() as u32
+                                        w.telemetry_metrics.lock_or_panic().len() as u32
                                     })
                                 })
                                 .sum::<u32>()
@@ -476,7 +478,7 @@ impl SidecarInterface for SidecarServer {
                         let apps = rt_info.apps.clone();
                         tokio::spawn(async move {
                             let service = service_future.await;
-                            let app_future = if let Some(fut) = lock_or_panic(&apps).get(&service) {
+                            let app_future = if let Some(fut) = apps.lock_or_panic().get(&service) {
                                 fut.clone()
                             } else {
                                 return;
@@ -548,7 +550,9 @@ impl SidecarInterface for SidecarServer {
                 builder.runtime_id = Some(instance_id.runtime_id.to_owned());
                 builder.application.env = Some(env_name.to_owned());
                 let session_info = self.get_session(&instance_id.session_id);
-                let mut config = lock_or_panic(&session_info.session_config)
+                let mut config = session_info
+                    .session_config
+                    .lock_or_panic()
                     .clone()
                     .unwrap_or_else(ddtelemetry::config::Config::from_env);
                 config.restartable = true;
@@ -623,7 +627,7 @@ impl SidecarInterface for SidecarServer {
                     }) {
                         // Avoid self.get_runtime(), it could create a new one.
                         if let Some(session) =
-                            lock_or_panic(&self.sessions).get(&instance_id.session_id)
+                            self.sessions.lock_or_panic().get(&instance_id.session_id)
                         {
                             if let Some(runtime) =
                                 session.lock_runtimes().get(&instance_id.runtime_id)
@@ -704,7 +708,7 @@ impl SidecarInterface for SidecarServer {
         });
         if config.endpoint.api_key.is_none() {
             // no agent info if agentless
-            *lock_or_panic(&session.agent_infos) =
+            *session.agent_infos.lock_or_panic() =
                 Some(self.agent_infos.query_for(config.endpoint.clone()));
         }
         session.set_remote_config_invariants(ConfigInvariants {
@@ -714,7 +718,7 @@ impl SidecarInterface for SidecarServer {
             products: config.remote_config_products,
             capabilities: config.remote_config_capabilities,
         });
-        *lock_or_panic(&session.remote_config_interval) = config.remote_config_poll_interval;
+        *session.remote_config_interval.lock_or_panic() = config.remote_config_poll_interval;
         self.trace_flusher
             .interval_ms
             .store(config.flush_interval.as_millis() as u64, Ordering::Relaxed);
@@ -725,14 +729,16 @@ impl SidecarInterface for SidecarServer {
             .min_force_drop_size_bytes
             .store(config.force_drop_size as u32, Ordering::Relaxed);
 
-        lock_or_panic(&session.log_guard).replace((
+        session.log_guard.lock_or_panic().replace((
             log::get_multi_log_filter().add(config.log_level),
             log::get_multi_log_writer().add(config.log_file),
         ));
 
-        if let Some(completer) = lock_or_panic(&self.self_telemetry_config).take() {
+        if let Some(completer) = self.self_telemetry_config.lock_or_panic().take() {
             #[allow(clippy::expect_used)]
-            let config = lock_or_panic(&session.session_config)
+            let config = session
+                .session_config
+                .lock_or_panic()
                 .as_ref()
                 .expect("Expected session_config to be Some(Config) but received None")
                 .clone();
@@ -890,7 +896,9 @@ impl SidecarInterface for SidecarServer {
         exception_hash: u64,
         granularity: Duration,
     ) -> Self::AcquireExceptionHashRateLimiterFut {
-        lock_or_panic(get_exception_hash_limiter()).add(exception_hash, granularity);
+        get_exception_hash_limiter()
+            .lock_or_panic()
+            .add(exception_hash, granularity);
 
         no_response()
     }
@@ -934,7 +942,7 @@ impl SidecarInterface for SidecarServer {
         let app = applications.entry(queue_id).or_default();
         app.remote_config_guard = Some(self.remote_configs.add_runtime(
             invariants,
-            *lock_or_panic(&session.remote_config_interval),
+            *session.remote_config_interval.lock_or_panic(),
             instance_id.runtime_id,
             notify_target,
             env_name.clone(),
@@ -1076,7 +1084,7 @@ async fn session_interceptor(
             }) = instance
             {
                 if sessions.insert(session.clone()) {
-                    match lock_or_panic(&session_counter).entry(session) {
+                    match session_counter.lock_or_panic().entry(session) {
                         Entry::Occupied(mut entry) => entry.insert(entry.get() + 1),
                         Entry::Vacant(entry) => *entry.insert(1),
                     };
