@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
+use ddcommon::lock_or_panic;
 use std::ffi::{CStr, CString};
 use std::io;
 use std::sync::atomic::{fence, AtomicU64, Ordering};
@@ -126,6 +127,7 @@ where
             let fetch_data = |reader: &'a mut OneWayShmReader<T, D>| {
                 let size = std::mem::size_of::<RawMetaData>() + source_data.meta.size;
 
+                #[allow(clippy::unwrap_used)]
                 let handle = reader.handle.as_mut().unwrap();
                 handle.ensure_space(size);
 
@@ -191,7 +193,7 @@ where
 
 impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
     pub fn write(&self, contents: &[u8]) {
-        let mut mapped = self.handle.lock().unwrap();
+        let mut mapped = lock_or_panic(&self.handle);
 
         let size = contents.len() + 1; // trailing zero byte, to keep some C code happy
         mapped.ensure_space(std::mem::size_of::<RawMetaData>() + size);
@@ -210,7 +212,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
     }
 
     pub fn as_slice(&self) -> &[u8] {
-        let mapped = self.handle.lock().unwrap();
+        let mapped = lock_or_panic(&self.handle);
         let data = unsafe { &*(mapped.as_slice() as *const [u8] as *const RawData) };
         if data.meta.size > 0 {
             let slice = data.as_slice();
@@ -221,6 +223,6 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
     }
 
     pub fn size(&self) -> usize {
-        self.handle.lock().unwrap().as_slice().len()
+        lock_or_panic(&self.handle).as_slice().len()
     }
 }

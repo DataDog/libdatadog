@@ -3,6 +3,7 @@
 
 use crate::primary_sidecar_identifier;
 use datadog_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory};
+use ddcommon::lock_or_panic;
 use ddcommon::rate_limiter::Limiter;
 use std::ffi::CString;
 use std::io;
@@ -13,6 +14,7 @@ use std::time::Duration;
 static EXCEPTION_HASH_LIMITER: OnceLock<Mutex<ManagedExceptionHashRateLimiter>> = OnceLock::new();
 
 pub(crate) fn get_exception_hash_limiter() -> &'static Mutex<ManagedExceptionHashRateLimiter> {
+    #[allow(clippy::unwrap_used)]
     EXCEPTION_HASH_LIMITER
         .get_or_init(|| Mutex::new(ManagedExceptionHashRateLimiter::create().unwrap()))
 }
@@ -32,7 +34,7 @@ impl ManagedExceptionHashRateLimiter {
                 let mut interval = tokio::time::interval(Duration::from_secs(60));
                 loop {
                     interval.tick().await;
-                    let mut this = get_exception_hash_limiter().lock().unwrap();
+                    let mut this = lock_or_panic(get_exception_hash_limiter());
                     this.active.retain_mut(|limiter| {
                         // This technically could discard
                         limiter.shm.update_rate() > 0. || !unsafe { limiter.shm.drop_if_rc_1() }
@@ -78,6 +80,7 @@ impl HashLimiter {
 }
 
 fn path() -> CString {
+    #[allow(clippy::unwrap_used)]
     CString::new(format!("/ddexhlimit-{}", primary_sidecar_identifier())).unwrap()
 }
 

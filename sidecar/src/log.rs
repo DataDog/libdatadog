@@ -3,6 +3,7 @@
 
 use crate::config;
 use chrono::{DateTime, Utc};
+use ddcommon::lock_or_panic;
 use priority_queue::PriorityQueue;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
@@ -78,19 +79,23 @@ where
 {
     pub fn add<'a, 's: 'a>(&'s self, key: K) -> TemporarilyRetainedMapGuard<'a, K, V> {
         {
-            let mut live = self.live_counter.lock().unwrap();
+            let mut live = lock_or_panic(&self.live_counter);
             if let Some(count) = live.get_mut(&key) {
                 *count += 1;
             } else {
                 live.insert(key.clone(), 1);
-                if self.pending_removal.lock().unwrap().remove(&key).is_none() {
+
+                if lock_or_panic(&self.pending_removal).remove(&key).is_none() {
+                    #[allow(clippy::unwrap_used)]
                     self.maps.write().unwrap().insert(key.clone(), key.parse());
                     <K as TemporarilyRetainedKeyParser<V>>::enable();
                 }
             }
         }
 
-        let mut pending = self.pending_removal.lock().unwrap();
+        let mut pending = lock_or_panic(&self.pending_removal);
+
+        #[allow(clippy::unwrap_used)]
         while let Some((_, time)) = pending.peek() {
             if *time < Instant::now().sub(self.expire_after) {
                 let (log_level, _) = pending.pop().unwrap();
@@ -105,6 +110,7 @@ where
     }
 
     pub fn stats(&self) -> TemporarilyRetainedMapStats {
+        #[allow(clippy::unwrap_used)]
         TemporarilyRetainedMapStats {
             elements: self.maps.read().unwrap().len() as u32,
             live_counters: self.live_counter.lock().unwrap().len() as u32,
@@ -133,16 +139,15 @@ where
     K: TemporarilyRetainedKeyParser<V> + Clone + Eq + Hash,
 {
     fn drop(&mut self) {
-        let mut live = self.map.live_counter.lock().unwrap();
+        let mut live = lock_or_panic(&self.map.live_counter);
+        #[allow(clippy::unwrap_used)]
         let rc = live.get_mut(&self.key).unwrap();
         *rc -= 1;
         if *rc == 0 {
+            #[allow(clippy::unwrap_used)]
             live.remove(&self.key).unwrap();
-            self.map
-                .pending_removal
-                .lock()
-                .unwrap()
-                .push(self.key.clone(), Instant::now());
+
+            lock_or_panic(&self.map.pending_removal).push(self.key.clone(), Instant::now());
         }
     }
 }
@@ -173,7 +178,7 @@ impl MultiEnvFilter {
     }
 
     pub fn collect_logs_created_count(&self) -> HashMap<Level, u32> {
-        let mut map = self.logs_created.lock().unwrap();
+        let mut map = lock_or_panic(&self.logs_created);
         std::mem::take(map.deref_mut())
     }
 }
@@ -197,6 +202,7 @@ impl TemporarilyRetainedKeyParser<EnvFilter> for String {
 
 impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
     fn enabled(&self, meta: &Metadata<'_>, cx: &Context<'_, S>) -> bool {
+        #[allow(clippy::unwrap_used)]
         self.map
             .maps
             .read()
@@ -207,6 +213,7 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
 
     fn callsite_enabled(&self, meta: &'static Metadata<'static>) -> Interest {
         let mut callsite_interest = Interest::never();
+        #[allow(clippy::unwrap_used)]
         for f in self.map.maps.read().unwrap().values() {
             let interest = (f as &dyn Filter<S>).callsite_enabled(meta);
             if interest.is_always() {
@@ -220,6 +227,7 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
     }
 
     fn event_enabled(&self, event: &Event<'_>, cx: &Context<'_, S>) -> bool {
+        #[allow(clippy::unwrap_used)]
         let enabled = self
             .map
             .maps
@@ -229,13 +237,14 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
             .any(|f| (f as &dyn Filter<S>).event_enabled(event, cx));
 
         if enabled {
-            let mut map = self.logs_created.lock().unwrap();
+            let mut map = lock_or_panic(&self.logs_created);
             *map.entry(event.metadata().level().to_owned()).or_default() += 1;
         }
         enabled
     }
 
     fn max_level_hint(&self) -> Option<LevelFilter> {
+        #[allow(clippy::unwrap_used)]
         self.map
             .maps
             .read()
@@ -247,30 +256,35 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
     }
 
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        #[allow(clippy::unwrap_used)]
         for f in self.map.maps.read().unwrap().values() {
             (f as &dyn Filter<S>).on_new_span(attrs, id, ctx.clone());
         }
     }
 
     fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
+        #[allow(clippy::unwrap_used)]
         for f in self.map.maps.read().unwrap().values() {
             (f as &dyn Filter<S>).on_record(id, values, ctx.clone());
         }
     }
 
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
+        #[allow(clippy::unwrap_used)]
         for f in self.map.maps.read().unwrap().values() {
             (f as &dyn Filter<S>).on_enter(id, ctx.clone());
         }
     }
 
     fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
+        #[allow(clippy::unwrap_used)]
         for f in self.map.maps.read().unwrap().values() {
             (f as &dyn Filter<S>).on_exit(id, ctx.clone());
         }
     }
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
+        #[allow(clippy::unwrap_used)]
         for f in self.map.maps.read().unwrap().values() {
             (f as &dyn Filter<S>).on_close(id.clone(), ctx.clone());
         }
@@ -339,6 +353,7 @@ impl TemporarilyRetainedKeyParser<Box<dyn io::Write + Send>> for config::LogMeth
 impl io::Write for &MultiWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         #[allow(clippy::manual_try_fold)] // we want the array to be fully iterated in any case
+        #[allow(clippy::unwrap_used)]
         self.maps
             .write()
             .unwrap()
@@ -347,6 +362,7 @@ impl io::Write for &MultiWriter {
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        #[allow(clippy::unwrap_used)]
         self.maps
             .write()
             .unwrap()

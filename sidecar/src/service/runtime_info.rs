@@ -7,6 +7,7 @@ use crate::service::{
     InstanceId, QueueId,
 };
 use datadog_live_debugger::sender::{generate_tags, PayloadSender};
+use ddcommon::lock_or_panic;
 use ddcommon::tag::Tag;
 use futures::{
     future::{self, join_all, Shared},
@@ -128,7 +129,7 @@ impl RuntimeInfo {
     ///
     /// * `<MutexGuard<AppMap>>` - A mutable reference to the apps map.
     pub(crate) fn lock_apps(&self) -> MutexGuard<AppMap> {
-        self.apps.lock().unwrap()
+        lock_or_panic(&self.apps)
     }
 
     /// Locks the applications map and returns a mutable reference to it.
@@ -138,7 +139,7 @@ impl RuntimeInfo {
     /// * `MutexGuard<HashMap<QueueId, ActiveApplications>>` - A mutable reference to the
     ///   applications map.
     pub(crate) fn lock_applications(&self) -> MutexGuard<HashMap<QueueId, ActiveApplication>> {
-        self.applications.lock().unwrap()
+        lock_or_panic(&self.applications)
     }
 }
 

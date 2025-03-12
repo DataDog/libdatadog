@@ -3,6 +3,7 @@
 
 use crate::shm_remote_config::{ShmRemoteConfigs, ShmRemoteConfigsGuard};
 use datadog_remote_config::fetch::{ConfigInvariants, MultiTargetStats, NotifyTarget};
+use ddcommon::lock_or_panic;
 use ddcommon::tag::Tag;
 use std::collections::hash_map::Entry;
 use std::fmt::Debug;
@@ -107,7 +108,7 @@ impl RemoteConfigs {
         app_version: String,
         tags: Vec<Tag>,
     ) -> RemoteConfigsGuard {
-        match self.0.lock().unwrap().entry(invariants) {
+        match lock_or_panic(&self.0).entry(invariants) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => {
                 let this = self.0.clone();
@@ -136,15 +137,13 @@ impl RemoteConfigs {
     }
 
     pub fn shutdown(&self) {
-        for (_, rc) in self.0.lock().unwrap().drain() {
+        for (_, rc) in lock_or_panic(&self.0).drain() {
             rc.shutdown();
         }
     }
 
     pub fn stats(&self) -> MultiTargetStats {
-        self.0
-            .lock()
-            .unwrap()
+        lock_or_panic(&self.0)
             .values()
             .map(|rc| rc.stats())
             .fold(MultiTargetStats::default(), |a, b| a + b)

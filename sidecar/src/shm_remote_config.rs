@@ -15,6 +15,7 @@ use datadog_remote_config::fetch::{
     MultiTargetStats, NotifyTarget, RefcountedFile,
 };
 use datadog_remote_config::{RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target};
+use ddcommon::lock_or_panic;
 use ddcommon::tag::Tag;
 use priority_queue::PriorityQueue;
 use sha2::{Digest, Sha224};
@@ -70,6 +71,8 @@ pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CS
     );
     // datadog remote config, on macos we're restricted to 31 chars
     path.truncate(31); // should not be larger than 31 chars, but be sure.
+
+    #[allow(clippy::unwrap_used)]
     CString::new(path).unwrap()
 }
 
@@ -80,6 +83,7 @@ impl RemoteConfigReader {
     }
 
     pub fn from_path(path: &CStr) -> Self {
+        #[allow(clippy::unwrap_used)]
         RemoteConfigReader(OneWayShmReader::new(
             open_named_shm(path).ok(),
             CString::new(path.to_bytes()).unwrap(),
@@ -146,7 +150,7 @@ impl FileStorage for ConfigFileStorage {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(store_shm(version, &path, file)?),
             limiter: if path.product == RemoteConfigProduct::LiveDebugger {
-                Some(get_shm_limiter().lock().unwrap().alloc())
+                Some(lock_or_panic(get_shm_limiter()).alloc())
             } else {
                 None
             },
@@ -160,7 +164,7 @@ impl FileStorage for ConfigFileStorage {
         version: u64,
         contents: Vec<u8>,
     ) -> anyhow::Result<()> {
-        *file.handle.lock().unwrap() = store_shm(version, &file.refcount.path, contents)?;
+        *lock_or_panic(&file.handle) = store_shm(version, &file.refcount.path, contents)?;
         Ok(())
     }
 }
@@ -201,7 +205,7 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
         target: &Arc<Target>,
         files: &[Arc<StoredShmFile>],
     ) -> bool {
-        let mut writers = self.writers.lock().unwrap();
+        let mut writers = lock_or_panic(&self.writers);
         let writer = match writers.entry(target.clone()) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => e.insert(match RemoteConfigWriter::new(&self.invariants, target) {
@@ -218,7 +222,7 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
         serialized.extend_from_slice(runtime_id.as_bytes());
         serialized.push(b'\n');
         for file in files.iter() {
-            serialized.extend_from_slice(file.handle.lock().unwrap().get_path());
+            serialized.extend_from_slice(lock_or_panic(&file.handle).get_path());
             serialized.push(b':');
             if let Some(ref limiter) = file.limiter {
                 serialized.extend_from_slice(limiter.index().to_string().as_bytes());
@@ -249,19 +253,17 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
     }
 
     fn expired(&self, target: &Arc<Target>) {
-        if let Some(writer) = self.writers.lock().unwrap().remove(target) {
+        if let Some(writer) = lock_or_panic(&self.writers).remove(target) {
             // clear to signal it's no longer being fetched
             writer.write(&[]);
         }
     }
 
     fn dead(&self) {
-        (self
-            .on_dead
-            .lock()
-            .unwrap()
+        #[allow(clippy::expect_used)]
+        lock_or_panic(&self.on_dead)
             .as_ref()
-            .expect("The MultiTargetHandler must not be used anymore once on_dead is called"))(
+            .expect("The MultiTargetHandler must not be used anymore once on_dead is called")(
         );
     }
 }
@@ -473,6 +475,7 @@ impl RemoteConfigManager {
                 }
 
                 while let Some((_, Reverse(instant))) = self.unexpired_targets.peek() {
+                    #[allow(clippy::unwrap_used)]
                     if *instant < Instant::now() - Duration::from_secs(3666) {
                         let (target, _) = self.unexpired_targets.pop().unwrap();
                         self.encountered_targets.remove(&target);

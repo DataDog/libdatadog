@@ -10,13 +10,13 @@ use std::{
 
 use futures::future;
 
-use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
-use datadog_remote_config::fetch::ConfigInvariants;
-use tracing::log::warn;
-use tracing::{debug, error, info, trace};
-
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
+use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
+use datadog_remote_config::fetch::ConfigInvariants;
+use ddcommon::lock_or_panic;
+use tracing::log::warn;
+use tracing::{debug, error, info, trace};
 
 use crate::service::agent_info::AgentInfoGuard;
 use crate::service::{InstanceId, QueueId, RuntimeInfo};
@@ -143,11 +143,11 @@ impl SessionInfo {
     }
 
     pub(crate) fn lock_runtimes(&self) -> MutexGuard<HashMap<String, RuntimeInfo>> {
-        self.runtimes.lock().unwrap()
+        lock_or_panic(&self.runtimes)
     }
 
     pub(crate) fn get_telemetry_config(&self) -> MutexGuard<Option<ddtelemetry::config::Config>> {
-        let mut cfg = self.session_config.lock().unwrap();
+        let mut cfg = lock_or_panic(&self.session_config);
 
         if (*cfg).is_none() {
             *cfg = Some(ddtelemetry::config::Config::from_env())
@@ -166,7 +166,7 @@ impl SessionInfo {
     }
 
     pub(crate) fn get_trace_config(&self) -> MutexGuard<tracer::Config> {
-        self.tracer_config.lock().unwrap()
+        lock_or_panic(&self.tracer_config)
     }
 
     pub(crate) fn modify_trace_config<F>(&self, f: F)
@@ -177,7 +177,7 @@ impl SessionInfo {
     }
 
     pub(crate) fn get_dogstatsd(&self) -> MutexGuard<Option<dogstatsd_client::Client>> {
-        self.dogstatsd.lock().unwrap()
+        lock_or_panic(&self.dogstatsd)
     }
 
     pub(crate) fn configure_dogstatsd<F>(&self, f: F)
@@ -188,7 +188,7 @@ impl SessionInfo {
     }
 
     pub fn get_debugger_config(&self) -> MutexGuard<datadog_live_debugger::sender::Config> {
-        self.debugger_config.lock().unwrap()
+        lock_or_panic(&self.debugger_config)
     }
 
     pub fn modify_debugger_config<F>(&self, mut f: F)
@@ -199,11 +199,11 @@ impl SessionInfo {
     }
 
     pub fn set_remote_config_invariants(&self, invariants: ConfigInvariants) {
-        *self.remote_config_invariants.lock().unwrap() = Some(invariants);
+        *lock_or_panic(&self.remote_config_invariants) = Some(invariants);
     }
 
     pub fn get_remote_config_invariants(&self) -> MutexGuard<Option<ConfigInvariants>> {
-        self.remote_config_invariants.lock().unwrap()
+        lock_or_panic(&self.remote_config_invariants)
     }
 
     pub fn send_debugger_data<R: AsRef<[u8]> + Sync + Send + 'static>(
@@ -237,7 +237,7 @@ impl SessionInfo {
                 }
             }
             if sender.is_none() {
-                let config = &*config.lock().unwrap();
+                let config = &*lock_or_panic(&config);
                 *sender = Some(PayloadSender::new(config, debugger_type, tags.as_str())?);
                 let guard = guard.clone();
                 spawn_map_err!(
@@ -254,6 +254,8 @@ impl SessionInfo {
                 "Submitting live debugger {debugger_type:?} payload {:?}",
                 String::from_utf8_lossy(payload)
             );
+
+            #[allow(clippy::unwrap_used)]
             sender.as_mut().unwrap().append(payload).await
         }
 

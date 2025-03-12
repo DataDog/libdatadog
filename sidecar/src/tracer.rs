@@ -13,6 +13,7 @@ use std::sync::{Mutex, OnceLock};
 static SHM_LIMITER: OnceLock<Mutex<ShmLimiterMemory>> = OnceLock::new();
 
 pub fn get_shm_limiter() -> &'static Mutex<ShmLimiterMemory> {
+    #[allow(clippy::unwrap_used)]
     SHM_LIMITER.get_or_init(|| Mutex::new(ShmLimiterMemory::create(shm_limiter_path()).unwrap()))
 }
 
@@ -39,5 +40,6 @@ impl Config {
 }
 
 pub fn shm_limiter_path() -> CString {
+    #[allow(clippy::unwrap_used)]
     CString::new(format!("/ddlimiters-{}", primary_sidecar_identifier())).unwrap()
 }
