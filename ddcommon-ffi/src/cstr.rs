@@ -24,7 +24,7 @@ impl<'a> CStr<'a> {
     pub fn from_std(s: &'a std::ffi::CStr) -> Self {
         Self {
             ptr: unsafe { ptr::NonNull::new_unchecked(s.as_ptr().cast_mut()) },
-            length: s.to_bytes().len() - 1,
+            length: s.to_bytes().len(),
             _lifetime_marker: std::marker::PhantomData,
         }
     }
@@ -33,7 +33,7 @@ impl<'a> CStr<'a> {
         unsafe {
             std::ffi::CStr::from_bytes_with_nul_unchecked(std::slice::from_raw_parts(
                 self.ptr.as_ptr().cast_const().cast(),
-                self.length,
+                self.length + 1,
             ))
         }
     }
@@ -63,7 +63,7 @@ impl CString {
     pub fn as_cstr(&self) -> CStr<'_> {
         CStr {
             ptr: self.ptr,
-            length: self.length + 1, // +1 for the null terminator
+            length: self.length,
             _lifetime_marker: PhantomData,
         }
     }
@@ -81,8 +81,8 @@ impl CString {
         unsafe {
             std::ffi::CString::from_vec_with_nul_unchecked(Vec::from_raw_parts(
                 s.ptr.as_ptr().cast(),
-                s.length,
-                s.length,
+                s.length + 1, // +1 for the null terminator
+                s.length + 1, // +1 for the null terminator
             ))
         }
     }
@@ -98,5 +98,34 @@ impl Drop for CString {
                 self.length,
             ))
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cstr() {
+        let s = std::ffi::CString::new("hello").unwrap();
+        let cstr = CStr::from_std(&s);
+        assert_eq!(cstr.into_std().to_str().unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_cstring() {
+        let s = CString::new("hello").unwrap();
+        assert_eq!(s.as_cstr().into_std().to_str().unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_raw_cstr() {
+        let s: &'static [u8] = b"abc\0";
+        let c: CStr<'static> = CStr {
+            ptr: NonNull::new(s.as_ptr().cast_mut()).unwrap().cast(),
+            length: 3,
+            _lifetime_marker: PhantomData,
+        };
+        assert_eq!(c.into_std().to_str().unwrap(), "abc");
     }
 }
