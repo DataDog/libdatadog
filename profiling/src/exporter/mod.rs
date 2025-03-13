@@ -11,7 +11,7 @@ pub use ddcommon::tag::Tag;
 pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
 use lz4_flex::frame::FrameEncoder;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
@@ -159,10 +159,46 @@ fn get_rss_and_size_from_smaps(section_name: &str) -> Option<MemoryStats> {
     None
 }
 
+#[cfg(target_os = "linux")]
+fn inject_mimalloc_stats(internal: &mut Value) {
+    if let Some(map) = internal.as_object_mut() {
+        let mut peak_bytes: i64 = 0;
+        let mut total_bytes: i64 = 0;
+        let mut freed_bytes: i64 = 0;
+        let mut current_bytes: i64 = 0;
+
+        unsafe {
+            libmimalloc_sys::mi_libdatadog_total_stat(
+                &mut peak_bytes,
+                &mut total_bytes,
+                &mut freed_bytes,
+                &mut current_bytes,
+            )
+        };
+
+        let mut mimalloc_data = json!({
+            "peak_bytes": peak_bytes,
+            "total_bytes": total_bytes,
+            "freed_bytes": freed_bytes,
+            "current_bytes": current_bytes,
+        });
+
+        if let Some(metrics) = get_rss_and_size_from_smaps("[anon:libdatadog]") {
+            mimalloc_data["kernel_map_size_bytes"] = json!(metrics.size_bytes);
+            mimalloc_data["kernel_map_rss_bytes"] = json!(metrics.rss_bytes);
+        }
+
+        map.insert("mimalloc".to_string(), mimalloc_data);
+    }
+}
+
 #[cfg(not(target_os = "linux"))]
 fn get_rss_and_size_from_smaps(section_name: &str) -> Option<MemoryStats> {
     None
 }
+
+#[cfg(not(target_os = "linux"))]
+fn inject_mimalloc_stats(internal: &mut Value) {}
 
 impl ProfileExporter {
     /// Creates a new exporter to be used to report profiling data.
@@ -268,35 +304,7 @@ impl ProfileExporter {
             .collect();
 
         let mut internal: serde_json::value::Value = internal_metadata.unwrap_or_else(|| json!({}));
-        if let Some(map) = internal.as_object_mut() {
-            let mut peak_bytes: i64 = 0;
-            let mut total_bytes: i64 = 0;
-            let mut freed_bytes: i64 = 0;
-            let mut current_bytes: i64 = 0;
-
-            unsafe {
-                libmimalloc_sys::mi_libdatadog_total_stat(
-                    &mut peak_bytes,
-                    &mut total_bytes,
-                    &mut freed_bytes,
-                    &mut current_bytes,
-                )
-            };
-
-            let mut mimalloc_data = json!({
-                "peak_bytes": peak_bytes,
-                "total_bytes": total_bytes,
-                "freed_bytes": freed_bytes,
-                "current_bytes": current_bytes,
-            });
-
-            if let Some(metrics) = get_rss_and_size_from_smaps("[anon:libdatadog]") {
-                mimalloc_data["kernel_map_size_bytes"] = json!(metrics.size_bytes);
-                mimalloc_data["kernel_map_rss_bytes"] = json!(metrics.rss_bytes);
-            }
-
-            map.insert("mimalloc".to_string(), mimalloc_data);
-        }
+        inject_mimalloc_stats(&mut internal);
 
         let event = json!({
             "attachments": attachments,
