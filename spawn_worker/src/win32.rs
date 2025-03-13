@@ -85,6 +85,35 @@ fn write_trampoline(process_name: &Option<String>) -> io::Result<(PathBuf, File)
     Ok((path, file))
 }
 
+pub fn write_crashtracking_trampoline(process_name: &String) -> io::Result<(PathBuf, File)> {
+    let mut path = env::temp_dir().join(process_name);
+    path.set_extension("dll");
+
+    // Attempt to move it just in case it already exists
+    let mut old_path = path.clone();
+    old_path.set_extension("old");
+    let _ = fs::rename(&path, old_path);
+
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .custom_flags(FILE_ATTRIBUTE_TEMPORARY)
+        .open(path.clone())?;
+
+    file.set_len(crate::CRASHTRACKING_TRAMPOLINE_BIN.len() as u64)?;
+    file.write_all(crate::CRASHTRACKING_TRAMPOLINE_BIN)?;
+    drop(file);
+
+    // And now open it with FILE_FLAG_DELETE_ON_CLOSE
+    let file = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE)
+        .open(path.clone())?;
+
+    Ok((path, file))
+}
+
 pub enum Stdio {
     Handle(OwnedHandle),
     Null,
