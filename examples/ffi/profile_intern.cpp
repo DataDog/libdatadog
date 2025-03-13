@@ -98,7 +98,7 @@ int main(void) {
       profile, root_function_name, empty_string_id, root_file_name, 0));
   auto root_location =
       extract_result(ddog_prof_Profile_intern_location(profile, root_mapping, root_function, 0, 0));
-  ddog_prof_Slice_GenerationalIdLocationId locations = {.ptr = &root_location, .len = 1};
+  ddog_prof_Slice_LocationId locations = {.ptr = &root_location, .len = 1};
   auto stacktrace = extract_result(ddog_prof_Profile_intern_stacktrace(profile, locations));
 
   auto magic_label_key =

@@ -52,6 +52,7 @@ renaming_overrides_prefixing = true
 "VoidResult" = "ddog_VoidResult"
 
 "Slice_GenerationalIdLabelId" = "ddog_prof_Slice_LabelId"
+"Slice_GenerationalIdLocationId" = "ddog_prof_Slice_LocationId"
 
 "GenerationalId_FunctionId" = "ddog_prof_FunctionId"
 "Result_GenerationalIdFunctionId" = "ddog_prof_FunctionId_Result"
