@@ -8,7 +8,6 @@ use crate::msgpack_decoder::decode::string::{
 };
 use crate::span::{AttributeAnyValueBytes, AttributeArrayValueBytes, SpanEventBytes};
 use rmp::decode::ValueReadError;
-use rmp::Marker;
 use std::collections::HashMap;
 use std::str::FromStr;
 use tinybytes::{Bytes, BytesString};
@@ -34,20 +33,15 @@ pub(crate) fn read_span_events(buf: &mut Bytes) -> Result<Vec<SpanEventBytes>, D
         return Ok(empty_vec);
     }
 
-    match rmp::decode::read_marker(unsafe { buf.as_mut_slice() }).map_err(|_| {
-        DecodeError::InvalidFormat("Unable to read marker for span events".to_owned())
-    })? {
-        Marker::FixArray(len) => {
-            let mut vec: Vec<SpanEventBytes> = Vec::with_capacity(len.into());
-            for _ in 0..len {
-                vec.push(decode_span_event(buf)?);
-            }
-            Ok(vec)
-        }
-        _ => Err(DecodeError::InvalidType(
-            "Unable to read span event from buffer".to_owned(),
-        )),
+    let len = rmp::decode::read_array_len(unsafe { buf.as_mut_slice() }).map_err(|_| {
+        DecodeError::InvalidType("Unable to get array len for span events".to_owned())
+    })?;
+
+    let mut vec: Vec<SpanEventBytes> = Vec::with_capacity(len.try_into().unwrap());
+    for _ in 0..len {
+        vec.push(decode_span_event(buf)?);
     }
+    Ok(vec)
 }
 #[derive(Debug, PartialEq)]
 enum SpanEventKey {
@@ -74,7 +68,7 @@ impl FromStr for SpanEventKey {
 fn decode_span_event(buf: &mut Bytes) -> Result<SpanEventBytes, DecodeError> {
     let mut event = SpanEventBytes::default();
     let event_size = rmp::decode::read_map_len(unsafe { buf.as_mut_slice() })
-        .map_err(|_| DecodeError::InvalidType("Unable to get map len for span size".to_owned()))?;
+        .map_err(|_| DecodeError::InvalidType("Unable to get map len for event size".to_owned()))?;
 
     for _ in 0..event_size {
         match read_string_ref(unsafe { buf.as_mut_slice() })?.parse::<SpanEventKey>()? {
@@ -191,23 +185,20 @@ fn read_attributes_array(buf: &mut Bytes) -> Result<Vec<AttributeArrayValueBytes
         return Ok(empty_vec);
     }
 
-    match rmp::decode::read_marker(unsafe { buf.as_mut_slice() }).map_err(|_| {
-        DecodeError::InvalidFormat("Unable to read marker for attributes".to_owned())
-    })? {
-        Marker::FixArray(len) => {
-            let mut vec: Vec<AttributeArrayValueBytes> = Vec::with_capacity(len.into());
-            let first = decode_attribute_array(buf, None)?;
-            let array_type = type_from_attribute_array(&first);
-            vec.push(first);
-            for _ in 1..len {
-                vec.push(decode_attribute_array(buf, Some(array_type))?);
-            }
-            Ok(vec)
+    let len = rmp::decode::read_array_len(unsafe { buf.as_mut_slice() }).map_err(|_| {
+        DecodeError::InvalidType("Unable to get array len for event attributes".to_owned())
+    })?;
+
+    let mut vec: Vec<AttributeArrayValueBytes> = Vec::with_capacity(len.try_into().unwrap());
+    if len > 0 {
+        let first = decode_attribute_array(buf, None)?;
+        let array_type = type_from_attribute_array(&first);
+        vec.push(first);
+        for _ in 1..len {
+            vec.push(decode_attribute_array(buf, Some(array_type))?);
         }
-        _ => Err(DecodeError::InvalidType(
-            "Unable to read attribute from buffer".to_owned(),
-        )),
     }
+    Ok(vec)
 }
 
 #[derive(Debug, PartialEq)]
