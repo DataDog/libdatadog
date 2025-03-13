@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::hint::black_box;
+
 #[cfg(not(windows))]
 fn main() {
     panic!("This test is only supported on Windows");
@@ -8,6 +10,7 @@ fn main() {
 
 #[cfg(windows)]
 fn main() {
+    // Usage: test_app.exe <path to write crash report>
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
@@ -26,10 +29,7 @@ fn main() {
 
     // Force a segfault to crash
     let ptr = std::ptr::null_mut::<i32>();
-    unsafe {
-        *ptr = 42;
-    }
-
+    unsafe { *black_box(ptr) = black_box(42) };
     println!("Test app exiting (failed to crash?)");
 }
 

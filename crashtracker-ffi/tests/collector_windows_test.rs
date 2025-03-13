@@ -65,10 +65,7 @@ fn get_artifact_dir() -> PathBuf {
 
     let test_bin_location = PathBuf::from(env::args().next().unwrap());
     let mut location_components = test_bin_location.components().rev().peekable();
-    loop {
-        let Some(c) = location_components.peek() else {
-            break;
-        };
+    while let Some(c) = location_components.peek() {
         if c.as_os_str() == "target" {
             break;
         }
