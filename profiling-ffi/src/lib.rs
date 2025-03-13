@@ -25,5 +25,6 @@ pub use data_pipeline_ffi::*;
 pub use datadog_library_config_ffi::*;
 
 #[cfg(target_os = "linux")]
+#[cfg(not(miri))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
