@@ -3,7 +3,7 @@
 
 use std::borrow::Cow;
 use std::future;
-use std::io::{BufRead, Cursor, Write};
+use std::io::{Cursor, Write};
 
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
@@ -133,9 +133,10 @@ fn get_rss_and_size_from_smaps(section_name: &str) -> Option<MemoryStats> {
             .map(|kb| kb * 1024)
     };
 
-    for line in std::io::BufReader::new(std::fs::File::open("/proc/self/smaps").ok()?)
-        .lines()
-        .map_while(Result::ok)
+    for line in std::io::BufRead::lines(std::io::BufReader::new(
+        std::fs::File::open("/proc/self/smaps").ok()?,
+    ))
+    .map_while(Result::ok)
     {
         if line.ends_with(section_name) {
             in_target = true;
