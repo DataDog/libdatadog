@@ -159,10 +159,10 @@ pub fn find_metric_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
 }
 
 /// Checks if the given key-value pair exists in the tags.
-fn has_tag_value<'a>(tags: &'a SortedTags, key: &str, value: &str) -> bool {
+fn has_tag_value(tags: &SortedTags, key: &str, value: &str) -> bool {
     tags.find_all(key)
         .iter()
-        .any(|tag_value| tag_value == value)
+        .any(|tag_value| tag_value.as_str() == value)
 }
 
 /// Checks if the metric is a Datadog metric.
