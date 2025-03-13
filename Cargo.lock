@@ -3309,7 +3309,7 @@ dependencies = [
 [[package]]
 name = "libmimalloc-sys"
 version = "0.1.39"
-source = "git+https://github.com/datadog/mimalloc_rust.git?rev=9c4b05f#9c4b05fdc6221648250915a5cc2ae26111b8c13b"
+source = "git+https://github.com/datadog/mimalloc_rust.git?rev=9dcdc71#9dcdc71b12c72d1562d67740794e571e08c27cea"
 dependencies = [
  "cc",
  "cty",
