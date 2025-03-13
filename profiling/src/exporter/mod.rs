@@ -116,6 +116,7 @@ impl Request {
     }
 }
 
+#[allow(dead_code)] // Only used on linux
 struct MemoryStats {
     size_bytes: u64,
     rss_bytes: u64,
