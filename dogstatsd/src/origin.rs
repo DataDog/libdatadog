@@ -70,6 +70,15 @@ impl From<OriginService> for u32 {
     }
 }
 
+fn serverless_origin(category: OriginCategory) -> Origin {
+    Origin {
+        origin_product: OriginProduct::Serverless.into(),
+        origin_service: OriginService::Other.into(),
+        origin_category: category.into(),
+        ..Default::default()
+    }
+}
+
 pub fn find_metric_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
     let name = metric.name.to_string();
     let prefix = name.split('.').take(2).collect::<Vec<&str>>().join(".");
@@ -78,52 +87,22 @@ pub fn find_metric_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
         return None;
     }
     if is_azure_app_services(&tags, &prefix) {
-        return Some(Origin {
-            origin_product: OriginProduct::Serverless.into(),
-            origin_category: OriginCategory::AppServicesMetrics.into(),
-            origin_service: OriginService::Other.into(),
-            ..Default::default()
-        });
+        return Some(serverless_origin(OriginCategory::AppServicesMetrics));
     }
     if is_google_cloud_run(&tags, &prefix) {
-        return Some(Origin {
-            origin_product: OriginProduct::Serverless.into(),
-            origin_category: OriginCategory::CloudRunMetrics.into(),
-            origin_service: OriginService::Other.into(),
-            ..Default::default()
-        });
+        return Some(serverless_origin(OriginCategory::CloudRunMetrics));
     }
     if is_azure_container_app(&tags, &prefix) {
-        return Some(Origin {
-            origin_product: OriginProduct::Serverless.into(),
-            origin_category: OriginCategory::ContainerAppMetrics.into(),
-            origin_service: OriginService::Other.into(),
-            ..Default::default()
-        });
+        return Some(serverless_origin(OriginCategory::ContainerAppMetrics));
     }
     if is_azure_functions(&tags, &prefix) {
-        return Some(Origin {
-            origin_product: OriginProduct::Serverless.into(),
-            origin_category: OriginCategory::AzureFunctionsMetrics.into(),
-            origin_service: OriginService::Other.into(),
-            ..Default::default()
-        });
+        return Some(serverless_origin(OriginCategory::AzureFunctionsMetrics));
     }
     if is_aws_lambda(&tags, &prefix) {
-        return Some(Origin {
-            origin_product: OriginProduct::Serverless.into(),
-            origin_category: OriginCategory::LambdaMetrics.into(),
-            origin_service: OriginService::Other.into(),
-            ..Default::default()
-        });
+        return Some(serverless_origin(OriginCategory::LambdaMetrics));
     }
     if is_aws_step_functions(&tags, &prefix) {
-        return Some(Origin {
-            origin_product: OriginProduct::Serverless.into(),
-            origin_category: OriginCategory::StepFunctionsMetrics.into(),
-            origin_service: OriginService::Other.into(),
-            ..Default::default()
-        });
+        return Some(serverless_origin(OriginCategory::StepFunctionsMetrics));
     }
 
     None
