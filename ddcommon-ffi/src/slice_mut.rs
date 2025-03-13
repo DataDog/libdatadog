@@ -9,6 +9,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::os::raw::c_char;
+use std::ptr::NonNull;
 use std::str::Utf8Error;
 
 #[repr(C)]
@@ -17,7 +18,7 @@ pub struct MutSlice<'a, T: 'a> {
     /// Should be non-null and suitably aligned for the underlying type. It is
     /// allowed but not recommended for the pointer to be null when the len is
     /// zero.
-    ptr: *mut T,
+    ptr: Option<NonNull<T>>,
 
     /// The number of elements (not bytes) that `.ptr` points to. Must be less
     /// than or equal to [isize::MAX].
@@ -53,15 +54,9 @@ pub type CharMutSlice<'a> = MutSlice<'a, c_char>;
 /// Use to represent bytes -- does not need to be valid UTF-8.
 pub type ByteMutSlice<'a> = MutSlice<'a, u8>;
 
-/// This exists as an intrinsic, but it is private.
-pub fn is_aligned_and_not_null<T>(ptr: *const T) -> bool {
-    !ptr.is_null() && is_aligned(ptr)
-}
-
 #[inline]
-fn is_aligned<T>(ptr: *const T) -> bool {
-    debug_assert!(!ptr.is_null());
-    ptr as usize % std::mem::align_of::<T>() == 0
+fn is_aligned<T>(ptr: NonNull<T>) -> bool {
+    ptr.as_ptr() as usize % std::mem::align_of::<T>() == 0
 }
 
 pub trait AsBytes<'a> {
@@ -100,20 +95,12 @@ impl<'a> AsBytes<'a> for MutSlice<'a, u8> {
     }
 }
 
-impl<'a> AsBytes<'a> for MutSlice<'a, i8> {
-    fn as_bytes(&self) -> &'a [u8] {
-        // SAFETY: safe to convert *i8 to *u8 and then read it... I think.
-        unsafe { MutSlice::from_raw_parts(self.ptr.cast(), self.len) }.as_mut_slice()
-    }
-}
-
 impl<'a, T: 'a> MutSlice<'a, T> {
     /// Creates a valid empty slice (len=0, ptr is non-null).
     #[must_use]
-    // TODO: this can't be const under 1.78, but can under later versions.
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
-            ptr: [].as_mut_ptr(),
+            ptr: Some(NonNull::dangling()),
             len: 0,
             _marker: PhantomData,
         }
@@ -123,28 +110,30 @@ impl<'a, T: 'a> MutSlice<'a, T> {
     /// Uphold the same safety requirements as [std::str::from_raw_parts].
     /// However, it is allowed but not recommended to provide a null pointer
     /// when the len is 0.
+    // TODO, this can be const once MSRV >= 1.85
     pub unsafe fn from_raw_parts(ptr: *mut T, len: usize) -> Self {
         Self {
-            ptr,
+            ptr: NonNull::new(ptr),
             len,
             _marker: PhantomData,
         }
     }
 
+    // TODO, this can be const once MSRV >= 1.85
     pub fn new(slice: &mut [T]) -> Self {
         Self {
-            ptr: slice.as_mut_ptr(),
+            ptr: NonNull::new(slice.as_mut_ptr()),
             len: slice.len(),
             _marker: PhantomData,
         }
     }
 
     pub fn as_mut_slice(&mut self) -> &'a mut [T] {
-        if !self.ptr.is_null() {
+        if let Some(ptr) = self.ptr {
             // Crashing immediately is likely better than ignoring these.
-            assert!(is_aligned(self.ptr));
+            assert!(is_aligned(ptr));
             assert!(self.len <= isize::MAX as usize);
-            unsafe { slice::from_raw_parts_mut(self.ptr, self.len) }
+            unsafe { slice::from_raw_parts_mut(ptr.as_ptr(), self.len) }
         } else {
             // Crashing immediately is likely better than ignoring this.
             assert_eq!(self.len, 0);
@@ -153,11 +142,11 @@ impl<'a, T: 'a> MutSlice<'a, T> {
     }
 
     pub fn as_slice(&self) -> &'a [T] {
-        if !self.ptr.is_null() {
+        if let Some(ptr) = self.ptr {
             // Crashing immediately is likely better than ignoring these.
-            assert!(is_aligned(self.ptr));
+            assert!(is_aligned(ptr));
             assert!(self.len <= isize::MAX as usize);
-            unsafe { slice::from_raw_parts(self.ptr, self.len) }
+            unsafe { slice::from_raw_parts(ptr.as_ptr(), self.len) }
         } else {
             // Crashing immediately is likely better than ignoring this.
             assert_eq!(self.len, 0);
@@ -264,7 +253,7 @@ mod tests {
     #[test]
     fn test_null_len0() {
         let mut null_len0: MutSlice<u8> = MutSlice {
-            ptr: ptr::null_mut(),
+            ptr: None,
             len: 0,
             _marker: PhantomData,
         };
@@ -275,7 +264,7 @@ mod tests {
     #[test]
     fn test_null_panic() {
         let mut null_len0: MutSlice<u8> = MutSlice {
-            ptr: ptr::null_mut(),
+            ptr: None,
             len: 1,
             _marker: PhantomData,
         };
@@ -286,7 +275,7 @@ mod tests {
     #[test]
     fn test_long_panic() {
         let mut dangerous: MutSlice<u8> = MutSlice {
-            ptr: ptr::NonNull::dangling().as_ptr(),
+            ptr: Some(ptr::NonNull::dangling()),
             len: isize::MAX as usize + 1,
             _marker: PhantomData,
         };
