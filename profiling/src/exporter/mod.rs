@@ -160,7 +160,7 @@ fn get_rss_and_size_from_smaps(section_name: &str) -> Option<MemoryStats> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn get_rss_and_size_for_section(_: &str) -> Option<MemoryStats> {
+fn get_rss_and_size_from_smaps(section_name: &str) -> Option<MemoryStats> {
     None
 }
 
