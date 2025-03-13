@@ -54,6 +54,10 @@ struct InternalCachedProfileId {
 }
 
 // Enable Mutex<ManagedStringStorage> to be Send
+//
+// SAFETY: ManagedStringStorage **must always** be wrapped with a Mutex -- you can't pass one in to
+// a Profile without it. This is because it is not, by itself, thread-safe, and its real-world use
+// cases are expected to include concurrency.
 unsafe impl Send for ManagedStringStorage {}
 
 impl From<&CachedProfileId> for InternalCachedProfileId {
