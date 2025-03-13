@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(windows)]
 use std::hint::black_box;
 
 #[cfg(not(windows))]
@@ -29,6 +30,7 @@ fn main() {
 
     // Force a segfault to crash
     let ptr = std::ptr::null_mut::<i32>();
+    // SAFETY: Don't worry, we are crashing on purpose
     unsafe { *black_box(ptr) = black_box(42) };
     println!("Test app exiting (failed to crash?)");
 }
@@ -42,6 +44,7 @@ fn init_crashtracking(crash_path: &str, module_name: &str) -> bool {
     use windows::Win32::System::Diagnostics::Debug::{SetErrorMode, THREAD_ERROR_MODE};
 
     // Make sure WER is enabled
+    // SAFETY: No preconditions
     unsafe { SetErrorMode(THREAD_ERROR_MODE(0x0001)) };
 
     println!(

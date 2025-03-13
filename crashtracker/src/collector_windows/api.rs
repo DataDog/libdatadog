@@ -1,6 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+// SAFETY: All functions in the windows crate are marked as unsafe with no preconditions.
+
 use crate::{
     BuildIdType, CrashInfoBuilder, ErrorKind, FileType, Metadata, StackFrame, StackTrace,
     ThreadData,
@@ -69,16 +71,16 @@ pub fn init_crashtracking_windows(
 
     create_registry_key(&module)?;
 
-    unsafe {
-        match WERCONTEXT.lock() {
-            Ok(wercontext) => {
+    match WERCONTEXT.lock() {
+        Ok(wercontext) => {
+            unsafe {
                 WerRegisterRuntimeExceptionModule(
                     &HSTRING::from(&module),
                     addr_of!(*wercontext) as *const c_void,
-                )?;
-            }
-            Err(e) => return Err(anyhow!("Failed to lock WERCONTEXT: {}", e)),
+                )?
+            };
         }
+        Err(e) => return Err(anyhow!("Failed to lock WERCONTEXT: {}", e)),
     }
     anyhow::Ok(())
 }
@@ -209,6 +211,14 @@ pub fn exception_event_callback(
 
     let wer_context = read_wer_context(process_handle, context)?;
 
+    anyhow::ensure!(
+        wer_context.len * size_of::<u8>() < isize::MAX as usize,
+        "The size of the WER context is invalid"
+    );
+
+    // SAFETY:
+    // 1. wer_context.ptr points to valid memory
+    // 2. the total size is smaller than isize::MAX
     let error_context_json =
         unsafe { std::slice::from_raw_parts(wer_context.ptr as *const u8, wer_context.len) };
     let error_context_str = std::str::from_utf8(error_context_json)?;
@@ -271,6 +281,8 @@ fn read_wer_context(process_handle: HANDLE, base_address: usize) -> Result<WerCo
 
     // Copy the raw bytes from the Vec<u8> into the MaybeUninit<WerContext>
     let ptr = wer_context.as_mut_ptr();
+
+    // SAFETY: buffer has the same size as WerContext, and they don't overlap
     unsafe { std::ptr::copy_nonoverlapping(buffer.as_ptr(), ptr as *mut u8, buffer.len()) };
 
     // Validate prefix and suffix
@@ -278,6 +290,9 @@ fn read_wer_context(process_handle: HANDLE, base_address: usize) -> Result<WerCo
 
     // We can't call assume_init yet because ptr hasn't been set,
     // and apparently (*raw_ptr).prefix before calling assume_init is undefined behavior
+    // SAFETY:
+    // 1. raw_ptr is not null
+    // 2. raw_ptr.prefix and raw_ptr.suffix both are properly initialized u64
     let prefix = unsafe { read_unaligned(addr_of!((*raw_ptr).prefix)) };
     let suffix = unsafe { read_unaligned(addr_of!((*raw_ptr).suffix)) };
 
@@ -286,6 +301,9 @@ fn read_wer_context(process_handle: HANDLE, base_address: usize) -> Result<WerCo
         "Invalid WER context"
     );
 
+    // SAFETY:
+    // 1. raw_ptr is not null
+    // 2. raw_ptr.ptr and raw_ptr.len both are properly initialized usize
     let ptr = unsafe { read_unaligned(addr_of!((*raw_ptr).ptr)) };
     let len = unsafe { read_unaligned(addr_of!((*raw_ptr).len)) };
 
@@ -336,6 +354,7 @@ fn walk_thread_stack(
         context.ctx.ContextFlags = CONTEXT_FULL_X86;
     }
 
+    // The context is properly aligned on a 16-byte boundary
     unsafe { GetThreadContext(thread_handle, &mut context.ctx)? };
 
     let mut native_frame = STACKFRAME_EX::default();
@@ -363,6 +382,7 @@ fn walk_thread_stack(
         native_frame.AddrFrame.Mode = AddrModeFlat;
     }
 
+    // SAFETY: The context is properly aligned on a 16-byte boundary
     while let TRUE = unsafe {
         StackWalkEx(
             machine_type,
@@ -448,11 +468,17 @@ fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>> {
     }
     .context("Failed to enumerate process modules")?;
 
+    anyhow::ensure!(cb_actual <= cb_needed, "Invalid module list size");
+
+    // SAFETY:
+    // 1. cb_actual is smaller than cb_needed
+    // 2. cb_actual / size_of::<HMODULE>() elements were initialized
     unsafe { hmodules.set_len(cb_actual as usize / size_of::<HMODULE>()) };
 
     // Iterate through the module handles and retrieve information
     for &hmodule in hmodules.iter() {
         let mut module_info = MODULEINFO::default();
+
         if unsafe {
             GetModuleInformation(
                 process_handle,
@@ -489,6 +515,7 @@ unsafe fn read_memory<T>(process_handle: HANDLE, address: u64) -> Result<T> {
     let mut value = MaybeUninit::<T>::uninit();
     let size = size_of::<T>();
 
+    // SAFETY: value has a size of `size`
     let result = unsafe {
         ReadProcessMemory(
             process_handle,
@@ -511,6 +538,7 @@ fn read_memory_raw(process_handle: HANDLE, address: u64, size: usize) -> Result<
     let mut buffer = vec![0u8; size];
     let mut bytes_read = 0;
 
+    // SAFETY: buffer has a size of `size`
     let result = unsafe {
         ReadProcessMemory(
             process_handle,
@@ -574,6 +602,7 @@ struct CvInfoPdb70 {
 }
 
 fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbInfo> {
+    // SAFETY: IMAGE_DOS_HEADER has no references
     let dos_header: IMAGE_DOS_HEADER = unsafe { read_memory(process_handle, base_address)? };
 
     if dos_header.e_magic != IMAGE_DOS_SIGNATURE {
@@ -581,6 +610,7 @@ fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbInfo> {
     }
 
     let nt_headers_address = base_address + dos_header.e_lfanew as u64;
+    // SAFETY: ImageNtHeadersGeneric has no references
     let nt_headers: ImageNtHeadersGeneric =
         unsafe { read_memory(process_handle, nt_headers_address)? };
 
@@ -596,10 +626,12 @@ fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbInfo> {
     }
 
     let debug_data_dir: IMAGE_DATA_DIRECTORY = if is_pe32 {
+        // SAFETY: IMAGE_NT_HEADERS32 has no references
         let nt_headers32: IMAGE_NT_HEADERS32 =
             unsafe { read_memory(process_handle, nt_headers_address)? };
         nt_headers32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG.0 as usize]
     } else {
+        // SAFETY: IMAGE_NT_HEADERS64 has no references
         let nt_headers64: IMAGE_NT_HEADERS64 =
             unsafe { read_memory(process_handle, nt_headers_address)? };
         nt_headers64.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG.0 as usize]
@@ -612,9 +644,18 @@ fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbInfo> {
     )?;
 
     let debug_dir = unsafe {
+        anyhow::ensure!(
+            debug_dir_buffer.len() / size_of::<IMAGE_DEBUG_DIRECTORY>() < isize::MAX as usize,
+            "Buffer is too big"
+        );
+
+        // SAFETY:
+        // 1. data is initialized and contained within a single allocated object
+        // 2. data is non-null and aligned
+        // 3. total size is smaller than isize::MAX
         std::slice::from_raw_parts(
             debug_dir_buffer.as_ptr() as *const IMAGE_DEBUG_DIRECTORY,
-            debug_dir_buffer.len() / std::mem::size_of::<IMAGE_DEBUG_DIRECTORY>(),
+            debug_dir_buffer.len() / size_of::<IMAGE_DEBUG_DIRECTORY>(),
         )
     };
 
@@ -623,6 +664,7 @@ fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbInfo> {
             continue;
         }
 
+        // SAFETY: CvInfoPdb70 has no references
         let cv_info: CvInfoPdb70 =
             unsafe { read_memory(process_handle, base_address + entry.AddressOfRawData as u64)? };
 
