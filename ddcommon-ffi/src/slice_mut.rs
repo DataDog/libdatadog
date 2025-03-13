@@ -40,14 +40,6 @@ impl<T: Debug> Debug for MutSlice<'_, T> {
     }
 }
 
-impl<T: Eq> PartialEq<Self> for MutSlice<'_, T> {
-    fn eq(&self, other: &Self) -> bool {
-        **self == **other
-    }
-}
-
-impl<T: Eq> Eq for MutSlice<'_, T> {}
-
 /// Use to represent strings -- should be valid UTF-8.
 pub type CharMutSlice<'a> = MutSlice<'a, c_char>;
 
