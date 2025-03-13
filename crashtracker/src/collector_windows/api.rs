@@ -548,6 +548,8 @@ impl fmt::LowerHex for Guid {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
+            // Guid format but without dashes
+            // https://devblogs.microsoft.com/oldnewthing/20220928-00/?p=107221
             "{:08x}{:04x}{:04x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
             self.data1,
             self.data2,

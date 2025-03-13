@@ -16,9 +16,10 @@ crate-type = ["lib", "cdylib"]
 name = "test_app"
 path = "tests/test_app/src/main.rs"
 bench = false
+required-features = ["collector_windows"]
 
 [features]
-default = ["cbindgen", "collector", "collector_windows", "demangler", "receiver"]
+default = ["cbindgen", "collector", "demangler", "receiver"]
 cbindgen = ["build_common/cbindgen"]
 # Enables the in-process collection of crash-info
 collector = []
@@ -26,6 +27,9 @@ collector_windows = []
 demangler = ["dep:symbolic-demangle", "dep:symbolic-common"]
 # Enables the use of this library to receiver crash-info from a suitable collector
 receiver = []
+
+[target.'cfg(windows)'.features]
+default = ["collector_windows"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
