@@ -156,8 +156,15 @@ impl Profile {
         Ok(GenerationalId::new(id, self.generation))
     }
 
+    pub const INTERNED_EMPTY_STRING: GenerationalId<StringId> =
+        GenerationalId::new_immortal(StringId::ZERO);
+
     pub fn intern_string(&mut self, s: &str) -> anyhow::Result<GenerationalId<StringId>> {
-        Ok(GenerationalId::new(self.intern(s), self.generation))
+        if s.is_empty() {
+            Ok(Self::INTERNED_EMPTY_STRING)
+        } else {
+            Ok(GenerationalId::new(self.intern(s), self.generation))
+        }
     }
 
     pub fn intern_strings(

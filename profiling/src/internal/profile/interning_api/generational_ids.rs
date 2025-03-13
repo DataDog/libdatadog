@@ -11,6 +11,8 @@ pub struct Generation {
 }
 
 impl Generation {
+    const IMMORTAL: Self = Self { id: u64::MAX };
+
     /// The only way to create a generation.  Guaranteed to give a new value each time.
     pub fn new() -> Self {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -33,11 +35,20 @@ pub struct GenerationalId<T: Copy> {
 
 impl<T: Copy> GenerationalId<T> {
     pub fn get(&self, expected_generation: Generation) -> anyhow::Result<T> {
-        anyhow::ensure!(self.generation == expected_generation);
+        anyhow::ensure!(
+            self.generation == expected_generation || self.generation == Generation::IMMORTAL
+        );
         Ok(self.id)
     }
 
-    pub fn new(id: T, generation: Generation) -> Self {
+    pub const fn new(id: T, generation: Generation) -> Self {
         Self { id, generation }
+    }
+
+    pub const fn new_immortal(id: T) -> Self {
+        Self {
+            id,
+            generation: Generation::IMMORTAL,
+        }
     }
 }

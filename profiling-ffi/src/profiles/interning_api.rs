@@ -8,6 +8,7 @@ use datadog_profiling::{
     api::ManagedStringId,
     collections::identifiable::StringId,
     internal::{
+        self,
         interning_api::{Generation, GenerationalId},
         FunctionId, LabelId, LabelSetId, LocationId, MappingId, StackTraceId,
     },
@@ -312,6 +313,15 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_string(
     s: CharSlice,
 ) -> Result<GenerationalId<StringId>> {
     wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_string(s.try_to_utf8()?) })
+}
+
+/// This functions returns an interned id for an empty string
+///
+/// # Safety
+/// No preconditions
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_interned_empty_string() -> GenerationalId<StringId> {
+    internal::Profile::INTERNED_EMPTY_STRING
 }
 
 /// This functions interns its argument into the profiler.
