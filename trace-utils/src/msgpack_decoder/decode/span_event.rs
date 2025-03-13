@@ -37,7 +37,7 @@ pub(crate) fn read_span_events(buf: &mut Bytes) -> Result<Vec<SpanEventBytes>, D
         DecodeError::InvalidType("Unable to get array len for span events".to_owned())
     })?;
 
-    let mut vec: Vec<SpanEventBytes> = Vec::with_capacity(len.try_into().unwrap());
+    let mut vec: Vec<SpanEventBytes> = Vec::with_capacity(len as usize);
     for _ in 0..len {
         vec.push(decode_span_event(buf)?);
     }
@@ -189,7 +189,7 @@ fn read_attributes_array(buf: &mut Bytes) -> Result<Vec<AttributeArrayValueBytes
         DecodeError::InvalidType("Unable to get array len for event attributes".to_owned())
     })?;
 
-    let mut vec: Vec<AttributeArrayValueBytes> = Vec::with_capacity(len.try_into().unwrap());
+    let mut vec: Vec<AttributeArrayValueBytes> = Vec::with_capacity(len as usize);
     if len > 0 {
         let first = decode_attribute_array(buf, None)?;
         let array_type = type_from_attribute_array(&first);
