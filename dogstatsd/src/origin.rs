@@ -80,8 +80,7 @@ struct MetricOriginCheck<'a> {
 impl<'a> MetricOriginCheck<'a> {
     /// Checks if the tag matches the given key, value, and prefix.
     fn matches(&self, tags: &SortedTags, metric_prefix: &str) -> bool {
-        get_first_tag_value(tags, self.tag_key) == Some(self.tag_value)
-            && metric_prefix != self.prefix
+        has_tag_value(tags, self.tag_key, self.tag_value) && metric_prefix != self.prefix
     }
 }
 
@@ -159,18 +158,11 @@ pub fn find_metric_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
     None
 }
 
-/// Gets the first non-empty tag value for the given key.
-fn get_first_tag_value<'a>(tags: &'a SortedTags, key: &str) -> Option<&'a str> {
+/// Checks if the given key-value pair exists in the tags.
+fn has_tag_value<'a>(tags: &'a SortedTags, key: &str, value: &str) -> bool {
     tags.find_all(key)
         .iter()
-        .filter_map(|value| {
-            if !value.is_empty() {
-                Some(value.as_str())
-            } else {
-                None
-            }
-        })
-        .next()
+        .any(|tag_value| tag_value == value)
 }
 
 /// Checks if the metric is a Datadog metric.
@@ -250,11 +242,11 @@ mod tests {
     }
 
     #[test]
-    fn test_get_first_tag_value() {
+    fn test_has_tag_value() {
         let tags = SortedTags::parse("a,a:1,b:2,c:3").unwrap();
-        assert_eq!(get_first_tag_value(&tags, "a"), Some("1"));
-        assert_eq!(get_first_tag_value(&tags, "b"), Some("2"));
-        assert_eq!(get_first_tag_value(&tags, "c"), Some("3"));
-        assert_eq!(get_first_tag_value(&tags, "d"), None);
+        assert!(has_tag_value(&tags, "a", "1"));
+        assert!(has_tag_value(&tags, "b", "2"));
+        assert!(has_tag_value(&tags, "c", "3"));
+        assert!(!has_tag_value(&tags, "d", "4"));
     }
 }
