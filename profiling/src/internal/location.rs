@@ -10,7 +10,7 @@ use super::*;
 ///    struct.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct Location {
-    pub mapping_id: MappingId,
+    pub mapping_id: Option<MappingId>,
     pub function_id: FunctionId,
     pub address: u64,
     pub line: i64,
@@ -26,7 +26,7 @@ impl PprofItem for Location {
     fn to_pprof(&self, id: Self::Id) -> Self::PprofMessage {
         pprof::Location {
             id: id.to_raw_id(),
-            mapping_id: self.mapping_id.to_raw_id(),
+            mapping_id: self.mapping_id.map(MappingId::to_raw_id).unwrap_or(0),
             address: self.address,
             lines: vec![pprof::Line {
                 function_id: self.function_id.to_raw_id(),
@@ -48,7 +48,7 @@ impl Id for LocationId {
         Self(small_non_zero_pprof_id(offset).expect("LocationId to fit into a u32"))
     }
 
-    fn to_raw_id(&self) -> Self::RawId {
+    fn to_raw_id(self) -> Self::RawId {
         self.0.get().into()
     }
 }

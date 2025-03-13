@@ -323,6 +323,7 @@ impl Profile {
                 .get_stacktrace(sample.stacktrace)?
                 .locations
                 .iter()
+                .cloned()
                 .map(Id::to_raw_id)
                 .collect();
             self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
@@ -467,33 +468,41 @@ impl Profile {
         })
     }
 
-    fn add_mapping(&mut self, mapping: &api::Mapping) -> MappingId {
+    fn add_mapping(&mut self, mapping: &api::Mapping) -> Option<MappingId> {
+        if *mapping == api::Mapping::default() {
+            return None;
+        }
+
         let filename = self.intern(mapping.filename);
         let build_id = self.intern(mapping.build_id);
 
-        self.mappings.dedup(Mapping {
-            memory_start: mapping.memory_start,
-            memory_limit: mapping.memory_limit,
-            file_offset: mapping.file_offset,
-            filename,
-            build_id,
-        })
-    }
-
-    fn add_string_id_mapping(
-        &mut self,
-        mapping: &api::StringIdMapping,
-    ) -> anyhow::Result<MappingId> {
-        let filename = self.resolve(mapping.filename)?;
-        let build_id = self.resolve(mapping.build_id)?;
-
-        Ok(self.mappings.dedup(Mapping {
+        Some(self.mappings.dedup(Mapping {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
             file_offset: mapping.file_offset,
             filename,
             build_id,
         }))
+    }
+
+    fn add_string_id_mapping(
+        &mut self,
+        mapping: &api::StringIdMapping,
+    ) -> anyhow::Result<Option<MappingId>> {
+        if *mapping == Default::default() {
+            return Ok(None);
+        }
+
+        let filename = self.resolve(mapping.filename)?;
+        let build_id = self.resolve(mapping.build_id)?;
+
+        Ok(Some(self.mappings.dedup(Mapping {
+            memory_start: mapping.memory_start,
+            memory_limit: mapping.memory_limit,
+            file_offset: mapping.file_offset,
+            filename,
+            build_id,
+        })))
     }
 
     fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {

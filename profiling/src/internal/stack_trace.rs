@@ -27,7 +27,7 @@ impl Id for StackTraceId {
         Self(index)
     }
 
-    fn to_raw_id(&self) -> Self::RawId {
+    fn to_raw_id(self) -> Self::RawId {
         self.0 as Self::RawId
     }
 }

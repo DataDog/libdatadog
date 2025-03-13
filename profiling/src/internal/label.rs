@@ -92,7 +92,7 @@ impl Id for LabelId {
         Self(index)
     }
 
-    fn to_raw_id(&self) -> Self::RawId {
+    fn to_raw_id(self) -> Self::RawId {
         self.0 as Self::RawId
     }
 }
@@ -140,7 +140,7 @@ impl Id for LabelSetId {
         Self(index)
     }
 
-    fn to_raw_id(&self) -> Self::RawId {
+    fn to_raw_id(self) -> Self::RawId {
         self.0 as Self::RawId
     }
 }
