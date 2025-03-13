@@ -70,6 +70,51 @@ impl From<OriginService> for u32 {
     }
 }
 
+struct TagCheck<'a> {
+    key: &'a str,
+    value: &'a str,
+    prefix: &'a str,
+}
+
+impl<'a> TagCheck<'a> {
+    fn matches(&self, tags: &SortedTags, prefix: &str) -> bool {
+        get_first_tag_value(tags, self.key) == Some(self.value) && prefix != self.prefix
+    }
+}
+
+const TAG_CHECKS: &[TagCheck] = &[
+    TagCheck {
+        key: DD_ORIGIN_TAG_KEY,
+        value: GOOGLE_CLOUD_RUN_TAG_VALUE,
+        prefix: GOOGLE_CLOUD_RUN_PREFIX,
+    },
+    TagCheck {
+        key: DD_ORIGIN_TAG_KEY,
+        value: AZURE_APP_SERVICES_TAG_VALUE,
+        prefix: AZURE_APP_SERVICES_PREFIX,
+    },
+    TagCheck {
+        key: DD_ORIGIN_TAG_KEY,
+        value: AZURE_CONTAINER_APP_TAG_VALUE,
+        prefix: AZURE_CONTAINER_APP_PREFIX,
+    },
+    TagCheck {
+        key: DD_ORIGIN_TAG_KEY,
+        value: AZURE_FUNCTIONS_TAG_VALUE,
+        prefix: AZURE_FUNCTIONS_PREFIX,
+    },
+    TagCheck {
+        key: AWS_LAMBDA_TAG_KEY,
+        value: "",
+        prefix: AWS_LAMBDA_PREFIX,
+    },
+    TagCheck {
+        key: AWS_STEP_FUNCTIONS_TAG_KEY,
+        value: "",
+        prefix: AWS_STEP_FUNCTIONS_PREFIX,
+    },
+];
+
 fn serverless_origin(category: OriginCategory) -> Origin {
     Origin {
         origin_product: OriginProduct::Serverless.into(),
@@ -86,23 +131,20 @@ pub fn find_metric_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
     if is_datadog_metric(&prefix) {
         return None;
     }
-    if is_azure_app_services(&tags, &prefix) {
-        return Some(serverless_origin(OriginCategory::AppServicesMetrics));
-    }
-    if is_google_cloud_run(&tags, &prefix) {
-        return Some(serverless_origin(OriginCategory::CloudRunMetrics));
-    }
-    if is_azure_container_app(&tags, &prefix) {
-        return Some(serverless_origin(OriginCategory::ContainerAppMetrics));
-    }
-    if is_azure_functions(&tags, &prefix) {
-        return Some(serverless_origin(OriginCategory::AzureFunctionsMetrics));
-    }
-    if is_aws_lambda(&tags, &prefix) {
-        return Some(serverless_origin(OriginCategory::LambdaMetrics));
-    }
-    if is_aws_step_functions(&tags, &prefix) {
-        return Some(serverless_origin(OriginCategory::StepFunctionsMetrics));
+
+    for (i, tag_check) in TAG_CHECKS.iter().enumerate() {
+        if tag_check.matches(&tags, &prefix) {
+            let category = match i {
+                0 => OriginCategory::CloudRunMetrics,
+                1 => OriginCategory::AppServicesMetrics,
+                2 => OriginCategory::ContainerAppMetrics,
+                3 => OriginCategory::AzureFunctionsMetrics,
+                4 => OriginCategory::LambdaMetrics,
+                5 => OriginCategory::StepFunctionsMetrics,
+                _ => OriginCategory::Other,
+            };
+            return Some(serverless_origin(category));
+        }
     }
 
     None
@@ -123,35 +165,6 @@ fn get_first_tag_value<'a>(tags: &'a SortedTags, key: &str) -> Option<&'a str> {
 
 fn is_datadog_metric(prefix: &str) -> bool {
     prefix == DATADOG_PREFIX
-}
-
-fn is_google_cloud_run(tags: &SortedTags, prefix: &str) -> bool {
-    get_first_tag_value(tags, DD_ORIGIN_TAG_KEY) == Some(GOOGLE_CLOUD_RUN_TAG_VALUE)
-        && prefix != GOOGLE_CLOUD_RUN_PREFIX
-}
-
-fn is_azure_app_services(tags: &SortedTags, prefix: &str) -> bool {
-    get_first_tag_value(tags, DD_ORIGIN_TAG_KEY) == Some(AZURE_APP_SERVICES_TAG_VALUE)
-        && prefix != AZURE_APP_SERVICES_PREFIX
-}
-
-fn is_azure_container_app(tags: &SortedTags, prefix: &str) -> bool {
-    get_first_tag_value(tags, DD_ORIGIN_TAG_KEY) == Some(AZURE_CONTAINER_APP_TAG_VALUE)
-        && prefix != AZURE_CONTAINER_APP_PREFIX
-}
-
-fn is_azure_functions(tags: &SortedTags, prefix: &str) -> bool {
-    get_first_tag_value(tags, DD_ORIGIN_TAG_KEY) == Some(AZURE_FUNCTIONS_TAG_VALUE)
-        && prefix != AZURE_FUNCTIONS_PREFIX
-}
-
-fn is_aws_lambda(tags: &SortedTags, prefix: &str) -> bool {
-    get_first_tag_value(tags, AWS_LAMBDA_TAG_KEY).is_some() && prefix != AWS_LAMBDA_PREFIX
-}
-
-fn is_aws_step_functions(tags: &SortedTags, prefix: &str) -> bool {
-    get_first_tag_value(tags, AWS_STEP_FUNCTIONS_TAG_KEY).is_some()
-        && prefix != AWS_STEP_FUNCTIONS_PREFIX
 }
 
 #[cfg(test)]
