@@ -319,6 +319,7 @@ pub fn create_test_json_span(
             },
             "metrics": {},
             "meta_struct": {},
+            "span_events": [],
         }
     );
 
