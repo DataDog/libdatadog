@@ -194,12 +194,12 @@ fn inject_mimalloc_stats(internal: &mut Value) {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn get_rss_and_size_from_smaps(section_name: &str) -> Option<MemoryStats> {
+fn get_rss_and_size_from_smaps(_section_name: &str) -> Option<MemoryStats> {
     None
 }
 
 #[cfg(not(target_os = "linux"))]
-fn inject_mimalloc_stats(internal: &mut Value) {}
+fn inject_mimalloc_stats(_internal: &mut Value) {}
 
 impl ProfileExporter {
     /// Creates a new exporter to be used to report profiling data.
