@@ -71,13 +71,13 @@ impl From<OriginService> for u32 {
 }
 
 /// Struct to hold tag key, tag value, and prefix for matching.
-struct MetricOriginCheck<'a> {
-    tag_key: &'a str,
-    tag_value: &'a str,
-    prefix: &'a str,
+struct MetricOriginCheck {
+    tag_key: &'static str,
+    tag_value: &'static str,
+    prefix: &'static str,
 }
 
-impl<'a> MetricOriginCheck<'a> {
+impl MetricOriginCheck {
     /// Checks if the tag matches the given key, value, and prefix.
     fn matches(&self, tags: &SortedTags, metric_prefix: &str) -> bool {
         has_tag_value(tags, self.tag_key, self.tag_value) && metric_prefix != self.prefix
