@@ -160,6 +160,9 @@ pub fn find_metric_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
 
 /// Checks if the given key-value pair exists in the tags.
 fn has_tag_value(tags: &SortedTags, key: &str, value: &str) -> bool {
+    if value.is_empty() {
+        return !tags.find_all(key).is_empty();
+    }
     tags.find_all(key)
         .iter()
         .any(|tag_value| tag_value.as_str() == value)
