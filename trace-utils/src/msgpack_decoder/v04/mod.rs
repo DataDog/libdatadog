@@ -1,7 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-mod span;
+pub(crate) mod span;
+
 use self::span::decode_span;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::SpanBytes;
