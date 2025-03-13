@@ -36,7 +36,7 @@ pub(crate) fn read_span_links(buf: &mut Bytes) -> Result<Vec<SpanLinkBytes>, Dec
         DecodeError::InvalidType("Unable to get array len for span links".to_owned())
     })?;
 
-    let mut vec: Vec<SpanLinkBytes> = Vec::with_capacity(len.try_into().unwrap());
+    let mut vec: Vec<SpanLinkBytes> = Vec::with_capacity(len as usize);
     for _ in 0..len {
         vec.push(decode_span_link(buf)?);
     }
