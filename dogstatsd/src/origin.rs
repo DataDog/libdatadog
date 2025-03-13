@@ -70,49 +70,50 @@ impl From<OriginService> for u32 {
     }
 }
 
-/// Struct to hold tag key, value, and prefix for matching.
-struct TagCheck<'a> {
-    key: &'a str,
-    value: &'a str,
+/// Struct to hold tag key, tag value, and prefix for matching.
+struct MetricOriginCheck<'a> {
+    tag_key: &'a str,
+    tag_value: &'a str,
     prefix: &'a str,
 }
 
-impl<'a> TagCheck<'a> {
+impl<'a> MetricOriginCheck<'a> {
     /// Checks if the tag matches the given key, value, and prefix.
     fn matches(&self, tags: &SortedTags, metric_prefix: &str) -> bool {
-        get_first_tag_value(tags, self.key) == Some(self.value) && metric_prefix != self.prefix
+        get_first_tag_value(tags, self.tag_key) == Some(self.tag_value)
+            && metric_prefix != self.prefix
     }
 }
 
-const TAG_CHECKS: &[TagCheck] = &[
-    TagCheck {
-        key: DD_ORIGIN_TAG_KEY,
-        value: GOOGLE_CLOUD_RUN_TAG_VALUE,
+const METRIC_ORIGIN_CHECKS: &[MetricOriginCheck] = &[
+    MetricOriginCheck {
+        tag_key: DD_ORIGIN_TAG_KEY,
+        tag_value: GOOGLE_CLOUD_RUN_TAG_VALUE,
         prefix: GOOGLE_CLOUD_RUN_PREFIX,
     },
-    TagCheck {
-        key: DD_ORIGIN_TAG_KEY,
-        value: AZURE_APP_SERVICES_TAG_VALUE,
+    MetricOriginCheck {
+        tag_key: DD_ORIGIN_TAG_KEY,
+        tag_value: AZURE_APP_SERVICES_TAG_VALUE,
         prefix: AZURE_APP_SERVICES_PREFIX,
     },
-    TagCheck {
-        key: DD_ORIGIN_TAG_KEY,
-        value: AZURE_CONTAINER_APP_TAG_VALUE,
+    MetricOriginCheck {
+        tag_key: DD_ORIGIN_TAG_KEY,
+        tag_value: AZURE_CONTAINER_APP_TAG_VALUE,
         prefix: AZURE_CONTAINER_APP_PREFIX,
     },
-    TagCheck {
-        key: DD_ORIGIN_TAG_KEY,
-        value: AZURE_FUNCTIONS_TAG_VALUE,
+    MetricOriginCheck {
+        tag_key: DD_ORIGIN_TAG_KEY,
+        tag_value: AZURE_FUNCTIONS_TAG_VALUE,
         prefix: AZURE_FUNCTIONS_PREFIX,
     },
-    TagCheck {
-        key: AWS_LAMBDA_TAG_KEY,
-        value: "",
+    MetricOriginCheck {
+        tag_key: AWS_LAMBDA_TAG_KEY,
+        tag_value: "",
         prefix: AWS_LAMBDA_PREFIX,
     },
-    TagCheck {
-        key: AWS_STEP_FUNCTIONS_TAG_KEY,
-        value: "",
+    MetricOriginCheck {
+        tag_key: AWS_STEP_FUNCTIONS_TAG_KEY,
+        tag_value: "",
         prefix: AWS_STEP_FUNCTIONS_PREFIX,
     },
 ];
@@ -140,8 +141,8 @@ pub fn find_metric_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
         return None;
     }
 
-    for (index, tag_check) in TAG_CHECKS.iter().enumerate() {
-        if tag_check.matches(&tags, &metric_prefix) {
+    for (index, origin_check) in METRIC_ORIGIN_CHECKS.iter().enumerate() {
+        if origin_check.matches(&tags, &metric_prefix) {
             let category = match index {
                 0 => OriginCategory::CloudRunMetrics,
                 1 => OriginCategory::AppServicesMetrics,
