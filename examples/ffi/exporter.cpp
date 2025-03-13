@@ -96,9 +96,9 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  ddog_prof_EncodedProfile *encoded_profile = &serialize_result.ok;
+  auto *encoded_profile = &serialize_result.ok;
 
-  ddog_prof_Endpoint endpoint =
+  auto endpoint =
       ddog_prof_Endpoint_agentless(DDOG_CHARSLICE_C_BARE("datad0g.com"), to_slice_c_char(api_key));
 
   ddog_Vec_Tag tags = ddog_Vec_Tag_new();
@@ -110,9 +110,9 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  ddog_prof_Exporter_NewResult exporter_new_result =
-      ddog_prof_Exporter_new(DDOG_CHARSLICE_C_BARE("exporter-example"), DDOG_CHARSLICE_C_BARE("1.2.3"),
-                             DDOG_CHARSLICE_C_BARE("native"), &tags, endpoint);
+  ddog_prof_Exporter_NewResult exporter_new_result = ddog_prof_Exporter_new(
+      DDOG_CHARSLICE_C_BARE("exporter-example"), DDOG_CHARSLICE_C_BARE("1.2.3"),
+      DDOG_CHARSLICE_C_BARE("native"), &tags, endpoint);
   ddog_Vec_Tag_drop(tags);
 
   if (exporter_new_result.tag == DDOG_PROF_EXPORTER_NEW_RESULT_ERR) {
@@ -123,33 +123,26 @@ int main(int argc, char *argv[]) {
 
   auto exporter = exporter_new_result.ok;
 
-  ddog_prof_Exporter_File files_to_compress_and_export_[] = {{
-      .name = DDOG_CHARSLICE_C_BARE("auto.pprof"),
-      .file = ddog_Vec_U8_as_slice(&encoded_profile->buffer),
-  }};
-  ddog_prof_Exporter_Slice_File files_to_compress_and_export = {
-      .ptr = files_to_compress_and_export_,
-      .len = sizeof files_to_compress_and_export_ / sizeof *files_to_compress_and_export_,
-  };
-
-  ddog_prof_Exporter_Slice_File files_to_export_unmodified = ddog_prof_Exporter_Slice_File_empty();
+  auto files_to_compress_and_export = ddog_prof_Exporter_Slice_File_empty();
+  auto files_to_export_unmodified = ddog_prof_Exporter_Slice_File_empty();
 
   ddog_CharSlice internal_metadata_example = DDOG_CHARSLICE_C_BARE(
       "{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");
 
-  ddog_CharSlice info_example = DDOG_CHARSLICE_C_BARE(
-      "{\"application\": {\"start_time\": \"2024-01-24T11:17:22+0000\"}, \"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
+  ddog_CharSlice info_example =
+      DDOG_CHARSLICE_C_BARE("{\"application\": {\"start_time\": \"2024-01-24T11:17:22+0000\"}, "
+                            "\"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
 
   auto res = ddog_prof_Exporter_set_timeout(exporter, 30000);
   if (res.tag == DDOG_PROF_OPTION_ERROR_SOME_ERROR) {
-          print_error("Failed to set the timeout", res.some);
-          ddog_Error_drop(&res.some);
-          return 1;
+    print_error("Failed to set the timeout", res.some);
+    ddog_Error_drop(&res.some);
+    return 1;
   }
 
   ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(
-      exporter, encoded_profile->start, encoded_profile->end, files_to_compress_and_export,
-      files_to_export_unmodified, nullptr, nullptr, &internal_metadata_example, &info_example);
+      exporter, encoded_profile, files_to_compress_and_export, files_to_export_unmodified, nullptr,
+      &internal_metadata_example, &info_example);
   ddog_prof_EncodedProfile_drop(encoded_profile);
 
   if (build_result.tag == DDOG_PROF_EXPORTER_REQUEST_BUILD_RESULT_ERR) {

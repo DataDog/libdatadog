@@ -55,6 +55,38 @@ pub struct EncodedProfile {
     pub endpoints_stats: ProfiledEndpointsStats,
 }
 
+impl EncodedProfile {
+    pub fn test_instance() -> anyhow::Result<Self> {
+        use std::io::Read;
+
+        fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+            let mut file = std::fs::File::open(path)?;
+            let metadata = file.metadata()?;
+            let mut buffer = Vec::with_capacity(metadata.len() as usize);
+            file.read_to_end(&mut buffer)?;
+
+            Ok(buffer)
+        }
+
+        let small_pprof_name = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/profile.pprof");
+        let buffer = open(small_pprof_name).expect("to open file and read its bytes");
+
+        let start = SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_nanos(12000000034))
+            .unwrap();
+        let end = SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_nanos(56000000078))
+            .unwrap();
+        let endpoints_stats = ProfiledEndpointsStats::default();
+        Ok(EncodedProfile {
+            start,
+            end,
+            buffer,
+            endpoints_stats,
+        })
+    }
+}
+
 /// Public API
 impl Profile {
     /// Add the endpoint data to the endpoint mappings.

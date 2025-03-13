@@ -1,10 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::borrow::Cow;
-use std::future;
-use std::io::{Cursor, Write};
-
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
 pub use ddcommon::tag::Tag;
@@ -12,6 +8,10 @@ pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
 use lz4_flex::frame::FrameEncoder;
 use serde_json::json;
+use std::borrow::Cow;
+use std::fmt::Debug;
+use std::io::{Cursor, Write};
+use std::{future, iter};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
@@ -26,7 +26,7 @@ pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
 #[cfg(windows)]
 pub use connector::named_pipe::{named_pipe_path_from_uri, named_pipe_path_to_uri};
 
-use crate::internal::ProfiledEndpointsStats;
+use crate::internal::EncodedProfile;
 
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 
@@ -162,12 +162,10 @@ impl ProfileExporter {
     /// "RFC: Pprof System Info Support".
     pub fn build(
         &self,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        profile: EncodedProfile,
         files_to_compress_and_export: &[File],
         files_to_export_unmodified: &[File],
         additional_tags: Option<&Vec<Tag>>,
-        endpoint_counts: Option<&ProfiledEndpointsStats>,
         internal_metadata: Option<serde_json::Value>,
         info: Option<serde_json::Value>,
     ) -> anyhow::Result<Request> {
@@ -217,13 +215,20 @@ impl ProfileExporter {
             .iter()
             .chain(files_to_export_unmodified.iter())
             .map(|file| file.name.to_owned())
+            .chain(iter::once("profile.pprof".to_string()))
             .collect();
+
+        let endpoint_counts = if profile.endpoints_stats.is_empty() {
+            None
+        } else {
+            Some(profile.endpoints_stats)
+        };
 
         let event = json!({
             "attachments": attachments,
             "tags_profiler": tags_profiler,
-            "start": start.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
-            "end": end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
+            "start": DateTime::<Utc>::from(profile.start).format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
+            "end": DateTime::<Utc>::from(profile.end).format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
             "family": self.family.as_ref(),
             "version": "4",
             "endpoint_counts" : endpoint_counts,
@@ -270,6 +275,12 @@ impl ProfileExporter {
              */
             form.add_reader_file(file.name, Cursor::new(encoded), file.name)
         }
+        // Add the actual pprof
+        form.add_reader_file(
+            "profile.pprof",
+            Cursor::new(profile.buffer),
+            "profile.pprof",
+        );
 
         let builder = self
             .endpoint

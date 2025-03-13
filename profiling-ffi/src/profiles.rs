@@ -7,9 +7,8 @@ use anyhow::Context;
 use datadog_profiling::api;
 use datadog_profiling::api::ManagedStringId;
 use datadog_profiling::internal;
-use datadog_profiling::internal::ProfiledEndpointsStats;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
-use ddcommon_ffi::{Error, Timespec};
+use ddcommon_ffi::{Error, Handle, Timespec, ToInner};
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::{Duration, SystemTime};
@@ -83,17 +82,8 @@ pub enum ProfileNewResult {
 #[allow(dead_code)]
 #[repr(C)]
 pub enum SerializeResult {
-    Ok(EncodedProfile),
+    Ok(Handle<internal::EncodedProfile>),
     Err(Error),
-}
-
-impl From<anyhow::Result<EncodedProfile>> for SerializeResult {
-    fn from(value: anyhow::Result<EncodedProfile>) -> Self {
-        match value {
-            Ok(e) => Self::Ok(e),
-            Err(err) => Self::Err(err.into()),
-        }
-    }
 }
 
 impl From<anyhow::Result<internal::EncodedProfile>> for SerializeResult {
@@ -719,41 +709,18 @@ unsafe fn add_upscaling_rule(
     )
 }
 
-#[repr(C)]
-pub struct EncodedProfile {
-    start: Timespec,
-    end: Timespec,
-    buffer: ddcommon_ffi::Vec<u8>,
-    endpoints_stats: Box<ProfiledEndpointsStats>,
-}
-
 /// # Safety
 /// Only pass a reference to a valid `ddog_prof_EncodedProfile`, or null. A
 /// valid reference also means that it hasn't already been dropped (do not
 /// call this twice on the same object).
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(profile: Option<&mut EncodedProfile>) {
-    if let Some(reference) = profile {
-        // Safety: EncodedProfile's are repr(C), and not box allocated. If the
-        // user has followed the safety requirements of this function, then
-        // this is safe.
-        std::ptr::drop_in_place(reference as *mut _)
-    }
-}
-
-impl From<internal::EncodedProfile> for EncodedProfile {
-    fn from(value: internal::EncodedProfile) -> Self {
-        let start = value.start.into();
-        let end = value.end.into();
-        let buffer = value.buffer.into();
-        let endpoints_stats = Box::new(value.endpoints_stats);
-
-        Self {
-            start,
-            end,
-            buffer,
-            endpoints_stats,
-        }
+pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
+    profile: *mut Handle<internal::EncodedProfile>,
+) {
+    // Technically, this function has been designed so if it's double-dropped
+    // then it's okay, but it's not something that should be relied on.
+    if !profile.is_null() {
+        drop((*profile).take())
     }
 }
 

@@ -6,10 +6,10 @@
 
 use datadog_profiling::exporter;
 use datadog_profiling::exporter::{ProfileExporter, Request};
-use datadog_profiling::internal::ProfiledEndpointsStats;
+use datadog_profiling::internal::EncodedProfile;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use ddcommon_ffi::{Error, MaybeError, Timespec};
+use ddcommon_ffi::{Error, Handle, MaybeError, ToInner};
 use std::borrow::Cow;
 use std::ptr::NonNull;
 use std::str::FromStr;
@@ -259,16 +259,15 @@ impl From<RequestBuildResult> for Result<Box<Request>, String> {
 /// valid objects created by this module.
 /// NULL is allowed for `optional_additional_tags`, `optional_endpoints_stats`,
 /// `optional_internal_metadata_json` and `optional_info_json`.
+/// Consumes the `SerializedProfile`
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     exporter: Option<&mut ProfileExporter>,
-    start: Timespec,
-    end: Timespec,
+    profile: *mut Handle<EncodedProfile>,
     files_to_compress_and_export: Slice<File>,
     files_to_export_unmodified: Slice<File>,
     optional_additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    optional_endpoints_stats: Option<&ProfiledEndpointsStats>,
     optional_internal_metadata_json: Option<&CharSlice>,
     optional_info_json: Option<&CharSlice>,
 ) -> RequestBuildResult {
@@ -290,13 +289,20 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
                 Err(err) => return RequestBuildResult::Err(err.into()),
             };
 
+            if profile.is_null() {
+                return RequestBuildResult::Err(anyhow::anyhow!("profile pointer was null").into());
+            }
+
+            let profile = match (*profile).take() {
+                Ok(p) => *p,
+                Err(e) => return RequestBuildResult::Err(e.into()),
+            };
+
             match exporter.build(
-                start.into(),
-                end.into(),
+                profile,
                 files_to_compress_and_export.as_slice(),
                 files_to_export_unmodified.as_slice(),
                 tags.as_ref(),
-                optional_endpoints_stats,
                 internal_metadata,
                 info,
             ) {
@@ -575,19 +581,7 @@ mod tests {
             ExporterNewResult::Err(_) => panic!("Should not occur!"),
         };
 
-        let files_to_compress_and_export: &[File] = &[File {
-            name: CharSlice::from("foo.pprof"),
-            file: ByteSlice::from(b"dummy contents" as &[u8]),
-        }];
-
-        let start = Timespec {
-            seconds: 12,
-            nanoseconds: 34,
-        };
-        let finish = Timespec {
-            seconds: 56,
-            nanoseconds: 78,
-        };
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
             ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
@@ -597,11 +591,9 @@ mod tests {
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
                 Some(exporter.as_mut()),
-                start,
-                finish,
-                Slice::from(files_to_compress_and_export),
+                profile,
                 Slice::empty(),
-                None,
+                Slice::empty(),
                 None,
                 None,
                 None,
@@ -610,7 +602,7 @@ mod tests {
 
         let parsed_event_json = parsed_event_json(build_result);
 
-        assert_eq!(parsed_event_json["attachments"], json!(["foo.pprof"]));
+        assert_eq!(parsed_event_json["attachments"], json!(["profile.pprof"]));
         assert_eq!(parsed_event_json["endpoint_counts"], json!(null));
         assert_eq!(
             parsed_event_json["start"],
@@ -649,19 +641,7 @@ mod tests {
             ExporterNewResult::Err(_) => panic!("Should not occur!"),
         };
 
-        let files: &[File] = &[File {
-            name: CharSlice::from("foo.pprof"),
-            file: ByteSlice::from(b"dummy contents" as &[u8]),
-        }];
-
-        let start = Timespec {
-            seconds: 12,
-            nanoseconds: 34,
-        };
-        let finish = Timespec {
-            seconds: 56,
-            nanoseconds: 78,
-        };
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
             ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
@@ -681,11 +661,9 @@ mod tests {
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
                 Some(exporter.as_mut()),
-                start,
-                finish,
-                Slice::from(files),
+                profile,
                 Slice::empty(),
-                None,
+                Slice::empty(),
                 None,
                 Some(&raw_internal_metadata),
                 None,
@@ -724,19 +702,8 @@ mod tests {
             ExporterNewResult::Err(_) => panic!("Should not occur!"),
         };
 
-        let files: &[File] = &[File {
-            name: CharSlice::from("foo.pprof"),
-            file: ByteSlice::from(b"dummy contents" as &[u8]),
-        }];
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
 
-        let start = Timespec {
-            seconds: 12,
-            nanoseconds: 34,
-        };
-        let finish = Timespec {
-            seconds: 56,
-            nanoseconds: 78,
-        };
         let timeout_milliseconds = 90;
         unsafe {
             ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
@@ -748,11 +715,9 @@ mod tests {
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
                 Some(exporter.as_mut()),
-                start,
-                finish,
-                Slice::from(files),
+                profile,
                 Slice::empty(),
-                None,
+                Slice::empty(),
                 None,
                 Some(&raw_internal_metadata),
                 None,
@@ -787,19 +752,7 @@ mod tests {
             ExporterNewResult::Err(_) => panic!("Should not occur!"),
         };
 
-        let files: &[File] = &[File {
-            name: CharSlice::from("foo.pprof"),
-            file: ByteSlice::from(b"dummy contents" as &[u8]),
-        }];
-
-        let start = Timespec {
-            seconds: 12,
-            nanoseconds: 34,
-        };
-        let finish = Timespec {
-            seconds: 56,
-            nanoseconds: 78,
-        };
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
             ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
@@ -840,11 +793,9 @@ mod tests {
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
                 Some(exporter.as_mut()),
-                start,
-                finish,
-                Slice::from(files),
+                profile,
                 Slice::empty(),
-                None,
+                Slice::empty(),
                 None,
                 None,
                 Some(&raw_info),
@@ -904,19 +855,7 @@ mod tests {
             ExporterNewResult::Err(_) => panic!("Should not occur!"),
         };
 
-        let files: &[File] = &[File {
-            name: CharSlice::from("foo.pprof"),
-            file: ByteSlice::from(b"dummy contents" as &[u8]),
-        }];
-
-        let start = Timespec {
-            seconds: 12,
-            nanoseconds: 34,
-        };
-        let finish = Timespec {
-            seconds: 56,
-            nanoseconds: 78,
-        };
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
             ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
@@ -928,11 +867,9 @@ mod tests {
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
                 Some(exporter.as_mut()),
-                start,
-                finish,
-                Slice::from(files),
+                profile,
                 Slice::empty(),
-                None,
+                Slice::empty(),
                 None,
                 None,
                 Some(&raw_info),
@@ -949,23 +886,14 @@ mod tests {
 
     #[test]
     fn test_build_failure() {
-        let start = Timespec {
-            seconds: 12,
-            nanoseconds: 34,
-        };
-        let finish = Timespec {
-            seconds: 56,
-            nanoseconds: 78,
-        };
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
                 None, // No exporter, will fail
-                start,
-                finish,
+                profile,
                 Slice::empty(),
                 Slice::empty(),
-                None,
                 None,
                 None,
                 None,
