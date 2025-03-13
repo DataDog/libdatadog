@@ -482,7 +482,7 @@ mod tests {
     use ddcommon::tag;
     use ddcommon_ffi::Slice;
     use hyper::body::HttpBody;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     fn profiling_library_name() -> CharSlice<'static> {
         CharSlice::from("dd-trace-foo")
@@ -621,7 +621,10 @@ mod tests {
             json!("1970-01-01T00:00:56.000000078Z")
         );
         assert_eq!(parsed_event_json["family"], json!("native"));
-        assert_eq!(parsed_event_json["internal"], json!({}));
+        assert_eq!(
+            without_mimalloc_metadata(&parsed_event_json["internal"]),
+            json!({})
+        );
         assert_eq!(parsed_event_json["tags_profiler"], json!(""));
         assert_eq!(parsed_event_json["version"], json!("4"));
 
@@ -695,7 +698,7 @@ mod tests {
         let parsed_event_json = parsed_event_json(build_result);
 
         assert_eq!(
-            parsed_event_json["internal"],
+            without_mimalloc_metadata(&parsed_event_json["internal"]),
             json!({
                 "no_signals_workaround_enabled": "true",
                 "execution_trace_enabled": "false",
@@ -992,5 +995,11 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn without_mimalloc_metadata(v: &Value) -> Value {
+        let mut stripped_value = v.clone();
+        stripped_value.as_object_mut().unwrap().remove("mimalloc");
+        stripped_value
     }
 }

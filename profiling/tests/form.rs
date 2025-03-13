@@ -62,7 +62,7 @@ mod tests {
     use datadog_profiling::exporter::*;
     use ddcommon::tag;
     use hyper::body::HttpBody;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     fn default_tags() -> Vec<Tag> {
         vec![tag!("service", "php"), tag!("host", "bits")]
@@ -130,7 +130,10 @@ mod tests {
         assert_eq!(parsed_event_json["attachments"], json!(["profile.pprof"]));
         assert_eq!(parsed_event_json["endpoint_counts"], json!(null));
         assert_eq!(parsed_event_json["family"], json!("php"));
-        assert_eq!(parsed_event_json["internal"], json!({}));
+        assert_eq!(
+            without_mimalloc_metadata(&parsed_event_json["internal"]),
+            json!({})
+        );
         assert_eq!(
             parsed_event_json["tags_profiler"],
             json!("service:php,host:bits")
@@ -164,7 +167,10 @@ mod tests {
         let request = multipart(&mut exporter, Some(internal_metadata.clone()), None);
         let parsed_event_json = parsed_event_json(request);
 
-        assert_eq!(parsed_event_json["internal"], internal_metadata);
+        assert_eq!(
+            without_mimalloc_metadata(&parsed_event_json["internal"]),
+            internal_metadata
+        );
     }
 
     #[test]
@@ -245,5 +251,11 @@ mod tests {
             actual_headers.get("DD-EVP-ORIGIN-VERSION").unwrap(),
             profiling_library_version
         );
+    }
+
+    fn without_mimalloc_metadata(v: &Value) -> Value {
+        let mut stripped_value = v.clone();
+        stripped_value.as_object_mut().unwrap().remove("mimalloc");
+        stripped_value
     }
 }

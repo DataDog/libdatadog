@@ -3,7 +3,7 @@
 
 use std::borrow::Cow;
 use std::future;
-use std::io::{Cursor, Write};
+use std::io::{BufRead, Cursor, Write};
 
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
@@ -116,6 +116,54 @@ impl Request {
     }
 }
 
+struct MemoryStats {
+    size_bytes: u64,
+    rss_bytes: u64,
+}
+
+#[cfg(target_os = "linux")]
+fn get_rss_and_size_from_smaps(section_name: &str) -> Option<MemoryStats> {
+    let mut size = None;
+    let mut rss = None;
+    let mut in_target = false;
+    let parse_value = |line: String| -> Option<u64> {
+        line.split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(|kb| kb * 1024)
+    };
+
+    for line in std::io::BufReader::new(std::fs::File::open("/proc/self/smaps").ok()?)
+        .lines()
+        .map_while(Result::ok)
+    {
+        if line.ends_with(section_name) {
+            in_target = true;
+        } else if in_target {
+            if line.starts_with("Size:") && line.ends_with("kB") {
+                size = Some(parse_value(line)?); // The ? is so we stop if we fail to parse
+            } else if line.starts_with("Rss:") && line.ends_with("kB") {
+                rss = Some(parse_value(line)?); // Same as above
+            } else if line.starts_with("VmFlags") {
+                // Reached the end of the section and didn't find what we wanted
+                return None;
+            }
+            if let (Some(size), Some(rss)) = (size, rss) {
+                return Some(MemoryStats {
+                    size_bytes: size,
+                    rss_bytes: rss,
+                });
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn get_rss_and_size_for_section(_: &str) -> Option<MemoryStats> {
+    None
+}
+
 impl ProfileExporter {
     /// Creates a new exporter to be used to report profiling data.
     /// # Arguments
@@ -221,35 +269,33 @@ impl ProfileExporter {
 
         let mut internal: serde_json::value::Value = internal_metadata.unwrap_or_else(|| json!({}));
         if let Some(map) = internal.as_object_mut() {
-            let mut current_rss: usize = 0;
-            let mut peak_rss: usize = 0;
-            let mut current_commit: usize = 0;
-            let mut peak_commit: usize = 0;
-            let mut page_faults: usize = 0;
+            let mut peak_bytes: i64 = 0;
+            let mut total_bytes: i64 = 0;
+            let mut freed_bytes: i64 = 0;
+            let mut current_bytes: i64 = 0;
 
             unsafe {
-                libmimalloc_sys::mi_process_info(
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    &mut current_rss,
-                    &mut peak_rss,
-                    &mut current_commit,
-                    &mut peak_commit,
-                    &mut page_faults,
+                libmimalloc_sys::mi_libdatadog_total_stat(
+                    &mut peak_bytes,
+                    &mut total_bytes,
+                    &mut freed_bytes,
+                    &mut current_bytes,
                 )
             };
 
-            map.insert(
-                "mimalloc".to_string(),
-                json!({
-                    "current_rss": current_rss,
-                    "peak_rss": peak_rss,
-                    "current_commit": current_commit,
-                    "peak_commit": peak_commit,
-                    "page_faults": page_faults,
-                }),
-            );
+            let mut mimalloc_data = json!({
+                "peak_bytes": peak_bytes,
+                "total_bytes": total_bytes,
+                "freed_bytes": freed_bytes,
+                "current_bytes": current_bytes,
+            });
+
+            if let Some(metrics) = get_rss_and_size_from_smaps("[anon:libdatadog]") {
+                mimalloc_data["kernel_map_size_bytes"] = json!(metrics.size_bytes);
+                mimalloc_data["kernel_map_rss_bytes"] = json!(metrics.rss_bytes);
+            }
+
+            map.insert("mimalloc".to_string(), mimalloc_data);
         }
 
         let event = json!({
