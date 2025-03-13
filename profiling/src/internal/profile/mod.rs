@@ -20,9 +20,8 @@ use anyhow::Context;
 use interning_api::Generation;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::atomic::AtomicU64;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 pub struct Profile {
@@ -48,7 +47,7 @@ pub struct Profile {
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
-    string_storage: Option<Rc<Mutex<ManagedStringStorage>>>,
+    string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
     string_storage_cached_profile_id: Option<CachedProfileId>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
@@ -256,7 +255,7 @@ impl Profile {
         start_time: SystemTime,
         sample_types: &[api::ValueType],
         period: Option<api::Period>,
-        string_storage: Rc<Mutex<ManagedStringStorage>>,
+        string_storage: Arc<Mutex<ManagedStringStorage>>,
     ) -> Self {
         Self::new_internal(
             Self::backup_period(period),
@@ -605,7 +604,7 @@ impl Profile {
         owned_period: Option<owned_types::Period>,
         owned_sample_types: Option<Box<[owned_types::ValueType]>>,
         start_time: SystemTime,
-        string_storage: Option<Rc<Mutex<ManagedStringStorage>>>,
+        string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
     ) -> Self {
         let mut profile = Self {
             owned_period,
@@ -2362,7 +2361,7 @@ mod api_tests {
 
     #[test]
     fn test_regression_managed_string_table_correctly_maps_ids() {
-        let storage = Rc::new(Mutex::new(ManagedStringStorage::new()));
+        let storage = Arc::new(Mutex::new(ManagedStringStorage::new()));
         let hello_id: u32;
         let world_id: u32;
 
