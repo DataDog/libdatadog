@@ -11,5 +11,17 @@ RUN sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo \
 RUN yum update -y \
     && yum install -y unzip
 
+# Install and make devtoolset-9 (modern gcc) available
+# This matches what we do in libddprof-build
+RUN yum install -y centos-release-scl \
+  # package centos-release-scl installs new yum repos, we must fix them too
+  && sed -i s/mirror.centos.org/buildlogs.centos.org/g /etc/yum.repos.d/CentOS-SCLo-*.repo \
+  && sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/CentOS-SCLo-*.repo \
+  && sed -i s/^mirrorlist=http/#mirrorlist=http/g /etc/yum.repos.d/CentOS-SCLo-*.repo \
+  && yum install -y --setopt=tsflags=nodocs --nogpgcheck \
+  devtoolset-9 \
+  && yum clean all --enablerepo='*'
+RUN echo "source /opt/rh/devtoolset-9/enable" > /etc/profile.d/devtoolset-9.sh && chmod +x /etc/profile.d/devtoolset-9.sh
+
 COPY ./scripts/install-protoc.sh .
 RUN chmod +x ./install-protoc.sh && ./install-protoc.sh usr/local
