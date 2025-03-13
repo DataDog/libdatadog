@@ -166,12 +166,25 @@ where
                 serialize_attribute_array::<S, T>(&mut state, attribute)?;
             }
             AttributeAnyValue::Array(value) => {
-                state.serialize_field("type", &4)?;
+                let value_type: u8 = self.into();
+                state.serialize_field("type", &value_type)?;
                 state.serialize_field("array_value", value)?;
             }
         }
 
         state.end()
+    }
+}
+
+impl<T> From<&AttributeAnyValue<T>> for u8
+where
+    T: SpanText,
+{
+    fn from(attribute: &AttributeAnyValue<T>) -> u8 {
+        match attribute {
+            AttributeAnyValue::SingleValue(value) => value.into(),
+            AttributeAnyValue::Array(_) => 4,
+        }
     }
 }
 
@@ -208,22 +221,26 @@ where
     T: SpanText,
     S: serde::Serializer,
 {
+    let attribute_type: u8 = attribute.into();
+    state.serialize_field("type", &attribute_type)?;
     match attribute {
-        AttributeArrayValue::String(value) => {
-            state.serialize_field("type", &0)?;
-            state.serialize_field("string_value", value)
-        }
-        AttributeArrayValue::Boolean(value) => {
-            state.serialize_field("type", &1)?;
-            state.serialize_field("bool_value", value)
-        }
-        AttributeArrayValue::Integer(value) => {
-            state.serialize_field("type", &2)?;
-            state.serialize_field("int_value", value)
-        }
-        AttributeArrayValue::Double(value) => {
-            state.serialize_field("type", &3)?;
-            state.serialize_field("double_value", value)
+        AttributeArrayValue::String(value) => state.serialize_field("string_value", value),
+        AttributeArrayValue::Boolean(value) => state.serialize_field("bool_value", value),
+        AttributeArrayValue::Integer(value) => state.serialize_field("int_value", value),
+        AttributeArrayValue::Double(value) => state.serialize_field("double_value", value),
+    }
+}
+
+impl<T> From<&AttributeArrayValue<T>> for u8
+where
+    T: SpanText,
+{
+    fn from(attribute: &AttributeArrayValue<T>) -> u8 {
+        match attribute {
+            AttributeArrayValue::String(_) => 0,
+            AttributeArrayValue::Boolean(_) => 1,
+            AttributeArrayValue::Integer(_) => 2,
+            AttributeArrayValue::Double(_) => 3,
         }
     }
 }

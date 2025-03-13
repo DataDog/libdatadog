@@ -156,7 +156,8 @@ fn decode_attribute_any(buf: &mut Bytes) -> Result<AttributeAnyValueBytes, Decod
 
     if let Some(value) = attribute {
         if let Some(attribute_type) = attribute_type {
-            if type_from_attribute(&value) == attribute_type {
+            let value_type: u8 = (&value).into();
+            if attribute_type == value_type {
                 Ok(value)
             } else {
                 Err(DecodeError::InvalidFormat(
@@ -173,13 +174,6 @@ fn decode_attribute_any(buf: &mut Bytes) -> Result<AttributeAnyValueBytes, Decod
     }
 }
 
-fn type_from_attribute(attribute: &AttributeAnyValueBytes) -> u8 {
-    match attribute {
-        AttributeAnyValueBytes::SingleValue(value) => type_from_attribute_array(value),
-        AttributeAnyValueBytes::Array(_) => 4,
-    }
-}
-
 fn read_attributes_array(buf: &mut Bytes) -> Result<Vec<AttributeArrayValueBytes>, DecodeError> {
     if let Some(empty_vec) = handle_null_marker(buf, Vec::default) {
         return Ok(empty_vec);
@@ -192,7 +186,7 @@ fn read_attributes_array(buf: &mut Bytes) -> Result<Vec<AttributeArrayValueBytes
     let mut vec: Vec<AttributeArrayValueBytes> = Vec::with_capacity(len as usize);
     if len > 0 {
         let first = decode_attribute_array(buf, None)?;
-        let array_type = type_from_attribute_array(&first);
+        let array_type = (&first).into();
         vec.push(first);
         for _ in 1..len {
             vec.push(decode_attribute_array(buf, Some(array_type))?);
@@ -282,7 +276,8 @@ fn decode_attribute_array(
 
     if let Some(value) = attribute {
         if let Some(attribute_type) = attribute_type {
-            if type_from_attribute_array(&value) == attribute_type {
+            let value_type: u8 = (&value).into();
+            if attribute_type == value_type {
                 if let Some(array_type) = array_type {
                     if array_type != attribute_type {
                         return Err(DecodeError::InvalidType(
@@ -303,15 +298,6 @@ fn decode_attribute_array(
         }
     } else {
         Err(DecodeError::InvalidFormat("Invalid attribute".to_owned()))
-    }
-}
-
-fn type_from_attribute_array(attribute: &AttributeArrayValueBytes) -> u8 {
-    match attribute {
-        AttributeArrayValueBytes::String(_) => 0,
-        AttributeArrayValueBytes::Boolean(_) => 1,
-        AttributeArrayValueBytes::Integer(_) => 2,
-        AttributeArrayValueBytes::Double(_) => 3,
     }
 }
 
