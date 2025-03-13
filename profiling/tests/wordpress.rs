@@ -98,7 +98,7 @@ fn wordpress() {
             /* 8 */ php_location("<?php", "/var/www/html/public/wp-blog-header.php", 13),
             /* 9 */ php_location("<?php", "/var/www/html/public/index.php", 17),
         ],
-        values: vec![1, 6925169, 5340670],
+        values: &[1, 6925169, 5340670],
         labels: vec![],
     };
 
@@ -185,7 +185,7 @@ fn wordpress() {
             /* 8 */ php_location("<?php", "/var/www/html/public/wp-blog-header.php", 13),
             /* 9 */ php_location("<?php", "/var/www/html/public/index.php", 17),
         ],
-        values: vec![1, 10097441, 8518865],
+        values: &[1, 10097441, 8518865],
         labels: vec![],
     };
     let actual_sample1 = api.samples.get(1).unwrap();

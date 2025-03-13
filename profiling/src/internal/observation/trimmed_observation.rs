@@ -65,14 +65,11 @@ impl TrimmedObservation {
     /// # Safety
     /// This panics if you attempt to create an Observation with a data vector
     /// of the wrong length.
-    pub fn new(v: Vec<i64>, len: ObservationLength) -> Self {
+    pub fn new(v: &[i64], len: ObservationLength) -> Self {
         len.assert_eq(v.len());
 
-        // First, convert the vector into a boxed slice.
-        // This shrinks any excess capacity on the vec.
-        // At this point, the memory is now owned by the box.
-        // https://doc.rust-lang.org/std/vec/struct.Vec.html#method.into_boxed_slice
-        let b = v.into_boxed_slice();
+        // First, convert the slice into a boxed slice so we can persist it.
+        let b: Box<[i64]> = Box::from(v);
         // Get the fat pointer representing the slice out of the box.
         // At this point, we now own the memory
         // https://doc.rust-lang.org/std/boxed/struct.Box.html#method.into_raw
@@ -129,7 +126,7 @@ mod tests {
 
     #[test]
     fn as_mut_test() {
-        let v = vec![1, 2];
+        let v = &[1, 2];
         let o = ObservationLength::new(2);
         let mut t = TrimmedObservation::new(v, o);
         unsafe {
@@ -142,7 +139,7 @@ mod tests {
 
     #[test]
     fn drop_after_emptying_test() {
-        let v = vec![1, 2];
+        let v = &[1, 2];
         let o = ObservationLength::new(2);
         let t = TrimmedObservation::new(v, o);
         unsafe {
@@ -156,14 +153,14 @@ mod tests {
     // happens
     #[cfg_attr(miri, ignore)]
     fn drop_owned_data_panics_test() {
-        let v = vec![1, 2];
+        let v = &[1, 2];
         let o = ObservationLength::new(2);
         let _t = TrimmedObservation::new(v, o);
     }
 
     #[test]
     fn into_boxed_slice_test() {
-        let v = vec![1, 2];
+        let v = &[1, 2];
         let o = ObservationLength::new(2);
         let mut t = TrimmedObservation::new(v, o);
         unsafe {
@@ -175,7 +172,7 @@ mod tests {
 
     #[test]
     fn into_vec_test() {
-        let v = vec![1, 2];
+        let v = &[1, 2];
         let o = ObservationLength::new(2);
         let mut t = TrimmedObservation::new(v, o);
         unsafe {
@@ -193,19 +190,19 @@ mod tests {
         bolero::check!().with_type::<Vec<i64>>().for_each(|v| {
             let o = ObservationLength::new(v.len());
             {
-                let t = TrimmedObservation::new(v.clone(), o);
+                let t = TrimmedObservation::new(v, o);
                 unsafe {
                     t.consume(o);
                 }
             }
             {
-                let t = TrimmedObservation::new(v.clone(), o);
+                let t = TrimmedObservation::new(v, o);
                 unsafe {
                     assert_eq!(t.into_boxed_slice(o).as_ref(), v.as_slice());
                 }
             }
             {
-                let t = TrimmedObservation::new(v.clone(), o);
+                let t = TrimmedObservation::new(v, o);
                 unsafe {
                     assert_eq!(&t.into_vec(o), v);
                 }
@@ -227,9 +224,9 @@ mod tests {
             .with_type::<(Vec<i64>, Vec<Operation>)>()
             .for_each(|(v, ops)| {
                 let o = ObservationLength::new(v.len());
-                let mut t = TrimmedObservation::new(v.clone(), o);
+                let mut t = TrimmedObservation::new(v, o);
 
-                let mut v = v.clone();
+                let v = &mut v.clone();
                 for op in ops {
                     let slice = unsafe { t.as_mut_slice(o) };
 
