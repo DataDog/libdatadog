@@ -70,6 +70,7 @@ impl From<OriginService> for u32 {
     }
 }
 
+/// Struct to hold tag key, value, and prefix for matching.
 struct TagCheck<'a> {
     key: &'a str,
     value: &'a str,
@@ -77,8 +78,9 @@ struct TagCheck<'a> {
 }
 
 impl<'a> TagCheck<'a> {
-    fn matches(&self, tags: &SortedTags, prefix: &str) -> bool {
-        get_first_tag_value(tags, self.key) == Some(self.value) && prefix != self.prefix
+    /// Checks if the tag matches the given key, value, and prefix.
+    fn matches(&self, tags: &SortedTags, metric_prefix: &str) -> bool {
+        get_first_tag_value(tags, self.key) == Some(self.value) && metric_prefix != self.prefix
     }
 }
 
@@ -115,6 +117,7 @@ const TAG_CHECKS: &[TagCheck] = &[
     },
 ];
 
+/// Creates an Origin for serverless metrics.
 fn serverless_origin(category: OriginCategory) -> Origin {
     Origin {
         origin_product: OriginProduct::Serverless.into(),
@@ -124,17 +127,22 @@ fn serverless_origin(category: OriginCategory) -> Origin {
     }
 }
 
+/// Finds the origin of a metric based on its tags and name prefix.
 pub fn find_metric_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
-    let name = metric.name.to_string();
-    let prefix = name.split('.').take(2).collect::<Vec<&str>>().join(".");
+    let metric_name = metric.name.to_string();
+    let metric_prefix = metric_name
+        .split('.')
+        .take(2)
+        .collect::<Vec<&str>>()
+        .join(".");
 
-    if is_datadog_metric(&prefix) {
+    if is_datadog_metric(&metric_prefix) {
         return None;
     }
 
-    for (i, tag_check) in TAG_CHECKS.iter().enumerate() {
-        if tag_check.matches(&tags, &prefix) {
-            let category = match i {
+    for (index, tag_check) in TAG_CHECKS.iter().enumerate() {
+        if tag_check.matches(&tags, &metric_prefix) {
+            let category = match index {
                 0 => OriginCategory::CloudRunMetrics,
                 1 => OriginCategory::AppServicesMetrics,
                 2 => OriginCategory::ContainerAppMetrics,
@@ -150,6 +158,7 @@ pub fn find_metric_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
     None
 }
 
+/// Gets the first non-empty tag value for the given key.
 fn get_first_tag_value<'a>(tags: &'a SortedTags, key: &str) -> Option<&'a str> {
     tags.find_all(key)
         .iter()
@@ -163,6 +172,7 @@ fn get_first_tag_value<'a>(tags: &'a SortedTags, key: &str) -> Option<&'a str> {
         .next()
 }
 
+/// Checks if the metric is a Datadog metric.
 fn is_datadog_metric(prefix: &str) -> bool {
     prefix == DATADOG_PREFIX
 }
