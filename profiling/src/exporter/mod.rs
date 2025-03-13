@@ -195,6 +195,7 @@ fn inject_mimalloc_stats(internal: &mut Value) {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)] // Only used on linux
 fn get_rss_and_size_from_smaps(_section_name: &str) -> Option<MemoryStats> {
     None
 }
