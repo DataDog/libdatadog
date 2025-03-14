@@ -276,7 +276,7 @@ fn is_default<T: Default + PartialEq>(t: &T) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent};
+    use super::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
     use crate::msgpack_decoder::v04::span::decode_span;
     use std::collections::HashMap;
 
@@ -293,6 +293,12 @@ mod tests {
         let span: Span<&str> = Span {
             name: "tracing.operation",
             resource: "MyEndpoint",
+            span_links: vec![SpanLink {
+                trace_id: 42,
+                attributes: HashMap::from([("span", "link")]),
+                tracestate: "running",
+                ..Default::default()
+            }],
             span_events: vec![SpanEvent {
                 time_unix_nano: 1727211691770716000,
                 name: "exception",
@@ -334,6 +340,14 @@ mod tests {
 
         assert_eq!(span.name, deserialized.name.as_str());
         assert_eq!(span.resource, deserialized.resource.as_str());
+        assert_eq!(
+            span.span_links[0].trace_id,
+            deserialized.span_links[0].trace_id
+        );
+        assert_eq!(
+            span.span_links[0].tracestate,
+            deserialized.span_links[0].tracestate.as_str()
+        );
         assert_eq!(
             span.span_events[0].name,
             deserialized.span_events[0].name.as_str()

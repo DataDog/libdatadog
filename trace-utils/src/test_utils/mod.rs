@@ -219,6 +219,7 @@ pub fn create_test_gcp_json_span(
             },
             "metrics": {},
             "meta_struct": {},
+            "span_links": [],
         }
     )
 }
@@ -327,6 +328,7 @@ pub fn create_test_json_span(
             },
             "metrics": {},
             "meta_struct": {},
+            "span_links": [],
             "span_events": [],
         }
     );
