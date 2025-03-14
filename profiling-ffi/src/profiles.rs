@@ -1,14 +1,14 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::string_storage::get_inner_string_storage;
-use crate::string_storage::ManagedStringStorage;
+use crate::string_storage::{get_inner_string_storage, ManagedStringStorage};
 use anyhow::Context;
 use datadog_profiling::api;
 use datadog_profiling::api::ManagedStringId;
 use datadog_profiling::internal;
-use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
-use ddcommon_ffi::{Error, Handle, Timespec, ToInner};
+use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
+use ddcommon_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
+use function_name::named;
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::{Duration, SystemTime};
@@ -722,6 +722,25 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
     if !profile.is_null() {
         drop((*profile).take())
     }
+}
+
+/// Given an EncodedProfile, get a slice representing the bytes in the pprof.
+/// This slice is valid for use until the encoded_profile is modified in any way (e.g. dropped or
+/// consumed).
+/// # Safety
+/// Only pass a reference to a valid `ddog_prof_EncodedProfile`.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_prof_EncodedProfile_get_pprof_bytes<'a>(
+    mut encoded_profile: *mut Handle<internal::EncodedProfile>,
+) -> ddcommon_ffi::Result<ByteSlice<'a>> {
+    wrap_with_ffi_result!({
+        let slice = encoded_profile.to_inner_mut()?.buffer.as_slice();
+        // Rountdtrip through raw pointers to avoid Rust complaining about lifetimes.
+        let byte_slice = ByteSlice::from_raw_parts(slice.as_ptr(), slice.len());
+        anyhow::Ok(byte_slice)
+    })
 }
 
 /// Serialize the aggregated profile.
