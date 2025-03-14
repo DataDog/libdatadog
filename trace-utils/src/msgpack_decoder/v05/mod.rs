@@ -164,6 +164,7 @@ fn read_indexed_map_to_bytes_strings(
     let len = rmp::decode::read_map_len(unsafe { buf.as_mut_slice() })
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
 
+    #[allow(clippy::expect_used)]
     let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
     for _ in 0..len {
         let key = get_from_dict(buf, dict)?;

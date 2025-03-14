@@ -9,6 +9,13 @@
 //! of values (or possibly floating-point weights) added to each bin. Negative values are
 //! partitioned like positive values, symmetrically to zero. The value zero as well as its close
 //! neighborhood that would be mapped to extreme bin indexes is mapped to a specific counter.
+
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::todo))]
+#![cfg_attr(not(test), deny(clippy::unimplemented))]
+
 use std::collections::{HashMap, VecDeque};
 
 use prost::Message;
@@ -216,6 +223,7 @@ impl LowCollapsingDenseStore {
 
 impl Default for LowCollapsingDenseStore {
     fn default() -> Self {
+        #[allow(clippy::unwrap_used)]
         Self::new(2048).unwrap()
     }
 }
@@ -279,6 +287,7 @@ impl Default for LogMapping {
         // offset used in datadog's backend for sketches
         let offset: f64 = (1.0 - (BACKEND_SKETCH_MIN_VALUE.ln() / GAMMA.ln()).floor()) + 0.5;
 
+        #[allow(clippy::unwrap_used)]
         Self::new(GAMMA, offset).unwrap()
     }
 }

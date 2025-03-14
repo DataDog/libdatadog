@@ -42,6 +42,7 @@ pub struct ExampleServer {
 
 impl ExampleServer {
     pub async fn accept_connection(self, channel: crate::platform::Channel) {
+        #[allow(clippy::unwrap_used)]
         let server = tarpc::server::BaseChannel::new(
             tarpc::server::Config::default(),
             Transport::try_from(channel).unwrap(),
@@ -84,6 +85,8 @@ impl ExampleInterface for ExampleServer {
 
     fn store_file(self, _: Context, file: PlatformHandle<File>) -> Self::StoreFileFut {
         self.req_cnt.fetch_add(1, Ordering::AcqRel);
+
+        #[allow(clippy::unwrap_used)]
         self.stored_files.lock().unwrap().push(file);
 
         ready(())
@@ -93,6 +96,8 @@ impl ExampleInterface for ExampleServer {
 
     fn retrieve_file(self, _: Context) -> Self::RetrieveFileFut {
         self.req_cnt.fetch_add(1, Ordering::AcqRel);
+
+        #[allow(clippy::unwrap_used)]
         ready(self.stored_files.lock().unwrap().pop())
     }
 }

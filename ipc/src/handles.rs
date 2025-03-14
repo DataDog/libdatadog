@@ -80,6 +80,7 @@ mod transport_impls {
         ) -> Result<(), Transport::Error> {
             match self {
                 Some(s) => s.receive_handles(transport),
+                #[allow(clippy::todo)]
                 None => todo!(),
             }
         }

@@ -85,6 +85,7 @@ impl ConnStream {
         uri: hyper::Uri,
         require_tls: bool,
     ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> {
+        #[allow(clippy::unwrap_used)]
         c.call(uri.to_string().parse().unwrap())
             .and_then(move |stream| match stream {
                 // move only require_tls

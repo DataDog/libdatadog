@@ -118,6 +118,7 @@ impl Config {
             ),
         ]);
         if self.appsec_config.is_some() {
+            #[allow(clippy::unwrap_used)]
             res.extend(self.appsec_config.as_ref().unwrap().to_env());
         }
         res
@@ -241,6 +242,8 @@ impl FromEnv {
 pub fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
     if let Some(ref api_key) = endpoint.api_key {
         let mut parts = endpoint.url.clone().into_parts();
+
+        #[allow(clippy::unwrap_used)]
         if parts.scheme.is_none() {
             parts.scheme = Some(Scheme::HTTPS);
             parts.authority = Some(
@@ -250,6 +253,8 @@ pub fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
             );
         }
         parts.path_and_query = Some(PathAndQuery::from_static("/"));
+
+        #[allow(clippy::unwrap_used)]
         Endpoint {
             url: hyper::Uri::from_parts(parts).unwrap(),
             api_key: Some(api_key.clone()),
