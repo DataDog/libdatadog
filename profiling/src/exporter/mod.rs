@@ -124,9 +124,15 @@ struct MemoryStats {
 
 #[cfg(target_os = "linux")]
 fn get_rss_and_size_from_smaps(section_name: &str) -> Option<MemoryStats> {
-    let mut size = None;
-    let mut rss = None;
+    let mut found_section = false;
+
     let mut in_target = false;
+    let mut current_size: Option<u64> = None;
+    let mut current_rss: Option<u64> = None;
+
+    let mut total_size: u64 = 0;
+    let mut total_rss: u64 = 0;
+
     let parse_value = |line: String| -> Option<u64> {
         line.split_whitespace()
             .nth(1)
@@ -141,24 +147,37 @@ fn get_rss_and_size_from_smaps(section_name: &str) -> Option<MemoryStats> {
     {
         if line.ends_with(section_name) {
             in_target = true;
+            found_section = true;
         } else if in_target {
             if line.starts_with("Size:") && line.ends_with("kB") {
-                size = Some(parse_value(line)?); // The ? is so we stop if we fail to parse
+                current_size = Some(parse_value(line)?); // The ? is so we stop if we fail to parse
             } else if line.starts_with("Rss:") && line.ends_with("kB") {
-                rss = Some(parse_value(line)?); // Same as above
+                current_rss = Some(parse_value(line)?); // Same as above
             } else if line.starts_with("VmFlags") {
                 // Reached the end of the section and didn't find what we wanted
                 return None;
             }
-            if let (Some(size), Some(rss)) = (size, rss) {
-                return Some(MemoryStats {
-                    size_bytes: size,
-                    rss_bytes: rss,
-                });
+
+            if let (Some(found_size), Some(found_rss)) = (current_size, current_rss) {
+                total_size += found_size;
+                total_rss += found_rss;
+
+                // Prepare for next go-around
+                in_target = false;
+                current_size = None;
+                current_rss = None;
             }
         }
     }
-    None
+
+    if !found_section {
+        return None;
+    }
+
+    Some(MemoryStats {
+        size_bytes: total_size,
+        rss_bytes: total_rss,
+    })
 }
 
 #[cfg(target_os = "linux")]
