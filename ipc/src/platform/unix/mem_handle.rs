@@ -35,6 +35,7 @@ fn shm_open<P: ?Sized + NixPath>(
             open(path.as_c_str(), flag, mode)
                 .or_else(|e| {
                     if (flag & OFlag::O_CREAT) == OFlag::O_CREAT && e == Errno::ENOENT {
+                        #[allow(clippy::unwrap_used)]
                         mkdir(c"/tmp/libdatadog", Mode::from_bits(0o1777).unwrap())?;
                         // work around umask(2).
                         unsafe { chmod(c"/tmp/libdatadog".as_ptr(), 0o1777) };
@@ -168,7 +169,10 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
         // SAFETY: we'll overwrite the original memory later
         let mut handle: T = unsafe { std::ptr::read(self) }.into();
         _ = handle.resize(expected_size);
-        unsafe { std::ptr::write(self, handle.map().unwrap()) };
+        #[allow(clippy::unwrap_used)]
+        unsafe {
+            std::ptr::write(self, handle.map().unwrap())
+        };
     }
 }
 

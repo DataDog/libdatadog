@@ -40,6 +40,8 @@ impl SidecarTransport {
             Ok(t) => t,
             Err(_) => return,
         };
+
+        #[allow(clippy::unwrap_used)]
         if transport.is_closed() {
             info!("The sidecar transport is closed. Reconnecting...");
             let new = match factory() {
@@ -340,11 +342,13 @@ pub fn send_debugger_data_shm_vec(
         }
     }
     let mut size_serializer = serde_json::Serializer::new(SizeCount(0));
-    payloads.serialize(&mut size_serializer).unwrap();
+
+    payloads.serialize(&mut size_serializer)?;
 
     let mut mapped = ShmHandle::new(size_serializer.into_inner().0)?.map()?;
     let mut serializer = serde_json::Serializer::new(mapped.as_slice_mut());
-    payloads.serialize(&mut serializer).unwrap();
+
+    payloads.serialize(&mut serializer)?;
 
     Ok(send_debugger_data_shm(
         transport,

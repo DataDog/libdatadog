@@ -75,6 +75,7 @@ impl StatsFlusher for ServerlessStatsFlusher {
             }
         };
 
+        #[allow(clippy::unwrap_used)]
         match stats_utils::send_stats_payload(
             serialized_stats_payload,
             &config.trace_stats_intake,

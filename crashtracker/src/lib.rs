@@ -44,6 +44,12 @@
 //! Handling of forks
 //! Safety issues
 
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::todo))]
+#![cfg_attr(not(test), deny(clippy::unimplemented))]
+
 #[cfg(all(unix, feature = "collector"))]
 mod collector;
 mod crash_info;

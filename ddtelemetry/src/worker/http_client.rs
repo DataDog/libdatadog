@@ -43,9 +43,11 @@ pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
 pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
     match &c.endpoint {
         Some(e) if e.url.scheme_str() == Some("file") => {
+            #[allow(clippy::expect_used)]
             let file_path = ddcommon::decode_uri_path_in_authority(&e.url)
                 .expect("file urls should always have been encoded in authority");
             return Box::new(MockClient {
+                #[allow(clippy::expect_used)]
                 file: Arc::new(Mutex::new(Box::new(
                     OpenOptions::new()
                         .create(true)
@@ -87,10 +89,14 @@ impl HttpClient for MockClient {
             body.push(b'\n');
 
             {
+                #[allow(clippy::expect_used)]
                 let mut writer = s.file.lock().expect("mutex poisoned");
+
+                #[allow(clippy::unwrap_used)]
                 writer.write_all(body.as_ref()).unwrap();
             }
 
+            #[allow(clippy::unwrap_used)]
             Ok(Response::builder()
                 .status(202)
                 .body(hyper::Body::empty())
