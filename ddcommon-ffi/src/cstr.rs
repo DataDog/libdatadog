@@ -69,10 +69,10 @@ impl CString {
     }
 
     pub fn from_std(s: std::ffi::CString) -> Self {
-        let s = ManuallyDrop::new(s);
+        let length = s.to_bytes().len();
         Self {
-            ptr: unsafe { ptr::NonNull::new_unchecked(s.as_ptr().cast_mut()) },
-            length: s.to_bytes().len(),
+            ptr: unsafe { ptr::NonNull::new_unchecked(s.into_raw()) },
+            length,
         }
     }
 
@@ -94,8 +94,8 @@ impl Drop for CString {
         drop(unsafe {
             std::ffi::CString::from_vec_with_nul_unchecked(Vec::from_raw_parts(
                 ptr.as_ptr().cast(),
-                self.length,
-                self.length,
+                self.length + 1,
+                self.length + 1,
             ))
         });
     }
