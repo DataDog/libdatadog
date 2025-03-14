@@ -74,11 +74,16 @@ impl Profiling {
         let from_dyn: PathBuf = [&self.source_lib, arch::PROF_DYNAMIC_LIB_FFI]
             .iter()
             .collect();
-        let to_dyn: PathBuf = [lib_dir.as_os_str(), OsStr::new(arch::PROF_DYNAMIC_LIB)]
-            .iter()
-            .collect();
+        if from_dyn.exists() {
+            // On musllinux used for building Python wheels, cdylib crate-type is not supported
+            // and we don't generate dynamic libraries. This is ok as dd-trace-py prefers static
+            // libraries.
+            let to_dyn: PathBuf = [lib_dir.as_os_str(), OsStr::new(arch::PROF_DYNAMIC_LIB)]
+                .iter()
+                .collect();
 
-        fs::copy(from_dyn, to_dyn).expect("unable to copy dynamic lib");
+            fs::copy(from_dyn, to_dyn).expect("unable to copy dynamic lib");
+        }
 
         let from_static: PathBuf = [&self.source_lib, arch::PROF_STATIC_LIB_FFI]
             .iter()
