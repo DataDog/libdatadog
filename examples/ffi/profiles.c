@@ -66,8 +66,8 @@ int main(void) {
   }
   ddog_prof_Profile_drop(profile);
 
-  printf("Press any key to exit...");
-  getchar();
+  // printf("Press any key to exit...");
+  // getchar();
 
   return 0;
 }

@@ -47,7 +47,7 @@ impl PprofItem for Mapping {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[repr(transparent)]
+#[repr(C)]
 pub struct MappingId(NonZeroU32);
 
 impl Id for MappingId {
