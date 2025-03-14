@@ -53,11 +53,11 @@ mod tracing_integration_tests {
         span_1["span_events"] = json!([
             {
                 "name": "test_span",
-                "time_unix_nano": 1727211691770715042 as u64
+                "time_unix_nano": 1727211691770715042_u64
             },
             {
                 "name": "exception",
-                "time_unix_nano": 1727211691770716000 as u64,
+                "time_unix_nano": 1727211691770716000_u64,
                 "attributes": {
                     "exception.message": {"type": 0, "string_value": "Cannot divide by zero"},
                     "exception.version": {"type": 3, "double_value": 4.2},
@@ -74,16 +74,16 @@ mod tracing_integration_tests {
         let mut span_2 = create_test_json_span(1234, 12343, 12341, 1, false);
         span_2["span_links"] = json!([
             {
-                "trace_id": 0x000000000000000c151df7d6ee5e2d6 as u64,
-                "span_id": 0xa3978fb9b92502a8 as u64,
+                "trace_id": 0xc151df7d6ee5e2d6_u64,
+                "span_id": 0xa3978fb9b92502a8_u64,
                 "attributes": {
                     "link.name":"Job #123"
                 }
             },
             {
-                "trace_id": 0xa918bf567eec151d as u64,
-                "trace_id_high": 0x527ccbd68a74d57e as u64,
-                "span_id": 0xc08c967f0e5e7b0a as u64
+                "trace_id": 0xa918bf567eec151d_u64,
+                "trace_id_high": 0x527ccbd68a74d57e_u64,
+                "span_id": 0xc08c967f0e5e7b0a_u64
             }
         ]);
 
