@@ -10,8 +10,9 @@ use lz4_flex::frame::FrameEncoder;
 use serde_json::json;
 use std::borrow::Cow;
 use std::fmt::Debug;
+use std::future;
 use std::io::{Cursor, Write};
-use std::{future, iter};
+use std::ops::Not;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
@@ -152,7 +153,7 @@ impl ProfileExporter {
 
     #[allow(clippy::too_many_arguments)]
     /// Build a Request object representing the profile information provided.
-    /// 
+    ///
     /// Consumes the `EncodedProfile`, which is unavailable for use after.
     ///
     /// For details on the `internal_metadata` parameter, please reference the Datadog-internal
@@ -164,7 +165,7 @@ impl ProfileExporter {
     /// "RFC: Pprof System Info Support".
     pub fn build(
         &self,
-        profile: EncodedProfile,
+        mut profile: Option<EncodedProfile>,
         files_to_compress_and_export: &[File],
         files_to_export_unmodified: &[File],
         additional_tags: Option<&Vec<Tag>>,
@@ -217,20 +218,30 @@ impl ProfileExporter {
             .iter()
             .chain(files_to_export_unmodified.iter())
             .map(|file| file.name.to_owned())
-            .chain(iter::once("profile.pprof".to_string()))
+            .chain(profile.as_ref().map(|_| "profile.pprof".to_string()))
             .collect();
 
-        let endpoint_counts = if profile.endpoints_stats.is_empty() {
-            None
-        } else {
-            Some(profile.endpoints_stats)
-        };
+        let endpoint_counts = profile
+            .as_ref()
+            .map(|p| &p.endpoints_stats)
+            .and_then(|es| es.is_empty().not().then_some(es));
+
+        let start = profile.as_ref().map(|p| {
+            DateTime::<Utc>::from(p.start)
+                .format("%Y-%m-%dT%H:%M:%S%.9fZ")
+                .to_string()
+        });
+        let end = profile.as_ref().map(|p| {
+            DateTime::<Utc>::from(p.end)
+                .format("%Y-%m-%dT%H:%M:%S%.9fZ")
+                .to_string()
+        });
 
         let event = json!({
             "attachments": attachments,
             "tags_profiler": tags_profiler,
-            "start": DateTime::<Utc>::from(profile.start).format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
-            "end": DateTime::<Utc>::from(profile.end).format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
+            "start": start,
+            "end": end,
             "family": self.family.as_ref(),
             "version": "4",
             "endpoint_counts" : endpoint_counts,
@@ -277,12 +288,15 @@ impl ProfileExporter {
              */
             form.add_reader_file(file.name, Cursor::new(encoded), file.name)
         }
-        // Add the actual pprof
-        form.add_reader_file(
-            "profile.pprof",
-            Cursor::new(profile.buffer),
-            "profile.pprof",
-        );
+
+        if let Some(profile) = &mut profile {
+            // Add the actual pprof
+            form.add_reader_file(
+                "profile.pprof",
+                Cursor::new(std::mem::take(&mut profile.buffer)),
+                "profile.pprof",
+            );
+        }
 
         let builder = self
             .endpoint

@@ -9,7 +9,7 @@ fn multipart(
     internal_metadata: Option<serde_json::Value>,
     info: Option<serde_json::Value>,
 ) -> Request {
-    let profile = EncodedProfile::test_instance().expect("To get a profile");
+    let profile = Some(EncodedProfile::test_instance().expect("To get a profile"));
 
     let files_to_compress_and_export = &[];
     let files_to_export_unmodified = &[];
