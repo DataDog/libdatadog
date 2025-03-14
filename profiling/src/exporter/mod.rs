@@ -1,10 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::borrow::Cow;
-use std::future;
-use std::io::{Cursor, Write};
-
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
 pub use ddcommon::tag::Tag;
@@ -12,6 +8,11 @@ pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
 use lz4_flex::frame::FrameEncoder;
 use serde_json::json;
+use std::borrow::Cow;
+use std::fmt::Debug;
+use std::future;
+use std::io::{Cursor, Write};
+use std::ops::Not;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
@@ -26,7 +27,7 @@ pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
 #[cfg(windows)]
 pub use connector::named_pipe::{named_pipe_path_from_uri, named_pipe_path_to_uri};
 
-use crate::internal::ProfiledEndpointsStats;
+use crate::internal::EncodedProfile;
 
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 
@@ -153,6 +154,8 @@ impl ProfileExporter {
     #[allow(clippy::too_many_arguments)]
     /// Build a Request object representing the profile information provided.
     ///
+    /// Consumes the `EncodedProfile`, which is unavailable for use after.
+    ///
     /// For details on the `internal_metadata` parameter, please reference the Datadog-internal
     /// "RFC: Attaching internal metadata to pprof profiles".
     /// If you use this parameter, please update the RFC with your use-case, so we can keep track of
@@ -162,12 +165,10 @@ impl ProfileExporter {
     /// "RFC: Pprof System Info Support".
     pub fn build(
         &self,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        mut profile: Option<EncodedProfile>,
         files_to_compress_and_export: &[File],
         files_to_export_unmodified: &[File],
         additional_tags: Option<&Vec<Tag>>,
-        endpoint_counts: Option<&ProfiledEndpointsStats>,
         internal_metadata: Option<serde_json::Value>,
         info: Option<serde_json::Value>,
     ) -> anyhow::Result<Request> {
@@ -217,13 +218,30 @@ impl ProfileExporter {
             .iter()
             .chain(files_to_export_unmodified.iter())
             .map(|file| file.name.to_owned())
+            .chain(profile.as_ref().map(|_| "profile.pprof".to_string()))
             .collect();
+
+        let endpoint_counts = profile
+            .as_ref()
+            .map(|p| &p.endpoints_stats)
+            .and_then(|es| es.is_empty().not().then_some(es));
+
+        let start = profile.as_ref().map(|p| {
+            DateTime::<Utc>::from(p.start)
+                .format("%Y-%m-%dT%H:%M:%S%.9fZ")
+                .to_string()
+        });
+        let end = profile.as_ref().map(|p| {
+            DateTime::<Utc>::from(p.end)
+                .format("%Y-%m-%dT%H:%M:%S%.9fZ")
+                .to_string()
+        });
 
         let event = json!({
             "attachments": attachments,
             "tags_profiler": tags_profiler,
-            "start": start.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
-            "end": end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
+            "start": start,
+            "end": end,
             "family": self.family.as_ref(),
             "version": "4",
             "endpoint_counts" : endpoint_counts,
@@ -269,6 +287,15 @@ impl ProfileExporter {
              * about these name of the form field for these attachments.
              */
             form.add_reader_file(file.name, Cursor::new(encoded), file.name)
+        }
+
+        if let Some(profile) = &mut profile {
+            // Add the actual pprof
+            form.add_reader_file(
+                "profile.pprof",
+                Cursor::new(std::mem::take(&mut profile.buffer)),
+                "profile.pprof",
+            );
         }
 
         let builder = self
