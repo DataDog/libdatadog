@@ -73,10 +73,10 @@ impl EncodedProfile {
 
         let start = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_nanos(12000000034))
-            .unwrap();
+            .context("Translating time failed")?;
         let end = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_nanos(56000000078))
-            .unwrap();
+            .context("Translating time failed")?;
         let endpoints_stats = ProfiledEndpointsStats::default();
         Ok(EncodedProfile {
             start,
