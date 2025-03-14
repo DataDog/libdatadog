@@ -19,6 +19,13 @@ use ddcommon_ffi::{
 };
 use function_name::named;
 
+// Cbindgen was putting invalid C types on the static, this workaround seems to fix it.
+type CbindgenIsDumbStringId = GenerationalId<StringId>;
+
+#[no_mangle]
+#[used]
+pub static INTERNED_EMPTY_STRING: CbindgenIsDumbStringId = internal::Profile::INTERNED_EMPTY_STRING;
+
 /// This functions interns its argument into the profiler.
 /// If successful, it an opaque interning ID.
 /// This ID is valid for use on this profiler, until the profiler is reset.
