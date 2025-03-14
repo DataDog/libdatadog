@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
 use std::str::FromStr;
-use tinybytes::BytesString;
+use tinybytes::{Bytes, BytesString};
 
 #[derive(Debug, PartialEq)]
 pub enum SpanKey {
@@ -104,7 +104,7 @@ where
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub metrics: HashMap<T, f64>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta_struct: HashMap<T, Vec<u8>>,
+    pub meta_struct: HashMap<T, Bytes>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub span_links: Vec<SpanLink<T>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
