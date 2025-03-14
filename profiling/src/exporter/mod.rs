@@ -153,7 +153,7 @@ impl ProfileExporter {
     #[allow(clippy::too_many_arguments)]
     /// Build a Request object representing the profile information provided.
     /// 
-    /// Consumes the `EncodedProfile`
+    /// Consumes the `EncodedProfile`, which is unavailable for use after.
     ///
     /// For details on the `internal_metadata` parameter, please reference the Datadog-internal
     /// "RFC: Attaching internal metadata to pprof profiles".
