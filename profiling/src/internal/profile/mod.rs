@@ -69,7 +69,7 @@ impl EncodedProfile {
         }
 
         let small_pprof_name = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/profile.pprof");
-        let buffer = open(small_pprof_name).expect("to open file and read its bytes");
+        let buffer = open(small_pprof_name).map_err(|e| anyhow::anyhow!("{e}"))?;
 
         let start = SystemTime::UNIX_EPOCH
             .checked_add(Duration::from_nanos(12000000034))
