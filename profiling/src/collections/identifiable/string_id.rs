@@ -33,7 +33,7 @@ impl Id for StringId {
         Self(inner.try_into().expect("StringId to fit into a u32"))
     }
 
-    fn to_raw_id(self) -> Self::RawId {
+    fn to_raw_id(&self) -> Self::RawId {
         Self::RawId::from(self.0)
     }
 }

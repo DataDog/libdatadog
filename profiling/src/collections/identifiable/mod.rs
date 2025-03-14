@@ -23,7 +23,7 @@ pub trait Id: Copy + Eq + Hash {
     /// to be ultra-rare (more than u32::MAX-1 items created?!).
     fn from_offset(inner: usize) -> Self;
 
-    fn to_raw_id(self) -> Self::RawId;
+    fn to_raw_id(&self) -> Self::RawId;
 
     fn into_raw_id(self) -> Self::RawId {
         self.to_raw_id()

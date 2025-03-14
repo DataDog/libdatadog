@@ -43,7 +43,7 @@ impl Id for FunctionId {
         Self(small_non_zero_pprof_id(offset).expect("FunctionId to fit into a u32"))
     }
 
-    fn to_raw_id(self) -> Self::RawId {
+    fn to_raw_id(&self) -> Self::RawId {
         self.0.get().into()
     }
 }

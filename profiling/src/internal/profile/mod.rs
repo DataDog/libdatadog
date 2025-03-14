@@ -323,7 +323,6 @@ impl Profile {
                 .get_stacktrace(sample.stacktrace)?
                 .locations
                 .iter()
-                .cloned()
                 .map(Id::to_raw_id)
                 .collect();
             self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
