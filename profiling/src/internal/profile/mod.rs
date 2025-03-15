@@ -467,33 +467,59 @@ impl Profile {
         })
     }
 
-    fn add_mapping(&mut self, mapping: &api::Mapping) -> MappingId {
+    fn is_zero_mapping(mapping: &api::Mapping) -> bool {
+        // - PHP, Python, and Ruby use a mapping only because it's required.
+        // - .NET uses only the filename.
+        // - The native profiler uses all fields.
+        // We strike a balance for optimizing for the dynamic languages and
+        // the others by mixing branches and branchless programming.
+        let filename = mapping.filename.len();
+        let build_id = mapping.build_id.len();
+        if 0 != (filename | build_id) {
+            return false;
+        }
+
+        let memory_start = mapping.memory_start;
+        let memory_limit = mapping.memory_limit;
+        let file_offset = mapping.file_offset;
+        0 == (memory_start | memory_limit | file_offset)
+    }
+
+    fn add_mapping(&mut self, mapping: &api::Mapping) -> Option<MappingId> {
+        if Self::is_zero_mapping(mapping) {
+            return None;
+        }
+
         let filename = self.intern(mapping.filename);
         let build_id = self.intern(mapping.build_id);
 
-        self.mappings.dedup(Mapping {
-            memory_start: mapping.memory_start,
-            memory_limit: mapping.memory_limit,
-            file_offset: mapping.file_offset,
-            filename,
-            build_id,
-        })
-    }
-
-    fn add_string_id_mapping(
-        &mut self,
-        mapping: &api::StringIdMapping,
-    ) -> anyhow::Result<MappingId> {
-        let filename = self.resolve(mapping.filename)?;
-        let build_id = self.resolve(mapping.build_id)?;
-
-        Ok(self.mappings.dedup(Mapping {
+        Some(self.mappings.dedup(Mapping {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
             file_offset: mapping.file_offset,
             filename,
             build_id,
         }))
+    }
+
+    fn add_string_id_mapping(
+        &mut self,
+        mapping: &api::StringIdMapping,
+    ) -> anyhow::Result<Option<MappingId>> {
+        if *mapping == Default::default() {
+            return Ok(None);
+        }
+
+        let filename = self.resolve(mapping.filename)?;
+        let build_id = self.resolve(mapping.build_id)?;
+
+        Ok(Some(self.mappings.dedup(Mapping {
+            memory_start: mapping.memory_start,
+            memory_limit: mapping.memory_limit,
+            file_offset: mapping.file_offset,
+            filename,
+            build_id,
+        })))
     }
 
     fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {
