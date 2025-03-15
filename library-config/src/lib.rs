@@ -555,7 +555,7 @@ impl Configurator {
         &self,
         path_local: &Path,
         path_managed: &Path,
-        process_info: ProcessInfo,
+        process_info: &ProcessInfo,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
         let local_config = match fs::File::open(path_local) {
             Ok(file) => self.parse_stable_config_file(file)?,
@@ -764,7 +764,7 @@ mod tests {
             .get_config_from_file(
                 "/file/is/missing".as_ref(),
                 "/file/is/missing_too".as_ref(),
-                ProcessInfo {
+                &ProcessInfo {
                     args: vec![b"-jar HelloWorld.jar".to_vec()],
                     envp: vec![b"ENV=VAR".to_vec()],
                     language: b"java".to_vec(),
