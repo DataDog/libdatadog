@@ -467,8 +467,26 @@ impl Profile {
         })
     }
 
+    fn is_zero_mapping(mapping: &api::Mapping) -> bool {
+        // - PHP, Python, and Ruby use a mapping only because it's required.
+        // - .NET uses only the filename.
+        // - The native profiler uses all fields.
+        // We strike a balance for optimizing for the dynamic languages and
+        // the others by mixing branches and branchless programming.
+        let filename = mapping.filename.len();
+        let build_id = mapping.build_id.len();
+        if 0 != (filename | build_id) {
+            return false;
+        }
+
+        let memory_start = mapping.memory_start;
+        let memory_limit = mapping.memory_limit;
+        let file_offset = mapping.file_offset;
+        0 == (memory_start | memory_limit | file_offset)
+    }
+
     fn add_mapping(&mut self, mapping: &api::Mapping) -> Option<MappingId> {
-        if *mapping == api::Mapping::default() {
+        if Self::is_zero_mapping(mapping) {
             return None;
         }
 
