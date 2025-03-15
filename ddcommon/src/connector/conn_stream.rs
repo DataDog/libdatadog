@@ -17,6 +17,7 @@ pub enum ConnStream {
         #[pin]
         transport: tokio::net::TcpStream,
     },
+    #[cfg(feature = "https")]
     Tls {
         #[pin]
         transport: Box<tokio_rustls::client::TlsStream<TokioIo<TokioIo<tokio::net::TcpStream>>>>,
@@ -80,6 +81,7 @@ impl ConnStream {
         })
     }
 
+    #[cfg(feature = "https")]
     pub fn from_https_connector_with_uri(
         c: &mut HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
         uri: hyper::Uri,
@@ -114,6 +116,7 @@ impl tokio::io::AsyncRead for ConnStream {
     ) -> Poll<std::io::Result<()>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_read(cx, buf),
+            #[cfg(feature = "https")]
             ConnStreamProj::Tls { transport } => transport.poll_read(cx, buf),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_read(cx, buf),
@@ -127,6 +130,7 @@ impl hyper::client::connect::Connection for ConnStream {
     fn connected(&self) -> hyper::client::connect::Connected {
         match self {
             Self::Tcp { transport } => transport.connected(),
+            #[cfg(feature = "https")]
             Self::Tls { transport } => {
                 let (tcp, _) = transport.get_ref();
                 tcp.inner().inner().connected()
@@ -147,6 +151,7 @@ impl tokio::io::AsyncWrite for ConnStream {
     ) -> Poll<Result<usize, std::io::Error>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_write(cx, buf),
+            #[cfg(feature = "https")]
             ConnStreamProj::Tls { transport } => transport.poll_write(cx, buf),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_write(cx, buf),
@@ -161,6 +166,7 @@ impl tokio::io::AsyncWrite for ConnStream {
     ) -> Poll<Result<(), std::io::Error>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_shutdown(cx),
+            #[cfg(feature = "https")]
             ConnStreamProj::Tls { transport } => transport.poll_shutdown(cx),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_shutdown(cx),
@@ -172,6 +178,7 @@ impl tokio::io::AsyncWrite for ConnStream {
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_flush(cx),
+            #[cfg(feature = "https")]
             ConnStreamProj::Tls { transport } => transport.poll_flush(cx),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_flush(cx),

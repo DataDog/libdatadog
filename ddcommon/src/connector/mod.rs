@@ -5,12 +5,8 @@ use futures::future::BoxFuture;
 use futures::{future, FutureExt};
 use hyper::client::HttpConnector;
 
-#[cfg(feature = "use_webpki_roots")]
-use hyper_rustls::ConfigBuilderExt;
-
 use lazy_static::lazy_static;
 
-use rustls::ClientConfig;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -28,24 +24,12 @@ use conn_stream::{ConnStream, ConnStreamError};
 #[derive(Clone)]
 pub enum Connector {
     Http(hyper::client::HttpConnector),
+    #[cfg(feature = "https")]
     Https(hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>),
 }
 
 lazy_static! {
     static ref DEFAULT_CONNECTOR: Connector = Connector::new();
-}
-
-// When using aws-lc-rs, rustls needs to be initialized with the default CryptoProvider; sometimes
-// this is done as a side-effect of other operations, but we need to ensure it happens here.  On
-// non-unix platforms, ddcommon uses `ring` instead, which handles this at rustls initialization.
-#[cfg(feature = "use_webpki_roots")]
-lazy_static! {
-    static ref INIT_CRYPTO_PROVIDER: () = {
-        #[cfg(unix)]
-        rustls::crypto::aws_lc_rs::default_provider()
-            .install_default()
-            .expect("Failed to install default CryptoProvider");
-    };
 }
 
 impl Default for Connector {
@@ -56,14 +40,21 @@ impl Default for Connector {
 
 impl Connector {
     pub fn new() -> Self {
-        #[cfg(feature = "use_webpki_roots")]
-        let https_connector_fn = build_https_connector_with_webpki_roots;
-        #[cfg(not(feature = "use_webpki_roots"))]
-        let https_connector_fn = build_https_connector;
+        #[cfg(feature = "https")]
+        {
+            #[cfg(feature = "use_webpki_roots")]
+            let https_connector_fn = https::build_https_connector_with_webpki_roots;
+            #[cfg(not(feature = "use_webpki_roots"))]
+            let https_connector_fn = https::build_https_connector;
 
-        match https_connector_fn() {
-            Ok(connector) => Connector::Https(connector),
-            Err(_) => Connector::Http(HttpConnector::new()),
+            match https_connector_fn() {
+                Ok(connector) => Connector::Https(connector),
+                Err(_) => Connector::Http(HttpConnector::new()),
+            }
+        }
+        #[cfg(not(feature = "https"))]
+        {
+            Connector::Http(HttpConnector::new())
         }
     }
 
@@ -83,6 +74,7 @@ impl Connector {
                     ConnStream::from_http_connector_with_uri(c, uri).boxed()
                 }
             }
+            #[cfg(feature = "https")]
             Self::Https(c) => {
                 ConnStream::from_https_connector_with_uri(c, uri, require_tls).boxed()
             }
@@ -90,49 +82,72 @@ impl Connector {
     }
 }
 
-#[cfg(not(feature = "use_webpki_roots"))]
-fn build_https_connector(
-) -> anyhow::Result<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>>
-{
-    let certs = load_root_certs()?;
-    let client_config = ClientConfig::builder()
-        .with_root_certificates(certs)
-        .with_no_client_auth();
-    Ok(hyper_rustls::HttpsConnectorBuilder::new()
-        .with_tls_config(client_config)
-        .https_or_http()
-        .enable_http1()
-        .build())
-}
+#[cfg(feature = "https")]
+mod https {
+    #[cfg(feature = "use_webpki_roots")]
+    use hyper_rustls::ConfigBuilderExt;
 
-#[cfg(feature = "use_webpki_roots")]
-fn build_https_connector_with_webpki_roots(
-) -> anyhow::Result<hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>>
-{
-    *INIT_CRYPTO_PROVIDER; // One-time initialization of a crypto provider if needed
+    use lazy_static::lazy_static;
+    use rustls::ClientConfig;
 
-    let client_config = ClientConfig::builder()
-        .with_webpki_roots()
-        .with_no_client_auth();
-    Ok(hyper_rustls::HttpsConnectorBuilder::new()
-        .with_tls_config(client_config)
-        .https_or_http()
-        .enable_http1()
-        .build())
-}
-
-#[cfg(not(feature = "use_webpki_roots"))]
-fn load_root_certs() -> anyhow::Result<rustls::RootCertStore> {
-    let mut roots = rustls::RootCertStore::empty();
-
-    for cert in rustls_native_certs::load_native_certs()? {
-        //TODO: log when invalid cert is loaded
-        roots.add(cert).ok();
+    // When using aws-lc-rs, rustls needs to be initialized with the default CryptoProvider;
+    // sometimes this is done as a side-effect of other operations, but we need to ensure it
+    // happens here.  On non-unix platforms, ddcommon uses `ring` instead, which handles this at
+    // rustls initialization.
+    #[cfg(feature = "use_webpki_roots")]
+    lazy_static! {
+        static ref INIT_CRYPTO_PROVIDER: () = {
+            #[cfg(unix)]
+            rustls::crypto::aws_lc_rs::default_provider()
+                .install_default()
+                .expect("Failed to install default CryptoProvider");
+        };
     }
-    if roots.is_empty() {
-        return Err(errors::Error::NoValidCertifacteRootsFound.into());
+
+    #[cfg(feature = "use_webpki_roots")]
+    pub(super) fn build_https_connector_with_webpki_roots() -> anyhow::Result<
+        hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+    > {
+        *INIT_CRYPTO_PROVIDER; // One-time initialization of a crypto provider if needed
+
+        let client_config = ClientConfig::builder()
+            .with_webpki_roots()
+            .with_no_client_auth();
+        Ok(hyper_rustls::HttpsConnectorBuilder::new()
+            .with_tls_config(client_config)
+            .https_or_http()
+            .enable_http1()
+            .build())
     }
-    Ok(roots)
+
+    #[cfg(not(feature = "use_webpki_roots"))]
+    pub(super) fn build_https_connector() -> anyhow::Result<
+        hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+    > {
+        let certs = load_root_certs()?;
+        let client_config = ClientConfig::builder()
+            .with_root_certificates(certs)
+            .with_no_client_auth();
+        Ok(hyper_rustls::HttpsConnectorBuilder::new()
+            .with_tls_config(client_config)
+            .https_or_http()
+            .enable_http1()
+            .build())
+    }
+
+    #[cfg(not(feature = "use_webpki_roots"))]
+    fn load_root_certs() -> anyhow::Result<rustls::RootCertStore> {
+        let mut roots = rustls::RootCertStore::empty();
+
+        for cert in rustls_native_certs::load_native_certs()? {
+            //TODO: log when invalid cert is loaded
+            roots.add(cert).ok();
+        }
+        if roots.is_empty() {
+            return Err(errors::Error::NoValidCertifacteRootsFound.into());
+        }
+        Ok(roots)
+    }
 }
 
 impl hyper::service::Service<hyper::Uri> for Connector {
@@ -156,6 +171,7 @@ impl hyper::service::Service<hyper::Uri> for Connector {
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self {
             Connector::Http(c) => c.poll_ready(cx).map_err(|e| e.into()),
+            #[cfg(feature = "https")]
             Connector::Https(c) => c.poll_ready(cx),
         }
     }
@@ -213,6 +229,7 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     #[cfg(feature = "use_webpki_roots")]
+    #[cfg(feature = "https")]
     /// Verify that Connector will allow tls connections if root certificates
     /// are not found but can use webpki certificates
     async fn test_missing_root_certificates_use_webpki_certificates() {
