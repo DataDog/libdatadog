@@ -4,7 +4,7 @@
 use super::receive_report::receive_report_from_stream;
 use crate::{crash_info::CrashInfo, CrashtrackerConfiguration, StacktraceCollection};
 use anyhow::Context;
-#[cfg(feature ="pyo3")]
+#[cfg(feature = "pyo3")]
 use pyo3::prelude::*;
 use std::time::Duration;
 use tokio::{
