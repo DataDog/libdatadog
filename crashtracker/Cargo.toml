@@ -20,6 +20,7 @@ bench = false
 default = ["collector", "receiver"]
 # Enables the in-process collection of crash-info
 collector = []
+pyo3 = ["dep:pyo3"]
 # Enables the use of this library to receiver crash-info from a suitable collector
 receiver = []
 
@@ -42,6 +43,7 @@ num-traits = "0.2.19"
 os_info = "3.7.0"
 page_size = "0.6.0"
 portable-atomic = { version = "1.6.0", features = ["serde"] }
+pyo3 = { version = "0.22.3", features = ["extension-module", "abi3-py38", "anyhow"], optional = true }
 rand = "0.8.5"
 schemars = "0.8.21"
 serde = {version = "1.0", features = ["derive"]}

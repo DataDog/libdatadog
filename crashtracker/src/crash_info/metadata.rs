@@ -1,10 +1,13 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#[cfg(feature = "pyo3")]
+use pyo3::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::unknown_value::UnknownValue;
 
+#[cfg_attr(feature = "pyo3", pyclass)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Metadata {
     pub library_name: String,
@@ -16,7 +19,7 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    pub fn new(
+    fn new_internal(
         library_name: String,
         library_version: String,
         family: String,
@@ -28,6 +31,31 @@ impl Metadata {
             family,
             tags,
         }
+    }
+
+    #[cfg(not(feature = "pyo3"))]
+    pub fn new(
+        library_name: String,
+        library_version: String,
+        family: String,
+        tags: Vec<String>,
+    ) -> Self {
+        Self::new_internal(library_name, library_version, family, tags)
+    }
+}
+
+#[cfg_attr(feature = "pyo3", pymethods)]
+impl Metadata {
+    #[cfg(feature = "pyo3")]
+    #[new]
+    #[pyo3(signature = (library_name, library_version, family, tags))]
+    pub fn new(
+        library_name: String,
+        library_version: String,
+        family: String,
+        tags: Vec<String>,
+    ) -> Self {
+        Self::new_internal(library_name, library_version, family, tags)
     }
 }
 

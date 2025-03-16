@@ -4,6 +4,8 @@
 use super::receive_report::receive_report_from_stream;
 use crate::{crash_info::CrashInfo, CrashtrackerConfiguration, StacktraceCollection};
 use anyhow::Context;
+#[cfg(feature ="pyo3")]
+use pyo3::prelude::*;
 use std::time::Duration;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -13,7 +15,7 @@ use tokio::{
 /*-----------------------------------------
 |                Public API               |
 ------------------------------------------*/
-
+#[cfg_attr(feature = "pyo3", pyfunction)]
 pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {
     let stream = BufReader::new(tokio::io::stdin());
     let rt = tokio::runtime::Builder::new_current_thread()

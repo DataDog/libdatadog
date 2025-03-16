@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
+
+#[cfg(feature = "pyo3")]
+use pyo3::prelude::*;
+
 use crate::{
     clear_spans, clear_traces,
     collector::crash_handler::{configure_receiver, register_crash_handlers, restore_old_handlers},
@@ -52,6 +56,7 @@ pub fn default_signals() -> Vec<libc::c_int> {
 /// ATOMICITY:
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
+#[cfg_attr(feature="pyo3", pyfunction)]
 pub fn on_fork(
     config: CrashtrackerConfiguration,
     receiver_config: CrashtrackerReceiverConfig,
@@ -81,6 +86,7 @@ pub fn on_fork(
 /// ATOMICITY:
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
+#[cfg_attr(feature="pyo3", pyfunction)]
 pub fn init(
     config: CrashtrackerConfiguration,
     receiver_config: CrashtrackerReceiverConfig,
@@ -101,6 +107,7 @@ pub fn init(
 // look in /tmp/crashreports for the crash reports and output files
 #[ignore]
 #[test]
+#[cfg(not(feature="pyo3"))]
 fn test_crash() -> anyhow::Result<()> {
     use crate::{begin_op, StacktraceCollection};
     use chrono::Utc;
@@ -170,6 +177,7 @@ fn test_crash() -> anyhow::Result<()> {
 }
 
 #[test]
+#[cfg(not(feature="pyo3"))]
 fn test_altstack_paradox() -> anyhow::Result<()> {
     use crate::StacktraceCollection;
     use chrono::Utc;
@@ -226,6 +234,7 @@ fn get_sigaltstack() -> Option<libc::stack_t> {
 
 #[cfg_attr(miri, ignore)]
 #[cfg(target_os = "linux")]
+#[cfg(not(feature="pyo3"))]
 #[test]
 fn test_altstack_use_create() -> anyhow::Result<()> {
     // This test initializes crashtracking in a fork, then waits on the exit status of the child.
@@ -352,6 +361,7 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
 
 #[cfg_attr(miri, ignore)]
 #[cfg(target_os = "linux")]
+#[cfg(not(feature="pyo3"))]
 #[test]
 fn test_altstack_use_nocreate() -> anyhow::Result<()> {
     // Similar to the other test, this one operates inside of a fork in order to prevent poisoning
@@ -482,6 +492,7 @@ fn test_altstack_use_nocreate() -> anyhow::Result<()> {
 
 #[cfg_attr(miri, ignore)]
 #[cfg(target_os = "linux")]
+#[cfg(not(feature="pyo3"))]
 #[test]
 fn test_altstack_nouse() -> anyhow::Result<()> {
     // This checks that when we do not request the altstack, we do not get the altstack
@@ -611,6 +622,7 @@ fn test_altstack_nouse() -> anyhow::Result<()> {
 
 #[cfg_attr(miri, ignore)]
 #[cfg(target_os = "linux")]
+#[cfg(not(feature="pyo3"))]
 #[test]
 #[ignore]
 fn test_waitall_nohang() -> anyhow::Result<()> {

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::{default_signals, shared::constants, signal_from_signum};
 use ddcommon::Endpoint;
+#[cfg(feature = "pyo3")]
+use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// Stacktrace collection occurs in the context of a crashing process.
@@ -9,6 +11,7 @@ use serde::{Deserialize, Serialize};
 /// for stack trace collection itself to crash.
 /// We recommend fully enabling stacktrace collection, but having an environment
 /// variable to allow downgrading the collector.
+#[cfg_attr(feature = "pyo3", pyclass(eq, eq_int))]
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StacktraceCollection {
@@ -19,6 +22,7 @@ pub enum StacktraceCollection {
     EnabledWithSymbolsInReceiver,
 }
 
+#[cfg_attr(feature = "pyo3", pyclass)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashtrackerConfiguration {
     // Paths to any additional files to track, if any
@@ -32,6 +36,7 @@ pub struct CrashtrackerConfiguration {
     pub unix_socket_path: Option<String>,
 }
 
+#[cfg_attr(feature = "pyo3", pyclass)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct CrashtrackerReceiverConfig {
     pub args: Vec<String>,
@@ -42,7 +47,7 @@ pub struct CrashtrackerReceiverConfig {
 }
 
 impl CrashtrackerReceiverConfig {
-    pub fn new(
+    fn new_internal(
         args: Vec<String>,
         env: Vec<(String, String)>,
         path_to_receiver_binary: String,
@@ -64,11 +69,49 @@ impl CrashtrackerReceiverConfig {
             stdout_filename,
         })
     }
+
+    #[cfg(not(feature = "pyo3"))]
+    pub fn new(
+        args: Vec<String>,
+        env: Vec<(String, String)>,
+        path_to_receiver_binary: String,
+        stderr_filename: Option<String>,
+        stdout_filename: Option<String>,
+    ) -> anyhow::Result<Self> {
+        Self::new_internal(
+            args,
+            env,
+            path_to_receiver_binary,
+            stderr_filename,
+            stdout_filename,
+        )
+    }
+}
+
+#[cfg_attr(feature = "pyo3", pymethods)]
+impl CrashtrackerReceiverConfig {
+    #[cfg(feature = "pyo3")]
+    #[new]
+    #[pyo3(signature = (args, env, path_to_receiver_binary, stderr_filename=None, stdout_filename=None))]
+    pub fn new(
+        args: Vec<String>,
+        env: Vec<(String, String)>,
+        path_to_receiver_binary: String,
+        stderr_filename: Option<String>,
+        stdout_filename: Option<String>,
+    ) -> anyhow::Result<Self> {
+        Self::new_internal(
+            args,
+            env,
+            path_to_receiver_binary,
+            stderr_filename,
+            stdout_filename,
+        )
+    }
 }
 
 impl CrashtrackerConfiguration {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    fn new_internal(
         additional_files: Vec<String>,
         create_alt_stack: bool,
         use_alt_stack: bool,
@@ -120,9 +163,64 @@ impl CrashtrackerConfiguration {
             unix_socket_path,
         })
     }
+
+    #[cfg(not(feature = "pyo3"))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        additional_files: Vec<String>,
+        create_alt_stack: bool,
+        use_alt_stack: bool,
+        resolve_frames: StacktraceCollection,
+        endpoint: Option<Endpoint>,
+        signals: Vec<i32>,
+        timeout_ms: u32,
+        unix_socket_path: Option<String>,
+    ) -> anyhow::Result<Self> {
+        Self::new_internal(
+            additional_files,
+            create_alt_stack,
+            use_alt_stack,
+            endpoint,
+            resolve_frames,
+            signals,
+            timeout_ms,
+            unix_socket_path,
+        )
+    }
+}
+
+#[cfg_attr(feature = "pyo3", pymethods)]
+impl CrashtrackerConfiguration {
+    #[cfg(feature = "pyo3")]
+    #[new]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (additional_files, create_alt_stack, use_alt_stack, resolve_frames, signals, timeout_ms, endpoint=None, unix_socket_path=None))]
+    pub fn new(
+        additional_files: Vec<String>,
+        create_alt_stack: bool,
+        use_alt_stack: bool,
+        resolve_frames: StacktraceCollection,
+        signals: Vec<i32>,
+        timeout_ms: u32,
+        endpoint: Option<&str>,
+        unix_socket_path: Option<String>,
+    ) -> anyhow::Result<Self> {
+        let endpoint = endpoint.map(Endpoint::from_slice);
+        Self::new_internal(
+            additional_files,
+            create_alt_stack,
+            use_alt_stack,
+            endpoint,
+            resolve_frames,
+            signals,
+            timeout_ms,
+            unix_socket_path,
+        )
+    }
 }
 
 #[cfg(test)]
+#[cfg(not(feature = "pyo3"))]
 mod tests {
     use super::CrashtrackerReceiverConfig;
 
