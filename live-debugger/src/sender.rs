@@ -40,6 +40,8 @@ impl Config {
     ) -> anyhow::Result<()> {
         let mut logs_uri_parts = logs_endpoint.url.into_parts();
         let mut diagnostics_uri_parts = diagnostics_endpoint.url.into_parts();
+
+        #[allow(clippy::unwrap_used)]
         if logs_uri_parts.scheme.is_some()
             && logs_uri_parts.scheme.as_ref().unwrap().as_str() != "file"
         {
@@ -84,6 +86,7 @@ impl DebuggerType {
 }
 
 pub fn encode<S: Eq + Hash + Serialize>(data: Vec<DebuggerPayload>) -> Vec<u8> {
+    #[allow(clippy::unwrap_used)]
     serde_json::to_vec(&data).unwrap()
 }
 
@@ -132,6 +135,7 @@ impl PayloadSender {
         debugger_type: DebuggerType,
         percent_encoded_tags: &str,
     ) -> anyhow::Result<Self> {
+        #[allow(clippy::unwrap_used)]
         let endpoint = match debugger_type {
             DebuggerType::Diagnostics => &config.diagnostics_endpoint,
             DebuggerType::Logs => &config.logs_endpoint,
@@ -141,6 +145,8 @@ impl PayloadSender {
 
         let mut url = endpoint.url.clone();
         let mut parts = url.into_parts();
+
+        #[allow(clippy::unwrap_used)]
         let query = format!(
             "{}?ddtags={}",
             parts.path_and_query.unwrap(),

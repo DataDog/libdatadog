@@ -38,6 +38,7 @@ impl Number {
         <i64 as TryInto<T>>::Error: fmt::Debug,
         <u64 as TryInto<T>>::Error: fmt::Debug,
     {
+        #[allow(clippy::unwrap_used)]
         match self {
             Number::Signed(val) => {
                 let upper_bound_check = if let Some(upper_bound) = upper_bound {

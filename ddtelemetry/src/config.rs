@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use ddcommon::{config::parse_env, parse_uri, Endpoint};
-use std::{borrow::Cow, time::Duration};
-
 use http::{uri::PathAndQuery, Uri};
-use lazy_static::lazy_static;
+use std::sync::OnceLock;
+use std::{borrow::Cow, time::Duration};
 
 pub const DEFAULT_DD_SITE: &str = "datadoghq.com";
 pub const PROD_INTAKE_SUBDOMAIN: &str = "instrumentation-telemetry-intake";
@@ -18,6 +17,13 @@ const TRACE_SOCKET_PATH: &str = "/var/run/datadog/apm.socket";
 
 const DEFAULT_AGENT_HOST: &str = "localhost";
 const DEFAULT_AGENT_PORT: u16 = 8126;
+
+// TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
+static CFG: OnceLock<Config> = OnceLock::new();
+
+fn get_cfg() -> &'static Config {
+    CFG.get_or_init(Config::from_env)
+}
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Config {
@@ -37,7 +43,11 @@ fn endpoint_with_telemetry_path(
     direct_submission_enabled: bool,
 ) -> anyhow::Result<Endpoint> {
     let mut uri_parts = endpoint.url.into_parts();
-    if uri_parts.scheme.is_some() && uri_parts.scheme.as_ref().unwrap().as_str() != "file" {
+    if uri_parts
+        .scheme
+        .as_ref()
+        .is_some_and(|scheme| scheme.as_str() != "file")
+    {
         uri_parts.path_and_query = Some(PathAndQuery::from_static(
             if endpoint.api_key.is_some() && direct_submission_enabled {
                 DIRECT_TELEMETRY_URL_PATH
@@ -244,10 +254,7 @@ impl Config {
     }
 
     pub fn get() -> &'static Self {
-        lazy_static! {
-            static ref CFG: Config = Config::from_env();
-        }
-        &CFG
+        get_cfg()
     }
 
     /// set_host sets the host telemetry should connect to.

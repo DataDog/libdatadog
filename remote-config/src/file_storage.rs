@@ -4,6 +4,7 @@
 use crate::fetch::FileStorage;
 use crate::file_change_tracker::{FilePath, UpdatedFiles};
 use crate::{RemoteConfigData, RemoteConfigPath};
+use ddcommon::MutexExt;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -29,7 +30,7 @@ where
 
 impl<P: ParseFile> UpdatedFiles<RawFile<P>, P> for RawFileStorage<P> {
     fn updated(&self) -> Vec<(Arc<RawFile<P>>, P)> {
-        std::mem::take(&mut *self.updated.lock().unwrap())
+        std::mem::take(&mut *self.updated.lock_or_panic())
     }
 }
 
@@ -58,11 +59,11 @@ impl<P> Deref for RawFileContentsGuard<'_, P> {
 impl<P> RawFile<P> {
     /// Gets the contents behind a Deref impl (guarding a Mutex).
     pub fn contents(&self) -> RawFileContentsGuard<P> {
-        RawFileContentsGuard(self.data.lock().unwrap())
+        RawFileContentsGuard(self.data.lock_or_panic())
     }
 
     pub fn version(&self) -> u64 {
-        self.data.lock().unwrap().version
+        self.data.lock_or_panic().version
     }
 }
 
@@ -97,9 +98,9 @@ impl<P: ParseFile> FileStorage for RawFileStorage<P> {
         contents: Vec<u8>,
     ) -> anyhow::Result<()> {
         let mut contents = P::parse(&file.path, contents);
-        let mut data = file.data.lock().unwrap();
+        let mut data = file.data.lock_or_panic();
         std::mem::swap(&mut data.contents, &mut contents);
-        self.updated.lock().unwrap().push((file.clone(), contents));
+        self.updated.lock_or_panic().push((file.clone(), contents));
         data.version = version;
         Ok(())
     }

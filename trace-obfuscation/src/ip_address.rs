@@ -82,6 +82,7 @@ fn quantize_ip(s: &str) -> Option<String> {
 
 /// Split the ip prefix, can be either a provider specific prefix or a protocol
 fn split_prefix(s: &str) -> (&str, &str) {
+    #[allow(clippy::unwrap_used)]
     if let Some(tail) = s.strip_prefix("ip-") {
         ("ip-", tail)
     } else if let Some(protocol) = PREFIX_REGEX
@@ -131,6 +132,7 @@ fn parse_ip_v4(s: &str, sep: char) -> Option<(&str, &str)> {
     let mut current_field = 0;
     let mut last_index = s.len();
     for (i, ch) in s.char_indices() {
+        #[allow(clippy::unwrap_used)]
         if ch.is_ascii_digit() {
             // A field can't have a leading 0
             if field_digits == 1 && field_value == 0 {

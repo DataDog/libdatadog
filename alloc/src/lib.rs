@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::todo))]
+#![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 mod chain;
 mod linear;

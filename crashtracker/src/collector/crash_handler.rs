@@ -76,10 +76,12 @@ struct PreparedExecve {
 impl PreparedExecve {
     fn new(config: &CrashtrackerReceiverConfig) -> Self {
         // Allocate and store binary path
+        #[allow(clippy::expect_used)]
         let binary_path = CString::new(config.path_to_receiver_binary.as_str())
             .expect("Failed to convert binary path to CString");
 
         // Allocate and store arguments
+        #[allow(clippy::expect_used)]
         let args_cstrings: Vec<CString> = config
             .args
             .iter()
@@ -97,6 +99,7 @@ impl PreparedExecve {
             .iter()
             .map(|(key, value)| {
                 let env_str = format!("{key}={value}");
+                #[allow(clippy::expect_used)]
                 CString::new(env_str).expect("Failed to convert environment variable to CString")
             })
             .collect();
@@ -188,6 +191,7 @@ fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout
     // allocations in the signal handler.
     let receiver_args = RECEIVER_ARGS.load(SeqCst);
     let (binary_path, args_ptrs, env_vars_ptrs) = unsafe {
+        #[allow(clippy::expect_used)]
         let receiver_args = receiver_args.as_ref().expect("No receiver arguments");
         (
             &receiver_args.binary_path,

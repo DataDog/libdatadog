@@ -6,7 +6,6 @@
 use crate::flusher::ShippingError;
 use datadog_protos::metrics::SketchPayload;
 use derive_more::{Display, Into};
-use lazy_static::lazy_static;
 use protobuf::Message;
 use regex::Regex;
 use reqwest;
@@ -14,14 +13,21 @@ use reqwest::{Client, Response};
 use serde::{Serialize, Serializer};
 use serde_json;
 use std::io::Write;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::{debug, error};
 use zstd::stream::write::Encoder;
 
-lazy_static! {
-    static ref SITE_RE: Regex = Regex::new(r"^[a-zA-Z0-9._:-]+$").expect("invalid regex");
-    static ref URL_PREFIX_RE: Regex =
-        Regex::new(r"^https?://[a-zA-Z0-9._:-]+$").expect("invalid regex");
+// TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
+static SITE_RE: OnceLock<Regex> = OnceLock::new();
+fn get_site_re() -> &'static Regex {
+    #[allow(clippy::expect_used)]
+    SITE_RE.get_or_init(|| Regex::new(r"^[a-zA-Z0-9._:-]+$").expect("invalid regex"))
+}
+static URL_PREFIX_RE: OnceLock<Regex> = OnceLock::new();
+fn get_url_prefix_re() -> &'static Regex {
+    #[allow(clippy::expect_used)]
+    URL_PREFIX_RE.get_or_init(|| Regex::new(r"^https?://[a-zA-Z0-9._:-]+$").expect("invalid regex"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Into)]
@@ -36,7 +42,7 @@ impl Site {
         // Datadog sites are generally domain names. In particular, they shouldn't have any slashes
         // in them. We expect this to be coming from a `DD_SITE` environment variable or the `site`
         // config field.
-        if SITE_RE.is_match(&site) {
+        if get_site_re().is_match(&site) {
             Ok(Site(site))
         } else {
             Err(SiteError(site))
@@ -49,7 +55,7 @@ impl Site {
 pub struct UrlPrefixError(String);
 
 fn validate_url_prefix(prefix: &str) -> Result<(), UrlPrefixError> {
-    if URL_PREFIX_RE.is_match(prefix) {
+    if get_url_prefix_re().is_match(prefix) {
         Ok(())
     } else {
         Err(UrlPrefixError(prefix.to_owned()))
@@ -111,6 +117,7 @@ impl MetricsIntakeUrlPrefix {
 
     #[inline]
     fn new_expect_validated(validated_prefix: String) -> Self {
+        #[allow(clippy::expect_used)]
         validate_url_prefix(&validated_prefix).expect("Invalid URL prefix");
 
         Self(validated_prefix)
