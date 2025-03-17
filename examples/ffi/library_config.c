@@ -48,9 +48,8 @@ int main(int argc, const char *const *argv) {
   ddog_Vec_LibraryConfig configs = config_result.ok;
   for (int i = 0; i < configs.len; i++) {
     const ddog_LibraryConfig *cfg = &configs.ptr[i];
-    ddog_CStr name = ddog_library_config_name_to_env(cfg->name);
 
-    printf("Setting env variable: %s=%s\n", name.ptr, cfg->value.ptr);
-    setenv(name.ptr, cfg->value.ptr, 1);
+    printf("Setting env variable: %s=%s\n", cfg->name.ptr, cfg->value.ptr);
+    setenv(cfg->name.ptr, cfg->value.ptr, 1);
   }
 }
