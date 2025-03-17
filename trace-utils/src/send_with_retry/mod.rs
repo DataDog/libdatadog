@@ -86,7 +86,7 @@ impl std::error::Error for RequestError {}
 ///
 /// # Arguments
 /// http_proxy will be ignored if hte crate is not compiled with the `proxy` feature
-
+///
 /// # Returns
 ///
 /// Return a [`SendWithRetryResult`] containing the response and the number of attempts or an error
