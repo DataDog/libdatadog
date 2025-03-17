@@ -251,29 +251,32 @@ impl DdApi {
             attempts += 1;
             match builder.try_clone() {
                 Some(builder) => {
-                    let resp = builder.send().await.map_err(|e| {
-                        ShippingError::Destination(
-                            e.status(),
-                            format!("Failed to send request: {e}"),
-                        )
-                    })?;
-                    if resp.status().is_success() {
-                        return Ok(resp);
-                    }
-                    match retry_strategy {
-                        RetryStrategy::LinearBackoff(max_attempts, _)
-                        | RetryStrategy::Immediate(max_attempts)
-                            if attempts >= max_attempts =>
-                        {
-                            return Err(ShippingError::Destination(
-                                Some(resp.status()),
-                                "Failed to send request after {max_attempts}".to_string(),
-                            ));
+                    let resp = builder.send().await;
+                    match resp {
+                        Ok(resp) if resp.status().is_success() => return Ok(resp),
+                        // TODO what if it's okay and there status code is somehow not success?
+                        Ok(resp) => {
+                            debug!("Non-success status code: {:?}", resp.status());
+                            return Ok(resp);
                         }
-                        RetryStrategy::LinearBackoff(_, delay) => {
-                            tokio::time::sleep(Duration::from_secs(delay)).await;
+                        Err(resp) => {
+                            match retry_strategy {
+                                RetryStrategy::LinearBackoff(max_attempts, _)
+                                | RetryStrategy::Immediate(max_attempts)
+                                    if attempts >= max_attempts =>
+                                {
+                                    // handle if status code missing like timeout
+                                    return Err(ShippingError::Destination(
+                                        resp.status(),
+                                        "Failed to send request after {max_attempts}".to_string(),
+                                    ));
+                                }
+                                RetryStrategy::LinearBackoff(_, delay) => {
+                                    tokio::time::sleep(Duration::from_secs(delay)).await;
+                                }
+                                _ => {}
+                            }
                         }
-                        _ => {}
                     }
                 }
                 None => {
