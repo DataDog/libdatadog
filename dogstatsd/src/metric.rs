@@ -7,8 +7,10 @@ use ddsketch_agent::DDSketch;
 use fnv::FnvHasher;
 use protobuf::Chars;
 use regex::Regex;
+use tracing::debug;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
+use std::time::Instant;
 use ustr::Ustr;
 
 pub const EMPTY_TAGS: SortedTags = SortedTags { values: Vec::new() };
@@ -71,6 +73,7 @@ impl SortedTags {
     }
 
     pub fn parse(tags_section: &str) -> Result<SortedTags, ParseError> {
+        let mut sr = Instant::now();
         let tag_parts = tags_section.split(',');
         let mut parsed_tags = Vec::new();
         // Validate that the tags have the right form.
@@ -84,8 +87,13 @@ impl SortedTags {
                 parsed_tags.push((Ustr::from(k), Ustr::from(v)));
             }
         }
+        debug!("Validation of tags took {:?}us", sr.elapsed().as_nanos());
+        sr = Instant::now();
         parsed_tags.dedup();
+        debug!("Deduped tags took {:?}us", sr.elapsed().as_nanos());
+        sr = Instant::now();
         parsed_tags.sort_unstable();
+        debug!("Sorted unstable took {:?}", sr.elapsed().as_nanos());
         Ok(SortedTags {
             values: parsed_tags,
         })
@@ -121,6 +129,13 @@ impl SortedTags {
             }
         }
         tags_as_vec
+    }
+
+    pub fn find_all(&self, tag_key: &str) -> Vec<&Ustr> {
+        self.values
+            .iter()
+            .filter_map(|(k, v)| if k == tag_key { Some(v) } else { None })
+            .collect()
     }
 
     pub(crate) fn to_resources(&self) -> Vec<datadog::Resource> {
@@ -647,5 +662,14 @@ mod tests {
         let first_element = tags.values.first().unwrap();
         assert_eq!(first_element.0, Ustr::from("a"));
         assert_eq!(first_element.1, Ustr::from("a1"));
+    }
+
+    #[test]
+    fn sorted_tags_find_all() {
+        let tags = SortedTags::parse("a,a:1,b:2,c:3").unwrap();
+        assert_eq!(tags.find_all("a"), vec![&Ustr::from(""), &Ustr::from("1")]);
+        assert_eq!(tags.find_all("b"), vec![&Ustr::from("2")]);
+        assert_eq!(tags.find_all("c"), vec![&Ustr::from("3")]);
+        assert_eq!(tags.find_all("d"), Vec::<&Ustr>::new());
     }
 }
