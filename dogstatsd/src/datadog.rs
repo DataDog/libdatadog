@@ -261,7 +261,7 @@ impl DdApi {
                         return Ok(resp);
                     }
                     match retry_strategy {
-                         RetryStrategy::LienarBackoff(max_attempts, _)
+                         RetryStrategy::LinearBackoff(max_attempts, _)
                         | RetryStrategy::Immediate(max_attempts)
                             if attempts >= max_attempts =>
                         {
