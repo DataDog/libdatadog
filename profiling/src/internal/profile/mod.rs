@@ -84,7 +84,11 @@ impl Profile {
         sample: api::Sample,
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<()> {
-        self.validate_sample_labels(&sample)?;
+        #[cfg(debug_assertions)]
+        {
+            self.validate_sample_labels(&sample)?;
+        }
+
         let labels: Vec<_> = sample
             .labels
             .iter()
@@ -666,6 +670,7 @@ impl Profile {
             .collect()
     }
 
+    #[cfg(debug_assertions)]
     fn validate_sample_labels(&mut self, sample: &api::Sample) -> anyhow::Result<()> {
         let mut seen: HashMap<&str, &api::Label> = HashMap::new();
 
