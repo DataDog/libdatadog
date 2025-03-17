@@ -1,24 +1,24 @@
 name: Lint
 on:
   push:
-env: 
+env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  actionlint: 
+  actionlint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: Run actionlint
-        uses: devops-actions/actionlint@v0.1.3
+        uses: devops-actions/actionlint@c6744a34774e4e1c1df0ff66bdb07ec7ee480ca0 # 0.1.9
         with:
           shellcheck_opts: '-e SC2086'
   rustfmt:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: Cache
         uses: ./.github/actions/cache
       - name: Install nightly-2024-12-16 toolchain and rustfmt
@@ -34,7 +34,7 @@ jobs:
         platform: [windows-latest, ubuntu-latest]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: Cache
         uses: ./.github/actions/cache
         with:
@@ -44,7 +44,7 @@ jobs:
       - name: Install Protoc Binary
         shell: bash
         run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
-      - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }} 
+      - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }}
         shell: bash
         run: |
           # shellcheck disable=SC2046
@@ -54,7 +54,7 @@ jobs:
     name: "Presence of licence headers"
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: Install licensecheck
         run: sudo apt-get install -y licensecheck
       - name: Check licenses
@@ -78,10 +78,10 @@ jobs:
     name: "Valid LICENSE-3rdparty.yml"
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - run: stat LICENSE-3rdparty.yml
       - name: Cache
-        uses: actions/cache@v4
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # 4.2.2
         with:
           path: |
             ~/.cargo/registry/
@@ -96,8 +96,8 @@ jobs:
       # sparse vs git index, so force git.
       - run: mkdir -p .cargo && printf "[registries.crates-io]\nprotocol = \"git\"\n" > .cargo/config.toml
       - run: cargo install cargo-bundle-licenses
-      - name: "Generate new LICENSE-3rdparty.yml and check against the previous" 
-        env: 
+      - name: "Generate new LICENSE-3rdparty.yml and check against the previous"
+        env:
           CARGO_HOME: "/tmp/dd-cargo"
         run: |
           # Run cargo bundle-licenses without directly checking against a previous snapshot
@@ -120,7 +120,7 @@ jobs:
 
       - name: export the generated license file on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1
         with:
           name: LICENSE-3rdparty.yml
           path: /tmp/CI.yaml
