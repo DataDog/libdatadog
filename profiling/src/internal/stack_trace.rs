@@ -23,6 +23,7 @@ impl Id for StackTraceId {
     type RawId = usize;
 
     fn from_offset(inner: usize) -> Self {
+        #[allow(clippy::expect_used)]
         let index: u32 = inner.try_into().expect("StackTraceId to fit into a u32");
         Self(index)
     }

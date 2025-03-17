@@ -1,6 +1,16 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+// TODO: This module should probably be gated behind a test-only feature flag
+
+// This module should only ever be used in test code. Relaxing the crate level clippy lints to warn
+// when panic macros are used.
+#![allow(clippy::panic)]
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::todo)]
+#![allow(clippy::unimplemented)]
+
 use crate::fetch::ConfigInvariants;
 use crate::targets::{TargetData, TargetsCustom, TargetsData, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};

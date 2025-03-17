@@ -1,7 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-
-use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::todo))]
+#![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 use hyper::{
     header::HeaderValue,
@@ -9,6 +12,8 @@ use hyper::{
 };
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::sync::{Mutex, MutexGuard};
+use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 pub mod azure_app_services;
 pub mod connector;
@@ -19,6 +24,55 @@ pub mod config;
 pub mod rate_limiter;
 pub mod tag;
 pub mod tracer_metadata;
+
+/// Extension trait for `Mutex` to provide a method that acquires a lock, panicking if the lock is
+/// poisoned.
+///
+/// This helper function is intended to be used to avoid having to add many
+/// `#[allow(clippy::unwrap_used)]` annotations if there are a lot of usages of `Mutex`.
+///
+/// # Arguments
+///
+/// * `self` - A reference to the `Mutex` to lock.
+///
+/// # Returns
+///
+/// A `MutexGuard` that provides access to the locked data.
+///
+/// # Panics
+///
+/// This function will panic if the `Mutex` is poisoned.
+///
+/// # Examples
+///
+/// ```
+/// use ddcommon::MutexExt;
+/// use std::sync::{Arc, Mutex};
+///
+/// let data = Arc::new(Mutex::new(5));
+/// let data_clone = Arc::clone(&data);
+///
+/// std::thread::spawn(move || {
+///     let mut num = data_clone.lock_or_panic();
+///     *num += 1;
+/// })
+/// .join()
+/// .expect("Thread panicked");
+///
+/// assert_eq!(*data.lock_or_panic(), 6);
+/// ```
+pub trait MutexExt<T> {
+    fn lock_or_panic(&self) -> MutexGuard<'_, T>;
+}
+
+impl<T> MutexExt<T> for Mutex<T> {
+    #[inline(always)]
+    #[track_caller]
+    fn lock_or_panic(&self) -> MutexGuard<'_, T> {
+        #[allow(clippy::unwrap_used)]
+        self.lock().unwrap()
+    }
+}
 
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
@@ -214,6 +268,7 @@ impl Endpoint {
     #[inline]
     pub fn from_slice(url: &str) -> Endpoint {
         Endpoint {
+            #[allow(clippy::unwrap_used)]
             url: parse_uri(url).unwrap(),
             ..Default::default()
         }

@@ -10,7 +10,6 @@ pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 use bytes::Bytes;
 use ddcommon::{connector, Endpoint, HttpRequestBuilder};
 use hyper::{Body, Client, Method, Response};
-use hyper_proxy::{Intercept, Proxy, ProxyConnector};
 use std::{collections::HashMap, time::Duration};
 
 pub type Attempts = u32;
@@ -37,7 +36,7 @@ impl std::fmt::Display for SendWithRetryError {
             SendWithRetryError::Timeout(_) => write!(f, "Request timed out"),
             SendWithRetryError::Network(error, _) => write!(f, "Network error: {error}"),
             SendWithRetryError::Build(_) => {
-                write!(f, "Failed to build request due to invalid propery")
+                write!(f, "Failed to build request due to invalid property")
             }
         }
     }
@@ -70,7 +69,7 @@ impl std::fmt::Display for RequestError {
             RequestError::TimeoutSocket => write!(f, "Socket timed out"),
             RequestError::TimeoutApi => write!(f, "Api timeout exhausted"),
             RequestError::Network(error) => write!(f, "Network error: {error}"),
-            RequestError::Build => write!(f, "Failed to build request due to invalid propery"),
+            RequestError::Build => write!(f, "Failed to build request due to invalid property"),
         }
     }
 }
@@ -85,10 +84,13 @@ impl std::error::Error for RequestError {}
 /// it is used as the uri of the proxy. The request is executed with a timeout of
 /// [`Endpoint::timeout_ms`].
 ///
+/// # Arguments
+/// http_proxy will be ignored if hte crate is not compiled with the `proxy` feature
+///
 /// # Returns
 ///
 /// Return a [`SendWithRetryResult`] containing the response and the number of attempts or an error
-/// describing the last attempt faillure.
+/// describing the last attempt failure.
 ///
 /// # Errors
 /// Fail if the request didn't succeed after applying the retry strategy.
@@ -173,21 +175,32 @@ async fn send_request(
 ) -> Result<Response<Body>, RequestError> {
     let req = req.body(Body::from(payload)).or(Err(RequestError::Build))?;
 
-    match tokio::time::timeout(
-        timeout,
+    #[cfg(feature = "proxy")]
+    #[allow(clippy::unwrap_used)]
+    let req_future = {
         if let Some(proxy) = http_proxy {
-            let proxy = Proxy::new(Intercept::Https, proxy.parse().unwrap());
+            let proxy =
+                hyper_proxy::Proxy::new(hyper_proxy::Intercept::Https, proxy.parse().unwrap());
             let proxy_connector =
-                ProxyConnector::from_proxy(connector::Connector::default(), proxy).unwrap();
+                hyper_proxy::ProxyConnector::from_proxy(connector::Connector::default(), proxy)
+                    .unwrap();
             Client::builder().build(proxy_connector).request(req)
         } else {
             Client::builder()
                 .build(connector::Connector::default())
                 .request(req)
-        },
-    )
-    .await
-    {
+        }
+    };
+
+    #[cfg(not(feature = "proxy"))]
+    let req_future = {
+        let _ = http_proxy;
+        Client::builder()
+            .build(connector::Connector::default())
+            .request(req)
+    };
+
+    match tokio::time::timeout(timeout, req_future).await {
         Ok(resp) => match resp {
             Ok(body) => Ok(body),
             Err(e) => {

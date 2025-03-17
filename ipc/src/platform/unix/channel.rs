@@ -56,6 +56,7 @@ impl Channel {
     }
 
     pub fn probe_readable(&self) -> bool {
+        #[allow(clippy::unwrap_used)]
         let raw_fd = self.inner.as_owned_fd().unwrap();
         let mut fds = FdSet::new();
         fds.insert(raw_fd);

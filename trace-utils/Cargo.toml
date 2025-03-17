@@ -16,45 +16,66 @@ path = "benches/main.rs"
 
 [dependencies]
 anyhow = "1.0"
-hyper = { version = "0.14", features = ["client", "server", "runtime", "backports", "deprecated"] }
-hyper-proxy = { version = "0.9.1", default-features = false, features = ["rustls"], optional = true }
+hyper = { version = "0.14", features = [
+    "client",
+    "tcp",
+    "backports",
+    "deprecated",
+] }
 serde = { version = "1.0.145", features = ["derive"] }
 prost = "0.11.6"
 rmp-serde = "1.1.1"
 log = "0.4"
 serde_json = "1.0"
-flate2 = "1.0"
 futures = { version = "0.3", default-features = false }
-ddcommon = { path = "../ddcommon", features = ["use_webpki_roots"] }
+ddcommon = { path = "../ddcommon" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-normalization = { path = "../trace-normalization" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 rand = "0.8.5"
 bytes = "1.6.0"
-# This should only be used for testing. It isn't under dev-dependencies because test-utils can't be under #[cfg(test)].
-httpmock = { version = "0.7.0", optional = true}
 rmpv = { version = "1.3.0", default-features = false }
 rmp = { version = "0.8.14", default-features = false }
-testcontainers = { version = "0.17.0", optional = true }
+tinybytes = { path = "../tinybytes", features = [
+    "bytes_string",
+    "serialization",
+] }
+
+# Proxy feature
+hyper-proxy = { version = "0.9.1", default-features = false, features = [
+    "rustls",
+], optional = true }
+
+# Compression feature
+flate2 = { version = "1.0", optional = true }
+zstd = { version = "0.13.3", default-features = false, optional = true }
+
+# test-utils feature
 cargo_metadata = { version = "0.18.1", optional = true }
 # Dependency of cargo metadata, but 0.1.8 requires too new of a rust version.
 cargo-platform = { version = "=0.1.7", optional = true }
-tinybytes =  { path = "../tinybytes", features = ["bytes_string", "serialization"] }
-urlencoding = { version="2.1.3", optional= true }
-zstd = { version = "0.13.3", default-features = false, optional = true }
+testcontainers = { version = "0.17.0", optional = true }
+httpmock = { version = "0.7.0", optional = true }
+urlencoding = { version = "2.1.3", optional = true }
 
 [dev-dependencies]
 bolero = "0.10.1"
 bolero-generator = "0.10.2"
 criterion = "0.5.1"
-httpmock = { version = "0.7.0"}
+httpmock = { version = "0.7.0" }
 serde_json = "1.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 datadog-trace-utils = { path = ".", features = ["test-utils"] }
 tempfile = "3.3.0"
 
 [features]
-default = ["proxy"]
-test-utils = ["httpmock", "testcontainers", "cargo_metadata", "cargo-platform", "urlencoding"]
+mini_agent = ["proxy", "compression", "ddcommon/use_webpki_roots"]
+test-utils = [
+    "httpmock",
+    "testcontainers",
+    "cargo_metadata",
+    "cargo-platform",
+    "urlencoding",
+]
 proxy = ["hyper-proxy"]
-compression = ["zstd"]
+compression = ["zstd", "flate2"]

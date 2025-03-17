@@ -30,6 +30,7 @@ pub extern "C" fn ddog_endpoint_from_filename(filename: crate::CharSlice) -> Opt
 pub extern "C" fn ddog_endpoint_from_api_key(api_key: crate::CharSlice) -> Box<Endpoint> {
     let mut parts = Parts::default();
     parts.authority = Some(Authority::from_static("datadoghq.com"));
+    #[allow(clippy::unwrap_used)]
     Box::new(Endpoint {
         url: hyper::Uri::from_parts(parts).unwrap(),
         api_key: Some(api_key.to_utf8_lossy().to_string().into()),
@@ -52,6 +53,7 @@ pub extern "C" fn ddog_endpoint_from_api_key_and_site(
         Err(e) => return Some(Box::new(Error::from(e.to_string()))),
     });
     *endpoint = Box::into_raw(Box::new(Endpoint {
+        #[allow(clippy::unwrap_used)]
         url: hyper::Uri::from_parts(parts).unwrap(),
         api_key: Some(api_key.to_utf8_lossy().to_string().into()),
         ..Default::default()

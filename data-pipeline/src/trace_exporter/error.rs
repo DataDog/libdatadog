@@ -95,6 +95,7 @@ impl NetworkError {
 
 impl Display for NetworkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[allow(clippy::unwrap_used)]
         std::fmt::Display::fmt(self.source().unwrap(), f)
     }
 }
