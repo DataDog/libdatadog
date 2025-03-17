@@ -7,7 +7,6 @@ use datadog_protos::metrics::Origin;
 // Metric tag keys
 const DD_ORIGIN_TAG_KEY: &str = "origin";
 const AWS_LAMBDA_TAG_KEY: &str = "function_arn";
-const AWS_STEP_FUNCTIONS_TAG_KEY: &str = "statemachinearn";
 
 // Metric tag values
 const GOOGLE_CLOUD_RUN_TAG_VALUE: &str = "cloudrun";
@@ -22,7 +21,6 @@ const AZURE_APP_SERVICES_PREFIX: &str = "azure.app_services";
 const AZURE_CONTAINER_APP_PREFIX: &str = "azure.app_containerapps";
 const AZURE_FUNCTIONS_PREFIX: &str = "azure.functions";
 const AWS_LAMBDA_PREFIX: &str = "aws.lambda";
-const AWS_STEP_FUNCTIONS_PREFIX: &str = "aws.states";
 
 /// Represents the product origin of a metric.
 /// The full enum is exhaustive so we only include what we need. Please reference the corresponding
@@ -47,7 +45,6 @@ pub enum OriginCategory {
     CloudRunMetrics = 36,
     ContainerAppMetrics = 37,
     LambdaMetrics = 38,
-    StepFunctionsMetrics = 41,
     AzureFunctionsMetrics = 71,
 }
 
@@ -110,11 +107,6 @@ const METRIC_ORIGIN_CHECKS: &[MetricOriginCheck] = &[
         tag_value: "",
         prefix: AWS_LAMBDA_PREFIX,
     },
-    MetricOriginCheck {
-        tag_key: AWS_STEP_FUNCTIONS_TAG_KEY,
-        tag_value: "",
-        prefix: AWS_STEP_FUNCTIONS_PREFIX,
-    },
 ];
 
 /// Creates an Origin for serverless metrics.
@@ -148,7 +140,6 @@ pub fn find_metric_origin(metric: &Metric, tags: SortedTags) -> Option<Origin> {
                 2 => OriginCategory::ContainerAppMetrics,
                 3 => OriginCategory::AzureFunctionsMetrics,
                 4 => OriginCategory::LambdaMetrics,
-                5 => OriginCategory::StepFunctionsMetrics,
                 _ => OriginCategory::Other,
             };
             return Some(serverless_origin(category));
