@@ -99,6 +99,7 @@ impl ShmHandle {
         // confusing "The system cannot find the file specified. (os error 2)".
         // It seems like DuplicateHandle requires a name to re-open the FileMapping
         // within another process. Oh well. Let's generate an unique one.
+        #[allow(clippy::unwrap_used)]
         let name = CString::new(format!(
             "libdatadog-anon-{name}-{}-{}",
             unsafe { libc::getpid() },
@@ -117,6 +118,7 @@ impl NamedShmHandle {
         // Global\ namespace is reserved for Session ID 0.
         // We cannot rely on our PHP process having permissions to have access to Session 0.
         // This requires us to have one sidecar per Session ID. That's good enough though.
+        #[allow(clippy::unwrap_used)]
         CString::new(format!(
             "Local\\{}",
             String::from_utf8_lossy(&path.to_bytes()[1..])
@@ -160,6 +162,8 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
         if expected_size <= current_size {
             return;
         }
+
+        #[allow(clippy::panic)]
         if expected_size > MAPPING_MAX_SIZE {
             panic!(
                 "Tried to allocate {} bytes for shared mapping (limit: {} bytes)",
@@ -167,6 +171,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
             );
         }
 
+        #[allow(clippy::unwrap_used)]
         unsafe {
             self.mem.set_mapping_size(expected_size).unwrap();
         }

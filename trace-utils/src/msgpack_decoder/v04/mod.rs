@@ -57,6 +57,7 @@ pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, us
 
     let start_len = data.len();
 
+    #[allow(clippy::expect_used)]
     Ok((
         (0..trace_count).try_fold(
             Vec::with_capacity(

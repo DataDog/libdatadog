@@ -133,9 +133,14 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
         }),
     };
     buffer.push(snapshot);
-    let DebuggerData::Snapshot(ref mut snapshot) = buffer.last_mut().unwrap().debugger else {
+
+    #[allow(clippy::unwrap_used)]
+    let DebuggerData::Snapshot(ref mut snapshot) = buffer.last_mut().unwrap().debugger
+    else {
         unreachable!();
     };
+
+    #[allow(clippy::unwrap_used)]
     unsafe {
         transmute(
             snapshot
@@ -191,6 +196,8 @@ pub unsafe extern "C" fn ddog_snapshot_entry<'a>(
     let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
         unreachable!();
     };
+
+    #[allow(clippy::unwrap_used)]
     transmute(
         snapshot
             .captures
@@ -210,6 +217,8 @@ pub unsafe extern "C" fn ddog_snapshot_lines<'a>(
     let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
         unreachable!();
     };
+
+    #[allow(clippy::unwrap_used)]
     transmute(
         match snapshot.captures.as_mut().unwrap().lines.entry(line) {
             hash_map::Entry::Occupied(e) => e.into_mut(),
@@ -226,6 +235,8 @@ pub unsafe extern "C" fn ddog_snapshot_exit<'a>(
     let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
         unreachable!();
     };
+
+    #[allow(clippy::unwrap_used)]
     transmute(
         snapshot
             .captures
@@ -303,6 +314,8 @@ pub extern "C" fn ddog_capture_value_add_field<'a, 'b: 'a, 'c: 'a>(
     let fields = match value.fields {
         None => {
             value.fields = Some(Box::default());
+
+            #[allow(clippy::unwrap_used)]
             value.fields.as_mut().unwrap()
         }
         Some(ref mut f) => f,
@@ -352,6 +365,7 @@ pub extern "C" fn ddog_evaluation_error_snapshot<'a>(
 }
 
 pub fn serialize_debugger_payload(payload: &DebuggerPayload) -> String {
+    #[allow(clippy::unwrap_used)]
     serde_json::to_string(payload).unwrap()
 }
 
@@ -412,11 +426,13 @@ pub fn ddog_debugger_diagnostics_create_unboxed<'a>(
                 ProbeStatus::Blocked => {
                     format!("Instrumentation denied for probe {}", &diagnostics.probe_id)
                 }
+                #[allow(clippy::unwrap_used)]
                 ProbeStatus::Error => format!(
                     "Encountered error while instrumenting probe {}: {}",
                     &diagnostics.probe_id,
                     diagnostics.exception.as_ref().unwrap().message
                 ),
+                #[allow(clippy::unwrap_used)]
                 ProbeStatus::Warning => format!(
                     "Probe {} warning: {}",
                     &diagnostics.probe_id,

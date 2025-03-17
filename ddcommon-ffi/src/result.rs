@@ -36,6 +36,7 @@ impl<T> Result<T> {
     pub fn unwrap(self) -> T {
         match self {
             Self::Ok(v) => v,
+            #[allow(clippy::panic)]
             Self::Err(err) => panic!("{err}"),
         }
     }

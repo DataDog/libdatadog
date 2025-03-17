@@ -162,6 +162,7 @@ pub fn normalize_tag(tag: &mut String) {
             let mut it = bytes[read_cursor..].iter();
             // This won't panic because we now bytes is a valid utf8 array, and next_code_point
             // returns and actual utf8 codepoint
+            #[allow(clippy::unwrap_used)]
             std::char::from_u32(crate::utf8_helpers::next_code_point(&mut it).unwrap()).unwrap()
         };
         let mut len_utf8 = c.len_utf8();
@@ -186,7 +187,7 @@ pub fn normalize_tag(tag: &mut String) {
         }
 
         // The method in the agent checks if the character is of a Letter unicode class,
-        // which is not excatly the same. Alphabetics also contains Nl and Other_aplhabetics
+        // which is not exactly the same. Alphabetics also contains Nl and Other_aplhabetics
         // unicode character classes https://www.unicode.org/reports/tr44/#Alphabetic , but
         // close enough
         if c.is_alphabetic() {

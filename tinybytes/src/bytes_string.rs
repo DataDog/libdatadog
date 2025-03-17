@@ -77,6 +77,7 @@ impl BytesString {
     /// * `slice` - The string slice pointing into the given bytes that will form the `BytesString`.
     pub fn from_bytes_slice(bytes: &Bytes, slice: &str) -> Self {
         // SAFETY: This is safe as a str slice is definitely a valid UTF-8 slice.
+        #[allow(clippy::expect_used)]
         unsafe {
             Self::from_bytes_unchecked(bytes.slice_ref(slice.as_bytes()).expect("Invalid slice"))
         }

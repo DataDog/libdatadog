@@ -1,6 +1,14 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+// This module should only ever be used in test code. Relaxing the crate level clippy lints to warn
+// when panic macros are used.
+#![allow(clippy::panic)]
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::expect_used)]
+#![allow(clippy::todo)]
+#![allow(clippy::unimplemented)]
+
 pub mod datadog_test_agent;
 
 use std::collections::HashMap;
@@ -211,6 +219,7 @@ pub fn create_test_gcp_json_span(
             },
             "metrics": {},
             "meta_struct": {},
+            "span_links": [],
         }
     )
 }
@@ -319,6 +328,7 @@ pub fn create_test_json_span(
             },
             "metrics": {},
             "meta_struct": {},
+            "span_links": [],
             "span_events": [],
         }
     );

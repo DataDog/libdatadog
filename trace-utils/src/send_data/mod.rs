@@ -238,6 +238,7 @@ impl SendData {
         headers: HashMap<&'static str, String>,
         http_proxy: Option<&str>,
     ) -> (SendWithRetryResult, u64, u64) {
+        #[allow(clippy::unwrap_used)]
         let payload_len = u64::try_from(payload.len()).unwrap();
         (
             send_with_retry(
@@ -281,6 +282,8 @@ impl SendData {
 
     async fn send_with_protobuf(&self, http_proxy: Option<&str>) -> SendDataResult {
         let mut result = SendDataResult::default();
+
+        #[allow(clippy::unwrap_used)]
         let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
 
         match &self.tracer_payloads {
@@ -322,6 +325,7 @@ impl SendData {
         match &self.tracer_payloads {
             TracerPayloadCollection::V07(payloads) => {
                 for tracer_payload in payloads {
+                    #[allow(clippy::unwrap_used)]
                     let chunks = u64::try_from(tracer_payload.chunks.len()).unwrap();
                     let mut headers = self.headers.clone();
                     headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
@@ -336,6 +340,7 @@ impl SendData {
                 }
             }
             TracerPayloadCollection::V04(payload) => {
+                #[allow(clippy::unwrap_used)]
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
                 let mut headers = self.headers.clone();
                 headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
@@ -349,6 +354,7 @@ impl SendData {
                 futures.push(self.send_payload(chunks, payload, headers, http_proxy));
             }
             TracerPayloadCollection::V05(payload) => {
+                #[allow(clippy::unwrap_used)]
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
                 let mut headers = self.headers.clone();
                 headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());

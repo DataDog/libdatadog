@@ -72,6 +72,7 @@ impl TimestampedObservations {
     }
 
     pub fn into_iter(self) -> TimestampedObservationsIter {
+        #[allow(clippy::unwrap_used)]
         TimestampedObservationsIter {
             decoder: FrameDecoder::new(Cursor::new(
                 self.compressed_timestamped_data.finish().unwrap(),

@@ -35,6 +35,8 @@ impl BufferReader {
                 // Max buffer size is configurable in Go Agent and the default is 8KB
                 // https://github.com/DataDog/datadog-agent/blob/85939a62b5580b2a15549f6936f257e61c5aa153/pkg/config/config_template.yaml#L2154-L2158
                 let mut buf = [0; 8192];
+
+                #[allow(clippy::expect_used)]
                 let (amt, src) = socket
                     .recv_from(&mut buf)
                     .await
@@ -54,7 +56,9 @@ impl DogStatsD {
         cancel_token: tokio_util::sync::CancellationToken,
     ) -> DogStatsD {
         let addr = format!("{}:{}", config.host, config.port);
+
         // TODO (UDS socket)
+        #[allow(clippy::expect_used)]
         let socket = tokio::net::UdpSocket::bind(addr)
             .await
             .expect("couldn't bind to address");
@@ -74,11 +78,14 @@ impl DogStatsD {
     }
 
     async fn consume_statsd(&self) {
+        #[allow(clippy::expect_used)]
         let (buf, src) = self
             .buffer_reader
             .read()
             .await
             .expect("didn't receive data");
+
+        #[allow(clippy::expect_used)]
         let msgs = std::str::from_utf8(&buf).expect("couldn't parse as string");
         debug!("Received message: {} from {}", msgs, src);
         let statsd_metric_strings = msgs.split('\n');
@@ -112,6 +119,7 @@ impl DogStatsD {
             })
             .collect();
         if !all_valid_metrics.is_empty() {
+            #[allow(clippy::expect_used)]
             let mut guarded_aggregator = self.aggregator.lock().expect("lock poisoned");
             for a_valid_value in all_valid_metrics {
                 let _ = guarded_aggregator.insert(a_valid_value);

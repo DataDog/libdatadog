@@ -88,6 +88,7 @@ impl Id for LabelId {
     type RawId = usize;
 
     fn from_offset(inner: usize) -> Self {
+        #[allow(clippy::expect_used)]
         let index: u32 = inner.try_into().expect("LabelId to fit into a u32");
         Self(index)
     }
@@ -136,6 +137,7 @@ impl Id for LabelSetId {
     type RawId = usize;
 
     fn from_offset(inner: usize) -> Self {
+        #[allow(clippy::expect_used)]
         let index: u32 = inner.try_into().expect("LabelSetId to fit into a u32");
         Self(index)
     }

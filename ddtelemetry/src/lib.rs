@@ -3,6 +3,11 @@
 
 #![allow(clippy::mutex_atomic)]
 #![allow(clippy::nonminimal_bool)]
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::todo))]
+#![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 use ddcommon::entity_id;
 

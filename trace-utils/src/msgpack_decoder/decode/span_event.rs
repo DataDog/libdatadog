@@ -87,6 +87,7 @@ fn read_attributes_map(
     let len = rmp::decode::read_map_len(unsafe { buf.as_mut_slice() })
         .map_err(|_| DecodeError::InvalidType("Unable to get map len for attributes".to_owned()))?;
 
+    #[allow(clippy::expect_used)]
     let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
     for _ in 0..len {
         let key = read_string_bytes(buf)?;

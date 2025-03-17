@@ -1477,8 +1477,6 @@ dependencies = [
  "constcat",
  "ddcommon",
  "hyper 0.14.31",
- "json",
- "lazy_static",
  "percent-encoding",
  "regex",
  "regex-automata 0.4.8",
@@ -1604,7 +1602,6 @@ dependencies = [
  "futures-util",
  "http 0.2.12",
  "hyper 0.14.31",
- "lazy_static",
  "manual_future",
  "serde",
  "serde_json",
@@ -1659,7 +1656,6 @@ dependencies = [
  "http 0.2.12",
  "httpmock",
  "hyper 0.14.31",
- "lazy_static",
  "libc",
  "manual_future",
  "memory-stats",
@@ -1800,7 +1796,6 @@ dependencies = [
  "httpmock",
  "hyper 0.14.31",
  "hyper-proxy",
- "hyper-rustls 0.27.3",
  "log",
  "prost 0.11.9",
  "rand",
@@ -1832,7 +1827,6 @@ dependencies = [
  "hyper-rustls 0.27.3",
  "hyper-util",
  "indexmap 2.6.0",
- "lazy_static",
  "libc",
  "log",
  "maplit",
@@ -1888,10 +1882,6 @@ dependencies = [
  "hashbrown 0.14.5",
  "http 0.2.12",
  "hyper 0.14.31",
- "io-lifetimes",
- "lazy_static",
- "pin-project",
- "regex",
  "serde",
  "serde_json",
  "sys-info",
@@ -2055,7 +2045,6 @@ dependencies = [
  "derive_more",
  "fnv",
  "hashbrown 0.14.5",
- "lazy_static",
  "mockito",
  "proptest",
  "protobuf",
@@ -3207,12 +3196,6 @@ checksum = "6a88f1bda2bd75b0452a14784937d796722fdebfe50df998aeb3f0b7603019a9"
 dependencies = [
  "wasm-bindgen",
 ]
-
-[[package]]
-name = "json"
-version = "0.12.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "078e285eafdfb6c4b434e0d31e8cfcb5115b651496faca5749b88fafd4f23bfd"
 
 [[package]]
 name = "kernel32-sys"
@@ -5956,7 +5939,6 @@ dependencies = [
 name = "tools"
 version = "16.0.3"
 dependencies = [
- "lazy_static",
  "regex",
 ]
 

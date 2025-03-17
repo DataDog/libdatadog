@@ -205,6 +205,7 @@ impl MetricContexts {
         common: bool,
         namespace: data::metrics::MetricNamespace,
     ) -> ContextKey {
+        #[allow(clippy::unwrap_used)]
         let mut contexts = self.inner.lock().unwrap();
         let key = ContextKey(contexts.store.len() as u32, metric_type);
         contexts.store.push(MetricContext {
@@ -218,6 +219,7 @@ impl MetricContexts {
     }
 
     pub fn lock(&self) -> MetricContextGuard<'_> {
+        #[allow(clippy::unwrap_used)]
         MetricContextGuard {
             guard: self.inner.as_ref().lock().unwrap(),
         }
