@@ -467,26 +467,27 @@ impl Profile {
         })
     }
 
-    fn is_zero_mapping(mapping: &api::Mapping) -> bool {
-        // - PHP, Python, and Ruby use a mapping only because it's required.
-        // - .NET uses only the filename.
-        // - The native profiler uses all fields.
-        // We strike a balance for optimizing for the dynamic languages and
-        // the others by mixing branches and branchless programming.
-        let filename = mapping.filename.len();
-        let build_id = mapping.build_id.len();
-        if 0 != (filename | build_id) {
-            return false;
+    fn add_mapping(&mut self, mapping: &api::Mapping) -> Option<MappingId> {
+        #[inline]
+        fn is_zero_mapping(mapping: &api::Mapping) -> bool {
+            // - PHP, Python, and Ruby use a mapping only as required.
+            // - .NET uses only the filename.
+            // - The native profiler uses all fields.
+            // We strike a balance for optimizing for the dynamic languages
+            // and the others by mixing branches and branchless programming.
+            let filename = mapping.filename.len();
+            let build_id = mapping.build_id.len();
+            if 0 != (filename | build_id) {
+                return false;
+            }
+
+            let memory_start = mapping.memory_start;
+            let memory_limit = mapping.memory_limit;
+            let file_offset = mapping.file_offset;
+            0 == (memory_start | memory_limit | file_offset)
         }
 
-        let memory_start = mapping.memory_start;
-        let memory_limit = mapping.memory_limit;
-        let file_offset = mapping.file_offset;
-        0 == (memory_start | memory_limit | file_offset)
-    }
-
-    fn add_mapping(&mut self, mapping: &api::Mapping) -> Option<MappingId> {
-        if Self::is_zero_mapping(mapping) {
+        if is_zero_mapping(mapping) {
             return None;
         }
 
@@ -506,7 +507,19 @@ impl Profile {
         &mut self,
         mapping: &api::StringIdMapping,
     ) -> anyhow::Result<Option<MappingId>> {
-        if *mapping == Default::default() {
+        #[inline]
+        fn is_zero_mapping(mapping: &api::StringIdMapping) -> bool {
+            // See the other is_zero_mapping for more info, but only Ruby is
+            // using this API at the moment, so we optimize for the whole
+            // thing being a zero representation.
+            let memory_start = mapping.memory_start;
+            let memory_limit = mapping.memory_limit;
+            let file_offset = mapping.file_offset;
+            let strings = (mapping.filename.value | mapping.build_id.value) as u64;
+            0 == (memory_start | memory_limit | file_offset | strings)
+        }
+
+        if is_zero_mapping(mapping) {
             return Ok(None);
         }
 
