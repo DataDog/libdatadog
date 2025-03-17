@@ -21,6 +21,8 @@ use tokio_util::sync::CancellationToken;
 #[cfg(not(miri))]
 #[tokio::test]
 async fn dogstatsd_server_ships_series() {
+    use dogstatsd::datadog::RetryStrategy;
+
     let mut mock_server = Server::new_async().await;
 
     let mock = mock_server
@@ -51,6 +53,7 @@ async fn dogstatsd_server_ships_series() {
         .expect("failed to create URL"),
         https_proxy: None,
         timeout: std::time::Duration::from_secs(5),
+        retry_strategy: RetryStrategy::Immediate(3),
     });
 
     let server_address = "127.0.0.1:18125";

@@ -135,6 +135,7 @@ pub struct DdApi {
     api_key: String,
     metrics_intake_url_prefix: MetricsIntakeUrlPrefix,
     client: Option<Client>,
+    retry_strategy: RetryStrategy,
 }
 
 impl DdApi {
@@ -144,6 +145,7 @@ impl DdApi {
         metrics_intake_url_prefix: MetricsIntakeUrlPrefix,
         https_proxy: Option<String>,
         timeout: Duration,
+        retry_strategy: RetryStrategy,
     ) -> Self {
         let client = build_client(https_proxy, timeout)
             .inspect_err(|e| {
@@ -154,6 +156,7 @@ impl DdApi {
             api_key,
             metrics_intake_url_prefix,
             client,
+            retry_strategy,
         }
     }
 
@@ -163,7 +166,7 @@ impl DdApi {
         let safe_body = serde_json::to_vec(&series)
             .map_err(|e| ShippingError::Payload(format!("Failed to serialize series: {e}")))?;
         debug!("Sending body: {:?}", &series);
-        self.ship_data(url, safe_body, "application/json").await
+        self.ship_data(url, safe_body, "application/json", self.retry_strategy.clone()).await
     }
 
     pub async fn ship_distributions(
@@ -175,8 +178,7 @@ impl DdApi {
             .write_to_bytes()
             .map_err(|e| ShippingError::Payload(format!("Failed to serialize series: {e}")))?;
         debug!("Sending distributions: {:?}", &sketches);
-        self.ship_data(url, safe_body, "application/x-protobuf")
-            .await
+        self.ship_data(url, safe_body, "application/x-protobuf", self.retry_strategy.clone()).await
         // TODO maybe go to coded output stream if we incrementally
         // add sketch payloads to the buffer
         // something like this, but fix the utf-8 encoding issue
@@ -193,6 +195,7 @@ impl DdApi {
         url: String,
         body: Vec<u8>,
         content_type: &str,
+        retry_strategy: RetryStrategy,
     ) -> Result<Response, ShippingError> {
         let client = &self
             .client
@@ -219,12 +222,47 @@ impl DdApi {
             }
         };
 
-        let resp = builder.send().await;
+        let resp = self.send_with_retry(builder, retry_strategy).await;
 
         let elapsed = start.elapsed();
         debug!("Request to {} took {}ms", url, elapsed.as_millis());
-        resp.map_err(|e| ShippingError::Destination(e.status(), format!("Cannot reach {url}")))
+        resp
     }
+
+    async fn send_with_retry(&self, builder: reqwest::RequestBuilder, retry_strategy: RetryStrategy) -> Result<Response, ShippingError> {
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            match builder.try_clone() {
+                Some(builder) => {
+                    let resp = builder.send().await.map_err(|e| ShippingError::Destination(e.status(), format!("Failed to send request: {e}")))?;
+                    if resp.status().is_success() {
+                        return Ok(resp);
+                    }
+                    match retry_strategy {
+                        RetryStrategy::ExponentialBackoff(max_attempts, _) | RetryStrategy::LienarBackoff(max_attempts, _) | RetryStrategy::Immediate(max_attempts) if attempts >= max_attempts => {
+                            return Err(ShippingError::Destination(Some(resp.status()), "Failed to send request after {max_attempts}".to_string()));
+                        }
+                        RetryStrategy::ExponentialBackoff(_, delay) | RetryStrategy::LienarBackoff(_, delay) => {
+                            tokio::time::sleep(Duration::from_secs(delay)).await;
+                        }
+                        _ => {}
+                    }
+                }
+                None => {
+                    return Err(ShippingError::Destination(None, "Failed to clone request".to_string()));
+                }
+
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum RetryStrategy {
+    Immediate(u64), // attempts
+    ExponentialBackoff(u64, u64), // attempts, delay
+    LienarBackoff(u64, u64), // attempts, delay
 }
 
 fn build_client(https_proxy: Option<String>, timeout: Duration) -> Result<Client, reqwest::Error> {
