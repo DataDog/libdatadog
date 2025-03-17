@@ -7,8 +7,10 @@ use ddsketch_agent::DDSketch;
 use fnv::FnvHasher;
 use protobuf::Chars;
 use regex::Regex;
+use tracing::debug;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
+use std::time::Instant;
 use ustr::Ustr;
 
 pub const EMPTY_TAGS: SortedTags = SortedTags { values: Vec::new() };
@@ -71,21 +73,68 @@ impl SortedTags {
     }
 
     pub fn parse(tags_section: &str) -> Result<SortedTags, ParseError> {
-        let tag_parts = tags_section.split(',');
-        let mut parsed_tags = Vec::new();
-        // Validate that the tags have the right form.
-        for (i, part) in tag_parts.filter(|s| !s.is_empty()).enumerate() {
-            if i >= constants::MAX_TAGS {
-                return Err(ParseError::Raw(format!("Too many tags, more than {i}")));
+        let mut sr = Instant::now();
+        let comma_count = tags_section.bytes().filter(|&b| b == b',').count();
+        let mut parsed_tags = Vec::with_capacity(comma_count + 1);
+
+        // Avoid re-splitting the string and directly work with bytes
+        let bytes = tags_section.as_bytes();
+        let mut start = 0;
+        let mut i = 0;
+        let mut tag_count = 0;
+        
+        while i <= bytes.len() {
+            // Process either at a comma or at the end of the string
+            if i == bytes.len() || bytes[i] == b',' {
+                // Only process if we have content (handles empty segments and trailing commas)
+                if i > start {
+                    if tag_count >= constants::MAX_TAGS {
+                        return Err(ParseError::Raw(format!("Too many tags, more than {tag_count}")));
+                    }
+                    
+                    // Find colon position in current segment
+                    let segment = &bytes[start..i];
+                    let colon_pos = segment.iter().position(|&b| b == b':');
+                    
+                    // Process based on whether there's a colon or not
+                    match colon_pos {
+                        Some(pos) => {
+                            let k = std::str::from_utf8(&segment[..pos]).unwrap();
+                            let v = std::str::from_utf8(&segment[pos+1..]).unwrap();
+                            parsed_tags.push((Ustr::from(k), Ustr::from(v)));
+                        },
+                        None => {
+                            let tag = std::str::from_utf8(segment).unwrap();
+                            parsed_tags.push((Ustr::from(tag), Ustr::from("")));
+                        }
+                    }
+                    
+                    tag_count += 1;
+                }
+                start = i + 1;
             }
-            if !part.contains(':') {
-                parsed_tags.push((Ustr::from(part), Ustr::from("")));
-            } else if let Some((k, v)) = part.split_once(':') {
-                parsed_tags.push((Ustr::from(k), Ustr::from(v)));
-            }
+            i += 1;
         }
-        parsed_tags.dedup();
-        parsed_tags.sort_unstable();
+        debug!("Parsed tags in {:?}us", sr.elapsed().as_nanos());
+        
+        sr = Instant::now();
+        // In-place deduplication and sorting in one pass
+        if !parsed_tags.is_empty() {
+            parsed_tags.sort_unstable();
+            // Dedup after sorting for better efficiency
+            let mut write_idx = 1;
+            for read_idx in 1..parsed_tags.len() {
+                if parsed_tags[read_idx] != parsed_tags[write_idx - 1] {
+                    if read_idx != write_idx {
+                        parsed_tags[write_idx] = parsed_tags[read_idx].clone();
+                    }
+                    write_idx += 1;
+                }
+            }
+            parsed_tags.truncate(write_idx);
+        }
+        debug!("Deduped and sorted tags in {:?}us", sr.elapsed().as_nanos());
+        
         Ok(SortedTags {
             values: parsed_tags,
         })
@@ -121,6 +170,13 @@ impl SortedTags {
             }
         }
         tags_as_vec
+    }
+
+    pub fn find_all(&self, tag_key: &str) -> Vec<&Ustr> {
+        self.values
+            .iter()
+            .filter_map(|(k, v)| if k == tag_key { Some(v) } else { None })
+            .collect()
     }
 
     pub(crate) fn to_resources(&self) -> Vec<datadog::Resource> {
@@ -647,5 +703,14 @@ mod tests {
         let first_element = tags.values.first().unwrap();
         assert_eq!(first_element.0, Ustr::from("a"));
         assert_eq!(first_element.1, Ustr::from("a1"));
+    }
+
+    #[test]
+    fn sorted_tags_find_all() {
+        let tags = SortedTags::parse("a,a:1,b:2,c:3").unwrap();
+        assert_eq!(tags.find_all("a"), vec![&Ustr::from(""), &Ustr::from("1")]);
+        assert_eq!(tags.find_all("b"), vec![&Ustr::from("2")]);
+        assert_eq!(tags.find_all("c"), vec![&Ustr::from("3")]);
+        assert_eq!(tags.find_all("d"), Vec::<&Ustr>::new());
     }
 }
