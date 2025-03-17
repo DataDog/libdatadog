@@ -557,6 +557,11 @@ impl Configurator {
         path_managed: &Path,
         process_info: &ProcessInfo,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
+        if self.debug_logs {
+            eprintln!("Reading stable configuration from files:");
+            eprintln!("\tlocal: {:?}", path_local);
+            eprintln!("\tfleet: {:?}", path_managed);
+        }
         let local_config = match fs::File::open(path_local) {
             Ok(file) => self.parse_stable_config_file(file)?,
             Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
