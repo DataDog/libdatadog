@@ -3,7 +3,7 @@
 
 use crate::aggregator::Aggregator;
 use crate::datadog::{self};
-use datadog::{DdApi, RetryStrategy, MetricsIntakeUrlPrefix};
+use datadog::{DdApi, MetricsIntakeUrlPrefix, RetryStrategy};
 use reqwest::{Response, StatusCode};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
