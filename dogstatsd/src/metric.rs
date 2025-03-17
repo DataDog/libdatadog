@@ -74,34 +74,67 @@ impl SortedTags {
 
     pub fn parse(tags_section: &str) -> Result<SortedTags, ParseError> {
         let mut sr = Instant::now();
-        // Count the number of commas to pre-allocate the vector
         let comma_count = tags_section.bytes().filter(|&b| b == b',').count();
         let mut parsed_tags = Vec::with_capacity(comma_count + 1);
-        
-        // Process the tags
+
+        // Avoid re-splitting the string and directly work with bytes
+        let bytes = tags_section.as_bytes();
+        let mut start = 0;
         let mut i = 0;
-        for part in tags_section.split(',').filter(|s| !s.is_empty()) {
-            if i >= constants::MAX_TAGS {
-                return Err(ParseError::Raw(format!("Too many tags, more than {i}")));
+        let mut tag_count = 0;
+        
+        while i <= bytes.len() {
+            // Process either at a comma or at the end of the string
+            if i == bytes.len() || bytes[i] == b',' {
+                // Only process if we have content (handles empty segments and trailing commas)
+                if i > start {
+                    if tag_count >= constants::MAX_TAGS {
+                        return Err(ParseError::Raw(format!("Too many tags, more than {tag_count}")));
+                    }
+                    
+                    // Find colon position in current segment
+                    let segment = &bytes[start..i];
+                    let colon_pos = segment.iter().position(|&b| b == b':');
+                    
+                    // Process based on whether there's a colon or not
+                    match colon_pos {
+                        Some(pos) => {
+                            let k = std::str::from_utf8(&segment[..pos]).unwrap();
+                            let v = std::str::from_utf8(&segment[pos+1..]).unwrap();
+                            parsed_tags.push((Ustr::from(k), Ustr::from(v)));
+                        },
+                        None => {
+                            let tag = std::str::from_utf8(segment).unwrap();
+                            parsed_tags.push((Ustr::from(tag), Ustr::from("")));
+                        }
+                    }
+                    
+                    tag_count += 1;
+                }
+                start = i + 1;
             }
-            
-            if let Some(colon_pos) = part.find(':') {
-                // Avoid creating a new string via split_once
-                let (k, v) = (&part[..colon_pos], &part[colon_pos+1..]);
-                parsed_tags.push((Ustr::from(k), Ustr::from(v)));
-            } else {
-                parsed_tags.push((Ustr::from(part), Ustr::from("")));
-            }
-            
             i += 1;
         }
-        debug!("Validation of tags took {:?}us", sr.elapsed().as_nanos());
+        debug!("Parsed tags in {:?}us", sr.elapsed().as_nanos());
+        
         sr = Instant::now();
-        parsed_tags.dedup();
-        debug!("Deduped tags took {:?}us", sr.elapsed().as_nanos());
-        sr = Instant::now();
-        parsed_tags.sort_unstable();
-        debug!("Sorted unstable took {:?}us", sr.elapsed().as_nanos());
+        // In-place deduplication and sorting in one pass
+        if !parsed_tags.is_empty() {
+            parsed_tags.sort_unstable();
+            // Dedup after sorting for better efficiency
+            let mut write_idx = 1;
+            for read_idx in 1..parsed_tags.len() {
+                if parsed_tags[read_idx] != parsed_tags[write_idx - 1] {
+                    if read_idx != write_idx {
+                        parsed_tags[write_idx] = parsed_tags[read_idx].clone();
+                    }
+                    write_idx += 1;
+                }
+            }
+            parsed_tags.truncate(write_idx);
+        }
+        debug!("Deduped and sorted tags in {:?}us", sr.elapsed().as_nanos());
+        
         Ok(SortedTags {
             values: parsed_tags,
         })
