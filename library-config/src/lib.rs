@@ -251,7 +251,7 @@ impl ProcessInfo {
 /// * It skips invalid/unknown keys in the map
 /// * Since the storage is a Boxed slice and not a Hashmap, it doesn't over-allocate
 #[derive(Debug, Default, PartialEq, Eq)]
-struct ConfigMap(Box<[(LibraryConfigName, String)]>);
+struct ConfigMap(Box<[(String, String)]>);
 
 impl<'de> serde::Deserialize<'de> for ConfigMap {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -263,7 +263,7 @@ impl<'de> serde::Deserialize<'de> for ConfigMap {
             type Value = ConfigMap;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("struct ConfigMap(HashMap<LibraryConfig, String>)")
+                formatter.write_str("struct ConfigMap(HashMap<String, String>)")
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -273,7 +273,7 @@ impl<'de> serde::Deserialize<'de> for ConfigMap {
                 let mut configs = Vec::new();
                 configs.reserve_exact(map.size_hint().unwrap_or(0));
                 loop {
-                    let k = match map.next_key::<LibraryConfigName>() {
+                    let k = match map.next_key::<String>() {
                         Ok(Some(k)) => k,
                         Ok(None) => break,
                         Err(_) => {
@@ -288,53 +288,6 @@ impl<'de> serde::Deserialize<'de> for ConfigMap {
             }
         }
         deserializer.deserialize_map(ConfigMapVisitor)
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, serde::Deserialize, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-#[allow(clippy::enum_variant_names)]
-pub enum LibraryConfigName {
-    // Phase 1: product enablement
-    DdApmTracingEnabled,
-    DdRuntimeMetricsEnabled,
-    DdLogsInjection,
-    DdProfilingEnabled,
-    DdDataStreamsEnabled,
-    DdAppsecEnabled,
-    DdIastEnabled,
-    DdDynamicInstrumentationEnabled,
-    DdDataJobsEnabled,
-    DdAppsecScaEnabled,
-
-    // Phase 2: Service tagging + misceanellous stuff
-    DdTraceDebug,
-    DdService,
-    DdEnv,
-    DdVersion,
-}
-
-impl LibraryConfigName {
-    pub fn to_str(&self) -> &'static str {
-        use LibraryConfigName::*;
-        match self {
-            DdApmTracingEnabled => "DD_APM_TRACING_ENABLED",
-            DdRuntimeMetricsEnabled => "DD_RUNTIME_METRICS_ENABLED",
-            DdLogsInjection => "DD_LOGS_INJECTION",
-            DdProfilingEnabled => "DD_PROFILING_ENABLED",
-            DdDataStreamsEnabled => "DD_DATA_STREAMS_ENABLED",
-            DdAppsecEnabled => "DD_APPSEC_ENABLED",
-            DdIastEnabled => "DD_IAST_ENABLED",
-            DdDynamicInstrumentationEnabled => "DD_DYNAMIC_INSTRUMENTATION_ENABLED",
-            DdDataJobsEnabled => "DD_DATA_JOBS_ENABLED",
-            DdAppsecScaEnabled => "DD_APPSEC_SCA_ENABLED",
-
-            DdTraceDebug => "DD_TRACE_DEBUG",
-            DdService => "DD_SERVICE",
-            DdEnv => "DD_ENV",
-            DdVersion => "DD_VERSION",
-        }
     }
 }
 
@@ -440,7 +393,7 @@ fn string_operator_match(op: &Operator, matches: &[u8], value: &[u8]) -> bool {
 /// LibraryConfig represent a configuration item and is part of the public API
 /// of this module
 pub struct LibraryConfig {
-    pub name: LibraryConfigName,
+    pub name: String,
     pub value: String,
     pub source: LibraryConfigSource,
     pub config_id: Option<String>,
@@ -625,7 +578,7 @@ impl Configurator {
         mut stable_config: StableConfig,
         source: LibraryConfigSource,
         process_info: &ProcessInfo,
-        cfg: &mut HashMap<LibraryConfigName, LibraryConfigVal>,
+        cfg: &mut HashMap<String, LibraryConfigVal>,
     ) -> anyhow::Result<()> {
         self.log_process_info(process_info, source);
 
@@ -659,7 +612,7 @@ impl Configurator {
         stable_config: StableConfig,
         source: LibraryConfigSource,
         process_info: &ProcessInfo,
-        library_config: &mut HashMap<LibraryConfigName, LibraryConfigVal>,
+        library_config: &mut HashMap<String, LibraryConfigVal>,
     ) -> anyhow::Result<()> {
         let matcher = Matcher::new(process_info, &stable_config.tags);
         let Some(configs) = matcher.find_stable_config(&stable_config) else {
@@ -672,7 +625,7 @@ impl Configurator {
         for (name, config_val) in configs.0.iter() {
             let value = matcher.template_config(config_val)?;
             library_config.insert(
-                *name,
+                name.clone(),
                 LibraryConfigVal {
                     value,
                     source,
@@ -728,8 +681,8 @@ mod tests {
 
     use super::{Configurator, ProcessInfo};
     use crate::{
-        ConfigMap, LibraryConfig, LibraryConfigName, LibraryConfigSource, Matcher, Operator,
-        Origin, Rule, Selector, StableConfig,
+        ConfigMap, LibraryConfig, LibraryConfigSource, Matcher, Operator, Origin, Rule, Selector,
+        StableConfig,
     };
 
     fn test_config(local_cfg: &[u8], fleet_cfg: &[u8], expected: Vec<LibraryConfig>) {
@@ -748,7 +701,7 @@ mod tests {
             .unwrap();
 
         // Sort by name for determinism
-        actual.sort_by_key(|c| c.name);
+        actual.sort_by_key(|c| c.name.clone());
         assert_eq!(actual, expected);
     }
 
@@ -776,7 +729,6 @@ mod tests {
 
     #[test]
     fn test_local_host_global_config() {
-        use LibraryConfigName::*;
         use LibraryConfigSource::*;
         test_config(
             b"
@@ -795,61 +747,61 @@ apm_configuration_default:
             b"",
             vec![
                 LibraryConfig {
-                    name: DdApmTracingEnabled,
+                    name: "DD_APM_TRACING_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: LocalStableConfig,
                     config_id: None,
                 },
                 LibraryConfig {
-                    name: DdRuntimeMetricsEnabled,
+                    name: "DD_APPSEC_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: LocalStableConfig,
                     config_id: None,
                 },
                 LibraryConfig {
-                    name: DdLogsInjection,
+                    name: "DD_APPSEC_SCA_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: LocalStableConfig,
                     config_id: None,
                 },
                 LibraryConfig {
-                    name: DdProfilingEnabled,
+                    name: "DD_DATA_JOBS_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: LocalStableConfig,
                     config_id: None,
                 },
                 LibraryConfig {
-                    name: DdDataStreamsEnabled,
+                    name: "DD_DATA_STREAMS_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: LocalStableConfig,
                     config_id: None,
                 },
                 LibraryConfig {
-                    name: DdAppsecEnabled,
+                    name: "DD_DYNAMIC_INSTRUMENTATION_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: LocalStableConfig,
                     config_id: None,
                 },
                 LibraryConfig {
-                    name: DdIastEnabled,
+                    name: "DD_IAST_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: LocalStableConfig,
                     config_id: None,
                 },
                 LibraryConfig {
-                    name: DdDynamicInstrumentationEnabled,
+                    name: "DD_LOGS_INJECTION".to_owned(),
                     value: "true".to_owned(),
                     source: LocalStableConfig,
                     config_id: None,
                 },
                 LibraryConfig {
-                    name: DdDataJobsEnabled,
+                    name: "DD_PROFILING_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: LocalStableConfig,
                     config_id: None,
                 },
                 LibraryConfig {
-                    name: DdAppsecScaEnabled,
+                    name: "DD_RUNTIME_METRICS_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: LocalStableConfig,
                     config_id: None,
@@ -860,7 +812,6 @@ apm_configuration_default:
 
     #[test]
     fn test_fleet_host_global_config() {
-        use LibraryConfigName::*;
         use LibraryConfigSource::*;
         test_config(
             b"",
@@ -875,7 +826,6 @@ apm_configuration_default:
   DD_APPSEC_ENABLED: true
   DD_IAST_ENABLED: true
   DD_DYNAMIC_INSTRUMENTATION_ENABLED: true
-  # extra keys should be skipped without errors
   FOO_BAR: quoicoubeh
   DD_DATA_JOBS_ENABLED: true
   DD_APPSEC_SCA_ENABLED: true
@@ -884,62 +834,68 @@ wtf:
     ",
             vec![
                 LibraryConfig {
-                    name: DdApmTracingEnabled,
+                    name: "DD_APM_TRACING_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
                 },
                 LibraryConfig {
-                    name: DdRuntimeMetricsEnabled,
+                    name: "DD_APPSEC_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
                 },
                 LibraryConfig {
-                    name: DdLogsInjection,
+                    name: "DD_APPSEC_SCA_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
                 },
                 LibraryConfig {
-                    name: DdProfilingEnabled,
+                    name: "DD_DATA_JOBS_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
                 },
                 LibraryConfig {
-                    name: DdDataStreamsEnabled,
+                    name: "DD_DATA_STREAMS_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
                 },
                 LibraryConfig {
-                    name: DdAppsecEnabled,
+                    name: "DD_DYNAMIC_INSTRUMENTATION_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
                 },
                 LibraryConfig {
-                    name: DdIastEnabled,
+                    name: "DD_IAST_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
                 },
                 LibraryConfig {
-                    name: DdDynamicInstrumentationEnabled,
+                    name: "DD_LOGS_INJECTION".to_owned(),
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
                 },
                 LibraryConfig {
-                    name: DdDataJobsEnabled,
+                    name: "DD_PROFILING_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
                 },
                 LibraryConfig {
-                    name: DdAppsecScaEnabled,
+                    name: "DD_RUNTIME_METRICS_ENABLED".to_owned(),
                     value: "true".to_owned(),
+                    source: FleetStableConfig,
+                    config_id: Some("abc".to_owned()),
+                },
+                LibraryConfig {
+                    name: "FOO_BAR".to_owned(),
+                    value: "quoicoubeh".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
                 },
@@ -949,7 +905,6 @@ wtf:
 
     #[test]
     fn test_merge_local_fleet() {
-        use LibraryConfigName::*;
         use LibraryConfigSource::*;
 
         test_config(
@@ -968,28 +923,28 @@ apm_configuration_default:
 ",
             vec![
                 LibraryConfig {
-                    name: DdApmTracingEnabled,
+                    name: "DD_APM_TRACING_ENABLED".to_owned(),
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
                 },
                 LibraryConfig {
-                    name: DdRuntimeMetricsEnabled,
-                    value: "true".to_owned(),
-                    source: LocalStableConfig,
-                    config_id: None,
-                },
-                LibraryConfig {
-                    name: DdLogsInjection,
+                    name: "DD_LOGS_INJECTION".to_owned(),
                     value: "true".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
                 },
                 LibraryConfig {
-                    name: DdProfilingEnabled,
+                    name: "DD_PROFILING_ENABLED".to_owned(),
                     value: "false".to_owned(),
                     source: FleetStableConfig,
                     config_id: Some("abc".to_owned()),
+                },
+                LibraryConfig {
+                    name: "DD_RUNTIME_METRICS_ENABLED".to_owned(),
+                    value: "true".to_owned(),
+                    source: LocalStableConfig,
+                    config_id: None,
                 },
             ],
         );
@@ -1018,7 +973,7 @@ rules:
     ",
     b"", 
     vec![LibraryConfig {
-            name: LibraryConfigName::DdService,
+            name: "DD_SERVICE".to_string(),
             value: "my_service_my_cluster_my_config_java".to_string(),
             source: LibraryConfigSource::LocalStableConfig,
             config_id: Some("abc".to_string()),
@@ -1028,7 +983,6 @@ rules:
 
     #[test]
     fn test_parse_static_config() {
-        use LibraryConfigName::*;
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.reopen()
             .unwrap()
@@ -1067,8 +1021,9 @@ rules:
                     }],
                     configuration: ConfigMap(
                         vec![
-                            (DdProfilingEnabled, "true".to_owned()),
-                            (DdService, "my-service".to_owned())
+                            ("DD_PROFILING_ENABLED".to_owned(), "true".to_owned()),
+                            ("DD_SERVICE".to_owned(), "my-service".to_owned()),
+                            ("FOOBAR".to_owned(), "maybe??".to_owned()),
                         ]
                         .into_boxed_slice()
                     ),
@@ -1175,7 +1130,7 @@ rules:
         assert_eq!(
             config,
             vec![LibraryConfig {
-                name: LibraryConfigName::DdService,
+                name: "DD_SERVICE".to_string(),
                 value: "managed".to_string(),
                 source: LibraryConfigSource::FleetStableConfig,
                 config_id: Some("def".to_string()),

@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_library_config::{self as lib_config, LibraryConfigName, LibraryConfigSource};
+use datadog_library_config::{self as lib_config, LibraryConfigSource};
 use ddcommon_ffi::{self as ffi, slice::AsBytes, CharSlice};
 
 // TODO: Centos 6 build
@@ -28,7 +28,7 @@ impl<'a> ProcessInfo<'a> {
 
 #[repr(C)]
 pub struct LibraryConfig {
-    pub name: LibraryConfigName,
+    pub name: ffi::CString,
     pub value: ffi::CString,
 }
 
@@ -38,7 +38,7 @@ impl LibraryConfig {
             .into_iter()
             .map(|c| {
                 Ok(LibraryConfig {
-                    name: c.name,
+                    name: ffi::CString::from_std(std::ffi::CString::new(c.name)?),
                     value: ffi::CString::from_std(std::ffi::CString::new(c.value)?),
                 })
             })
@@ -133,30 +133,6 @@ pub extern "C" fn ddog_library_configurator_get(
     })()
     .and_then(LibraryConfig::rs_vec_to_ffi)
     .into()
-}
-
-#[no_mangle]
-/// Returns a static null-terminated string, containing the name of the environment variable
-/// associated with the library configuration
-pub extern "C" fn ddog_library_config_name_to_env(name: LibraryConfigName) -> ffi::CStr<'static> {
-    use LibraryConfigName::*;
-    ffi::CStr::from_std(match name {
-        DdApmTracingEnabled => ddcommon::cstr!("DD_APM_TRACING_ENABLED"),
-        DdRuntimeMetricsEnabled => ddcommon::cstr!("DD_RUNTIME_METRICS_ENABLED"),
-        DdLogsInjection => ddcommon::cstr!("DD_LOGS_INJECTION"),
-        DdProfilingEnabled => ddcommon::cstr!("DD_PROFILING_ENABLED"),
-        DdDataStreamsEnabled => ddcommon::cstr!("DD_DATA_STREAMS_ENABLED"),
-        DdAppsecEnabled => ddcommon::cstr!("DD_APPSEC_ENABLED"),
-        DdIastEnabled => ddcommon::cstr!("DD_IAST_ENABLED"),
-        DdDynamicInstrumentationEnabled => ddcommon::cstr!("DD_DYNAMIC_INSTRUMENTATION_ENABLED"),
-        DdDataJobsEnabled => ddcommon::cstr!("DD_DATA_JOBS_ENABLED"),
-        DdAppsecScaEnabled => ddcommon::cstr!("DD_APPSEC_SCA_ENABLED"),
-
-        DdTraceDebug => ddcommon::cstr!("DD_TRACE_DEBUG"),
-        DdService => ddcommon::cstr!("DD_SERVICE"),
-        DdEnv => ddcommon::cstr!("DD_ENV"),
-        DdVersion => ddcommon::cstr!("DD_VERSION"),
-    })
 }
 
 #[no_mangle]
