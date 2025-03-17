@@ -6,6 +6,7 @@
 /// TODO remove when str::floor_char_boundary is stable
 #[inline]
 pub(crate) fn floor_char_boundary(s: &str, index: usize) -> usize {
+    #[allow(clippy::unwrap_used)]
     if index >= s.len() {
         s.len()
     } else {

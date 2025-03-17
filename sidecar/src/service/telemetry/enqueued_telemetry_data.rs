@@ -8,7 +8,6 @@ use ddtelemetry::worker::store::Store;
 use ddtelemetry::worker::{TelemetryActions, MAX_ITEMS};
 use futures::future::Shared;
 use futures::FutureExt;
-use lazy_static::lazy_static;
 use manual_future::ManualFuture;
 use serde::Deserialize;
 use serde_with::{serde_as, VecSkipError};
@@ -17,7 +16,7 @@ use std::ops::Sub;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 use tracing::warn;
 
@@ -26,12 +25,19 @@ use crate::service::telemetry::AppInstance;
 use crate::service::SidecarAction;
 
 type ComposerCache = HashMap<PathBuf, (SystemTime, Arc<Vec<data::Dependency>>)>;
-// TODO: APMSP-1076 - Convert to using once_cell::lazy. (Also requires refactoring sidecar::log)
-lazy_static! {
-    static ref COMPOSER_CACHE: tokio::sync::Mutex<ComposerCache> =
-        tokio::sync::Mutex::new(Default::default());
-    static ref LAST_CACHE_CLEAN: AtomicU64 = AtomicU64::new(0);
+
+static COMPOSER_CACHE: OnceLock<tokio::sync::Mutex<ComposerCache>> = OnceLock::new();
+
+fn get_composer_cache() -> &'static tokio::sync::Mutex<ComposerCache> {
+    COMPOSER_CACHE.get_or_init(|| tokio::sync::Mutex::new(Default::default()))
 }
+
+static LAST_CACHE_CLEAN: OnceLock<AtomicU64> = OnceLock::new();
+
+fn get_last_cache_clean() -> &'static AtomicU64 {
+    LAST_CACHE_CLEAN.get_or_init(|| AtomicU64::new(0))
+}
+
 #[serde_as]
 #[derive(Deserialize)]
 struct ComposerPackages {
@@ -179,7 +185,7 @@ impl EnqueuedTelemetryData {
     fn extract_composer_telemetry(path: PathBuf) -> ManualFuture<Arc<Vec<data::Dependency>>> {
         let (deps, completer) = ManualFuture::new();
         tokio::spawn(async {
-            let mut cache = COMPOSER_CACHE.lock().await;
+            let mut cache = get_composer_cache().lock().await;
             let packages = match tokio::fs::metadata(&path).await.and_then(|m| m.modified()) {
                 Err(e) => {
                     warn!("Failed to report dependencies from {path:?}, could not read modification time: {e:?}");
@@ -208,10 +214,10 @@ impl EnqueuedTelemetryData {
                     cache.insert(path, (now, packages.clone()));
                     // cheap way to avoid unbounded caching
                     const CACHE_INTERVAL: u64 = 2000;
-                    let last_clean = LAST_CACHE_CLEAN.load(Ordering::Relaxed);
+                    let last_clean = get_last_cache_clean().load(Ordering::Relaxed);
                     let now_secs = Instant::now().elapsed().as_secs();
                     if now_secs > last_clean + CACHE_INTERVAL
-                        && LAST_CACHE_CLEAN
+                        && get_last_cache_clean()
                             .compare_exchange(
                                 last_clean,
                                 now_secs,

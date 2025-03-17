@@ -5,19 +5,24 @@ use crate::errors::ParseError;
 use crate::{constants, datadog};
 use ddsketch_agent::DDSketch;
 use fnv::FnvHasher;
-use lazy_static::lazy_static;
 use protobuf::Chars;
 use regex::Regex;
 use std::hash::{Hash, Hasher};
+use std::sync::OnceLock;
 use ustr::Ustr;
 
 pub const EMPTY_TAGS: SortedTags = SortedTags { values: Vec::new() };
 
 // https://docs.datadoghq.com/developers/dogstatsd/datagram_shell?tab=metrics#dogstatsd-protocol-v13
-lazy_static! {
-    static ref METRIC_REGEX: Regex = Regex::new(
-        r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[a-zA-Z]+)(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?(?:\|c:(?P<container_id>[^|]+))?(?:\|T(?P<timestamp>[^|]+))?$",
-    ).expect("Failed to create metric regex");
+static METRIC_REGEX: OnceLock<Regex> = OnceLock::new();
+fn get_metric_regex() -> &'static Regex {
+    #[allow(clippy::expect_used)]
+    METRIC_REGEX.get_or_init(|| {
+        Regex::new(
+            r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[a-zA-Z]+)(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?(?:\|c:(?P<container_id>[^|]+))?(?:\|T(?P<timestamp>[^|]+))?$",
+        )
+        .expect("Failed to create metric regex")
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -181,6 +186,7 @@ impl Metric {
         tags: Option<SortedTags>,
         timestamp: Option<i64>,
     ) -> Metric {
+        #[allow(clippy::expect_used)]
         let parsed_timestamp = timestamp_to_bucket(timestamp.unwrap_or_else(|| {
             std::time::UNIX_EPOCH
                 .elapsed()
@@ -204,6 +210,7 @@ impl Metric {
 // Round down to the nearest 10 seconds
 // to form a bucket of metric contexts aggregated per 10s
 pub fn timestamp_to_bucket(timestamp: i64) -> i64 {
+    #[allow(clippy::expect_used)]
     let now_seconds: i64 = std::time::UNIX_EPOCH
         .elapsed()
         .expect("unable to poll clock, unrecoverable")
@@ -228,7 +235,7 @@ pub fn timestamp_to_bucket(timestamp: i64) -> i64 {
 /// example aj-test.increment:1|c|#user:aj-test from 127.0.0.1:50983
 pub fn parse(input: &str) -> Result<Metric, ParseError> {
     // TODO must enforce / exploit constraints given in `constants`.
-    if let Some(caps) = METRIC_REGEX.captures(input) {
+    if let Some(caps) = get_metric_regex().captures(input) {
         // unused for now
         // let sample_rate = caps.name("sample_rate").map(|m| m.as_str());
 
@@ -238,8 +245,14 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
         } else {
             tags = None;
         }
+
+        #[allow(clippy::unwrap_used)]
         let val = first_value(caps.name("values").unwrap().as_str())?;
+
+        #[allow(clippy::unwrap_used)]
         let t = caps.name("type").unwrap().as_str();
+
+        #[allow(clippy::expect_used)]
         let now = std::time::UNIX_EPOCH
             .elapsed()
             .expect("unable to poll clock, unrecoverable")
@@ -266,6 +279,7 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
                 return Err(ParseError::Raw(format!("Invalid metric type: {t}")));
             }
         };
+        #[allow(clippy::unwrap_used)]
         let name = Ustr::from(caps.name("name").unwrap().as_str());
         let id = id(name, &tags, parsed_timestamp);
         return Ok(Metric {

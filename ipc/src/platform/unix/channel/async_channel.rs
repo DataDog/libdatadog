@@ -56,6 +56,7 @@ impl AsyncWrite for AsyncChannel {
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
         let project = self.project();
+        #[allow(clippy::unwrap_used)]
         let handles = project.metadata.lock().unwrap().drain_to_send();
 
         if !handles.is_empty() {
@@ -63,6 +64,7 @@ impl AsyncWrite for AsyncChannel {
             match project.inner.send_with_fd(buf, &fds) {
                 Ok(sent) => Poll::Ready(Ok(sent)),
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    #[allow(clippy::unwrap_used)]
                     project
                         .metadata
                         .lock()
@@ -112,6 +114,7 @@ impl AsyncRead for AsyncChannel {
             loop {
                 break match project.inner.recv_with_fd(b, &mut fds) {
                     Ok((bytes_received, descriptors_received)) => {
+                        #[allow(clippy::unwrap_used)]
                         project
                             .metadata
                             .lock()

@@ -1,10 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use lazy_static::lazy_static;
 use std::error;
 use std::fmt;
 use std::path::Path;
+use std::sync::OnceLock;
 
 mod cgroup_inode;
 mod container_id;
@@ -76,27 +76,32 @@ fn get_cgroup_mount_path() -> &'static str {
     DEFAULT_CGROUP_MOUNT_PATH
 }
 
+// TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
+static CONTAINER_ID: OnceLock<Option<String>> = OnceLock::new();
+
 /// Returns the `container_id` if available in the cgroup file, otherwise returns `None`
 pub fn get_container_id() -> Option<&'static str> {
     // cache container id in a static to avoid recomputing it at each call
-    lazy_static! {
-        static ref CONTAINER_ID: Option<String> =
-            container_id::extract_container_id(Path::new(get_cgroup_path())).ok();
-    }
-    CONTAINER_ID.as_deref()
+    CONTAINER_ID
+        .get_or_init(|| container_id::extract_container_id(Path::new(get_cgroup_path())).ok())
+        .as_deref()
 }
+
+// TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
+static ENTITY_ID: OnceLock<Option<String>> = OnceLock::new();
 
 /// Returns the `entity_id` if available, either `cid-<container_id>` or `in-<cgroup_inode>`
 pub fn get_entity_id() -> Option<&'static str> {
     // cache entity id in a static to avoid recomputing it at each call
-    lazy_static! {
-        static ref ENTITY_ID: Option<String> = compute_entity_id(
-            CGROUP_V1_BASE_CONTROLLER,
-            Path::new(get_cgroup_path()),
-            Path::new(get_cgroup_mount_path()),
-        );
-    }
-    ENTITY_ID.as_deref()
+    ENTITY_ID
+        .get_or_init(|| {
+            compute_entity_id(
+                CGROUP_V1_BASE_CONTROLLER,
+                Path::new(get_cgroup_path()),
+                Path::new(get_cgroup_mount_path()),
+            )
+        })
+        .as_deref()
 }
 
 #[cfg(test)]
@@ -104,14 +109,24 @@ mod tests {
     use super::*;
     use regex::Regex;
 
-    lazy_static! {
-        static ref IN_REGEX: Regex = Regex::new(r"in-\d+").unwrap();
-        static ref CI_REGEX: Regex =
-            Regex::new(&format!(r"ci-{}", container_id::CONTAINER_REGEX.as_str())).unwrap();
+    static IN_REGEX: OnceLock<Regex> = OnceLock::new();
+    static CI_REGEX: OnceLock<Regex> = OnceLock::new();
+
+    fn get_in_regex() -> &'static Regex {
+        IN_REGEX.get_or_init(|| Regex::new(r"in-\d+").unwrap())
     }
 
-    /// The following test can only be run in isolation because of caching behaviour introduced
-    /// by lazy_static
+    fn get_ci_regex() -> &'static Regex {
+        CI_REGEX.get_or_init(|| {
+            Regex::new(&format!(
+                r"ci-{}",
+                container_id::get_container_regex().as_str()
+            ))
+            .unwrap()
+        })
+    }
+
+    /// The following test can only be run in isolation because of caching behaviour
     fn test_entity_id(filename: &str, expected_result: Option<&Regex>) {
         let test_root_dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests"));
 
@@ -139,19 +154,19 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_v2() {
-        test_entity_id("cgroup.v2", Some(&IN_REGEX))
+        test_entity_id("cgroup.v2", Some(get_in_regex()))
     }
 
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_v1() {
-        test_entity_id("cgroup.linux", Some(&IN_REGEX))
+        test_entity_id("cgroup.linux", Some(get_in_regex()))
     }
 
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_container_id() {
-        test_entity_id("cgroup.docker", Some(&CI_REGEX))
+        test_entity_id("cgroup.docker", Some(get_ci_regex()))
     }
 
     #[cfg_attr(miri, ignore)]

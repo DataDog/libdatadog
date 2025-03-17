@@ -140,6 +140,7 @@ impl StringTable {
                     // implementation of `ChainAllocator` will fail if the
                     // underlying allocator fails when asking for a new chunk.
                     // This is expected to be rare.
+                    #[allow(clippy::expect_used)]
                     let s = ArenaAllocator::allocate(&self.bytes, str)
                         .expect("allocator for StringTable::intern to succeed");
 
