@@ -261,8 +261,7 @@ impl DdApi {
                         return Ok(resp);
                     }
                     match retry_strategy {
-                        RetryStrategy::ExponentialBackoff(max_attempts, _)
-                        | RetryStrategy::LienarBackoff(max_attempts, _)
+                         RetryStrategy::LienarBackoff(max_attempts, _)
                         | RetryStrategy::Immediate(max_attempts)
                             if attempts >= max_attempts =>
                         {
@@ -271,8 +270,7 @@ impl DdApi {
                                 "Failed to send request after {max_attempts}".to_string(),
                             ));
                         }
-                        RetryStrategy::ExponentialBackoff(_, delay)
-                        | RetryStrategy::LienarBackoff(_, delay) => {
+                        RetryStrategy::LinearBackoff(_, delay) => {
                             tokio::time::sleep(Duration::from_secs(delay)).await;
                         }
                         _ => {}
@@ -292,8 +290,7 @@ impl DdApi {
 #[derive(Debug, Clone)]
 pub enum RetryStrategy {
     Immediate(u64),               // attempts
-    ExponentialBackoff(u64, u64), // attempts, delay
-    LienarBackoff(u64, u64),      // attempts, delay
+    LinearBackoff(u64, u64),      // attempts, delay
 }
 
 fn build_client(https_proxy: Option<String>, timeout: Duration) -> Result<Client, reqwest::Error> {
