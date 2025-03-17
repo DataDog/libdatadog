@@ -261,7 +261,7 @@ impl DdApi {
                         return Ok(resp);
                     }
                     match retry_strategy {
-                         RetryStrategy::LinearBackoff(max_attempts, _)
+                        RetryStrategy::LinearBackoff(max_attempts, _)
                         | RetryStrategy::Immediate(max_attempts)
                             if attempts >= max_attempts =>
                         {
@@ -289,8 +289,8 @@ impl DdApi {
 
 #[derive(Debug, Clone)]
 pub enum RetryStrategy {
-    Immediate(u64),               // attempts
-    LinearBackoff(u64, u64),      // attempts, delay
+    Immediate(u64),          // attempts
+    LinearBackoff(u64, u64), // attempts, delay
 }
 
 fn build_client(https_proxy: Option<String>, timeout: Duration) -> Result<Client, reqwest::Error> {
