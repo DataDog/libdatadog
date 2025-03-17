@@ -72,7 +72,7 @@ int main(int argc, const char *const *argv) {
   ddog_Configurator *configurator = ddog_library_configurator_new(true, language);
 
   if (args.infer) {
-    ddog_library_configurator_detect_process_context(configurator);
+    ddog_library_configurator_with_detect_process_info(configurator);
   } else {
     ddog_CharSlice args[] = {
         DDOG_CHARSLICE_C("/bin/true"),

@@ -98,7 +98,7 @@ pub extern "C" fn ddog_library_configurator_with_process_info<'a>(
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_library_configurator_detect_process_context(c: &mut Configurator) {
+pub extern "C" fn ddog_library_configurator_with_detect_process_info(c: &mut Configurator) {
     c.process_info = Some(lib_config::ProcessInfo::detect_global(
         c.language.to_utf8_lossy().into_owned(),
     ));
