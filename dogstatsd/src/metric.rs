@@ -74,18 +74,26 @@ impl SortedTags {
 
     pub fn parse(tags_section: &str) -> Result<SortedTags, ParseError> {
         let mut sr = Instant::now();
-        let tag_parts = tags_section.split(',');
-        let mut parsed_tags = Vec::new();
-        // Validate that the tags have the right form.
-        for (i, part) in tag_parts.filter(|s| !s.is_empty()).enumerate() {
+        // Count the number of commas to pre-allocate the vector
+        let comma_count = tags_section.bytes().filter(|&b| b == b',').count();
+        let mut parsed_tags = Vec::with_capacity(comma_count + 1);
+        
+        // Process the tags
+        let mut i = 0;
+        for part in tags_section.split(',').filter(|s| !s.is_empty()) {
             if i >= constants::MAX_TAGS {
                 return Err(ParseError::Raw(format!("Too many tags, more than {i}")));
             }
-            if !part.contains(':') {
-                parsed_tags.push((Ustr::from(part), Ustr::from("")));
-            } else if let Some((k, v)) = part.split_once(':') {
+            
+            if let Some(colon_pos) = part.find(':') {
+                // Avoid creating a new string via split_once
+                let (k, v) = (&part[..colon_pos], &part[colon_pos+1..]);
                 parsed_tags.push((Ustr::from(k), Ustr::from(v)));
+            } else {
+                parsed_tags.push((Ustr::from(part), Ustr::from("")));
             }
+            
+            i += 1;
         }
         debug!("Validation of tags took {:?}us", sr.elapsed().as_nanos());
         sr = Instant::now();
@@ -93,7 +101,7 @@ impl SortedTags {
         debug!("Deduped tags took {:?}us", sr.elapsed().as_nanos());
         sr = Instant::now();
         parsed_tags.sort_unstable();
-        debug!("Sorted unstable took {:?}", sr.elapsed().as_nanos());
+        debug!("Sorted unstable took {:?}us", sr.elapsed().as_nanos());
         Ok(SortedTags {
             values: parsed_tags,
         })
