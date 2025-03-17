@@ -24,7 +24,9 @@ pub fn read_meta_struct(buf: &mut Bytes) -> Result<HashMap<BytesString, Bytes>, 
         let key = read_string_bytes(buf)?;
         let byte_array_len = read_byte_array_len(unsafe { buf.as_mut_slice() })? as usize;
 
-        let data = buf.slice_ref(&buf[0..byte_array_len]).unwrap();
+        let data = buf
+            .slice_ref(&buf[0..byte_array_len])
+            .ok_or_else(|| DecodeError::InvalidFormat("Invalid data length".to_string()))?;
         unsafe {
             // SAFETY: forwarding the buffer requires that buf is borrowed from static.
             *buf.as_mut_slice() = &buf.as_mut_slice()[byte_array_len..];
