@@ -23,28 +23,7 @@ mod tracing_integration_tests {
     use std::os::unix::fs::PermissionsExt;
     use tinybytes::{Bytes, BytesString};
 
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn compare_v04_trace_snapshot_test() {
-        let relative_snapshot_path = "trace-utils/tests/snapshots/";
-        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
-
-        let header_tags = TracerHeaderTags {
-            lang: "test-lang",
-            lang_version: "2.0",
-            lang_interpreter: "interpreter",
-            lang_vendor: "vendor",
-            tracer_version: "1.0",
-            container_id: "id",
-            ..Default::default()
-        };
-
-        let endpoint = Endpoint::from_url(
-            test_agent
-                .get_uri_for_endpoint("v0.4/traces", Some("compare_v04_trace_snapshot_test"))
-                .await,
-        );
-
+    fn get_v04_trace_snapshot_test_payload() -> Bytes {
         let mut span_1 = create_test_json_span(1234, 12342, 12341, 1, false);
         span_1["metrics"] = json!({
             "_dd_metric1": 1.0,
@@ -92,7 +71,32 @@ mod tracing_integration_tests {
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
 
-        let data = tinybytes::Bytes::from(encoded_data);
+        tinybytes::Bytes::from(encoded_data)
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn compare_v04_trace_snapshot_test() {
+        let relative_snapshot_path = "trace-utils/tests/snapshots/";
+        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
+
+        let header_tags = TracerHeaderTags {
+            lang: "test-lang",
+            lang_version: "2.0",
+            lang_interpreter: "interpreter",
+            lang_vendor: "vendor",
+            tracer_version: "1.0",
+            container_id: "id",
+            ..Default::default()
+        };
+
+        let endpoint = Endpoint::from_url(
+            test_agent
+                .get_uri_for_endpoint("v0.4/traces", Some("compare_v04_trace_snapshot_test"))
+                .await,
+        );
+
+        let data = get_v04_trace_snapshot_test_payload();
 
         let payload_collection = TracerPayloadParams::new(
             data,
@@ -311,19 +315,7 @@ mod tracing_integration_tests {
             ..Default::default()
         };
 
-        let mut span_1 = create_test_json_span(1234, 12342, 12341, 1, false);
-        span_1["metrics"] = json!({
-            "_dd_metric1": 1.0,
-            "_dd_metric2": 2.0
-        });
-
-        let span_2 = create_test_json_span(1234, 12343, 12341, 1, false);
-        let mut root_span = create_test_json_span(1234, 12341, 0, 0, true);
-        root_span["type"] = json!("web".to_owned());
-
-        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
-
-        let data = tinybytes::Bytes::from(encoded_data);
+        let data = get_v04_trace_snapshot_test_payload();
 
         let payload_collection = TracerPayloadParams::new(
             data,
