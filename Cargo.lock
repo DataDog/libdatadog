@@ -1796,7 +1796,6 @@ dependencies = [
  "httpmock",
  "hyper 0.14.31",
  "hyper-proxy",
- "hyper-rustls 0.27.3",
  "log",
  "prost 0.11.9",
  "rand",
