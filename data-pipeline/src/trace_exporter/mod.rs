@@ -84,6 +84,8 @@ impl TraceExporterOutputFormat {
     fn add_query(&self, url: &Uri, query: &str) -> Uri {
         let url = format!("{}?{}", url, query);
 
+        // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+        #[allow(clippy::expect_used)]
         Uri::from_str(&url).expect("Failed to create Uri from string")
     }
 }
@@ -96,6 +98,8 @@ impl TraceExporterOutputFormat {
 /// * `path` - The path to be added to the URL.
 fn add_path(url: &Uri, path: &str) -> Uri {
     let p_and_q = url.path_and_query();
+
+    #[allow(clippy::unwrap_used)]
     let new_p_and_q = match p_and_q {
         Some(pq) => {
             let p = pq.path();
@@ -111,6 +115,7 @@ fn add_path(url: &Uri, path: &str) -> Uri {
     let mut parts = url.clone().into_parts();
     parts.path_and_query = Some(new_p_and_q);
     // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+    #[allow(clippy::unwrap_used)]
     Uri::from_parts(parts).unwrap()
 }
 
@@ -356,7 +361,9 @@ impl TraceExporter {
             self.runtime.block_on(async {
                 cancellation_token.cancel();
             });
+            #[allow(clippy::unwrap_used)]
             let bucket_size = stats_concentrator.lock().unwrap().get_bucket_size();
+
             self.client_side_stats
                 .store(Arc::new(StatsComputationStatus::DisabledByAgent {
                     bucket_size,
@@ -403,7 +410,9 @@ impl TraceExporter {
                         exporter_handle: _,
                     } => {
                         if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
+                            #[allow(clippy::unwrap_used)]
                             let mut concentrator = stats_concentrator.lock().unwrap();
+
                             concentrator.set_span_kinds(
                                 agent_info
                                     .info
@@ -459,6 +468,8 @@ impl TraceExporter {
             req_builder = req_builder
                 .header("Content-type", "application/msgpack")
                 .header("X-Datadog-Trace-Count", trace_count.to_string().as_str());
+
+            #[allow(clippy::unwrap_used)]
             let req = req_builder
                 .body(Body::from(Bytes::copy_from_slice(data)))
                 // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
@@ -474,6 +485,7 @@ impl TraceExporter {
                     if !response_status.is_success() {
                         // TODO: Properly handle non-OK states to prevent possible panics
                         // (APMSP-18190).
+                        #[allow(clippy::unwrap_used)]
                         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
                         let response_body =
                             String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
@@ -555,7 +567,9 @@ impl TraceExporter {
             exporter_handle: _,
         } = &**self.client_side_stats.load()
         {
+            #[allow(clippy::unwrap_used)]
             let mut stats_concentrator = stats_concentrator.lock().unwrap();
+
             match collection {
                 TraceCollection::TraceChunk(traces) => {
                     let spans = traces.iter().flat_map(|trace| trace.iter());

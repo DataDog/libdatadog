@@ -52,7 +52,7 @@
 //! ```
 
 use crate::config::parse_env;
-use lazy_static::lazy_static;
+use std::sync::OnceLock;
 
 const EXTERNAL_ENV_ENVIRONMENT_VARIABLE: &str = "DD_EXTERNAL_ENV";
 
@@ -93,11 +93,12 @@ pub fn get_entity_id() -> Option<&'static str> {
     }
 }
 
+// TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
+static DD_EXTERNAL_ENV: OnceLock<Option<String>> = OnceLock::new();
+
 /// Returns the `DD_EXTERNAL_ENV` if available as an env variable
 pub fn get_external_env() -> Option<&'static str> {
-    lazy_static! {
-        static ref DD_EXTERNAL_ENV: Option<String> =
-            parse_env::str_not_empty(EXTERNAL_ENV_ENVIRONMENT_VARIABLE);
-    }
-    DD_EXTERNAL_ENV.as_deref()
+    DD_EXTERNAL_ENV
+        .get_or_init(|| parse_env::str_not_empty(EXTERNAL_ENV_ENVIRONMENT_VARIABLE))
+        .as_deref()
 }
