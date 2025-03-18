@@ -255,7 +255,10 @@ impl DdApi {
                     match resp {
                         Ok(resp) if resp.status().is_success() => return Ok(resp),
                         Ok(resp) => {
-                            debug!("Statsd non-success status code but OK response: {:?}", resp.status());
+                            debug!(
+                                "Statsd non-success status code but OK response: {:?}",
+                                resp.status()
+                            );
                             return Ok(resp);
                         }
                         Err(resp) => {
