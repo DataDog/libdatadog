@@ -166,12 +166,7 @@ impl DdApi {
         let safe_body = serde_json::to_vec(&series)
             .map_err(|e| ShippingError::Payload(format!("Failed to serialize series: {e}")))?;
         debug!("Sending body: {:?}", &series);
-        self.ship_data(
-            url,
-            safe_body,
-            "application/json",
-        )
-        .await
+        self.ship_data(url, safe_body, "application/json").await
     }
 
     pub async fn ship_distributions(
@@ -183,12 +178,8 @@ impl DdApi {
             .write_to_bytes()
             .map_err(|e| ShippingError::Payload(format!("Failed to serialize series: {e}")))?;
         debug!("Sending distributions: {:?}", &sketches);
-        self.ship_data(
-            url,
-            safe_body,
-            "application/x-protobuf",
-        )
-        .await
+        self.ship_data(url, safe_body, "application/x-protobuf")
+            .await
         // TODO maybe go to coded output stream if we incrementally
         // add sketch payloads to the buffer
         // something like this, but fix the utf-8 encoding issue
