@@ -101,7 +101,13 @@ impl ProfileProtoMap {
 
         // PANIC: the global allocator doesn't panic, and the other condition
         // is a value over 2 GiB
-        let range = try_encode_with_tag(encodable, tag, &mut self.buf).unwrap();
+        let range = match try_encode_with_tag(encodable, tag, &mut self.buf) {
+            Ok(range) => range,
+            Err(err) => {
+                self.buf.truncate(checkpoint);
+                panic!("failed inserting message with tag {tag}: {err}")
+            }
+        };
         debug_assert!(range.end >= range.start);
 
         let byte_range = ByteRange {

@@ -54,6 +54,10 @@ pub fn try_encode_with_tag(
     let encoded_len = encodable.encoded_len();
     let required =
         encoding::key_len(tag) + encoding::encoded_len_varint(encoded_len as u64) + encoded_len;
+
+    // Overflow: since all of our individual Mapping, Function, and Location
+    // messages are bounded in size, required will always be "small." So a
+    // buf.len() + required will not overflow usize, not even on 32-bit.
     if buf.len() + required > PROTOBUF_MAX_MESSAGE_BYTES {
         let len = buf.len();
         Err(EncodeError::TooLarge { len, required })
