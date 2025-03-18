@@ -28,7 +28,7 @@ derivative = "2.2.0"
 futures = { version = "0.3", default-features = false }
 futures-core = {version = "0.3.0", default-features = false}
 futures-util = {version = "0.3.0", default-features = false}
-hashbrown = { version = "0.14", default-features = false, features = ["allocator-api2"] }
+hashbrown = { version = "0.15.2", default-features = false, features = ["allocator-api2"] }
 http = "0.2"
 http-body = "0.4"
 hyper = {version = "0.14", features = ["client", "backports", "deprecated"], default-features = false}
