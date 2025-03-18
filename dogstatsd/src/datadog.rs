@@ -254,31 +254,28 @@ impl DdApi {
                     let resp = builder.send().await;
                     match resp {
                         Ok(resp) if resp.status().is_success() => return Ok(resp),
-                        Ok(resp) => {
-                            debug!(
-                                "Statsd non-success status code but OK response: {:?}",
-                                resp.status()
-                            );
-                            return Ok(resp);
+                        _ => {}
+                    }
+
+                    match retry_strategy {
+                        RetryStrategy::LinearBackoff(max_attempts, _)
+                        | RetryStrategy::Immediate(max_attempts)
+                            if attempts >= max_attempts =>
+                        {
+                            let status = match resp {
+                                Ok(resp) => Some(resp.status()),
+                                Err(err) => err.status(),
+                            };
+                            // handle if status code missing like timeout
+                            return Err(ShippingError::Destination(
+                                status,
+                                "Failed to send request after {max_attempts}".to_string(),
+                            ));
                         }
-                        Err(resp) => {
-                            match retry_strategy {
-                                RetryStrategy::LinearBackoff(max_attempts, _)
-                                | RetryStrategy::Immediate(max_attempts)
-                                    if attempts >= max_attempts =>
-                                {
-                                    // handle if status code missing like timeout
-                                    return Err(ShippingError::Destination(
-                                        resp.status(),
-                                        "Failed to send request after {max_attempts}".to_string(),
-                                    ));
-                                }
-                                RetryStrategy::LinearBackoff(_, delay) => {
-                                    tokio::time::sleep(Duration::from_secs(delay)).await;
-                                }
-                                _ => {}
-                            }
+                        RetryStrategy::LinearBackoff(_, delay) => {
+                            tokio::time::sleep(Duration::from_millis(delay)).await;
                         }
+                        _ => {}
                     }
                 }
                 None => {
@@ -383,6 +380,7 @@ impl Series {
 #[cfg(test)]
 mod test {
     use super::*;
+    use mockito::Server;
 
     #[test]
     fn override_can_be_empty() {
@@ -447,5 +445,77 @@ mod test {
                 "https://api.a_site".to_string()
             ))
         );
+    }
+
+    #[test]
+    fn test_send_with_retry_immediate_failure() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("POST", "/test")
+            .with_status(500)
+            .with_body("Internal Server Error")
+            .expect(3)
+            .create();
+
+        let client = Client::new();
+        let builder = client.post(format!("{}/test", server.url()));
+        let retry_strategy = RetryStrategy::Immediate(3);
+        let dd_api = DdApi::new(
+            "test_key".to_string(),
+            MetricsIntakeUrlPrefix::new_expect_validated(server.url()),
+            None,
+            Duration::from_secs(1),
+            retry_strategy.clone(),
+        );
+
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(dd_api.send_with_retry(builder, retry_strategy));
+
+        // The result should be an error since we got a 500 response
+        assert!(result.is_err());
+
+        // Verify that the mock was called exactly 3 times
+        mock.assert();
+    }
+
+    #[test]
+    fn test_send_with_retry_linear_backoff_success() {
+        let mut server = Server::new();
+        let mock = server
+            .mock("POST", "/test")
+            .with_status(500)
+            .with_body("Internal Server Error")
+            .expect(1)
+            .create();
+
+        let success_mock = server
+            .mock("POST", "/test")
+            .with_status(200)
+            .with_body("Success")
+            .expect(1)
+            .create();
+
+        let client = Client::new();
+        let builder = client.post(format!("{}/test", server.url()));
+        let retry_strategy = RetryStrategy::LinearBackoff(3, 1); // 3 attempts, 1ms delay
+        let dd_api = DdApi::new(
+            "test_key".to_string(),
+            MetricsIntakeUrlPrefix::new_expect_validated(server.url()),
+            None,
+            Duration::from_secs(1),
+            retry_strategy.clone(),
+        );
+
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(dd_api.send_with_retry(builder, retry_strategy));
+
+        // The result should be Ok since we got a 200 response on retry
+        assert!(result.is_ok());
+
+        // Verify that both mocks were called exactly once
+        mock.assert();
+        success_mock.assert();
     }
 }
