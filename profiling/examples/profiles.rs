@@ -43,7 +43,7 @@ fn main() {
                 ..Default::default()
             },
         ],
-        values: vec![1, 10000],
+        values: &[1, 10000],
         labels: vec![],
     };
 

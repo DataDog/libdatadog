@@ -32,6 +32,8 @@ pub enum BuilderErrorKind {
     InvalidUri(String),
     /// Indicates that the telemetry configuration is invalid.
     InvalidTelemetryConfig,
+    /// Indicates any incompatible configuration
+    InvalidConfiguration(String),
 }
 
 impl Display for BuilderErrorKind {
@@ -40,6 +42,9 @@ impl Display for BuilderErrorKind {
             BuilderErrorKind::InvalidUri(msg) => write!(f, "Invalid URI: {}", msg),
             BuilderErrorKind::InvalidTelemetryConfig => {
                 write!(f, "Invalid telemetry configuration")
+            }
+            BuilderErrorKind::InvalidConfiguration(msg) => {
+                write!(f, "Invalid configuration: {}", msg)
             }
         }
     }
@@ -90,6 +95,7 @@ impl NetworkError {
 
 impl Display for NetworkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[allow(clippy::unwrap_used)]
         std::fmt::Display::fmt(self.source().unwrap(), f)
     }
 }

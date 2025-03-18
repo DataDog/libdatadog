@@ -39,11 +39,12 @@ where
         span_id_to_service.insert(span.span_id, span.service.clone());
     }
     for span in trace.iter_mut() {
-        if span.parent_id == 0 {
+        let parent_id = span.parent_id;
+        if parent_id == 0 {
             set_top_level_span(span, true);
             continue;
         }
-        match span_id_to_service.get(&span.parent_id) {
+        match span_id_to_service.get(&parent_id) {
             Some(parent_span_service) => {
                 if !parent_span_service.eq(&span.service) {
                     // parent is not in the same service
@@ -85,7 +86,7 @@ pub fn is_partial_snapshot<T: SpanText>(span: &Span<T>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v04::SpanBytes;
+    use crate::span::SpanBytes;
 
     fn create_test_span(
         trace_id: u64,
@@ -113,6 +114,7 @@ mod tests {
             r#type: "".into(),
             meta_struct: HashMap::new(),
             span_links: vec![],
+            span_events: vec![],
         };
         if is_top_level {
             span.metrics.insert("_top_level".into(), 1.0);

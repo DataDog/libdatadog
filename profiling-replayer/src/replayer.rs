@@ -136,6 +136,7 @@ impl<'pprof> Replayer<'pprof> {
 
         let timestamp = labels.iter().find_map(|label| {
             if label.key == "end_timestamp_ns" {
+                #[allow(clippy::expect_used)]
                 Some(Timestamp::try_from(label.num).expect("non-zero timestamp"))
             } else {
                 None
@@ -235,7 +236,7 @@ impl<'pprof> Replayer<'pprof> {
                 timestamp,
                 api::Sample {
                     locations: Self::sample_locations(profile_index, sample)?,
-                    values: sample.values.clone(),
+                    values: &(sample.values),
                     labels,
                 },
             ));

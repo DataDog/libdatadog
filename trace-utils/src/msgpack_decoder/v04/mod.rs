@@ -1,11 +1,11 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-mod span;
+pub(crate) mod span;
 
 use self::span::decode_span;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::v04::SpanBytes;
+use crate::span::SpanBytes;
 
 /// Decodes a slice of bytes into a vector of `TracerPayloadV04` objects.
 ///
@@ -57,6 +57,7 @@ pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, us
 
     let start_len = data.len();
 
+    #[allow(clippy::expect_used)]
     Ok((
         (0..trace_count).try_fold(
             Vec::with_capacity(

@@ -3,6 +3,8 @@
 
 pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
+use crate::span::v05;
+use crate::span::v05::dict::SharedDict;
 pub use crate::tracer_header_tags::TracerHeaderTags;
 use crate::tracer_payload;
 use crate::tracer_payload::{TraceCollection, TracerPayloadCollection};
@@ -518,12 +520,18 @@ pub fn enrich_span_with_google_cloud_function_metadata(
     mini_agent_metadata: &MiniAgentMetadata,
     function: Option<String>,
 ) {
-    let Some(region) = &mini_agent_metadata.gcp_region else {
+    #[allow(clippy::todo)]
+    let Some(region) = &mini_agent_metadata.gcp_region
+    else {
         todo!()
     };
-    let Some(project) = &mini_agent_metadata.gcp_project_id else {
+    #[allow(clippy::todo)]
+    let Some(project) = &mini_agent_metadata.gcp_project_id
+    else {
         todo!()
     };
+
+    #[allow(clippy::unwrap_used)]
     if function.is_some() && !region.is_empty() && !project.is_empty() {
         let resource_name = format!(
             "projects/{}/locations/{}/functions/{}",
@@ -594,9 +602,32 @@ pub fn collect_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
     tracer_header_tags: &TracerHeaderTags,
     process_chunk: &mut T,
     is_agentless: bool,
-) -> TracerPayloadCollection {
+    use_v05_format: bool,
+) -> anyhow::Result<TracerPayloadCollection> {
     match traces {
-        TraceCollection::V04(traces) => TracerPayloadCollection::V04(traces),
+        TraceCollection::TraceChunk(traces) => {
+            if use_v05_format {
+                let mut shared_dict = SharedDict::default();
+                let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
+                for trace in traces {
+                    let v05_trace = trace.iter().try_fold(
+                        Vec::with_capacity(trace.len()),
+                        |mut acc, span| -> anyhow::Result<Vec<v05::Span>> {
+                            acc.push(v05::from_span_bytes(span, &mut shared_dict)?);
+                            Ok(acc)
+                        },
+                    )?;
+
+                    v05_traces.push(v05_trace);
+                }
+                Ok(TracerPayloadCollection::V05((
+                    shared_dict.dict(),
+                    v05_traces,
+                )))
+            } else {
+                Ok(TracerPayloadCollection::V04(traces))
+            }
+        }
         TraceCollection::V07(mut traces) => {
             let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
 
@@ -655,11 +686,9 @@ pub fn collect_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
                 }
             }
 
-            TracerPayloadCollection::V07(vec![construct_tracer_payload(
-                trace_chunks,
-                tracer_header_tags,
-                root_span_tags,
-            )])
+            Ok(TracerPayloadCollection::V07(vec![
+                construct_tracer_payload(trace_chunks, tracer_header_tags, root_span_tags),
+            ]))
         }
     }
 }
@@ -683,10 +712,16 @@ pub fn is_partial_snapshot(span: &pb::Span) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::create_test_span;
+    use crate::test_utils::{create_test_no_alloc_span, create_test_span};
     use ddcommon::Endpoint;
     use hyper::Request;
     use serde_json::json;
+    use tinybytes::BytesString;
+
+    fn find_index_in_dict(dict: &[BytesString], value: &str) -> Option<u32> {
+        let idx = dict.iter().position(|e| e.as_str() == value);
+        idx.map(|idx| idx.try_into().unwrap())
+    }
 
     #[test]
     fn test_coalescing_does_not_exceed_max_size() {
@@ -1084,5 +1119,87 @@ mod tests {
             })
             .collect();
         assert_eq!(spans_marked_as_top_level, [1, 4, 5])
+    }
+
+    #[test]
+    fn test_collect_trace_chunks_v05() {
+        let chunk = vec![create_test_no_alloc_span(123, 456, 789, 1, true)];
+
+        let collection = collect_trace_chunks(
+            TraceCollection::TraceChunk(vec![chunk]),
+            &TracerHeaderTags::default(),
+            &mut tracer_payload::DefaultTraceChunkProcessor,
+            false,
+            true,
+        )
+        .unwrap();
+
+        let (dict, traces) = match collection {
+            TracerPayloadCollection::V05(payload) => payload,
+            _ => panic!("Unexpected type"),
+        };
+
+        assert_eq!(dict.len(), 16);
+
+        let span = &traces[0][0];
+        assert_eq!(span.service, 1);
+        assert_eq!(span.name, 2);
+        assert_eq!(span.resource, 3);
+        assert_eq!(span.trace_id, 123);
+        assert_eq!(span.span_id, 456);
+        assert_eq!(span.parent_id, 789);
+        assert_eq!(span.start, 1);
+        assert_eq!(span.error, 0);
+        assert_eq!(span.error, 0);
+        assert_eq!(span.r#type, 15);
+        assert_eq!(
+            *span
+                .meta
+                .get(&find_index_in_dict(&dict, "service").unwrap())
+                .unwrap(),
+            find_index_in_dict(&dict, "test-service").unwrap()
+        );
+        assert_eq!(
+            *span
+                .meta
+                .get(&find_index_in_dict(&dict, "env").unwrap())
+                .unwrap(),
+            find_index_in_dict(&dict, "test-env").unwrap()
+        );
+        assert_eq!(
+            *span
+                .meta
+                .get(&find_index_in_dict(&dict, "runtime-id").unwrap())
+                .unwrap(),
+            find_index_in_dict(&dict, "test-runtime-id-value").unwrap()
+        );
+        assert_eq!(
+            *span
+                .meta
+                .get(&find_index_in_dict(&dict, "_dd.origin").unwrap())
+                .unwrap(),
+            find_index_in_dict(&dict, "cloudfunction").unwrap()
+        );
+        assert_eq!(
+            *span
+                .meta
+                .get(&find_index_in_dict(&dict, "origin").unwrap())
+                .unwrap(),
+            find_index_in_dict(&dict, "cloudfunction").unwrap()
+        );
+        assert_eq!(
+            *span
+                .meta
+                .get(&find_index_in_dict(&dict, "functionname").unwrap())
+                .unwrap(),
+            find_index_in_dict(&dict, "dummy_function_name").unwrap()
+        );
+        assert_eq!(
+            *span
+                .metrics
+                .get(&find_index_in_dict(&dict, "_top_level").unwrap())
+                .unwrap(),
+            1.0
+        );
     }
 }

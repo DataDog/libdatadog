@@ -46,7 +46,7 @@ impl TimestampedObservations {
         }
     }
 
-    pub fn add(&mut self, sample: Sample, ts: Timestamp, values: Vec<i64>) -> anyhow::Result<()> {
+    pub fn add(&mut self, sample: Sample, ts: Timestamp, values: &[i64]) -> anyhow::Result<()> {
         // We explicitly turn the data into a stream of bytes, feeding it to the compressor.
         // @ivoanjo: I played with introducing a structure to serialize it all-at-once, but it seems
         // to be a lot of boilerplate (of which cost I'm not sure) to basically do the same
@@ -72,6 +72,7 @@ impl TimestampedObservations {
     }
 
     pub fn into_iter(self) -> TimestampedObservationsIter {
+        #[allow(clippy::unwrap_used)]
         TimestampedObservationsIter {
             decoder: FrameDecoder::new(Cursor::new(
                 self.compressed_timestamped_data.finish().unwrap(),

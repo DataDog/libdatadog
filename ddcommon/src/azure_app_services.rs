@@ -1,9 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use lazy_static::lazy_static;
 use regex::Regex;
 use std::env;
+use std::sync::OnceLock;
 
 const WEBSITE_ONWER_NAME: &str = "WEBSITE_OWNER_NAME";
 const WEBSITE_SITE_NAME: &str = "WEBSITE_SITE_NAME";
@@ -102,6 +102,7 @@ impl AzureMetadata {
     }
 
     fn extract_resource_group(s: Option<String>) -> Option<String> {
+        #[allow(clippy::unwrap_used)]
         let re: Regex = Regex::new(r".+\+(.+)-.+webspace(-Linux)?").unwrap();
 
         s.as_ref().and_then(|text| {
@@ -250,18 +251,17 @@ impl AzureMetadata {
     }
 }
 
+// TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
+static AAS_METADATA: OnceLock<Option<AzureMetadata>> = OnceLock::new();
+
 pub fn get_metadata() -> &'static Option<AzureMetadata> {
-    lazy_static! {
-        static ref AAS_METATDATA: Option<AzureMetadata> = AzureMetadata::new(RealEnv {});
-    }
-    &AAS_METATDATA
+    AAS_METADATA.get_or_init(|| AzureMetadata::new(RealEnv {}))
 }
 
+// TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
+static AAS_METADATA_FUNCTION: OnceLock<Option<AzureMetadata>> = OnceLock::new();
 pub fn get_function_metadata() -> &'static Option<AzureMetadata> {
-    lazy_static! {
-        static ref AAS_METATDATA: Option<AzureMetadata> = AzureMetadata::new_function(RealEnv {});
-    }
-    &AAS_METATDATA
+    AAS_METADATA_FUNCTION.get_or_init(|| AzureMetadata::new_function(RealEnv {}))
 }
 
 #[cfg(test)]

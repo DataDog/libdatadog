@@ -15,7 +15,6 @@ bench = false
 
 [dependencies]
 regex = "1"
-lazy_static = "1.4"
 
 [[bin]]
 name = "dedup_headers"

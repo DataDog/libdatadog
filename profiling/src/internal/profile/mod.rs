@@ -17,8 +17,8 @@ use crate::serializer::CompressedProtobufSerializer;
 use anyhow::Context;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::rc::Rc;
-use std::sync::RwLock;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 pub struct Profile {
@@ -42,7 +42,7 @@ pub struct Profile {
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
-    string_storage: Option<Rc<RwLock<ManagedStringStorage>>>,
+    string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
     string_storage_cached_profile_id: Option<CachedProfileId>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
@@ -152,7 +152,7 @@ impl Profile {
 
     fn add_sample_internal(
         &mut self,
-        values: Vec<i64>,
+        values: &[i64],
         labels: Vec<LabelId>,
         locations: Vec<LocationId>,
         timestamp: Option<Timestamp>,
@@ -205,27 +205,19 @@ impl Profile {
             // which already ensured that the string storage exists.
             .ok_or_else(|| anyhow::anyhow!("Current sample makes use of ManagedStringIds but profile was not created using a string table"))?;
 
+        let mut write_locked_storage = string_storage
+            .lock()
+            .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
+
         let cached_profile_id = match self.string_storage_cached_profile_id.as_ref() {
             Some(cached_profile_id) => cached_profile_id,
             None => {
-                let new_id = string_storage
-                    .write()
-                    .map_err(|_| {
-                        anyhow::anyhow!(
-                            "acquisition of write lock on string storage should succeed"
-                        )
-                    })?
-                    .next_cached_profile_id()?;
+                let new_id = write_locked_storage.next_cached_profile_id()?;
                 self.string_storage_cached_profile_id.get_or_insert(new_id)
             }
         };
 
-        string_storage
-            .read()
-            .map_err(|_| {
-                anyhow::anyhow!("acquisition of read lock on string storage should succeed")
-            })?
-            .get_seq_num(non_empty_string_id, &mut self.strings, cached_profile_id)
+        write_locked_storage.get_seq_num(non_empty_string_id, &mut self.strings, cached_profile_id)
     }
 
     /// Creates a profile with `start_time`.
@@ -254,7 +246,7 @@ impl Profile {
         start_time: SystemTime,
         sample_types: &[api::ValueType],
         period: Option<api::Period>,
-        string_storage: Rc<RwLock<ManagedStringStorage>>,
+        string_storage: Arc<Mutex<ManagedStringStorage>>,
     ) -> Self {
         Self::new_internal(
             Self::backup_period(period),
@@ -475,33 +467,72 @@ impl Profile {
         })
     }
 
-    fn add_mapping(&mut self, mapping: &api::Mapping) -> MappingId {
+    fn add_mapping(&mut self, mapping: &api::Mapping) -> Option<MappingId> {
+        #[inline]
+        fn is_zero_mapping(mapping: &api::Mapping) -> bool {
+            // - PHP, Python, and Ruby use a mapping only as required.
+            // - .NET uses only the filename.
+            // - The native profiler uses all fields.
+            // We strike a balance for optimizing for the dynamic languages
+            // and the others by mixing branches and branchless programming.
+            let filename = mapping.filename.len();
+            let build_id = mapping.build_id.len();
+            if 0 != (filename | build_id) {
+                return false;
+            }
+
+            let memory_start = mapping.memory_start;
+            let memory_limit = mapping.memory_limit;
+            let file_offset = mapping.file_offset;
+            0 == (memory_start | memory_limit | file_offset)
+        }
+
+        if is_zero_mapping(mapping) {
+            return None;
+        }
+
         let filename = self.intern(mapping.filename);
         let build_id = self.intern(mapping.build_id);
 
-        self.mappings.dedup(Mapping {
-            memory_start: mapping.memory_start,
-            memory_limit: mapping.memory_limit,
-            file_offset: mapping.file_offset,
-            filename,
-            build_id,
-        })
-    }
-
-    fn add_string_id_mapping(
-        &mut self,
-        mapping: &api::StringIdMapping,
-    ) -> anyhow::Result<MappingId> {
-        let filename = self.resolve(mapping.filename)?;
-        let build_id = self.resolve(mapping.build_id)?;
-
-        Ok(self.mappings.dedup(Mapping {
+        Some(self.mappings.dedup(Mapping {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
             file_offset: mapping.file_offset,
             filename,
             build_id,
         }))
+    }
+
+    fn add_string_id_mapping(
+        &mut self,
+        mapping: &api::StringIdMapping,
+    ) -> anyhow::Result<Option<MappingId>> {
+        #[inline]
+        fn is_zero_mapping(mapping: &api::StringIdMapping) -> bool {
+            // See the other is_zero_mapping for more info, but only Ruby is
+            // using this API at the moment, so we optimize for the whole
+            // thing being a zero representation.
+            let memory_start = mapping.memory_start;
+            let memory_limit = mapping.memory_limit;
+            let file_offset = mapping.file_offset;
+            let strings = (mapping.filename.value | mapping.build_id.value) as u64;
+            0 == (memory_start | memory_limit | file_offset | strings)
+        }
+
+        if is_zero_mapping(mapping) {
+            return Ok(None);
+        }
+
+        let filename = self.resolve(mapping.filename)?;
+        let build_id = self.resolve(mapping.build_id)?;
+
+        Ok(Some(self.mappings.dedup(Mapping {
+            memory_start: mapping.memory_start,
+            memory_limit: mapping.memory_limit,
+            file_offset: mapping.file_offset,
+            filename,
+            build_id,
+        })))
     }
 
     fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {
@@ -597,7 +628,7 @@ impl Profile {
         owned_period: Option<owned_types::Period>,
         owned_sample_types: Option<Box<[owned_types::ValueType]>>,
         start_time: SystemTime,
-        string_storage: Option<Rc<RwLock<ManagedStringStorage>>>,
+        string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
     ) -> Self {
         let mut profile = Self {
             owned_period,
@@ -811,7 +842,7 @@ mod api_tests {
             .add_sample(
                 api::Sample {
                     locations,
-                    values: vec![1, 10000],
+                    values: &[1, 10000],
                     labels: vec![],
                 },
                 None,
@@ -860,7 +891,7 @@ mod api_tests {
             ..Default::default()
         }];
 
-        let values: Vec<i64> = vec![1];
+        let values = &[1];
         let labels = vec![api::Label {
             key: "pid",
             num: 101,
@@ -869,13 +900,13 @@ mod api_tests {
 
         let main_sample = api::Sample {
             locations: main_locations,
-            values: values.clone(),
+            values,
             labels: labels.clone(),
         };
 
         let test_sample = api::Sample {
             locations: test_locations,
-            values: values.clone(),
+            values,
             labels: labels.clone(),
         };
 
@@ -1094,7 +1125,7 @@ mod api_tests {
 
         let sample = api::Sample {
             locations: vec![],
-            values: vec![1, 10000],
+            values: &[1, 10000],
             labels: vec![id_label],
         };
 
@@ -1133,13 +1164,13 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000],
+            values: &[1, 10000],
             labels: vec![id_label, other_label],
         };
 
         let sample2 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000],
+            values: &[1, 10000],
             labels: vec![id2_label, other_label],
         };
 
@@ -1283,7 +1314,7 @@ mod api_tests {
 
         let sample = api::Sample {
             locations: vec![],
-            values: vec![10000],
+            values: &[10000],
             labels,
         };
 
@@ -1308,7 +1339,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000],
+            values: &[1, 10000],
             labels: vec![id_label],
         };
 
@@ -1348,7 +1379,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![0, 10000, 42],
+            values: &[0, 10000, 42],
             labels: vec![],
         };
 
@@ -1376,7 +1407,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![],
         };
 
@@ -1404,7 +1435,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 16, 29],
+            values: &[1, 16, 29],
             labels: vec![],
         };
 
@@ -1436,7 +1467,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 16, 29],
+            values: &[1, 16, 29],
             labels: vec![],
         };
 
@@ -1468,7 +1499,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 16, 0],
+            values: &[1, 16, 0],
             labels: vec![],
         };
 
@@ -1500,7 +1531,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 16, 0],
+            values: &[1, 16, 0],
             labels: vec![],
         };
 
@@ -1547,7 +1578,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 21],
+            values: &[1, 10000, 21],
             labels: vec![],
         };
 
@@ -1570,7 +1601,7 @@ mod api_tests {
 
         let sample2 = api::Sample {
             locations: main_locations,
-            values: vec![5, 24, 99],
+            values: &[5, 24, 99],
             labels: vec![],
         };
 
@@ -1604,7 +1635,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 21],
+            values: &[1, 10000, 21],
             labels: vec![],
         };
 
@@ -1626,7 +1657,7 @@ mod api_tests {
 
         let sample2 = api::Sample {
             locations: main_locations,
-            values: vec![5, 24, 99],
+            values: &[5, 24, 99],
             labels: vec![],
         };
 
@@ -1671,7 +1702,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![id_label],
         };
 
@@ -1727,7 +1758,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![id_label],
         };
 
@@ -1762,7 +1793,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![id_label],
         };
 
@@ -1784,7 +1815,7 @@ mod api_tests {
 
         let sample2 = api::Sample {
             locations: main_locations,
-            values: vec![5, 24, 99],
+            values: &[5, 24, 99],
             labels: vec![],
         };
 
@@ -1826,7 +1857,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![id_label, id_no_match_label],
         };
 
@@ -1855,7 +1886,7 @@ mod api_tests {
 
         let sample2 = api::Sample {
             locations: main_locations,
-            values: vec![5, 24, 99],
+            values: &[5, 24, 99],
             labels: vec![id_no_match_label, id_label2],
         };
 
@@ -1908,7 +1939,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![id_label],
         };
 
@@ -1944,7 +1975,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![id_label],
         };
 
@@ -2216,7 +2247,7 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000, 42],
+            values: &[1, 10000, 42],
             labels: vec![id_label],
         };
 
@@ -2278,13 +2309,13 @@ mod api_tests {
 
         let sample1 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000],
+            values: &[1, 10000],
             labels: vec![id_label],
         };
 
         let sample2 = api::Sample {
             locations: vec![],
-            values: vec![1, 10000],
+            values: &[1, 10000],
             labels: vec![id2_label],
         };
 
@@ -2352,12 +2383,12 @@ mod api_tests {
 
     #[test]
     fn test_regression_managed_string_table_correctly_maps_ids() {
-        let storage = Rc::new(RwLock::new(ManagedStringStorage::new()));
+        let storage = Arc::new(Mutex::new(ManagedStringStorage::new()));
         let hello_id: u32;
         let world_id: u32;
 
         {
-            let mut storage_guard = storage.write().unwrap();
+            let mut storage_guard = storage.lock().unwrap();
             hello_id = storage_guard.intern("hello").unwrap();
             world_id = storage_guard.intern("world").unwrap();
         }
@@ -2377,7 +2408,7 @@ mod api_tests {
 
         let sample = api::StringIdSample {
             locations: vec![location],
-            values: vec![1],
+            values: &[1],
             labels: vec![],
         };
 

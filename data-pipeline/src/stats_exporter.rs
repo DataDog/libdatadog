@@ -121,6 +121,7 @@ impl StatsExporter {
         encode_stats_payload(
             self.meta.borrow(),
             sequence,
+            #[allow(clippy::unwrap_used)]
             self.concentrator
                 .lock()
                 .unwrap()
@@ -184,7 +185,7 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<hyper::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_trace_utils::span::v04::{trace_utils, SpanBytes};
+    use datadog_trace_utils::span::{trace_utils, SpanBytes};
     use datadog_trace_utils::test_utils::poll_for_mock_hit;
     use httpmock::prelude::*;
     use httpmock::MockServer;

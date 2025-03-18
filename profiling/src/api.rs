@@ -172,7 +172,7 @@ pub struct Sample<'a> {
     /// When aggregating multiple samples into a single sample, the
     /// result has a list of values that is the element-wise sum of the
     /// lists of the originals.
-    pub values: Vec<i64>,
+    pub values: &'a [i64],
 
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
@@ -181,9 +181,9 @@ pub struct Sample<'a> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 // Same as Sample, but using StringIds
-pub struct StringIdSample {
+pub struct StringIdSample<'a> {
     pub locations: Vec<StringIdLocation>,
-    pub values: Vec<i64>,
+    pub values: &'a [i64],
     pub labels: Vec<StringIdLabel>,
 }
 
@@ -415,7 +415,7 @@ impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
             }
             let sample = Sample {
                 locations,
-                values: sample.values.clone(),
+                values: &sample.values,
                 labels,
             };
             samples.push(sample);

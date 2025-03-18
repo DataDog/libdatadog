@@ -1,30 +1,142 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::v04::SpanBytes;
+use crate::span::{trace_utils, v05, SpanBytes};
 use crate::{
     msgpack_decoder,
     trace_utils::{cmp_send_data_payloads, collect_trace_chunks, TracerHeaderTags},
 };
 use datadog_trace_protobuf::pb;
 use std::cmp::Ordering;
+use std::iter::Iterator;
 use tinybytes;
 
+type DroppedP0Traces = usize;
+type DroppedP0Spans = usize;
 pub type TracerPayloadV04 = Vec<SpanBytes>;
+pub type TracerPayloadV05 = Vec<v05::Span>;
+pub type DroppedP0Stats = (DroppedP0Traces, DroppedP0Spans);
+
+// Keys used for sampling
+const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
+const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
+const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 
 #[derive(Debug, Clone)]
 /// Enumerates the different encoding types.
 pub enum TraceEncoding {
     /// v0.4 encoding (TracerPayloadV04).
     V04,
+    /// v054 encoding (TracerPayloadV04).
+    V05,
     /// v0.7 encoding (TracerPayload).
     V07,
 }
 
 /// A collection of traces before they are turned into TraceChunks.
 pub enum TraceCollection {
+    /// Collection of traces using protobuf representation of trace chunks. Used for V07
+    /// implementation.
     V07(Vec<Vec<pb::Span>>),
-    V04(Vec<Vec<SpanBytes>>),
+    /// Collection of traces using the SpanBytes representation of trace chunks. This
+    /// representation allows the use of ByteString for representing Strings in order to avoid
+    /// unnecessary cloning during the processing of the chunks. Used for V04 and V05
+    /// implementations.
+    TraceChunk(Vec<Vec<SpanBytes>>),
+}
+
+impl TraceCollection {
+    pub fn len(&self) -> usize {
+        match self {
+            TraceCollection::V07(traces) => traces.len(),
+            TraceCollection::TraceChunk(traces) => traces.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            TraceCollection::V07(traces) => traces.is_empty(),
+            TraceCollection::TraceChunk(traces) => traces.is_empty(),
+        }
+    }
+
+    pub fn set_top_level_spans(&mut self) {
+        match self {
+            TraceCollection::TraceChunk(traces) => {
+                for chunk in traces.iter_mut() {
+                    trace_utils::compute_top_level_span(chunk);
+                }
+            }
+            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            #[allow(clippy::unimplemented)]
+            TraceCollection::V07(_) => {
+                unimplemented!("set_top_level_spans not implemented for v07")
+            }
+        }
+    }
+
+    /// Remove spans and chunks from a TraceCollection only keeping the ones that may be sampled by
+    /// the agent.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing the dropped p0 stats, the first value correspond the amount of traces
+    /// dropped and the latter to the spans dropped.
+    pub fn drop_chunks(&mut self) -> DroppedP0Stats {
+        let mut dropped_p0_traces = 0;
+        let mut dropped_p0_spans = 0;
+
+        match self {
+            TraceCollection::TraceChunk(traces) => {
+                traces.retain_mut(|chunk| {
+                    // List of spans to keep even if the chunk is dropped
+                    let mut sampled_indexes = Vec::new();
+                    for (index, span) in chunk.iter().enumerate() {
+                        // ErrorSampler
+                        if span.error == 1 {
+                            // We send chunks containing an error
+                            return true;
+                        }
+                        // PrioritySampler and NoPrioritySampler
+                        let priority = span.metrics.get(SAMPLING_PRIORITY_KEY);
+                        if trace_utils::has_top_level(span)
+                            && (priority.is_none() || priority.is_some_and(|p| *p > 0.0))
+                        {
+                            // We send chunks with positive priority or no priority
+                            return true;
+                        }
+                        // SingleSpanSampler and AnalyzedSpansSampler
+                        else if span
+                            .metrics
+                            .get(SAMPLING_SINGLE_SPAN_MECHANISM)
+                            .is_some_and(|m| *m == 8.0)
+                            || span.metrics.contains_key(SAMPLING_ANALYTICS_RATE_KEY)
+                        {
+                            // We send spans sampled by single-span sampling or analyzed spans
+                            sampled_indexes.push(index);
+                        }
+                    }
+                    dropped_p0_spans += chunk.len() - sampled_indexes.len();
+                    if sampled_indexes.is_empty() {
+                        // If no spans were sampled we can drop the whole chunk
+                        dropped_p0_traces += 1;
+                        return false;
+                    }
+                    let sampled_spans = sampled_indexes
+                        .iter()
+                        .map(|i| std::mem::take(&mut chunk[*i]))
+                        .collect();
+                    *chunk = sampled_spans;
+                    true
+                });
+            }
+            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            #[allow(clippy::unimplemented)]
+            TraceCollection::V07(_) => unimplemented!("drop_chunks not implemented for v07"),
+        }
+
+        (dropped_p0_traces, dropped_p0_spans)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -32,8 +144,10 @@ pub enum TraceCollection {
 pub enum TracerPayloadCollection {
     /// Collection of TracerPayloads.
     V07(Vec<pb::TracerPayload>),
-    /// Collection of TracerPayloadsV04.
-    V04(Vec<TracerPayloadV04>),
+    /// Collection of TraceChunkSpan.
+    V04(Vec<Vec<SpanBytes>>),
+    /// Collection of TraceChunkSpan with de-duplicated strings.
+    V05((Vec<tinybytes::BytesString>, Vec<Vec<v05::Span>>)),
 }
 
 impl TracerPayloadCollection {
@@ -64,6 +178,9 @@ impl TracerPayloadCollection {
                     dest.append(src)
                 }
             }
+            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            #[allow(clippy::unimplemented)]
+            TracerPayloadCollection::V05(_) => unimplemented!("Append for V05 not implemented"),
         }
     }
 
@@ -112,6 +229,7 @@ impl TracerPayloadCollection {
                 collection.iter().map(|s| s.chunks.len()).sum()
             }
             TracerPayloadCollection::V04(collection) => collection.len(),
+            TracerPayloadCollection::V05((_, collection)) => collection.len(),
         }
     }
 }
@@ -221,7 +339,8 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
     /// processing through `process_chunk`, and assembling the resulting data into
     /// a `TracerPayloadCollection`.
     ///
-    /// Note: Currently only the `TraceEncoding::V04` encoding type is supported.
+    /// Note: Currently only the `TraceEncoding::V04` and `TraceEncoding::V05` encoding types are
+    /// supported.
     ///
     /// # Returns
     ///
@@ -272,13 +391,36 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
                 }
 
                 Ok(collect_trace_chunks(
-                    TraceCollection::V04(traces),
+                    TraceCollection::TraceChunk(traces),
                     self.tracer_header_tags,
                     self.chunk_processor,
                     self.is_agentless,
-                ))
-            }
-            _ => todo!("Encodings other than TraceEncoding::V04 not implemented yet."),
+                    false,
+                )?)
+            },
+            TraceEncoding::V05 => {
+                let (traces, size) = match msgpack_decoder::v05::from_slice(self.data) {
+                    Ok(res) => res,
+                    Err(e) => {
+                        anyhow::bail!("Error deserializing trace from request body: {e}")
+                    }
+                };
+
+                if let Some(size_ref) = self.size {
+                    *size_ref = size;
+                }
+
+                Ok(collect_trace_chunks(
+                    TraceCollection::TraceChunk(traces),
+                    self.tracer_header_tags,
+                    self.chunk_processor,
+                    self.is_agentless,
+                    true,
+                )?)
+            },
+            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            #[allow(clippy::unimplemented)]
+            _ => unimplemented!("Encodings other than TraceEncoding::V04 and TraceEncoding::V05 not implemented yet."),
         }
     }
 }
@@ -286,11 +428,14 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::span::SpanBytes;
     use crate::test_utils::create_test_no_alloc_span;
     use datadog_trace_protobuf::pb;
     use serde_json::json;
     use std::collections::HashMap;
     use tinybytes::BytesString;
+
+    const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 
     fn create_dummy_collection_v07() -> TracerPayloadCollection {
         TracerPayloadCollection::V07(vec![pb::TracerPayload {
@@ -403,6 +548,7 @@ mod tests {
             meta_struct: HashMap::new(),
             r#type: BytesString::from_slice("serverless".as_ref()).unwrap(),
             span_links: vec![],
+            span_events: vec![],
         }];
 
         let span_data2 = json!([{
@@ -435,6 +581,7 @@ mod tests {
             meta_struct: HashMap::new(),
             r#type: BytesString::default(),
             span_links: vec![],
+            span_events: vec![],
         }];
 
         let data = rmp_serde::to_vec(&vec![span_data1, span_data2])
@@ -513,6 +660,125 @@ mod tests {
             assert_eq!(dummy_trace, traces[0]);
         } else {
             panic!("Invalid collection type returned for try_into");
+        }
+    }
+
+    #[test]
+    fn test_drop_chunks() {
+        let chunk_with_priority = vec![
+            SpanBytes {
+                span_id: 1,
+                metrics: HashMap::from([
+                    (SAMPLING_PRIORITY_KEY.into(), 1.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            SpanBytes {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_with_null_priority = vec![
+            SpanBytes {
+                span_id: 1,
+                metrics: HashMap::from([
+                    (SAMPLING_PRIORITY_KEY.into(), 0.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            SpanBytes {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_without_priority = vec![
+            SpanBytes {
+                span_id: 1,
+                metrics: HashMap::from([(TRACER_TOP_LEVEL_KEY.into(), 1.0)]),
+                ..Default::default()
+            },
+            SpanBytes {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_with_error = vec![
+            SpanBytes {
+                span_id: 1,
+                error: 1,
+                metrics: HashMap::from([
+                    (SAMPLING_PRIORITY_KEY.into(), 0.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            SpanBytes {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_with_a_single_span = vec![
+            SpanBytes {
+                span_id: 1,
+                metrics: HashMap::from([
+                    (SAMPLING_PRIORITY_KEY.into(), 0.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            SpanBytes {
+                span_id: 2,
+                parent_id: 1,
+                metrics: HashMap::from([(SAMPLING_SINGLE_SPAN_MECHANISM.into(), 8.0)]),
+                ..Default::default()
+            },
+        ];
+        let chunk_with_analyzed_span = vec![
+            SpanBytes {
+                span_id: 1,
+                metrics: HashMap::from([
+                    (SAMPLING_PRIORITY_KEY.into(), 0.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            SpanBytes {
+                span_id: 2,
+                parent_id: 1,
+                metrics: HashMap::from([(SAMPLING_ANALYTICS_RATE_KEY.into(), 1.0)]),
+                ..Default::default()
+            },
+        ];
+
+        let chunks_and_expected_sampled_spans = vec![
+            (chunk_with_priority, 2),
+            (chunk_with_null_priority, 0),
+            (chunk_without_priority, 2),
+            (chunk_with_error, 2),
+            (chunk_with_a_single_span, 1),
+            (chunk_with_analyzed_span, 1),
+        ];
+
+        for (chunk, expected_count) in chunks_and_expected_sampled_spans.into_iter() {
+            let mut collection = TraceCollection::TraceChunk(vec![chunk]);
+            collection.drop_chunks();
+
+            let traces = match collection {
+                TraceCollection::TraceChunk(t) => t,
+                _ => panic!("Collection must contain TraceChunkSpan"),
+            };
+
+            if expected_count == 0 {
+                assert!(traces.is_empty());
+            } else {
+                assert_eq!(traces[0].len(), expected_count);
+            }
         }
     }
 }

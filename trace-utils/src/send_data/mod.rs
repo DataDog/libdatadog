@@ -20,6 +20,10 @@ use futures::StreamExt;
 use hyper::header::CONTENT_TYPE;
 use send_data_result::SendDataResult;
 use std::collections::HashMap;
+#[cfg(feature = "compression")]
+use std::io::Write;
+#[cfg(feature = "compression")]
+use zstd::stream::write::Encoder;
 
 #[derive(Debug, Clone)]
 /// `SendData` is a structure that holds the data to be sent to a target endpoint.
@@ -63,6 +67,64 @@ pub struct SendData {
     target: Endpoint,
     headers: HashMap<&'static str, String>,
     retry_strategy: RetryStrategy,
+    #[cfg(feature = "compression")]
+    compression: Compression,
+}
+
+#[cfg(feature = "compression")]
+#[derive(Debug, Clone)]
+pub enum Compression {
+    Zstd(i32),
+    None,
+}
+
+pub struct SendDataBuilder {
+    pub(crate) tracer_payloads: TracerPayloadCollection,
+    pub(crate) size: usize,
+    target: Endpoint,
+    headers: HashMap<&'static str, String>,
+    retry_strategy: RetryStrategy,
+    #[cfg(feature = "compression")]
+    compression: Compression,
+}
+
+impl SendDataBuilder {
+    pub fn new(
+        size: usize,
+        tracer_payload: TracerPayloadCollection,
+        tracer_header_tags: TracerHeaderTags,
+        target: &Endpoint,
+    ) -> SendDataBuilder {
+        let mut headers: HashMap<&'static str, String> = tracer_header_tags.into();
+        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
+        SendDataBuilder {
+            tracer_payloads: tracer_payload,
+            size,
+            target: target.clone(),
+            headers,
+            retry_strategy: RetryStrategy::default(),
+            #[cfg(feature = "compression")]
+            compression: Compression::None,
+        }
+    }
+
+    #[cfg(feature = "compression")]
+    pub fn with_compression(mut self, compression: Compression) -> SendDataBuilder {
+        self.compression = compression;
+        self
+    }
+
+    pub fn build(self) -> SendData {
+        SendData {
+            tracer_payloads: self.tracer_payloads,
+            size: self.size,
+            target: self.target,
+            headers: self.headers,
+            retry_strategy: self.retry_strategy,
+            #[cfg(feature = "compression")]
+            compression: self.compression,
+        }
+    }
 }
 
 impl SendData {
@@ -93,6 +155,8 @@ impl SendData {
             target: target.clone(),
             headers,
             retry_strategy: RetryStrategy::default(),
+            #[cfg(feature = "compression")]
+            compression: Compression::None,
         }
     }
 
@@ -174,6 +238,7 @@ impl SendData {
         headers: HashMap<&'static str, String>,
         http_proxy: Option<&str>,
     ) -> (SendWithRetryResult, u64, u64) {
+        #[allow(clippy::unwrap_used)]
         let payload_len = u64::try_from(payload.len()).unwrap();
         (
             send_with_retry(
@@ -193,8 +258,32 @@ impl SendData {
         self.target.api_key.is_some()
     }
 
+    #[cfg(feature = "compression")]
+    fn compress_payload(&self, payload: Vec<u8>, headers: &mut HashMap<&str, String>) -> Vec<u8> {
+        match self.compression {
+            Compression::Zstd(level) => {
+                let result = (|| -> std::io::Result<Vec<u8>> {
+                    let mut encoder = Encoder::new(Vec::new(), level)?;
+                    encoder.write_all(&payload)?;
+                    encoder.finish()
+                })();
+
+                match result {
+                    Ok(compressed_payload) => {
+                        headers.insert("Content-Encoding", "zstd".to_string());
+                        compressed_payload
+                    }
+                    Err(_) => payload,
+                }
+            }
+            _ => payload,
+        }
+    }
+
     async fn send_with_protobuf(&self, http_proxy: Option<&str>) -> SendDataResult {
         let mut result = SendDataResult::default();
+
+        #[allow(clippy::unwrap_used)]
         let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
 
         match &self.tracer_payloads {
@@ -206,17 +295,19 @@ impl SendData {
                     Ok(p) => p,
                     Err(e) => return result.error(e),
                 };
-
                 let mut request_headers = self.headers.clone();
+
+                #[cfg(feature = "compression")]
+                let final_payload =
+                    self.compress_payload(serialized_trace_payload, &mut request_headers);
+
+                #[cfg(not(feature = "compression"))]
+                let final_payload = serialized_trace_payload;
+
                 request_headers.insert(CONTENT_TYPE.as_str(), APPLICATION_PROTOBUF_STR.to_string());
 
                 let (response, bytes_sent, chunks) = self
-                    .send_payload(
-                        chunks,
-                        serialized_trace_payload,
-                        request_headers,
-                        http_proxy,
-                    )
+                    .send_payload(chunks, final_payload, request_headers, http_proxy)
                     .await;
 
                 result.update(response, bytes_sent, chunks);
@@ -234,6 +325,7 @@ impl SendData {
         match &self.tracer_payloads {
             TracerPayloadCollection::V07(payloads) => {
                 for tracer_payload in payloads {
+                    #[allow(clippy::unwrap_used)]
                     let chunks = u64::try_from(tracer_payload.chunks.len()).unwrap();
                     let mut headers = self.headers.clone();
                     headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
@@ -247,13 +339,28 @@ impl SendData {
                     futures.push(self.send_payload(chunks, payload, headers, http_proxy));
                 }
             }
-            TracerPayloadCollection::V04(payloads) => {
+            TracerPayloadCollection::V04(payload) => {
+                #[allow(clippy::unwrap_used)]
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
                 let mut headers = self.headers.clone();
                 headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
                 headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
 
-                let payload = match rmp_serde::to_vec_named(payloads) {
+                let payload = match rmp_serde::to_vec_named(payload) {
+                    Ok(p) => p,
+                    Err(e) => return result.error(anyhow!(e)),
+                };
+
+                futures.push(self.send_payload(chunks, payload, headers, http_proxy));
+            }
+            TracerPayloadCollection::V05(payload) => {
+                #[allow(clippy::unwrap_used)]
+                let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
+                let mut headers = self.headers.clone();
+                headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
+                headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
+
+                let payload = match rmp_serde::to_vec(payload) {
                     Ok(p) => p,
                     Err(e) => return result.error(anyhow!(e)),
                 };
@@ -376,6 +483,7 @@ mod tests {
             TracerPayloadCollection::V04(payloads) => {
                 rmp_serde::to_vec_named(payloads).unwrap().len()
             }
+            TracerPayloadCollection::V05(payloads) => rmp_serde::to_vec(payloads).unwrap().len(),
         }
     }
 

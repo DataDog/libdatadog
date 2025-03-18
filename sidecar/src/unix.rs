@@ -46,6 +46,7 @@ pub extern "C" fn ddog_daemon_entry_point() {
                 move || {
                     // We need to drop O_NONBLOCK, as accept() on a shutdown socket will just give
                     // EAGAIN instead of EINVAL
+                    #[allow(clippy::unwrap_used)]
                     let flags =
                         OFlag::from_bits_truncate(fcntl(listener_fd, F_GETFL).ok().unwrap());
                     _ = fcntl(listener_fd, F_SETFL(flags & !OFlag::O_NONBLOCK));
@@ -105,7 +106,7 @@ fn maybe_start_appsec() -> bool {
     }
 
     info!("Starting appsec helper");
-
+    #[allow(clippy::unwrap_used)]
     let entrypoint_sym_name = CString::new("appsec_helper_main").unwrap();
 
     let func_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, entrypoint_sym_name.as_ptr()) };
@@ -128,6 +129,7 @@ fn maybe_start_appsec() -> bool {
 fn shutdown_appsec() -> bool {
     info!("Shutting down appsec helper");
 
+    #[allow(clippy::unwrap_used)]
     let shutdown_sym_name = CString::new("appsec_helper_shutdown").unwrap();
 
     let func_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, shutdown_sym_name.as_ptr()) };

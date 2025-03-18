@@ -40,7 +40,7 @@ fn main() {
         .set_language("rust")
         .set_language_version(env!("CARGO_PKG_RUST_VERSION"))
         .set_input_format(TraceExporterInputFormat::V04)
-        .set_output_format(TraceExporterOutputFormat::V07)
+        .set_output_format(TraceExporterOutputFormat::V04)
         .enable_stats(Duration::from_secs(10))
         .build()
         .unwrap();

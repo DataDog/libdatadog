@@ -12,7 +12,13 @@ struct RawReplaceRule {
     repl: String,
 }
 
-#[derive(Debug)]
+impl PartialEq for ReplaceRule {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.repl == other.repl && self.re.as_str() == other.re.as_str()
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ReplaceRule {
     // name specifies the name of the tag that the replace rule addresses. However,
     // some exceptions apply such as:
@@ -146,6 +152,7 @@ fn replace_all(
         let mut last_match = 0;
         for cap in it {
             // unwrap on 0 is OK because captures only reports matches
+            #[allow(clippy::unwrap_used)]
             let m = cap.get(0).unwrap();
             scratch_space.push_str(&haystack[last_match..m.start()]);
             regex::Replacer::replace_append(&mut replace, &cap, scratch_space);
@@ -271,5 +278,39 @@ mod tests {
     fn test_parse_rules_invalid_regex() {
         let result = replacer::parse_rules_from_string(r#"[{"http.url", ")", "${1}?"}]"#);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_replace_rule_eq() {
+        let rule1 = replacer::ReplaceRule {
+            name: "http.url".to_string(),
+            re: regex::Regex::new("(token/)([^/]*)").unwrap(),
+            repl: "${1}?".to_string(),
+            no_expansion: false,
+        };
+        let rule2 = replacer::ReplaceRule {
+            name: "http.url".to_string(),
+            re: regex::Regex::new("(token/)([^/]*)").unwrap(),
+            repl: "${1}?".to_string(),
+            no_expansion: false,
+        };
+        assert_eq!(rule1, rule2);
+    }
+
+    #[test]
+    fn test_replace_rule_neq() {
+        let rule1 = replacer::ReplaceRule {
+            name: "http.url".to_string(),
+            re: regex::Regex::new("(token/)([^/]*)").unwrap(),
+            repl: "${1}?".to_string(),
+            no_expansion: false,
+        };
+        let rule2 = replacer::ReplaceRule {
+            name: "http.url".to_string(),
+            re: regex::Regex::new("(broken/)([^/]*)").unwrap(),
+            repl: "${1}?".to_string(),
+            no_expansion: false,
+        };
+        assert_ne!(rule1, rule2);
     }
 }

@@ -1,6 +1,12 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::todo))]
+#![cfg_attr(not(test), deny(clippy::unimplemented))]
+
 mod profile_index;
 mod replayer;
 
@@ -42,6 +48,7 @@ fn median(values: &[usize]) -> Option<f64> {
 }
 
 /// Finds the Q1, Q2, Q3 values. Assumes the slice is sorted.
+#[allow(clippy::unwrap_used)]
 fn quartiles(values: &[usize]) -> Option<[f64; 3]> {
     // This calculates Q3 as the median of the values above the midpoint, which
     // depending on how you define Q3, this is possibly not correct.
@@ -80,7 +87,7 @@ impl Sysinfo {
 
     pub fn measure_memory(&mut self, label: &str) -> u64 {
         self.s.refresh_process(self.pid);
-
+        #[allow(clippy::expect_used)]
         let process = self
             .s
             .process(self.pid)
@@ -105,6 +112,7 @@ impl Sysinfo {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 fn main() -> anyhow::Result<()> {
     let matches = command!()
         .arg(

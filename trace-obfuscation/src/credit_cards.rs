@@ -15,6 +15,7 @@ pub fn is_card_number<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
     let mut len = 0;
     for c in s.chars() {
         // Only valid characters are 0-9, space (" ") and dash("-")
+        #[allow(clippy::unwrap_used)]
         match c {
             ' ' | '-' => continue,
             '0'..='9' => {
@@ -36,9 +37,13 @@ pub fn is_card_number<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
     let num_s = &num_s[..len];
     let mut is_valid_iin = FuzzyBool::Maybe;
     let mut cs = num_s.iter();
+
+    #[allow(clippy::unwrap_used)]
     let mut prefix: u32 = *cs.next().unwrap();
+    #[allow(clippy::unwrap_used)]
     while is_valid_iin == FuzzyBool::Maybe {
         is_valid_iin = valid_card_prefix(prefix);
+
         prefix = 10 * prefix + cs.next().unwrap();
     }
 
@@ -54,6 +59,7 @@ pub fn is_card_number<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
 /// See:
 /// https://en.wikipedia.org/wiki/Luhn_algorithm
 fn luhn_valid(nums: &[u32]) -> bool {
+    #[allow(clippy::unwrap_used)]
     let (given_digit, payload) = nums.split_last().unwrap();
     calculate_luhn(payload) == *given_digit
 }
