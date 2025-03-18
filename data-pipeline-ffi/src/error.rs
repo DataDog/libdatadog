@@ -87,6 +87,7 @@ impl From<TraceExporterError> for ExporterError {
             TraceExporterError::Builder(e) => match e {
                 BuilderErrorKind::InvalidUri(_) => ExporterErrorCode::InvalidUrl,
                 BuilderErrorKind::InvalidTelemetryConfig => ExporterErrorCode::InvalidArgument,
+                BuilderErrorKind::InvalidConfiguration(_) => ExporterErrorCode::InvalidArgument,
             },
             TraceExporterError::Deserialization(_) => ExporterErrorCode::Serde,
             TraceExporterError::Io(e) => match e.kind() {

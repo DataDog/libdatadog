@@ -1823,6 +1823,7 @@ dependencies = [
  "tinybytes",
  "tokio",
  "urlencoding",
+ "zstd",
 ]
 
 [[package]]
@@ -1844,8 +1845,12 @@ dependencies = [
  "libc",
  "log",
  "maplit",
+ "memfd",
  "pin-project",
+ "rand",
  "regex",
+ "rmp",
+ "rmp-serde",
  "rustls 0.23.18",
  "rustls-native-certs 0.7.3",
  "serde",

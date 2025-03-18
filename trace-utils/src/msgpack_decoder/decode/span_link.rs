@@ -6,7 +6,7 @@ use crate::msgpack_decoder::decode::number::read_number_bytes;
 use crate::msgpack_decoder::decode::string::{
     handle_null_marker, read_str_map_to_bytes_strings, read_string_bytes, read_string_ref,
 };
-use crate::span::v04::SpanLinkBytes;
+use crate::span::SpanLinkBytes;
 use rmp::Marker;
 use std::str::FromStr;
 use tinybytes::Bytes;

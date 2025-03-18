@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod span;
-
 use self::span::decode_span;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::v04::SpanBytes;
+use crate::span::SpanBytes;
 
 /// Decodes a slice of bytes into a vector of `TracerPayloadV04` objects.
 ///
