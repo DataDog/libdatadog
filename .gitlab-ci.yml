@@ -43,7 +43,11 @@ report_failure:
 # Final job that will show in github statuses
 report_gitlab_CI_status:
   tags: ["arch:amd64"]
-  when: always
+  rules:
+    - changes:
+        - ./dogstatsd/**
+      when: never
+    - when: always
   stage: .post
   script:
     - "echo TIP: If you see this failing, something else in the GitLab pipeline failed. Follow the link to the pipeline and check for other things that failed prior to this step."
