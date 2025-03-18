@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::aggregator::Aggregator;
-use crate::datadog::{self};
-use datadog::{DdApi, MetricsIntakeUrlPrefix, RetryStrategy};
+use crate::datadog::{DdApi, MetricsIntakeUrlPrefix, RetryStrategy};
 use reqwest::{Response, StatusCode};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

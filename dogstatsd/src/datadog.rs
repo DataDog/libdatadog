@@ -236,41 +236,44 @@ impl DdApi {
         let mut attempts = 0;
         loop {
             attempts += 1;
-            match builder.try_clone() {
-                Some(builder) => {
-                    let resp = builder.send().await;
-                    match resp {
-                        Ok(resp) if resp.status().is_success() => return Ok(resp),
-                        _ => {}
-                    }
-
-                    match self.retry_strategy {
-                        RetryStrategy::LinearBackoff(max_attempts, _)
-                        | RetryStrategy::Immediate(max_attempts)
-                            if attempts >= max_attempts =>
-                        {
-                            let status = match resp {
-                                Ok(resp) => Some(resp.status()),
-                                Err(err) => err.status(),
-                            };
-                            // handle if status code missing like timeout
-                            return Err(ShippingError::Destination(
-                                status,
-                                "Failed to send request after {max_attempts}".to_string(),
-                            ));
-                        }
-                        RetryStrategy::LinearBackoff(_, delay) => {
-                            tokio::time::sleep(Duration::from_millis(delay)).await;
-                        }
-                        _ => {}
-                    }
-                }
+            let cloned_builder = match builder.try_clone() {
+                Some(b) => b,
                 None => {
                     return Err(ShippingError::Destination(
                         None,
                         "Failed to clone request".to_string(),
                     ));
                 }
+            };
+
+            let response = cloned_builder.send().await;
+            match response {
+                Ok(response) if response.status().is_success() => {
+                    return Ok(response);
+                }
+                _ => {}
+            }
+
+            match self.retry_strategy {
+                RetryStrategy::LinearBackoff(max_attempts, _)
+                | RetryStrategy::Immediate(max_attempts)
+                    if attempts >= max_attempts =>
+                {
+                    let status = match response {
+                        Ok(response) => Some(response.status()),
+                        Err(err) => err.status(),
+                    };
+                    // handle if status code missing like timeout
+                    return Err(ShippingError::Destination(
+                        status,
+                        format!("Failed to send request after {} attempts", max_attempts)
+                            .to_string(),
+                    ));
+                }
+                RetryStrategy::LinearBackoff(_, delay) => {
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                }
+                _ => {}
             }
         }
     }
