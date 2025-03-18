@@ -26,7 +26,7 @@ use datadog_trace_mini_agent::{
 use dogstatsd::{
     aggregator::Aggregator as MetricsAggregator,
     constants::CONTEXTS,
-    datadog::{MetricsIntakeUrlPrefix, Site, RetryStrategy},
+    datadog::{MetricsIntakeUrlPrefix, RetryStrategy, Site},
     dogstatsd::{DogStatsD, DogStatsDConfig},
     flusher::{Flusher, FlusherConfig},
 };
