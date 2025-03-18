@@ -9,6 +9,10 @@ include:
   - local: .gitlab/benchmarks.yml
 
 trigger_internal_build:
+  rules:
+    - changes:
+        - ./dogstatsd/**
+      when: never
   variables:
     LIBDATADOG_COMMIT_BRANCH: $CI_COMMIT_BRANCH
     LIBDATADOG_COMMIT_SHA: $CI_COMMIT_SHA
