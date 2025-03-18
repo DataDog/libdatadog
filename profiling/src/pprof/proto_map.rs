@@ -10,7 +10,7 @@ use std::ops::Range;
 
 // This type exists because Range<u32> is not Copy.
 #[derive(Clone, Copy, Debug)]
-pub struct ByteRange {
+struct ByteRange {
     pub start: u32,
     pub end: u32,
 }
@@ -30,12 +30,15 @@ pub trait Identifiable: LenEncodable {
 }
 
 impl ProfileProtoMap {
+    #[inline]
     fn project(buf: &Vec<u8>, byte_range: ByteRange) -> &[u8] {
         let range = Range {
             start: byte_range.start as usize,
             end: byte_range.end as usize,
         };
-        &buf.as_slice()[range]
+        // SAFETY: the ByteRange's are not exposed, and we constructed them
+        // in-range, and we never modify the existing bytes (only append).
+        unsafe { &buf.as_slice().get_unchecked(range) }
     }
 
     #[inline]
@@ -95,13 +98,9 @@ impl ProfileProtoMap {
         let checkpoint = self.buf.len();
         let id = encodable.id();
 
-        // SAFETY: the global allocator doesn't panic, and the other condition
-        // is a value over 2 GiB, which is not possible with a single Mapping,
-        // Function, and Location. Location is a bit trickier because it holds
-        // an array, but in practice it's usually 1:1 (one Line per Location),
-        // and we have a requirement on Location that it's not too big.
-        let range =
-            unsafe { try_encode_with_tag(encodable, tag, &mut self.buf).unwrap_unchecked() };
+        // PANIC: the global allocator doesn't panic, and the other condition
+        // is a value over 2 GiB
+        let range = try_encode_with_tag(encodable, tag, &mut self.buf).unwrap();
         debug_assert!(range.end >= range.start);
 
         let byte_range = ByteRange {

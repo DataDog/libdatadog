@@ -54,8 +54,9 @@ pub fn try_encode_with_tag(
     let encoded_len = encodable.encoded_len();
     let required =
         encoding::key_len(tag) + encoding::encoded_len_varint(encoded_len as u64) + encoded_len;
-    if required > PROTOBUF_MAX_MESSAGE_BYTES {
-        Err(EncodeError::TooLarge { required })
+    if buf.len() + required > PROTOBUF_MAX_MESSAGE_BYTES {
+        let len = buf.len();
+        Err(EncodeError::TooLarge { len, required })
     } else if let Err(_err) = buf.try_reserve(required) {
         Err(EncodeError::Oom {
             required,
@@ -112,8 +113,8 @@ impl From<Mapping> for crate::pprof::proto::Mapping {
 
 #[derive(thiserror::Error, Debug)]
 pub enum EncodeError {
-    #[error("protobuf messages need to fit in 2 GiB, asked for {required}")]
-    TooLarge { required: usize },
+    #[error("protobuf messages need to fit in 2 GiB and the buffer is currently {len} bytes and needed {required} more")]
+    TooLarge { len: usize, required: usize },
 
     #[error("protobuf message needed {required} bytes, only {remaining} remaining")]
     Oom { required: usize, remaining: usize },
