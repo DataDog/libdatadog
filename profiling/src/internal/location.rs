@@ -39,7 +39,7 @@ impl PprofItem for Location {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
-pub struct LocationId(NonZeroU32);
+pub struct LocationId(pub(crate) NonZeroU32);
 
 impl Id for LocationId {
     type RawId = u64;

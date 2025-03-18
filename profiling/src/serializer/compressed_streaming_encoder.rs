@@ -27,6 +27,12 @@ impl CompressedProtobufSerializer {
         Ok(())
     }
 
+    /// Copy the buffer into the compressor. The caller must ensure that
+    /// buffer contains valid in-wire protobuf for pprof.
+    pub fn copy_buffer(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        self.zipper.write_all(buf)
+    }
+
     /// Only meant for string table strings. This is essentially an
     /// implementation of [prost::Message::encode] but for any `AsRef<str>`,
     /// and specialized for handling the unlikely OOM conditions of writing

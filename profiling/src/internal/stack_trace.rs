@@ -7,7 +7,7 @@ use super::*;
 pub struct StackTrace {
     /// The ids recorded here correspond to a Profile.location.id.
     /// The leaf is at location_id[0].
-    pub locations: Vec<LocationId>,
+    pub locations: Vec<Option<LocationId>>,
 }
 
 impl Item for StackTrace {

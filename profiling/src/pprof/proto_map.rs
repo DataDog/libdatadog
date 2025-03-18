@@ -20,7 +20,7 @@ pub struct ProfileProtoMap {
     buf: Vec<u8>,
 }
 
-trait Identifiable: LenEncodable {
+pub trait Identifiable: LenEncodable {
     fn id(&self) -> u64;
 
     /// Return true if this should dedup to id=0. This is likely a performance
@@ -139,13 +139,9 @@ impl ProfileProtoMap {
     }
 }
 
-mod sealed {
-    use super::*;
-    pub trait Insert<T: Identifiable> {
-        fn insert(&mut self, value: &T) -> (u64, bool);
-    }
+pub trait Insert<T: Identifiable> {
+    fn insert(&mut self, value: &T) -> (u64, bool);
 }
-use sealed::Insert;
 
 impl Insert<Mapping> for ProfileProtoMap {
     fn insert(&mut self, value: &Mapping) -> (u64, bool) {
@@ -153,7 +149,7 @@ impl Insert<Mapping> for ProfileProtoMap {
     }
 }
 
-impl Insert<Location<'_>> for ProfileProtoMap {
+impl Insert<Location> for ProfileProtoMap {
     fn insert(&mut self, value: &Location) -> (u64, bool) {
         self.insert_with_tag(4u32, value)
     }
@@ -192,24 +188,19 @@ impl Identifiable for Mapping {
     }
 }
 
-impl Identifiable for Location<'_> {
+impl Identifiable for Location {
     fn id(&self) -> u64 {
         self.id
     }
 
     fn is_zero_id(&self) -> bool {
-        // If there are lines, they need to be zero-reprs for the Location to
-        // also be zero.
-        for line in self.lines {
-            // I don't expect any profilers to set a zero value here, so pay
-            // for the branch; I expect this to basically always return false
-            // on the first loop.
-            if line.function_id != 0 {
-                return false;
-            }
-            if line.line != 0 {
-                return false;
-            }
+        // I don't expect any profilers to set a zero value here, so pay
+        // for the branch; I expect this to basically always return false.
+        if self.line.function_id != 0 {
+            return false;
+        }
+        if self.line.line != 0 {
+            return false;
         }
 
         // These members are not used by some of the profilers, so optimize
@@ -218,8 +209,7 @@ impl Identifiable for Location<'_> {
         // them all together.
         let mapping_id = self.mapping_id;
         let address = self.address;
-        let is_folded = self.is_folded as u64;
-        let c = mapping_id | address | is_folded;
+        let c = mapping_id | address;
         c == 0
     }
 }
@@ -287,8 +277,7 @@ mod tests {
                 id: 1,
                 mapping_id: 0,
                 address: 0,
-                lines: &[],
-                is_folded: false,
+                line: Default::default(),
             });
             assert_eq!(0, id0);
             assert!(b0);
@@ -298,11 +287,10 @@ mod tests {
                 id: 1,
                 mapping_id: 0,
                 address: 0,
-                lines: &[Line {
+                line: Line {
                     function_id: 0,
                     line: 0,
-                }],
-                is_folded: false,
+                },
             });
             assert_eq!(0, id0);
             assert!(b0);
@@ -342,11 +330,10 @@ mod tests {
                 id: 3,
                 mapping_id: 0,
                 address: 0,
-                lines: &[Line {
+                line: Line {
                     function_id: 1,
                     line: 1,
-                }],
-                is_folded: false,
+                },
             });
             assert_eq!(3, id3);
             assert_eq!(already_existed, b3);
@@ -365,11 +352,10 @@ mod tests {
                 id: 5,
                 mapping_id: 0,
                 address: 0,
-                lines: &[Line {
+                line: Line {
                     function_id: 4,
                     line: 2,
-                }],
-                is_folded: false,
+                },
             });
             assert_eq!(5, id5);
             assert_eq!(already_existed, b5);
@@ -449,82 +435,82 @@ mod tests {
         let locations = [
             Location {
                 id: 1,
-                lines: &[Line {
+                line: Line {
                     function_id: 1,
                     line: 0,
-                }],
+                },
                 ..Location::default()
             },
             Location {
                 id: 2,
-                lines: &[Line {
+                line: Line {
                     function_id: 2,
                     line: 0,
-                }],
+                },
                 ..Location::default()
             },
             Location {
                 id: 3,
-                lines: &[Line {
+                line: Line {
                     function_id: 3,
                     line: 0,
-                }],
+                },
                 ..Location::default()
             },
             Location {
                 id: 4,
-                lines: &[Line {
+                line: Line {
                     function_id: 4,
                     line: 5,
-                }],
+                },
                 ..Location::default()
             },
             Location {
                 id: 5,
-                lines: &[Line {
+                line: Line {
                     function_id: 5,
                     line: 41,
-                }],
+                },
                 ..Location::default()
             },
             Location {
                 id: 6,
-                lines: &[Line {
+                line: Line {
                     function_id: 6,
                     line: 45,
-                }],
+                },
                 ..Location::default()
             },
             Location {
                 id: 7,
-                lines: &[Line {
+                line: Line {
                     function_id: 7,
                     line: 25,
-                }],
+                },
                 ..Location::default()
             },
             Location {
                 id: 8,
-                lines: &[Line {
+                line: Line {
                     function_id: 8,
                     line: 5,
-                }],
+                },
                 ..Location::default()
             },
             Location {
                 id: 9,
-                lines: &[Line {
+                line: Line {
                     function_id: 9,
                     line: 0,
-                }],
+                },
                 ..Location::default()
             },
             Location {
                 id: 10,
-                lines: &[Line {
+                line: Line {
                     function_id: 10,
                     line: 67,
-                }],
+                },
                 ..Location::default()
             },
         ];
@@ -555,8 +541,9 @@ mod tests {
             assert_eq!(pprof.id, encodable.id);
             assert_eq!(pprof.mapping_id, encodable.mapping_id);
             assert_eq!(pprof.address, encodable.address);
-            assert_eq!(pprof.lines.as_slice(), encodable.lines);
-            assert_eq!(pprof.is_folded, encodable.is_folded);
+
+            assert_eq!(pprof.lines.len(), 1);
+            assert_eq!(pprof.lines[0], encodable.line);
         }
     }
 }

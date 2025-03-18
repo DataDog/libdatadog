@@ -276,7 +276,12 @@ fn assert_samples_eq(
             // Subtract 1 because when creating pprof location ids, we use
             // `small_non_zero_pprof_id()` function which guarantees that the id stored in pprof
             // is +1 of the index in the vector of Locations in internal::Profile.
-            let location = &profile.locations[*loc_id as usize - 1];
+            let default_loc = Default::default();
+            let location = if *loc_id != 0 {
+                &profile.locations[*loc_id as usize - 1]
+            } else {
+                &default_loc
+            };
 
             // PHP, Python, and Ruby don't use mappings, so allow for zero id.
             let mapping = if location.mapping_id != 0 {
@@ -284,10 +289,19 @@ fn assert_samples_eq(
             } else {
                 Default::default()
             };
-            // internal::Location::to_pprof() always creates a single line.
-            assert!(location.lines.len() == 1);
-            let line = location.lines[0];
-            let function = profile.functions[line.function_id as usize - 1];
+            // internal::Location::to_pprof() always creates a single line,
+            // but location id=0 may have len=0.
+            assert!(location.lines.len() <= 1);
+            let (function, lineno) = if let Some(line) = location.lines.first() {
+                if line.function_id != 0 {
+                    let lineno = line.line;
+                    (profile.functions[line.function_id as usize - 1], lineno)
+                } else {
+                    (Default::default(), 0)
+                }
+            } else {
+                (Default::default(), 0)
+            };
             assert!(!location.is_folded);
 
             // TODO: Consider using &str from the string table and make an `api::` mapping
@@ -309,7 +323,7 @@ fn assert_samples_eq(
                 function.start_line,
             );
             let owned_location =
-                Location::new(owned_mapping, owned_function, location.address, line.line);
+                Location::new(owned_mapping, owned_function, location.address, lineno);
 
             owned_locations.push(owned_location);
         }

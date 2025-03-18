@@ -48,7 +48,7 @@ impl PprofItem for Mapping {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
-pub struct MappingId(NonZeroU32);
+pub struct MappingId(pub(crate) NonZeroU32);
 
 impl Id for MappingId {
     type RawId = u64;

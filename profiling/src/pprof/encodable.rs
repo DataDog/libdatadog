@@ -1,10 +1,11 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::proto::{Function, Line};
 use prost::encoding::{WireType, MAX_TAG, MIN_TAG};
 use prost::*;
 use std::ops::Range;
+
+pub use super::proto::{Function, Line};
 
 /// Represents something that converts to the in-wire LEN type.
 pub trait LenEncodable {
@@ -85,14 +86,11 @@ pub struct Mapping {
 /// because it's not meant to be long-lived--you create one, serialize it,
 /// and throw the struct away.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct Location<'a> {
-    pub id: u64,           // 1
-    pub mapping_id: u64,   // 2
-    pub address: u64,      // 3
-    /// There should usually be exactly 1 line, but if there is more than one,
-    /// it should not allow for the whole Location to exceed 2 GiB in size.
-    pub lines: &'a [Line], // 4
-    pub is_folded: bool,   // 5
+pub struct Location {
+    pub id: u64,         // 1
+    pub mapping_id: u64, // 2
+    pub address: u64,    // 3
+    pub line: Line,      // 4
 }
 
 impl From<Mapping> for crate::pprof::proto::Mapping {
@@ -136,16 +134,6 @@ unsafe fn encode_varint_with_tag_with_zero_opt(tag: u32, value: u64, buf: &mut V
     }
 }
 
-///  # Safety
-/// The encoded_len must match the number of bytes needed to encode the value,
-/// and the buffer must have at least this number of bytes of unused capacity.
-#[inline]
-#[cfg_attr(debug_assertions, track_caller)]
-unsafe fn encode_bool_with_tag(tag: u32, value: bool, buf: &mut Vec<u8>) {
-    // SAFETY: size is guarded above.
-    unsafe { encode_varint_with_tag_with_zero_opt(tag, value as u64, buf) };
-}
-
 #[inline]
 fn encoded_len_u64_with_zero_opt(tag: u32, num: u64) -> usize {
     0 + if num != 0 {
@@ -172,15 +160,6 @@ fn encoded_len_i64_with_zero_opt(tag: u32, num: i64) -> usize {
 #[inline]
 fn encoded_len_i64_without_zero_opt(tag: u32, num: i64) -> usize {
     encoded_len_u64_without_zero_opt(tag, num as u64)
-}
-
-#[inline]
-fn encoded_len_bool_with_zero_opt(tag: u32, value: bool) -> usize {
-    0 + if value != false {
-        encoding::bool::encoded_len(tag, &value)
-    } else {
-        0
-    }
 }
 
 /// # Safety
@@ -295,26 +274,20 @@ impl LenEncodable for Function {
     }
 }
 
-impl<'a> LenEncodable for Location<'a> {
+impl LenEncodable for Location {
     fn encoded_len(&self) -> usize {
-        debug_assert!(!self.lines.is_empty());
         // Without zero-opt because it's inherently non-zero.
         let id = encoded_len_u64_without_zero_opt(1u32, self.id);
         let mapping_id = encoded_len_u64_with_zero_opt(2u32, self.mapping_id);
         let address = encoded_len_u64_with_zero_opt(3u32, self.address);
-        let lines = self
-            .lines
-            .iter()
-            .map(|line| {
-                let item = Message::encoded_len(line);
-                let tag = encoding::key_len(4u32);
-                let len_prefix = encoding::encoded_len_varint(item as u64);
-                tag + len_prefix + item
-            })
-            .sum::<usize>();
-        let is_folded = encoded_len_bool_with_zero_opt(5u32, self.is_folded);
+        let line = {
+            let item = Message::encoded_len(&self.line);
+            let tag = encoding::key_len(4u32);
+            let len_prefix = encoding::encoded_len_varint(item as u64);
+            tag + len_prefix + item
+        };
 
-        let len = id + mapping_id + address + lines + is_folded;
+        let len = id + mapping_id + address + line;
         len
     }
 
@@ -325,19 +298,16 @@ impl<'a> LenEncodable for Location<'a> {
         unsafe {
             encode_varint_with_tag(1u32, self.id, buf);
 
-            // For Location, we use lines (tag 4) as our unique prefix. This
-            // also means each Location needs 1 or more Lines.
+            // For Location, we use line (tag 4) as our unique prefix.
             let start = buf.len() as u32;
 
-            for line in self.lines.iter() {
-                encode_key(4u32, WireType::LengthDelimited, buf);
-                encode_varint(Message::encoded_len(line) as u64, buf);
-                // Can ignore errors, as we've reserved enough capacity prior.
-                _ = Message::encode(line, buf);
-            }
+            encode_key(4u32, WireType::LengthDelimited, buf);
+            encode_varint(Message::encoded_len(&self.line) as u64, buf);
+            // Can ignore errors, as we've reserved enough capacity prior.
+            _ = Message::encode(&self.line, buf);
+
             encode_varint_with_tag_with_zero_opt(2u32, self.mapping_id, buf);
             encode_varint_with_tag_with_zero_opt(3u32, self.address, buf);
-            encode_bool_with_tag(5u32, self.is_folded, buf);
 
             let end = buf.len() as u32;
             let range = Range { start, end };
@@ -476,11 +446,10 @@ mod tests {
             id: 1,
             mapping_id: 2,
             address: 3,
-            lines: &[Line {
+            line: Line {
                 function_id: 4,
                 line: 5,
-            }],
-            is_folded: false,
+            },
         };
 
         let len = LenEncodable::encoded_len(&before);
@@ -501,7 +470,7 @@ mod tests {
         assert_eq!(before.id, after.id);
         assert_eq!(before.mapping_id, after.mapping_id);
         assert_eq!(before.address, after.address);
-        assert_eq!(&before.lines, &after.lines);
-        assert_eq!(before.is_folded, after.is_folded);
+
+        assert_eq!(&before.line, after.lines.first().unwrap());
     }
 }

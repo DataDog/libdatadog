@@ -12,6 +12,7 @@ use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::StringTable;
 use crate::iter::{IntoLendingIterator, LendingIterator};
+use crate::pprof::proto_map::{Insert, ProfileProtoMap};
 use crate::pprof::sliced_proto::*;
 use crate::serializer::CompressedProtobufSerializer;
 use anyhow::Context;
@@ -31,11 +32,18 @@ pub struct Profile {
     /// stores it in a way that does not depend on the string table.
     owned_period: Option<owned_types::Period>,
     endpoints: Endpoints,
-    functions: FxIndexSet<Function>,
     labels: FxIndexSet<Label>,
     label_sets: FxIndexSet<LabelSet>,
-    locations: FxIndexSet<Location>,
-    mappings: FxIndexSet<Mapping>,
+
+    /// The map holds mappings, locations, and functions. Their in-wire
+    /// serializers are designed so that they do not conflict with each other
+    /// and can all live in the same map.
+    protomap: ProfileProtoMap,
+
+    num_mappings: usize,
+    num_locations: usize,
+    num_functions: usize,
+
     observations: Observations,
     period: Option<(i64, ValueType)>,
     sample_types: Box<[ValueType]>,
@@ -154,7 +162,7 @@ impl Profile {
         &mut self,
         values: &[i64],
         labels: Vec<LabelId>,
-        locations: Vec<LocationId>,
+        locations: Vec<Option<LocationId>>,
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
@@ -323,9 +331,9 @@ impl Profile {
                 .get_stacktrace(sample.stacktrace)?
                 .locations
                 .iter()
-                .map(Id::to_raw_id)
+                .map(|id| id.map(Id::into_raw_id).unwrap_or(0))
                 .collect();
-            self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
+            self.check_location_ids_are_valid(&location_ids, self.num_locations)?;
             self.upscaling_rules.upscale_values(&mut values, &labels)?;
 
             let labels = labels.into_iter().map(pprof::Label::from).collect();
@@ -353,16 +361,10 @@ impl Profile {
             encoder.encode(ProfileSampleTypesEntry::from(item))?;
         }
 
-        for item in into_pprof_iter(self.mappings) {
-            encoder.encode(ProfileMappingsEntry::from(item))?;
-        }
-
-        for item in into_pprof_iter(self.locations) {
-            encoder.encode(ProfileLocationsEntry::from(item))?;
-        }
-
-        for item in into_pprof_iter(self.functions) {
-            encoder.encode(ProfileFunctionsEntry::from(item))?;
+        // Compress the mappings, locations, and functions.
+        {
+            let buffer = self.protomap.clear();
+            encoder.copy_buffer(&buffer)?;
         }
 
         let mut lender = self.strings.into_lending_iter();
@@ -397,9 +399,8 @@ impl Profile {
         let len: u64 = u64::try_from(len)?;
         for id in location_ids.iter() {
             let id = *id;
-            // Location ids start from 1, that's why they're <= len instead of < len
             anyhow::ensure!(
-                id > 0 && id <= len,
+                id < len,
                 "invalid location id found during serialization {:?}, len was {:?}",
                 id,
                 len
@@ -411,18 +412,25 @@ impl Profile {
 
 /// Private helper functions
 impl Profile {
-    fn add_function(&mut self, function: &api::Function) -> FunctionId {
+    fn add_function(&mut self, function: &api::Function) -> u64 {
         let name = self.intern(function.name);
         let system_name = self.intern(function.system_name);
         let filename = self.intern(function.filename);
-
         let start_line = function.start_line;
-        self.functions.dedup(Function {
-            name,
-            system_name,
-            filename,
+
+        let proto = pprof::encodable::Function {
+            id: self.num_functions as u64,
+            name: name.to_raw_id(),
+            system_name: system_name.to_raw_id(),
+            filename: filename.to_raw_id(),
             start_line,
-        })
+        };
+        let (raw_id, already_existed) = self.protomap.insert(&proto);
+        if !already_existed {
+            self.num_functions += 1;
+        }
+
+        raw_id
     }
 
     fn add_string_id_function(
@@ -434,40 +442,75 @@ impl Profile {
         let filename = self.resolve(function.filename)?;
 
         let start_line = function.start_line;
-        Ok(self.functions.dedup(Function {
-            name,
-            system_name,
-            filename,
+        let proto = pprof::encodable::Function {
+            id: self.num_functions as u64,
+            name: name.to_raw_id(),
+            system_name: system_name.to_raw_id(),
+            filename: filename.to_raw_id(),
             start_line,
-        }))
+        };
+        let (raw_id, already_existed) = self.protomap.insert(&proto);
+        if !already_existed {
+            self.num_functions += 1;
+        }
+
+        let small_id = <u32>::try_from(raw_id)?;
+        let nonzero = NonZeroU32::new(small_id).ok_or_else(|| {
+            anyhow::anyhow!("function id 0 encountered where it was not expected")
+        })?;
+        Ok(FunctionId(nonzero))
     }
 
-    fn add_location(&mut self, location: &api::Location) -> anyhow::Result<LocationId> {
+    fn add_location(&mut self, location: &api::Location) -> anyhow::Result<Option<LocationId>> {
+        let id = self.num_locations as u64;
         let mapping_id = self.add_mapping(&location.mapping);
+        let address = location.address;
         let function_id = self.add_function(&location.function);
-        self.locations.checked_dedup(Location {
-            mapping_id,
-            function_id,
-            address: location.address,
-            line: location.line,
-        })
+        let line = location.line;
+        self.add_encodable_location(id, mapping_id, address, function_id, line)
     }
 
     fn add_string_id_location(
         &mut self,
         location: &api::StringIdLocation,
-    ) -> anyhow::Result<LocationId> {
+    ) -> anyhow::Result<Option<LocationId>> {
+        let id = self.num_locations as u64;
         let mapping_id = self.add_string_id_mapping(&location.mapping)?;
-        let function_id = self.add_string_id_function(&location.function)?;
-        self.locations.checked_dedup(Location {
-            mapping_id,
-            function_id,
-            address: location.address,
-            line: location.line,
-        })
+        let address = location.address;
+        let function_id = self.add_string_id_function(&location.function)?.to_raw_id();
+        let line = location.line;
+
+        self.add_encodable_location(id, mapping_id, address, function_id, line)
     }
 
-    fn add_mapping(&mut self, mapping: &api::Mapping) -> Option<MappingId> {
+    fn add_encodable_location(
+        &mut self,
+        id: u64,
+        mapping_id: u64,
+        address: u64,
+        function_id: u64,
+        line: i64,
+    ) -> anyhow::Result<Option<LocationId>> {
+        let proto = pprof::encodable::Location {
+            id,
+            mapping_id,
+            address,
+            line: pprof::encodable::Line { function_id, line },
+        };
+
+        let (raw_id, already_existed) = self.protomap.insert(&proto);
+        if !already_existed {
+            self.num_locations += 1;
+        }
+
+        let small_id = <u32>::try_from(raw_id)?;
+        match NonZeroU32::new(small_id) {
+            None => Ok(None),
+            Some(nonzero) => Ok(Some(LocationId(nonzero))),
+        }
+    }
+
+    fn add_mapping(&mut self, mapping: &api::Mapping) -> u64 {
         #[inline]
         fn is_zero_mapping(mapping: &api::Mapping) -> bool {
             // - PHP, Python, and Ruby use a mapping only as required.
@@ -488,25 +531,53 @@ impl Profile {
         }
 
         if is_zero_mapping(mapping) {
-            return None;
+            return 0;
         }
 
-        let filename = self.intern(mapping.filename);
-        let build_id = self.intern(mapping.build_id);
+        let filename = self.intern(mapping.filename).to_raw_id();
+        let build_id = self.intern(mapping.build_id).to_raw_id();
 
-        Some(self.mappings.dedup(Mapping {
-            memory_start: mapping.memory_start,
-            memory_limit: mapping.memory_limit,
-            file_offset: mapping.file_offset,
+        let id = self.num_mappings as u64;
+        let memory_start = mapping.memory_start;
+        let memory_limit = mapping.memory_limit;
+        let file_offset = mapping.file_offset;
+        self.add_encodable_mapping(
+            id,
+            memory_start,
+            memory_limit,
+            file_offset,
             filename,
             build_id,
-        }))
+        )
     }
 
-    fn add_string_id_mapping(
+    fn add_encodable_mapping(
         &mut self,
-        mapping: &api::StringIdMapping,
-    ) -> anyhow::Result<Option<MappingId>> {
+        id: u64,
+        memory_start: u64,
+        memory_limit: u64,
+        file_offset: u64,
+        filename: i64,
+        build_id: i64,
+    ) -> u64 {
+        let proto = pprof::encodable::Mapping {
+            id,
+            memory_start,
+            memory_limit,
+            file_offset,
+            filename,
+            build_id,
+        };
+
+        let (raw_id, already_existed) = self.protomap.insert(&proto);
+        if !already_existed {
+            self.num_mappings += 1;
+        }
+
+        raw_id
+    }
+
+    fn add_string_id_mapping(&mut self, mapping: &api::StringIdMapping) -> anyhow::Result<u64> {
         #[inline]
         fn is_zero_mapping(mapping: &api::StringIdMapping) -> bool {
             // See the other is_zero_mapping for more info, but only Ruby is
@@ -520,22 +591,27 @@ impl Profile {
         }
 
         if is_zero_mapping(mapping) {
-            return Ok(None);
+            return Ok(0);
         }
 
-        let filename = self.resolve(mapping.filename)?;
-        let build_id = self.resolve(mapping.build_id)?;
+        let filename = self.resolve(mapping.filename)?.to_raw_id();
+        let build_id = self.resolve(mapping.build_id)?.to_raw_id();
 
-        Ok(Some(self.mappings.dedup(Mapping {
-            memory_start: mapping.memory_start,
-            memory_limit: mapping.memory_limit,
-            file_offset: mapping.file_offset,
+        let id = self.num_mappings as u64;
+        let memory_start = mapping.memory_start;
+        let memory_limit = mapping.memory_limit;
+        let file_offset = mapping.file_offset;
+        Ok(self.add_encodable_mapping(
+            id,
+            memory_start,
+            memory_limit,
+            file_offset,
             filename,
             build_id,
-        })))
+        ))
     }
 
-    fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {
+    fn add_stacktrace(&mut self, locations: Vec<Option<LocationId>>) -> StackTraceId {
         self.stack_traces.dedup(StackTrace { locations })
     }
 
@@ -634,11 +710,12 @@ impl Profile {
             owned_period,
             owned_sample_types,
             endpoints: Default::default(),
-            functions: Default::default(),
             labels: Default::default(),
             label_sets: Default::default(),
-            locations: Default::default(),
-            mappings: Default::default(),
+            protomap: ProfileProtoMap::new(),
+            num_mappings: 1,
+            num_locations: 1,
+            num_functions: 1,
             observations: Default::default(),
             period: None,
             sample_types: Box::new([]),
@@ -1044,11 +1121,13 @@ mod api_tests {
         /* This set of asserts is to make sure it's a non-empty profile that we
          * are working with so that we can test that reset works.
          */
-        assert!(!profile.functions.is_empty());
+        assert!(profile.protomap.len() >= 3);
+        assert!(profile.num_mappings > 1);
+        assert!(profile.num_locations > 1);
+        assert!(profile.num_functions > 1);
+
         assert!(!profile.labels.is_empty());
         assert!(!profile.label_sets.is_empty());
-        assert!(!profile.locations.is_empty());
-        assert!(!profile.mappings.is_empty());
         assert!(!profile.observations.is_empty());
         assert!(!profile.sample_types.as_ref().is_empty());
         assert!(profile.period.is_none());
@@ -1059,12 +1138,13 @@ mod api_tests {
             .reset_and_return_previous(None)
             .expect("reset to succeed");
 
-        // These should all be empty now
-        assert!(profile.functions.is_empty());
+        // These should all be empty now.
+        assert_eq!(0, profile.protomap.len());
+        assert_eq!(1, profile.num_mappings);
+        assert_eq!(1, profile.num_locations);
+        assert_eq!(1, profile.num_functions);
         assert!(profile.labels.is_empty());
         assert!(profile.label_sets.is_empty());
-        assert!(profile.locations.is_empty());
-        assert!(profile.mappings.is_empty());
         assert!(profile.observations.is_empty());
         assert!(profile.endpoints.mappings.is_empty());
         assert!(profile.endpoints.stats.is_empty());
