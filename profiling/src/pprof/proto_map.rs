@@ -38,7 +38,7 @@ impl ProfileProtoMap {
         };
         // SAFETY: the ByteRange's are not exposed, and we constructed them
         // in-range, and we never modify the existing bytes (only append).
-        unsafe { &buf.as_slice().get_unchecked(range) }
+        unsafe { &buf.get_unchecked(range) }
     }
 
     #[inline]
