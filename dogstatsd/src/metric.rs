@@ -71,19 +71,23 @@ impl SortedTags {
     }
 
     pub fn parse(tags_section: &str) -> Result<SortedTags, ParseError> {
-        let tag_parts = tags_section.split(',');
-        let mut parsed_tags = Vec::new();
-        // Validate that the tags have the right form.
-        for (i, part) in tag_parts.filter(|s| !s.is_empty()).enumerate() {
-            if i >= constants::MAX_TAGS {
-                return Err(ParseError::Raw(format!("Too many tags, more than {i}")));
-            }
-            if !part.contains(':') {
-                parsed_tags.push((Ustr::from(part), Ustr::from("")));
-            } else if let Some((k, v)) = part.split_once(':') {
+        let count = tags_section.bytes().filter(|&b| b == b',').count();
+        if count > constants::MAX_TAGS {
+            return Err(ParseError::Raw(format!("Too many tags, more than {count}")));
+        }
+
+        let mut parsed_tags = Vec::with_capacity(count + 1);
+
+        for part in tags_section.split(',').filter(|s| !s.is_empty()) {
+            if let Some(i) = part.find(':') {
+                // Avoid creating a new string via split_once
+                let (k, v) = (&part[..i], &part[i + 1..]);
                 parsed_tags.push((Ustr::from(k), Ustr::from(v)));
+            } else {
+                parsed_tags.push((Ustr::from(part), Ustr::from("")));
             }
         }
+
         parsed_tags.dedup();
         parsed_tags.sort_unstable();
         Ok(SortedTags {
