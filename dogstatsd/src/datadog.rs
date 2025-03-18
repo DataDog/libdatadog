@@ -254,9 +254,8 @@ impl DdApi {
                     let resp = builder.send().await;
                     match resp {
                         Ok(resp) if resp.status().is_success() => return Ok(resp),
-                        // TODO what if it's okay and there status code is somehow not success?
                         Ok(resp) => {
-                            debug!("Non-success status code: {:?}", resp.status());
+                            debug!("Statsd non-success status code but OK response: {:?}", resp.status());
                             return Ok(resp);
                         }
                         Err(resp) => {
