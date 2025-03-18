@@ -7,7 +7,6 @@ use crate::msgpack_decoder::decode::string::{
     handle_null_marker, read_str_map_to_bytes_strings, read_string_bytes, read_string_ref,
 };
 use crate::span::SpanLinkBytes;
-use rmp::Marker;
 use std::str::FromStr;
 use tinybytes::Bytes;
 
@@ -33,20 +32,15 @@ pub(crate) fn read_span_links(buf: &mut Bytes) -> Result<Vec<SpanLinkBytes>, Dec
         return Ok(empty_vec);
     }
 
-    match rmp::decode::read_marker(unsafe { buf.as_mut_slice() }).map_err(|_| {
-        DecodeError::InvalidFormat("Unable to read marker for span links".to_owned())
-    })? {
-        Marker::FixArray(len) => {
-            let mut vec: Vec<SpanLinkBytes> = Vec::with_capacity(len.into());
-            for _ in 0..len {
-                vec.push(decode_span_link(buf)?);
-            }
-            Ok(vec)
-        }
-        _ => Err(DecodeError::InvalidType(
-            "Unable to read span link from buffer".to_owned(),
-        )),
+    let len = rmp::decode::read_array_len(unsafe { buf.as_mut_slice() }).map_err(|_| {
+        DecodeError::InvalidType("Unable to get array len for span links".to_owned())
+    })?;
+
+    let mut vec: Vec<SpanLinkBytes> = Vec::with_capacity(len as usize);
+    for _ in 0..len {
+        vec.push(decode_span_link(buf)?);
     }
+    Ok(vec)
 }
 #[derive(Debug, PartialEq)]
 enum SpanLinkKey {

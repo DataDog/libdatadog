@@ -39,6 +39,7 @@ impl Flusher {
 
     pub async fn flush(&mut self) {
         let (all_series, all_distributions) = {
+            #[allow(clippy::expect_used)]
             let mut aggregator = self.aggregator.lock().expect("lock poisoned");
             (
                 aggregator.consume_metrics(),

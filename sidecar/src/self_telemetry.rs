@@ -4,8 +4,7 @@ use crate::config::Config;
 use crate::log;
 use crate::service::SidecarServer;
 use crate::watchdog::WatchdogHandle;
-use ddcommon::tag;
-use ddcommon::tag::Tag;
+use ddcommon::{tag, tag::Tag, MutexExt};
 use ddtelemetry::data::metrics::{MetricNamespace, MetricType};
 use ddtelemetry::metrics::ContextKey;
 use ddtelemetry::worker::{
@@ -62,10 +61,11 @@ impl MetricData<'_> {
                 vec![],
             ),
         ];
-        for (level, count) in log::MULTI_LOG_FILTER
+        for (level, count) in log::get_multi_log_filter()
             .collect_logs_created_count()
             .into_iter()
         {
+            #[allow(clippy::unwrap_used)]
             futures.push(self.send(
                 self.logs_created,
                 count as f64,
@@ -76,6 +76,7 @@ impl MetricData<'_> {
             ));
         }
         if trace_metrics.api_requests > 0 {
+            #[allow(clippy::unwrap_used)]
             futures.push(self.send(
                 self.trace_api_requests,
                 trace_metrics.api_requests as f64,
@@ -128,6 +129,7 @@ impl MetricData<'_> {
             ));
         }
         for (status_code, count) in &trace_metrics.api_responses_count_per_code {
+            #[allow(clippy::unwrap_used)]
             futures.push(self.send(
                 self.trace_api_responses,
                 *count as f64,
@@ -152,8 +154,7 @@ pub fn self_telemetry(server: SidecarServer, watchdog_handle: WatchdogHandle) ->
     let (future, completer) = ManualFuture::new();
     server
         .self_telemetry_config
-        .lock()
-        .unwrap()
+        .lock_or_panic()
         .replace(completer);
 
     tokio::spawn(async move {

@@ -152,6 +152,7 @@ fn replace_all(
         let mut last_match = 0;
         for cap in it {
             // unwrap on 0 is OK because captures only reports matches
+            #[allow(clippy::unwrap_used)]
             let m = cap.get(0).unwrap();
             scratch_space.push_str(&haystack[last_match..m.start()]);
             regex::Replacer::replace_append(&mut replace, &cap, scratch_space);

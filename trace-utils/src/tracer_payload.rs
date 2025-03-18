@@ -68,6 +68,7 @@ impl TraceCollection {
                 }
             }
             // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            #[allow(clippy::unimplemented)]
             TraceCollection::V07(_) => {
                 unimplemented!("set_top_level_spans not implemented for v07")
             }
@@ -130,6 +131,7 @@ impl TraceCollection {
                 });
             }
             // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            #[allow(clippy::unimplemented)]
             TraceCollection::V07(_) => unimplemented!("drop_chunks not implemented for v07"),
         }
 
@@ -177,6 +179,7 @@ impl TracerPayloadCollection {
                 }
             }
             // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            #[allow(clippy::unimplemented)]
             TracerPayloadCollection::V05(_) => unimplemented!("Append for V05 not implemented"),
         }
     }
@@ -416,6 +419,7 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
                 )?)
             },
             // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            #[allow(clippy::unimplemented)]
             _ => unimplemented!("Encodings other than TraceEncoding::V04 and TraceEncoding::V05 not implemented yet."),
         }
     }
@@ -544,6 +548,7 @@ mod tests {
             meta_struct: HashMap::new(),
             r#type: BytesString::from_slice("serverless".as_ref()).unwrap(),
             span_links: vec![],
+            span_events: vec![],
         }];
 
         let span_data2 = json!([{
@@ -576,6 +581,7 @@ mod tests {
             meta_struct: HashMap::new(),
             r#type: BytesString::default(),
             span_links: vec![],
+            span_events: vec![],
         }];
 
         let data = rmp_serde::to_vec(&vec![span_data1, span_data2])

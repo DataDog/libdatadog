@@ -48,6 +48,7 @@ unsafe fn emit_backtrace_by_frames(
         if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
             backtrace::resolve_frame_unsynchronized(frame, |symbol| {
                 write!(w, "{{").unwrap();
+                #[allow(clippy::unwrap_used)]
                 emit_absolute_addresses(w, frame).unwrap();
                 if let Some(column) = symbol.colno() {
                     write!(w, ", \"column\": {column}").unwrap();
@@ -64,17 +65,21 @@ unsafe fn emit_backtrace_by_frames(
                 }
                 writeln!(w, "}}").unwrap();
                 // Flush eagerly to ensure that each frame gets emitted even if the next one fails
+                #[allow(clippy::unwrap_used)]
                 w.flush().unwrap();
             });
         } else {
             write!(w, "{{").unwrap();
+            #[allow(clippy::unwrap_used)]
             emit_absolute_addresses(w, frame).unwrap();
             writeln!(w, "}}").unwrap();
             // Flush eagerly to ensure that each frame gets emitted even if the next one fails
+            #[allow(clippy::unwrap_used)]
             w.flush().unwrap();
         }
         true // keep going to the next frame
     });
+    #[allow(clippy::unwrap_used)]
     writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}").unwrap();
     w.flush()?;
     Ok(())
