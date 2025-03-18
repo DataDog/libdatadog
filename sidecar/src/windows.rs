@@ -163,8 +163,6 @@ pub extern "C" fn ddog_setup_crashtracking(
     false
 }
 
-lazy_static! {
-    static ref SIDECAR_IDENTIFIER: String = fetch_sidecar_identifier();
 static SIDECAR_IDENTIFIER: OnceLock<String> = OnceLock::new();
 
 fn get_sidecar_identifier() -> &'static str {
