@@ -170,7 +170,6 @@ impl DdApi {
             url,
             safe_body,
             "application/json",
-            self.retry_strategy.clone(),
         )
         .await
     }
@@ -188,7 +187,6 @@ impl DdApi {
             url,
             safe_body,
             "application/x-protobuf",
-            self.retry_strategy.clone(),
         )
         .await
         // TODO maybe go to coded output stream if we incrementally
@@ -207,7 +205,6 @@ impl DdApi {
         url: String,
         body: Vec<u8>,
         content_type: &str,
-        retry_strategy: RetryStrategy,
     ) -> Result<Response, ShippingError> {
         let client = &self
             .client
@@ -234,7 +231,7 @@ impl DdApi {
             }
         };
 
-        let resp = self.send_with_retry(builder, retry_strategy).await;
+        let resp = self.send_with_retry(builder).await;
 
         let elapsed = start.elapsed();
         debug!("Request to {} took {}ms", url, elapsed.as_millis());
@@ -244,7 +241,6 @@ impl DdApi {
     async fn send_with_retry(
         &self,
         builder: reqwest::RequestBuilder,
-        retry_strategy: RetryStrategy,
     ) -> Result<Response, ShippingError> {
         let mut attempts = 0;
         loop {
@@ -257,7 +253,7 @@ impl DdApi {
                         _ => {}
                     }
 
-                    match retry_strategy {
+                    match self.retry_strategy {
                         RetryStrategy::LinearBackoff(max_attempts, _)
                         | RetryStrategy::Immediate(max_attempts)
                             if attempts >= max_attempts =>
