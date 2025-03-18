@@ -412,7 +412,7 @@ impl Profile {
 
 /// Private helper functions
 impl Profile {
-    fn add_function(&mut self, function: &api::Function) -> u64 {
+    fn add_function(&mut self, function: &api::Function) -> anyhow::Result<u64> {
         let name = self.intern(function.name);
         let system_name = self.intern(function.system_name);
         let filename = self.intern(function.filename);
@@ -425,12 +425,12 @@ impl Profile {
             filename: filename.to_raw_id(),
             start_line,
         };
-        let (raw_id, already_existed) = self.protomap.insert(&proto);
+        let (raw_id, already_existed) = self.protomap.insert(&proto)?;
         if !already_existed {
             self.num_functions += 1;
         }
 
-        raw_id
+        Ok(raw_id)
     }
 
     fn add_string_id_function(
@@ -449,7 +449,7 @@ impl Profile {
             filename: filename.to_raw_id(),
             start_line,
         };
-        let (raw_id, already_existed) = self.protomap.insert(&proto);
+        let (raw_id, already_existed) = self.protomap.insert(&proto)?;
         if !already_existed {
             self.num_functions += 1;
         }
@@ -463,9 +463,9 @@ impl Profile {
 
     fn add_location(&mut self, location: &api::Location) -> anyhow::Result<Option<LocationId>> {
         let id = self.num_locations as u64;
-        let mapping_id = self.add_mapping(&location.mapping);
+        let mapping_id = self.add_mapping(&location.mapping)?;
         let address = location.address;
-        let function_id = self.add_function(&location.function);
+        let function_id = self.add_function(&location.function)?;
         let line = location.line;
         self.add_encodable_location(id, mapping_id, address, function_id, line)
     }
@@ -498,7 +498,7 @@ impl Profile {
             line: pprof::encodable::Line { function_id, line },
         };
 
-        let (raw_id, already_existed) = self.protomap.insert(&proto);
+        let (raw_id, already_existed) = self.protomap.insert(&proto)?;
         if !already_existed {
             self.num_locations += 1;
         }
@@ -510,7 +510,7 @@ impl Profile {
         }
     }
 
-    fn add_mapping(&mut self, mapping: &api::Mapping) -> u64 {
+    fn add_mapping(&mut self, mapping: &api::Mapping) -> anyhow::Result<u64> {
         #[inline]
         fn is_zero_mapping(mapping: &api::Mapping) -> bool {
             // - PHP, Python, and Ruby use a mapping only as required.
@@ -531,7 +531,7 @@ impl Profile {
         }
 
         if is_zero_mapping(mapping) {
-            return 0;
+            return Ok(0);
         }
 
         let filename = self.intern(mapping.filename).to_raw_id();
@@ -559,7 +559,7 @@ impl Profile {
         file_offset: u64,
         filename: i64,
         build_id: i64,
-    ) -> u64 {
+    ) -> anyhow::Result<u64> {
         let proto = pprof::encodable::Mapping {
             id,
             memory_start,
@@ -569,12 +569,12 @@ impl Profile {
             build_id,
         };
 
-        let (raw_id, already_existed) = self.protomap.insert(&proto);
+        let (raw_id, already_existed) = self.protomap.insert(&proto)?;
         if !already_existed {
             self.num_mappings += 1;
         }
 
-        raw_id
+        Ok(raw_id)
     }
 
     fn add_string_id_mapping(&mut self, mapping: &api::StringIdMapping) -> anyhow::Result<u64> {
@@ -601,14 +601,14 @@ impl Profile {
         let memory_start = mapping.memory_start;
         let memory_limit = mapping.memory_limit;
         let file_offset = mapping.file_offset;
-        Ok(self.add_encodable_mapping(
+        self.add_encodable_mapping(
             id,
             memory_start,
             memory_limit,
             file_offset,
             filename,
             build_id,
-        ))
+        )
     }
 
     fn add_stacktrace(&mut self, locations: Vec<Option<LocationId>>) -> StackTraceId {

@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::encodable::{try_encode_with_tag, LenEncodable, Location, Mapping};
+use super::encodable::{try_encode_with_tag, EncodeError, LenEncodable, Location, Mapping};
 use super::proto::Function;
 use hashbrown::HashTable;
 use rustc_hash::FxHasher;
@@ -87,9 +87,13 @@ impl ProfileProtoMap {
     }
 
     #[cfg_attr(debug_assertions, track_caller)]
-    fn insert_with_tag(&mut self, tag: u32, encodable: &impl Identifiable) -> (u64, bool) {
+    fn insert_with_tag(
+        &mut self,
+        tag: u32,
+        encodable: &impl Identifiable,
+    ) -> Result<(u64, bool), EncodeError> {
         if encodable.is_zero_id() {
-            return (0, true);
+            return Ok((0, true));
         }
 
         // Items get pushed to the end, then deduplicated. If they already
@@ -105,7 +109,7 @@ impl ProfileProtoMap {
             Ok(range) => range,
             Err(err) => {
                 self.buf.truncate(checkpoint);
-                panic!("failed inserting message with tag {tag}: {err}")
+                return Err(err);
             }
         };
         debug_assert!(range.end >= range.start);
@@ -121,7 +125,7 @@ impl ProfileProtoMap {
             // capacity should remain; this matches `truncate` exactly.
             self.buf.truncate(checkpoint);
         }
-        (id, already_existed)
+        Ok((id, already_existed))
     }
 }
 
@@ -157,23 +161,23 @@ impl Default for ProfileProtoMap {
 }
 
 pub trait Insert<T: Identifiable> {
-    fn insert(&mut self, value: &T) -> (u64, bool);
+    fn insert(&mut self, value: &T) -> Result<(u64, bool), EncodeError>;
 }
 
 impl Insert<Mapping> for ProfileProtoMap {
-    fn insert(&mut self, value: &Mapping) -> (u64, bool) {
+    fn insert(&mut self, value: &Mapping) -> Result<(u64, bool), EncodeError> {
         self.insert_with_tag(3u32, value)
     }
 }
 
 impl Insert<Location> for ProfileProtoMap {
-    fn insert(&mut self, value: &Location) -> (u64, bool) {
+    fn insert(&mut self, value: &Location) -> Result<(u64, bool), EncodeError> {
         self.insert_with_tag(4u32, value)
     }
 }
 
 impl Insert<Function> for ProfileProtoMap {
-    fn insert(&mut self, value: &Function) -> (u64, bool) {
+    fn insert(&mut self, value: &Function) -> Result<(u64, bool), EncodeError> {
         self.insert_with_tag(5u32, value)
     }
 }
@@ -267,113 +271,133 @@ mod tests {
         let mut already_existed = false;
         loop {
             // Empty mapping, when excluding the ID.
-            let (id0, b0) = map.insert(&Mapping {
-                id: 1,
-                memory_start: 0,
-                memory_limit: 0,
-                file_offset: 0,
-                filename: 0,
-                build_id: 0,
-            });
+            let (id0, b0) = map
+                .insert(&Mapping {
+                    id: 1,
+                    memory_start: 0,
+                    memory_limit: 0,
+                    file_offset: 0,
+                    filename: 0,
+                    build_id: 0,
+                })
+                .unwrap();
             assert_eq!(0, id0);
             assert!(b0);
 
             // Empty Function, when excluding the ID.
-            let (id0, b0) = map.insert(&Function {
-                id: 2,
-                name: 0,
-                system_name: 0,
-                filename: 0,
-                start_line: 0,
-            });
+            let (id0, b0) = map
+                .insert(&Function {
+                    id: 2,
+                    name: 0,
+                    system_name: 0,
+                    filename: 0,
+                    start_line: 0,
+                })
+                .unwrap();
             assert_eq!(0, id0);
             assert!(b0);
 
             // Empty Location, when excluding the ID.
-            let (id0, b0) = map.insert(&Location {
-                id: 1,
-                mapping_id: 0,
-                address: 0,
-                line: Default::default(),
-            });
+            let (id0, b0) = map
+                .insert(&Location {
+                    id: 1,
+                    mapping_id: 0,
+                    address: 0,
+                    line: Default::default(),
+                })
+                .unwrap();
             assert_eq!(0, id0);
             assert!(b0);
 
             // Empty Location, when excluding the ID.
-            let (id0, b0) = map.insert(&Location {
-                id: 1,
-                mapping_id: 0,
-                address: 0,
-                line: Line {
-                    function_id: 0,
-                    line: 0,
-                },
-            });
+            let (id0, b0) = map
+                .insert(&Location {
+                    id: 1,
+                    mapping_id: 0,
+                    address: 0,
+                    line: Line {
+                        function_id: 0,
+                        line: 0,
+                    },
+                })
+                .unwrap();
             assert_eq!(0, id0);
             assert!(b0);
 
-            let (id1, b1) = map.insert(&Function {
-                id: 1,
-                name: 1,
-                system_name: 0,
-                filename: 0,
-                start_line: 0,
-            });
+            let (id1, b1) = map
+                .insert(&Function {
+                    id: 1,
+                    name: 1,
+                    system_name: 0,
+                    filename: 0,
+                    start_line: 0,
+                })
+                .unwrap();
             assert_eq!(1, id1);
             assert_eq!(already_existed, b1);
 
-            let (id1, b1) = map.insert(&Function {
-                id: 2, // Same as 1 except for id, so it'll dedup.
-                name: 1,
-                system_name: 0,
-                filename: 0,
-                start_line: 0,
-            });
+            let (id1, b1) = map
+                .insert(&Function {
+                    id: 2, // Same as 1 except for id, so it'll dedup.
+                    name: 1,
+                    system_name: 0,
+                    filename: 0,
+                    start_line: 0,
+                })
+                .unwrap();
             assert_eq!(1, id1);
             assert!(b1);
 
-            let (id2, b2) = map.insert(&Mapping {
-                id: 2,
-                memory_start: 0,
-                memory_limit: 0,
-                file_offset: 0,
-                filename: 2,
-                build_id: 0,
-            });
+            let (id2, b2) = map
+                .insert(&Mapping {
+                    id: 2,
+                    memory_start: 0,
+                    memory_limit: 0,
+                    file_offset: 0,
+                    filename: 2,
+                    build_id: 0,
+                })
+                .unwrap();
             assert_eq!(2, id2);
             assert_eq!(already_existed, b2);
 
-            let (id3, b3) = map.insert(&Location {
-                id: 3,
-                mapping_id: 0,
-                address: 0,
-                line: Line {
-                    function_id: 1,
-                    line: 1,
-                },
-            });
+            let (id3, b3) = map
+                .insert(&Location {
+                    id: 3,
+                    mapping_id: 0,
+                    address: 0,
+                    line: Line {
+                        function_id: 1,
+                        line: 1,
+                    },
+                })
+                .unwrap();
             assert_eq!(3, id3);
             assert_eq!(already_existed, b3);
 
-            let (id4, b4) = map.insert(&Function {
-                id: 4,
-                name: 4,
-                system_name: 0,
-                filename: 2,
-                start_line: 1,
-            });
+            let (id4, b4) = map
+                .insert(&Function {
+                    id: 4,
+                    name: 4,
+                    system_name: 0,
+                    filename: 2,
+                    start_line: 1,
+                })
+                .unwrap();
             assert_eq!(4, id4);
             assert_eq!(already_existed, b4);
 
-            let (id5, b5) = map.insert(&Location {
-                id: 5,
-                mapping_id: 0,
-                address: 0,
-                line: Line {
-                    function_id: 4,
-                    line: 2,
-                },
-            });
+            let (id5, b5) = map
+                .insert(&Location {
+                    id: 5,
+                    mapping_id: 0,
+                    address: 0,
+                    line: Line {
+                        function_id: 4,
+                        line: 2,
+                    },
+                })
+                .unwrap();
             assert_eq!(5, id5);
             assert_eq!(already_existed, b5);
 
