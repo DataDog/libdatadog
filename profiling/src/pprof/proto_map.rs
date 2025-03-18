@@ -48,7 +48,7 @@ impl ProfileProtoMap {
         hasher.finish()
     }
 
-    fn insert_byte_range(&mut self, range: ByteRange, mut id: u64) -> (u64, bool) {
+    fn insert_byte_range(&mut self, range: ByteRange, id: u64) -> (u64, bool) {
         // We need an immutable reference to the buffer, and a mutable
         // reference to the hash table, and that goes against borrow rules if
         // we directly refer to self. So instead of using self references for
@@ -71,18 +71,19 @@ impl ProfileProtoMap {
         });
 
         let already_existed = item.is_some();
-        if let Some((_range, existing_id)) = item {
-            id = *existing_id;
+        let deduped_id = if let Some((_range, existing_id)) = item {
+            *existing_id
         } else {
             _ = self.ht.insert_unique(hash, (range, id), |(range, _id)| {
                 let bytes = Self::project(&buf, *range);
                 Self::hash(bytes)
             });
+            id
         };
 
         // Restore buffer before returning.
         core::mem::swap(&mut self.buf, &mut buf);
-        (id, already_existed)
+        (deduped_id, already_existed)
     }
 
     #[cfg_attr(debug_assertions, track_caller)]
