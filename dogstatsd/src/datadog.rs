@@ -380,7 +380,6 @@ impl Series {
 #[cfg(test)]
 mod test {
     use super::*;
-    
 
     #[test]
     fn override_can_be_empty() {
