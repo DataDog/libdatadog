@@ -136,7 +136,7 @@ unsafe fn encode_varint_with_tag_with_zero_opt(tag: u32, value: u64, buf: &mut V
 
 #[inline]
 fn encoded_len_u64_with_zero_opt(tag: u32, num: u64) -> usize {
-    0 + if num != 0 {
+    if num != 0 {
         encoded_len_u64_without_zero_opt(tag, num)
     } else {
         0
@@ -150,7 +150,7 @@ fn encoded_len_u64_without_zero_opt(tag: u32, num: u64) -> usize {
 
 #[inline]
 fn encoded_len_i64_with_zero_opt(tag: u32, num: i64) -> usize {
-    0 + if num != 0 {
+    if num != 0 {
         encoded_len_i64_without_zero_opt(tag, num)
     } else {
         0
@@ -234,8 +234,8 @@ impl LenEncodable for Mapping {
             // tag 5 (filename) was already encoded
             encode_varint_with_tag_with_zero_opt(6u32, self.build_id as u64, buf);
             let end = buf.len() as u32;
-            let range = Range { start, end };
-            range
+
+            Range { start, end }
         }
     }
 }
@@ -268,8 +268,8 @@ impl LenEncodable for Function {
             encode_varint_with_tag_with_zero_opt(5u32, self.start_line as u64, buf);
 
             let end = buf.len() as u32;
-            let range = Range { start, end };
-            range
+
+            Range { start, end }
         }
     }
 }
@@ -287,8 +287,7 @@ impl LenEncodable for Location {
             tag + len_prefix + item
         };
 
-        let len = id + mapping_id + address + line;
-        len
+        id + mapping_id + address + line
     }
 
     unsafe fn encode(&self, buf: &mut Vec<u8>) -> Range<u32> {
@@ -310,8 +309,8 @@ impl LenEncodable for Location {
             encode_varint_with_tag_with_zero_opt(3u32, self.address, buf);
 
             let end = buf.len() as u32;
-            let range = Range { start, end };
-            range
+
+            Range { start, end }
         }
     }
 }

@@ -120,22 +120,33 @@ impl ProfileProtoMap {
 }
 
 impl ProfileProtoMap {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             ht: HashTable::new(),
             buf: Vec::new(),
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn len(&self) -> usize {
         self.ht.len()
+    }
+
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.ht.is_empty()
     }
 
     #[inline]
     pub fn clear(&mut self) -> Vec<u8> {
         self.ht.clear();
-        core::mem::replace(&mut self.buf, Vec::new())
+        core::mem::take(&mut self.buf)
+    }
+}
+
+impl Default for ProfileProtoMap {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -313,7 +324,7 @@ mod tests {
                 start_line: 0,
             });
             assert_eq!(1, id1);
-            assert_eq!(true, b1);
+            assert!(b1);
 
             let (id2, b2) = map.insert(&Mapping {
                 id: 2,
