@@ -22,6 +22,6 @@ jobs:
     - uses: taiki-e/install-action@v2
       with: 
         tool: nextest@0.9.81
-    - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run -j10
+    - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run -j 10
     # We need to disable isolation because 
     # "unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled" 
