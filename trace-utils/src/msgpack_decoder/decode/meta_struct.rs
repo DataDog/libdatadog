@@ -9,7 +9,6 @@ use rmp::decode;
 use std::collections::HashMap;
 use tinybytes::{Bytes, BytesString};
 
-#[inline]
 pub fn read_meta_struct(buf: &mut Bytes) -> Result<HashMap<BytesString, Vec<u8>>, DecodeError> {
     if let Some(empty_map) = handle_null_marker(buf, HashMap::default) {
         return Ok(empty_map);

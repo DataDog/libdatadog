@@ -8,14 +8,12 @@ use crate::msgpack_decoder::decode::string::{handle_null_marker, read_string_byt
 use std::collections::HashMap;
 use tinybytes::{Bytes, BytesString};
 
-#[inline]
 pub fn read_metric_pair(buf: &mut Bytes) -> Result<(BytesString, f64), DecodeError> {
     let key = read_string_bytes(buf)?;
     let v = read_number_bytes(buf)?;
 
     Ok((key, v))
 }
-#[inline]
 pub fn read_metrics(buf: &mut Bytes) -> Result<HashMap<BytesString, f64>, DecodeError> {
     if let Some(empty_map) = handle_null_marker(buf, HashMap::default) {
         return Ok(empty_map);

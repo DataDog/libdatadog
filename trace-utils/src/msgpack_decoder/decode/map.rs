@@ -33,7 +33,6 @@ use tinybytes::Bytes;
 /// * `K` - The type of the keys in the map. Must implement `std::hash::Hash` and `Eq`.
 /// * `V` - The type of the values in the map.
 /// * `F` - The type of the function used to read key-value pairs from the buffer.
-#[inline]
 pub fn read_map<K, V, F>(
     len: usize,
     buf: &mut Bytes,
@@ -67,7 +66,6 @@ where
 /// This function will return an error if:
 /// - The buffer does not contain a map.
 /// - There is an error reading from the buffer.
-#[inline]
 pub fn read_map_len(buf: &mut &[u8]) -> Result<usize, DecodeError> {
     match decode::read_marker(buf)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for map".to_owned()))?
