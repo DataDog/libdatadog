@@ -255,16 +255,16 @@ impl From<RequestBuildResult> for Result<Box<Request>, String> {
 /// "RFC: Pprof System Info Support".
 ///
 /// # Safety
-/// The `exporter`, `profile`, `optional_additional_stats`, and `optional_endpoint_stats` args
-/// should be valid objects created by this module.
-/// NULL is allowed for `profile`, `optional_additional_tags`, `optional_endpoints_stats`,
+/// The `exporter`, `optional_additional_stats`, and `optional_endpoint_stats` args should be
+/// valid objects created by this module.
+/// NULL is allowed for `optional_additional_tags`, `optional_endpoints_stats`,
 /// `optional_internal_metadata_json` and `optional_info_json`.
 /// Consumes the `SerializedProfile`
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     exporter: Option<&mut ProfileExporter>,
-    profile: Option<&mut Handle<EncodedProfile>>,
+    profile: *mut Handle<EncodedProfile>,
     files_to_compress_and_export: Slice<File>,
     files_to_export_unmodified: Slice<File>,
     optional_additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
@@ -289,13 +289,13 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
                 Err(err) => return RequestBuildResult::Err(err.into()),
             };
 
-            let profile = if let Some(profile) = profile {
-                match profile.take() {
-                    Ok(p) => Some(*p),
-                    Err(e) => return RequestBuildResult::Err(e.into()),
-                }
-            } else {
-                None
+            if profile.is_null() {
+                return RequestBuildResult::Err(anyhow::anyhow!("profile pointer was null").into());
+            }
+
+            let profile = match (*profile).take() {
+                Ok(p) => *p,
+                Err(e) => return RequestBuildResult::Err(e.into()),
             };
 
             match exporter.build(
@@ -591,7 +591,7 @@ mod tests {
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
                 Some(exporter.as_mut()),
-                Some(profile),
+                profile,
                 Slice::empty(),
                 Slice::empty(),
                 None,
@@ -661,7 +661,7 @@ mod tests {
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
                 Some(exporter.as_mut()),
-                Some(profile),
+                profile,
                 Slice::empty(),
                 Slice::empty(),
                 None,
@@ -715,7 +715,7 @@ mod tests {
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
                 Some(exporter.as_mut()),
-                Some(profile),
+                profile,
                 Slice::empty(),
                 Slice::empty(),
                 None,
@@ -793,7 +793,7 @@ mod tests {
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
                 Some(exporter.as_mut()),
-                Some(profile),
+                profile,
                 Slice::empty(),
                 Slice::empty(),
                 None,
@@ -867,7 +867,7 @@ mod tests {
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
                 Some(exporter.as_mut()),
-                Some(profile),
+                profile,
                 Slice::empty(),
                 Slice::empty(),
                 None,
@@ -891,7 +891,7 @@ mod tests {
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
                 None, // No exporter, will fail
-                Some(profile),
+                profile,
                 Slice::empty(),
                 Slice::empty(),
                 None,
