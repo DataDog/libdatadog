@@ -7,6 +7,6 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 mod error;
+mod ffi_logger;
 mod response;
 mod trace_exporter;
-mod ffi_logger;

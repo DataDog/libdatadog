@@ -1,11 +1,7 @@
-use std::ffi::CString;
-use std::os::raw::c_char;
-use std::sync::Mutex;
-use log::{Log, Record, Level, Metadata};
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
-use std::sync::Once;
-use std::sync::atomic::{AtomicBool, Ordering};
 use ddcommon_ffi::Error;
+use log::{Level, Log, Metadata, Record};
+use std::sync::Mutex;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -19,7 +15,9 @@ pub enum LogLevel {
 
 type LogCallback = extern "C" fn(level: LogLevel, message: CharSlice);
 
-static LOGGER: FfiLogger = FfiLogger { callback: Mutex::new(None) };
+static LOGGER: FfiLogger = FfiLogger {
+    callback: Mutex::new(None),
+};
 
 struct FfiLogger {
     callback: Mutex<Option<LogCallback>>,
@@ -37,10 +35,10 @@ impl Log for FfiLogger {
 
         let level = match record.level() {
             Level::Error => LogLevel::Error,
-            Level::Warn  => LogLevel::Warn,
-            Level::Info  => LogLevel::Info,
+            Level::Warn => LogLevel::Warn,
+            Level::Info => LogLevel::Info,
             Level::Debug => LogLevel::Debug,
-            Level::Trace => LogLevel::Trace
+            Level::Trace => LogLevel::Trace,
         };
 
         let message = record.args().to_string();
@@ -55,7 +53,9 @@ impl Log for FfiLogger {
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_ffi_logger_set_log_callback<'a>(callback: LogCallback) -> Option<Box<Error>> {
+pub extern "C" fn ddog_ffi_logger_set_log_callback<'a>(
+    callback: LogCallback,
+) -> Option<Box<Error>> {
     let mut cb = match LOGGER.callback.lock() {
         Ok(guard) => guard,
         Err(_) => {
@@ -63,7 +63,7 @@ pub extern "C" fn ddog_ffi_logger_set_log_callback<'a>(callback: LogCallback) ->
             return Some(Box::new(error));
         }
     };
-    
+
     *cb = Some(callback);
 
     match log::set_logger(&LOGGER) {
@@ -83,7 +83,11 @@ pub extern "C" fn ddog_ffi_logger_set_log_callback<'a>(callback: LogCallback) ->
 
 #[no_mangle]
 pub extern "C" fn trigger_logs_with_message(level: LogLevel, message: CharSlice) {
-    println!("🚀 trigger_logs_with_message() called with level {:?}, while max level is set to {:?}", level, log::max_level());
+    println!(
+        "🚀 trigger_logs_with_message() called with level {:?}, while max level is set to {:?}",
+        level,
+        log::max_level()
+    );
     match level {
         LogLevel::Error => log::error!("{}", message.to_utf8_lossy()),
         LogLevel::Warn => log::warn!("{}", message.to_utf8_lossy()),
@@ -111,7 +115,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
-    use log;
+
     use std::sync::Once;
 
     static INIT: Once = Once::new();
@@ -161,7 +165,10 @@ mod tests {
                 Some(error) => {
                     let error_msg = error.to_string();
                     println!("Got expected error message: {}", error_msg);
-                    assert!(error_msg.contains("logger"), "Error message should mention logger");
+                    assert!(
+                        error_msg.contains("logger"),
+                        "Error message should mention logger"
+                    );
                 }
             }
         }
@@ -186,17 +193,22 @@ mod tests {
                 let slice = CharSlice::from(message);
                 trigger_logs_with_message(level, slice);
 
-                assert!(CALLED.load(Ordering::SeqCst), 
-                    "Log callback was not triggered for level {:?}", level);
+                assert!(
+                    CALLED.load(Ordering::SeqCst),
+                    "Log callback was not triggered for level {:?}",
+                    level
+                );
                 assert_eq!(
                     get_received_level(),
                     Some(level),
-                    "Incorrect level received for {:?}", level
+                    "Incorrect level received for {:?}",
+                    level
                 );
                 assert_eq!(
                     get_received_message(),
                     Some(message.to_string()),
-                    "Incorrect message received for level {:?}", level
+                    "Incorrect message received for level {:?}",
+                    level
                 );
             }
         }
@@ -207,20 +219,17 @@ mod tests {
             reset_test_state();
             // Ensure appropriate log level is set
             ddog_ffi_logger_set_max_log_level(LogLevel::Info);
-            
+
             let unicode_message = "🦀 Rust loves 유니코드 and Unicode! 🎉";
             let slice = CharSlice::from(unicode_message);
             trigger_logs_with_message(LogLevel::Info, slice);
 
-            assert!(CALLED.load(Ordering::SeqCst), "Log callback was not triggered");
-            assert_eq!(
-                get_received_message(),
-                Some(unicode_message.to_string())
+            assert!(
+                CALLED.load(Ordering::SeqCst),
+                "Log callback was not triggered"
             );
-            assert_eq!(
-                get_received_level(),
-                Some(LogLevel::Info)
-            );
+            assert_eq!(get_received_message(), Some(unicode_message.to_string()));
+            assert_eq!(get_received_level(), Some(LogLevel::Info));
         }
 
         // 4. Test max log level filtering
@@ -230,12 +239,10 @@ mod tests {
                 // When max level is ERROR
                 (LogLevel::Error, LogLevel::Error, "Error message", true),
                 (LogLevel::Error, LogLevel::Warn, "Warning message", false),
-                
                 // When max level is INFO
                 (LogLevel::Info, LogLevel::Error, "Error message", true),
                 (LogLevel::Info, LogLevel::Info, "Info message", true),
                 (LogLevel::Info, LogLevel::Debug, "Debug message", false),
-                
                 // When max level is TRACE
                 (LogLevel::Trace, LogLevel::Debug, "Debug message", true),
                 (LogLevel::Trace, LogLevel::Trace, "Trace message", true),
@@ -244,8 +251,11 @@ mod tests {
             for (max_level, log_level, message, should_log) in test_cases {
                 reset_test_state();
                 ddog_ffi_logger_set_max_log_level(max_level);
-                println!("Testing with max_level {:?}, log_level {:?}", max_level, log_level);
-                
+                println!(
+                    "Testing with max_level {:?}, log_level {:?}",
+                    max_level, log_level
+                );
+
                 let slice = CharSlice::from(message);
                 trigger_logs_with_message(log_level, slice);
 
