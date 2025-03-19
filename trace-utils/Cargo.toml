@@ -39,9 +39,6 @@ tinybytes = { path = "../tinybytes", features = [
 ] }
 
 # Proxy feature
-# hyper-proxy = { version = "0.9.1", default-features = false, features = [
-#     "rustls",
-# ], optional = true }
 hyper-http-proxy = { version = "1.1.0", default-features = false, features = [
     "rustls-tls-webpki-roots",
 ], optional = true }
