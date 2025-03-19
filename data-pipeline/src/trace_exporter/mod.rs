@@ -19,13 +19,13 @@ use ddcommon::header::{
     APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
 };
 use ddcommon::tag::Tag;
-use ddcommon::{connector, parse_uri, tag, Endpoint};
+use ddcommon::{hyper_migration, parse_uri, tag, Endpoint};
 use dogstatsd_client::{new, Client, DogStatsDAction};
 use either::Either;
 use error::BuilderErrorKind;
-use hyper::body::HttpBody;
+use http_body_util::BodyExt;
 use hyper::http::uri::PathAndQuery;
-use hyper::{header::CONTENT_TYPE, Body, Method, Uri};
+use hyper::{header::CONTENT_TYPE, Method, Uri};
 use log::{error, info};
 use std::io;
 use std::sync::{Arc, Mutex};
@@ -471,15 +471,13 @@ impl TraceExporter {
 
             #[allow(clippy::unwrap_used)]
             let req = req_builder
-                .body(Body::from(Bytes::copy_from_slice(data)))
+                .body(hyper_migration::Body::from_bytes(Bytes::copy_from_slice(
+                    data,
+                )))
                 // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
                 .unwrap();
 
-            match hyper::Client::builder()
-                .build(connector::Connector::default())
-                .request(req)
-                .await
-            {
+            match hyper_migration::new_default_client().request(req).await {
                 Ok(response) => {
                     let response_status = response.status();
                     if !response_status.is_success() {

@@ -33,8 +33,7 @@ backtrace = "0.3.74"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock", "serde"]}
 ddcommon = {path = "../ddcommon"}
 ddtelemetry = {path = "../ddtelemetry"}
-http = "0.2"
-hyper = {version = "0.14", features = ["client", "backports", "deprecated"], default-features = false}
+http = "1.0"
 libc = "0.2"
 nix = { version = "0.27.1", features = ["poll", "signal", "socket"] }
 num-derive = "0.4.2"

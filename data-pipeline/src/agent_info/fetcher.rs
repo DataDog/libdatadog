@@ -6,8 +6,9 @@
 use super::{schema::AgentInfo, AgentInfoArc};
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwapOption;
-use ddcommon::{connector::Connector, Endpoint};
-use hyper::body::HttpBody;
+use ddcommon::hyper_migration;
+use ddcommon::Endpoint;
+use http_body_util::BodyExt;
 use hyper::{self, body::Buf, header::HeaderName};
 use log::{error, info};
 use std::sync::Arc;
@@ -38,8 +39,8 @@ pub async fn fetch_info_with_state(
     let req = info_endpoint
         .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
         .method(hyper::Method::GET)
-        .body(hyper::Body::empty());
-    let client = hyper::Client::builder().build(Connector::default());
+        .body(hyper_migration::Body::empty());
+    let client = hyper_migration::new_default_client();
     let res = client.request(req?).await?;
     let new_state_hash = res
         .headers()

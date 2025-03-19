@@ -3,7 +3,7 @@
 
 use futures::future::BoxFuture;
 use futures::{future, FutureExt};
-use hyper::client::HttpConnector;
+use hyper_util::client::legacy::connect;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -22,9 +22,9 @@ use conn_stream::{ConnStream, ConnStreamError};
 
 #[derive(Clone)]
 pub enum Connector {
-    Http(hyper::client::HttpConnector),
+    Http(connect::HttpConnector),
     #[cfg(feature = "https")]
-    Https(hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>),
+    Https(hyper_rustls::HttpsConnector<connect::HttpConnector>),
 }
 
 // TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
@@ -50,7 +50,7 @@ impl Connector {
 
             match https_connector_fn() {
                 Ok(connector) => Connector::Https(connector),
-                Err(_) => Connector::Http(HttpConnector::new()),
+                Err(_) => Connector::Http(connect::HttpConnector::new()),
             }
         }
         #[cfg(not(feature = "https"))]
@@ -89,15 +89,14 @@ mod https {
     use hyper_rustls::ConfigBuilderExt;
 
     use rustls::ClientConfig;
-    use std::sync::OnceLock;
-
 
     #[cfg(feature = "use_webpki_roots")]
-    /// When using aws-lc-rs, rustls needs to be initialized with the default CryptoProvider; sometimes
-    /// this is done as a side-effect of other operations, but we need to ensure it happens here.  On
-    /// non-unix platforms, ddcommon uses `ring` instead, which handles this at rustls initialization.
-    /// TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
+    /// When using aws-lc-rs, rustls needs to be initialized with the default CryptoProvider;
+    /// sometimes this is done as a side-effect of other operations, but we need to ensure it
+    /// happens here.  On non-unix platforms, ddcommon uses `ring` instead, which handles this
+    /// at rustls initialization. TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
     fn ensure_crypto_provider_initialized() {
+        use std::sync::OnceLock;
         static INIT_CRYPTO_PROVIDER: OnceLock<()> = OnceLock::new();
         INIT_CRYPTO_PROVIDER.get_or_init(|| {
             #[cfg(unix)]
@@ -141,6 +140,8 @@ mod https {
 
     #[cfg(not(feature = "use_webpki_roots"))]
     fn load_root_certs() -> anyhow::Result<rustls::RootCertStore> {
+        use super::errors;
+
         let mut roots = rustls::RootCertStore::empty();
 
         for cert in rustls_native_certs::load_native_certs()? {
@@ -154,7 +155,7 @@ mod https {
     }
 }
 
-impl hyper::service::Service<hyper::Uri> for Connector {
+impl tower_service::Service<hyper::Uri> for Connector {
     type Response = ConnStream;
     type Error = ConnStreamError;
 
@@ -183,8 +184,9 @@ impl hyper::service::Service<hyper::Uri> for Connector {
 
 #[cfg(test)]
 mod tests {
-    use hyper::service::Service;
+    use crate::hyper_migration;
     use std::env;
+    use tower_service::Service;
 
     use super::*;
 
@@ -194,14 +196,14 @@ mod tests {
     /// Verify that the Connector type implements the correct bound Connect + Clone
     /// to be able to use the hyper::Client
     fn test_hyper_client_from_connector() {
-        let _: hyper::Client<Connector> = hyper::Client::builder().build(Connector::new());
+        let _: hyper_migration::HttpClient = hyper_migration::new_default_client();
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
     #[cfg(feature = "use_webpki_roots")]
     fn test_hyper_client_from_connector_with_webpki_roots() {
-        let _: hyper::Client<Connector> = hyper::Client::builder().build(Connector::new());
+        let _: hyper_migration::HttpClient = hyper_migration::new_default_client();
     }
 
     #[tokio::test]

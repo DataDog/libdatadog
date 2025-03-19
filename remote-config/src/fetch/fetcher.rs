@@ -11,11 +11,11 @@ use datadog_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
     TargetFileHash, TargetFileMeta,
 };
-use ddcommon::{connector, Endpoint, MutexExt};
+use ddcommon::{hyper_migration, Endpoint, MutexExt};
 use http::uri::Scheme;
-use hyper::body::HttpBody;
+use http_body_util::BodyExt;
 use hyper::http::uri::PathAndQuery;
-use hyper::{Client, StatusCode};
+use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use std::collections::{HashMap, HashSet};
@@ -310,12 +310,12 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 http::header::CONTENT_TYPE,
                 ddcommon::header::APPLICATION_JSON,
             )
-            .body(serde_json::to_string(&config_req)?)?;
+            .body(hyper_migration::Body::from(serde_json::to_string(
+                &config_req,
+            )?))?;
         let response = tokio::time::timeout(
             Duration::from_millis(self.state.endpoint.timeout_ms),
-            Client::builder()
-                .build(connector::Connector::default())
-                .request(req),
+            hyper_migration::new_default_client().request(req),
         )
         .await
         .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?
@@ -530,7 +530,6 @@ pub mod tests {
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::RemoteConfigSource;
     use http::Response;
-    use hyper::Body;
     use std::sync::OnceLock;
 
     // TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
@@ -645,7 +644,7 @@ pub mod tests {
         );
         let mut opaque_state = ConfigClientState::default();
 
-        let mut response = Response::new(Body::from(""));
+        let mut response = Response::new(hyper_migration::Body::from(""));
         *response.status_mut() = StatusCode::NOT_FOUND;
         *server.next_response.lock().unwrap() = Some(response);
 
@@ -666,7 +665,10 @@ pub mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_fetch_cache() {
+        eprintln!("before spawn");
         let server = RemoteConfigServer::spawn();
+        eprintln!("spawned");
+
         server.files.lock().unwrap().insert(
             get_path_first().clone(),
             (vec![get_dummy_target().clone()], 1, "v1".to_string()),
@@ -705,6 +707,7 @@ pub mod tests {
                 .unwrap();
 
             let req = server.last_request.lock().unwrap();
+
             let req = req.as_ref().unwrap();
             assert!(req.cached_target_files.is_empty());
 
