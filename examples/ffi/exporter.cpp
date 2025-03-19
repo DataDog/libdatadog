@@ -38,8 +38,7 @@ int main(int argc, char *argv[]) {
 
   const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
   const ddog_prof_Period period = {wall_time, 60};
-  ddog_prof_Profile_NewResult profile_new_result =
-      ddog_prof_Profile_new(sample_types, &period, nullptr);
+  ddog_prof_Profile_NewResult profile_new_result = ddog_prof_Profile_new(sample_types, &period);
   if (profile_new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
     print_error("Failed to make new profile: ", profile_new_result.err);
     ddog_Error_drop(&profile_new_result.err);
