@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// The maximum tags that a `Metric` may hold.
-pub const MAX_TAGS: usize = 32;
+pub const MAX_TAGS: usize = 100;
 
 pub const CONTEXTS: usize = 10_240;
 

@@ -71,20 +71,27 @@ impl SortedTags {
     }
 
     pub fn parse(tags_section: &str) -> Result<SortedTags, ParseError> {
-        let tag_parts = tags_section.split(',');
-        let mut parsed_tags = Vec::new();
-        // Validate that the tags have the right form.
-        for (i, part) in tag_parts.filter(|s| !s.is_empty()).enumerate() {
-            if i >= constants::MAX_TAGS {
-                return Err(ParseError::Raw(format!("Too many tags, more than {i}")));
-            }
-            if !part.contains(':') {
-                parsed_tags.push((Ustr::from(part), Ustr::from("")));
-            } else if let Some((k, v)) = part.split_once(':') {
+        let total_tags = tags_section.bytes().filter(|&b| b == b',').count() + 1;
+        let mut parsed_tags = Vec::with_capacity(total_tags);
+
+        for part in tags_section.split(',').filter(|s| !s.is_empty()) {
+            if let Some(i) = part.find(':') {
+                // Avoid creating a new string via split_once
+                let (k, v) = (&part[..i], &part[i + 1..]);
                 parsed_tags.push((Ustr::from(k), Ustr::from(v)));
+            } else {
+                parsed_tags.push((Ustr::from(part), Ustr::from("")));
             }
         }
+
         parsed_tags.dedup();
+        if parsed_tags.len() > constants::MAX_TAGS {
+            return Err(ParseError::Raw(format!(
+                "Too many tags, more than {c}",
+                c = constants::MAX_TAGS
+            )));
+        }
+
         parsed_tags.sort_unstable();
         Ok(SortedTags {
             values: parsed_tags,
@@ -551,15 +558,13 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn parse_too_many_tags() {
-        // 33
-        assert_eq!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3").unwrap_err(),
-                   ParseError::Raw("Too many tags, more than 32".to_string()));
-
-        // 32
-        assert!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2").is_ok());
-
-        // 31
-        assert!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1").is_ok());
+        // 101
+        assert_eq!(
+            parse(
+                "foo:1|g|#a:1,b:2,c:3,d:4,e:5,f:6,g:7,h:8,i:9,j:10,k:11,l:12,m:13,n:14,o:15,p:16,q:17,r:18,s:19,t:20,u:21,v:22,w:23,x:24,y:25,z:26,aa:27,ab:28,ac:29,ad:30,ae:31,af:32,ag:33,ah:34,ai:35,aj:36,ak:37,al:38,am:39,an:40,ao:41,ap:42,aq:43,ar:44,as:45,at:46,au:47,av:48,aw:49,ax:50,ay:51,az:52,ba:53,bb:54,bc:55,bd:56,be:57,bf:58,bg:59,bh:60,bi:61,bj:62,bk:63,bl:64,bm:65,bn:66,bo:67,bp:68,bq:69,br:70,bs:71,bt:72,bu:73,bv:74,bw:75,bx:76,by:77,bz:78,ca:79,cb:80,cc:81,cd:82,ce:83,cf:84,cg:85,ch:86,ci:87,cj:88,ck:89,cl:90,cm:91,cn:92,co:93,cp:94,cq:95,cr:96,cs:97,ct:98,cu:99,cv:100,cw:101"
+            ).unwrap_err(),
+            ParseError::Raw("Too many tags, more than 100".to_string())
+        );
 
         // 30
         assert!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3").is_ok());
