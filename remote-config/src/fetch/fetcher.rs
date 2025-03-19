@@ -665,9 +665,7 @@ pub mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_fetch_cache() {
-        eprintln!("before spawn");
         let server = RemoteConfigServer::spawn();
-        eprintln!("spawned");
 
         server.files.lock().unwrap().insert(
             get_path_first().clone(),

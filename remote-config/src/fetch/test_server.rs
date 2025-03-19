@@ -39,7 +39,7 @@ pub struct RemoteConfigServer {
     pub next_response: Mutex<Option<Response<hyper_migration::Body>>>,
     pub endpoint: Endpoint,
     #[allow(dead_code)] // stops receiver on drop
-    pub shutdown_complete_tx: Sender<()>,
+    shutdown_complete_tx: Sender<()>,
 }
 
 impl RemoteConfigServer {
@@ -183,7 +183,6 @@ impl RemoteConfigServer {
         let service = service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
             let this = this.clone();
             async move {
-                eprintln!("new response");
                 let body_bytes = req.into_body().collect().await.unwrap().to_bytes();
                 this.handle_request(body_bytes)
             }
