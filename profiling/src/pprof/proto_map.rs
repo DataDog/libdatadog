@@ -31,14 +31,14 @@ pub trait Identifiable: LenEncodable {
 
 impl ProfileProtoMap {
     #[inline]
-    fn project(buf: &Vec<u8>, byte_range: ByteRange) -> &[u8] {
+    fn project(buf: &[u8], byte_range: ByteRange) -> &[u8] {
         let range = Range {
             start: byte_range.start as usize,
             end: byte_range.end as usize,
         };
         // SAFETY: the ByteRange's are not exposed, and we constructed them
         // in-range, and we never modify the existing bytes (only append).
-        unsafe { &buf.get_unchecked(range) }
+        unsafe { buf.get_unchecked(range) }
     }
 
     #[inline]
