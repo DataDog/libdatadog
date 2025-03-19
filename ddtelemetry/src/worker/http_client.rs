@@ -92,7 +92,7 @@ impl HttpClient for MockClient {
                 writer.write_all(body.as_ref())?;
             }
 
-            hyper_migration::empty_reponse(hyper::Response::builder().status(202))
+            hyper_migration::empty_response(hyper::Response::builder().status(202))
         })
     }
 }

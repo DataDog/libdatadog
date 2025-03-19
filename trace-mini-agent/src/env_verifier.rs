@@ -376,7 +376,7 @@ mod tests {
         impl GoogleMetadataClient for MockGoogleMetadataClient {
             async fn get_metadata(&self) -> anyhow::Result<hyper_migration::HttpResponse> {
                 Ok(
-                    hyper_migration::empty_reponse(Response::builder().status(StatusCode::OK))
+                    hyper_migration::empty_response(Response::builder().status(StatusCode::OK))
                         .unwrap(),
                 )
             }
@@ -398,7 +398,7 @@ mod tests {
         #[async_trait]
         impl GoogleMetadataClient for MockGoogleMetadataClient {
             async fn get_metadata(&self) -> anyhow::Result<hyper_migration::HttpResponse> {
-                Ok(hyper_migration::empty_reponse(
+                Ok(hyper_migration::empty_response(
                     Response::builder()
                         .status(StatusCode::OK)
                         .header("Server", "Metadata Server NOT for Serverless"),
@@ -423,7 +423,7 @@ mod tests {
         #[async_trait]
         impl GoogleMetadataClient for MockGoogleMetadataClient {
             async fn get_metadata(&self) -> anyhow::Result<hyper_migration::HttpResponse> {
-                Ok(hyper_migration::mock_reponse(
+                Ok(hyper_migration::mock_response(
                     Response::builder()
                         .status(StatusCode::OK)
                         .header("Server", "Metadata Server for Serverless"),
@@ -469,7 +469,7 @@ mod tests {
                 // Sleep for 5 seconds to let the timeout trigger
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 Ok(
-                    hyper_migration::empty_reponse(Response::builder().status(StatusCode::OK))
+                    hyper_migration::empty_response(Response::builder().status(StatusCode::OK))
                         .unwrap(),
                 )
             }

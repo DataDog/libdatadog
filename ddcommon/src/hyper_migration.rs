@@ -59,14 +59,14 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-pub fn mock_reponse(
+pub fn mock_response(
     builder: http::response::Builder,
     body: hyper::body::Bytes,
 ) -> anyhow::Result<HttpResponse> {
     Ok(builder.body(Body::from_bytes(body))?)
 }
 
-pub fn empty_reponse(builder: http::response::Builder) -> anyhow::Result<HttpResponse> {
+pub fn empty_response(builder: http::response::Builder) -> anyhow::Result<HttpResponse> {
     Ok(builder.body(Body::empty())?)
 }
 
