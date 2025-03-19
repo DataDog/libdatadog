@@ -414,9 +414,8 @@ impl<'a> From<Sample<'a>> for api::StringIdSample<'a> {
 pub unsafe extern "C" fn ddog_prof_Profile_new(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
-    start_time: Option<&Timespec>,
 ) -> ProfileNewResult {
-    profile_new(sample_types, period, start_time, None)
+    profile_new(sample_types, period, None)
 }
 
 /// Same as `ddog_profile_new` but also configures a `string_storage` for the profile.
@@ -426,30 +425,27 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
 pub unsafe extern "C" fn ddog_prof_Profile_with_string_storage(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
-    start_time: Option<&Timespec>,
     string_storage: ManagedStringStorage,
 ) -> ProfileNewResult {
-    profile_new(sample_types, period, start_time, Some(string_storage))
+    profile_new(sample_types, period, Some(string_storage))
 }
 
 unsafe fn profile_new(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
-    start_time: Option<&Timespec>,
     string_storage: Option<ManagedStringStorage>,
 ) -> ProfileNewResult {
     let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
-    let start_time = start_time.map_or_else(SystemTime::now, SystemTime::from);
     let period = period.map(Into::into);
 
     let internal_profile = match string_storage {
-        None => internal::Profile::new(start_time, &types, period),
+        None => internal::Profile::new(&types, period),
         Some(s) => {
             let string_storage = match get_inner_string_storage(s, true) {
                 Ok(string_storage) => string_storage,
                 Err(err) => return ProfileNewResult::Err(err.into()),
             };
-            internal::Profile::with_string_storage(start_time, &types, period, string_storage)
+            internal::Profile::with_string_storage(&types, period, string_storage)
         }
     };
     let ffi_profile = Profile::new(internal_profile);
@@ -775,8 +771,11 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
 
-        let start_time = start_time.map(SystemTime::from);
-        let old_profile = profile.reset_and_return_previous(start_time)?;
+        let old_profile = profile.reset_and_return_previous()?;
+        if let Some(start_time) = start_time {
+            profile.set_start_time(start_time.into())?;
+        }
+
         let end_time = end_time.map(SystemTime::from);
         let duration = match duration_nanos {
             None => None,
@@ -809,13 +808,10 @@ pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &ddcommon_ffi::Vec<u8>) -> Sl
 /// If `time` is not null, it must point to a valid Timespec object.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_Profile_reset(
-    profile: *mut Profile,
-    start_time: Option<&Timespec>,
-) -> ProfileResult {
+pub unsafe extern "C" fn ddog_prof_Profile_reset(profile: *mut Profile) -> ProfileResult {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
-        profile.reset_and_return_previous(start_time.map(SystemTime::from))?;
+        profile.reset_and_return_previous()?;
         anyhow::Ok(())
     })()
     .context("ddog_prof_Profile_reset failed")
@@ -833,7 +829,6 @@ mod tests {
             let mut profile = Result::from(ddog_prof_Profile_new(
                 Slice::from_raw_parts(sample_type, 1),
                 None,
-                None,
             ))?;
             ddog_prof_Profile_drop(&mut profile);
             Ok(())
@@ -846,7 +841,6 @@ mod tests {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
             let mut profile = Result::from(ddog_prof_Profile_new(
                 Slice::from_raw_parts(sample_type, 1),
-                None,
                 None,
             ))?;
 
@@ -875,7 +869,6 @@ mod tests {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
             let mut profile = Result::from(ddog_prof_Profile_new(
                 Slice::from_raw_parts(sample_type, 1),
-                None,
                 None,
             ))?;
 
@@ -939,7 +932,6 @@ mod tests {
         let sample_type: *const ValueType = &ValueType::new("samples", "count");
         let mut profile = Result::from(ddog_prof_Profile_new(
             Slice::from_raw_parts(sample_type, 1),
-            None,
             None,
         ))
         .unwrap();
