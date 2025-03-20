@@ -14,17 +14,32 @@ pragma_once = true
 no_includes = true
 sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
 includes = ["common.h"]
+after_includes = """
+
+#if defined(_WIN32) && defined(_CRASHTRACKING_COLLECTOR)
+#include <werapi.h>
+#include <windows.h>
+#endif
+
+"""
+
+[defines]
+"target_os = windows" = "_WIN32"
+"feature = collector_windows" = "_CRASHTRACKING_COLLECTOR"
 
 [export]
 prefix = "ddog_crasht_"
 renaming_overrides_prefixing = true
 
 [export.rename]
+"BOOL" = "BOOL"
 "ByteSlice" = "ddog_ByteSlice"
 "CancellationToken" = "ddog_CancellationToken"
 "CharSlice" = "ddog_CharSlice"
 "Endpoint" = "ddog_Endpoint"
 "Error" = "ddog_Error"
+"HMODULE" = "HMODULE"
+"HRESULT" = "HRESULT"
 "HttpStatus" = "ddog_HttpStatus"
 "Option_U32" = "ddog_Option_U32"
 "Slice_CChar" = "ddog_Slice_CChar"
@@ -41,6 +56,7 @@ renaming_overrides_prefixing = true
 "StackTraceNewResult" = " ddog_crasht_StackTrace_NewResult"
 "StackFrameNewResult" = "ddog_crasht_StackFrame_NewResult"
 "CrashInfoNewResult" = "ddog_crasht_CrashInfo_NewResult"
+"WER_RUNTIME_EXCEPTION_INFORMATION" = "WER_RUNTIME_EXCEPTION_INFORMATION"
 
 [export.mangle]
 rename_types = "PascalCase"

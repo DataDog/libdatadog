@@ -52,6 +52,8 @@
 
 #[cfg(all(unix, feature = "collector"))]
 mod collector;
+#[cfg(all(windows, feature = "collector_windows"))]
+mod collector_windows;
 mod crash_info;
 #[cfg(all(unix, feature = "receiver"))]
 mod receiver;
@@ -65,6 +67,9 @@ pub use collector::{
     remove_additional_tag, remove_span, remove_trace, reset_counters, shutdown_crash_handler,
     update_config, update_metadata, OpTypes, DEFAULT_SYMBOLS,
 };
+
+#[cfg(all(windows, feature = "collector_windows"))]
+pub use collector_windows::api::{exception_event_callback, init_crashtracking_windows};
 
 pub use crash_info::*;
 
