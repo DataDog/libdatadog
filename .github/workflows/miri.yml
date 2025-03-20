@@ -4,7 +4,7 @@ on:
 
 jobs:
   run-miri:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-8-cores
     env:
       CARGO_TERM_COLOR: always
       PROPTEST_CASES: 1
@@ -21,7 +21,7 @@ jobs:
       run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
     - uses: taiki-e/install-action@v2
       with: 
-        tool: nextest@0.9.81
+        tool: nextest@0.9.92
     - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run
     # We need to disable isolation because 
     # "unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled" 
