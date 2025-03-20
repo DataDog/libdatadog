@@ -5738,6 +5738,7 @@ dependencies = [
  "once_cell",
  "pretty_assertions",
  "proptest",
+ "rmp-serde",
  "serde",
  "serde_json",
  "test-case",
