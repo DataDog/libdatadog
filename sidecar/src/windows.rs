@@ -6,10 +6,14 @@ use crate::setup::pid_shm_path;
 use datadog_ipc::platform::{
     named_pipe_name_from_raw_handle, FileBackedHandle, MappedMem, NamedShmHandle,
 };
+
+use datadog_crashtracker_ffi::{ddog_crasht_init_windows, Metadata};
+use ddcommon::Endpoint;
 use ddcommon::MutexExt;
+use ddcommon_ffi::CharSlice;
 use futures::FutureExt;
 use manual_future::ManualFuture;
-use spawn_worker::{SpawnWorker, Stdio};
+use spawn_worker::{write_crashtracking_trampoline, SpawnWorker, Stdio};
 use std::ffi::CStr;
 use std::io::{self, Error};
 use std::os::windows::io::{AsRawHandle, IntoRawHandle, OwnedHandle};
@@ -127,6 +131,36 @@ pub fn setup_daemon_process(listener: OwnedHandle, spawn_cfg: &mut SpawnWorker) 
         .stdin(Stdio::Null);
 
     Ok(())
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_setup_crashtracking(
+    endpoint: Option<&Endpoint>,
+    metadata: Metadata,
+) -> bool {
+    // Ensure unique process names - we spawn one sidecar per console session id (see
+    // setup/windows.rs for the reasoning)
+    match write_crashtracking_trampoline(&format!(
+        "datadog-crashtracking-{}",
+        primary_sidecar_identifier()
+    )) {
+        Ok((path, _)) => {
+            if let Ok(path_str) = path.into_os_string().into_string() {
+                return ddog_crasht_init_windows(
+                    CharSlice::from(path_str.as_str()),
+                    endpoint,
+                    metadata,
+                );
+            } else {
+                error!("Failed to convert path to string");
+            }
+        }
+        Err(e) => {
+            error!("Failed to write crashtracking trampoline: {}", e);
+        }
+    }
+
+    false
 }
 
 static SIDECAR_IDENTIFIER: OnceLock<String> = OnceLock::new();
