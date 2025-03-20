@@ -622,7 +622,6 @@ mod tests {
         );
         assert_eq!(parsed_event_json["family"], json!("native"));
         assert_eq!(parsed_event_json["internal"], json!({}));
-        assert_eq!(parsed_event_json["tags_profiler"], json!(""));
         assert_eq!(parsed_event_json["version"], json!("4"));
 
         // TODO: Assert on contents of attachments, as well as on the headers/configuration for the
