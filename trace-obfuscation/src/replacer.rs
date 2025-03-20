@@ -251,6 +251,7 @@ mod tests {
         ]
     )]
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_name() {
         let parsed_rules = replacer::parse_rules_from_string(rules);
 
@@ -281,6 +282,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_replace_rule_eq() {
         let rule1 = replacer::ReplaceRule {
             name: "http.url".to_string(),
@@ -298,6 +300,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_replace_rule_neq() {
         let rule1 = replacer::ReplaceRule {
             name: "http.url".to_string(),
