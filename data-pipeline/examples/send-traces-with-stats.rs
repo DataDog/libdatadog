@@ -30,7 +30,8 @@ fn get_span(now: i64, trace_id: u64, span_id: u64) -> pb::Span {
 }
 
 fn main() {
-    let exporter = TraceExporter::builder()
+    let mut builder = TraceExporter::builder();
+    builder
         .set_url("http://localhost:8126")
         .set_hostname("test")
         .set_env("testing")
@@ -41,9 +42,8 @@ fn main() {
         .set_language_version(env!("CARGO_PKG_RUST_VERSION"))
         .set_input_format(TraceExporterInputFormat::V04)
         .set_output_format(TraceExporterOutputFormat::V04)
-        .enable_stats(Duration::from_secs(10))
-        .build()
-        .unwrap();
+        .enable_stats(Duration::from_secs(10));
+    let exporter = builder.build().unwrap();
     let now = UNIX_EPOCH.elapsed().unwrap().as_nanos() as i64;
 
     let mut traces = Vec::new();
