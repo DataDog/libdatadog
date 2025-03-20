@@ -2,15 +2,12 @@ name: Miri test
 on:
   push:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  run-miri:
+  build-miri:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        partition: [1, 2, 3, 4]
-    env:
-      CARGO_TERM_COLOR: always
-      PROPTEST_CASES: 1
     steps:
       - uses: actions/checkout@v4
       - name: Set up Rust
@@ -25,6 +22,32 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9.92
-      - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run --partition count:${{ matrix.partition }}/4
+      - run: cargo nextest archive --archive-file nextest-archive.tar.zst
+      - name: Upload archive to workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-archive
+          path: nextest-archive.tar.zst
+
+  run-miri:
+    runs-on: ubuntu-latest
+    needs: build-miri
+    strategy:
+      matrix:
+        partition: [1, 2, 3, 4]
+    env:
+      PROPTEST_CASES: 1
+    steps:
+      - uses: actions/checkout@v4
+      # Cargo nextest's run phase does not require Cargo, but ~/.cargo/bin is
+      # required by the install action.
+      - run: mkdir -p ~/.cargo/bin
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.92
+      - run: |
+          MIRIFLAGS="-Zmiri-disable-isolation" ~/.cargo/bin/cargo-nextest miri nextest run \
+            --archive-file nextest-archive.tar.zst \
+            --partition count:${{ matrix.partition }}/4
       # We need to disable isolation because
       # "unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled"
