@@ -34,20 +34,23 @@ jobs:
     needs: build-miri
     strategy:
       matrix:
-        partition: [1, 2, 3, 4]
+        partition: [1, 2, 3, 4, 5]
     env:
       PROPTEST_CASES: 1
     steps:
       - uses: actions/checkout@v4
-      # Cargo nextest's run phase does not require Cargo, but ~/.cargo/bin is
-      # required by the install action.
-      - run: mkdir -p ~/.cargo/bin
+      - name: Set up Rust
+        run: |
+          set -e
+          rustup set profile minimal
+          rustup toolchain install nightly-2024-12-16 --component miri
+          rustup default nightly-2024-12-16
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9.92
       - run: |
-          MIRIFLAGS="-Zmiri-disable-isolation" ~/.cargo/bin/cargo-nextest miri nextest run \
+          MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run \
             --archive-file nextest-archive.tar.zst \
-            --partition count:${{ matrix.partition }}/4
+            --partition count:${{ matrix.partition }}/5
       # We need to disable isolation because
       # "unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled"
