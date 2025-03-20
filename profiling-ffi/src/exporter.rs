@@ -10,19 +10,13 @@ use datadog_profiling::internal::EncodedProfile;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use ddcommon_ffi::{
-    wrap_with_ffi_result, wrap_with_void_ffi_result, Error, Handle, Result, ToInner, VoidResult,
+    wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResult,
 };
 use function_name::named;
 use std::borrow::Cow;
-use std::ptr::NonNull;
 use std::str::FromStr;
 
-#[allow(dead_code)]
-#[repr(C)]
-pub enum RequestBuildResult {
-    Ok(Handle<Request>),
-    Err(Error),
-}
+type TokioCancellationToken = tokio_util::sync::CancellationToken;
 
 #[allow(dead_code)]
 #[repr(C)]
@@ -44,9 +38,6 @@ pub struct File<'a> {
 pub extern "C" fn ddog_prof_Exporter_Slice_File_empty() -> Slice<'static, File<'static>> {
     Slice::empty()
 }
-
-// This type exists only to force cbindgen to expose an CancellationToken as an opaque type.
-pub struct CancellationToken(tokio_util::sync::CancellationToken);
 
 #[derive(Debug)]
 #[repr(C)]
@@ -229,7 +220,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     optional_additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
     optional_internal_metadata_json: Option<&CharSlice>,
     optional_info_json: Option<&CharSlice>,
-) -> ddcommon_ffi::Result<Handle<Request>> {
+) -> Result<Handle<Request>> {
     wrap_with_ffi_result!({
         let exporter = exporter.to_inner_mut()?;
         let profile = *profile.take()?;
@@ -300,14 +291,13 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(mut request: *mut Handl
 pub unsafe extern "C" fn ddog_prof_Exporter_send(
     mut exporter: *mut Handle<ProfileExporter>,
     mut request: *mut Handle<Request>,
-    cancel: Option<&CancellationToken>,
+    mut cancel: *mut Handle<TokioCancellationToken>,
 ) -> Result<HttpStatus> {
     wrap_with_ffi_result!({
         let request = *request.take().context("request")?;
         let exporter = exporter.to_inner_mut()?;
-
-        let cancel = cancel.map(|ptr| &ptr.0);
-        let response = exporter.send(request, cancel)?;
+        let cancel = cancel.to_inner_mut().ok();
+        let response = exporter.send(request, cancel.as_deref())?;
 
         anyhow::Ok(HttpStatus(response.status().as_u16()))
     })
@@ -317,14 +307,11 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send(
 /// different thread.
 #[no_mangle]
 #[must_use]
-pub extern "C" fn ddog_CancellationToken_new() -> NonNull<CancellationToken> {
-    let token = CancellationToken(tokio_util::sync::CancellationToken::new());
-    let ptr = Box::into_raw(Box::new(token));
-    // Safety: Box::into_raw will be non-null.
-    unsafe { NonNull::new_unchecked(ptr) }
+pub extern "C" fn ddog_CancellationToken_new() -> Handle<TokioCancellationToken> {
+    TokioCancellationToken::new().into()
 }
 
-/// A cloned CancellationToken is connected to the CancellationToken it was created from.
+/// A cloned TokioCancellationToken is connected to the TokioCancellationToken it was created from.
 /// Either the cloned or the original token can be used to cancel or provided as arguments to send.
 /// The useful part is that they have independent lifetimes and can be dropped separately.
 ///
@@ -351,14 +338,12 @@ pub extern "C" fn ddog_CancellationToken_new() -> NonNull<CancellationToken> {
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_CancellationToken_clone(
-    token: Option<&CancellationToken>,
-) -> *mut CancellationToken {
-    match token {
-        Some(ptr) => {
-            let new_token = ptr.0.clone();
-            Box::into_raw(Box::new(CancellationToken(new_token)))
-        }
-        None => std::ptr::null_mut(),
+    mut token: *mut Handle<TokioCancellationToken>,
+) -> Handle<TokioCancellationToken> {
+    if let Ok(token) = token.to_inner_mut() {
+        token.clone().into()
+    } else {
+        Handle::empty()
     }
 }
 
@@ -366,17 +351,17 @@ pub unsafe extern "C" fn ddog_CancellationToken_clone(
 /// Note that cancellation is a terminal state; cancelling a token more than once does nothing.
 /// Returns `true` if token was successfully cancelled.
 #[no_mangle]
-pub extern "C" fn ddog_CancellationToken_cancel(cancel: Option<&CancellationToken>) -> bool {
-    match cancel {
-        Some(ptr) => {
-            let token = &ptr.0;
-            let will_cancel = !token.is_cancelled();
-            if will_cancel {
-                token.cancel();
-            }
-            will_cancel
+pub unsafe extern "C" fn ddog_CancellationToken_cancel(
+    mut cancel: *mut Handle<TokioCancellationToken>,
+) -> bool {
+    if let Ok(token) = cancel.to_inner_mut() {
+        let will_cancel = !token.is_cancelled();
+        if will_cancel {
+            token.cancel();
         }
-        None => false,
+        will_cancel
+    } else {
+        false
     }
 }
 
@@ -384,11 +369,8 @@ pub extern "C" fn ddog_CancellationToken_cancel(cancel: Option<&CancellationToke
 /// The `token` can be null, but non-null values must be created by the Rust
 /// Global allocator and must have not been dropped already.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_CancellationToken_drop(token: Option<&mut CancellationToken>) {
-    if let Some(reference) = token {
-        // Safety: the token is not repr(C), so it is boxed.
-        drop(Box::from_raw(reference as *mut _))
-    }
+pub unsafe extern "C" fn ddog_CancellationToken_drop(mut token: *mut Handle<TokioCancellationToken>) {
+    drop(token.take())
 }
 
 #[cfg(test)]
@@ -790,8 +772,9 @@ mod tests {
     fn send_fails_with_null() {
         let exporter = &mut Handle::empty();
         let request = &mut Handle::empty();
+        let cancel = &mut Handle::empty();
         unsafe {
-            let error = ddog_prof_Exporter_send(exporter, request, None)
+            let error = ddog_prof_Exporter_send(exporter, request, cancel)
                 .unwrap_err()
                 .to_string();
             assert_eq!(

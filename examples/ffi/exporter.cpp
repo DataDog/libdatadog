@@ -152,8 +152,8 @@ int main(int argc, char *argv[]) {
 
   auto request = &build_result.ok;
 
-  ddog_CancellationToken *cancel = ddog_CancellationToken_new();
-  ddog_CancellationToken *cancel_for_background_thread = ddog_CancellationToken_clone(cancel);
+  auto cancel = ddog_CancellationToken_new();
+  auto cancel_for_background_thread = ddog_CancellationToken_clone(&cancel);
 
   // As an example of CancellationToken usage, here we create a background
   // thread that sleeps for some time and then cancels a request early (e.g.
@@ -161,20 +161,20 @@ int main(int argc, char *argv[]) {
   //
   // If the request is faster than the sleep time, no cancellation takes place.
   std::thread trigger_cancel_if_request_takes_too_long_thread(
-      [](ddog_CancellationToken *cancel_for_background_thread) {
+      [](ddog_prof_Handle_TokioCancellationToken cancel_for_background_thread) {
         int timeout_ms = 5000;
         std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms));
         printf("Request took longer than %d ms, triggering asynchronous "
                "cancellation\n",
                timeout_ms);
-        ddog_CancellationToken_cancel(cancel_for_background_thread);
-        ddog_CancellationToken_drop(cancel_for_background_thread);
+        ddog_CancellationToken_cancel(&cancel_for_background_thread);
+        ddog_CancellationToken_drop(&cancel_for_background_thread);
       },
       cancel_for_background_thread);
   trigger_cancel_if_request_takes_too_long_thread.detach();
 
   int exit_code = 0;
-  auto send_result = ddog_prof_Exporter_send(exporter, request, cancel);
+  auto send_result = ddog_prof_Exporter_send(exporter, request, &cancel);
   if (send_result.tag == DDOG_PROF_RESULT_HTTP_STATUS_ERR_HTTP_STATUS) {
     print_error("Failed to send profile: ", send_result.err);
     exit_code = 1;
@@ -185,6 +185,6 @@ int main(int argc, char *argv[]) {
 
   ddog_prof_Exporter_Request_drop(request);
   ddog_prof_Exporter_drop(exporter);
-  ddog_CancellationToken_drop(cancel);
+  ddog_CancellationToken_drop(&cancel);
   return exit_code;
 }

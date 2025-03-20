@@ -15,13 +15,16 @@ no_includes = true
 sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
 includes = ["common.h"]
 
+after_includes = """
+struct TokioCancellationToken;
+"""
+
 [export]
 prefix = "ddog_prof_"
 renaming_overrides_prefixing = true
 
 [export.rename]
 "ByteSlice" = "ddog_ByteSlice"
-"CancellationToken" = "ddog_CancellationToken"
 "CharSlice" = "ddog_CharSlice"
 "Endpoint" = "ddog_Endpoint"
 "Error" = "ddog_Error"
@@ -61,6 +64,8 @@ renaming_overrides_prefixing = true
 "HandleEncodedProfile" = "ddog_prof_EncodedProfile"
 "Handle_EncodedProfile" = "ddog_prof_EncodedProfile"
 "Result_HandleEncodedProfile" = "ddog_prof_EncodedProfile_Result"
+
+"CancellationToken" = "struct ddog_prof_OpaqueCancellationToken"
 
 [export.mangle]
 rename_types = "PascalCase"
