@@ -467,33 +467,72 @@ impl Profile {
         })
     }
 
-    fn add_mapping(&mut self, mapping: &api::Mapping) -> MappingId {
+    fn add_mapping(&mut self, mapping: &api::Mapping) -> Option<MappingId> {
+        #[inline]
+        fn is_zero_mapping(mapping: &api::Mapping) -> bool {
+            // - PHP, Python, and Ruby use a mapping only as required.
+            // - .NET uses only the filename.
+            // - The native profiler uses all fields.
+            // We strike a balance for optimizing for the dynamic languages
+            // and the others by mixing branches and branchless programming.
+            let filename = mapping.filename.len();
+            let build_id = mapping.build_id.len();
+            if 0 != (filename | build_id) {
+                return false;
+            }
+
+            let memory_start = mapping.memory_start;
+            let memory_limit = mapping.memory_limit;
+            let file_offset = mapping.file_offset;
+            0 == (memory_start | memory_limit | file_offset)
+        }
+
+        if is_zero_mapping(mapping) {
+            return None;
+        }
+
         let filename = self.intern(mapping.filename);
         let build_id = self.intern(mapping.build_id);
 
-        self.mappings.dedup(Mapping {
-            memory_start: mapping.memory_start,
-            memory_limit: mapping.memory_limit,
-            file_offset: mapping.file_offset,
-            filename,
-            build_id,
-        })
-    }
-
-    fn add_string_id_mapping(
-        &mut self,
-        mapping: &api::StringIdMapping,
-    ) -> anyhow::Result<MappingId> {
-        let filename = self.resolve(mapping.filename)?;
-        let build_id = self.resolve(mapping.build_id)?;
-
-        Ok(self.mappings.dedup(Mapping {
+        Some(self.mappings.dedup(Mapping {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
             file_offset: mapping.file_offset,
             filename,
             build_id,
         }))
+    }
+
+    fn add_string_id_mapping(
+        &mut self,
+        mapping: &api::StringIdMapping,
+    ) -> anyhow::Result<Option<MappingId>> {
+        #[inline]
+        fn is_zero_mapping(mapping: &api::StringIdMapping) -> bool {
+            // See the other is_zero_mapping for more info, but only Ruby is
+            // using this API at the moment, so we optimize for the whole
+            // thing being a zero representation.
+            let memory_start = mapping.memory_start;
+            let memory_limit = mapping.memory_limit;
+            let file_offset = mapping.file_offset;
+            let strings = (mapping.filename.value | mapping.build_id.value) as u64;
+            0 == (memory_start | memory_limit | file_offset | strings)
+        }
+
+        if is_zero_mapping(mapping) {
+            return Ok(None);
+        }
+
+        let filename = self.resolve(mapping.filename)?;
+        let build_id = self.resolve(mapping.build_id)?;
+
+        Ok(Some(self.mappings.dedup(Mapping {
+            memory_start: mapping.memory_start,
+            memory_limit: mapping.memory_limit,
+            file_offset: mapping.file_offset,
+            filename,
+            build_id,
+        })))
     }
 
     fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {
