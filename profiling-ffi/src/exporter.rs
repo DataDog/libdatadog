@@ -4,13 +4,12 @@
 #![allow(renamed_and_removed_lints)]
 #![allow(clippy::box_vec)]
 
-use anyhow::Context;
 use datadog_profiling::exporter;
 use datadog_profiling::exporter::{ProfileExporter, Request};
 use datadog_profiling::internal::EncodedProfile;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use ddcommon_ffi::{wrap_with_ffi_result, Error, Handle, MaybeError, ToInner};
+use ddcommon_ffi::{wrap_with_ffi_result, Error, Handle, MaybeError, Result, ToInner};
 use function_name::named;
 use std::borrow::Cow;
 use std::ptr::NonNull;
@@ -27,13 +26,6 @@ pub enum ExporterNewResult {
 #[repr(C)]
 pub enum RequestBuildResult {
     Ok(Handle<Request>),
-    Err(Error),
-}
-
-#[allow(dead_code)]
-#[repr(C)]
-pub enum SendResult {
-    HttpResponse(HttpStatus),
     Err(Error),
 }
 
@@ -329,29 +321,21 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(mut request: *mut Handl
 /// All non-null arguments MUST have been created by created by apis in this module.
 #[no_mangle]
 #[must_use]
+#[named]
 pub unsafe extern "C" fn ddog_prof_Exporter_send(
     exporter: Option<&mut ProfileExporter>,
-    request: Handle<Request>,
+    mut request: *mut Handle<Request>,
     cancel: Option<&CancellationToken>,
-) -> SendResult {
-    match ddog_prof_exporter_send_impl(exporter, request, cancel) {
-        Ok(code) => SendResult::HttpResponse(code),
-        Err(err) => SendResult::Err(Error::from(err.context("failed ddog_prof_Exporter_send"))),
-    }
-}
+) -> Result<HttpStatus> {
+    wrap_with_ffi_result!({
+        let request = *request.take().context("request")?;
+        let exporter = exporter.context("exporter was null")?;
 
-unsafe fn ddog_prof_exporter_send_impl(
-    exporter: Option<&mut ProfileExporter>,
-    mut request: Handle<Request>,
-    cancel: Option<&CancellationToken>,
-) -> anyhow::Result<HttpStatus> {
-    let request = *request.take().context("request")?;
-    let exporter = exporter.context("exporter was null")?;
+        let cancel = cancel.map(|ptr| &ptr.0);
+        let response = exporter.send(request, cancel)?;
 
-    let cancel = cancel.map(|ptr| &ptr.0);
-    let response = exporter.send(request, cancel)?;
-
-    Ok(HttpStatus(response.status().as_u16()))
+        anyhow::Ok(HttpStatus(response.status().as_u16()))
+    })
 }
 
 /// Can be passed as an argument to send and then be used to asynchronously cancel it from a
@@ -851,20 +835,15 @@ mod tests {
 
     #[test]
     fn send_fails_with_null() {
-        let request = Handle::empty();
+        let mut request = Handle::empty();
         unsafe {
-            match ddog_prof_Exporter_send(None, request, None) {
-                SendResult::HttpResponse(http_status) => {
-                    panic!("Expected test to fail, got {http_status:?}")
-                }
-                SendResult::Err(error) => {
-                    let actual_error = error.to_string();
-                    assert_eq!(
-                        "failed ddog_prof_Exporter_send: request: inner pointer was null, indicates use after free",
-                        actual_error
+            let error = ddog_prof_Exporter_send(None, &mut request, None)
+                .unwrap_err()
+                .to_string();
+            assert_eq!(
+                        "ddog_prof_Exporter_send failed: request: inner pointer was null, indicates use after free",
+                        error
                     );
-                }
-            }
         }
     }
 }
