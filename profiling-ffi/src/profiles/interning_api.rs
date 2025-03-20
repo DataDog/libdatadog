@@ -26,7 +26,7 @@ type CbindgenIsDumbStringId = GenerationalId<StringId>;
 #[used]
 pub static INTERNED_EMPTY_STRING: CbindgenIsDumbStringId = internal::Profile::INTERNED_EMPTY_STRING;
 
-/// This functions interns its argument into the profiler.
+/// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
 /// This ID is valid for use on this profiler, until the profiler is reset.
 /// It is an error to use this id after the profiler has been reset, or on a different profiler.
@@ -51,7 +51,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_function(
     })
 }
 
-/// This functions interns its argument into the profiler.
+/// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
 /// This ID is valid for use on this profiler, until the profiler is reset.
 /// It is an error to use this id after the profiler has been reset, or on a different profiler.
@@ -73,7 +73,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_label_num(
     wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_label_num(key, val, None) })
 }
 
-/// This functions interns its argument into the profiler.
+/// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
 /// This ID is valid for use on this profiler, until the profiler is reset.
 /// It is an error to use this id after the profiler has been reset, or on a different profiler.
@@ -96,7 +96,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_label_num_with_unit(
     wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_label_num(key, val, Some(unit)) })
 }
 
-/// This functions interns its argument into the profiler.
+/// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
 /// This ID is valid for use on this profiler, until the profiler is reset.
 /// It is an error to use this id after the profiler has been reset, or on a different profiler.
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_label_str(
     wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_label_str(key, val) })
 }
 
-/// This functions interns its argument into the profiler.
+/// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
 /// This ID is valid for use on this profiler, until the profiler is reset.
 /// It is an error to use this id after the profiler has been reset, or on a different profiler.
@@ -139,7 +139,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_labelset(
     wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_labelset(labels.as_slice()) })
 }
 
-/// This functions interns its argument into the profiler.
+/// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
 /// This ID is valid for use on this profiler, until the profiler is reset.
 /// It is an error to use this id after the profiler has been reset, or on a different profiler.
@@ -164,7 +164,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_location(
     })
 }
 
-/// This functions interns its argument into the profiler.
+/// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
 /// This ID is valid for use on this profiler, until the profiler is reset.
 /// It is an error to use this id after the profiler has been reset, or on a different profiler.
@@ -190,7 +190,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_location_with_mapping_id(
     })
 }
 
-/// This functions interns its argument into the profiler.
+/// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
 /// This ID is valid for use on this profiler, until the profiler is reset.
 /// It is an error to use this id after the profiler has been reset, or on a different profiler.
@@ -211,7 +211,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_managed_string(
     wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_managed_string(s) })
 }
 
-/// This functions interns its argument into the profiler.
+/// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
 /// This ID is valid for use on this profiler, until the profiler is reset.
 /// It is an error to use this id after the profiler has been reset, or on a different profiler.
@@ -237,7 +237,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_managed_strings(
     })
 }
 
-/// This functions interns its argument into the profiler.
+/// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
 /// This ID is valid for use on this profiler, until the profiler is reset.
 /// It is an error to use this id after the profiler has been reset, or on a different profiler.
@@ -270,7 +270,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_mapping(
     })
 }
 
-/// This functions interns its argument into the profiler.
+/// This function interns its argument into the profiler.
 /// If successful, it returns void.
 /// This ID is valid for use on this profiler, until the profiler is reset.
 /// It is an error to use this id after the profiler has been reset, or on a different profiler.
@@ -302,7 +302,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_sample(
     })
 }
 
-/// This functions interns its argument into the profiler.
+/// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
 /// This ID is valid for use on this profiler, until the profiler is reset.
 /// It is an error to use this id after the profiler has been reset, or on a different profiler.
@@ -325,7 +325,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_stacktrace(
     })
 }
 
-/// This functions interns its argument into the profiler.
+/// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
 /// This ID is valid for use on this profiler, until the profiler is reset.
 /// It is an error to use this id after the profiler has been reset, or on a different profiler.
@@ -355,7 +355,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_interned_empty_string() -> Generation
     internal::Profile::INTERNED_EMPTY_STRING
 }
 
-/// This functions interns its argument into the profiler.
+/// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
 /// This ID is valid for use on this profiler, until the profiler is reset.
 /// It is an error to use this id after the profiler has been reset, or on a different profiler.
