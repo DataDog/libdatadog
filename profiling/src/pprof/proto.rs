@@ -163,9 +163,12 @@ pub struct Function {
     #[prost(int64, tag = "3")]
     pub system_name: i64, // Index into string table
     #[prost(int64, tag = "4")]
-    pub filename: i64, // Index into string table
-    #[prost(int64, tag = "5")]
-    pub start_line: i64, // Index into string table
+    pub filename: i64, /* Index into string table */
+
+                       /* We derive no value from this line, so our APIs and reprs omit it.
+                        * We comment it out here to also not waste time serializing it.
+                        * #[prost(int64, tag = "5")]
+                        *pub start_line: i64, // Index into string table */
 }
 
 #[cfg(test)]
@@ -214,7 +217,6 @@ mod tests {
             name: 4,
             system_name: 4,
             filename: 5,
-            start_line: 0,
         };
 
         let test_function = Function {
@@ -222,7 +224,6 @@ mod tests {
             name: 6,
             system_name: 6,
             filename: 5,
-            start_line: 3,
         };
 
         let main_line = Line {

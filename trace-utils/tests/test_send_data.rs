@@ -4,8 +4,8 @@
 #[cfg(test)]
 mod tracing_integration_tests {
     use datadog_trace_utils::send_data::SendData;
-    use datadog_trace_utils::test_utils::create_test_json_span;
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
+    use datadog_trace_utils::test_utils::{create_test_json_span, create_test_no_alloc_span};
     use datadog_trace_utils::trace_utils::TracerHeaderTags;
     use datadog_trace_utils::tracer_payload::{
         DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadParams,
@@ -16,10 +16,12 @@ mod tracing_integration_tests {
     #[cfg(target_os = "linux")]
     use hyper::Uri;
     use serde_json::json;
+    use std::collections::HashMap;
     #[cfg(target_os = "linux")]
     use std::fs::Permissions;
     #[cfg(target_os = "linux")]
     use std::os::unix::fs::PermissionsExt;
+    use tinybytes::{Bytes, BytesString};
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
@@ -73,6 +75,101 @@ mod tracing_integration_tests {
 
         test_agent
             .assert_snapshot("compare_v04_trace_snapshot_test")
+            .await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn compare_v04_trace_meta_struct_snapshot_test() {
+        let relative_snapshot_path = "trace-utils/tests/snapshots/";
+        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
+
+        let header_tags = TracerHeaderTags {
+            lang: "test-lang",
+            lang_version: "2.0",
+            lang_interpreter: "interpreter",
+            lang_vendor: "vendor",
+            tracer_version: "1.0",
+            container_id: "id",
+            ..Default::default()
+        };
+
+        let endpoint = Endpoint::from_url(
+            test_agent
+                .get_uri_for_endpoint(
+                    "v0.4/traces",
+                    Some("compare_v04_trace_meta_struct_snapshot_test"),
+                )
+                .await,
+        );
+
+        let meta_struct_data = rmp_serde::to_vec_named(&json!({
+                "exploit": [
+                {
+                    "type": "test",
+                    "language": "nodejs",
+                    "id": "someuuid",
+                    "message": "Threat detected",
+                    "frames": [
+                    {
+                        "id": 0,
+                        "file": "test.js",
+                        "line": 1,
+                        "column": 31,
+                        "function": "test"
+                    },
+                    {
+                        "id": 1,
+                        "file": "test2.js",
+                        "line": 54,
+                        "column": 77,
+                        "function": "test"
+                    },
+                    {
+                        "id": 2,
+                        "file": "test.js",
+                        "line": 1245,
+                        "column": 41,
+                        "function": "test"
+                    },
+                    {
+                        "id": 3,
+                        "file": "test3.js",
+                        "line": 2024,
+                        "column": 32,
+                        "function": "test"
+                    }
+                    ]
+                }
+                ]
+        }))
+        .unwrap();
+
+        let mut root_span = create_test_no_alloc_span(1234, 12341, 0, 0, true);
+        root_span.r#type = BytesString::from("web");
+        root_span.meta_struct =
+            HashMap::from([(BytesString::from("appsec"), Bytes::from(meta_struct_data))]);
+
+        let encoded_data = rmp_serde::to_vec_named(&vec![vec![root_span]]).unwrap();
+
+        let data = tinybytes::Bytes::from(encoded_data);
+
+        let payload_collection = TracerPayloadParams::new(
+            data,
+            &header_tags,
+            &mut DefaultTraceChunkProcessor,
+            false,
+            TraceEncoding::V04,
+        )
+        .try_into()
+        .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
+
+        let data = SendData::new(300, payload_collection, header_tags, &endpoint);
+
+        let _result = data.send().await;
+
+        test_agent
+            .assert_snapshot("compare_v04_trace_meta_struct_snapshot_test")
             .await;
     }
 

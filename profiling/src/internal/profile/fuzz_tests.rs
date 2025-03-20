@@ -16,18 +16,14 @@ pub struct Function {
 
     /// Source file containing the function.
     pub filename: Box<str>,
-
-    /// Line number in source file.
-    pub start_line: i64,
 }
 
 impl Function {
-    pub fn new(name: Box<str>, system_name: Box<str>, filename: Box<str>, start_line: i64) -> Self {
+    pub fn new(name: Box<str>, system_name: Box<str>, filename: Box<str>) -> Self {
         Self {
             name,
             system_name,
             filename,
-            start_line,
         }
     }
 }
@@ -38,7 +34,6 @@ impl<'a> From<&'a Function> for api::Function<'a> {
             name: &value.name,
             system_name: &value.system_name,
             filename: &value.filename,
-            start_line: value.start_line,
         }
     }
 }
@@ -306,7 +301,6 @@ fn assert_samples_eq(
                     .into_boxed_str(),
                 profile.string_table_fetch_owned(function.system_name),
                 profile.string_table_fetch_owned(function.filename),
-                function.start_line,
             );
             let owned_location =
                 Location::new(owned_mapping, owned_function, location.address, line.line);

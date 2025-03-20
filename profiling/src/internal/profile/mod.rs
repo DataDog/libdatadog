@@ -420,12 +420,10 @@ impl Profile {
         let system_name = self.intern(function.system_name);
         let filename = self.intern(function.filename);
 
-        let start_line = function.start_line;
         self.functions.dedup(Function {
             name,
             system_name,
             filename,
-            start_line,
         })
     }
 
@@ -437,12 +435,10 @@ impl Profile {
         let system_name = self.resolve(function.system_name)?;
         let filename = self.resolve(function.filename)?;
 
-        let start_line = function.start_line;
         Ok(self.functions.dedup(Function {
             name,
             system_name,
             filename,
-            start_line,
         }))
     }
 
@@ -828,7 +824,6 @@ mod api_tests {
                     name: "phpinfo",
                     system_name: "phpinfo",
                     filename: "index.php",
-                    start_line: 0,
                 },
                 ..Default::default()
             },
@@ -871,7 +866,6 @@ mod api_tests {
                 name: "{main}",
                 system_name: "{main}",
                 filename: "index.php",
-                ..Default::default()
             },
             ..Default::default()
         }];
@@ -881,7 +875,6 @@ mod api_tests {
                 name: "test",
                 system_name: "test",
                 filename: "index.php",
-                start_line: 3,
             },
             ..Default::default()
         }];
@@ -891,7 +884,6 @@ mod api_tests {
                 name: "test",
                 system_name: "test",
                 filename: "index.php",
-                start_line: 4,
             },
             ..Default::default()
         }];
@@ -949,8 +941,8 @@ mod api_tests {
 
         assert_eq!(profile.samples.len(), 3);
         assert_eq!(profile.mappings.len(), 1);
-        assert_eq!(profile.locations.len(), 3);
-        assert_eq!(profile.functions.len(), 3);
+        assert_eq!(profile.locations.len(), 2); // one of them dedups
+        assert_eq!(profile.functions.len(), 2);
 
         for (index, mapping) in profile.mappings.iter().enumerate() {
             assert_eq!((index + 1) as u64, mapping.id);
@@ -1598,7 +1590,6 @@ mod api_tests {
                 name: "{main}",
                 system_name: "{main}",
                 filename: "index.php",
-                start_line: 0,
             },
             address: 0,
             line: 0,
@@ -1655,7 +1646,6 @@ mod api_tests {
                 name: "{main}",
                 system_name: "{main}",
                 filename: "index.php",
-                start_line: 0,
             },
             ..Default::default()
         }];
@@ -1813,7 +1803,6 @@ mod api_tests {
                 name: "{main}",
                 system_name: "{main}",
                 filename: "index.php",
-                start_line: 0,
             },
             ..Default::default()
         }];
@@ -1877,7 +1866,6 @@ mod api_tests {
                 name: "{main}",
                 system_name: "{main}",
                 filename: "index.php",
-                start_line: 0,
             },
             ..Default::default()
         }];
