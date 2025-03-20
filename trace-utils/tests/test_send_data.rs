@@ -23,6 +23,57 @@ mod tracing_integration_tests {
     use std::os::unix::fs::PermissionsExt;
     use tinybytes::{Bytes, BytesString};
 
+    fn get_v04_trace_snapshot_test_payload() -> Bytes {
+        let mut span_1 = create_test_json_span(1234, 12342, 12341, 1, false);
+        span_1["metrics"] = json!({
+            "_dd_metric1": 1.0,
+            "_dd_metric2": 2.0
+        });
+        span_1["span_events"] = json!([
+            {
+                "name": "test_span",
+                "time_unix_nano": 1727211691770715042_u64
+            },
+            {
+                "name": "exception",
+                "time_unix_nano": 1727211691770716000_u64,
+                "attributes": {
+                    "exception.message": {"type": 0, "string_value": "Cannot divide by zero"},
+                    "exception.version": {"type": 3, "double_value": 4.2},
+                    "exception.escaped": {"type": 1, "bool_value": true},
+                    "exception.count": {"type": 2, "int_value": 1},
+                    "exception.lines": {"type": 4, "array_value": [
+                        {"type": 0, "string_value": "  File \"<string>\", line 1, in <module>"},
+                        {"type": 0, "string_value": "  File \"<string>\", line 1, in divide"},
+                    ]}
+                }
+            }
+        ]);
+
+        let mut span_2 = create_test_json_span(1234, 12343, 12341, 1, false);
+        span_2["span_links"] = json!([
+            {
+                "trace_id": 0xc151df7d6ee5e2d6_u64,
+                "span_id": 0xa3978fb9b92502a8_u64,
+                "attributes": {
+                    "link.name":"Job #123"
+                }
+            },
+            {
+                "trace_id": 0xa918bf567eec151d_u64,
+                "trace_id_high": 0x527ccbd68a74d57e_u64,
+                "span_id": 0xc08c967f0e5e7b0a_u64
+            }
+        ]);
+
+        let mut root_span = create_test_json_span(1234, 12341, 0, 0, true);
+        root_span["type"] = json!("web".to_owned());
+
+        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
+
+        tinybytes::Bytes::from(encoded_data)
+    }
+
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_trace_snapshot_test() {
@@ -45,19 +96,7 @@ mod tracing_integration_tests {
                 .await,
         );
 
-        let mut span_1 = create_test_json_span(1234, 12342, 12341, 1, false);
-        span_1["metrics"] = json!({
-            "_dd_metric1": 1.0,
-            "_dd_metric2": 2.0
-        });
-
-        let span_2 = create_test_json_span(1234, 12343, 12341, 1, false);
-        let mut root_span = create_test_json_span(1234, 12341, 0, 0, true);
-        root_span["type"] = json!("web".to_owned());
-
-        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
-
-        let data = tinybytes::Bytes::from(encoded_data);
+        let data = get_v04_trace_snapshot_test_payload();
 
         let payload_collection = TracerPayloadParams::new(
             data,
@@ -276,19 +315,7 @@ mod tracing_integration_tests {
             ..Default::default()
         };
 
-        let mut span_1 = create_test_json_span(1234, 12342, 12341, 1, false);
-        span_1["metrics"] = json!({
-            "_dd_metric1": 1.0,
-            "_dd_metric2": 2.0
-        });
-
-        let span_2 = create_test_json_span(1234, 12343, 12341, 1, false);
-        let mut root_span = create_test_json_span(1234, 12341, 0, 0, true);
-        root_span["type"] = json!("web".to_owned());
-
-        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
-
-        let data = tinybytes::Bytes::from(encoded_data);
+        let data = get_v04_trace_snapshot_test_payload();
 
         let payload_collection = TracerPayloadParams::new(
             data,
