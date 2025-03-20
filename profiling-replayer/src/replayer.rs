@@ -206,7 +206,6 @@ impl<'pprof> Replayer<'pprof> {
             name: profile_index.get_string(function.name)?,
             system_name: profile_index.get_string(function.system_name)?,
             filename: profile_index.get_string(function.filename)?,
-            start_line: function.start_line,
         })
     }
 
