@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::entity_id::get_external_env;
 use std::error;
 use std::fmt;
 use std::path::Path;
@@ -46,10 +47,20 @@ fn compute_entity_id(
     base_controller: &str,
     cgroup_path: &Path,
     cgroup_mount_path: &Path,
+    external_env: Option<&str>,
 ) -> Option<String> {
     container_id::extract_container_id(cgroup_path)
         .ok()
-        .map(|container_id| format!("ci-{container_id}"))
+        .map(|container_id| {
+            // Use cid- prefix if external_env is None (for backward compatibility)
+            // Otherwise use ci- prefix
+            let prefix = if external_env.is_none() {
+                "cid-"
+            } else {
+                "ci-"
+            };
+            format!("{}{}", prefix, container_id)
+        })
         .or(
             cgroup_inode::get_cgroup_inode(base_controller, cgroup_path, cgroup_mount_path)
                 .map(|inode| format!("in-{inode}")),
@@ -99,6 +110,7 @@ pub fn get_entity_id() -> Option<&'static str> {
                 CGROUP_V1_BASE_CONTROLLER,
                 Path::new(get_cgroup_path()),
                 Path::new(get_cgroup_mount_path()),
+                get_external_env(),
             )
         })
         .as_deref()
@@ -111,9 +123,20 @@ mod tests {
 
     static IN_REGEX: OnceLock<Regex> = OnceLock::new();
     static CI_REGEX: OnceLock<Regex> = OnceLock::new();
+    static CID_REGEX: OnceLock<Regex> = OnceLock::new();
 
     fn get_in_regex() -> &'static Regex {
         IN_REGEX.get_or_init(|| Regex::new(r"in-\d+").unwrap())
+    }
+
+    fn get_cid_regex() -> &'static Regex {
+        CID_REGEX.get_or_init(|| {
+            Regex::new(&format!(
+                r"cid-{}",
+                container_id::get_container_regex().as_str()
+            ))
+            .unwrap()
+        })
     }
 
     fn get_ci_regex() -> &'static Regex {
@@ -127,13 +150,14 @@ mod tests {
     }
 
     /// The following test can only be run in isolation because of caching behaviour
-    fn test_entity_id(filename: &str, expected_result: Option<&Regex>) {
+    fn test_entity_id(filename: &str, expected_result: Option<&Regex>, external_env: Option<&str>) {
         let test_root_dir = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests"));
 
         let entity_id = compute_entity_id(
             CGROUP_V1_BASE_CONTROLLER,
             test_root_dir.join(filename).as_path(),
             test_root_dir.join("cgroup").as_path(),
+            external_env,
         );
 
         if let Some(regex) = expected_result {
@@ -154,24 +178,30 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_v2() {
-        test_entity_id("cgroup.v2", Some(get_in_regex()))
+        test_entity_id("cgroup.v2", Some(get_in_regex()), None)
     }
 
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_v1() {
-        test_entity_id("cgroup.linux", Some(get_in_regex()))
+        test_entity_id("cgroup.linux", Some(get_in_regex()), None)
     }
 
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_container_id() {
-        test_entity_id("cgroup.docker", Some(get_ci_regex()))
+        test_entity_id("cgroup.docker", Some(get_cid_regex()), None);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_entity_id_for_container_id_with_external_env() {
+        test_entity_id("cgroup.docker", Some(get_ci_regex()), Some("test-env"));
     }
 
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_entity_id_for_no_id() {
-        test_entity_id("cgroup.no_memory", None)
+        test_entity_id("cgroup.no_memory", None, None)
     }
 }

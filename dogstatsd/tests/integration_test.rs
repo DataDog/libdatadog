@@ -21,6 +21,8 @@ use tokio_util::sync::CancellationToken;
 #[cfg(not(miri))]
 #[tokio::test]
 async fn dogstatsd_server_ships_series() {
+    use dogstatsd::datadog::RetryStrategy;
+
     let mut mock_server = Server::new_async().await;
 
     let mock = mock_server
@@ -51,6 +53,7 @@ async fn dogstatsd_server_ships_series() {
         .expect("failed to create URL"),
         https_proxy: None,
         timeout: std::time::Duration::from_secs(5),
+        retry_strategy: RetryStrategy::Immediate(3),
     });
 
     let server_address = "127.0.0.1:18125";
@@ -97,4 +100,169 @@ async fn start_dogstatsd(metrics_aggr: &Arc<Mutex<MetricsAggregator>>) -> Cancel
     });
 
     dogstatsd_cancel_token
+}
+
+#[cfg(test)]
+#[cfg(not(miri))]
+#[tokio::test]
+async fn test_send_with_retry_immediate_failure() {
+    use dogstatsd::datadog::{DdApi, DdDdUrl, RetryStrategy};
+    use dogstatsd::metric::{parse, SortedTags};
+
+    let mut server = Server::new_async().await;
+    let mock = server
+        .mock("POST", "/api/v2/series")
+        .with_status(500)
+        .with_body("Internal Server Error")
+        .expect(3)
+        .create_async()
+        .await;
+
+    let retry_strategy = RetryStrategy::Immediate(3);
+    let dd_api = DdApi::new(
+        "test_key".to_string(),
+        MetricsIntakeUrlPrefix::new(
+            None,
+            MetricsIntakeUrlPrefixOverride::maybe_new(
+                None,
+                Some(DdDdUrl::new(server.url()).expect("failed to create URL")),
+            ),
+        )
+        .expect("failed to create URL"),
+        None,
+        Duration::from_secs(1),
+        retry_strategy.clone(),
+    );
+
+    // Create a series using the Aggregator
+    let mut aggregator = MetricsAggregator::new(SortedTags::parse("test:value").unwrap(), 1)
+        .expect("failed to create aggregator");
+    let metric = parse("test:1|c").expect("failed to parse metric");
+    aggregator.insert(metric).expect("failed to insert metric");
+    let series = aggregator.to_series();
+
+    let result = dd_api.ship_series(&series).await;
+
+    // The result should be an error since we got a 500 response
+    assert!(result.is_err());
+
+    // Verify that the mock was called exactly 3 times
+    mock.assert_async().await;
+}
+
+#[cfg(test)]
+#[cfg(not(miri))]
+#[tokio::test]
+async fn test_send_with_retry_linear_backoff_success() {
+    use dogstatsd::datadog::{DdApi, DdDdUrl, RetryStrategy};
+    use dogstatsd::metric::{parse, SortedTags};
+
+    let mut server = Server::new_async().await;
+    let mock = server
+        .mock("POST", "/api/v2/series")
+        .with_status(500)
+        .with_body("Internal Server Error")
+        .expect(1)
+        .create_async()
+        .await;
+
+    let success_mock = server
+        .mock("POST", "/api/v2/series")
+        .with_status(200)
+        .with_body("Success")
+        .expect(1)
+        .create_async()
+        .await;
+
+    let retry_strategy = RetryStrategy::LinearBackoff(3, 1); // 3 attempts, 1ms delay
+    let dd_api = DdApi::new(
+        "test_key".to_string(),
+        MetricsIntakeUrlPrefix::new(
+            None,
+            MetricsIntakeUrlPrefixOverride::maybe_new(
+                None,
+                Some(DdDdUrl::new(server.url()).expect("failed to create URL")),
+            ),
+        )
+        .expect("failed to create URL"),
+        None,
+        Duration::from_secs(1),
+        retry_strategy.clone(),
+    );
+
+    // Create a series using the Aggregator
+    let mut aggregator = MetricsAggregator::new(SortedTags::parse("test:value").unwrap(), 1)
+        .expect("failed to create aggregator");
+    let metric = parse("test:1|c").expect("failed to parse metric");
+    aggregator.insert(metric).expect("failed to insert metric");
+    let series = aggregator.to_series();
+
+    let result = dd_api.ship_series(&series).await;
+
+    // The result should be Ok since we got a 200 response on retry
+    assert!(result.is_ok());
+    if let Ok(response) = result {
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+    } else {
+        panic!("Expected Ok result");
+    }
+
+    // Verify that both mocks were called exactly once
+    mock.assert_async().await;
+    success_mock.assert_async().await;
+}
+
+#[cfg(test)]
+#[cfg(not(miri))]
+#[tokio::test]
+async fn test_send_with_retry_immediate_failure_after_one_attempt() {
+    use dogstatsd::datadog::{DdApi, DdDdUrl, RetryStrategy};
+    use dogstatsd::flusher::ShippingError;
+    use dogstatsd::metric::{parse, SortedTags};
+
+    let mut server = Server::new_async().await;
+    let mock = server
+        .mock("POST", "/api/v2/series")
+        .with_status(500)
+        .with_body("Internal Server Error")
+        .expect(1)
+        .create_async()
+        .await;
+
+    let retry_strategy = RetryStrategy::Immediate(1); // Only 1 attempt
+    let dd_api = DdApi::new(
+        "test_key".to_string(),
+        MetricsIntakeUrlPrefix::new(
+            None,
+            MetricsIntakeUrlPrefixOverride::maybe_new(
+                None,
+                Some(DdDdUrl::new(server.url()).expect("failed to create URL")),
+            ),
+        )
+        .expect("failed to create URL"),
+        None,
+        Duration::from_secs(1),
+        retry_strategy.clone(),
+    );
+
+    // Create a series using the Aggregator
+    let mut aggregator = MetricsAggregator::new(SortedTags::parse("test:value").unwrap(), 1)
+        .expect("failed to create aggregator");
+    let metric = parse("test:1|c").expect("failed to parse metric");
+    aggregator.insert(metric).expect("failed to insert metric");
+    let series = aggregator.to_series();
+
+    let result = dd_api.ship_series(&series).await;
+
+    // The result should be an error since we got a 500 response
+    assert!(result.is_err());
+    if let Err(ShippingError::Destination(Some(status), msg)) = result {
+        assert_eq!(status, reqwest::StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(msg, "Failed to send request after 1 attempts");
+    } else {
+        panic!("Expected ShippingError::Destination with status 500");
+    }
+
+    // Verify that the mock was called exactly once
+    mock.assert_async().await;
 }

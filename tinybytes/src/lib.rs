@@ -13,6 +13,9 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(feature = "serde")]
+use serde::Serialize;
+
 /// Immutable bytes type with zero copy cloning and slicing.
 #[derive(Clone)]
 pub struct Bytes {
@@ -275,6 +278,16 @@ impl hash::Hash for Bytes {
 impl fmt::Debug for Bytes {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(self.as_slice(), f)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl Serialize for Bytes {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.as_slice())
     }
 }
 

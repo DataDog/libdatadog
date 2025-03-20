@@ -722,6 +722,7 @@ impl TelemetryWorker {
     }
 }
 
+#[derive(Debug)]
 struct InnerTelemetryShutdown {
     is_shutdown: Mutex<bool>,
     condvar: Condvar,
@@ -746,7 +747,7 @@ impl InnerTelemetryShutdown {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 /// TelemetryWorkerHandle is a handle which allows interactions with the telemetry worker.
 /// The handle is safe to use across threads.
 ///

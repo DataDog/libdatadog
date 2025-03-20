@@ -78,9 +78,6 @@ pub struct Function<'a> {
 
     /// Source file containing the function.
     pub filename: &'a str,
-
-    /// Line number in source file.
-    pub start_line: i64,
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -89,7 +86,6 @@ pub struct StringIdFunction {
     pub name: ManagedStringId,
     pub system_name: ManagedStringId,
     pub filename: ManagedStringId,
-    pub start_line: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -216,8 +212,7 @@ impl std::fmt::Display for UpscalingInfo {
                 sampling_distance,
             } => write!(
                 f,
-                "Poisson = sum_value_offset: {}, count_value_offset: {}, sampling_distance: {}",
-                sum_value_offset, count_value_offset, sampling_distance
+                "Poisson = sum_value_offset: {sum_value_offset}, count_value_offset: {count_value_offset}, sampling_distance: {sampling_distance}"
             ),
             UpscalingInfo::PoissonNonSampleTypeCount {
                 sum_value_offset,
@@ -225,11 +220,10 @@ impl std::fmt::Display for UpscalingInfo {
                 sampling_distance,
             } => write!(
                 f,
-                "Poisson = sum_value_offset: {}, count_value: {}, sampling_distance: {}",
-                sum_value_offset, count_value, sampling_distance
+                "Poisson = sum_value_offset: {sum_value_offset}, count_value: {count_value}, sampling_distance: {sampling_distance}",
             ),
             UpscalingInfo::Proportional { scale } => {
-                write!(f, "Proportional = scale: {}", scale)
+                write!(f, "Proportional = scale: {scale}")
             }
         }
     }
@@ -245,15 +239,11 @@ impl UpscalingInfo {
             } => {
                 anyhow::ensure!(
                     sum_value_offset < &number_of_values && count_value_offset < &number_of_values,
-                    "sum_value_offset {} and count_value_offset {} must be strictly less than {}",
-                    sum_value_offset,
-                    count_value_offset,
-                    number_of_values
+                    "sum_value_offset {sum_value_offset} and count_value_offset {count_value_offset} must be strictly less than {number_of_values}"
                 );
                 anyhow::ensure!(
                     sampling_distance != &0,
-                    "sampling_distance {} must be greater than 0",
-                    sampling_distance
+                    "sampling_distance {sampling_distance} must be greater than 0"
                 )
             }
             UpscalingInfo::PoissonNonSampleTypeCount {
@@ -263,19 +253,15 @@ impl UpscalingInfo {
             } => {
                 anyhow::ensure!(
                     sum_value_offset < &number_of_values,
-                    "sum_value_offset {} must be strictly less than {}",
-                    sum_value_offset,
-                    number_of_values
+                    "sum_value_offset {sum_value_offset} must be strictly less than {number_of_values}"
                 );
                 anyhow::ensure!(
                     count_value != &0,
-                    "count_value {} must be greater than 0",
-                    count_value
+                    "count_value {count_value} must be greater than 0"
                 );
                 anyhow::ensure!(
                     sampling_distance != &0,
-                    "sampling_distance {} must be greater than 0",
-                    sampling_distance
+                    "sampling_distance {sampling_distance} must be greater than 0"
                 )
             }
             UpscalingInfo::Proportional { scale: _ } => (),
@@ -326,7 +312,6 @@ fn function_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Function> {
             name: string_table_fetch(pprof, function.name)?,
             system_name: string_table_fetch(pprof, function.system_name)?,
             filename: string_table_fetch(pprof, function.filename)?,
-            start_line: function.start_line,
         }),
         None => anyhow::bail!("Function {id} was not found."),
     }

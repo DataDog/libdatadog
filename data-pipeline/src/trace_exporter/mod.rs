@@ -192,6 +192,7 @@ enum StatsComputationStatus {
 /// another task to send stats when a time bucket expire. When this feature is enabled the
 /// TraceExporter drops all spans that may not be sampled by the agent.
 #[allow(missing_docs)]
+#[derive(Debug)]
 pub struct TraceExporter {
     endpoint: Endpoint,
     metadata: TracerMetadata,
@@ -781,7 +782,7 @@ pub struct TelemetryConfig {
 }
 
 #[allow(missing_docs)]
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct TraceExporterBuilder {
     url: Option<String>,
     hostname: String,
@@ -824,116 +825,116 @@ impl TraceExporterBuilder {
     ///
     /// - **Windows Named Pipe:** `windows:\\.\pipe\<name>`
     ///   - Example: `set_url(r"windows:\\.\pipe\datadog-apm")`
-    pub fn set_url(mut self, url: &str) -> Self {
+    pub fn set_url(&mut self, url: &str) -> &mut Self {
         self.url = Some(url.to_owned());
         self
     }
 
     /// Set the URL to communicate with a dogstatsd server
-    pub fn set_dogstatsd_url(mut self, url: &str) -> Self {
+    pub fn set_dogstatsd_url(&mut self, url: &str) -> &mut Self {
         self.dogstatsd_url = Some(url.to_owned());
         self
     }
 
     /// Set the hostname used for stats payload
     /// Only used when client-side stats is enabled
-    pub fn set_hostname(mut self, hostname: &str) -> Self {
+    pub fn set_hostname(&mut self, hostname: &str) -> &mut Self {
         hostname.clone_into(&mut self.hostname);
         self
     }
 
     /// Set the env used for stats payloads
     /// Only used when client-side stats is enabled
-    pub fn set_env(mut self, env: &str) -> Self {
+    pub fn set_env(&mut self, env: &str) -> &mut Self {
         env.clone_into(&mut self.env);
         self
     }
 
     /// Set the app version which corresponds to the `version` meta tag
     /// Only used when client-side stats is enabled
-    pub fn set_app_version(mut self, app_version: &str) -> Self {
+    pub fn set_app_version(&mut self, app_version: &str) -> &mut Self {
         app_version.clone_into(&mut self.app_version);
         self
     }
 
     /// Set the service name used for stats payloads.
     /// Only used when client-side stats is enabled
-    pub fn set_service(mut self, service: &str) -> Self {
+    pub fn set_service(&mut self, service: &str) -> &mut Self {
         service.clone_into(&mut self.service);
         self
     }
 
     /// Set the `git_commit_sha` corresponding to the `_dd.git.commit.sha` meta tag
     /// Only used when client-side stats is enabled
-    pub fn set_git_commit_sha(mut self, git_commit_sha: &str) -> Self {
+    pub fn set_git_commit_sha(&mut self, git_commit_sha: &str) -> &mut Self {
         git_commit_sha.clone_into(&mut self.git_commit_sha);
         self
     }
 
     /// Set the `Datadog-Meta-Tracer-Version` header
-    pub fn set_tracer_version(mut self, tracer_version: &str) -> Self {
+    pub fn set_tracer_version(&mut self, tracer_version: &str) -> &mut Self {
         tracer_version.clone_into(&mut self.tracer_version);
         self
     }
 
     /// Set the `Datadog-Meta-Lang` header
-    pub fn set_language(mut self, lang: &str) -> Self {
+    pub fn set_language(&mut self, lang: &str) -> &mut Self {
         lang.clone_into(&mut self.language);
         self
     }
 
     /// Set the `Datadog-Meta-Lang-Version` header
-    pub fn set_language_version(mut self, lang_version: &str) -> Self {
+    pub fn set_language_version(&mut self, lang_version: &str) -> &mut Self {
         lang_version.clone_into(&mut self.language_version);
         self
     }
 
     /// Set the `Datadog-Meta-Lang-Interpreter` header
-    pub fn set_language_interpreter(mut self, lang_interpreter: &str) -> Self {
+    pub fn set_language_interpreter(&mut self, lang_interpreter: &str) -> &mut Self {
         lang_interpreter.clone_into(&mut self.language_interpreter);
         self
     }
 
     /// Set the `Datadog-Meta-Lang-Interpreter-Vendor` header
-    pub fn set_language_interpreter_vendor(mut self, lang_interpreter_vendor: &str) -> Self {
+    pub fn set_language_interpreter_vendor(&mut self, lang_interpreter_vendor: &str) -> &mut Self {
         lang_interpreter_vendor.clone_into(&mut self.language_interpreter_vendor);
         self
     }
 
     #[allow(missing_docs)]
-    pub fn set_input_format(mut self, input_format: TraceExporterInputFormat) -> Self {
+    pub fn set_input_format(&mut self, input_format: TraceExporterInputFormat) -> &mut Self {
         self.input_format = input_format;
         self
     }
 
     #[allow(missing_docs)]
-    pub fn set_output_format(mut self, output_format: TraceExporterOutputFormat) -> Self {
+    pub fn set_output_format(&mut self, output_format: TraceExporterOutputFormat) -> &mut Self {
         self.output_format = output_format;
         self
     }
 
     /// Set the header indicating the tracer has computed the top-level tag
-    pub fn set_client_computed_top_level(mut self) -> Self {
+    pub fn set_client_computed_top_level(&mut self) -> &mut Self {
         self.client_computed_top_level = true;
         self
     }
 
     /// Set the header indicating the tracer has already computed stats.
     /// This should not be used when stats computation is enabled.
-    pub fn set_client_computed_stats(mut self) -> Self {
+    pub fn set_client_computed_stats(&mut self) -> &mut Self {
         self.client_computed_stats = true;
         self
     }
 
     /// Enable stats computation on traces sent through this exporter
-    pub fn enable_stats(mut self, bucket_size: Duration) -> Self {
+    pub fn enable_stats(&mut self, bucket_size: Duration) -> &mut Self {
         self.stats_bucket_size = Some(bucket_size);
         self
     }
 
     /// Enable peer tags aggregation for stats computation (requires stats computation to be
     /// enabled)
-    pub fn enable_stats_peer_tags_aggregation(mut self, peer_tags: Vec<String>) -> Self {
+    pub fn enable_stats_peer_tags_aggregation(&mut self, peer_tags: Vec<String>) -> &mut Self {
         self.peer_tags_aggregation = true;
         self.peer_tags = peer_tags;
         self
@@ -941,13 +942,13 @@ impl TraceExporterBuilder {
 
     /// Enable stats eligibility by span kind (requires stats computation to be
     /// enabled)
-    pub fn enable_compute_stats_by_span_kind(mut self) -> Self {
+    pub fn enable_compute_stats_by_span_kind(&mut self) -> &mut Self {
         self.compute_stats_by_span_kind = true;
         self
     }
 
     /// Enables sending telemetry metrics.
-    pub fn enable_telemetry(mut self, cfg: Option<TelemetryConfig>) -> Self {
+    pub fn enable_telemetry(&mut self, cfg: Option<TelemetryConfig>) -> &mut Self {
         if let Some(cfg) = cfg {
             self.telemetry = Some(cfg);
         } else {
@@ -959,7 +960,7 @@ impl TraceExporterBuilder {
     #[cfg(feature = "test-utils")]
     /// Set query parameters to be used in the URL when communicating with the test-agent. This is
     /// not supported in production as the real agent doesn't accept query params.
-    pub fn set_query_params(mut self, query_params: &str) -> Self {
+    pub fn set_query_params(&mut self, query_params: &str) -> &mut Self {
         self.query_params = Some(query_params.to_owned());
         self
     }
@@ -1107,8 +1108,8 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_new() {
-        let builder = TraceExporterBuilder::default();
-        let exporter = builder
+        let mut builder = TraceExporterBuilder::default();
+        builder
             .set_url("http://192.168.1.1:8127/")
             .set_tracer_version("v0.1")
             .set_language("nodejs")
@@ -1122,9 +1123,8 @@ mod tests {
             .enable_telemetry(Some(TelemetryConfig {
                 heartbeat: 1000,
                 runtime_id: None,
-            }))
-            .build()
-            .unwrap();
+            }));
+        let exporter = builder.build().unwrap();
 
         assert_eq!(
             exporter
@@ -1241,8 +1241,8 @@ mod tests {
                 .body(r#"{"version":"1","client_drop_p0s":true}"#);
         });
 
-        let builder = TraceExporterBuilder::default();
-        let exporter = builder
+        let mut builder = TraceExporterBuilder::default();
+        builder
             .set_url(&server.url("/"))
             .set_service("test")
             .set_env("staging")
@@ -1252,9 +1252,8 @@ mod tests {
             .set_language_interpreter("v8")
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
-            .enable_stats(Duration::from_secs(10))
-            .build()
-            .unwrap();
+            .enable_stats(Duration::from_secs(10));
+        let exporter = builder.build().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             duration: 10,
@@ -1314,8 +1313,8 @@ mod tests {
                 .body(r#"{"version":"1","client_drop_p0s":true}"#);
         });
 
-        let builder = TraceExporterBuilder::default();
-        let exporter = builder
+        let mut builder = TraceExporterBuilder::default();
+        builder
             .set_url(&server.url("/"))
             .set_service("test")
             .set_env("staging")
@@ -1325,9 +1324,8 @@ mod tests {
             .set_language_interpreter("v8")
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
-            .enable_stats(Duration::from_secs(10))
-            .build()
-            .unwrap();
+            .enable_stats(Duration::from_secs(10));
+        let exporter = builder.build().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             service: "test".into(),
@@ -1370,7 +1368,8 @@ mod tests {
         output: TraceExporterOutputFormat,
         enable_telemrty: bool,
     ) -> TraceExporter {
-        let mut builder = TraceExporterBuilder::default()
+        let mut builder = TraceExporterBuilder::default();
+        builder
             .set_url(&url)
             .set_service("test")
             .set_env("staging")
@@ -1382,14 +1381,14 @@ mod tests {
             .set_output_format(output);
 
         if let Some(url) = dogstatsd_url {
-            builder = builder.set_dogstatsd_url(&url);
+            builder.set_dogstatsd_url(&url);
         };
 
         if enable_telemrty {
-            builder = builder.enable_telemetry(Some(TelemetryConfig {
+            builder.enable_telemetry(Some(TelemetryConfig {
                 heartbeat: 100,
                 ..Default::default()
-            }))
+            }));
         }
 
         builder.build().unwrap()
@@ -1546,16 +1545,16 @@ mod tests {
                 );
         });
 
-        let exporter = TraceExporterBuilder::default()
+        let mut builder = TraceExporterBuilder::default();
+        builder
             .set_url(&server.url("/"))
             .set_service("foo")
             .set_env("foo-env")
             .set_tracer_version("v0.1")
             .set_language("nodejs")
             .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .build()
-            .unwrap();
+            .set_language_interpreter("v8");
+        let exporter = builder.build().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
@@ -1583,15 +1582,17 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_builder_error() {
-        let exporter = TraceExporterBuilder::default()
+        let mut builder = TraceExporterBuilder::default();
+        builder
             .set_url("")
             .set_service("foo")
             .set_env("foo-env")
             .set_tracer_version("v0.1")
             .set_language("nodejs")
             .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .build();
+            .set_language_interpreter("v8");
+
+        let exporter = builder.build();
 
         assert!(exporter.is_err());
 
@@ -1616,16 +1617,16 @@ mod tests {
                 .body(r#"{ "error": "Unavailable" }"#);
         });
 
-        let exporter = TraceExporterBuilder::default()
+        let mut builder = TraceExporterBuilder::default();
+        builder
             .set_url(&server.url("/"))
             .set_service("foo")
             .set_env("foo-env")
             .set_tracer_version("v0.1")
             .set_language("nodejs")
             .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .build()
-            .unwrap();
+            .set_language_interpreter("v8");
+        let exporter = builder.build().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
@@ -1653,16 +1654,16 @@ mod tests {
                 .body("");
         });
 
-        let exporter = TraceExporterBuilder::default()
+        let mut builder = TraceExporterBuilder::default();
+        builder
             .set_url(&server.url("/"))
             .set_service("foo")
             .set_env("foo-env")
             .set_tracer_version("v0.1")
             .set_language("nodejs")
             .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .build()
-            .unwrap();
+            .set_language_interpreter("v8");
+        let exporter = builder.build().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
@@ -1709,7 +1710,8 @@ mod tests {
                 .body("");
         });
 
-        let exporter = TraceExporterBuilder::default()
+        let mut builder = TraceExporterBuilder::default();
+        builder
             .set_url(&server.url("/"))
             .set_service("foo")
             .set_env("foo-env")
@@ -1720,9 +1722,8 @@ mod tests {
             .enable_telemetry(Some(TelemetryConfig {
                 heartbeat: 100,
                 ..Default::default()
-            }))
-            .build()
-            .unwrap();
+            }));
+        let exporter = builder.build().unwrap();
 
         let traces = vec![0x90];
         let bytes = tinybytes::Bytes::from(traces);
@@ -1816,7 +1817,8 @@ mod tests {
                 .body("");
         });
 
-        let exporter = TraceExporterBuilder::default()
+        let mut builder = TraceExporterBuilder::default();
+        builder
             .set_url(&server.url("/"))
             .set_service("foo")
             .set_env("foo-env")
@@ -1829,9 +1831,9 @@ mod tests {
                 ..Default::default()
             }))
             .set_input_format(TraceExporterInputFormat::V04)
-            .set_output_format(TraceExporterOutputFormat::V05)
-            .build()
-            .unwrap();
+            .set_output_format(TraceExporterOutputFormat::V05);
+
+        let exporter = builder.build().unwrap();
 
         let traces = vec![0x90];
         let bytes = tinybytes::Bytes::from(traces);
@@ -1900,8 +1902,8 @@ mod tests {
             then.delay(delay).status(status).body(response);
         });
 
-        let builder = TraceExporterBuilder::default();
-        let exporter = builder
+        let mut builder = TraceExporterBuilder::default();
+        builder
             .set_url(&server.url("/"))
             .set_service("test")
             .set_env("staging")
@@ -1911,9 +1913,8 @@ mod tests {
             .set_language_interpreter("v8")
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
-            .enable_stats(Duration::from_secs(10))
-            .build()
-            .unwrap();
+            .enable_stats(Duration::from_secs(10));
+        let exporter = builder.build().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             duration: 10,

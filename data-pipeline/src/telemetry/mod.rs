@@ -106,6 +106,7 @@ impl TelemetryClientBuilder {
 }
 
 /// Telemetry handle used to send metrics to the agent
+#[derive(Debug)]
 pub struct TelemetryClient {
     metrics: Metrics,
     worker: TelemetryWorkerHandle,
