@@ -728,7 +728,7 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
 #[no_mangle]
 #[must_use]
 #[named]
-pub unsafe extern "C" fn ddog_prof_EncodedProfile_get_pprof_bytes<'a>(
+pub unsafe extern "C" fn ddog_prof_EncodedProfile_bytes<'a>(
     mut encoded_profile: *mut Handle<internal::EncodedProfile>,
 ) -> ddcommon_ffi::Result<ByteSlice<'a>> {
     wrap_with_ffi_result!({
