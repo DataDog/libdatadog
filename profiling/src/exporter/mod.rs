@@ -7,6 +7,7 @@ use std::io::{Cursor, Write};
 
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
+use const_format::concatcp;
 pub use ddcommon::tag::Tag;
 pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
@@ -15,7 +16,7 @@ use serde_json::json;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
-use ddcommon::{azure_app_services, connector, Endpoint, HttpClient, HttpResponse};
+use ddcommon::{azure_app_services, connector, tag, Endpoint, HttpClient, HttpResponse};
 
 pub mod config;
 mod errors;
@@ -150,6 +151,22 @@ impl ProfileExporter {
         })
     }
 
+    #[cfg(target_env = "musl")]
+    fn runtime_platform_tag(&self) -> Tag {
+        tag!(
+            "runtime_platform",
+            concatcp!(std::env::consts::ARCH, "-", std::env::consts::OS, "-musl")
+        )
+    }
+
+    #[cfg(not(target_env = "musl"))]
+    fn runtime_platform_tag(&self) -> Tag {
+        tag!(
+            "runtime_platform",
+            concatcp!(std::env::consts::ARCH, "-", std::env::consts::OS)
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     /// Build a Request object representing the profile information provided.
     ///
@@ -211,7 +228,9 @@ impl ProfileExporter {
             });
         }
 
-        tags_profiler.pop(); // clean up the trailing comma
+        // Since this is the last tag, we add it without a comma afterwards. If any tags get added
+        // after this one, you'll need to add the comma between them.
+        tags_profiler.push_str(self.runtime_platform_tag().as_ref());
 
         let attachments: Vec<String> = files_to_compress_and_export
             .iter()

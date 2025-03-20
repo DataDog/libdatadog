@@ -131,9 +131,22 @@ mod tests {
         assert_eq!(parsed_event_json["endpoint_counts"], json!(null));
         assert_eq!(parsed_event_json["family"], json!("php"));
         assert_eq!(parsed_event_json["internal"], json!({}));
-        assert_eq!(
-            parsed_event_json["tags_profiler"],
-            json!("service:php,host:bits")
+        let tags_profiler = parsed_event_json["tags_profiler"]
+            .as_str()
+            .unwrap()
+            .split(',')
+            .collect::<Vec<_>>();
+        assert!(tags_profiler.contains(&"service:php"));
+        assert!(tags_profiler.contains(&"host:bits"));
+        let runtime_platform = tags_profiler
+            .iter()
+            .find(|tag| tag.starts_with("runtime_platform:"))
+            .expect("runtime_platform tag should exist");
+        assert!(
+            runtime_platform.starts_with(&format!("runtime_platform:{}", std::env::consts::ARCH)),
+            "expected platform tag to start with runtime_platform:{} but got '{}'",
+            std::env::consts::ARCH,
+            runtime_platform
         );
         assert_eq!(parsed_event_json["version"], json!("4"));
     }
