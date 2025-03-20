@@ -238,6 +238,9 @@ impl ProfileExporter {
             .map(|file| file.name.to_owned())
             .collect();
 
+        let mut internal: serde_json::value::Value = internal_metadata.unwrap_or_else(|| json!({}));
+        internal["libdatadog_version"] = json!(env!("CARGO_PKG_VERSION"));
+
         let event = json!({
             "attachments": attachments,
             "tags_profiler": tags_profiler,
@@ -246,7 +249,7 @@ impl ProfileExporter {
             "family": self.family.as_ref(),
             "version": "4",
             "endpoint_counts" : endpoint_counts,
-            "internal": internal_metadata.unwrap_or_else(|| json!({})),
+            "internal": internal,
             "info": info.unwrap_or_else(|| json!({})),
         })
         .to_string();

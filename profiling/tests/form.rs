@@ -130,7 +130,10 @@ mod tests {
         assert_eq!(parsed_event_json["attachments"], json!(["profile.pprof"]));
         assert_eq!(parsed_event_json["endpoint_counts"], json!(null));
         assert_eq!(parsed_event_json["family"], json!("php"));
-        assert_eq!(parsed_event_json["internal"], json!({}));
+        assert_eq!(
+            parsed_event_json["internal"],
+            json!({"libdatadog_version": env!("CARGO_PKG_VERSION")})
+        );
         let tags_profiler = parsed_event_json["tags_profiler"]
             .as_str()
             .unwrap()
@@ -172,7 +175,8 @@ mod tests {
         let internal_metadata = json!({
             "no_signals_workaround_enabled": "true",
             "execution_trace_enabled": "false",
-            "extra object": {"key": [1, 2, true]}
+            "extra object": {"key": [1, 2, true]},
+            "libdatadog_version": env!("CARGO_PKG_VERSION"),
         });
         let request = multipart(&mut exporter, Some(internal_metadata.clone()), None);
         let parsed_event_json = parsed_event_json(request);
