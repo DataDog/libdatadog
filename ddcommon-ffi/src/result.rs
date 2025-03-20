@@ -40,6 +40,14 @@ impl<T> Result<T> {
             Self::Err(err) => panic!("{err}"),
         }
     }
+
+    pub fn unwrap_err(self) -> Error {
+        match self {
+            #[allow(clippy::panic)]
+            Self::Ok(_) => panic!("Expected error, got value"),
+            Self::Err(err) => err,
+        }
+    }
 }
 
 impl<T> From<anyhow::Result<T>> for Result<T> {

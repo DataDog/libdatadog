@@ -4,12 +4,14 @@
 #![allow(renamed_and_removed_lints)]
 #![allow(clippy::box_vec)]
 
+use anyhow::Context;
 use datadog_profiling::exporter;
 use datadog_profiling::exporter::{ProfileExporter, Request};
 use datadog_profiling::internal::EncodedProfile;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use ddcommon_ffi::{Error, Handle, MaybeError, ToInner};
+use ddcommon_ffi::{wrap_with_ffi_result, Error, Handle, MaybeError, ToInner};
+use function_name::named;
 use std::borrow::Cow;
 use std::ptr::NonNull;
 use std::str::FromStr;
@@ -24,7 +26,7 @@ pub enum ExporterNewResult {
 #[allow(dead_code)]
 #[repr(C)]
 pub enum RequestBuildResult {
-    Ok(NonNull<Request>),
+    Ok(Handle<Request>),
     Err(Error),
 }
 
@@ -232,17 +234,6 @@ unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> 
         .collect()
 }
 
-#[cfg(test)]
-impl From<RequestBuildResult> for Result<Box<Request>, String> {
-    fn from(result: RequestBuildResult) -> Self {
-        match result {
-            // Safety: Request is opaque, can only be built from Rust.
-            RequestBuildResult::Ok(ok) => Ok(unsafe { Box::from_raw(ok.as_ptr()) }),
-            RequestBuildResult::Err(err) => Err(err.to_string()),
-        }
-    }
-}
-
 /// If successful, builds a `ddog_prof_Exporter_Request` object based on the
 /// profile data supplied. If unsuccessful, it returns an error message.
 ///
@@ -262,57 +253,36 @@ impl From<RequestBuildResult> for Result<Box<Request>, String> {
 /// Consumes the `SerializedProfile`
 #[no_mangle]
 #[must_use]
+#[named]
 pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     exporter: Option<&mut ProfileExporter>,
-    profile: *mut Handle<EncodedProfile>,
+    mut profile: *mut Handle<EncodedProfile>,
     files_to_compress_and_export: Slice<File>,
     files_to_export_unmodified: Slice<File>,
     optional_additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
     optional_internal_metadata_json: Option<&CharSlice>,
     optional_info_json: Option<&CharSlice>,
-) -> RequestBuildResult {
-    match exporter {
-        None => RequestBuildResult::Err(anyhow::anyhow!("exporter was null").into()),
-        Some(exporter) => {
-            let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
-            let files_to_export_unmodified = into_vec_files(files_to_export_unmodified);
-            let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
+) -> ddcommon_ffi::Result<Handle<Request>> {
+    wrap_with_ffi_result!({
+        let exporter = exporter.context("exporter was null")?;
+        let profile = *profile.take()?;
+        let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
+        let files_to_export_unmodified = into_vec_files(files_to_export_unmodified);
+        let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
 
-            let internal_metadata =
-                match parse_json("internal_metadata", optional_internal_metadata_json) {
-                    Ok(parsed) => parsed,
-                    Err(err) => return RequestBuildResult::Err(err.into()),
-                };
+        let internal_metadata = parse_json("internal_metadata", optional_internal_metadata_json)?;
+        let info = parse_json("info", optional_info_json)?;
 
-            let info = match parse_json("info", optional_info_json) {
-                Ok(parsed) => parsed,
-                Err(err) => return RequestBuildResult::Err(err.into()),
-            };
-
-            if profile.is_null() {
-                return RequestBuildResult::Err(anyhow::anyhow!("profile pointer was null").into());
-            }
-
-            let profile = match (*profile).take() {
-                Ok(p) => *p,
-                Err(e) => return RequestBuildResult::Err(e.into()),
-            };
-
-            match exporter.build(
-                profile,
-                files_to_compress_and_export.as_slice(),
-                files_to_export_unmodified.as_slice(),
-                tags.as_ref(),
-                internal_metadata,
-                info,
-            ) {
-                Ok(request) => {
-                    RequestBuildResult::Ok(NonNull::new_unchecked(Box::into_raw(Box::new(request))))
-                }
-                Err(err) => RequestBuildResult::Err(err.into()),
-            }
-        }
-    }
+        let request = exporter.build(
+            profile,
+            files_to_compress_and_export.as_slice(),
+            files_to_export_unmodified.as_slice(),
+            tags.as_ref(),
+            internal_metadata,
+            info,
+        )?;
+        anyhow::Ok(request.into())
+    })
 }
 
 unsafe fn parse_json(
@@ -341,22 +311,10 @@ unsafe fn parse_json(
 /// pointer must point to a valid `ddog_prof_Exporter_Request` object made by
 /// the Rust Global allocator.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(
-    request: Option<&mut Option<&mut Request>>,
-) {
-    drop(rebox_request(request))
-}
-
-/// Replace the inner `*mut Request` with a nullptr to reduce chance of
-/// double-free in caller.
-unsafe fn rebox_request(request: Option<&mut Option<&mut Request>>) -> Option<Box<Request>> {
-    if let Some(ref_ptr) = request {
-        let mut tmp = None;
-        std::mem::swap(ref_ptr, &mut tmp);
-        tmp.map(|ptr| Box::from_raw(ptr as *mut _))
-    } else {
-        None
-    }
+pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(mut request: *mut Handle<Request>) {
+    // Technically, this function has been designed so if it's double-dropped
+    // then it's okay, but it's not something that should be relied on.
+    drop(request.take())
 }
 
 /// Sends the request, returning the HttpStatus.
@@ -373,7 +331,7 @@ unsafe fn rebox_request(request: Option<&mut Option<&mut Request>>) -> Option<Bo
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Exporter_send(
     exporter: Option<&mut ProfileExporter>,
-    request: Option<&mut Option<&mut Request>>,
+    request: Handle<Request>,
     cancel: Option<&CancellationToken>,
 ) -> SendResult {
     match ddog_prof_exporter_send_impl(exporter, request, cancel) {
@@ -384,22 +342,14 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send(
 
 unsafe fn ddog_prof_exporter_send_impl(
     exporter: Option<&mut ProfileExporter>,
-    request: Option<&mut Option<&mut Request>>,
+    mut request: Handle<Request>,
     cancel: Option<&CancellationToken>,
 ) -> anyhow::Result<HttpStatus> {
-    // Re-box the request first, to avoid leaks on other errors.
-    let request = match rebox_request(request) {
-        Some(boxed) => boxed,
-        None => anyhow::bail!("request was null"),
-    };
-
-    let exporter = match exporter {
-        Some(exporter) => exporter,
-        None => anyhow::bail!("exporter was null"),
-    };
+    let request = *request.take().context("request")?;
+    let exporter = exporter.context("exporter was null")?;
 
     let cancel = cancel.map(|ptr| &ptr.0);
-    let response = exporter.send(*request, cancel)?;
+    let response = exporter.send(request, cancel)?;
 
     Ok(HttpStatus(response.status().as_u16()))
 }
@@ -510,9 +460,9 @@ mod tests {
         CharSlice::from(base_url())
     }
 
-    fn parsed_event_json(request: RequestBuildResult) -> serde_json::Value {
-        let request = Result::from(request).unwrap();
-
+    fn parsed_event_json(request: ddcommon_ffi::Result<Handle<Request>>) -> serde_json::Value {
+        // Safety: This is a test
+        let request = unsafe { request.unwrap().take().unwrap() };
         // Really hacky way of getting the event.json file contents, because I didn't want to
         // implement a full multipart parser and didn't find a particularly good
         // alternative. If you do figure out a better way, there's another copy of this code
@@ -724,12 +674,10 @@ mod tests {
             )
         };
 
-        match build_result {
-            RequestBuildResult::Ok(_) => panic!("Should not happen!"),
-            RequestBuildResult::Err(message) => assert!(String::from(message).starts_with(
-                r#"Failed to parse contents of internal_metadata json string (`this is not a valid json string`)"#
-            )),
-        }
+        let message = build_result.unwrap_err();
+        assert!(String::from(message).starts_with(
+                 r#"ddog_prof_Exporter_Request_build failed: Failed to parse contents of internal_metadata json string (`this is not a valid json string`)"#
+  ));
     }
 
     #[test]
@@ -876,12 +824,10 @@ mod tests {
             )
         };
 
-        match build_result {
-            RequestBuildResult::Ok(_) => panic!("Should not happen!"),
-            RequestBuildResult::Err(message) => assert!(String::from(message).starts_with(
-                r#"Failed to parse contents of info json string (`this is not a valid json string`)"#
-            )),
-        }
+        let message = build_result.unwrap_err();
+        assert!(String::from(message).starts_with(
+            r#"ddog_prof_Exporter_Request_build failed: Failed to parse contents of info json string (`this is not a valid json string`)"#
+        ));
     }
 
     #[test]
@@ -900,21 +846,21 @@ mod tests {
             )
         };
 
-        let build_result = Result::from(build_result);
         build_result.unwrap_err();
     }
 
     #[test]
     fn send_fails_with_null() {
+        let request = Handle::empty();
         unsafe {
-            match ddog_prof_Exporter_send(None, None, None) {
+            match ddog_prof_Exporter_send(None, request, None) {
                 SendResult::HttpResponse(http_status) => {
                     panic!("Expected test to fail, got {http_status:?}")
                 }
                 SendResult::Err(error) => {
                     let actual_error = error.to_string();
                     assert_eq!(
-                        "failed ddog_prof_Exporter_send: request was null",
+                        "failed ddog_prof_Exporter_send: request: inner pointer was null, indicates use after free",
                         actual_error
                     );
                 }

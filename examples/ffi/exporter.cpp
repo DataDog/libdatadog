@@ -139,12 +139,12 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(
+  auto build_result = ddog_prof_Exporter_Request_build(
       exporter, encoded_profile, files_to_compress_and_export, files_to_export_unmodified, nullptr,
       &internal_metadata_example, &info_example);
   ddog_prof_EncodedProfile_drop(encoded_profile);
 
-  if (build_result.tag == DDOG_PROF_EXPORTER_REQUEST_BUILD_RESULT_ERR) {
+  if (build_result.tag == DDOG_PROF_RESULT_HANDLE_REQUEST_ERR_HANDLE_REQUEST) {
     print_error("Failed to build request: ", build_result.err);
     ddog_Error_drop(&build_result.err);
     return 1;
@@ -174,7 +174,7 @@ int main(int argc, char *argv[]) {
   trigger_cancel_if_request_takes_too_long_thread.detach();
 
   int exit_code = 0;
-  ddog_prof_Exporter_SendResult send_result = ddog_prof_Exporter_send(exporter, &request, cancel);
+  ddog_prof_Exporter_SendResult send_result = ddog_prof_Exporter_send(exporter, request, cancel);
   if (send_result.tag == DDOG_PROF_EXPORTER_SEND_RESULT_ERR) {
     print_error("Failed to send profile: ", send_result.err);
     exit_code = 1;
