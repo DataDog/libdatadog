@@ -92,9 +92,9 @@ int main(void) {
   auto root_mapping = extract_result(
       ddog_prof_Profile_intern_mapping(profile, 0, 0, 0, root_file_name, INTERNED_EMPTY_STRING));
   auto root_function = extract_result(ddog_prof_Profile_intern_function(
-      profile, root_function_name, INTERNED_EMPTY_STRING, root_file_name, 0));
-  auto root_location =
-      extract_result(ddog_prof_Profile_intern_location(profile, root_mapping, root_function, 0, 0));
+      profile, root_function_name, INTERNED_EMPTY_STRING, root_file_name));
+  auto root_location = extract_result(ddog_prof_Profile_intern_location_with_mapping_id(
+      profile, root_mapping, root_function, 0, 0));
   ddog_prof_Slice_LocationId locations = {.ptr = &root_location, .len = 1};
   auto stacktrace = extract_result(ddog_prof_Profile_intern_stacktrace(profile, locations));
 

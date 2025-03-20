@@ -18,13 +18,11 @@ impl Profile {
         name: GenerationalId<StringId>,
         system_name: GenerationalId<StringId>,
         filename: GenerationalId<StringId>,
-        start_line: i64,
     ) -> anyhow::Result<GenerationalId<FunctionId>> {
         let function = Function {
             name: name.get(self.generation)?,
             system_name: system_name.get(self.generation)?,
             filename: filename.get(self.generation)?,
-            start_line,
         };
         let id = self.functions.dedup(function);
         Ok(GenerationalId::new(id, self.generation))
@@ -68,13 +66,13 @@ impl Profile {
 
     pub fn intern_location(
         &mut self,
-        mapping_id: GenerationalId<MappingId>,
+        mapping_id: Option<GenerationalId<MappingId>>,
         function_id: GenerationalId<FunctionId>,
         address: u64,
         line: i64,
     ) -> anyhow::Result<GenerationalId<LocationId>> {
         let location = Location {
-            mapping_id: mapping_id.get(self.generation)?,
+            mapping_id: mapping_id.map(|id| id.get(self.generation)).transpose()?,
             function_id: function_id.get(self.generation)?,
             address,
             line,
