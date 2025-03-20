@@ -369,7 +369,9 @@ pub unsafe extern "C" fn ddog_CancellationToken_cancel(
 /// The `token` can be null, but non-null values must be created by the Rust
 /// Global allocator and must have not been dropped already.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_CancellationToken_drop(mut token: *mut Handle<TokioCancellationToken>) {
+pub unsafe extern "C" fn ddog_CancellationToken_drop(
+    mut token: *mut Handle<TokioCancellationToken>,
+) {
     drop(token.take())
 }
 

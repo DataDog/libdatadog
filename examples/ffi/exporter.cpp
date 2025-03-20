@@ -161,7 +161,7 @@ int main(int argc, char *argv[]) {
   //
   // If the request is faster than the sleep time, no cancellation takes place.
   std::thread trigger_cancel_if_request_takes_too_long_thread(
-      [](ddog_prof_Handle_TokioCancellationToken cancel_for_background_thread) {
+      [](ddog_prof_CancellationToken cancel_for_background_thread) {
         int timeout_ms = 5000;
         std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms));
         printf("Request took longer than %d ms, triggering asynchronous "
