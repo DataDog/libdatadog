@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::aggregator::Aggregator;
-use crate::datadog;
-use datadog::{DdApi, MetricsIntakeUrlPrefix};
+use crate::datadog::{DdApi, MetricsIntakeUrlPrefix, RetryStrategy};
 use reqwest::{Response, StatusCode};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -20,6 +19,7 @@ pub struct FlusherConfig {
     pub metrics_intake_url_prefix: MetricsIntakeUrlPrefix,
     pub https_proxy: Option<String>,
     pub timeout: Duration,
+    pub retry_strategy: RetryStrategy,
 }
 
 #[allow(clippy::await_holding_lock)]
@@ -30,6 +30,7 @@ impl Flusher {
             config.metrics_intake_url_prefix,
             config.https_proxy,
             config.timeout,
+            config.retry_strategy,
         );
         Flusher {
             dd_api,
