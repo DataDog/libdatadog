@@ -135,6 +135,7 @@ pub struct DdApi {
     api_key: String,
     metrics_intake_url_prefix: MetricsIntakeUrlPrefix,
     client: Option<Client>,
+    retry_strategy: RetryStrategy,
 }
 
 impl DdApi {
@@ -144,6 +145,7 @@ impl DdApi {
         metrics_intake_url_prefix: MetricsIntakeUrlPrefix,
         https_proxy: Option<String>,
         timeout: Duration,
+        retry_strategy: RetryStrategy,
     ) -> Self {
         let client = build_client(https_proxy, timeout)
             .inspect_err(|e| {
@@ -154,6 +156,7 @@ impl DdApi {
             api_key,
             metrics_intake_url_prefix,
             client,
+            retry_strategy,
         }
     }
 
@@ -219,12 +222,67 @@ impl DdApi {
             }
         };
 
-        let resp = builder.send().await;
+        let resp = self.send_with_retry(builder).await;
 
         let elapsed = start.elapsed();
         debug!("Request to {} took {}ms", url, elapsed.as_millis());
-        resp.map_err(|e| ShippingError::Destination(e.status(), format!("Cannot reach {url}")))
+        resp
     }
+
+    async fn send_with_retry(
+        &self,
+        builder: reqwest::RequestBuilder,
+    ) -> Result<Response, ShippingError> {
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            let cloned_builder = match builder.try_clone() {
+                Some(b) => b,
+                None => {
+                    return Err(ShippingError::Destination(
+                        None,
+                        "Failed to clone request".to_string(),
+                    ));
+                }
+            };
+
+            let response = cloned_builder.send().await;
+            match response {
+                Ok(response) if response.status().is_success() => {
+                    return Ok(response);
+                }
+                _ => {}
+            }
+
+            match self.retry_strategy {
+                RetryStrategy::LinearBackoff(max_attempts, _)
+                | RetryStrategy::Immediate(max_attempts)
+                    if attempts >= max_attempts =>
+                {
+                    let status = match response {
+                        Ok(response) => Some(response.status()),
+                        Err(err) => err.status(),
+                    };
+                    // handle if status code missing like timeout
+                    return Err(ShippingError::Destination(
+                        status,
+                        format!("Failed to send request after {} attempts", max_attempts)
+                            .to_string(),
+                    ));
+                }
+                RetryStrategy::LinearBackoff(_, delay) => {
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum RetryStrategy {
+    Immediate(u64),          // attempts
+    LinearBackoff(u64, u64), // attempts, delay
 }
 
 fn build_client(https_proxy: Option<String>, timeout: Duration) -> Result<Client, reqwest::Error> {

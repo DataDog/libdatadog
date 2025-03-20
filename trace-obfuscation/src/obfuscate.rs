@@ -80,6 +80,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_replace_span_tags() {
         let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
         span.meta
