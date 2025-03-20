@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        partition: [1, 2, 3, 4]
+        partition: [1, 2, 3, 4, 5]
     env:
       CARGO_TERM_COLOR: always
       PROPTEST_CASES: 1
@@ -25,6 +25,6 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9.92
-      - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run --partition count:${{ matrix.partition }}/4
+      - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run --partition count:${{ matrix.partition }}/5
       # We need to disable isolation because
       # "unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled"
