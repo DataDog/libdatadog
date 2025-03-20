@@ -89,8 +89,9 @@ impl<'a> AsBytes<'a> for MutSlice<'a, u8> {
 
 impl<'a, T: 'a> MutSlice<'a, T> {
     /// Creates a valid empty slice (len=0, ptr is non-null).
+    // TODO, this can be const once MSRV >= 1.85
     #[must_use]
-    pub const fn empty() -> Self {
+    pub fn empty() -> Self {
         Self {
             ptr: Some(NonNull::dangling()),
             len: 0,
