@@ -707,7 +707,7 @@ unsafe fn add_upscaling_rule(
 
 /// # Safety
 /// Only pass a reference to a valid `ddog_prof_EncodedProfile`, or null. A
-/// valid reference also means that it hasn't already been dropped (do not
+/// valid reference also means that it hasn't already been dropped or exported (do not
 /// call this twice on the same object).
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
