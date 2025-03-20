@@ -620,7 +620,7 @@ mod tests {
     use std::collections::HashMap;
 
     struct EvalCtx<'e> {
-        variables: &'e HashMap<String, Val>,
+        variables: &'e HashMap<&'e str, Val>,
     }
 
     #[derive(Clone, PartialEq)]
@@ -863,32 +863,32 @@ mod tests {
     #[test]
     fn test_eval() {
         let vars = HashMap::from([
-            ("var".to_string(), Val::Str("bar".to_string())),
+            ("var", Val::Str("bar".to_string())),
             (
-                "vec".to_string(),
+                "vec",
                 Val::Vec(vec![Val::Num(10.), Val::Num(11.), Val::Num(12.)]),
             ),
             (
-                "vecvec".to_string(),
+                "vecvec",
                 Val::Vec(vec![
                     Val::Vec(vec![Val::Num(10.), Val::Num(11.)]),
                     Val::Vec(vec![Val::Num(12.)]),
                 ]),
             ),
-            ("empty".to_string(), Val::Str("".to_string())),
-            ("emptyvec".to_string(), Val::Vec(vec![])),
-            ("null".to_string(), Val::Null),
-            ("zero".to_string(), Val::Num(0.)),
-            ("two".to_string(), Val::Num(2.)),
+            ("empty", Val::Str("".to_string())),
+            ("emptyvec", Val::Vec(vec![])),
+            ("null", Val::Null),
+            ("zero", Val::Num(0.)),
+            ("two", Val::Num(2.)),
             (
-                "objA".to_string(),
+                "objA",
                 Val::Obj(OrdMap(HashMap::from([(
                     "class".to_string(),
                     Val::Str("A".to_string()),
                 )]))),
             ),
             (
-                "objB".to_string(),
+                "objB",
                 Val::Obj(OrdMap(HashMap::from([(
                     "class".to_string(),
                     Val::Str("B".to_string()),

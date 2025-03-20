@@ -127,7 +127,7 @@ struct ConfigFileStorage {
 
 struct StoredShmFile {
     handle: Mutex<NamedShmHandle>,
-    limiter: Option<ShmLimiter>,
+    limiter: Option<ShmLimiter<()>>,
     refcount: FileRefcountData,
 }
 

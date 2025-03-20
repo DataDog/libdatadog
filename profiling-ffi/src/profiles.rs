@@ -154,9 +154,6 @@ pub struct Function<'a> {
     /// Source file containing the function.
     pub filename: CharSlice<'a>,
     pub filename_id: ManagedStringId,
-
-    /// Line number in source file.
-    pub start_line: i64,
 }
 
 #[repr(C)]
@@ -276,7 +273,6 @@ impl<'a> TryFrom<&'a Function<'a>> for api::Function<'a> {
             name,
             system_name,
             filename,
-            start_line: function.start_line,
         })
     }
 }
@@ -287,7 +283,6 @@ impl<'a> From<&'a Function<'a>> for api::StringIdFunction {
             name: function.name_id,
             system_name: function.system_name_id,
             filename: function.filename_id,
-            start_line: function.start_line,
         }
     }
 }
@@ -886,7 +881,6 @@ mod tests {
                     system_name_id: ManagedStringId { value: 0 },
                     filename: "index.php".into(),
                     filename_id: ManagedStringId { value: 0 },
-                    start_line: 0,
                 },
                 ..Default::default()
             }];
@@ -950,7 +944,6 @@ mod tests {
                 system_name_id: ManagedStringId { value: 0 },
                 filename: "index.php".into(),
                 filename_id: ManagedStringId { value: 0 },
-                start_line: 0,
             },
             ..Default::default()
         }];
@@ -963,7 +956,6 @@ mod tests {
                 system_name_id: ManagedStringId { value: 0 },
                 filename: "index.php".into(),
                 filename_id: ManagedStringId { value: 0 },
-                start_line: 3,
             },
             line: 4,
             ..Default::default()

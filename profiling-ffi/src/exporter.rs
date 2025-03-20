@@ -500,7 +500,10 @@ mod tests {
             json!("1970-01-01T00:00:56.000000078Z")
         );
         assert_eq!(parsed_event_json["family"], json!("native"));
-        assert_eq!(parsed_event_json["internal"], json!({}));
+        assert_eq!(
+            parsed_event_json["internal"],
+            json!({"libdatadog_version": env!("CARGO_PKG_VERSION")})
+        );
         assert_eq!(parsed_event_json["tags_profiler"], json!(""));
         assert_eq!(parsed_event_json["version"], json!("4"));
 
@@ -560,7 +563,8 @@ mod tests {
             json!({
                 "no_signals_workaround_enabled": "true",
                 "execution_trace_enabled": "false",
-                "extra object": {"key": [1, 2, true]}
+                "extra object": {"key": [1, 2, true]},
+                "libdatadog_version": env!("CARGO_PKG_VERSION"),
             })
         );
     }
