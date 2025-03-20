@@ -98,29 +98,14 @@ pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, us
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::create_test_json_span;
+    use crate::test_utils::{create_test_json_span, create_test_no_alloc_span};
     use bolero::check;
     use rmp_serde;
     use rmp_serde::to_vec_named;
     use serde_json::json;
     use std::collections::HashMap;
-    use tinybytes::BytesString;
+    use tinybytes::{Bytes, BytesString};
 
-    fn generate_meta_struct_element(i: u8) -> (String, Vec<u8>) {
-        let map = HashMap::from([
-            (
-                format!("meta_struct_map_key {}", i + 1),
-                format!("meta_struct_map_val {}", i + 1),
-            ),
-            (
-                format!("meta_struct_map_key {}", i + 2),
-                format!("meta_struct_map_val {}", i + 2),
-            ),
-        ]);
-        let key = format!("key {}", i).to_owned();
-
-        (key, rmp_serde::to_vec_named(&map).unwrap())
-    }
     #[test]
     fn test_empty_array() {
         let encoded_data = vec![0x90];
@@ -226,14 +211,11 @@ mod tests {
     }
 
     #[test]
-    fn test_decoder_meta_struct_fixed_map_success() {
-        let expected_meta_struct = HashMap::from([
-            generate_meta_struct_element(0),
-            generate_meta_struct_element(1),
-        ]);
-
-        let mut span = create_test_json_span(1, 2, 0, 0, false);
-        span["meta_struct"] = json!(expected_meta_struct.clone());
+    fn test_decoder_meta_struct_success() {
+        let data = vec![1, 2, 3, 4];
+        let mut span = create_test_no_alloc_span(1, 2, 0, 0, false);
+        span.meta_struct =
+            HashMap::from([(BytesString::from("meta_key"), Bytes::from(data.clone()))]);
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         let (decoded_traces, _) =
@@ -243,36 +225,10 @@ mod tests {
         assert_eq!(1, decoded_traces[0].len());
         let decoded_span = &decoded_traces[0][0];
 
-        for (key, value) in expected_meta_struct.iter() {
-            assert_eq!(
-                value,
-                &decoded_span.meta_struct[&BytesString::from_slice(key.as_ref()).unwrap()]
-            );
-        }
-    }
-
-    #[test]
-    fn test_decoder_meta_struct_map_16_success() {
-        let expected_meta_struct: HashMap<String, Vec<u8>> =
-            (0..20).map(generate_meta_struct_element).collect();
-
-        let mut span = create_test_json_span(1, 2, 0, 0, false);
-        span["meta_struct"] = json!(expected_meta_struct.clone());
-
-        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let (decoded_traces, _) =
-            from_slice(tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
-
-        assert_eq!(1, decoded_traces.len());
-        assert_eq!(1, decoded_traces[0].len());
-        let decoded_span = &decoded_traces[0][0];
-
-        for (key, value) in expected_meta_struct.iter() {
-            assert_eq!(
-                value,
-                &decoded_span.meta_struct[&BytesString::from_slice(key.as_ref()).unwrap()]
-            );
-        }
+        assert_eq!(
+            decoded_span.meta_struct.get("meta_key").unwrap().to_vec(),
+            data
+        );
     }
 
     #[test]
