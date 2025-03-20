@@ -109,18 +109,18 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  ddog_prof_Exporter_NewResult exporter_new_result = ddog_prof_Exporter_new(
+  auto exporter_new_result = ddog_prof_Exporter_new(
       DDOG_CHARSLICE_C_BARE("exporter-example"), DDOG_CHARSLICE_C_BARE("1.2.3"),
       DDOG_CHARSLICE_C_BARE("native"), &tags, endpoint);
   ddog_Vec_Tag_drop(tags);
 
-  if (exporter_new_result.tag == DDOG_PROF_EXPORTER_NEW_RESULT_ERR) {
+  if (exporter_new_result.tag == DDOG_PROF_PROFILE_EXPORTER_RESULT_ERR_HANDLE_PROFILE_EXPORTER) {
     print_error("Failed to create exporter: ", exporter_new_result.err);
     ddog_Error_drop(&exporter_new_result.err);
     return 1;
   }
 
-  auto exporter = exporter_new_result.ok;
+  auto exporter = &exporter_new_result.ok;
 
   auto files_to_compress_and_export = ddog_prof_Exporter_Slice_File_empty();
   auto files_to_export_unmodified = ddog_prof_Exporter_Slice_File_empty();
@@ -133,9 +133,9 @@ int main(int argc, char *argv[]) {
                             "\"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
 
   auto res = ddog_prof_Exporter_set_timeout(exporter, 30000);
-  if (res.tag == DDOG_PROF_OPTION_ERROR_SOME_ERROR) {
-    print_error("Failed to set the timeout", res.some);
-    ddog_Error_drop(&res.some);
+  if (res.tag == DDOG_PROF_VOID_RESULT_ERR) {
+    print_error("Failed to set the timeout", res.err);
+    ddog_Error_drop(&res.err);
     return 1;
   }
 
@@ -144,7 +144,7 @@ int main(int argc, char *argv[]) {
       &internal_metadata_example, &info_example);
   ddog_prof_EncodedProfile_drop(encoded_profile);
 
-  if (build_result.tag == DDOG_PROF_RESULT_HANDLE_REQUEST_ERR_HANDLE_REQUEST) {
+  if (build_result.tag == DDOG_PROF_REQUEST_RESULT_ERR_HANDLE_REQUEST) {
     print_error("Failed to build request: ", build_result.err);
     ddog_Error_drop(&build_result.err);
     return 1;

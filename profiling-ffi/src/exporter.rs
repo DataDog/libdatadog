@@ -9,18 +9,13 @@ use datadog_profiling::exporter::{ProfileExporter, Request};
 use datadog_profiling::internal::EncodedProfile;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use ddcommon_ffi::{wrap_with_ffi_result, Error, Handle, MaybeError, Result, ToInner};
+use ddcommon_ffi::{
+    wrap_with_ffi_result, wrap_with_void_ffi_result, Error, Handle, Result, ToInner, VoidResult,
+};
 use function_name::named;
 use std::borrow::Cow;
 use std::ptr::NonNull;
 use std::str::FromStr;
-
-#[allow(dead_code)]
-#[repr(C)]
-pub enum ExporterNewResult {
-    Ok(NonNull<ProfileExporter>),
-    Err(Error),
-}
 
 #[allow(dead_code)]
 #[repr(C)]
@@ -140,49 +135,31 @@ pub unsafe fn try_to_endpoint(endpoint: ProfilingEndpoint) -> anyhow::Result<ddc
 /// All pointers must refer to valid objects of the correct types.
 #[no_mangle]
 #[must_use]
+#[named]
 pub unsafe extern "C" fn ddog_prof_Exporter_new(
     profiling_library_name: CharSlice,
     profiling_library_version: CharSlice,
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: ProfilingEndpoint,
-) -> ExporterNewResult {
-    // Use a helper function so we can use the ? operator.
-    match ddog_prof_exporter_new_impl(
-        profiling_library_name,
-        profiling_library_version,
-        family,
-        tags,
-        endpoint,
-    ) {
-        Ok(exporter) => {
-            // Safety: Box::into_raw will always be non-null.
-            let ptr = NonNull::new_unchecked(Box::into_raw(Box::new(exporter)));
-            ExporterNewResult::Ok(ptr)
-        }
-        Err(err) => ExporterNewResult::Err(err.into()),
-    }
-}
-
-fn ddog_prof_exporter_new_impl(
-    profiling_library_name: CharSlice,
-    profiling_library_version: CharSlice,
-    family: CharSlice,
-    tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: ProfilingEndpoint,
-) -> anyhow::Result<ProfileExporter> {
-    let library_name = profiling_library_name.to_utf8_lossy().into_owned();
-    let library_version = profiling_library_version.to_utf8_lossy().into_owned();
-    let family = family.to_utf8_lossy().into_owned();
-    let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
-    let tags = tags.map(|tags| tags.iter().cloned().collect());
-    ProfileExporter::new(
-        library_name,
-        library_version,
-        family,
-        tags,
-        converted_endpoint,
-    )
+) -> Result<Handle<ProfileExporter>> {
+    wrap_with_ffi_result!({
+        let library_name = profiling_library_name.to_utf8_lossy().into_owned();
+        let library_version = profiling_library_version.to_utf8_lossy().into_owned();
+        let family = family.to_utf8_lossy().into_owned();
+        let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
+        let tags = tags.map(|tags| tags.iter().cloned().collect());
+        anyhow::Ok(
+            ProfileExporter::new(
+                library_name,
+                library_version,
+                family,
+                tags,
+                converted_endpoint,
+            )?
+            .into(),
+        )
+    })
 }
 
 /// Sets the value for the exporter's timeout.
@@ -190,16 +167,15 @@ fn ddog_prof_exporter_new_impl(
 /// * `exporter` - ProfileExporter instance.
 /// * `timeout_ms` - timeout in milliseconds.
 #[no_mangle]
+#[named]
+#[must_use]
 pub unsafe extern "C" fn ddog_prof_Exporter_set_timeout(
-    exporter: Option<&mut ProfileExporter>,
+    mut exporter: *mut Handle<ProfileExporter>,
     timeout_ms: u64,
-) -> MaybeError {
-    if let Some(ptr) = exporter {
-        ptr.set_timeout(timeout_ms);
-        MaybeError::None
-    } else {
-        MaybeError::Some(Error::from("Invalid argument"))
-    }
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        exporter.to_inner_mut()?.set_timeout(timeout_ms);
+    })
 }
 
 /// # Safety
@@ -207,11 +183,10 @@ pub unsafe extern "C" fn ddog_prof_Exporter_set_timeout(
 /// valid `ddog_prof_Exporter_Request` object made by the Rust Global
 /// allocator that has not already been dropped.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Exporter_drop(exporter: Option<&mut ProfileExporter>) {
-    if let Some(reference) = exporter {
-        // Safety: ProfileExporter's are opaque and therefore Boxed.
-        drop(Box::from_raw(reference as *mut _))
-    }
+pub unsafe extern "C" fn ddog_prof_Exporter_drop(mut exporter: *mut Handle<ProfileExporter>) {
+    // Technically, this function has been designed so if it's double-dropped
+    // then it's okay, but it's not something that should be relied on.
+    drop(exporter.take())
 }
 
 unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> {
@@ -247,7 +222,7 @@ unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> 
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
-    exporter: Option<&mut ProfileExporter>,
+    mut exporter: *mut Handle<ProfileExporter>,
     mut profile: *mut Handle<EncodedProfile>,
     files_to_compress_and_export: Slice<File>,
     files_to_export_unmodified: Slice<File>,
@@ -256,7 +231,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     optional_info_json: Option<&CharSlice>,
 ) -> ddcommon_ffi::Result<Handle<Request>> {
     wrap_with_ffi_result!({
-        let exporter = exporter.context("exporter was null")?;
+        let exporter = exporter.to_inner_mut()?;
         let profile = *profile.take()?;
         let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
         let files_to_export_unmodified = into_vec_files(files_to_export_unmodified);
@@ -323,13 +298,13 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(mut request: *mut Handl
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_prof_Exporter_send(
-    exporter: Option<&mut ProfileExporter>,
+    mut exporter: *mut Handle<ProfileExporter>,
     mut request: *mut Handle<Request>,
     cancel: Option<&CancellationToken>,
 ) -> Result<HttpStatus> {
     wrap_with_ffi_result!({
         let request = *request.take().context("request")?;
-        let exporter = exporter.context("exporter was null")?;
+        let exporter = exporter.to_inner_mut()?;
 
         let cancel = cancel.map(|ptr| &ptr.0);
         let response = exporter.send(request, cancel)?;
@@ -485,10 +460,8 @@ mod tests {
         };
 
         match result {
-            ExporterNewResult::Ok(mut exporter) => unsafe {
-                ddog_prof_Exporter_drop(Some(exporter.as_mut()))
-            },
-            ExporterNewResult::Err(message) => {
+            Result::Ok(mut exporter) => unsafe { ddog_prof_Exporter_drop(&mut exporter) },
+            Result::Err(message) => {
                 drop(message);
                 panic!("Should not occur!")
             }
@@ -510,21 +483,17 @@ mod tests {
             )
         };
 
-        let mut exporter = match exporter_result {
-            ExporterNewResult::Ok(e) => e,
-            ExporterNewResult::Err(_) => panic!("Should not occur!"),
-        };
+        let mut exporter = exporter_result.unwrap();
 
         let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
-                .unwrap_none();
+            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds).unwrap();
         }
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
-                Some(exporter.as_mut()),
+                &mut exporter,
                 profile,
                 Slice::empty(),
                 Slice::empty(),
@@ -570,16 +539,12 @@ mod tests {
             )
         };
 
-        let mut exporter = match exporter_result {
-            ExporterNewResult::Ok(e) => e,
-            ExporterNewResult::Err(_) => panic!("Should not occur!"),
-        };
+        let mut exporter = exporter_result.unwrap();
 
         let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
-                .unwrap_none();
+            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds).unwrap();
         }
 
         let raw_internal_metadata = CharSlice::from(
@@ -594,7 +559,7 @@ mod tests {
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
-                Some(exporter.as_mut()),
+                &mut exporter,
                 profile,
                 Slice::empty(),
                 Slice::empty(),
@@ -631,24 +596,20 @@ mod tests {
             )
         };
 
-        let mut exporter = match exporter_result {
-            ExporterNewResult::Ok(e) => e,
-            ExporterNewResult::Err(_) => panic!("Should not occur!"),
-        };
+        let mut exporter = exporter_result.unwrap();
 
         let profile = &mut EncodedProfile::test_instance().unwrap().into();
 
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
-                .unwrap_none();
+            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds).unwrap();
         }
 
         let raw_internal_metadata = CharSlice::from("this is not a valid json string");
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
-                Some(exporter.as_mut()),
+                &mut exporter,
                 profile,
                 Slice::empty(),
                 Slice::empty(),
@@ -679,16 +640,12 @@ mod tests {
             )
         };
 
-        let mut exporter = match exporter_result {
-            ExporterNewResult::Ok(e) => e,
-            ExporterNewResult::Err(_) => panic!("Should not occur!"),
-        };
+        let mut exporter = exporter_result.unwrap();
 
         let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
-                .unwrap_none();
+            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds).unwrap();
         }
 
         let raw_info = CharSlice::from(
@@ -724,7 +681,7 @@ mod tests {
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
-                Some(exporter.as_mut()),
+                &mut exporter,
                 profile,
                 Slice::empty(),
                 Slice::empty(),
@@ -782,23 +739,19 @@ mod tests {
             )
         };
 
-        let mut exporter = match exporter_result {
-            ExporterNewResult::Ok(e) => e,
-            ExporterNewResult::Err(_) => panic!("Should not occur!"),
-        };
+        let exporter = &mut exporter_result.unwrap();
 
         let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
-                .unwrap_none();
+            ddog_prof_Exporter_set_timeout(exporter, timeout_milliseconds).unwrap();
         }
 
         let raw_info = CharSlice::from("this is not a valid json string");
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
-                Some(exporter.as_mut()),
+                exporter,
                 profile,
                 Slice::empty(),
                 Slice::empty(),
@@ -817,10 +770,10 @@ mod tests {
     #[test]
     fn test_build_failure() {
         let profile = &mut EncodedProfile::test_instance().unwrap().into();
-
+        let exporter = &mut Handle::empty();
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
-                None, // No exporter, will fail
+                exporter, // No exporter, will fail
                 profile,
                 Slice::empty(),
                 Slice::empty(),
@@ -835,9 +788,10 @@ mod tests {
 
     #[test]
     fn send_fails_with_null() {
-        let mut request = Handle::empty();
+        let exporter = &mut Handle::empty();
+        let request = &mut Handle::empty();
         unsafe {
-            let error = ddog_prof_Exporter_send(None, &mut request, None)
+            let error = ddog_prof_Exporter_send(exporter, request, None)
                 .unwrap_err()
                 .to_string();
             assert_eq!(

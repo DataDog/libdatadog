@@ -50,6 +50,18 @@ renaming_overrides_prefixing = true
 "StringWrapper" = "ddog_StringWrapper"
 "StringWrapperResult" = "ddog_StringWrapperResult"
 
+"HandleProfileExporter" = "ddog_prof_ProfileExporter"
+"Handle_ProfileExporter" = "ddog_prof_ProfileExporter"
+"Result_HandleProfileExporter" = "ddog_prof_ProfileExporter_Result"
+
+"HandleRequest" = "ddog_prof_Request"
+"Handle_Request" = "ddog_prof_Request"
+"Result_HandleRequest" = "ddog_prof_Request_Result"
+
+"HandleEncodedProfile" = "ddog_prof_EncodedProfile"
+"Handle_EncodedProfile" = "ddog_prof_EncodedProfile"
+"Result_HandleEncodedProfile" = "ddog_prof_EncodedProfile_Result"
+
 [export.mangle]
 rename_types = "PascalCase"
 
