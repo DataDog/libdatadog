@@ -53,6 +53,13 @@ struct InternalCachedProfileId {
     id: u32,
 }
 
+// Enable Mutex<ManagedStringStorage> to be Send
+//
+// SAFETY: ManagedStringStorage **must always** be wrapped with a Mutex -- you can't pass one in to
+// a Profile without it. This is because it is not, by itself, thread-safe, and its real-world use
+// cases are expected to include concurrency.
+unsafe impl Send for ManagedStringStorage {}
+
 impl From<&CachedProfileId> for InternalCachedProfileId {
     fn from(cached: &CachedProfileId) -> Self {
         InternalCachedProfileId { id: cached.id }
@@ -70,6 +77,7 @@ impl ManagedStringStorage {
         };
         // Ensure empty string gets id 0 and always has usage > 0 so it's always retained
         // Safety: On an empty managed string table intern should never fail.
+        #[allow(clippy::expect_used)]
         storage.intern_new("").expect("Initialization to succeed");
         storage
     }

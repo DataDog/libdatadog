@@ -6,14 +6,15 @@ use crate::setup::pid_shm_path;
 use datadog_ipc::platform::{
     named_pipe_name_from_raw_handle, FileBackedHandle, MappedMem, NamedShmHandle,
 };
+use ddcommon::MutexExt;
 use futures::FutureExt;
-use lazy_static::lazy_static;
 use manual_future::ManualFuture;
 use spawn_worker::{SpawnWorker, Stdio};
 use std::ffi::CStr;
 use std::io::{self, Error};
 use std::os::windows::io::{AsRawHandle, IntoRawHandle, OwnedHandle};
 use std::ptr::null_mut;
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
@@ -66,7 +67,7 @@ pub extern "C" fn ddog_daemon_entry_point() {
             let pipe = NamedPipeServer::from_raw_handle(handle.into_raw_handle())?;
 
             let cancel = move || {
-                if let Some(completer) = close_completer.lock().unwrap().take() {
+                if let Some(completer) = close_completer.lock_or_panic().take() {
                     tokio::spawn(completer.complete(()));
                 }
             };
@@ -128,8 +129,10 @@ pub fn setup_daemon_process(listener: OwnedHandle, spawn_cfg: &mut SpawnWorker) 
     Ok(())
 }
 
-lazy_static! {
-    static ref SIDECAR_IDENTIFIER: String = fetch_sidecar_identifier();
+static SIDECAR_IDENTIFIER: OnceLock<String> = OnceLock::new();
+
+fn get_sidecar_identifier() -> &'static str {
+    SIDECAR_IDENTIFIER.get_or_init(fetch_sidecar_identifier)
 }
 
 fn fetch_sidecar_identifier() -> String {
@@ -199,7 +202,7 @@ fn fetch_sidecar_identifier() -> String {
 }
 
 pub fn primary_sidecar_identifier() -> &'static str {
-    SIDECAR_IDENTIFIER.as_str()
+    get_sidecar_identifier()
 }
 
 #[test]

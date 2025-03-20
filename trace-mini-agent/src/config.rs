@@ -69,6 +69,7 @@ impl Config {
             )
         })?;
 
+        #[allow(clippy::unwrap_used)]
         Ok(Config {
             app_name: Some(app_name),
             env_type,

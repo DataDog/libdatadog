@@ -172,7 +172,7 @@ pub struct Sample<'a> {
     /// When aggregating multiple samples into a single sample, the
     /// result has a list of values that is the element-wise sum of the
     /// lists of the originals.
-    pub values: Vec<i64>,
+    pub values: &'a [i64],
 
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
@@ -181,9 +181,9 @@ pub struct Sample<'a> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 // Same as Sample, but using StringIds
-pub struct StringIdSample {
+pub struct StringIdSample<'a> {
     pub locations: Vec<StringIdLocation>,
-    pub values: Vec<i64>,
+    pub values: &'a [i64],
     pub labels: Vec<StringIdLabel>,
 }
 
@@ -216,8 +216,7 @@ impl std::fmt::Display for UpscalingInfo {
                 sampling_distance,
             } => write!(
                 f,
-                "Poisson = sum_value_offset: {}, count_value_offset: {}, sampling_distance: {}",
-                sum_value_offset, count_value_offset, sampling_distance
+                "Poisson = sum_value_offset: {sum_value_offset}, count_value_offset: {count_value_offset}, sampling_distance: {sampling_distance}"
             ),
             UpscalingInfo::PoissonNonSampleTypeCount {
                 sum_value_offset,
@@ -225,11 +224,10 @@ impl std::fmt::Display for UpscalingInfo {
                 sampling_distance,
             } => write!(
                 f,
-                "Poisson = sum_value_offset: {}, count_value: {}, sampling_distance: {}",
-                sum_value_offset, count_value, sampling_distance
+                "Poisson = sum_value_offset: {sum_value_offset}, count_value: {count_value}, sampling_distance: {sampling_distance}",
             ),
             UpscalingInfo::Proportional { scale } => {
-                write!(f, "Proportional = scale: {}", scale)
+                write!(f, "Proportional = scale: {scale}")
             }
         }
     }
@@ -245,15 +243,11 @@ impl UpscalingInfo {
             } => {
                 anyhow::ensure!(
                     sum_value_offset < &number_of_values && count_value_offset < &number_of_values,
-                    "sum_value_offset {} and count_value_offset {} must be strictly less than {}",
-                    sum_value_offset,
-                    count_value_offset,
-                    number_of_values
+                    "sum_value_offset {sum_value_offset} and count_value_offset {count_value_offset} must be strictly less than {number_of_values}"
                 );
                 anyhow::ensure!(
                     sampling_distance != &0,
-                    "sampling_distance {} must be greater than 0",
-                    sampling_distance
+                    "sampling_distance {sampling_distance} must be greater than 0"
                 )
             }
             UpscalingInfo::PoissonNonSampleTypeCount {
@@ -263,19 +257,15 @@ impl UpscalingInfo {
             } => {
                 anyhow::ensure!(
                     sum_value_offset < &number_of_values,
-                    "sum_value_offset {} must be strictly less than {}",
-                    sum_value_offset,
-                    number_of_values
+                    "sum_value_offset {sum_value_offset} must be strictly less than {number_of_values}"
                 );
                 anyhow::ensure!(
                     count_value != &0,
-                    "count_value {} must be greater than 0",
-                    count_value
+                    "count_value {count_value} must be greater than 0"
                 );
                 anyhow::ensure!(
                     sampling_distance != &0,
-                    "sampling_distance {} must be greater than 0",
-                    sampling_distance
+                    "sampling_distance {sampling_distance} must be greater than 0"
                 )
             }
             UpscalingInfo::Proportional { scale: _ } => (),
@@ -425,7 +415,7 @@ impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
             }
             let sample = Sample {
                 locations,
-                values: sample.values.clone(),
+                values: &sample.values,
                 labels,
             };
             samples.push(sample);

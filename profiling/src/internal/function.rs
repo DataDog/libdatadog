@@ -40,6 +40,7 @@ impl Id for FunctionId {
     type RawId = u64;
 
     fn from_offset(offset: usize) -> Self {
+        #[allow(clippy::expect_used)]
         Self(small_non_zero_pprof_id(offset).expect("FunctionId to fit into a u32"))
     }
 

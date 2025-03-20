@@ -42,6 +42,7 @@ pub struct NamedPipeLiaison {
 }
 
 pub fn pid_shm_path(pipe_path: &str) -> CString {
+    #[allow(clippy::unwrap_used)]
     CString::new(&pipe_path[PIPE_PATH.len() - 1..]).unwrap()
 }
 
@@ -172,6 +173,7 @@ impl NamedPipeLiaison {
         // Due to the restriction on Global\ namespace for shared memory we have to distinguish
         // individual sidecar sessions. Fetch the session_id to effectively namespace the
         // Named Pipe names too.
+        #[allow(clippy::unwrap_used)]
         Self {
             socket_path: CString::new(format!(
                 "{}{}{}-libdd.{}",

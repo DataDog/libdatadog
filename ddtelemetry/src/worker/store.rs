@@ -69,6 +69,8 @@ mod queuehasmpap {
                 return (&mut self.items[idx - self.popped].1, false);
             }
             self.insert_nocheck(hash, key, default);
+
+            #[allow(clippy::unwrap_used)]
             (&mut self.items.back_mut().unwrap().1, true)
         }
 

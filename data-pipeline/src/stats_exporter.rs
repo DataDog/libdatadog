@@ -121,6 +121,7 @@ impl StatsExporter {
         encode_stats_payload(
             self.meta.borrow(),
             sequence,
+            #[allow(clippy::unwrap_used)]
             self.concentrator
                 .lock()
                 .unwrap()

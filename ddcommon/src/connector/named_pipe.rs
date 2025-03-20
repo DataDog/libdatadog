@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 /// Build a URI from a Path representing a named pipe
 /// `path` - named pipe path. ex: \\.\pipe\pipename
 pub fn named_pipe_path_to_uri(path: &Path) -> Result<hyper::Uri, hyper::http::Error> {
+    #[allow(clippy::unwrap_used)]
     let path = hex::encode(path.as_os_str().to_str().unwrap());
     hyper::Uri::builder()
         .scheme("windows")

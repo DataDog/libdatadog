@@ -6,6 +6,7 @@ use crate::fetch::{
     ConfigFetcherStateStats, ConfigInvariants, FileStorage,
 };
 use crate::{RemoteConfigPath, Target};
+use ddcommon::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::Add;
@@ -187,7 +188,7 @@ where
 
     fn expire_file(&mut self, file: Arc<S::StoredFile>) {
         let mut expire_lock = self.state.files_lock();
-        let mut inactive = self.inactive.lock().unwrap();
+        let mut inactive = self.inactive.lock_or_panic();
         if file.refcount().rc.load(Ordering::Relaxed) != 0 {
             return; // Don't do anything if refcount was increased while acquiring the lock
         }
@@ -213,7 +214,7 @@ where
 
     pub fn stats(&self) -> RefcountingStorageStats {
         RefcountingStorageStats {
-            inactive_files: self.inactive.lock().unwrap().len() as u32,
+            inactive_files: self.inactive.lock_or_panic().len() as u32,
             fetcher: self.state.stats(),
         }
     }
@@ -276,7 +277,7 @@ impl SharedFetcher {
         loop {
             let first_run_id = fetcher.file_storage.run_id.inc_runners();
 
-            let runtime_id = self.runtime_id.lock().unwrap().clone();
+            let runtime_id = self.runtime_id.lock_or_panic().clone();
             let fetched = fetcher
                 .fetch_once(
                     runtime_id.as_str(),
@@ -288,7 +289,7 @@ impl SharedFetcher {
 
             let clean_inactive = || {
                 let run_range = first_run_id..=fetcher.file_storage.run_id.dec_runners();
-                let mut inactive = fetcher.file_storage.inactive.lock().unwrap();
+                let mut inactive = fetcher.file_storage.inactive.lock_or_panic();
                 inactive.retain(|_, v| {
                     if run_range.contains(&v.get_expiring_run_id()) && v.delref() == 1 {
                         fetcher
@@ -309,7 +310,7 @@ impl SharedFetcher {
                     if !files.is_empty() || !last_files.is_empty() {
                         for file in files.iter() {
                             if file.get_expiring_run_id() != 0 {
-                                let mut inactive = fetcher.file_storage.inactive.lock().unwrap();
+                                let mut inactive = fetcher.file_storage.inactive.lock_or_panic();
                                 if inactive.remove(&file.refcount().path).is_some() {
                                     file.setref(0);
                                     file.set_expiring_run_id(0);
@@ -367,16 +368,20 @@ pub mod tests {
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::Target;
     use futures::future::join_all;
-    use lazy_static::lazy_static;
-    use std::sync::Arc;
+    use std::sync::{Arc, OnceLock};
 
-    lazy_static! {
-        pub static ref OTHER_TARGET: Arc<Target> = Arc::new(Target {
-            service: "other".to_string(),
-            env: "env".to_string(),
-            app_version: "7.8.9".to_string(),
-            tags: vec![],
-        });
+    // TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
+    static OTHER_TARGET: OnceLock<Arc<Target>> = OnceLock::new();
+
+    pub(crate) fn get_other_target() -> &'static Arc<Target> {
+        OTHER_TARGET.get_or_init(|| {
+            Arc::new(Target {
+                service: "other".to_string(),
+                env: "env".to_string(),
+                app_version: "7.8.9".to_string(),
+                tags: vec![],
+            })
+        })
     }
 
     pub struct RcPathStore {
@@ -429,12 +434,12 @@ pub mod tests {
         );
 
         server.files.lock().unwrap().insert(
-            PATH_FIRST.clone(),
-            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+            get_path_first().clone(),
+            (vec![get_dummy_target().clone()], 1, "v1".to_string()),
         );
 
         let fetcher = SharedFetcher::new(
-            DUMMY_TARGET.clone(),
+            get_dummy_target().clone(),
             "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
         );
         let iteration = AtomicU32::new(0);
@@ -450,14 +455,14 @@ pub mod tests {
                             assert_eq!(fetched[0].store.data.lock().unwrap().contents, "v1");
 
                             server.files.lock().unwrap().insert(
-                                PATH_SECOND.clone(),
-                                (vec![DUMMY_TARGET.clone()], 1, "X".to_string()),
+                                get_path_second().clone(),
+                                (vec![get_dummy_target().clone()], 1, "X".to_string()),
                             );
                         }
                         1 => {
                             assert_eq!(fetched.len(), 2);
 
-                            server.files.lock().unwrap().remove(&*PATH_SECOND);
+                            server.files.lock().unwrap().remove(get_path_second());
                         }
                         2 => {
                             assert_eq!(fetched.len(), 1);
@@ -490,16 +495,16 @@ pub mod tests {
         );
 
         server.files.lock().unwrap().insert(
-            PATH_FIRST.clone(),
+            get_path_first().clone(),
             (
-                vec![DUMMY_TARGET.clone(), OTHER_TARGET.clone()],
+                vec![get_dummy_target().clone(), get_other_target().clone()],
                 1,
                 "v1".to_string(),
             ),
         );
         server.files.lock().unwrap().insert(
-            PATH_SECOND.clone(),
-            (vec![DUMMY_TARGET.clone()], 1, "X".to_string()),
+            get_path_second().clone(),
+            (vec![get_dummy_target().clone()], 1, "X".to_string()),
         );
 
         let server_1 = server.clone();
@@ -507,13 +512,13 @@ pub mod tests {
         let server_first_1 = move || {
             assert_eq!(server_1_storage.0.files.lock().unwrap().len(), 2);
             server_1.files.lock().unwrap().insert(
-                PATH_FIRST.clone(),
-                (vec![OTHER_TARGET.clone()], 1, "v1".to_string()),
+                get_path_first().clone(),
+                (vec![get_other_target().clone()], 1, "v1".to_string()),
             );
             server_1.files.lock().unwrap().insert(
-                PATH_SECOND.clone(),
+                get_path_second().clone(),
                 (
-                    vec![DUMMY_TARGET.clone(), OTHER_TARGET.clone()],
+                    vec![get_dummy_target().clone(), get_other_target().clone()],
                     1,
                     "X".to_string(),
                 ),
@@ -526,10 +531,10 @@ pub mod tests {
         let server_second_1 = move || {
             assert_eq!(server_2_storage.0.files.lock().unwrap().len(), 2);
             server_2.files.lock().unwrap().insert(
-                PATH_FIRST.clone(),
-                (vec![DUMMY_TARGET.clone()], 2, "v2".to_string()),
+                get_path_first().clone(),
+                (vec![get_dummy_target().clone()], 2, "v2".to_string()),
             );
-            server_2.files.lock().unwrap().remove(&*PATH_SECOND);
+            server_2.files.lock().unwrap().remove(get_path_second());
         };
         let server_second_2 = server_second_1.clone();
 
@@ -558,11 +563,11 @@ pub mod tests {
         let server_third_2 = server_third_1.clone();
 
         let fetcher_1 = SharedFetcher::new(
-            DUMMY_TARGET.clone(),
+            get_dummy_target().clone(),
             "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
         );
         let fetcher_2 = SharedFetcher::new(
-            OTHER_TARGET.clone(),
+            get_other_target().clone(),
             "ae588386-8464-43ba-bd3a-3e2d36b2c22c".to_string(),
         );
         let iteration = Arc::new(AtomicU32::new(0));

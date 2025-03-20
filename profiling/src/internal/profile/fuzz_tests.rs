@@ -212,7 +212,7 @@ impl<'a> From<&'a Sample> for api::Sample<'a> {
     fn from(value: &'a Sample) -> Self {
         Self {
             locations: value.locations.iter().map(api::Location::from).collect(),
-            values: value.values.clone(),
+            values: &value.values,
             labels: value.labels.iter().map(api::Label::from).collect(),
         }
     }
@@ -277,7 +277,13 @@ fn assert_samples_eq(
             // `small_non_zero_pprof_id()` function which guarantees that the id stored in pprof
             // is +1 of the index in the vector of Locations in internal::Profile.
             let location = &profile.locations[*loc_id as usize - 1];
-            let mapping = &profile.mappings[location.mapping_id as usize - 1];
+
+            // PHP, Python, and Ruby don't use mappings, so allow for zero id.
+            let mapping = if location.mapping_id != 0 {
+                profile.mappings[location.mapping_id as usize - 1]
+            } else {
+                Default::default()
+            };
             // internal::Location::to_pprof() always creates a single line.
             assert!(location.lines.len() == 1);
             let line = location.lines[0];

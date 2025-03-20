@@ -47,6 +47,7 @@ const CONTINUE: ControlFlow<()> = ControlFlow::Continue(());
 const BREAK: ControlFlow<()> = ControlFlow::Break(());
 
 fn time_now() -> f64 {
+    #[allow(clippy::unwrap_used)]
     std::time::SystemTime::UNIX_EPOCH
         .elapsed()
         .unwrap_or_default()
@@ -240,9 +241,12 @@ impl TelemetryWorker {
         match action {
             Lifecycle(Start) => {
                 if !self.data.started {
+                    #[allow(clippy::unwrap_used)]
                     self.deadlines
                         .schedule_event(LifecycleAction::FlushMetricAggr)
                         .unwrap();
+
+                    #[allow(clippy::unwrap_used)]
                     self.deadlines
                         .schedule_event(LifecycleAction::FlushData)
                         .unwrap();
@@ -260,6 +264,8 @@ impl TelemetryWorker {
             }
             Lifecycle(FlushMetricAggr) => {
                 self.data.metric_buckets.flush_agregates();
+
+                #[allow(clippy::unwrap_used)]
                 self.deadlines
                     .schedule_event(LifecycleAction::FlushMetricAggr)
                     .unwrap();
@@ -277,6 +283,7 @@ impl TelemetryWorker {
                     }
                 }
 
+                #[allow(clippy::unwrap_used)]
                 self.deadlines
                     .schedule_event(LifecycleAction::FlushData)
                     .unwrap();
@@ -342,9 +349,13 @@ impl TelemetryWorker {
                         Ok(()) => self.payload_sent_success(&app_started),
                         Err(err) => self.log_err(&err),
                     }
+
+                    #[allow(clippy::unwrap_used)]
                     self.deadlines
                         .schedule_event(LifecycleAction::FlushMetricAggr)
                         .unwrap();
+
+                    #[allow(clippy::unwrap_used)]
                     // flush data should be last to previously flushed metrics are sent
                     self.deadlines
                         .schedule_event(LifecycleAction::FlushData)
@@ -366,6 +377,8 @@ impl TelemetryWorker {
             }
             Lifecycle(FlushMetricAggr) => {
                 self.data.metric_buckets.flush_agregates();
+
+                #[allow(clippy::unwrap_used)]
                 self.deadlines
                     .schedule_event(LifecycleAction::FlushMetricAggr)
                     .unwrap();
@@ -395,6 +408,7 @@ impl TelemetryWorker {
                     }
                 }
 
+                #[allow(clippy::unwrap_used)]
                 self.deadlines
                     .schedule_event(LifecycleAction::FlushData)
                     .unwrap();
@@ -409,6 +423,7 @@ impl TelemetryWorker {
                     Ok(()) => self.payload_sent_success(&app_started),
                     Err(err) => self.log_err(&err),
                 }
+                #[allow(clippy::unwrap_used)]
                 self.deadlines
                     .schedule_events(
                         &mut [
@@ -707,6 +722,7 @@ impl TelemetryWorker {
     }
 }
 
+#[derive(Debug)]
 struct InnerTelemetryShutdown {
     is_shutdown: Mutex<bool>,
     condvar: Condvar,
@@ -715,6 +731,7 @@ struct InnerTelemetryShutdown {
 impl InnerTelemetryShutdown {
     fn wait_for_shutdown(&self) {
         drop(
+            #[allow(clippy::unwrap_used)]
             self.condvar
                 .wait_while(self.is_shutdown.lock().unwrap(), |is_shutdown| {
                     !*is_shutdown
@@ -723,13 +740,14 @@ impl InnerTelemetryShutdown {
         )
     }
 
+    #[allow(clippy::unwrap_used)]
     fn shutdown_finished(&self) {
         *self.is_shutdown.lock().unwrap() = true;
         self.condvar.notify_all();
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 /// TelemetryWorkerHandle is a handle which allows interactions with the telemetry worker.
 /// The handle is safe to use across threads.
 ///
@@ -960,6 +978,7 @@ impl TelemetryWorkerBuilder {
         let telemetry_hearbeat_interval = config.telemetry_hearbeat_interval;
         let client = http_client::from_config(&config);
 
+        #[allow(clippy::unwrap_used)]
         let worker = TelemetryWorker {
             data: TelemetryWorkerData {
                 started: false,
