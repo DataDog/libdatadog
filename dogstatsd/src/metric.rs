@@ -5,19 +5,24 @@ use crate::errors::ParseError;
 use crate::{constants, datadog};
 use ddsketch_agent::DDSketch;
 use fnv::FnvHasher;
-use lazy_static::lazy_static;
 use protobuf::Chars;
 use regex::Regex;
 use std::hash::{Hash, Hasher};
+use std::sync::OnceLock;
 use ustr::Ustr;
 
 pub const EMPTY_TAGS: SortedTags = SortedTags { values: Vec::new() };
 
 // https://docs.datadoghq.com/developers/dogstatsd/datagram_shell?tab=metrics#dogstatsd-protocol-v13
-lazy_static! {
-    static ref METRIC_REGEX: Regex = Regex::new(
-        r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[a-zA-Z]+)(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?(?:\|c:(?P<container_id>[^|]+))?(?:\|T(?P<timestamp>[^|]+))?$",
-    ).expect("Failed to create metric regex");
+static METRIC_REGEX: OnceLock<Regex> = OnceLock::new();
+fn get_metric_regex() -> &'static Regex {
+    #[allow(clippy::expect_used)]
+    METRIC_REGEX.get_or_init(|| {
+        Regex::new(
+            r"^(?P<name>[^:]+):(?P<values>[^|]+)\|(?P<type>[a-zA-Z]+)(?:\|@(?P<sample_rate>[\d.]+))?(?:\|#(?P<tags>[^|]+))?(?:\|c:(?P<container_id>[^|]+))?(?:\|T(?P<timestamp>[^|]+))?$",
+        )
+        .expect("Failed to create metric regex")
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -66,20 +71,27 @@ impl SortedTags {
     }
 
     pub fn parse(tags_section: &str) -> Result<SortedTags, ParseError> {
-        let tag_parts = tags_section.split(',');
-        let mut parsed_tags = Vec::new();
-        // Validate that the tags have the right form.
-        for (i, part) in tag_parts.filter(|s| !s.is_empty()).enumerate() {
-            if i >= constants::MAX_TAGS {
-                return Err(ParseError::Raw(format!("Too many tags, more than {i}")));
-            }
-            if !part.contains(':') {
-                parsed_tags.push((Ustr::from(part), Ustr::from("")));
-            } else if let Some((k, v)) = part.split_once(':') {
+        let total_tags = tags_section.bytes().filter(|&b| b == b',').count() + 1;
+        let mut parsed_tags = Vec::with_capacity(total_tags);
+
+        for part in tags_section.split(',').filter(|s| !s.is_empty()) {
+            if let Some(i) = part.find(':') {
+                // Avoid creating a new string via split_once
+                let (k, v) = (&part[..i], &part[i + 1..]);
                 parsed_tags.push((Ustr::from(k), Ustr::from(v)));
+            } else {
+                parsed_tags.push((Ustr::from(part), Ustr::from("")));
             }
         }
+
         parsed_tags.dedup();
+        if parsed_tags.len() > constants::MAX_TAGS {
+            return Err(ParseError::Raw(format!(
+                "Too many tags, more than {c}",
+                c = constants::MAX_TAGS
+            )));
+        }
+
         parsed_tags.sort_unstable();
         Ok(SortedTags {
             values: parsed_tags,
@@ -181,6 +193,7 @@ impl Metric {
         tags: Option<SortedTags>,
         timestamp: Option<i64>,
     ) -> Metric {
+        #[allow(clippy::expect_used)]
         let parsed_timestamp = timestamp_to_bucket(timestamp.unwrap_or_else(|| {
             std::time::UNIX_EPOCH
                 .elapsed()
@@ -204,6 +217,7 @@ impl Metric {
 // Round down to the nearest 10 seconds
 // to form a bucket of metric contexts aggregated per 10s
 pub fn timestamp_to_bucket(timestamp: i64) -> i64 {
+    #[allow(clippy::expect_used)]
     let now_seconds: i64 = std::time::UNIX_EPOCH
         .elapsed()
         .expect("unable to poll clock, unrecoverable")
@@ -228,7 +242,7 @@ pub fn timestamp_to_bucket(timestamp: i64) -> i64 {
 /// example aj-test.increment:1|c|#user:aj-test from 127.0.0.1:50983
 pub fn parse(input: &str) -> Result<Metric, ParseError> {
     // TODO must enforce / exploit constraints given in `constants`.
-    if let Some(caps) = METRIC_REGEX.captures(input) {
+    if let Some(caps) = get_metric_regex().captures(input) {
         // unused for now
         // let sample_rate = caps.name("sample_rate").map(|m| m.as_str());
 
@@ -238,8 +252,14 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
         } else {
             tags = None;
         }
+
+        #[allow(clippy::unwrap_used)]
         let val = first_value(caps.name("values").unwrap().as_str())?;
+
+        #[allow(clippy::unwrap_used)]
         let t = caps.name("type").unwrap().as_str();
+
+        #[allow(clippy::expect_used)]
         let now = std::time::UNIX_EPOCH
             .elapsed()
             .expect("unable to poll clock, unrecoverable")
@@ -266,6 +286,7 @@ pub fn parse(input: &str) -> Result<Metric, ParseError> {
                 return Err(ParseError::Raw(format!("Invalid metric type: {t}")));
             }
         };
+        #[allow(clippy::unwrap_used)]
         let name = Ustr::from(caps.name("name").unwrap().as_str());
         let id = id(name, &tags, parsed_timestamp);
         return Ok(Metric {
@@ -537,15 +558,13 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn parse_too_many_tags() {
-        // 33
-        assert_eq!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3").unwrap_err(),
-                   ParseError::Raw("Too many tags, more than 32".to_string()));
-
-        // 32
-        assert!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2").is_ok());
-
-        // 31
-        assert!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1").is_ok());
+        // 101
+        assert_eq!(
+            parse(
+                "foo:1|g|#a:1,b:2,c:3,d:4,e:5,f:6,g:7,h:8,i:9,j:10,k:11,l:12,m:13,n:14,o:15,p:16,q:17,r:18,s:19,t:20,u:21,v:22,w:23,x:24,y:25,z:26,aa:27,ab:28,ac:29,ad:30,ae:31,af:32,ag:33,ah:34,ai:35,aj:36,ak:37,al:38,am:39,an:40,ao:41,ap:42,aq:43,ar:44,as:45,at:46,au:47,av:48,aw:49,ax:50,ay:51,az:52,ba:53,bb:54,bc:55,bd:56,be:57,bf:58,bg:59,bh:60,bi:61,bj:62,bk:63,bl:64,bm:65,bn:66,bo:67,bp:68,bq:69,br:70,bs:71,bt:72,bu:73,bv:74,bw:75,bx:76,by:77,bz:78,ca:79,cb:80,cc:81,cd:82,ce:83,cf:84,cg:85,ch:86,ci:87,cj:88,ck:89,cl:90,cm:91,cn:92,co:93,cp:94,cq:95,cr:96,cs:97,ct:98,cu:99,cv:100,cw:101"
+            ).unwrap_err(),
+            ParseError::Raw("Too many tags, more than 100".to_string())
+        );
 
         // 30
         assert!(parse("foo:1|g|#a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3,a:1,b:2,c:3").is_ok());
@@ -564,6 +583,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn parse_tag_no_value() {
         let result = parse("datadog.tracer.flush_triggered:1|c|#lang:go,lang_version:go1.22.10,_dd.origin:lambda,runtime-id:d66f501c-d09b-4d0d-970f-515235c4eb56,v1.65.1,service:aws.lambda,reason:scheduled");
         assert!(result.is_ok());
@@ -577,6 +597,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn parse_tag_multi_column() {
         let result = parse("datadog.tracer.flush_triggered:1|c|#lang:go:and:something:else");
         assert!(result.is_ok());
@@ -587,6 +608,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn parse_tracer_metric() {
         let input = "datadog.tracer.flush_duration:0.785551|ms|#lang:go,lang_version:go1.23.2,env:redacted_env,_dd.origin:lambda,runtime-id:redacted_runtime,tracer_version:v1.70.1,service:redacted_service,env:redacted_env,service:redacted_service,version:redacted_version";
         let expected_error = "ms".to_string();
@@ -598,6 +620,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn parse_metric_timestamp() {
         // Important to test that we round down to the nearest 10 seconds
         // for our buckets
@@ -607,6 +630,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn parse_metric_no_timestamp() {
         // *wince* this could be a race condition
         // we round the timestamp down to a 10s bucket and I want to test now

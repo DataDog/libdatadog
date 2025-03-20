@@ -6,5 +6,6 @@ pub mod map;
 pub mod meta_struct;
 pub mod metrics;
 pub mod number;
+pub mod span_event;
 pub mod span_link;
 pub mod string;

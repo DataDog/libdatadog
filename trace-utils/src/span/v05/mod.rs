@@ -83,6 +83,7 @@ mod tests {
             metrics: HashMap::from([(BytesString::from("metrics_field"), 1.1)]),
             meta_struct: HashMap::new(),
             span_links: vec![],
+            span_events: vec![],
         };
 
         let mut dict = SharedDict::default();

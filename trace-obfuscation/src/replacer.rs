@@ -152,6 +152,7 @@ fn replace_all(
         let mut last_match = 0;
         for cap in it {
             // unwrap on 0 is OK because captures only reports matches
+            #[allow(clippy::unwrap_used)]
             let m = cap.get(0).unwrap();
             scratch_space.push_str(&haystack[last_match..m.start()]);
             regex::Replacer::replace_append(&mut replace, &cap, scratch_space);
@@ -250,6 +251,7 @@ mod tests {
         ]
     )]
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_name() {
         let parsed_rules = replacer::parse_rules_from_string(rules);
 
@@ -280,6 +282,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_replace_rule_eq() {
         let rule1 = replacer::ReplaceRule {
             name: "http.url".to_string(),
@@ -297,6 +300,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_replace_rule_neq() {
         let rule1 = replacer::ReplaceRule {
             name: "http.url".to_string(),

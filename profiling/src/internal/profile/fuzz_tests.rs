@@ -16,18 +16,14 @@ pub struct Function {
 
     /// Source file containing the function.
     pub filename: Box<str>,
-
-    /// Line number in source file.
-    pub start_line: i64,
 }
 
 impl Function {
-    pub fn new(name: Box<str>, system_name: Box<str>, filename: Box<str>, start_line: i64) -> Self {
+    pub fn new(name: Box<str>, system_name: Box<str>, filename: Box<str>) -> Self {
         Self {
             name,
             system_name,
             filename,
-            start_line,
         }
     }
 }
@@ -38,7 +34,6 @@ impl<'a> From<&'a Function> for api::Function<'a> {
             name: &value.name,
             system_name: &value.system_name,
             filename: &value.filename,
-            start_line: value.start_line,
         }
     }
 }
@@ -277,7 +272,13 @@ fn assert_samples_eq(
             // `small_non_zero_pprof_id()` function which guarantees that the id stored in pprof
             // is +1 of the index in the vector of Locations in internal::Profile.
             let location = &profile.locations[*loc_id as usize - 1];
-            let mapping = &profile.mappings[location.mapping_id as usize - 1];
+
+            // PHP, Python, and Ruby don't use mappings, so allow for zero id.
+            let mapping = if location.mapping_id != 0 {
+                profile.mappings[location.mapping_id as usize - 1]
+            } else {
+                Default::default()
+            };
             // internal::Location::to_pprof() always creates a single line.
             assert!(location.lines.len() == 1);
             let line = location.lines[0];
@@ -300,7 +301,6 @@ fn assert_samples_eq(
                     .into_boxed_str(),
                 profile.string_table_fetch_owned(function.system_name),
                 profile.string_table_fetch_owned(function.filename),
-                function.start_line,
             );
             let owned_location =
                 Location::new(owned_mapping, owned_function, location.address, line.line);

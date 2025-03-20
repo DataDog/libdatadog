@@ -21,7 +21,7 @@ struct ShmLimiterData<'a, Inner> {
     _phantom: PhantomData<&'a ShmLimiterMemory<Inner>>,
 }
 
-pub struct ShmLimiterMemory<Inner = ()> {
+pub struct ShmLimiterMemory<Inner> {
     mem: Arc<RwLock<MappedMem<NamedShmHandle>>>,
     last_size: AtomicU32,
     _phantom: PhantomData<Inner>,
@@ -66,7 +66,10 @@ impl<Inner> ShmLimiterMemory<Inner> {
     /// The start of the ShmLimiter memory has 4 bytes indicating an offset to the first free
     /// element in the free list. It is zero if there is no element on the free list.
     fn first_free_ref(&self) -> &AtomicU32 {
-        unsafe { &*self.mem.read().unwrap().as_slice().as_ptr().cast() }
+        #[allow(clippy::unwrap_used)]
+        unsafe {
+            &*self.mem.read().unwrap().as_slice().as_ptr().cast()
+        }
     }
 
     fn next_free(&mut self) -> u32 {
@@ -82,7 +85,9 @@ impl<Inner> ShmLimiterMemory<Inner> {
             // Not yet used memory will always be 0. The next free entry will then be just above.
             if target_next_free == 0 {
                 target_next_free = first_free + std::mem::size_of::<ShmLimiterData<Inner>>() as u32;
+
                 // target_next_free is the end of the current entry - but we need one more
+                #[allow(clippy::unwrap_used)]
                 self.mem.write().unwrap().ensure_space(
                     target_next_free as usize + std::mem::size_of::<ShmLimiterData<Inner>>(),
                 );
@@ -122,6 +127,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
     fn ensure_index(&self, idx: u32) -> Option<()> {
         let end = idx + std::mem::size_of::<ShmLimiterData<Inner>>() as u32;
         if end > self.last_size.load(Ordering::Relaxed) {
+            #[allow(clippy::unwrap_used)]
             let mut mem = self.mem.write().unwrap();
             let mut cur_size = mem.mem.get_size() as u32;
             if cur_size < end {
@@ -167,6 +173,8 @@ impl<Inner> ShmLimiterMemory<Inner> {
         F: Fn(&Inner) -> bool,
     {
         let mut cur = Self::START_OFFSET;
+
+        #[allow(clippy::unwrap_used)]
         let mem = self.mem.read().unwrap();
         loop {
             self.ensure_index(cur)?;
@@ -187,7 +195,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
     }
 }
 
-pub struct ShmLimiter<Inner = ()> {
+pub struct ShmLimiter<Inner> {
     idx: u32,
     memory: ShmLimiterMemory<Inner>,
 }
@@ -200,6 +208,7 @@ impl<Inner> Debug for ShmLimiter<Inner> {
 
 impl<Inner> ShmLimiter<Inner> {
     fn limiter(&self) -> &ShmLimiterData<Inner> {
+        #[allow(clippy::unwrap_used)]
         unsafe {
             &*self
                 .memory
@@ -286,7 +295,7 @@ impl<Inner> Drop for ShmLimiter<Inner> {
 
 pub enum AnyLimiter {
     Local(LocalLimiter),
-    Shm(ShmLimiter),
+    Shm(ShmLimiter<()>),
 }
 
 impl AnyLimiter {

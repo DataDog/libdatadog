@@ -30,6 +30,7 @@ impl Id for StringId {
     type RawId = i64;
 
     fn from_offset(inner: usize) -> Self {
+        #[allow(clippy::expect_used)]
         Self(inner.try_into().expect("StringId to fit into a u32"))
     }
 

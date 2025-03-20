@@ -1,11 +1,20 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::todo))]
+#![cfg_attr(not(test), deny(clippy::unimplemented))]
+
 use std::{
     borrow, cmp, fmt, hash,
     ops::{self, RangeBounds},
     sync::Arc,
 };
+
+#[cfg(feature = "serde")]
+use serde::Serialize;
 
 /// Immutable bytes type with zero copy cloning and slicing.
 #[derive(Clone)]
@@ -83,12 +92,14 @@ impl Bytes {
 
         let len = self.len();
 
+        #[allow(clippy::expect_used)]
         let start = match range.start_bound() {
             Bound::Included(&n) => n,
             Bound::Excluded(&n) => n.checked_add(1).expect("range start overflow"),
             Bound::Unbounded => 0,
         };
 
+        #[allow(clippy::expect_used)]
         let end = match range.end_bound() {
             Bound::Included(&n) => n.checked_add(1).expect("range end overflow"),
             Bound::Excluded(&n) => n,
@@ -267,6 +278,16 @@ impl hash::Hash for Bytes {
 impl fmt::Debug for Bytes {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(self.as_slice(), f)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl Serialize for Bytes {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.as_slice())
     }
 }
 

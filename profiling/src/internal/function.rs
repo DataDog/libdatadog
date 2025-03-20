@@ -11,7 +11,6 @@ pub struct Function {
     pub name: StringId,
     pub system_name: StringId,
     pub filename: StringId,
-    pub start_line: i64,
 }
 
 impl Item for Function {
@@ -27,7 +26,6 @@ impl PprofItem for Function {
             name: self.name.to_raw_id(),
             system_name: self.system_name.to_raw_id(),
             filename: self.filename.to_raw_id(),
-            start_line: self.start_line,
         }
     }
 }
@@ -40,6 +38,7 @@ impl Id for FunctionId {
     type RawId = u64;
 
     fn from_offset(offset: usize) -> Self {
+        #[allow(clippy::expect_used)]
         Self(small_non_zero_pprof_id(offset).expect("FunctionId to fit into a u32"))
     }
 

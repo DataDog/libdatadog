@@ -24,6 +24,8 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
     let fd = shm.handle.as_owned_fd()?;
     if shm.size & NOT_COMMITTED != 0 {
         shm.size &= !NOT_COMMITTED;
+
+        #[allow(clippy::unwrap_used)]
         let page_size = NonZeroUsize::try_from(page_size::get()).unwrap();
         unsafe {
             let ptr = mmap(
@@ -44,6 +46,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
     }
 
     Ok(MappedMem {
+        #[allow(clippy::unwrap_used)]
         ptr: unsafe {
             mmap(
                 None,
@@ -133,6 +136,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
         if expected_size <= self.mem.get_shm().size {
             return;
         }
+        #[allow(clippy::panic)]
         if expected_size > MAPPING_MAX_SIZE - page_size::get() {
             panic!(
                 "Tried to allocate {} bytes for shared mapping (limit: {} bytes)",
@@ -144,9 +148,12 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
         // SAFETY: we'll overwrite the original memory later
         let mut handle: T = unsafe { std::ptr::read(self) }.into();
 
+        #[allow(clippy::unwrap_used)]
         let page_size = NonZeroUsize::try_from(page_size::get()).unwrap();
         unsafe {
             _ = handle.set_mapping_size(expected_size);
+
+            #[allow(clippy::unwrap_used)]
             let ptr = mmap(
                 None,
                 page_size,
@@ -162,7 +169,10 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
             _ = munmap(ptr, usize::from(page_size));
         }
 
-        unsafe { std::ptr::write(self, handle.map().unwrap()) };
+        #[allow(clippy::unwrap_used)]
+        unsafe {
+            std::ptr::write(self, handle.map().unwrap())
+        };
     }
 }
 

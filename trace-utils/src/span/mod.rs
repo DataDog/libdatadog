@@ -4,13 +4,14 @@
 pub mod trace_utils;
 pub mod v05;
 
+use serde::ser::SerializeStruct;
 use serde::Serialize;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
 use std::str::FromStr;
-use tinybytes::BytesString;
+use tinybytes::{Bytes, BytesString};
 
 #[derive(Debug, PartialEq)]
 pub enum SpanKey {
@@ -28,6 +29,7 @@ pub enum SpanKey {
     Type,
     MetaStruct,
     SpanLinks,
+    SpanEvents,
 }
 
 impl FromStr for SpanKey {
@@ -49,6 +51,7 @@ impl FromStr for SpanKey {
             "type" => Ok(SpanKey::Type),
             "meta_struct" => Ok(SpanKey::MetaStruct),
             "span_links" => Ok(SpanKey::SpanLinks),
+            "span_events" => Ok(SpanKey::SpanEvents),
             _ => Err(SpanKeyParseError::new(format!("Invalid span key: {}", s))),
         }
     }
@@ -57,9 +60,9 @@ impl FromStr for SpanKey {
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.
-pub trait SpanText: Eq + Hash + Borrow<str> {}
+pub trait SpanText: Eq + Hash + Borrow<str> + Serialize {}
 /// Implement the SpanText trait for any type which satisfies the sub traits.
-impl<T: Eq + Hash + Borrow<str>> SpanText for T {}
+impl<T: Eq + Hash + Borrow<str> + Serialize> SpanText for T {}
 
 /// Checks if the `value` represents an empty string. Used to skip serializing empty strings
 /// with serde.
@@ -101,9 +104,11 @@ where
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub metrics: HashMap<T, f64>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta_struct: HashMap<T, Vec<u8>>,
+    pub meta_struct: HashMap<T, Bytes>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub span_links: Vec<SpanLink<T>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub span_events: Vec<SpanEvent<T>>,
 }
 
 /// The generic representation of a V04 span link.
@@ -124,8 +129,127 @@ where
     pub flags: u64,
 }
 
+/// The generic representation of a V04 span event.
+/// `T` is the type used to represent strings in the span event.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct SpanEvent<T>
+where
+    T: SpanText,
+{
+    pub time_unix_nano: u64,
+    pub name: T,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub attributes: HashMap<T, AttributeAnyValue<T>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AttributeAnyValue<T>
+where
+    T: SpanText,
+{
+    SingleValue(AttributeArrayValue<T>),
+    Array(Vec<AttributeArrayValue<T>>),
+}
+
+impl<T> Serialize for AttributeAnyValue<T>
+where
+    T: SpanText,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("AttributeAnyValue", 2)?;
+
+        match self {
+            AttributeAnyValue::SingleValue(attribute) => {
+                serialize_attribute_array::<S, T>(&mut state, attribute)?;
+            }
+            AttributeAnyValue::Array(value) => {
+                let value_type: u8 = self.into();
+                state.serialize_field("type", &value_type)?;
+                state.serialize_field("array_value", value)?;
+            }
+        }
+
+        state.end()
+    }
+}
+
+impl<T> From<&AttributeAnyValue<T>> for u8
+where
+    T: SpanText,
+{
+    fn from(attribute: &AttributeAnyValue<T>) -> u8 {
+        match attribute {
+            AttributeAnyValue::SingleValue(value) => value.into(),
+            AttributeAnyValue::Array(_) => 4,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AttributeArrayValue<T>
+where
+    T: SpanText,
+{
+    String(T),
+    Boolean(bool),
+    Integer(i64),
+    Double(f64),
+}
+
+impl<T> Serialize for AttributeArrayValue<T>
+where
+    T: SpanText,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("AttributeArrayValue", 2)?;
+        serialize_attribute_array::<S, T>(&mut state, self)?;
+        state.end()
+    }
+}
+
+fn serialize_attribute_array<S, T>(
+    state: &mut S::SerializeStruct,
+    attribute: &AttributeArrayValue<T>,
+) -> Result<(), <S>::Error>
+where
+    T: SpanText,
+    S: serde::Serializer,
+{
+    let attribute_type: u8 = attribute.into();
+    state.serialize_field("type", &attribute_type)?;
+    match attribute {
+        AttributeArrayValue::String(value) => state.serialize_field("string_value", value),
+        AttributeArrayValue::Boolean(value) => state.serialize_field("bool_value", value),
+        AttributeArrayValue::Integer(value) => state.serialize_field("int_value", value),
+        AttributeArrayValue::Double(value) => state.serialize_field("double_value", value),
+    }
+}
+
+impl<T> From<&AttributeArrayValue<T>> for u8
+where
+    T: SpanText,
+{
+    fn from(attribute: &AttributeArrayValue<T>) -> u8 {
+        match attribute {
+            AttributeArrayValue::String(_) => 0,
+            AttributeArrayValue::Boolean(_) => 1,
+            AttributeArrayValue::Integer(_) => 2,
+            AttributeArrayValue::Double(_) => 3,
+        }
+    }
+}
+
 pub type SpanBytes = Span<BytesString>;
 pub type SpanLinkBytes = SpanLink<BytesString>;
+pub type SpanEventBytes = SpanEvent<BytesString>;
+pub type AttributeAnyValueBytes = AttributeAnyValue<BytesString>;
+pub type AttributeArrayValueBytes = AttributeArrayValue<BytesString>;
 
 #[derive(Debug)]
 pub struct SpanKeyParseError {
@@ -152,13 +276,112 @@ fn is_default<T: Default + PartialEq>(t: &T) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::Span;
+    use super::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
+    use crate::msgpack_decoder::v04::span::decode_span;
+    use std::collections::HashMap;
 
     #[test]
     fn skip_serializing_empty_fields_test() {
         let expected = b"\x87\xa7service\xa0\xa4name\xa0\xa8resource\xa0\xa8trace_id\x00\xa7span_id\x00\xa5start\x00\xa8duration\x00";
         let val: Span<&str> = Span::default();
         let serialized = rmp_serde::encode::to_vec_named(&val).unwrap();
+        assert_eq!(expected, serialized.as_slice());
+    }
+
+    #[test]
+    fn serialize_deserialize_test() {
+        let span: Span<&str> = Span {
+            name: "tracing.operation",
+            resource: "MyEndpoint",
+            span_links: vec![SpanLink {
+                trace_id: 42,
+                attributes: HashMap::from([("span", "link")]),
+                tracestate: "running",
+                ..Default::default()
+            }],
+            span_events: vec![SpanEvent {
+                time_unix_nano: 1727211691770716000,
+                name: "exception",
+                attributes: HashMap::from([
+                    (
+                        "exception.message",
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::String(
+                            "Cannot divide by zero",
+                        )),
+                    ),
+                    (
+                        "exception.type",
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::String("RuntimeError")),
+                    ),
+                    (
+                        "exception.escaped",
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::Boolean(false)),
+                    ),
+                    (
+                        "exception.count",
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(1)),
+                    ),
+                    (
+                        "exception.lines",
+                        AttributeAnyValue::Array(vec![
+                            AttributeArrayValue::String("  File \"<string>\", line 1, in <module>"),
+                            AttributeArrayValue::String("  File \"<string>\", line 1, in divide"),
+                            AttributeArrayValue::String("RuntimeError: Cannot divide by zero"),
+                        ]),
+                    ),
+                ]),
+            }],
+            ..Default::default()
+        };
+
+        let serialized = rmp_serde::encode::to_vec_named(&span).unwrap();
+        let mut serialized_bytes = tinybytes::Bytes::from(serialized);
+        let deserialized = decode_span(&mut serialized_bytes).unwrap();
+
+        assert_eq!(span.name, deserialized.name.as_str());
+        assert_eq!(span.resource, deserialized.resource.as_str());
+        assert_eq!(
+            span.span_links[0].trace_id,
+            deserialized.span_links[0].trace_id
+        );
+        assert_eq!(
+            span.span_links[0].tracestate,
+            deserialized.span_links[0].tracestate.as_str()
+        );
+        assert_eq!(
+            span.span_events[0].name,
+            deserialized.span_events[0].name.as_str()
+        );
+        assert_eq!(
+            span.span_events[0].time_unix_nano,
+            deserialized.span_events[0].time_unix_nano
+        );
+        for attribut in &deserialized.span_events[0].attributes {
+            assert!(span.span_events[0]
+                .attributes
+                .contains_key(attribut.0.as_str()))
+        }
+    }
+
+    #[test]
+    fn serialize_event_test() {
+        // `expected` is created by transforming the span into bytes
+        // and passing each bytes through `escaped_default`
+        let expected = b"\x88\xa7service\xa0\xa4name\xa0\xa8resource\xa0\xa8trace_id\x00\xa7span_id\x00\xa5start\x00\xa8duration\x00\xabspan_events\x91\x83\xaetime_unix_nano\xcf\x17\xf8I\xe1\xeb\xe5\x1f`\xa4name\xa4test\xaaattributes\x81\xaatest.event\x82\xa4type\x03\xacdouble_value\xcb@\x10\xcc\xcc\xcc\xcc\xcc\xcd";
+
+        let span: Span<&str> = Span {
+            span_events: vec![SpanEvent {
+                time_unix_nano: 1727211691770716000,
+                name: "test",
+                attributes: HashMap::from([(
+                    "test.event",
+                    AttributeAnyValue::SingleValue(AttributeArrayValue::Double(4.2)),
+                )]),
+            }],
+            ..Default::default()
+        };
+
+        let serialized = rmp_serde::encode::to_vec_named(&span).unwrap();
         assert_eq!(expected, serialized.as_slice());
     }
 }

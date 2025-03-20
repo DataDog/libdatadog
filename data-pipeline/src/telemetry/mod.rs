@@ -80,6 +80,7 @@ impl TelemetryClientBuilder {
 
     /// Builds the telemetry client.
     pub async fn build(self) -> Result<TelemetryClient, TelemetryError> {
+        #[allow(clippy::unwrap_used)]
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
             self.service_name.unwrap(),
             self.language.unwrap(),
@@ -105,6 +106,7 @@ impl TelemetryClientBuilder {
 }
 
 /// Telemetry handle used to send metrics to the agent
+#[derive(Debug)]
 pub struct TelemetryClient {
     metrics: Metrics,
     worker: TelemetryWorkerHandle,

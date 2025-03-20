@@ -31,6 +31,7 @@ pub fn obfuscate_url_string(
     let mut changed = false;
     for segment in split_url.iter_mut() {
         // we don't want to redact any HTML encodings
+        #[allow(clippy::unwrap_used)]
         let decoded = percent_decode_str(segment).decode_utf8().unwrap();
         if decoded.chars().any(|c| char::is_ascii_digit(&c)) {
             *segment = "/REDACTED/";
