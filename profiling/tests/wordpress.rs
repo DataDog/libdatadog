@@ -18,7 +18,6 @@ fn php_location<'a>(name: &'a str, filename: &'a str, line: i64) -> api::Locatio
             name,
             system_name: "",
             filename,
-            start_line: 0,
         },
         line,
     }
