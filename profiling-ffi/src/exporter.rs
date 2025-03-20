@@ -491,14 +491,30 @@ mod tests {
 
         assert_eq!(parsed_event_json["attachments"], json!(["profile.pprof"]));
         assert_eq!(parsed_event_json["endpoint_counts"], json!(null));
-        assert_eq!(
-            parsed_event_json["start"],
-            json!("1970-01-01T00:00:12.000000034Z")
-        );
-        assert_eq!(
-            parsed_event_json["end"],
-            json!("1970-01-01T00:00:56.000000078Z")
-        );
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                parsed_event_json["start"],
+                json!("1970-01-01T00:00:12.000000034Z")
+            );
+            assert_eq!(
+                parsed_event_json["end"],
+                json!("1970-01-01T00:00:56.000000078Z")
+            );
+        }
+        // Windows is less accurate on timestamps
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                parsed_event_json["start"],
+                json!("1970-01-01T00:00:12.000000000Z")
+            );
+            assert_eq!(
+                parsed_event_json["end"],
+                json!("1970-01-01T00:00:56.000000000Z")
+            );
+        }
+
         assert_eq!(parsed_event_json["family"], json!("native"));
         assert_eq!(
             parsed_event_json["internal"],
