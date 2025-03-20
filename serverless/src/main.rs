@@ -26,7 +26,7 @@ use datadog_trace_mini_agent::{
 use dogstatsd::{
     aggregator::Aggregator as MetricsAggregator,
     constants::CONTEXTS,
-    datadog::{MetricsIntakeUrlPrefix, Site},
+    datadog::{MetricsIntakeUrlPrefix, RetryStrategy, Site},
     dogstatsd::{DogStatsD, DogStatsDConfig},
     flusher::{Flusher, FlusherConfig},
 };
@@ -184,6 +184,7 @@ async fn start_dogstatsd(
                 .expect("Failed to create intake URL prefix"),
                 https_proxy,
                 timeout: DOGSTATSD_TIMEOUT_DURATION,
+                retry_strategy: RetryStrategy::LinearBackoff(3, 1),
             });
             Some(metrics_flusher)
         }
