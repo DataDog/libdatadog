@@ -76,7 +76,8 @@ mod tracing_integration_tests {
             .await;
 
         let task_result = task::spawn_blocking(move || {
-            let trace_exporter = TraceExporter::builder()
+            let mut builder = TraceExporter::builder();
+            builder
                 .set_url(url.to_string().as_ref())
                 .set_language("test-lang")
                 .set_language_version("2.0")
@@ -85,9 +86,9 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
-                .set_query_params("test_session_token=compare_v04_trace_snapshot_test")
-                .build()
-                .expect("Unable to build TraceExporter");
+                .set_query_params("test_session_token=compare_v04_trace_snapshot_test");
+
+            let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
             let data = get_v04_trace_snapshot_test_payload();
             let response = trace_exporter.send(data, 1);
@@ -117,7 +118,8 @@ mod tracing_integration_tests {
             .await;
 
         let task_result = task::spawn_blocking(move || {
-            let trace_exporter = TraceExporter::builder()
+            let mut builder = TraceExporter::builder();
+            builder
                 .set_url(url.to_string().as_ref())
                 .set_language("test-lang")
                 .set_language_version("2.0")
@@ -128,9 +130,8 @@ mod tracing_integration_tests {
                 .set_service("test")
                 .set_query_params("test_session_token=compare_v04_to_v05_trace_snapshot_test")
                 .set_input_format(TraceExporterInputFormat::V04)
-                .set_output_format(TraceExporterOutputFormat::V05)
-                .build()
-                .expect("Unable to build TraceExporter");
+                .set_output_format(TraceExporterOutputFormat::V05);
+            let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
             let data = get_v04_trace_snapshot_test_payload();
             let response = trace_exporter.send(data, 1);
@@ -160,7 +161,8 @@ mod tracing_integration_tests {
             .await;
 
         let task_result = task::spawn_blocking(move || {
-            let trace_exporter = TraceExporter::builder()
+            let mut builder = TraceExporter::builder();
+            builder
                 .set_url(url.to_string().as_ref())
                 .set_language("test-lang")
                 .set_language_version("2.0")
@@ -171,9 +173,8 @@ mod tracing_integration_tests {
                 .set_service("test")
                 .set_query_params("test_session_token=compare_v05_trace_snapshot_test")
                 .set_input_format(TraceExporterInputFormat::V05)
-                .set_output_format(TraceExporterOutputFormat::V05)
-                .build()
-                .expect("Unable to build TraceExporter");
+                .set_output_format(TraceExporterOutputFormat::V05);
+            let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
             let data = get_v05_trace_snapshot_test_payload();
             let response = trace_exporter.send(data, 1);
@@ -228,7 +229,8 @@ mod tracing_integration_tests {
             .await;
 
         let task_result = task::spawn_blocking(move || {
-            let trace_exporter = TraceExporter::builder()
+            let mut builder = TraceExporter::builder();
+            builder
                 .set_url(url.to_string().as_ref())
                 .set_language("test-lang")
                 .set_language_version("2.0")
@@ -237,9 +239,9 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
-                .set_query_params("test_session_token=compare_v04_trace_snapshot_test")
-                .build()
-                .expect("Unable to build TraceExporter");
+                .set_query_params("test_session_token=compare_v04_trace_snapshot_test");
+
+            let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
             let data = get_v04_trace_snapshot_test_payload();
             let response = trace_exporter.send(data, 1);

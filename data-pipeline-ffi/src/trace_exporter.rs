@@ -274,7 +274,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 ) -> Option<Box<ExporterError>> {
     if let Some(config) = config {
         // let config = &*ptr;
-        let mut builder = TraceExporter::builder()
+        let mut builder = TraceExporter::builder();
+        builder
             .set_url(config.url.as_ref().unwrap_or(&"".to_string()))
             .set_tracer_version(config.tracer_version.as_ref().unwrap_or(&"".to_string()))
             .set_language(config.language.as_ref().unwrap_or(&"".to_string()))
@@ -292,13 +293,11 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
             .set_input_format(config.input_format)
             .set_output_format(config.output_format);
         if config.compute_stats {
-            builder = builder.enable_stats(Duration::from_secs(10))
-            // TODO: APMSP-1317 Enable peer tags aggregation and stats by span_kind based on agent
-            // configuration
+            builder.enable_stats(Duration::from_secs(10));
         }
 
         if let Some(cfg) = &config.telemetry_cfg {
-            builder = builder.enable_telemetry(Some(cfg.clone()));
+            builder.enable_telemetry(Some(cfg.clone()));
         }
 
         match builder.build() {
