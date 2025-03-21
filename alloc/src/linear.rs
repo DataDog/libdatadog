@@ -140,7 +140,7 @@ mod tests {
     use super::*;
     use crate::utils::*;
     use allocator_api2::alloc::Global;
-    use bolero::generator::TypeGenerator;
+    use bolero::TypeGenerator;
 
     #[test]
     fn fuzz() {

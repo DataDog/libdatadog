@@ -47,6 +47,7 @@ futures = { version = "0.3", default-features = false }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
 symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"] }
 symbolic-common = "12.8.0"
+thiserror = "2"
 data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
 datadog-library-config-ffi = {  path = "../library-config-ffi", default-features = false, optional = true }
 function_name = "0.3.0"

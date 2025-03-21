@@ -313,19 +313,26 @@ impl<'a> From<&'a Location<'a>> for api::StringIdLocation {
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum LabelConvError {
+    #[error("failed to convert FFI label to API label: `0`")]
+    Utf8(#[from] Utf8Error),
+
+    #[error("failed to convert FFI label to API label because managed and non-managed strings were mixed")]
+    MixingManagedStrings,
+}
+
 impl<'a> TryFrom<&'a Label<'a>> for api::Label<'a> {
-    type Error = Utf8Error;
+    type Error = LabelConvError;
 
     fn try_from(label: &'a Label<'a>) -> Result<Self, Self::Error> {
+        if (label.key_id.value | label.str_id.value | label.num_unit_id.value) != 0 {
+            return Err(LabelConvError::MixingManagedStrings);
+        }
+
         let key = label.key.try_to_utf8()?;
         let str = label.str.try_to_utf8()?;
-        let str = if str.is_empty() { None } else { Some(str) };
         let num_unit = label.num_unit.try_to_utf8()?;
-        let num_unit = if num_unit.is_empty() {
-            None
-        } else {
-            Some(num_unit)
-        };
 
         Ok(Self {
             key,
@@ -336,29 +343,25 @@ impl<'a> TryFrom<&'a Label<'a>> for api::Label<'a> {
     }
 }
 
-impl<'a> From<&'a Label<'a>> for api::StringIdLabel {
-    fn from(label: &'a Label<'a>) -> Self {
-        let key = label.key_id;
-        let str = label.str_id;
-        let str = if str.value == 0 { None } else { Some(str) };
-        let num_unit = label.num_unit_id;
-        let num_unit = if num_unit.value == 0 {
-            None
-        } else {
-            Some(num_unit)
-        };
+impl<'a> TryFrom<&'a Label<'a>> for api::StringIdLabel {
+    type Error = LabelConvError;
 
-        Self {
-            key,
-            str,
-            num: label.num,
-            num_unit,
+    fn try_from(label: &'a Label<'a>) -> Result<Self, Self::Error> {
+        if !label.key.is_empty() || !label.str.is_empty() || !label.num_unit.is_empty() {
+            return Err(LabelConvError::MixingManagedStrings);
         }
+
+        Ok(Self {
+            key: label.key_id,
+            str: label.str_id,
+            num: label.num,
+            num_unit: label.num_unit_id,
+        })
     }
 }
 
 impl<'a> TryFrom<Sample<'a>> for api::Sample<'a> {
-    type Error = Utf8Error;
+    type Error = LabelConvError;
 
     fn try_from(sample: Sample<'a>) -> Result<Self, Self::Error> {
         let mut locations: Vec<api::Location> = Vec::with_capacity(sample.locations.len());
@@ -382,13 +385,20 @@ impl<'a> TryFrom<Sample<'a>> for api::Sample<'a> {
     }
 }
 
-impl<'a> From<Sample<'a>> for api::StringIdSample<'a> {
-    fn from(sample: Sample<'a>) -> Self {
-        Self {
+impl<'a> TryFrom<Sample<'a>> for api::StringIdSample<'a> {
+    type Error = LabelConvError;
+
+    fn try_from(sample: Sample<'a>) -> Result<Self, Self::Error> {
+        Ok(Self {
             locations: sample.locations.as_slice().iter().map(Into::into).collect(),
             values: sample.values.into_slice(),
-            labels: sample.labels.as_slice().iter().map(Into::into).collect(),
-        }
+            labels: sample
+                .labels
+                .as_slice()
+                .iter()
+                .map(TryInto::try_into)
+                .collect::<Result<Vec<_>, _>>()?,
+        })
     }
 }
 
@@ -498,7 +508,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
     sample: Sample,
     timestamp: Option<NonZeroI64>,
 ) -> ProfileResult {
-    (|| {
+    (|| -> anyhow::Result<()> {
         let profile = profile_ptr_to_inner(profile)?;
         let uses_string_ids = sample
             .labels
@@ -506,7 +516,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
             .is_some_and(|label| label.key.is_empty() && label.key_id.value > 0);
 
         if uses_string_ids {
-            profile.add_string_id_sample(sample.into(), timestamp)
+            profile.add_string_id_sample(sample.try_into()?, timestamp)
         } else {
             profile.add_sample(sample.try_into()?, timestamp)
         }
