@@ -151,20 +151,14 @@ impl ProfileExporter {
         })
     }
 
-    #[cfg(target_env = "musl")]
-    fn runtime_platform_tag(&self) -> Tag {
-        tag!(
-            "runtime_platform",
-            concatcp!(std::env::consts::ARCH, "-", std::env::consts::OS, "-musl")
-        )
-    }
+    const RUNTIME_INFO: &'static str = if cfg!(target_env = "musl") {
+        concatcp!(std::env::consts::ARCH, "-", std::env::consts::OS, "-musl")
+    } else {
+        concatcp!(std::env::consts::ARCH, "-", std::env::consts::OS)
+    };
 
-    #[cfg(not(target_env = "musl"))]
     fn runtime_platform_tag(&self) -> Tag {
-        tag!(
-            "runtime_platform",
-            concatcp!(std::env::consts::ARCH, "-", std::env::consts::OS)
-        )
+        tag!("runtime_platform", ProfileExporter::RUNTIME_INFO)
     }
 
     #[allow(clippy::too_many_arguments)]
