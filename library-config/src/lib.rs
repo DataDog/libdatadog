@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::borrow::Cow;
+use std::{borrow::Cow, path::PathBuf};
 use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -484,6 +484,40 @@ impl Target {
     }
 }
 
+#[cfg(windows)]
+fn get_programdata_for_product(product: &str) -> PathBuf {
+    use winreg::enums::*;
+    use winreg::RegKey;
+    let keyname = format!("SOFTWARE\\Datadog\\{}", product);
+    let hk_local_machine = RegKey::predef(HKEY_LOCAL_MACHINE);
+    match hk_local_machine.open_subkey_with_flags(&keyname, KEY_READ) {
+        Ok(key) => {
+            match key.get_value::<String, _>("ConfigRoot") {
+                Ok(val) => PathBuf::from(val),
+                Err(_) => {
+                    get_default_programdata();
+                }
+            }
+        }
+        Err(_) => {
+            get_default_programdata();
+        }
+    }
+}
+
+#[cfg(windows)]
+fn get_default_programdata() -> PathBuf {
+    use known_folders::{get_known_folder_path, KnownFolder};
+    let mut path = get_known_folder_path(KnownFolder::ProgramData);
+    path.push("Datadog");
+    path
+}
+
+#[cfg(not(windows))]
+fn get_programdata_for_product(_product: &str) -> PathBuf {
+    PathBuf::from("C:\\ProgramData\\Datadog")
+}
+
 impl Configurator {
     #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     pub const FLEET_STABLE_CONFIGURATION_PATH: &'static str =
@@ -493,19 +527,29 @@ impl Configurator {
     pub const LOCAL_STABLE_CONFIGURATION_PATH: &'static str =
         Self::local_stable_configuration_path(Target::current());
 
-    pub const fn local_stable_configuration_path(target: Target) -> &'static str {
+    pub fn local_stable_configuration_path(target: Target) -> Cow<'static, str> {
         match target {
             Target::Linux => "/etc/datadog-agent/application_monitoring.yaml",
             Target::Macos => "/opt/datadog-agent/etc/application_monitoring.yaml",
-            Target::Windows => "C:\\ProgramData\\Datadog\\application_monitoring.yaml",
+            // Target::Windows => "C:\\ProgramData\\Datadog\\application_monitoring.yaml",
+            Target::Windows => {
+                let mut path = get_programdata_for_product("Datadog Agent");
+                path.push("application_monitoring.yaml");
+                Box::leak(path.into_boxed_path()).to_str().unwrap()
+            }
         }
     }
 
-    pub const fn fleet_stable_configuration_path(target: Target) -> &'static str {
+    pub fn fleet_stable_configuration_path(target: Target) -> &'static str {
         match target {
             Target::Linux => "/etc/datadog-agent/managed/datadog-agent/stable/application_monitoring.yaml",
             Target::Macos => "/opt/datadog-agent/etc/stable/application_monitoring.yaml",
-            Target::Windows => "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml",
+            // Target::Windows => "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml",
+            Target::Windows => {
+                let mut path = get_programdata_for_product("Datadog Agent");
+                path.push("configs\\datadog_agent\\stable\\application_monitoring.yaml");
+                Box::leak(path.into_boxed_path()).to_str().unwrap()
+            }
         }
     }
 
