@@ -13,8 +13,8 @@ jobs:
         ruby: [2.1, 2.3, 2.4, 2.5, 2.6, 2.7, '3.0', 3.1, head]
     runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v4
-    - uses: ruby/setup-ruby@v1
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+    - uses: ruby/setup-ruby@922ebc4c5262cd14e07bb0e1db020984b6c064fe # 1.226.0
       with:
         ruby-version: ${{ matrix.ruby }}
         bundler-cache: true # runs 'bundle install' and caches installed gems automatically
@@ -34,8 +34,8 @@ jobs:
         ruby: [2.2]
     runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v4
-    - uses: ruby/setup-ruby@v1
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+    - uses: ruby/setup-ruby@922ebc4c5262cd14e07bb0e1db020984b6c064fe # 1.226.0
       with:
         ruby-version: ${{ matrix.ruby }}
         bundler-cache: true # runs 'bundle install' and caches installed gems automatically
