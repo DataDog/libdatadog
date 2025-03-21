@@ -14,7 +14,7 @@ int main(void) {
   const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
   const ddog_prof_Period period = {wall_time, 60};
 
-  ddog_prof_Profile_NewResult new_result = ddog_prof_Profile_new(sample_types, &period, NULL);
+  ddog_prof_Profile_NewResult new_result = ddog_prof_Profile_new(sample_types, &period);
   if (new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
     ddog_CharSlice message = ddog_Error_message(&new_result.err);
     fprintf(stderr, "%.*s", (int)message.len, message.ptr);
@@ -58,7 +58,7 @@ int main(void) {
   //   printf("Press any key to reset and drop...");
   //   getchar();
 
-  ddog_prof_Profile_Result reset_result = ddog_prof_Profile_reset(profile, NULL);
+  ddog_prof_Profile_Result reset_result = ddog_prof_Profile_reset(profile);
   if (reset_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
     ddog_CharSlice message = ddog_Error_message(&reset_result.err);
     fprintf(stderr, "%.*s", (int)message.len, message.ptr);

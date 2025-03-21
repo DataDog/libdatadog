@@ -38,8 +38,7 @@ int main(int argc, char *argv[]) {
 
   const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
   const ddog_prof_Period period = {wall_time, 60};
-  ddog_prof_Profile_NewResult profile_new_result =
-      ddog_prof_Profile_new(sample_types, &period, nullptr);
+  ddog_prof_Profile_NewResult profile_new_result = ddog_prof_Profile_new(sample_types, &period);
   if (profile_new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
     print_error("Failed to make new profile: ", profile_new_result.err);
     ddog_Error_drop(&profile_new_result.err);
@@ -96,9 +95,9 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  ddog_prof_EncodedProfile *encoded_profile = &serialize_result.ok;
+  auto *encoded_profile = &serialize_result.ok;
 
-  ddog_prof_Endpoint endpoint =
+  auto endpoint =
       ddog_prof_Endpoint_agentless(DDOG_CHARSLICE_C_BARE("datad0g.com"), to_slice_c_char(api_key));
 
   ddog_Vec_Tag tags = ddog_Vec_Tag_new();
@@ -110,58 +109,51 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  ddog_prof_Exporter_NewResult exporter_new_result =
-      ddog_prof_Exporter_new(DDOG_CHARSLICE_C_BARE("exporter-example"), DDOG_CHARSLICE_C_BARE("1.2.3"),
-                             DDOG_CHARSLICE_C_BARE("native"), &tags, endpoint);
+  auto exporter_new_result = ddog_prof_Exporter_new(
+      DDOG_CHARSLICE_C_BARE("exporter-example"), DDOG_CHARSLICE_C_BARE("1.2.3"),
+      DDOG_CHARSLICE_C_BARE("native"), &tags, endpoint);
   ddog_Vec_Tag_drop(tags);
 
-  if (exporter_new_result.tag == DDOG_PROF_EXPORTER_NEW_RESULT_ERR) {
+  if (exporter_new_result.tag == DDOG_PROF_PROFILE_EXPORTER_RESULT_ERR_HANDLE_PROFILE_EXPORTER) {
     print_error("Failed to create exporter: ", exporter_new_result.err);
     ddog_Error_drop(&exporter_new_result.err);
     return 1;
   }
 
-  auto exporter = exporter_new_result.ok;
+  auto exporter = &exporter_new_result.ok;
 
-  ddog_prof_Exporter_File files_to_compress_and_export_[] = {{
-      .name = DDOG_CHARSLICE_C_BARE("auto.pprof"),
-      .file = ddog_Vec_U8_as_slice(&encoded_profile->buffer),
-  }};
-  ddog_prof_Exporter_Slice_File files_to_compress_and_export = {
-      .ptr = files_to_compress_and_export_,
-      .len = sizeof files_to_compress_and_export_ / sizeof *files_to_compress_and_export_,
-  };
-
-  ddog_prof_Exporter_Slice_File files_to_export_unmodified = ddog_prof_Exporter_Slice_File_empty();
+  auto files_to_compress_and_export = ddog_prof_Exporter_Slice_File_empty();
+  auto files_to_export_unmodified = ddog_prof_Exporter_Slice_File_empty();
 
   ddog_CharSlice internal_metadata_example = DDOG_CHARSLICE_C_BARE(
       "{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");
 
-  ddog_CharSlice info_example = DDOG_CHARSLICE_C_BARE(
-      "{\"application\": {\"start_time\": \"2024-01-24T11:17:22+0000\"}, \"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
+  ddog_CharSlice info_example =
+      DDOG_CHARSLICE_C_BARE("{\"application\": {\"start_time\": \"2024-01-24T11:17:22+0000\"}, "
+                            "\"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
 
   auto res = ddog_prof_Exporter_set_timeout(exporter, 30000);
-  if (res.tag == DDOG_PROF_OPTION_ERROR_SOME_ERROR) {
-          print_error("Failed to set the timeout", res.some);
-          ddog_Error_drop(&res.some);
-          return 1;
+  if (res.tag == DDOG_PROF_VOID_RESULT_ERR) {
+    print_error("Failed to set the timeout", res.err);
+    ddog_Error_drop(&res.err);
+    return 1;
   }
 
-  ddog_prof_Exporter_Request_BuildResult build_result = ddog_prof_Exporter_Request_build(
-      exporter, encoded_profile->start, encoded_profile->end, files_to_compress_and_export,
-      files_to_export_unmodified, nullptr, nullptr, &internal_metadata_example, &info_example);
+  auto build_result = ddog_prof_Exporter_Request_build(
+      exporter, encoded_profile, files_to_compress_and_export, files_to_export_unmodified, nullptr,
+      &internal_metadata_example, &info_example);
   ddog_prof_EncodedProfile_drop(encoded_profile);
 
-  if (build_result.tag == DDOG_PROF_EXPORTER_REQUEST_BUILD_RESULT_ERR) {
+  if (build_result.tag == DDOG_PROF_REQUEST_RESULT_ERR_HANDLE_REQUEST) {
     print_error("Failed to build request: ", build_result.err);
     ddog_Error_drop(&build_result.err);
     return 1;
   }
 
-  auto &request = build_result.ok;
+  auto request = &build_result.ok;
 
-  ddog_CancellationToken *cancel = ddog_CancellationToken_new();
-  ddog_CancellationToken *cancel_for_background_thread = ddog_CancellationToken_clone(cancel);
+  auto cancel = ddog_CancellationToken_new();
+  auto cancel_for_background_thread = ddog_CancellationToken_clone(&cancel);
 
   // As an example of CancellationToken usage, here we create a background
   // thread that sleeps for some time and then cancels a request early (e.g.
@@ -169,31 +161,30 @@ int main(int argc, char *argv[]) {
   //
   // If the request is faster than the sleep time, no cancellation takes place.
   std::thread trigger_cancel_if_request_takes_too_long_thread(
-      [](ddog_CancellationToken *cancel_for_background_thread) {
+      [](ddog_prof_CancellationToken cancel_for_background_thread) {
         int timeout_ms = 5000;
         std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms));
         printf("Request took longer than %d ms, triggering asynchronous "
                "cancellation\n",
                timeout_ms);
-        ddog_CancellationToken_cancel(cancel_for_background_thread);
-        ddog_CancellationToken_drop(cancel_for_background_thread);
+        ddog_CancellationToken_cancel(&cancel_for_background_thread);
+        ddog_CancellationToken_drop(&cancel_for_background_thread);
       },
       cancel_for_background_thread);
   trigger_cancel_if_request_takes_too_long_thread.detach();
 
   int exit_code = 0;
-  ddog_prof_Exporter_SendResult send_result = ddog_prof_Exporter_send(exporter, &request, cancel);
-  if (send_result.tag == DDOG_PROF_EXPORTER_SEND_RESULT_ERR) {
+  auto send_result = ddog_prof_Exporter_send(exporter, request, &cancel);
+  if (send_result.tag == DDOG_PROF_RESULT_HTTP_STATUS_ERR_HTTP_STATUS) {
     print_error("Failed to send profile: ", send_result.err);
     exit_code = 1;
     ddog_Error_drop(&send_result.err);
   } else {
-    printf("Response code: %d\n", send_result.http_response.code);
+    printf("Response code: %d\n", send_result.ok.code);
   }
 
-  ddog_prof_Exporter_Request_drop(&request);
-
+  ddog_prof_Exporter_Request_drop(request);
   ddog_prof_Exporter_drop(exporter);
-  ddog_CancellationToken_drop(cancel);
+  ddog_CancellationToken_drop(&cancel);
   return exit_code;
 }

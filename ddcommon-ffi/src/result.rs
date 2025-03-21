@@ -15,6 +15,20 @@ pub enum VoidResult {
     Err(Error),
 }
 
+impl VoidResult {
+    pub fn unwrap(self) {
+        assert!(matches!(self, Self::Ok(_)));
+    }
+
+    pub fn unwrap_err(self) -> Error {
+        match self {
+            #[allow(clippy::panic)]
+            Self::Ok(_) => panic!("Expected error, got value"),
+            Self::Err(err) => err,
+        }
+    }
+}
+
 impl From<anyhow::Result<()>> for VoidResult {
     fn from(value: anyhow::Result<()>) -> Self {
         match value {
@@ -38,6 +52,14 @@ impl<T> Result<T> {
             Self::Ok(v) => v,
             #[allow(clippy::panic)]
             Self::Err(err) => panic!("{err}"),
+        }
+    }
+
+    pub fn unwrap_err(self) -> Error {
+        match self {
+            #[allow(clippy::panic)]
+            Self::Ok(_) => panic!("Expected error, got value"),
+            Self::Err(err) => err,
         }
     }
 }
