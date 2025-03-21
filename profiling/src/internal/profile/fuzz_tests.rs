@@ -504,7 +504,7 @@ fn fuzz_failure_001() {
             },
         ],
     };
-    let mut expected_profile = Profile::new(SystemTime::now(), &sample_types, None);
+    let mut expected_profile = Profile::new(&sample_types, None);
     let mut samples_with_timestamps = Vec::new();
     let mut samples_without_timestamps: HashMap<(&[Location], &[LabelByKey]), Vec<i64>> =
         HashMap::new();
@@ -543,7 +543,7 @@ fn test_fuzz_add_sample() {
                 .iter()
                 .map(api::ValueType::from)
                 .collect();
-            let mut expected_profile = Profile::new(SystemTime::now(), &sample_types, None);
+            let mut expected_profile = Profile::new(&sample_types, None);
             let mut samples_with_timestamps = Vec::new();
             let mut samples_without_timestamps: HashMap<(&[Location], &[LabelByKey]), Vec<i64>> =
                 HashMap::new();
@@ -603,7 +603,7 @@ fn fuzz_add_sample_with_fixed_sample_length() {
         })
         .for_each(|(sample_types, samples)| {
             let api_sample_types: Vec<_> = sample_types.iter().map(api::ValueType::from).collect();
-            let mut profile = Profile::new(SystemTime::now(), &api_sample_types, None);
+            let mut profile = Profile::new(&api_sample_types, None);
             let mut samples_with_timestamps = Vec::new();
             let mut samples_without_timestamps: HashMap<(&[Location], &[LabelByKey]), Vec<i64>> =
                 HashMap::new();
@@ -650,7 +650,7 @@ fn fuzz_add_endpoint() {
     bolero::check!()
         .with_type::<Vec<(u64, String)>>()
         .for_each(|endpoints| {
-            let mut profile = Profile::new(SystemTime::now(), &[], None);
+            let mut profile = Profile::new(&[], None);
             for (local_root_span_id, endpoint) in endpoints {
                 profile
                     .add_endpoint(*local_root_span_id, endpoint.into())
@@ -665,7 +665,7 @@ fn fuzz_add_endpoint_count() {
     bolero::check!()
         .with_type::<Vec<(String, i64)>>()
         .for_each(|endpoint_counts| {
-            let mut profile = Profile::new(SystemTime::now(), &[], None);
+            let mut profile = Profile::new(&[], None);
             for (endpoint, count) in endpoint_counts {
                 profile
                     .add_endpoint_count(endpoint.into(), *count)
@@ -704,7 +704,7 @@ fn fuzz_api_function_calls() {
         })
         .for_each(|(sample_types, operations)| {
             let api_sample_types: Vec<_> = sample_types.iter().map(api::ValueType::from).collect();
-            let mut profile = Profile::new(SystemTime::now(), &api_sample_types, None);
+            let mut profile = Profile::new(&api_sample_types, None);
             let mut samples_with_timestamps: Vec<&Sample> = Vec::new();
             let mut samples_without_timestamps: HashMap<(&[Location], &[LabelByKey]), Vec<i64>> =
                 HashMap::new();

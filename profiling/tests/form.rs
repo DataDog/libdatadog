@@ -1,50 +1,27 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_profiling::exporter::{File, ProfileExporter, Request};
-use std::error::Error;
-use std::io::Read;
-use std::ops::Sub;
-use std::path::Path;
-
-fn open<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, Box<dyn Error>> {
-    let mut file = std::fs::File::open(path)?;
-    let metadata = file.metadata()?;
-    let mut buffer = Vec::with_capacity(metadata.len() as usize);
-    file.read_to_end(&mut buffer)?;
-
-    Ok(buffer)
-}
+use datadog_profiling::exporter::{ProfileExporter, Request};
+use datadog_profiling::internal::EncodedProfile;
 
 fn multipart(
     exporter: &mut ProfileExporter,
     internal_metadata: Option<serde_json::Value>,
     info: Option<serde_json::Value>,
 ) -> Request {
-    let small_pprof_name = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/profile.pprof");
-    let buffer = open(small_pprof_name).expect("to open file and read its bytes");
+    let profile = EncodedProfile::test_instance().expect("To get a profile");
 
-    let files_to_compress_and_export: &[File] = &[File {
-        name: "profile.pprof",
-        bytes: buffer.as_slice(),
-    }];
-
+    let files_to_compress_and_export = &[];
     let files_to_export_unmodified = &[];
-
-    let now = chrono::Utc::now();
-    let start = now.sub(chrono::Duration::seconds(60));
-    let end = now;
 
     let timeout: u64 = 10_000;
     exporter.set_timeout(timeout);
 
     let request = exporter
         .build(
-            start,
-            end,
+            profile,
             files_to_compress_and_export,
             files_to_export_unmodified,
-            None,
             None,
             internal_metadata,
             info,
@@ -126,7 +103,6 @@ mod tests {
         );
 
         let parsed_event_json = parsed_event_json(request);
-
         assert_eq!(parsed_event_json["attachments"], json!(["profile.pprof"]));
         assert_eq!(parsed_event_json["endpoint_counts"], json!(null));
         assert_eq!(parsed_event_json["family"], json!("php"));

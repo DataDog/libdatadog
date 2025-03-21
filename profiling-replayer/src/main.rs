@@ -163,11 +163,9 @@ fn main() -> anyhow::Result<()> {
 
     let mut replayer = Replayer::try_from(&pprof)?;
 
-    let mut outprof = datadog_profiling::internal::Profile::new(
-        replayer.start_time,
-        &replayer.sample_types,
-        replayer.period,
-    );
+    let mut outprof =
+        datadog_profiling::internal::Profile::new(&replayer.sample_types, replayer.period)
+            .with_start_time(replayer.start_time)?;
 
     // Before benchmarking, let's calculate some statistics.
     // No point doing that if there aren't at least 4 samples though.

@@ -71,6 +71,8 @@ tempfile = "3.3.0"
 [features]
 mini_agent = ["proxy", "compression", "ddcommon/use_webpki_roots"]
 test-utils = [
+    "hyper/server",
+    "hyper/runtime",
     "httpmock",
     "testcontainers",
     "cargo_metadata",
