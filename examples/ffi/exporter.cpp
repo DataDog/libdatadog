@@ -88,7 +88,7 @@ int main(int argc, char *argv[]) {
   }
 
   ddog_prof_Profile_SerializeResult serialize_result =
-      ddog_prof_Profile_serialize(profile.get(), nullptr, nullptr, nullptr);
+      ddog_prof_Profile_serialize(profile.get(), nullptr, nullptr);
   if (serialize_result.tag == DDOG_PROF_PROFILE_SERIALIZE_RESULT_ERR) {
     print_error("Failed to serialize profile: ", serialize_result.err);
     ddog_Error_drop(&serialize_result.err);

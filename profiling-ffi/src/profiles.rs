@@ -11,7 +11,7 @@ use ddcommon_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
 use function_name::named;
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 /// Represents a profile. Do not access its member for any reason, only use
 /// the C API functions on this struct.
@@ -742,42 +742,31 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_bytes<'a>(
 ///
 /// # Arguments
 /// * `profile` - a reference to the profile being serialized.
+/// * `start_time` - start time for the serialized profile.
 /// * `end_time` - optional end time of the profile. If None/null is passed, the current time will
 ///   be used.
-/// * `duration_nanos` - Optional duration of the profile. Passing None or a negative duration will
-///   mean the duration will based on the end time minus the start time, but under anomalous
-///   conditions this may fail as system clocks can be adjusted, or the programmer accidentally
-///   passed an earlier time. The duration of the serialized profile will be set to zero for these
-///   cases.
-/// * `start_time` - Optional start time for the next profile.
 ///
 /// # Safety
 /// The `profile` must point to a valid profile object.
-/// The `end_time` must be null or otherwise point to a valid TimeSpec object.
-/// The `duration_nanos` must be null or otherwise point to a valid i64.
+/// The `start_time` and `end_time` must be null or otherwise point to a valid TimeSpec object.
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     profile: *mut Profile,
-    end_time: Option<&Timespec>,
-    duration_nanos: Option<&i64>,
     start_time: Option<&Timespec>,
+    end_time: Option<&Timespec>,
 ) -> SerializeResult {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
 
-        let old_profile = profile.reset_and_return_previous()?;
         if let Some(start_time) = start_time {
             profile.set_start_time(start_time.into())?;
         }
 
+        let old_profile = profile.reset_and_return_previous()?;
+
         let end_time = end_time.map(SystemTime::from);
-        let duration = match duration_nanos {
-            None => None,
-            Some(x) if *x < 0 => None,
-            Some(x) => Some(Duration::from_nanos((*x) as u64)),
-        };
-        old_profile.serialize_into_compressed_pprof(end_time, duration)
+        old_profile.serialize_into_compressed_pprof(end_time, None)
     })()
     .context("ddog_prof_Profile_serialize failed")
     .into()
