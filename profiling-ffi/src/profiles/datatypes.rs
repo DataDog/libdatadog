@@ -1,15 +1,14 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::string_storage::get_inner_string_storage;
-use crate::string_storage::ManagedStringStorage;
+use crate::string_storage::{get_inner_string_storage, ManagedStringStorage};
 use anyhow::Context;
 use datadog_profiling::api;
 use datadog_profiling::api::ManagedStringId;
 use datadog_profiling::internal;
-use datadog_profiling::internal::ProfiledEndpointsStats;
-use ddcommon_ffi::slice::{AsBytes, CharSlice, Slice};
-use ddcommon_ffi::{Error, Timespec};
+use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
+use ddcommon_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
+use function_name::named;
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::{Duration, SystemTime};
@@ -83,17 +82,8 @@ pub enum ProfileNewResult {
 #[allow(dead_code)]
 #[repr(C)]
 pub enum SerializeResult {
-    Ok(EncodedProfile),
+    Ok(Handle<internal::EncodedProfile>),
     Err(Error),
-}
-
-impl From<anyhow::Result<EncodedProfile>> for SerializeResult {
-    fn from(value: anyhow::Result<EncodedProfile>) -> Self {
-        match value {
-            Ok(e) => Self::Ok(e),
-            Err(err) => Self::Err(err.into()),
-        }
-    }
 }
 
 impl From<anyhow::Result<internal::EncodedProfile>> for SerializeResult {
@@ -419,9 +409,8 @@ impl<'a> From<Sample<'a>> for api::StringIdSample<'a> {
 pub unsafe extern "C" fn ddog_prof_Profile_new(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
-    start_time: Option<&Timespec>,
 ) -> ProfileNewResult {
-    profile_new(sample_types, period, start_time, None)
+    profile_new(sample_types, period, None)
 }
 
 /// Same as `ddog_profile_new` but also configures a `string_storage` for the profile.
@@ -431,30 +420,27 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
 pub unsafe extern "C" fn ddog_prof_Profile_with_string_storage(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
-    start_time: Option<&Timespec>,
     string_storage: ManagedStringStorage,
 ) -> ProfileNewResult {
-    profile_new(sample_types, period, start_time, Some(string_storage))
+    profile_new(sample_types, period, Some(string_storage))
 }
 
 unsafe fn profile_new(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
-    start_time: Option<&Timespec>,
     string_storage: Option<ManagedStringStorage>,
 ) -> ProfileNewResult {
     let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
-    let start_time = start_time.map_or_else(SystemTime::now, SystemTime::from);
     let period = period.map(Into::into);
 
     let internal_profile = match string_storage {
-        None => internal::Profile::new(start_time, &types, period),
+        None => internal::Profile::new(&types, period),
         Some(s) => {
             let string_storage = match get_inner_string_storage(s, true) {
                 Ok(string_storage) => string_storage,
                 Err(err) => return ProfileNewResult::Err(err.into()),
             };
-            internal::Profile::with_string_storage(start_time, &types, period, string_storage)
+            internal::Profile::with_string_storage(&types, period, string_storage)
         }
     };
     let ffi_profile = Profile::new(internal_profile);
@@ -714,42 +700,38 @@ unsafe fn add_upscaling_rule(
     )
 }
 
-#[repr(C)]
-pub struct EncodedProfile {
-    start: Timespec,
-    end: Timespec,
-    buffer: ddcommon_ffi::Vec<u8>,
-    endpoints_stats: Box<ProfiledEndpointsStats>,
-}
-
 /// # Safety
 /// Only pass a reference to a valid `ddog_prof_EncodedProfile`, or null. A
-/// valid reference also means that it hasn't already been dropped (do not
+/// valid reference also means that it hasn't already been dropped or exported (do not
 /// call this twice on the same object).
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(profile: Option<&mut EncodedProfile>) {
-    if let Some(reference) = profile {
-        // Safety: EncodedProfile's are repr(C), and not box allocated. If the
-        // user has followed the safety requirements of this function, then
-        // this is safe.
-        std::ptr::drop_in_place(reference as *mut _)
+pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
+    profile: *mut Handle<internal::EncodedProfile>,
+) {
+    // Technically, this function has been designed so if it's double-dropped
+    // then it's okay, but it's not something that should be relied on.
+    if !profile.is_null() {
+        drop((*profile).take())
     }
 }
 
-impl From<internal::EncodedProfile> for EncodedProfile {
-    fn from(value: internal::EncodedProfile) -> Self {
-        let start = value.start.into();
-        let end = value.end.into();
-        let buffer = value.buffer.into();
-        let endpoints_stats = Box::new(value.endpoints_stats);
-
-        Self {
-            start,
-            end,
-            buffer,
-            endpoints_stats,
-        }
-    }
+/// Given an EncodedProfile, get a slice representing the bytes in the pprof.
+/// This slice is valid for use until the encoded_profile is modified in any way (e.g. dropped or
+/// consumed).
+/// # Safety
+/// Only pass a reference to a valid `ddog_prof_EncodedProfile`.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_prof_EncodedProfile_bytes<'a>(
+    mut encoded_profile: *mut Handle<internal::EncodedProfile>,
+) -> ddcommon_ffi::Result<ByteSlice<'a>> {
+    wrap_with_ffi_result!({
+        let slice = encoded_profile.to_inner_mut()?.buffer.as_slice();
+        // Rountdtrip through raw pointers to avoid Rust complaining about lifetimes.
+        let byte_slice = ByteSlice::from_raw_parts(slice.as_ptr(), slice.len());
+        anyhow::Ok(byte_slice)
+    })
 }
 
 /// Serialize the aggregated profile.
@@ -784,8 +766,11 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
 
-        let start_time = start_time.map(SystemTime::from);
-        let old_profile = profile.reset_and_return_previous(start_time)?;
+        let old_profile = profile.reset_and_return_previous()?;
+        if let Some(start_time) = start_time {
+            profile.set_start_time(start_time.into())?;
+        }
+
         let end_time = end_time.map(SystemTime::from);
         let duration = match duration_nanos {
             None => None,
@@ -818,13 +803,10 @@ pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &ddcommon_ffi::Vec<u8>) -> Sl
 /// If `time` is not null, it must point to a valid Timespec object.
 #[no_mangle]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_Profile_reset(
-    profile: *mut Profile,
-    start_time: Option<&Timespec>,
-) -> ProfileResult {
+pub unsafe extern "C" fn ddog_prof_Profile_reset(profile: *mut Profile) -> ProfileResult {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
-        profile.reset_and_return_previous(start_time.map(SystemTime::from))?;
+        profile.reset_and_return_previous()?;
         anyhow::Ok(())
     })()
     .context("ddog_prof_Profile_reset failed")
@@ -842,7 +824,6 @@ mod tests {
             let mut profile = Result::from(ddog_prof_Profile_new(
                 Slice::from_raw_parts(sample_type, 1),
                 None,
-                None,
             ))?;
             ddog_prof_Profile_drop(&mut profile);
             Ok(())
@@ -855,7 +836,6 @@ mod tests {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
             let mut profile = Result::from(ddog_prof_Profile_new(
                 Slice::from_raw_parts(sample_type, 1),
-                None,
                 None,
             ))?;
 
@@ -884,7 +864,6 @@ mod tests {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");
             let mut profile = Result::from(ddog_prof_Profile_new(
                 Slice::from_raw_parts(sample_type, 1),
-                None,
                 None,
             ))?;
 
@@ -947,7 +926,6 @@ mod tests {
         let sample_type: *const ValueType = &ValueType::new("samples", "count");
         let mut profile = Result::from(ddog_prof_Profile_new(
             Slice::from_raw_parts(sample_type, 1),
-            None,
             None,
         ))
         .unwrap();
