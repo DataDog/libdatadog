@@ -140,19 +140,19 @@ mod tests {
     use super::*;
     use crate::utils::*;
     use allocator_api2::alloc::Global;
+    use bolero::generator::TypeGenerator;
 
     #[test]
     fn fuzz() {
         // avoid SUMMARY: libFuzzer: out-of-memory
         const MAX_SIZE: usize = 0x10000000;
 
-        use bolero::TypeGenerator;
         let size_hint = 0..=MAX_SIZE;
         let align_bits = 0..=32;
         let size = 0..=MAX_SIZE;
         let idx = 0..=MAX_SIZE;
-        let val = u8::gen();
-        let allocs = Vec::<(usize, u32, usize, u8)>::gen()
+        let val = u8::produce();
+        let allocs = Vec::<(usize, u32, usize, u8)>::produce()
             .with()
             .values((size, align_bits, idx, val));
         bolero::check!()
