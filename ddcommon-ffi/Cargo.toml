@@ -27,4 +27,4 @@ hyper = {version = "0.14", features = ["backports", "deprecated"], default-featu
 serde = "1.0"
 
 [dev-dependencies]
-bolero = "0.10.1"
+bolero = "0.13"

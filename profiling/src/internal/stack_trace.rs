@@ -16,7 +16,7 @@ impl Item for StackTrace {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
-#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
+#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct StackTraceId(u32);
 
 impl Id for StackTraceId {
