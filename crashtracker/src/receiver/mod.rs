@@ -10,6 +10,7 @@ pub use entry_points::{
 mod receive_report;
 
 #[cfg(test)]
+#[cfg(not(feature = "pyo3"))]
 mod tests {
     use super::receive_report::*;
     use crate::collector::default_signals;
