@@ -1582,6 +1582,7 @@ dependencies = [
  "ddcommon",
  "ddcommon-ffi",
  "ddtelemetry-ffi",
+ "function_name",
  "futures",
  "hyper 0.14.31",
  "libc",
