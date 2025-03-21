@@ -13,7 +13,7 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(feature = "serde")]
+#[cfg(feature = "serialization")]
 use serde::Serialize;
 
 /// Immutable bytes type with zero copy cloning and slicing.
@@ -281,7 +281,7 @@ impl fmt::Debug for Bytes {
     }
 }
 
-#[cfg(feature = "serde")]
+#[cfg(feature = "serialization")]
 impl Serialize for Bytes {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
