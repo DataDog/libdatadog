@@ -6,9 +6,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::{future, Future, FutureExt, TryFutureExt};
+use futures::{Future, FutureExt};
 use hyper::rt::ReadBufCursor;
-use hyper_rustls::HttpsConnector;
 use pin_project::pin_project;
 
 #[pin_project(project=ConnStreamProj)]
@@ -78,7 +77,7 @@ impl ConnStream {
     pub fn from_http_connector_with_uri(
         c: &mut HttpConnector,
         uri: hyper::Uri,
-    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> {
+    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> + 'static {
         c.call(uri).map(|r| match r {
             Ok(t) => Ok(ConnStream::Tcp { transport: t }),
             Err(e) => Err(e.into()),
@@ -87,27 +86,28 @@ impl ConnStream {
 
     #[cfg(feature = "https")]
     pub fn from_https_connector_with_uri(
-        c: &mut HttpsConnector<connect::HttpConnector>,
+        c: &mut hyper_rustls::HttpsConnector<connect::HttpConnector>,
         uri: hyper::Uri,
         require_tls: bool,
-    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> {
+    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> + 'static {
         #[allow(clippy::unwrap_used)]
-        c.call(uri.to_string().parse().unwrap())
-            .and_then(move |stream| match stream {
+        let stream_fut = c.call(uri.to_string().parse().unwrap());
+        async move {
+            let stream = stream_fut.await?;
+            match stream {
                 // move only require_tls
                 hyper_rustls::MaybeHttpsStream::Http(t) => {
                     if require_tls {
-                        future::ready(Err(
-                            super::errors::Error::CannotEstablishTlsConnection.into()
-                        ))
+                        Err(super::errors::Error::CannotEstablishTlsConnection.into())
                     } else {
-                        future::ready(Ok(ConnStream::Tcp { transport: t }))
+                        Ok(ConnStream::Tcp { transport: t })
                     }
                 }
-                hyper_rustls::MaybeHttpsStream::Https(t) => future::ready(Ok(ConnStream::Tls {
+                hyper_rustls::MaybeHttpsStream::Https(t) => Ok(ConnStream::Tls {
                     transport: Box::from(t),
-                })),
-            })
+                }),
+            }
+        }
     }
 }
 

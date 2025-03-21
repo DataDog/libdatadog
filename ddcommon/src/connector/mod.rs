@@ -55,15 +55,15 @@ impl Connector {
         }
         #[cfg(not(feature = "https"))]
         {
-            Connector::Http(HttpConnector::new())
+            Connector::Http(connect::HttpConnector::new())
         }
     }
 
-    fn build_conn_stream<'a>(
+    fn build_conn_stream(
         &mut self,
         uri: hyper::Uri,
         require_tls: bool,
-    ) -> BoxFuture<'a, Result<ConnStream, ConnStreamError>> {
+    ) -> BoxFuture<'static, Result<ConnStream, ConnStreamError>> {
         match self {
             Self::Http(c) => {
                 if require_tls {
