@@ -17,11 +17,13 @@ path = "src/bin/crashtracker_receiver.rs"
 bench = false
 
 [features]
-default = ["collector", "receiver"]
+default = ["collector", "receiver", "collector_windows"]
 # Enables the in-process collection of crash-info
 collector = []
 # Enables the use of this library to receiver crash-info from a suitable collector
 receiver = []
+# Enables the collection of crash-info on Windows
+collector_windows = []
 
 [target.'cfg(unix)'.dependencies]
 # Should be kept in sync with the libdatadog symbolizer crate (also using blasesym)
@@ -33,8 +35,7 @@ backtrace = "0.3.74"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock", "serde"]}
 ddcommon = {path = "../ddcommon"}
 ddtelemetry = {path = "../ddtelemetry"}
-http = "0.2"
-hyper = {version = "0.14", features = ["client", "backports", "deprecated"], default-features = false}
+http = "1.0"
 libc = "0.2"
 nix = { version = "0.27.1", features = ["poll", "signal", "socket"] }
 num-derive = "0.4.2"
@@ -49,7 +50,11 @@ serde_json = {version = "1.0"}
 tokio = { version = "1.23", features = ["rt", "macros", "io-std", "io-util"] }
 uuid = { version = "1.4.1", features = ["v4", "serde"] }
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.59.0", features = ["Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ErrorReporting", "Win32_System_Kernel", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_Security"] }
+
 [dev-dependencies]
+goblin = "0.9.3"
 tempfile = { version = "3.3" }
 
 [build-dependencies]

@@ -12,7 +12,10 @@ bench = false
 
 [dependencies]
 anyhow = "1.0"
-hyper = { version = "0.14", default-features = false, features = ["server", "backports", "deprecated"] }
+hyper = { version = "1.6", features = ["http1", "client", "server"] }
+hyper-util = {version = "0.1", features = ["service"] }
+tower = { version = "0.5.2", features = ["util"]  }
+http-body-util = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"]}
 async-trait = "0.1.64"
 tracing = { version = "0.1", default-features = false }

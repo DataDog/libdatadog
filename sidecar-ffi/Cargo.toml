@@ -25,7 +25,7 @@ libc = "0.2"
 dogstatsd-client = { path = "../dogstatsd-client" }
 
 [dev-dependencies]
-hyper = { version = "0.14", features = ["backports", "deprecated"], default-features = false }
+http = "1.0"
 tempfile = { version = "3.3" }
 
 [lints.rust]

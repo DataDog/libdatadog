@@ -1,10 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::borrow::Cow;
-use std::future;
-use std::io::{Cursor, Write};
-
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
 pub use ddcommon::tag::Tag;
@@ -12,10 +8,16 @@ pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
 use lz4_flex::frame::FrameEncoder;
 use serde_json::json;
+use std::borrow::Cow;
+use std::fmt::Debug;
+use std::io::{Cursor, Write};
+use std::{future, iter};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
-use ddcommon::{azure_app_services, connector, Endpoint, HttpClient, HttpResponse};
+use ddcommon::{
+    azure_app_services, connector, hyper_migration, Endpoint, HttpClient, HttpResponse,
+};
 
 pub mod config;
 mod errors;
@@ -26,7 +28,7 @@ pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
 #[cfg(windows)]
 pub use connector::named_pipe::{named_pipe_path_from_uri, named_pipe_path_to_uri};
 
-use crate::internal::ProfiledEndpointsStats;
+use crate::internal::EncodedProfile;
 
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 
@@ -57,11 +59,11 @@ pub struct File<'a> {
 #[derive(Debug)]
 pub struct Request {
     timeout: Option<std::time::Duration>,
-    req: hyper::Request<hyper::Body>,
+    req: hyper_migration::HttpRequest,
 }
 
-impl From<hyper::Request<hyper::Body>> for Request {
-    fn from(req: hyper::Request<hyper::Body>) -> Self {
+impl From<hyper_migration::HttpRequest> for Request {
+    fn from(req: hyper_migration::HttpRequest) -> Self {
         Self { req, timeout: None }
     }
 }
@@ -88,7 +90,7 @@ impl Request {
         self.req.headers()
     }
 
-    pub fn body(self) -> hyper::Body {
+    pub fn body(self) -> hyper_migration::Body {
         self.req.into_body()
     }
 
@@ -96,7 +98,7 @@ impl Request {
         self,
         client: &HttpClient,
         cancel: Option<&CancellationToken>,
-    ) -> anyhow::Result<hyper::Response<hyper::Body>> {
+    ) -> anyhow::Result<HttpResponse> {
         tokio::select! {
             _ = async { match cancel {
                     Some(cancellation_token) => cancellation_token.cancelled().await,
@@ -105,13 +107,16 @@ impl Request {
                 }}
             => Err(crate::exporter::errors::Error::UserRequestedCancellation.into()),
             result = async {
-                Ok(match self.timeout {
-                    Some(t) => tokio::time::timeout(t, client.request(self.req))
-                        .await
-                        .map_err(|_| crate::exporter::errors::Error::OperationTimedOut)?,
-                    None => client.request(self.req).await,
-                }?)}
-            => result,
+                match self.timeout {
+                    Some(t) => {
+                        let res = tokio::time::timeout(t, client.request(self.req)).await;
+                        res
+                            .map_err(|_| anyhow::Error::from(crate::exporter::errors::Error::OperationTimedOut))
+                    },
+                    None => Ok(client.request(self.req).await),
+                }
+            }
+            => Ok(hyper_migration::into_response(result??)),
         }
     }
 }
@@ -153,6 +158,8 @@ impl ProfileExporter {
     #[allow(clippy::too_many_arguments)]
     /// Build a Request object representing the profile information provided.
     ///
+    /// Consumes the `EncodedProfile`, which is unavailable for use after.
+    ///
     /// For details on the `internal_metadata` parameter, please reference the Datadog-internal
     /// "RFC: Attaching internal metadata to pprof profiles".
     /// If you use this parameter, please update the RFC with your use-case, so we can keep track of
@@ -162,12 +169,10 @@ impl ProfileExporter {
     /// "RFC: Pprof System Info Support".
     pub fn build(
         &self,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        profile: EncodedProfile,
         files_to_compress_and_export: &[File],
         files_to_export_unmodified: &[File],
         additional_tags: Option<&Vec<Tag>>,
-        endpoint_counts: Option<&ProfiledEndpointsStats>,
         internal_metadata: Option<serde_json::Value>,
         info: Option<serde_json::Value>,
     ) -> anyhow::Result<Request> {
@@ -217,17 +222,26 @@ impl ProfileExporter {
             .iter()
             .chain(files_to_export_unmodified.iter())
             .map(|file| file.name.to_owned())
+            .chain(iter::once("profile.pprof".to_string()))
             .collect();
+
+        let endpoint_counts = if profile.endpoints_stats.is_empty() {
+            None
+        } else {
+            Some(profile.endpoints_stats)
+        };
+        let mut internal: serde_json::value::Value = internal_metadata.unwrap_or_else(|| json!({}));
+        internal["libdatadog_version"] = json!(env!("CARGO_PKG_VERSION"));
 
         let event = json!({
             "attachments": attachments,
             "tags_profiler": tags_profiler,
-            "start": start.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
-            "end": end.format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
+            "start": DateTime::<Utc>::from(profile.start).format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
+            "end": DateTime::<Utc>::from(profile.end).format("%Y-%m-%dT%H:%M:%S%.9fZ").to_string(),
             "family": self.family.as_ref(),
             "version": "4",
             "endpoint_counts" : endpoint_counts,
-            "internal": internal_metadata.unwrap_or_else(|| json!({})),
+            "internal": internal,
             "info": info.unwrap_or_else(|| json!({})),
         })
         .to_string();
@@ -270,6 +284,12 @@ impl ProfileExporter {
              */
             form.add_reader_file(file.name, Cursor::new(encoded), file.name)
         }
+        // Add the actual pprof
+        form.add_reader_file(
+            "profile.pprof",
+            Cursor::new(profile.buffer),
+            "profile.pprof",
+        );
 
         let builder = self
             .endpoint
@@ -282,10 +302,11 @@ impl ProfileExporter {
                 self.profiling_library_version.as_ref(),
             );
 
-        Ok(
-            Request::from(form.set_body_convert::<hyper::Body, multipart::Body>(builder)?)
-                .with_timeout(std::time::Duration::from_millis(self.endpoint.timeout_ms)),
+        Ok(Request::from(
+            form.set_body::<multipart::Body>(builder)?
+                .map(hyper_migration::Body::boxed),
         )
+        .with_timeout(std::time::Duration::from_millis(self.endpoint.timeout_ms)))
     }
 
     pub fn send(
@@ -307,9 +328,7 @@ impl Exporter {
     /// Creates a new Exporter, initializing the TLS stack.
     pub fn new() -> anyhow::Result<Self> {
         // Set idle to 0, which prevents the pipe being broken every 2nd request
-        let client = hyper::Client::builder()
-            .pool_max_idle_per_host(0)
-            .build(connector::Connector::default());
+        let client = hyper_migration::new_client_periodic();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -323,12 +342,14 @@ impl Exporter {
         mut headers: hyper::header::HeaderMap,
         body: &[u8],
         timeout: std::time::Duration,
-    ) -> anyhow::Result<hyper::Response<hyper::Body>> {
+    ) -> anyhow::Result<hyper_migration::HttpResponse> {
         self.runtime.block_on(async {
             let mut request = hyper::Request::builder()
                 .method(http_method)
                 .uri(url)
-                .body(hyper::Body::from(Bytes::copy_from_slice(body)))?;
+                .body(hyper_migration::Body::from_bytes(Bytes::copy_from_slice(
+                    body,
+                )))?;
             std::mem::swap(request.headers_mut(), &mut headers);
 
             let request: Request = request.into();

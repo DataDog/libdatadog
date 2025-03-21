@@ -78,9 +78,6 @@ pub struct Function<'a> {
 
     /// Source file containing the function.
     pub filename: &'a str,
-
-    /// Line number in source file.
-    pub start_line: i64,
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -89,7 +86,6 @@ pub struct StringIdFunction {
     pub name: ManagedStringId,
     pub system_name: ManagedStringId,
     pub filename: ManagedStringId,
-    pub start_line: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -188,7 +184,7 @@ pub struct StringIdSample<'a> {
 }
 
 #[derive(Debug)]
-#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
+#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub enum UpscalingInfo {
     Poisson {
         // sum_value_offset and count_value_offset are offsets in the profile values type array
@@ -316,7 +312,6 @@ fn function_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Function> {
             name: string_table_fetch(pprof, function.name)?,
             system_name: string_table_fetch(pprof, function.system_name)?,
             filename: string_table_fetch(pprof, function.filename)?,
-            start_line: function.start_line,
         }),
         None => anyhow::bail!("Function {id} was not found."),
     }

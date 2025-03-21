@@ -6,16 +6,18 @@ pub use mini_agent::*;
 
 #[cfg(feature = "mini_agent")]
 mod mini_agent {
-    use hyper::body::HttpBody;
-    use hyper::{body::Buf, Body, Client, Method, Request, StatusCode};
+    use ddcommon::hyper_migration;
+    use http_body_util::BodyExt;
+    use hyper::{body::Buf, Method, Request, StatusCode};
     use log::debug;
     use std::io::Write;
 
     use datadog_trace_protobuf::pb;
-    use ddcommon::connector::Connector;
     use ddcommon::Endpoint;
 
-    pub async fn get_stats_from_request_body(body: Body) -> anyhow::Result<pb::ClientStatsPayload> {
+    pub async fn get_stats_from_request_body(
+        body: hyper_migration::Body,
+    ) -> anyhow::Result<pb::ClientStatsPayload> {
         let buffer = body.collect().await?.aggregate();
 
         let client_stats_payload: pb::ClientStatsPayload =
@@ -64,9 +66,9 @@ mod mini_agent {
             .header("Content-Type", "application/msgpack")
             .header("Content-Encoding", "gzip")
             .header("DD-API-KEY", api_key)
-            .body(Body::from(data.clone()))?;
+            .body(hyper_migration::Body::from(data.clone()))?;
 
-        let client: Client<_, hyper::Body> = Client::builder().build(Connector::default());
+        let client = hyper_migration::new_default_client();
         match client.request(req).await {
             Ok(response) => {
                 if response.status() != StatusCode::ACCEPTED {
@@ -88,6 +90,7 @@ mod mini_agent_tests {
     use datadog_trace_protobuf::pb::{
         ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet,
     };
+    use ddcommon::hyper_migration;
     use hyper::Request;
     use serde_json::Value;
 
@@ -143,7 +146,7 @@ mod mini_agent_tests {
 
         let bytes = rmp_serde::to_vec(&v).unwrap();
         let request = Request::builder()
-            .body(hyper::body::Body::from(bytes))
+            .body(hyper_migration::Body::from(bytes))
             .unwrap();
 
         let res = stats_utils::get_stats_from_request_body(request.into_body()).await;
@@ -217,7 +220,7 @@ mod mini_agent_tests {
 
         let bytes = rmp_serde::to_vec(&v).unwrap();
         let request = Request::builder()
-            .body(hyper::body::Body::from(bytes))
+            .body(hyper_migration::Body::from(bytes))
             .unwrap();
 
         let res = stats_utils::get_stats_from_request_body(request.into_body()).await;

@@ -3,13 +3,13 @@
 
 use crate::debugger_defs::{DebuggerData, DebuggerPayload};
 use constcat::concat;
-use ddcommon::connector::Connector;
+use ddcommon::hyper_migration;
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
-use hyper::body::{Bytes, HttpBody, Sender};
-use hyper::client::ResponseFuture;
+use http_body_util::BodyExt;
+use hyper::body::Bytes;
 use hyper::http::uri::PathAndQuery;
-use hyper::{Body, Client, Method, Response, Uri};
+use hyper::{Method, Uri};
 use percent_encoding::{percent_encode, CONTROLS};
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
@@ -111,17 +111,17 @@ pub fn generate_tags(
     percent_encode(tags.as_bytes(), CONTROLS).to_string()
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 enum SenderFuture {
     #[default]
     Error,
-    Outstanding(ResponseFuture),
-    Submitted(JoinHandle<hyper::Result<Response<Body>>>),
+    Outstanding(hyper_migration::ResponseFuture),
+    Submitted(JoinHandle<anyhow::Result<hyper_migration::HttpResponse>>),
 }
 
 pub struct PayloadSender {
     future: SenderFuture,
-    sender: Sender,
+    sender: hyper_migration::Sender,
     needs_boundary: bool,
     payloads: u32,
 }
@@ -164,7 +164,7 @@ impl PayloadSender {
             req = req.header("DD-EVP-ORIGIN", "agent-debugger");
         }
 
-        let (sender, body) = Body::channel();
+        let (sender, body) = hyper_migration::Body::channel();
 
         let needs_boundary = debugger_type == DebuggerType::Diagnostics;
         let req = req.header(
@@ -176,9 +176,7 @@ impl PayloadSender {
             },
         );
 
-        let future = Client::builder()
-            .build(Connector::default())
-            .request(req.body(body)?);
+        let future = hyper_migration::new_default_client().request(req.body(body)?);
         Ok(PayloadSender {
             future: SenderFuture::Outstanding(future),
             sender,
@@ -200,7 +198,10 @@ impl PayloadSender {
                     self.sender.send_data(header.into()).await?;
                 }
 
-                self.future = SenderFuture::Submitted(tokio::spawn(future));
+                self.future = SenderFuture::Submitted(tokio::spawn(async {
+                    let resp = hyper_migration::into_response(future.await?);
+                    Ok(resp)
+                }));
                 true
             }
             future => {
@@ -221,7 +222,7 @@ impl PayloadSender {
         Ok(())
     }
 
-    pub async fn finish(mut self) -> anyhow::Result<u32> {
+    pub async fn finish(self) -> anyhow::Result<u32> {
         if let SenderFuture::Submitted(future) = self.future {
             // insert a trailing ]
             if self.needs_boundary {
