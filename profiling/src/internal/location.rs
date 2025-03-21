@@ -38,7 +38,7 @@ impl PprofItem for Location {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[repr(transparent)]
+#[repr(C)]
 pub struct LocationId(NonZeroU32);
 
 impl Id for LocationId {

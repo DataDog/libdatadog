@@ -4,7 +4,7 @@
 use super::*;
 
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
+#[repr(C)]
 pub struct StringId(u32);
 
 impl StringId {

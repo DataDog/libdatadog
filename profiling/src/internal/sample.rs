@@ -24,7 +24,7 @@ impl Sample {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(transparent)]
+#[repr(C)]
 pub struct SampleId(u32);
 
 impl SampleId {

@@ -25,11 +25,16 @@ pub struct Period<'a> {
 }
 
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
+#[repr(C)]
 pub struct ManagedStringId {
     pub value: u32,
 }
 
 impl ManagedStringId {
+    pub fn empty() -> Self {
+        Self::new(0)
+    }
+
     pub fn new(value: u32) -> Self {
         ManagedStringId { value }
     }

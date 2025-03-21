@@ -4,6 +4,8 @@
 #[cfg(test)]
 mod fuzz_tests;
 
+pub mod interning_api;
+
 use self::api::UpscalingInfo;
 use super::*;
 use crate::api;
@@ -15,10 +17,11 @@ use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::pprof::sliced_proto::*;
 use crate::serializer::CompressedProtobufSerializer;
 use anyhow::Context;
+use interning_api::Generation;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 pub struct Profile {
@@ -30,8 +33,10 @@ pub struct Profile {
     /// When profiles are reset, the period needs to be preserved. This
     /// stores it in a way that does not depend on the string table.
     owned_period: Option<owned_types::Period>,
+    active_samples: AtomicU64,
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
+    generation: interning_api::Generation,
     labels: FxIndexSet<Label>,
     label_sets: FxIndexSet<LabelSet>,
     locations: FxIndexSet<Location>,
@@ -227,6 +232,10 @@ impl Profile {
         Ok(())
     }
 
+    pub fn get_generation(&self) -> anyhow::Result<Generation> {
+        Ok(self.generation)
+    }
+
     pub fn resolve(&mut self, id: ManagedStringId) -> anyhow::Result<StringId> {
         let non_empty_string_id = if let Some(valid_id) = NonZeroU32::new(id.value) {
             valid_id
@@ -288,6 +297,12 @@ impl Profile {
     /// Returns the previous Profile on success.
     #[inline]
     pub fn reset_and_return_previous(&mut self) -> anyhow::Result<Profile> {
+        let current_active_samples = self.sample_block()?;
+        anyhow::ensure!(
+            current_active_samples == 0,
+            "Can't rotate the profile, there are still active samples. Drain them and try again."
+        );
+
         let mut profile = Profile::new_internal(
             self.owned_period.take(),
             self.owned_sample_types.take(),
@@ -663,8 +678,10 @@ impl Profile {
         let mut profile = Self {
             owned_period,
             owned_sample_types,
+            active_samples: Default::default(),
             endpoints: Default::default(),
             functions: Default::default(),
+            generation: Generation::new(),
             labels: Default::default(),
             label_sets: Default::default(),
             locations: Default::default(),
