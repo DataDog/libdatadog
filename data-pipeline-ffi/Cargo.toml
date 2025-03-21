@@ -30,3 +30,4 @@ datadog-trace-utils = { path = "../trace-utils" }
 data-pipeline = { path = "../data-pipeline" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 tinybytes = { path = "../tinybytes" }
+log = "0.4.22"

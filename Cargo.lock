@@ -1320,6 +1320,7 @@ dependencies = [
  "datadog-trace-utils",
  "ddcommon-ffi",
  "httpmock",
+ "log",
  "rmp-serde",
  "tinybytes",
 ]
