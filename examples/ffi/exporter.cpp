@@ -133,7 +133,7 @@ int main(int argc, char *argv[]) {
                             "\"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
 
   auto res = ddog_prof_Exporter_set_timeout(exporter, 30000);
-  if (res.tag == DDOG_PROF_VOID_RESULT_ERR) {
+  if (res.tag == DDOG_VOID_RESULT_ERR) {
     print_error("Failed to set the timeout", res.err);
     ddog_Error_drop(&res.err);
     return 1;
