@@ -70,9 +70,6 @@ jobs:
   # when the found license was compared to a template license it was found to
   # have diverged in more than a few words. You should verify that the licence
   #  text is in fact correct in these cases.
-  #
-  # If this job fails, you probably need to regenerate the license, e.g.
-  # CARGO_HOME=/tmp/dd-cargo cargo bundle-licenses --format yaml --output LICENSE-3rdparty.yml
   license-3rdparty:
     runs-on: ubuntu-latest
     name: "Valid LICENSE-3rdparty.yml"
@@ -111,7 +108,10 @@ jobs:
 
           # Now perform the diff on the normalized files
           if ! diff /tmp/CI_normalized.yaml /tmp/LICENSE-3rdparty_normalized.yml; then
-            echo "Differences detected."
+            echo "Differences detected (see above). You probably need to manually update the license files. To do so:"
+            echo "cargo install cargo-bundle-licenses"
+            echo "CARGO_HOME=/tmp/dd-cargo cargo bundle-licenses --format yaml --output LICENSE-3rdparty.yml"
+            echo "...and push a commit with the result. Also, bonus points if someone automates this, wink wink nudge nudge."
             exit 1
           fi
 

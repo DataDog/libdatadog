@@ -48,3 +48,4 @@ symbolic-demangle = { version = "12.8.0", default-features = false, features = [
 symbolic-common = "12.8.0"
 data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
 datadog-library-config-ffi = {  path = "../library-config-ffi", default-features = false, optional = true }
+function_name = "0.3.0"
