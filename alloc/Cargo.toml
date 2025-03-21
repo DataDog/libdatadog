@@ -24,7 +24,7 @@ features = [
 
 [dev-dependencies]
 allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
-bolero = "0.10.1"
+bolero = "0.13"
 
 [lib]
 bench = false

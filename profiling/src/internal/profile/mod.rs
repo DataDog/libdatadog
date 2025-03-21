@@ -95,11 +95,10 @@ impl Profile {
             .map(|label| -> Result<_, api::LabelError> {
                 let label = label.try_normalize()?;
                 let key = self.intern(label.key);
-                let internal_label = match label.value {
-                    api::LabelValue::Str(str) => Label::str(key, self.intern(str)),
-                    api::LabelValue::Num { num, num_unit } => {
-                        Label::num(key, num, self.intern(num_unit))
-                    }
+                let internal_label = if !label.str.is_empty() {
+                    Label::str(key, self.intern(label.str))
+                } else {
+                    Label::num(key, label.num, self.intern(label.num_unit))
                 };
 
                 Ok(self.labels.dedup(internal_label))
@@ -559,19 +558,15 @@ impl Profile {
         );
 
         anyhow::ensure!(
-            label.has_num_value(),
+            label.get_str() == StringId::ZERO,
             "the local root span id label value must be sent as a number, not a string, given {:?}",
             label
         );
 
-        let local_root_span_id = if let LabelValue::Num { num, .. } = label.get_value() {
-            // Safety: the value is an u64, but pprof only has signed values, so we
-            // transmute it; the backend does the same.
-            unsafe { std::intrinsics::transmute::<i64, u64>(*num) }
-        } else {
-            return Err(anyhow::format_err!("the local root span id label value must be sent as a number, not a string, given {:?}",
-            label));
-        };
+        let (num, _) = label.get_num();
+        // Safety: the value is an u64, but pprof only has signed values, so we
+        // transmute it; the backend does the same.
+        let local_root_span_id = unsafe { std::intrinsics::transmute::<i64, u64>(num) };
 
         Ok(self
             .endpoints

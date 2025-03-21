@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use bolero::TypeGenerator;
+use bolero::generator::*;
 use core::mem::transmute;
 use std::cmp::Ordering;
+use std::collections::HashSet;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, TypeGenerator)]
 pub struct Function {
@@ -40,7 +41,8 @@ impl<'a> From<&'a Function> for api::Function<'a> {
 }
 
 /// Represents a label value. Note that the "zero" reprs of both variants
-/// should compare as equal, so Hash, PartialEq, etc. are not derived.
+/// should compare as equal, so Hash, PartialEq, etc. are not derived but are
+/// manually implemented using a helper struct.
 #[derive(Clone, Debug, TypeGenerator)]
 pub enum LabelValue {
     Str(Box<str>),
@@ -53,6 +55,8 @@ impl Default for LabelValue {
     }
 }
 
+/// Private struct used for treating `LabelValue::Str("")` the same as
+/// `LabelValue::Num { num: 0, num_unit: "" }`.
 #[derive(Clone, Debug, Default, Hash, Eq, PartialEq, PartialOrd, Ord)]
 struct RawLabelValue<'a> {
     str: &'a str,
@@ -109,6 +113,7 @@ pub struct NormalizedLabel {
     pub value: LabelValue,
 }
 
+/// Wrapper which compares equal, hashes, etc. based only on the label key.
 #[repr(transparent)]
 pub struct LabelByKey(NormalizedLabel);
 
@@ -281,12 +286,11 @@ pub struct Sample {
     pub labels: Vec<NormalizedLabel>,
 }
 
-#[cfg(test)]
 impl Sample {
-    /// Checks if the sample is well formed.  Useful in testing.
+    /// Checks if the sample is well-formed.  Useful in testing.
     pub fn is_well_formed(&self) -> bool {
         let labels_are_unique = {
-            let mut uniq = std::collections::HashSet::new();
+            let mut uniq = HashSet::new();
             self.labels.iter().map(|l| &l.key).all(|x| uniq.insert(x))
         };
         labels_are_unique
@@ -529,8 +533,8 @@ fn fuzz_failure_001() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_fuzz_add_sample() {
-    let sample_types_gen = Vec::<owned_types::ValueType>::gen();
-    let samples_gen = Vec::<(Option<Timestamp>, Sample)>::gen();
+    let sample_types_gen = Vec::<owned_types::ValueType>::produce();
+    let samples_gen = Vec::<(Option<Timestamp>, Sample)>::produce();
 
     bolero::check!()
         .with_generator((sample_types_gen, samples_gen))
@@ -572,22 +576,29 @@ fn fuzz_add_sample_with_fixed_sample_length() {
     bolero::check!()
         .with_generator(sample_length_gen)
         .and_then(|sample_len| {
-            let sample_types = Vec::<owned_types::ValueType>::gen().with().len(sample_len);
+            let sample_types = Vec::<owned_types::ValueType>::produce()
+                .with()
+                .len(sample_len);
 
-            let timestamps = Option::<Timestamp>::gen();
-            let locations = Vec::<Location>::gen();
-            let values = Vec::<i64>::gen().with().len(sample_len);
-            // Generate labels with unique keys
-            let labels = std::collections::HashSet::<NormalizedLabel>::gen();
+            let timestamps = Option::<Timestamp>::produce();
+            let locations = Vec::<Location>::produce();
+            let values = Vec::<i64>::produce().with().len(sample_len);
 
-            let samples = Vec::<(
-                Option<Timestamp>,
-                Vec<Location>,
-                Vec<i64>,
-                std::collections::HashSet<NormalizedLabel>,
-            )>::gen()
-            .with()
-            .values((timestamps, locations, values, labels));
+            // Generate labels with unique keys. We do this by generating a
+            // `HashMap<K, V>` and then map it into a `Vec<NormalizedLabel>`.
+            let labels =
+                HashMap::<Box<str>, LabelValue>::produce()
+                    .with()
+                    .map_gen(|mut hashmap| {
+                        hashmap
+                            .drain()
+                            .map(|(key, value)| NormalizedLabel { key, value })
+                            .collect::<Vec<_>>()
+                    });
+
+            let samples = Vec::produce()
+                .with()
+                .values((timestamps, locations, values, labels));
             (sample_types, samples)
         })
         .for_each(|(sample_types, samples)| {
@@ -605,7 +616,7 @@ fn fuzz_add_sample_with_fixed_sample_length() {
                         Sample {
                             locations: locations.clone(),
                             values: values.clone(),
-                            labels: labels.clone().into_iter().collect::<Vec<NormalizedLabel>>(),
+                            labels: labels.clone(),
                         },
                     )
                 })
@@ -684,8 +695,10 @@ fn fuzz_api_function_calls() {
     bolero::check!()
         .with_generator(sample_length_gen)
         .and_then(|sample_len| {
-            let sample_types = Vec::<owned_types::ValueType>::gen().with().len(sample_len);
-            let operations = Vec::<Operation>::gen();
+            let sample_types = Vec::<owned_types::ValueType>::produce()
+                .with()
+                .len(sample_len);
+            let operations = Vec::<Operation>::produce();
 
             (sample_types, operations)
         })

@@ -3,7 +3,7 @@
 
 use crate::api;
 
-#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
+#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 #[derive(Clone, Debug)]
 pub struct ValueType {
     pub typ: Box<str>,
@@ -26,7 +26,7 @@ impl<'a> From<&'a ValueType> for api::ValueType<'a> {
     }
 }
 
-#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
+#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 #[derive(Clone, Debug)]
 pub struct Period {
     pub typ: ValueType,

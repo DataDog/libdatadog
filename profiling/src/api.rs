@@ -178,12 +178,12 @@ impl Label<'_> {
         let str_is_empty = str.is_empty();
         let num_is_empty = num == 0 && num_unit.is_empty();
         if str_is_empty || num_is_empty {
-            let value = if str.is_empty() {
-                LabelValue::Num { num, num_unit }
-            } else {
-                LabelValue::Str(str)
-            };
-            Ok(NormalizedLabel { key, value })
+            Ok(NormalizedLabel {
+                key,
+                str,
+                num,
+                num_unit,
+            })
         } else {
             Err(LabelError {
                 key: Box::from(key),
@@ -210,7 +210,9 @@ impl Default for LabelValue<'_> {
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub struct NormalizedLabel<'a> {
     pub key: &'a str,
-    pub value: LabelValue<'a>,
+    pub(crate) str: &'a str,
+    pub(crate) num: i64,
+    pub(crate) num_unit: &'a str,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -240,7 +242,7 @@ pub struct StringIdSample<'a> {
 }
 
 #[derive(Debug)]
-#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
+#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub enum UpscalingInfo {
     Poisson {
         // sum_value_offset and count_value_offset are offsets in the profile values type array

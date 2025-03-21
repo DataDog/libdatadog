@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn fuzz() {
-        use bolero::TypeGenerator;
+        use bolero::generator::*;
 
         #[cfg(miri)]
         const MAX_SIZE: usize = 1_000_000;
@@ -197,10 +197,10 @@ mod tests {
         const MAX_SIZE: usize = isize::MAX as usize;
 
         let align_bits = 0..=32;
-        let size = usize::gen();
-        let idx = usize::gen();
-        let val = u8::gen();
-        let allocs = Vec::<(usize, u32, usize, u8)>::gen()
+        let size = usize::produce();
+        let idx = usize::produce();
+        let val = u8::produce();
+        let allocs = Vec::<(usize, u32, usize, u8)>::produce()
             .with()
             .values((size, align_bits, idx, val));
         bolero::check!()
