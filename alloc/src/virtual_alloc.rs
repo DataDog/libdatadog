@@ -185,11 +185,10 @@ mod tests {
     use super::*;
     use crate::utils::*;
     use allocator_api2::alloc::Allocator;
+    use bolero::TypeGenerator;
 
     #[test]
     fn fuzz() {
-        use bolero::generator::*;
-
         #[cfg(miri)]
         const MAX_SIZE: usize = 1_000_000;
 

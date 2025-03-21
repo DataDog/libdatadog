@@ -1,10 +1,11 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{http, Body, Method, Request, Response, Server, StatusCode};
+use ddcommon::hyper_migration;
+use hyper::service::service_fn;
+use hyper::{http, Method, Response, StatusCode};
 use serde_json::json;
-use std::convert::Infallible;
+use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -88,7 +89,7 @@ impl MiniAgent {
         let stats_processor = self.stats_processor.clone();
         let endpoint_config = self.config.clone();
 
-        let make_svc = make_service_fn(move |_| {
+        let service = service_fn(move |req| {
             let trace_processor = trace_processor.clone();
             let trace_tx = trace_tx.clone();
 
@@ -98,50 +99,78 @@ impl MiniAgent {
             let endpoint_config = endpoint_config.clone();
             let mini_agent_metadata = Arc::clone(&mini_agent_metadata);
 
-            let service = service_fn(move |req| {
-                MiniAgent::trace_endpoint_handler(
-                    endpoint_config.clone(),
-                    req,
-                    trace_processor.clone(),
-                    trace_tx.clone(),
-                    stats_processor.clone(),
-                    stats_tx.clone(),
-                    Arc::clone(&mini_agent_metadata),
-                )
-            });
-
-            async move { Ok::<_, Infallible>(service) }
+            MiniAgent::trace_endpoint_handler(
+                endpoint_config.clone(),
+                req.map(hyper_migration::Body::incoming),
+                trace_processor.clone(),
+                trace_tx.clone(),
+                stats_processor.clone(),
+                stats_tx.clone(),
+                Arc::clone(&mini_agent_metadata),
+            )
         });
 
         let addr = SocketAddr::from(([127, 0, 0, 1], MINI_AGENT_PORT as u16));
-        let server_builder = Server::try_bind(&addr)?;
-
-        let server = server_builder.serve(make_svc);
+        let listener = tokio::net::TcpListener::bind(&addr).await?;
 
         debug!("Mini Agent started: listening on port {MINI_AGENT_PORT}");
         debug!(
             "Time taken start the Mini Agent: {} ms",
             now.elapsed().as_millis()
         );
-
-        // start hyper http server
-        if let Err(e) = server.await {
-            error!("Server error: {e}");
-            return Err(e.into());
+        let server = hyper::server::conn::http1::Builder::new();
+        let mut joinset = tokio::task::JoinSet::new();
+        loop {
+            let conn = tokio::select! {
+                con_res = listener.accept() => match con_res {
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            io::ErrorKind::ConnectionAborted
+                                | io::ErrorKind::ConnectionReset
+                                | io::ErrorKind::ConnectionRefused
+                        ) =>
+                    {
+                        continue;
+                    }
+                    Err(e) => {
+                        error!("Server error: {e}");
+                        return Err(e.into());
+                    }
+                    Ok((conn, _)) => conn,
+                },
+                finished = async {
+                    match joinset.join_next().await {
+                        Some(finished) => finished,
+                        None => std::future::pending().await,
+                    }
+                } => match finished {
+                    Err(e) if e.is_panic() => {
+                        std::panic::resume_unwind(e.into_panic());
+                    },
+                    Ok(()) | Err(_) => continue,
+                },
+            };
+            let conn = hyper_util::rt::TokioIo::new(conn);
+            let server = server.clone();
+            let service = service.clone();
+            joinset.spawn(async move {
+                if let Err(e) = server.serve_connection(conn, service).await {
+                    error!("Connection error: {e}");
+                }
+            });
         }
-
-        Ok(())
     }
 
     async fn trace_endpoint_handler(
         config: Arc<config::Config>,
-        req: Request<Body>,
+        req: hyper_migration::HttpRequest,
         trace_processor: Arc<dyn trace_processor::TraceProcessor + Send + Sync>,
         trace_tx: Sender<SendData>,
         stats_processor: Arc<dyn stats_processor::StatsProcessor + Send + Sync>,
         stats_tx: Sender<pb::ClientStatsPayload>,
         mini_agent_metadata: Arc<trace_utils::MiniAgentMetadata>,
-    ) -> http::Result<Response<Body>> {
+    ) -> http::Result<hyper_migration::HttpResponse> {
         match (req.method(), req.uri().path()) {
             (&Method::PUT | &Method::POST, TRACE_ENDPOINT_PATH) => {
                 match trace_processor
@@ -179,7 +208,7 @@ impl MiniAgent {
         }
     }
 
-    fn info_handler(dd_dogstatsd_port: u16) -> http::Result<Response<Body>> {
+    fn info_handler(dd_dogstatsd_port: u16) -> http::Result<hyper_migration::HttpResponse> {
         let response_json = json!(
             {
                 "endpoints": [
@@ -195,6 +224,6 @@ impl MiniAgent {
         );
         Response::builder()
             .status(200)
-            .body(Body::from(response_json.to_string()))
+            .body(hyper_migration::Body::from(response_json.to_string()))
     }
 }

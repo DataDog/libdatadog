@@ -12,8 +12,8 @@ use crate::{
     metrics::{ContextKey, MetricBuckets, MetricContexts},
     worker::builder::ConfigBuilder,
 };
-use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
+use ddcommon::{hyper_migration, tag::Tag};
 
 use std::iter::Sum;
 use std::ops::Add;
@@ -34,7 +34,7 @@ use futures::{
     channel::oneshot,
     future::{self},
 };
-use http::{header, HeaderValue, Request};
+use http::{header, HeaderValue};
 use serde::{Deserialize, Serialize};
 use tokio::{
     runtime::{self, Handle},
@@ -641,7 +641,7 @@ impl TelemetryWorker {
         self.send_request(req).await
     }
 
-    fn build_request(&self, payload: &data::Payload) -> Result<Request<hyper::Body>> {
+    fn build_request(&self, payload: &data::Payload) -> Result<hyper_migration::HttpRequest> {
         let seq_id = self.next_seq_id();
         let tel = Telemetry {
             api_version: data::ApiVersion::V2,
@@ -679,11 +679,11 @@ impl TelemetryWorker {
                 &tel.application.tracer_version.clone(),
             );
 
-        let body = hyper::Body::from(serialize::serialize(&tel)?);
+        let body = hyper_migration::Body::from(serialize::serialize(&tel)?);
         Ok(req.body(body)?)
     }
 
-    async fn send_request(&self, req: Request<hyper::Body>) -> Result<()> {
+    async fn send_request(&self, req: hyper_migration::HttpRequest) -> Result<()> {
         tokio::select! {
             _ = self.cancellation_token.cancelled() => {
                 Err(anyhow::anyhow!("Request cancelled"))
@@ -701,7 +701,7 @@ impl TelemetryWorker {
                     Ok(_) => {
                         Ok(())
                     }
-                    Err(e) => Err(e.into()),
+                    Err(e) => Err(e),
                 }
             }
         }

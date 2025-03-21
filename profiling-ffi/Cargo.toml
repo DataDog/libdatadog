@@ -35,7 +35,8 @@ build_common = { path = "../build-common" }
 anyhow = "1.0"
 datadog-crashtracker-ffi = { path = "../crashtracker-ffi", default-features = false, optional = true}
 datadog-profiling = { path = "../profiling" }
-hyper = { version = "0.14", features = ["backports", "deprecated"], default-features = false }
+hyper = { version = "1.6", features = ["http1", "client"] }
+http-body-util = "0.1"
 ddcommon = { path = "../ddcommon"}
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }

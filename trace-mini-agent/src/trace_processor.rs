@@ -4,7 +4,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use hyper::{http, Body, Request, Response, StatusCode};
+use ddcommon::hyper_migration;
+use hyper::{http, StatusCode};
 use tokio::sync::mpsc::Sender;
 use tracing::debug;
 
@@ -26,10 +27,10 @@ pub trait TraceProcessor {
     async fn process_traces(
         &self,
         config: Arc<Config>,
-        req: Request<Body>,
+        req: hyper_migration::HttpRequest,
         tx: Sender<trace_utils::SendData>,
         mini_agent_metadata: Arc<trace_utils::MiniAgentMetadata>,
-    ) -> http::Result<Response<Body>>;
+    ) -> http::Result<hyper_migration::HttpResponse>;
 }
 
 struct ChunkProcessor {
@@ -66,10 +67,10 @@ impl TraceProcessor for ServerlessTraceProcessor {
     async fn process_traces(
         &self,
         config: Arc<Config>,
-        req: Request<Body>,
+        req: hyper_migration::HttpRequest,
         tx: Sender<trace_utils::SendData>,
         mini_agent_metadata: Arc<trace_utils::MiniAgentMetadata>,
-    ) -> http::Result<Response<Body>> {
+    ) -> http::Result<hyper_migration::HttpResponse> {
         debug!("Received traces to process");
         let (parts, body) = req.into_parts();
 
@@ -151,7 +152,7 @@ mod tests {
     use datadog_trace_utils::{
         test_utils::create_test_json_span, trace_utils, tracer_payload::TracerPayloadCollection,
     };
-    use ddcommon::Endpoint;
+    use ddcommon::{hyper_migration, Endpoint};
 
     fn get_current_timestamp_nanos() -> i64 {
         UNIX_EPOCH.elapsed().unwrap().as_nanos() as i64
@@ -213,7 +214,7 @@ mod tests {
             .header("datadog-meta-lang-interpreter", "v8")
             .header("datadog-container-id", "33")
             .header("content-length", "100")
-            .body(hyper::body::Body::from(bytes))
+            .body(hyper_migration::Body::from(bytes))
             .unwrap();
 
         let trace_processor = trace_processor::ServerlessTraceProcessor {};
@@ -283,7 +284,7 @@ mod tests {
             .header("datadog-meta-lang-interpreter", "v8")
             .header("datadog-container-id", "33")
             .header("content-length", "100")
-            .body(hyper::body::Body::from(bytes))
+            .body(hyper_migration::Body::from(bytes))
             .unwrap();
 
         let trace_processor = trace_processor::ServerlessTraceProcessor {};

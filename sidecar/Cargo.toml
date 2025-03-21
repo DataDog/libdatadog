@@ -30,8 +30,9 @@ tinybytes = { path = "../tinybytes" }
 
 futures = { version = "0.3", default-features = false }
 manual_future = "0.1.1"
-http = "0.2"
-hyper = { version = "0.14", features = ["client", "backports", "deprecated"], default-features = false }
+http = "1.0"
+hyper = { version = "1.6", features = ["http1", "client"] }
+http-body-util = "0.1"
 
 datadog-ipc = { path = "../ipc", features = ["tiny-bytes"] }
 datadog-ipc-macros = { path = "../ipc/macros" }

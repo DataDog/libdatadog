@@ -1,10 +1,11 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use ddcommon::hyper_migration;
 use hyper::{
     header,
     http::{self, HeaderMap},
-    Body, Response, StatusCode,
+    Response, StatusCode,
 };
 use serde_json::json;
 use tracing::{debug, error};
@@ -21,14 +22,16 @@ use tracing::{debug, error};
 pub fn log_and_create_http_response(
     message: &str,
     status: StatusCode,
-) -> http::Result<Response<Body>> {
+) -> http::Result<Response<hyper_migration::Body>> {
     if status.is_success() {
         debug!("{message}");
     } else {
         error!("{message}");
     }
     let body = json!({ "message": message }).to_string();
-    Response::builder().status(status).body(Body::from(body))
+    Response::builder()
+        .status(status)
+        .body(hyper_migration::Body::from(body))
 }
 
 /// Does two things:
@@ -45,10 +48,12 @@ pub fn log_and_create_http_response(
 pub fn log_and_create_traces_success_http_response(
     message: &str,
     status: StatusCode,
-) -> http::Result<Response<Body>> {
+) -> http::Result<hyper_migration::HttpResponse> {
     debug!("{message}");
     let body = json!({"rate_by_service":{"service:,env:":1}}).to_string();
-    Response::builder().status(status).body(Body::from(body))
+    Response::builder()
+        .status(status)
+        .body(hyper_migration::Body::from(body))
 }
 
 /// Takes a request's header map, and verifies that the "content-length" header is present, valid,
@@ -60,7 +65,7 @@ pub fn verify_request_content_length(
     header_map: &HeaderMap,
     max_content_length: usize,
     error_message_prefix: &str,
-) -> Option<http::Result<Response<Body>>> {
+) -> Option<http::Result<hyper_migration::HttpResponse>> {
     let content_length_header = match header_map.get(header::CONTENT_LENGTH) {
         Some(res) => res,
         None => {
@@ -99,11 +104,10 @@ pub fn verify_request_content_length(
 
 #[cfg(test)]
 mod tests {
-    use hyper::body::HttpBody;
+    use ddcommon::hyper_migration;
+    use http_body_util::BodyExt;
     use hyper::header;
-    use hyper::Body;
     use hyper::HeaderMap;
-    use hyper::Response;
     use hyper::StatusCode;
 
     use super::verify_request_content_length;
@@ -114,7 +118,7 @@ mod tests {
         map
     }
 
-    async fn get_response_body_as_string(response: Response<Body>) -> String {
+    async fn get_response_body_as_string(response: hyper_migration::HttpResponse) -> String {
         let body = response.into_body();
         let bytes = body.collect().await.unwrap().to_bytes();
         String::from_utf8(bytes.into_iter().collect()).unwrap()

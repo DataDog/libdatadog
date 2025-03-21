@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use bolero::generator::*;
+use bolero::generator::TypeGenerator;
 use core::mem::transmute;
 use std::cmp::Ordering;
 use std::collections::HashSet;

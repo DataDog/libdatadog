@@ -1,10 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon::HttpRequestBuilder;
-use http::{Request, Response};
-use hyper::body::HttpBody;
-use hyper::Body;
+use ddcommon::{hyper_migration, HttpRequestBuilder};
+use http_body_util::BodyExt;
 use std::{
     fs::OpenOptions,
     future::Future,
@@ -25,10 +23,10 @@ pub mod header {
 }
 
 pub type ResponseFuture =
-    Pin<Box<dyn Future<Output = Result<Response<Body>, hyper::Error>> + Send>>;
+    Pin<Box<dyn Future<Output = Result<hyper_migration::HttpResponse, anyhow::Error>> + Send>>;
 
 pub trait HttpClient {
-    fn request(&self, req: Request<hyper::Body>) -> ResponseFuture;
+    fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture;
 }
 
 pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
@@ -60,9 +58,7 @@ pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
         Some(_) | None => {}
     };
     Box::new(HyperClient {
-        inner: hyper::Client::builder()
-            .pool_idle_timeout(std::time::Duration::from_secs(30))
-            .build(ddcommon::connector::Connector::default()),
+        inner: hyper_migration::new_client_periodic(),
     })
 }
 
@@ -71,8 +67,9 @@ pub struct HyperClient {
 }
 
 impl HttpClient for HyperClient {
-    fn request(&self, req: Request<hyper::Body>) -> ResponseFuture {
-        Box::pin(self.inner.request(req))
+    fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture {
+        let resp = self.inner.request(req);
+        Box::pin(async { Ok(hyper_migration::into_response(resp.await?)) })
     }
 }
 
@@ -82,7 +79,7 @@ pub struct MockClient {
 }
 
 impl HttpClient for MockClient {
-    fn request(&self, req: Request<hyper::Body>) -> ResponseFuture {
+    fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture {
         let s = self.clone();
         Box::pin(async move {
             let mut body = req.collect().await?.to_bytes().to_vec();
@@ -92,15 +89,10 @@ impl HttpClient for MockClient {
                 #[allow(clippy::expect_used)]
                 let mut writer = s.file.lock().expect("mutex poisoned");
 
-                #[allow(clippy::unwrap_used)]
-                writer.write_all(body.as_ref()).unwrap();
+                writer.write_all(body.as_ref())?;
             }
 
-            #[allow(clippy::unwrap_used)]
-            Ok(Response::builder()
-                .status(202)
-                .body(hyper::Body::empty())
-                .unwrap())
+            hyper_migration::empty_response(hyper::Response::builder().status(202))
         })
     }
 }
@@ -120,7 +112,7 @@ mod tests {
         };
         c.request(
             HttpRequestBuilder::new()
-                .body(hyper::Body::from("hello world\n"))
+                .body(hyper_migration::Body::from("hello world\n"))
                 .unwrap(),
         )
         .await

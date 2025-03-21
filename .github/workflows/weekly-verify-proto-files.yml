@@ -9,13 +9,13 @@ env:
 
 jobs:
   weekly-verify-proto-files:
-    name: "Verify trace-protobuf .proto files are in sync with datadog-agent"        
+    name: "Verify trace-protobuf .proto files are in sync with datadog-agent"
     runs-on: ubuntu-latest
     environment: nightlies
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
 
       - name: diff agent_payload.proto
         working-directory: trace-protobuf/src/pb
@@ -48,7 +48,7 @@ jobs:
       - name: report failure
         id: slack
         if: failure()
-        uses: slackapi/slack-github-action@v1.25.0
+        uses: slackapi/slack-github-action@fcfb566f8b0aab22203f066d80ca1d7e4b5d05b3 # 1.27.1
         with:
           payload: |
             {

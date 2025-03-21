@@ -12,9 +12,9 @@ use anyhow::anyhow;
 use bytes::buf::Reader;
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
-use ddcommon::azure_app_services;
-use hyper::body::HttpBody;
-use hyper::{body::Buf, Body};
+use ddcommon::{azure_app_services, hyper_migration};
+use http_body_util::BodyExt;
+use hyper::body::Buf;
 use log::error;
 use rmp::decode::read_array_len;
 use rmpv::decode::read_value;
@@ -36,7 +36,7 @@ const SPAN_ELEMENT_COUNT: usize = 12;
 
 /// First value of returned tuple is the payload size
 pub async fn get_traces_from_request_body(
-    body: Body,
+    body: hyper_migration::Body,
 ) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
     let buffer = body.collect().await?.aggregate();
     let size = buffer.remaining();
@@ -226,7 +226,7 @@ fn get_v05_string(
 }
 
 pub async fn get_v05_traces_from_request_body(
-    body: Body,
+    body: hyper_migration::Body,
 ) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
     let buffer = body.collect().await?.aggregate();
     let body_size = buffer.remaining();
@@ -832,7 +832,7 @@ mod tests {
             )]],
         );
         let bytes = rmp_serde::to_vec(&data).unwrap();
-        let res = get_v05_traces_from_request_body(hyper::body::Body::from(bytes)).await;
+        let res = get_v05_traces_from_request_body(hyper_migration::Body::from(bytes)).await;
         assert!(res.is_ok());
         let (_, traces) = res.unwrap();
         let span = traces[0][0].clone();
@@ -929,7 +929,7 @@ mod tests {
         for (trace_input, output) in pairs {
             let bytes = rmp_serde::to_vec(&vec![&trace_input]).unwrap();
             let request = Request::builder()
-                .body(hyper::body::Body::from(bytes))
+                .body(hyper_migration::Body::from(bytes))
                 .unwrap();
             let res = get_traces_from_request_body(request.into_body()).await;
             assert!(res.is_ok());
@@ -987,7 +987,7 @@ mod tests {
 
         let bytes = rmp_serde::to_vec(&trace_input).unwrap();
         let request = Request::builder()
-            .body(hyper::body::Body::from(bytes))
+            .body(hyper_migration::Body::from(bytes))
             .unwrap();
 
         let res = get_traces_from_request_body(request.into_body()).await;

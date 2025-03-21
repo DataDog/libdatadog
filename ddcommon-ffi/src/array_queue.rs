@@ -298,10 +298,9 @@ pub unsafe extern "C" fn ddog_ArrayQueue_capacity(queue_ptr: &ArrayQueue) -> Arr
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use super::*;
     use bolero::TypeGenerator;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     unsafe extern "C" fn drop_item(item: *mut c_void) -> c_void {
         _ = Box::from_raw(item as *mut i32);
@@ -430,7 +429,7 @@ mod tests {
     #[test]
     fn fuzz_with_threads() {
         let capacity_gen = 1..=32usize;
-        let ops_gen = Vec::<Operation>::gen();
+        let ops_gen = Vec::<Operation>::produce();
 
         bolero::check!()
             .with_generator((capacity_gen, ops_gen, ops_gen, ops_gen, ops_gen))
