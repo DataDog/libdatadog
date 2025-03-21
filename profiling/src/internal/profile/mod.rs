@@ -89,23 +89,22 @@ impl Profile {
             self.validate_sample_labels(&sample)?;
         }
 
-        let labels: Vec<_> = sample
+        let labels = sample
             .labels
             .iter()
-            .map(|label| {
+            .map(|label| -> Result<_, api::LabelError> {
+                let label = label.try_normalize()?;
                 let key = self.intern(label.key);
-                let internal_label = if let Some(s) = label.str {
-                    let str = self.intern(s);
-                    Label::str(key, str)
-                } else {
-                    let num = label.num;
-                    let num_unit = label.num_unit.map(|s| self.intern(s));
-                    Label::num(key, num, num_unit)
+                let internal_label = match label.value {
+                    api::LabelValue::Str(str) => Label::str(key, self.intern(str)),
+                    api::LabelValue::Num { num, num_unit } => {
+                        Label::num(key, num, self.intern(num_unit))
+                    }
                 };
 
-                self.labels.dedup(internal_label)
+                Ok(self.labels.dedup(internal_label))
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
 
         let mut locations = Vec::with_capacity(sample.locations.len());
         for location in &sample.locations {
@@ -130,16 +129,19 @@ impl Profile {
         let mut labels = Vec::with_capacity(sample.labels.len());
         for label in &sample.labels {
             let key = self.resolve(label.key)?;
-            let internal_label = if let Some(s) = label.str {
-                let str = self.resolve(s)?;
+            let internal_label = if label.str.value != 0 {
+                anyhow::ensure!(
+                    label.num == 0 && label.num_unit.value == 0,
+                    "Sample Label using ManagedStringIds set str id and either num or num_unit, str={str_id}, num={num}, num_unit={num_unit}",
+                    str_id = label.str.value,
+                    num = label.num,
+                    num_unit = label.num_unit.value,
+                );
+                let str = self.resolve(label.str)?;
                 Label::str(key, str)
             } else {
                 let num = label.num;
-                let num_unit = if let Some(s) = label.num_unit {
-                    Some(self.resolve(s)?)
-                } else {
-                    None
-                };
+                let num_unit = self.resolve(label.num_unit)?;
                 Label::num(key, num, num_unit)
             };
 
@@ -197,9 +199,7 @@ impl Profile {
     }
 
     pub fn resolve(&mut self, id: ManagedStringId) -> anyhow::Result<StringId> {
-        let non_empty_string_id = if let Some(valid_id) = NonZeroU32::new(id.value) {
-            valid_id
-        } else {
+        let Some(non_empty_string_id) = NonZeroU32::new(id.value) else {
             return Ok(StringId::ZERO); // Both string tables use zero for the empty string
         };
 
@@ -701,7 +701,7 @@ impl Profile {
             .iter()
             .map(|l| self.get_label(*l).copied())
             .chain(self.get_endpoint_for_labels(sample.labels).transpose())
-            .chain(timestamp.map(|ts| Ok(Label::num(self.timestamp_key, ts.get(), None))))
+            .chain(timestamp.map(|ts| Ok(Label::num(self.timestamp_key, ts.get(), StringId::ZERO))))
             .collect()
     }
 
@@ -716,7 +716,7 @@ impl Profile {
 
             if label.key == "local root span id" {
                 anyhow::ensure!(
-                    label.str.is_none() && label.num != 0,
+                    label.str.is_empty() && label.num != 0,
                     "Invalid \"local root span id\" label: {:?}",
                     label
                 );
@@ -746,7 +746,7 @@ impl Profile {
 
             if key_id == self.endpoints.local_root_span_id_label {
                 anyhow::ensure!(
-                    label.str.is_none() && label.num != 0,
+                    label.str.value == 0 && label.num != 0,
                     "Invalid \"local root span id\" label: {:?}",
                     label
                 );
@@ -1115,9 +1115,10 @@ mod api_tests {
 
         let id_label = api::Label {
             key: "local root span id",
-            str: Some("10"), // bad value, should use .num instead for local root span id
+            // bad value, should use .num instead for local root span id
+            str: "10",
             num: 0,
-            num_unit: None,
+            num_unit: "",
         };
 
         let sample = api::Sample {
@@ -1140,23 +1141,23 @@ mod api_tests {
 
         let id_label = api::Label {
             key: "local root span id",
-            str: None,
+            str: "",
             num: 10,
-            num_unit: None,
+            num_unit: "",
         };
 
         let id2_label = api::Label {
             key: "local root span id",
-            str: None,
+            str: "",
             num: 11,
-            num_unit: None,
+            num_unit: "",
         };
 
         let other_label = api::Label {
             key: "other",
-            str: Some("test"),
+            str: "test",
             num: 0,
-            num_unit: None,
+            num_unit: "",
         };
 
         let sample1 = api::Sample {
@@ -1297,15 +1298,15 @@ mod api_tests {
         let labels = vec![
             api::Label {
                 key: "local root span id",
-                str: None,
+                str: "",
                 num: 5738080760940355267_i64,
-                num_unit: None,
+                num_unit: "",
             },
             api::Label {
                 key: "local root span id",
-                str: None,
+                str: "",
                 num: 8182855815056056749_i64,
-                num_unit: None,
+                num_unit: "",
             },
         ];
 
@@ -1329,9 +1330,9 @@ mod api_tests {
 
         let id_label = api::Label {
             key: "my label",
-            str: Some("coco"),
+            str: "coco",
             num: 0,
-            num_unit: None,
+            num_unit: "",
         };
 
         let sample1 = api::Sample {
@@ -1359,12 +1360,12 @@ mod api_tests {
         ]
     }
 
-    fn create_label(key: &'static str, str: Option<&'static str>) -> api::Label<'static> {
+    fn create_label(key: &'static str, str: &'static str) -> api::Label<'static> {
         api::Label {
             key,
             str,
             num: 0,
-            num_unit: None,
+            num_unit: "",
         }
     }
 
@@ -1693,7 +1694,7 @@ mod api_tests {
 
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
-        let id_label = create_label("my_label", Some("coco"));
+        let id_label = create_label("my_label", "coco");
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1749,7 +1750,7 @@ mod api_tests {
 
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
-        let id_label = create_label("my label", Some("coco"));
+        let id_label = create_label("my label", "coco");
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1765,7 +1766,7 @@ mod api_tests {
             .add_upscaling_rule(
                 values_offset.as_slice(),
                 id_label.key,
-                id_label.str.unwrap(),
+                id_label.str,
                 upscaling_info,
             )
             .expect("Rule added");
@@ -1784,7 +1785,7 @@ mod api_tests {
 
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
-        let id_label = create_label("my label", Some("coco"));
+        let id_label = create_label("my label", "coco");
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1822,7 +1823,7 @@ mod api_tests {
             .add_upscaling_rule(
                 values_offset.as_slice(),
                 id_label.key,
-                id_label.str.unwrap(),
+                id_label.str,
                 upscaling_info,
             )
             .expect("Rule added");
@@ -1845,9 +1846,9 @@ mod api_tests {
 
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
-        let id_no_match_label = create_label("another label", Some("do not care"));
+        let id_no_match_label = create_label("another label", "do not care");
 
-        let id_label = create_label("my label", Some("coco"));
+        let id_label = create_label("my label", "coco");
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1872,9 +1873,9 @@ mod api_tests {
 
         let id_label2 = api::Label {
             key: "my other label",
-            str: Some("foobar"),
+            str: "",
             num: 10,
-            num_unit: None,
+            num_unit: "",
         };
 
         let sample2 = api::Sample {
@@ -1883,8 +1884,8 @@ mod api_tests {
             labels: vec![id_no_match_label, id_label2],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
-        profile.add_sample(sample2, None).expect("add to success");
+        profile.add_sample(sample1, None).unwrap();
+        profile.add_sample(sample2, None).unwrap();
 
         // add rule for the first sample on the 1st value
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
@@ -1893,7 +1894,7 @@ mod api_tests {
             .add_upscaling_rule(
                 values_offset.as_slice(),
                 id_label.key,
-                id_label.str.unwrap(),
+                id_label.str,
                 upscaling_info,
             )
             .expect("Rule added");
@@ -1906,7 +1907,7 @@ mod api_tests {
             .add_upscaling_rule(
                 values_offset.as_slice(),
                 id_label2.key,
-                id_label2.str.unwrap(),
+                id_label2.str,
                 upscaling_info2,
             )
             .expect("Rule added");
@@ -1928,7 +1929,7 @@ mod api_tests {
 
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
-        let id_label = create_label("my label", Some("coco"));
+        let id_label = create_label("my label", "coco");
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1946,7 +1947,7 @@ mod api_tests {
             .add_upscaling_rule(
                 values_offset.as_slice(),
                 id_label.key,
-                id_label.str.unwrap(),
+                id_label.str,
                 upscaling_info,
             )
             .expect("Rule added");
@@ -1964,7 +1965,7 @@ mod api_tests {
 
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
-        let id_label = create_label("my label", Some("coco"));
+        let id_label = create_label("my label", "coco");
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -1988,7 +1989,7 @@ mod api_tests {
             .add_upscaling_rule(
                 value_offsets.as_slice(),
                 id_label.key,
-                id_label.str.unwrap(),
+                id_label.str,
                 upscaling_info2,
             )
             .expect("Rule added");
@@ -2236,7 +2237,7 @@ mod api_tests {
 
         let mut profile: Profile = Profile::new(SystemTime::now(), &sample_types, None);
 
-        let id_label = create_label("my label", Some("coco"));
+        let id_label = create_label("my label", "coco");
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -2253,7 +2254,7 @@ mod api_tests {
             .add_upscaling_rule(
                 value_offsets.as_slice(),
                 id_label.key,
-                id_label.str.unwrap(),
+                id_label.str,
                 upscaling_info2,
             )
             .expect("Rule added");
@@ -2284,9 +2285,9 @@ mod api_tests {
 
         let id_label = api::Label {
             key: "local root span id",
-            str: None,
+            str: "",
             num: 10,
-            num_unit: None,
+            num_unit: "",
         };
 
         let large_span_id = u64::MAX;
@@ -2295,9 +2296,9 @@ mod api_tests {
 
         let id2_label = api::Label {
             key: "local root span id",
-            str: None,
+            str: "",
             num: large_num,
-            num_unit: None,
+            num_unit: "",
         };
 
         let sample1 = api::Sample {
