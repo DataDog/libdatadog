@@ -48,6 +48,5 @@ tokio-util = "0.7.1"
 byteorder = { version = "1.5", features = ["std"] }
 
 [dev-dependencies]
-bolero = "0.10.1"
-bolero-generator = "0.10.2"
+bolero = "0.13"
 criterion = "0.5.1"

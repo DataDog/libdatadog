@@ -27,4 +27,4 @@ hyper = { version = "1.6", features = ["http1", "client"] }
 serde = "1.0"
 
 [dev-dependencies]
-bolero = "0.10.1"
+bolero = "0.13"

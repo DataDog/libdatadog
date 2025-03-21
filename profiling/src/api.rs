@@ -184,7 +184,7 @@ pub struct StringIdSample<'a> {
 }
 
 #[derive(Debug)]
-#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
+#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub enum UpscalingInfo {
     Poisson {
         // sum_value_offset and count_value_offset are offsets in the profile values type array
