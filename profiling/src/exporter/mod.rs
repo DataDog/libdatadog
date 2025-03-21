@@ -3,7 +3,6 @@
 
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
-use const_format::concatcp;
 pub use ddcommon::tag::Tag;
 pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
@@ -151,14 +150,16 @@ impl ProfileExporter {
         })
     }
 
-    const RUNTIME_INFO: &'static str = if cfg!(target_env = "musl") {
-        concatcp!(std::env::consts::ARCH, "-", std::env::consts::OS, "-musl")
-    } else {
-        concatcp!(std::env::consts::ARCH, "-", std::env::consts::OS)
-    };
+    /// The target triple. This is a string like:
+    ///  - aarch64-apple-darwin
+    ///  - x86_64-unknown-linux-gnu
+    /// The name is which is a misnomer, it traditionally had 3 pieces, but
+    /// it's commonly 4+ fragments today.
+    const TARGET_TRIPLE: &'static str = target_triple::TARGET;
 
+    #[inline]
     fn runtime_platform_tag(&self) -> Tag {
-        tag!("runtime_platform", ProfileExporter::RUNTIME_INFO)
+        tag!("runtime_platform", ProfileExporter::TARGET_TRIPLE)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -222,8 +223,9 @@ impl ProfileExporter {
             });
         }
 
-        // Since this is the last tag, we add it without a comma afterwards. If any tags get added
-        // after this one, you'll need to add the comma between them.
+        // Since this is the last tag, we add it without a comma afterward. If
+        // any tags get added after this one, you'll need to add the comma
+        // between them.
         tags_profiler.push_str(self.runtime_platform_tag().as_ref());
 
         let attachments: Vec<String> = files_to_compress_and_export

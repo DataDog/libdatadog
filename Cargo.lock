@@ -1565,6 +1565,7 @@ dependencies = [
  "rustc-hash 1.1.0",
  "serde",
  "serde_json",
+ "target-triple",
  "tokio",
  "tokio-util",
 ]
@@ -5492,9 +5493,9 @@ dependencies = [
 
 [[package]]
 name = "target-triple"
-version = "0.1.3"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42a4d50cdb458045afc8131fd91b64904da29548bcb63c7236e0844936c13078"
+checksum = "1ac9aa371f599d22256307c24a9d748c041e548cbf599f35d890f9d365361790"
 
 [[package]]
 name = "tarpc"

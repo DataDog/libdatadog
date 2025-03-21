@@ -20,8 +20,10 @@ harness = false
 [dependencies]
 anyhow = "1.0"
 bitmaps = "3.2.0"
+byteorder = { version = "1.5", features = ["std"] }
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
+const_format = "0.2.34"
 datadog-alloc = {path = "../alloc"}
 ddcommon = {path = "../ddcommon"}
 derivative = "2.2.0"
@@ -43,10 +45,9 @@ prost = "0.12"
 rustc-hash = { version = "1.1", default-features = false }
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
+target-triple = "0.1.4"
 tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
-byteorder = { version = "1.5", features = ["std"] }
-const_format = "0.2.34"
 
 [dev-dependencies]
 bolero = "0.10.1"
