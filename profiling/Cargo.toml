@@ -31,10 +31,10 @@ futures = { version = "0.3", default-features = false }
 futures-core = {version = "0.3.0", default-features = false}
 futures-util = {version = "0.3.0", default-features = false}
 hashbrown = { version = "0.14", default-features = false, features = ["allocator-api2"] }
-http = "0.2"
-http-body = "0.4"
-hyper = {version = "0.14", features = ["client", "backports", "deprecated"], default-features = false}
-hyper-multipart-rfc7578 = "0.7.0"
+http = "1.0"
+hyper = { version = "1.6", features = ["http1", "client"] }
+http-body-util = "0.1"
+hyper-multipart-rfc7578 = "0.9.0"
 indexmap = "2.2"
 libc = "0.2"
 lz4_flex = { version = "0.9", default-features = false, features = ["std", "safe-encode", "frame"] }
@@ -50,6 +50,5 @@ tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
 
 [dev-dependencies]
-bolero = "0.10.1"
-bolero-generator = "0.10.2"
+bolero = "0.13"
 criterion = "0.5.1"

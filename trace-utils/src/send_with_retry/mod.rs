@@ -8,23 +8,24 @@ mod retry_strategy;
 pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 
 use bytes::Bytes;
-use ddcommon::{connector, Endpoint, HttpRequestBuilder};
-use hyper::{Body, Client, Method, Response};
+use ddcommon::{hyper_migration, Endpoint, HttpRequestBuilder};
+use hyper::Method;
 use std::{collections::HashMap, time::Duration};
 
 pub type Attempts = u32;
 
-pub type SendWithRetryResult = Result<(Response<Body>, Attempts), SendWithRetryError>;
+pub type SendWithRetryResult =
+    Result<(hyper_migration::HttpResponse, Attempts), SendWithRetryError>;
 
 /// All errors contain the number of attempts after which the final error was returned
 #[derive(Debug)]
 pub enum SendWithRetryError {
     /// The request received an error HTTP code.
-    Http(Response<Body>, Attempts),
+    Http(hyper_migration::HttpResponse, Attempts),
     /// Treats timeout errors originated in the transport layer.
     Timeout(Attempts),
     /// Treats errors coming from networking.
-    Network(hyper::Error, Attempts),
+    Network(hyper_migration::ClientError, Attempts),
     /// Treats errors coming from building the request
     Build(Attempts),
 }
@@ -49,7 +50,6 @@ impl SendWithRetryError {
         match err {
             RequestError::Build => SendWithRetryError::Build(request_attempt),
             RequestError::Network(error) => SendWithRetryError::Network(error, request_attempt),
-            RequestError::TimeoutSocket => SendWithRetryError::Timeout(request_attempt),
             RequestError::TimeoutApi => SendWithRetryError::Timeout(request_attempt),
         }
     }
@@ -58,15 +58,13 @@ impl SendWithRetryError {
 #[derive(Debug)]
 enum RequestError {
     Build,
-    Network(hyper::Error),
-    TimeoutSocket,
+    Network(hyper_migration::ClientError),
     TimeoutApi,
 }
 
 impl std::fmt::Display for RequestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RequestError::TimeoutSocket => write!(f, "Socket timed out"),
             RequestError::TimeoutApi => write!(f, "Api timeout exhausted"),
             RequestError::Network(error) => write!(f, "Network error: {error}"),
             RequestError::Build => write!(f, "Failed to build request due to invalid property"),
@@ -172,44 +170,42 @@ async fn send_request(
     req: HttpRequestBuilder,
     payload: Bytes,
     http_proxy: Option<&str>,
-) -> Result<Response<Body>, RequestError> {
-    let req = req.body(Body::from(payload)).or(Err(RequestError::Build))?;
+) -> Result<hyper_migration::HttpResponse, RequestError> {
+    let req = req
+        .body(hyper_migration::Body::from_bytes(payload))
+        .or(Err(RequestError::Build))?;
 
     #[cfg(feature = "proxy")]
     #[allow(clippy::unwrap_used)]
     let req_future = {
         if let Some(proxy) = http_proxy {
-            let proxy =
-                hyper_proxy::Proxy::new(hyper_proxy::Intercept::Https, proxy.parse().unwrap());
-            let proxy_connector =
-                hyper_proxy::ProxyConnector::from_proxy(connector::Connector::default(), proxy)
-                    .unwrap();
-            Client::builder().build(proxy_connector).request(req)
-        } else {
-            Client::builder()
-                .build(connector::Connector::default())
+            let proxy = hyper_http_proxy::Proxy::new(
+                hyper_http_proxy::Intercept::Https,
+                proxy.parse().unwrap(),
+            );
+            let proxy_connector = hyper_http_proxy::ProxyConnector::from_proxy(
+                ddcommon::connector::Connector::default(),
+                proxy,
+            )
+            .unwrap();
+            hyper_migration::client_builder()
+                .build(proxy_connector)
                 .request(req)
+        } else {
+            hyper_migration::new_default_client().request(req)
         }
     };
 
     #[cfg(not(feature = "proxy"))]
     let req_future = {
         let _ = http_proxy;
-        Client::builder()
-            .build(connector::Connector::default())
-            .request(req)
+        hyper_migration::new_default_client().request(req)
     };
 
     match tokio::time::timeout(timeout, req_future).await {
         Ok(resp) => match resp {
-            Ok(body) => Ok(body),
-            Err(e) => {
-                if e.is_timeout() {
-                    Err(RequestError::TimeoutSocket)
-                } else {
-                    Err(RequestError::Network(e))
-                }
-            }
+            Ok(body) => Ok(hyper_migration::into_response(body)),
+            Err(e) => Err(RequestError::Network(e)),
         },
         Err(_) => Err(RequestError::TimeoutApi),
     }

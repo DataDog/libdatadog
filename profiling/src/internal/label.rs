@@ -130,7 +130,7 @@ impl Item for LabelSet {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
-#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
+#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct LabelSetId(u32);
 
 impl Id for LabelSetId {

@@ -38,7 +38,7 @@ mod tests {
     use crate::multipart;
     use datadog_profiling::exporter::*;
     use ddcommon::tag;
-    use hyper::body::HttpBody;
+    use http_body_util::BodyExt;
     use serde_json::json;
 
     fn default_tags() -> Vec<Tag> {
