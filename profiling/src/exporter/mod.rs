@@ -158,6 +158,7 @@ impl ProfileExporter {
     /// The target triple. This is a string like:
     ///  - aarch64-apple-darwin
     ///  - x86_64-unknown-linux-gnu
+    ///
     /// The name is which is a misnomer, it traditionally had 3 pieces, but
     /// it's commonly 4+ fragments today.
     const TARGET_TRIPLE: &'static str = target_triple::TARGET;
