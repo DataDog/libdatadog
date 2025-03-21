@@ -347,6 +347,20 @@ pub(crate) struct Metric {
     /// The kind of metric
     pub(crate) kind: DdMetricKind,
     pub(crate) tags: Vec<String>,
+    /// Optional metadata associated with the metric
+    pub(crate) metadata: Option<Metadata>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Metadata {
+    pub(crate) origin: Option<Origin>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Origin {
+    pub(crate) origin_product: u32,
+    pub(crate) origin_sub_product: u32,
+    pub(crate) origin_product_detail: u32,
 }
 
 #[derive(Debug, Serialize)]
