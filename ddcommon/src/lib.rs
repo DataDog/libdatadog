@@ -108,6 +108,9 @@ pub type HttpClient = hyper_migration::HttpClient;
 pub type HttpResponse = hyper_migration::HttpResponse;
 pub type HttpRequestBuilder = hyper::http::request::Builder;
 
+// Used by tag! macro
+pub use const_format;
+
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct Endpoint {
     #[serde(serialize_with = "serialize_uri", deserialize_with = "deserialize_uri")]
