@@ -6,8 +6,8 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::{future, Future, FutureExt, TryFutureExt};
-use hyper_rustls::HttpsConnector;
+use futures::{Future, FutureExt};
+use hyper::rt::ReadBufCursor;
 use pin_project::pin_project;
 
 #[pin_project(project=ConnStreamProj)]
@@ -15,29 +15,31 @@ use pin_project::pin_project;
 pub enum ConnStream {
     Tcp {
         #[pin]
-        transport: tokio::net::TcpStream,
+        transport: TokioIo<tokio::net::TcpStream>,
     },
+    #[cfg(feature = "https")]
     Tls {
         #[pin]
-        transport: Box<tokio_rustls::client::TlsStream<TokioIo<TokioIo<tokio::net::TcpStream>>>>,
+        transport:
+            Box<TokioIo<tokio_rustls::client::TlsStream<TokioIo<TokioIo<tokio::net::TcpStream>>>>>,
     },
     #[cfg(unix)]
     Udp {
         #[pin]
-        transport: tokio::net::UnixStream,
+        transport: TokioIo<tokio::net::UnixStream>,
     },
-
     #[cfg(windows)]
     NamedPipe {
         #[pin]
-        transport: tokio::net::windows::named_pipe::NamedPipeClient,
+        transport: TokioIo<tokio::net::windows::named_pipe::NamedPipeClient>,
     },
 }
 
 pub type ConnStreamError = Box<dyn std::error::Error + Send + Sync>;
 
-use hyper::{client::HttpConnector, service::Service};
+use hyper_util::client::legacy::connect::{self, HttpConnector};
 use hyper_util::rt::TokioIo;
+use tower_service::Service;
 
 impl ConnStream {
     pub async fn from_uds_uri(uri: hyper::Uri) -> Result<ConnStream, ConnStreamError> {
@@ -45,7 +47,7 @@ impl ConnStream {
         {
             let path = super::uds::socket_path_from_uri(&uri)?;
             Ok(ConnStream::Udp {
-                transport: tokio::net::UnixStream::connect(path).await?,
+                transport: TokioIo::new(tokio::net::UnixStream::connect(path).await?),
             })
         }
         #[cfg(not(unix))]
@@ -60,7 +62,9 @@ impl ConnStream {
         {
             let path = super::named_pipe::named_pipe_path_from_uri(&uri)?;
             Ok(ConnStream::NamedPipe {
-                transport: tokio::net::windows::named_pipe::ClientOptions::new().open(path)?,
+                transport: TokioIo::new(
+                    tokio::net::windows::named_pipe::ClientOptions::new().open(path)?,
+                ),
             })
         }
         #[cfg(not(windows))]
@@ -73,48 +77,49 @@ impl ConnStream {
     pub fn from_http_connector_with_uri(
         c: &mut HttpConnector,
         uri: hyper::Uri,
-    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> {
+    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> + 'static {
         c.call(uri).map(|r| match r {
             Ok(t) => Ok(ConnStream::Tcp { transport: t }),
             Err(e) => Err(e.into()),
         })
     }
 
+    #[cfg(feature = "https")]
     pub fn from_https_connector_with_uri(
-        c: &mut HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+        c: &mut hyper_rustls::HttpsConnector<connect::HttpConnector>,
         uri: hyper::Uri,
         require_tls: bool,
-    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> {
+    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> + 'static {
         #[allow(clippy::unwrap_used)]
-        c.call(uri.to_string().parse().unwrap())
-            .and_then(move |stream| match stream {
+        let stream_fut = c.call(uri.to_string().parse().unwrap());
+        async move {
+            let stream = stream_fut.await?;
+            match stream {
                 // move only require_tls
                 hyper_rustls::MaybeHttpsStream::Http(t) => {
                     if require_tls {
-                        future::ready(Err(
-                            super::errors::Error::CannotEstablishTlsConnection.into()
-                        ))
+                        Err(super::errors::Error::CannotEstablishTlsConnection.into())
                     } else {
-                        future::ready(Ok(ConnStream::Tcp {
-                            transport: t.into_inner(),
-                        }))
+                        Ok(ConnStream::Tcp { transport: t })
                     }
                 }
-                hyper_rustls::MaybeHttpsStream::Https(t) => future::ready(Ok(ConnStream::Tls {
-                    transport: Box::from(t.into_inner()),
-                })),
-            })
+                hyper_rustls::MaybeHttpsStream::Https(t) => Ok(ConnStream::Tls {
+                    transport: Box::from(t),
+                }),
+            }
+        }
     }
 }
 
-impl tokio::io::AsyncRead for ConnStream {
+impl hyper::rt::Read for ConnStream {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
+        buf: ReadBufCursor<'_>,
     ) -> Poll<std::io::Result<()>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_read(cx, buf),
+            #[cfg(feature = "https")]
             ConnStreamProj::Tls { transport } => transport.poll_read(cx, buf),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_read(cx, buf),
@@ -124,23 +129,24 @@ impl tokio::io::AsyncRead for ConnStream {
     }
 }
 
-impl hyper::client::connect::Connection for ConnStream {
-    fn connected(&self) -> hyper::client::connect::Connected {
+impl connect::Connection for ConnStream {
+    fn connected(&self) -> connect::Connected {
         match self {
             Self::Tcp { transport } => transport.connected(),
+            #[cfg(feature = "https")]
             Self::Tls { transport } => {
-                let (tcp, _) = transport.get_ref();
+                let (tcp, _) = transport.inner().get_ref();
                 tcp.inner().inner().connected()
             }
             #[cfg(unix)]
-            Self::Udp { transport: _ } => hyper::client::connect::Connected::new(),
+            Self::Udp { transport: _ } => connect::Connected::new(),
             #[cfg(windows)]
-            Self::NamedPipe { transport: _ } => hyper::client::connect::Connected::new(),
+            Self::NamedPipe { transport: _ } => connect::Connected::new(),
         }
     }
 }
 
-impl tokio::io::AsyncWrite for ConnStream {
+impl hyper::rt::Write for ConnStream {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -148,6 +154,7 @@ impl tokio::io::AsyncWrite for ConnStream {
     ) -> Poll<Result<usize, std::io::Error>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_write(cx, buf),
+            #[cfg(feature = "https")]
             ConnStreamProj::Tls { transport } => transport.poll_write(cx, buf),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_write(cx, buf),
@@ -162,6 +169,7 @@ impl tokio::io::AsyncWrite for ConnStream {
     ) -> Poll<Result<(), std::io::Error>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_shutdown(cx),
+            #[cfg(feature = "https")]
             ConnStreamProj::Tls { transport } => transport.poll_shutdown(cx),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_shutdown(cx),
@@ -173,6 +181,7 @@ impl tokio::io::AsyncWrite for ConnStream {
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_flush(cx),
+            #[cfg(feature = "https")]
             ConnStreamProj::Tls { transport } => transport.poll_flush(cx),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_flush(cx),

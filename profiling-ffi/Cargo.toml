@@ -42,7 +42,8 @@ ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
 function_name = "0.3.0"
 futures = { version = "0.3", default-features = false }
-hyper = { version = "0.14", features = ["backports", "deprecated"], default-features = false }
+http-body-util = "0.1"
+hyper = { version = "1.6", features = ["http1", "client"] }
 libc = "0.2"
 serde_json = { version = "1.0" }
 symbolic-common = "12.8.0"

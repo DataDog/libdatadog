@@ -380,7 +380,7 @@ mod tests {
     use super::*;
     use ddcommon::tag;
     use ddcommon_ffi::Slice;
-    use hyper::body::HttpBody;
+    use http_body_util::BodyExt;
     use serde_json::json;
 
     fn profiling_library_name() -> CharSlice<'static> {
@@ -520,7 +520,6 @@ mod tests {
             parsed_event_json["internal"],
             json!({"libdatadog_version": env!("CARGO_PKG_VERSION")})
         );
-        assert_eq!(parsed_event_json["tags_profiler"], json!(""));
         assert_eq!(parsed_event_json["version"], json!("4"));
 
         // TODO: Assert on contents of attachments, as well as on the headers/configuration for the

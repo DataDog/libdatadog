@@ -7,8 +7,9 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use cargo_metadata::MetadataCommand;
-use hyper::body::HttpBody;
-use hyper::{Client, Uri};
+use ddcommon::hyper_migration;
+use http_body_util::BodyExt;
+use hyper::Uri;
 use testcontainers::core::AccessMode;
 use testcontainers::{
     core::{Mount, WaitFor},
@@ -281,7 +282,7 @@ impl DatadogTestAgent {
     ///
     /// * `snapshot_token` - A string slice that holds the snapshot token.
     pub async fn assert_snapshot(&self, snapshot_token: &str) {
-        let client = Client::new();
+        let client = hyper_migration::new_default_client();
         let uri = self
             .get_uri_for_endpoint("test/session/snapshot", Some(snapshot_token))
             .await;
@@ -338,7 +339,7 @@ impl DatadogTestAgent {
         session_token: &str,
         agent_sample_rates_by_service: Option<&str>,
     ) {
-        let client = Client::new();
+        let client = hyper_migration::new_default_client();
 
         let mut query_params_map = HashMap::new();
         query_params_map.insert(SESSION_TEST_TOKEN_QUERY_PARAM_KEY, session_token);

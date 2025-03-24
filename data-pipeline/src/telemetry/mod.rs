@@ -261,6 +261,7 @@ impl TelemetryClient {
 
 #[cfg(test)]
 mod tests {
+    use ddcommon::hyper_migration;
     use httpmock::Method::POST;
     use httpmock::MockServer;
     use hyper::{Response, StatusCode};
@@ -565,7 +566,7 @@ mod tests {
     #[tokio::test]
     async fn telemetry_from_network_error_test() {
         // Create an hyper error by calling an undefined service
-        let hyper_error = hyper::Client::new()
+        let hyper_error = hyper_migration::new_default_client()
             .get(hyper::Uri::from_static("localhost:12345"))
             .await
             .unwrap_err();
