@@ -245,7 +245,7 @@ jobs:
           buildkitd-config: .github/buildkitd-16-cores.toml
       -
         name: Build and Generate FFI
-        uses: docker/bake-action@aefd381cbaa93c62a1e8b02194ae420cc36269d2 # 4.7.0
+        uses: docker/bake-action@4ba453fbc2db7735392b93edf935aaf9b1e8f747 # 6.5.0
         with:
           targets: ${{ matrix.target }}
           set: |
