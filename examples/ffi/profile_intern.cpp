@@ -70,8 +70,8 @@ void wait_for_user(std::string s) {
 
 int main(void) {
   const ddog_prof_ValueType wall_time = {
-      .type_ = DDOG_CHARSLICE_C("wall-time"),
-      .unit = DDOG_CHARSLICE_C("nanoseconds"),
+      .type_ = to_slice_c_char("wall-time"),
+      .unit = to_slice_c_char("nanoseconds"),
   };
   const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
   const ddog_prof_Period period = {wall_time, 60};
@@ -86,9 +86,9 @@ int main(void) {
 
   ddog_prof_Profile *profile = &new_result.ok;
   auto root_function_name =
-      extract_result(ddog_prof_Profile_intern_string(profile, DDOG_CHARSLICE_C("{main}")));
+      extract_result(ddog_prof_Profile_intern_string(profile, to_slice_c_char("{main}")));
   auto root_file_name = extract_result(
-      ddog_prof_Profile_intern_string(profile, DDOG_CHARSLICE_C("/srv/example/index.php")));
+      ddog_prof_Profile_intern_string(profile, to_slice_c_char("/srv/example/index.php")));
   auto root_mapping = extract_result(
       ddog_prof_Profile_intern_mapping(profile, 0, 0, 0, root_file_name, INTERNED_EMPTY_STRING));
   auto root_function = extract_result(ddog_prof_Profile_intern_function(
@@ -99,15 +99,15 @@ int main(void) {
   auto stacktrace = extract_result(ddog_prof_Profile_intern_stacktrace(profile, locations));
 
   auto magic_label_key =
-      extract_result(ddog_prof_Profile_intern_string(profile, DDOG_CHARSLICE_C("magic_word")));
+      extract_result(ddog_prof_Profile_intern_string(profile, to_slice_c_char("magic_word")));
   auto magic_label_val =
-      extract_result(ddog_prof_Profile_intern_string(profile, DDOG_CHARSLICE_C("abracadabra")));
+      extract_result(ddog_prof_Profile_intern_string(profile, to_slice_c_char("abracadabra")));
   auto magic_label =
       extract_result(ddog_prof_Profile_intern_label_str(profile, magic_label_key, magic_label_val));
 
   // Keep this id around, no need to reintern the same string over and over again.
   auto counter_id =
-      extract_result(ddog_prof_Profile_intern_string(profile, DDOG_CHARSLICE_C("unique_counter")));
+      extract_result(ddog_prof_Profile_intern_string(profile, to_slice_c_char("unique_counter")));
 
   // wait_for_user("Press any key to start adding values ...");
 
