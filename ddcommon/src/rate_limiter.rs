@@ -55,6 +55,7 @@ fn now() -> u64 {
         };
         unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
         // tv_sec is i32 on 32bit architecture
+        // https://sourceware.org/bugzilla/show_bug.cgi?id=16437
         #[cfg(target_pointer_width = "32")]
         {
             (ts.tv_sec as i64 * TIME_PER_SECOND + ts.tv_nsec as i64) as u64
