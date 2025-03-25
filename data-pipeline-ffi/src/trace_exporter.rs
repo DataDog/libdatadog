@@ -624,6 +624,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     fn exporter_constructor_test() {
         unsafe {
             let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
@@ -652,6 +653,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     fn exporter_constructor_error_test() {
         unsafe {
             let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
