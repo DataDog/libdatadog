@@ -40,7 +40,9 @@ impl Default for Connector {
 }
 
 impl Connector {
-    pub fn new() -> Self {
+    /// Make sure this function is not called frequently. Fetching the root certificates is an
+    /// expensive operation. Access the globally cached connector via Connector::default().
+    fn new() -> Self {
         #[cfg(feature = "https")]
         {
             #[cfg(feature = "use_webpki_roots")]
