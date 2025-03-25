@@ -31,7 +31,7 @@ impl PprofItem for Function {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
-#[repr(transparent)]
+#[repr(C)]
 pub struct FunctionId(NonZeroU32);
 
 impl Id for FunctionId {
