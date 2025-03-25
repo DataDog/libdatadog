@@ -12,7 +12,7 @@ jobs:
       CARGO_TERM_COLOR: always
       PROPTEST_CASES: 1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: Set up Rust
         run: |
           set -e
@@ -22,7 +22,7 @@ jobs:
       - name: Install Protoc Binary
         shell: bash
         run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
           tool: nextest@0.9.92
       - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run --partition count:${{ matrix.partition }}/5

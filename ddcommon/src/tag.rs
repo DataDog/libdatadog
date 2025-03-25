@@ -37,7 +37,7 @@ impl Tag {
 /// all tag validation is currently done client-side). If the key or value
 /// aren't known at compile-time, then use [Tag::new].
 // todo: what's a good way to keep these in-sync with Tag::from_value?
-// This can be a little more strict because it's compitle-time evaluated.
+// This can be a little more strict because it's compile-time evaluated.
 // https://docs.datadoghq.com/getting_started/tagging/#define-tags
 #[macro_export]
 macro_rules! tag {
@@ -48,7 +48,7 @@ macro_rules! tag {
         //       which checks that the whole thing doesn't end with a colon.
         $crate::tag::const_assert!(!$val.is_empty());
 
-        const COMBINED: &'static str = concat!($key, ":", $val);
+        const COMBINED: &'static str = $crate::const_format::concatcp!($key, ":", $val);
 
         // Tags must start with a letter. This is more restrictive than is
         // required (could be a unicode alphabetic char) and can be lifted

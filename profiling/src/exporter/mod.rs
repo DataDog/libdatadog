@@ -16,7 +16,7 @@ use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
 use ddcommon::{
-    azure_app_services, connector, hyper_migration, Endpoint, HttpClient, HttpResponse,
+    azure_app_services, connector, hyper_migration, tag, Endpoint, HttpClient, HttpResponse,
 };
 
 pub mod config;
@@ -155,6 +155,19 @@ impl ProfileExporter {
         })
     }
 
+    /// The target triple. This is a string like:
+    ///  - aarch64-apple-darwin
+    ///  - x86_64-unknown-linux-gnu
+    ///
+    /// The name is which is a misnomer, it traditionally had 3 pieces, but
+    /// it's commonly 4+ fragments today.
+    const TARGET_TRIPLE: &'static str = target_triple::TARGET;
+
+    #[inline]
+    fn runtime_platform_tag(&self) -> Tag {
+        tag!("runtime_platform", ProfileExporter::TARGET_TRIPLE)
+    }
+
     #[allow(clippy::too_many_arguments)]
     /// Build a Request object representing the profile information provided.
     ///
@@ -216,7 +229,10 @@ impl ProfileExporter {
             });
         }
 
-        tags_profiler.pop(); // clean up the trailing comma
+        // Since this is the last tag, we add it without a comma afterward. If
+        // any tags get added after this one, you'll need to add the comma
+        // between them.
+        tags_profiler.push_str(self.runtime_platform_tag().as_ref());
 
         let attachments: Vec<String> = files_to_compress_and_export
             .iter()
