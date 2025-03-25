@@ -2,9 +2,100 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
-class Program
+namespace DatadogLogger
 {
-    // Define the LogLevel enum to match Rust
+    // Core FFI structures that match Rust definitions
+    [StructLayout(LayoutKind.Sequential)]
+    internal readonly struct FFIVec
+    {
+        internal readonly IntPtr Data;
+        internal readonly nuint Length;
+        internal readonly nuint Capacity;
+
+        public Span<T> AsSpan<T>() where T : unmanaged
+        {
+            if (Data == IntPtr.Zero)
+                return Span<T>.Empty;
+
+            unsafe
+            {
+                return new Span<T>((void*)Data, (int)Length);
+            }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal readonly struct Error
+    {
+        internal readonly FFIVec Message;
+
+        // Similar to Rust's From trait
+        public Exception ToException()
+        {
+            var messageBytes = Message.AsSpan<byte>();
+            var message = Encoding.UTF8.GetString(messageBytes);
+            return new Exception(message);
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal readonly struct CharSlice
+    {
+        internal readonly IntPtr Ptr;
+        internal readonly nuint Len;
+
+        // Implement ToString for clean conversion
+        public override string ToString()
+        {
+            if (Ptr == IntPtr.Zero || Len == 0) return string.Empty;
+
+            unsafe
+            {
+                return Encoding.UTF8.GetString((byte*)Ptr, (int)Len);
+            }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal readonly struct LogField
+    {
+        internal readonly CharSlice Key;
+        internal readonly CharSlice Value;
+
+        public readonly (string Key, string Value) Deconstruct() =>
+            (Key.ToString(), Value.ToString());
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal readonly struct LogEvent
+    {
+        internal readonly LogLevel Level;
+        internal readonly FFIVec Fields;
+
+        public readonly Span<LogField> GetFields() => Fields.AsSpan<LogField>();
+    }
+
+    // Safe handle for managing FFI resources
+    internal sealed class ErrorHandle : SafeHandle
+    {
+        public ErrorHandle() : base(IntPtr.Zero, true) { }
+
+        public override bool IsInvalid => handle == IntPtr.Zero;
+
+        protected override bool ReleaseHandle()
+        {
+            if (!IsInvalid)
+            {
+                ddog_Error_drop(handle);
+            }
+            return true;
+        }
+
+        [DllImport(NativeMethods.DllPath)]
+        private static extern void ddog_Error_drop(IntPtr error);
+    }
+
+    // Enums
     public enum LogLevel
     {
         Debug = 0,
@@ -14,168 +105,239 @@ class Program
         Trace = 4
     }
 
-    // CharSlice struct to match Rust's CharSlice
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct CharSlice
+    // Native methods wrapper
+    internal static class NativeMethods
     {
-        internal IntPtr Ptr;     // Matches *const T
-        internal nuint Len;      // Matches usize
+        #if DEBUG
+            internal const string DllPath = "../../../../../../target/debug/libdata_pipeline_ffi.dylib";
+        #else
+            internal const string DllPath = "libdata_pipeline_ffi.dylib";
+        #endif
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        internal delegate void LogCallback(LogEvent logEvent);
+
+        [DllImport(DllPath, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern ErrorHandle ddog_logger_init(LogLevel level, LogCallback callback);
+
+        [DllImport(DllPath, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern ErrorHandle ddog_logger_set_max_log_level(LogLevel level);
+
+        [DllImport(DllPath, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void trigger_logs();
+
+        [DllImport(DllPath, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void trigger_logs_with_args();
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct LoggerError
+    // Main logger implementation
+    public sealed class DatadogLogger : ILogger, IDisposable
     {
-        internal CharSlice Message;
-    }
+        private static readonly Lazy<DatadogLogger> LazyInstance = new(() => new DatadogLogger());
+        private const string InitializationMessage = "Logger initialized with {0} level";
+        private const string LogLevelChangeMessage = "Log level set to {0}";
+        private bool _isDisposed;
+        private LogLevel _currentLevel = LogLevel.Debug;
 
-    private delegate void LogCallback(LogLevel level, CharSlice message);
+        private DatadogLogger() { }
 
-    const string dllPath = "../../../../../..//target/debug/libdata_pipeline_ffi.dylib";
+        public static DatadogLogger Instance => LazyInstance.Value;
 
-    [DllImport(dllPath)]
-    private static extern IntPtr ddog_ffi_logger_set_log_callback(LogCallback callback);
-
-    [DllImport(dllPath)]
-    private static extern void trigger_logs_with_message(LogLevel level, CharSlice message);
-
-    [DllImport(dllPath)]
-    private static extern void ddog_ffi_logger_set_max_log_level(LogLevel level);
-
-    [DllImport(dllPath)]
-    private static extern void ddog_Error_drop(IntPtr ddog_handle);
-
-
-    // Updated log handler to work with CharSlice
-    private static void LogHandler(LogLevel level, CharSlice slice)
-    {
-        unsafe
+        public void Initialize(LogLevel level = LogLevel.Debug)
         {
-            if (slice.Ptr == IntPtr.Zero)
-            {
-                Console.WriteLine("⚠️ Received null message pointer!");
+            ThrowIfDisposed();
+            using var result = NativeMethods.ddog_logger_init(level, LogHandler);
+            ThrowIfError(result);
+            _currentLevel = level;
+            Console.WriteLine(InitializationMessage, level);
+        }
+
+        public void SetMaxLogLevel(LogLevel level)
+        {
+            ThrowIfDisposed();
+            using var result = NativeMethods.ddog_logger_set_max_log_level(level);
+            ThrowIfError(result);
+            _currentLevel = level;
+            Console.WriteLine(LogLevelChangeMessage, level);
+        }
+
+        public bool IsEnabled(LogLevel level) => level >= _currentLevel;
+
+        public void Log(LogLevel level, string message)
+        {
+            if (!IsEnabled(level))
                 return;
-            }
 
-            // Use the actual length to decode the string
-            var message = Encoding.UTF8.GetString((byte*)slice.Ptr, (int)slice.Len);
+            WriteToConsole(level, message);
+        }
 
-            // Print log message with enum-based level
-            switch (level)
+        public void LogError(string message, Exception exception = null)
+        {
+            if (!IsEnabled(LogLevel.Error))
+                return;
+
+            WriteToConsole(LogLevel.Error, message);
+            if (exception != null)
             {
-                case LogLevel.Error:
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.Write("[ERROR] ");
-                    break;
-                case LogLevel.Warn:
-                    Console.ForegroundColor = ConsoleColor.Yellow;
-                    Console.Write("[WARN] ");
-                    break;
-                case LogLevel.Info:
-                    Console.ForegroundColor = ConsoleColor.White;
-                    Console.Write("[INFO] ");
-                    break;
-                case LogLevel.Debug:
-                    Console.ForegroundColor = ConsoleColor.Gray;
-                    Console.Write("[DEBUG] ");
-                    break;
-                case LogLevel.Trace:
-                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                    Console.Write("[TRACE] ");
-                    break;
+                WriteToConsole(LogLevel.Error, exception.ToString());
             }
-
-            Console.WriteLine(message);
-            Console.ResetColor();
-
         }
-    }
 
-    // Helper method to create CharSlice from string
-    private static unsafe CharSlice CreateCharSlice(string message)
-    {
-        byte[] utf8Bytes = Encoding.UTF8.GetBytes(message);
-        IntPtr ptr = Marshal.AllocHGlobal(utf8Bytes.Length);
-        Marshal.Copy(utf8Bytes, 0, ptr, utf8Bytes.Length);
+        public void LogWarning(string message) => Log(LogLevel.Warn, message);
+        public void LogInfo(string message) => Log(LogLevel.Info, message);
+        public void LogDebug(string message) => Log(LogLevel.Debug, message);
+        public void LogTrace(string message) => Log(LogLevel.Trace, message);
 
-        return new CharSlice
+        private void WriteToConsole(LogLevel level, string message)
         {
-            Ptr = ptr,
-            Len = (nuint)utf8Bytes.Length
-        };
-    }
-
-    // Helper method to trigger log with custom message
-    public static void TriggerCustomLog(LogLevel level, string message)
-    {
-        unsafe
-        {
-            var slice = CreateCharSlice(message);
-            trigger_logs_with_message(level, slice);
-        }
-    }
-
-    // Add a helper method for better usability
-    public static void SetMaxLogLevel(LogLevel level)
-    {
-        ddog_ffi_logger_set_max_log_level(level);
-    }
-
-    // Helper method to handle logger initialization
-    public static void InitializeLogger()
-    {
-        IntPtr errorPtr = ddog_ffi_logger_set_log_callback(LogHandler);
-        if (errorPtr != IntPtr.Zero)
-        {
+            var originalColor = Console.ForegroundColor;
             try
             {
-                var error = Marshal.PtrToStructure<LoggerError>(errorPtr);
-                var message = GetStringFromCharSlice(error.Message);
-                Console.WriteLine($"Failed to initialize logger: {message}");
+                Console.ForegroundColor = GetColorForLevel(level);
+                Console.Write($"[{level}] ");
+                Console.WriteLine(message);
             }
             finally
             {
-                ddog_Error_drop(errorPtr);
+                Console.ForegroundColor = originalColor;
             }
-            throw new Exception("Failed to initialize logger");
         }
-        Console.WriteLine("Logger initialized successfully");
 
-        // Set initial log level to Debug to see most logs
-        SetMaxLogLevel(LogLevel.Debug);
+        private static void LogHandler(LogEvent logEvent)
+        {
+            var logger = Instance;
+            var message = FormatLogFields(logEvent.GetFields());
+            logger.Log(logEvent.Level, message);
+        }
+
+        private static string FormatLogFields(Span<LogField> fields)
+        {
+            var builder = new StringBuilder();
+            foreach (var field in fields)
+            {
+                var (key, value) = field.Deconstruct();
+                builder.Append($"{key}: {value} ");
+            }
+            return builder.ToString().TrimEnd();
+        }
+
+        private static ConsoleColor GetColorForLevel(LogLevel level) => level switch
+        {
+            LogLevel.Error => ConsoleColor.Red,
+            LogLevel.Warn => ConsoleColor.Yellow,
+            LogLevel.Info => ConsoleColor.White,
+            LogLevel.Debug => ConsoleColor.Gray,
+            LogLevel.Trace => ConsoleColor.DarkGray,
+            _ => ConsoleColor.White
+        };
+
+        private void ThrowIfDisposed()
+        {
+            if (_isDisposed)
+            {
+                throw new ObjectDisposedException(nameof(DatadogLogger));
+            }
+        }
+
+        private static void ThrowIfError(ErrorHandle handle)
+        {
+            if (!handle.IsInvalid)
+            {
+                var error = Marshal.PtrToStructure<Error>(handle.DangerousGetHandle());
+                throw error.ToException();
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_isDisposed)
+                return;
+
+            _isDisposed = true;
+            GC.SuppressFinalize(this);
+        }
     }
 
-    // Helper method to convert CharSlice to string
-    private static unsafe string GetStringFromCharSlice(CharSlice slice)
+    // Example usage
+    class Program
     {
-        if (slice.Ptr == IntPtr.Zero)
+        static async Task Main()
         {
-            return string.Empty;
+            try
+            {
+                await RunLoggerDemo();
+            }
+            catch (Exception ex)
+            {
+                WriteError(ex);
+            }
         }
 
-        byte* ptr = (byte*)slice.Ptr;
-        int len = (int)slice.Len;
-        return Encoding.UTF8.GetString(ptr, len);
+        private static async Task RunLoggerDemo()
+        {
+            using var logger = DatadogLogger.Instance;
+            logger.Initialize(LogLevel.Debug);
+
+            await RunTestScenario("Testing built-in log messages:", () =>
+            {
+                logger.LogInfo("Starting built-in log test");
+                NativeMethods.trigger_logs();
+                return Task.CompletedTask;
+            });
+
+            await RunTestScenario("Testing logs with arguments:", () =>
+            {
+                logger.LogInfo("Starting argument log test");
+                NativeMethods.trigger_logs_with_args();
+                return Task.CompletedTask;
+            });
+
+            await RunTestScenario("Changing log level to Error:", () =>
+            {
+                logger.LogInfo("Changing to error level");
+                logger.SetMaxLogLevel(LogLevel.Error);
+                NativeMethods.trigger_logs();
+                return Task.CompletedTask;
+            });
+
+            await RunTestScenario("Changing log level back to Debug:", () =>
+            {
+                logger.LogInfo("Changing back to debug level");
+                logger.SetMaxLogLevel(LogLevel.Debug);
+                NativeMethods.trigger_logs();
+                return Task.CompletedTask;
+            });
+        }
+
+        private static async Task RunTestScenario(string description, Func<Task> action)
+        {
+            Console.WriteLine($"\n{description}");
+            await action();
+        }
+
+        private static void WriteError(Exception ex)
+        {
+            var previousColor = Console.ForegroundColor;
+            try
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"Error: {ex.Message}");
+            }
+            finally
+            {
+                Console.ForegroundColor = previousColor;
+            }
+        }
     }
 
-    static void Main()
+    public interface ILogger
     {
-        try
-        {
-            InitializeLogger();  // This will now set log level to Debug by default
-            Console.WriteLine("Logger initialized with Debug level");
-
-            // Example usage of custom logs
-            TriggerCustomLog(LogLevel.Error, "🔥 Custom error message!");   // Will show
-            TriggerCustomLog(LogLevel.Warn, "⚠️ Custom warning message!");  // Will show
-            TriggerCustomLog(LogLevel.Info, "ℹ️ Custom info message!");     // Will show
-            TriggerCustomLog(LogLevel.Debug, "🐛 Custom debug message!");   // Will show
-            TriggerCustomLog(LogLevel.Trace, "🔍 Custom trace message!");   // Won't show
-        }
-        catch (Exception ex)
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"Error: {ex.Message}");
-            Console.ResetColor();
-        }
+        void Log(LogLevel level, string message);
+        void LogError(string message, Exception exception = null);
+        void LogWarning(string message);
+        void LogInfo(string message);
+        void LogDebug(string message);
+        void LogTrace(string message);
+        bool IsEnabled(LogLevel level);
     }
 }
