@@ -50,3 +50,4 @@ symbolic-common = "12.8.0"
 symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"] }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
 tokio-util = "0.7.1"
+thiserror = "2"

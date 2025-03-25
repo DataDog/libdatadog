@@ -95,17 +95,9 @@ impl<'pprof> Replayer<'pprof> {
             .map(|label| {
                 Ok(api::Label {
                     key: profile_index.get_string(label.key)?,
-                    str: if label.str == 0 {
-                        None
-                    } else {
-                        Some(profile_index.get_string(label.str)?)
-                    },
+                    str: profile_index.get_string(label.str)?,
                     num: label.num,
-                    num_unit: if label.num_unit == 0 {
-                        None
-                    } else {
-                        Some(profile_index.get_string(label.num_unit)?)
-                    },
+                    num_unit: profile_index.get_string(label.num_unit)?,
                 })
             })
             .collect();
@@ -126,12 +118,12 @@ impl<'pprof> Replayer<'pprof> {
                 "local root span ids of zero do not make sense"
             );
 
-            let endpoint_value = match endpoint_label.str {
-                Some(v) => v,
-                None => anyhow::bail!("expected trace endpoint label value to have a string"),
-            };
+            anyhow::ensure!(
+                !endpoint_label.str.is_empty(),
+                "expected trace endpoint label value to have a non-empty string",
+            );
 
-            endpoint_info.replace((local_root_span_id, endpoint_value));
+            endpoint_info.replace((local_root_span_id, endpoint_label.str));
         }
 
         let timestamp = labels.iter().find_map(|label| {

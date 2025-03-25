@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use bolero::generator::TypeGenerator;
+use bolero::generator::{TypeGenerator, ValueGenerator};
+use core::mem::transmute;
+use std::cmp::Ordering;
 use std::collections::HashSet;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, TypeGenerator)]
@@ -38,31 +40,124 @@ impl<'a> From<&'a Function> for api::Function<'a> {
     }
 }
 
-#[derive(Clone, Debug, Default, Ord, PartialOrd, TypeGenerator)]
-pub struct Label {
-    pub key: Box<str>,
-
-    /// At most one of the following must be present
-    pub str: Option<Box<str>>,
-    pub num: i64,
-
-    /// Should only be present when num is present.
-    /// Specifies the units of num.
-    /// Use arbitrary string (for example, "requests") as a custom count unit.
-    /// If no unit is specified, consumer may apply heuristic to deduce the unit.
-    /// Consumers may also  interpret units like "bytes" and "kilobytes" as memory
-    /// units and units like "seconds" and "nanoseconds" as time units,
-    /// and apply appropriate unit conversions to these.
-    pub num_unit: Option<Box<str>>,
+/// Represents a label value. Note that the "zero" reprs of both variants
+/// should compare as equal, so Hash, PartialEq, etc. are not derived but are
+/// manually implemented using a helper struct.
+#[derive(Clone, Debug, TypeGenerator)]
+pub enum LabelValue {
+    Str(Box<str>),
+    Num { num: i64, num_unit: Box<str> },
 }
 
-impl<'a> From<&'a Label> for api::Label<'a> {
-    fn from(value: &'a Label) -> Self {
-        Self {
-            key: &value.key,
-            str: value.str.as_deref(),
-            num: value.num,
-            num_unit: value.num_unit.as_deref(),
+impl Default for LabelValue {
+    fn default() -> Self {
+        Self::Str(Box::from(""))
+    }
+}
+
+/// Private struct used for treating `LabelValue::Str("")` the same as
+/// `LabelValue::Num { num: 0, num_unit: "" }`.
+#[derive(Clone, Debug, Default, Hash, Eq, PartialEq, PartialOrd, Ord)]
+struct RawLabelValue<'a> {
+    str: &'a str,
+    num: i64,
+    num_unit: &'a str,
+}
+
+impl<'a> From<&'a LabelValue> for RawLabelValue<'a> {
+    fn from(label: &'a LabelValue) -> Self {
+        match label {
+            LabelValue::Str(str) => RawLabelValue {
+                str: str.as_ref(),
+                num: 0,
+                num_unit: "",
+            },
+            LabelValue::Num { num, num_unit } => RawLabelValue {
+                str: "",
+                num: *num,
+                num_unit: num_unit.as_ref(),
+            },
+        }
+    }
+}
+
+impl Eq for LabelValue {}
+
+impl core::hash::Hash for LabelValue {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        RawLabelValue::from(self).hash(state);
+    }
+}
+
+impl PartialEq for LabelValue {
+    fn eq(&self, other: &Self) -> bool {
+        RawLabelValue::from(self) == RawLabelValue::from(other)
+    }
+}
+
+impl PartialOrd for LabelValue {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for LabelValue {
+    fn cmp(&self, other: &Self) -> Ordering {
+        RawLabelValue::from(self).cmp(&RawLabelValue::from(other))
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, PartialOrd, Ord, TypeGenerator)]
+pub struct NormalizedLabel {
+    pub key: Box<str>,
+    pub value: LabelValue,
+}
+
+/// Wrapper which compares equal, hashes, etc. based only on the label key.
+#[repr(transparent)]
+pub struct LabelByKey(NormalizedLabel);
+
+impl PartialEq for LabelByKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.key == other.0.key
+    }
+}
+
+impl Eq for LabelByKey {}
+
+impl core::hash::Hash for LabelByKey {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.0.key.hash(state);
+    }
+}
+
+impl PartialOrd for LabelByKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for LabelByKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.key.cmp(&other.0.key)
+    }
+}
+
+impl<'a> From<&'a NormalizedLabel> for api::Label<'a> {
+    fn from(label: &'a NormalizedLabel) -> Self {
+        let key = &label.key;
+        match &label.value {
+            LabelValue::Str(str) => Self {
+                key,
+                str,
+                ..Self::default()
+            },
+            LabelValue::Num { num, num_unit } => Self {
+                key,
+                num: *num,
+                num_unit: num_unit.as_ref(),
+                ..Self::default()
+            },
         }
     }
 }
@@ -188,15 +283,14 @@ pub struct Sample {
 
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
-    pub labels: Vec<Label>,
+    pub labels: Vec<NormalizedLabel>,
 }
 
-#[cfg(test)]
 impl Sample {
-    /// Checks if the sample is well formed.  Useful in testing.
+    /// Checks if the sample is well-formed.  Useful in testing.
     pub fn is_well_formed(&self) -> bool {
         let labels_are_unique = {
-            let mut uniq = std::collections::HashSet::new();
+            let mut uniq = HashSet::new();
             self.labels.iter().map(|l| &l.key).all(|x| uniq.insert(x))
         };
         labels_are_unique
@@ -210,24 +304,6 @@ impl<'a> From<&'a Sample> for api::Sample<'a> {
             values: &value.values,
             labels: value.labels.iter().map(api::Label::from).collect(),
         }
-    }
-}
-
-/// PartialEq and Hash work on just the key to avoid getting duplicate
-/// label keys.
-impl PartialEq for Label {
-    fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
-    }
-}
-
-impl Eq for Label {}
-
-/// PartialEq and Hash work on just the key to avoid getting duplicate
-/// label keys.
-impl std::hash::Hash for Label {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.key.hash(state)
     }
 }
 
@@ -253,7 +329,7 @@ fn assert_sample_types_eq(
 fn assert_samples_eq(
     profile: &pprof::Profile,
     samples_with_timestamps: &[&Sample],
-    samples_without_timestamps: &HashMap<(&[Location], &[Label]), Vec<i64>>,
+    samples_without_timestamps: &HashMap<(&[Location], &[LabelByKey]), Vec<i64>>,
     endpoint_mappings: &FxIndexMap<u64, &String>,
 ) {
     assert_eq!(
@@ -309,7 +385,7 @@ fn assert_samples_eq(
         }
 
         // Recreate owned_labels from vector of pprof::Label
-        let mut owned_labels = Vec::new();
+        let mut owned_labels = Vec::with_capacity(sample.labels.len());
         for label in sample.labels.iter() {
             let key = profile.string_table_fetch_owned(label.key);
 
@@ -318,10 +394,15 @@ fn assert_samples_eq(
                 continue;
             } else if *key == *"trace endpoint" {
                 let actual_str = profile.string_table_fetch(label.str);
-                let prev_label: &Label = owned_labels
+                let prev_label: &NormalizedLabel = owned_labels
                     .last()
                     .expect("Previous label to exist for endpoint label");
-                let num = prev_label.num as u64;
+                let num = match &prev_label.value {
+                    LabelValue::Str(str) => {
+                        panic!("Trace endpoint label should be a numeric label, given string {str}")
+                    }
+                    LabelValue::Num { num, .. } => *num as u64,
+                };
                 let expected_str = endpoint_mappings
                     .get(&num)
                     .expect("Endpoint mapping to exist");
@@ -329,36 +410,36 @@ fn assert_samples_eq(
                 continue;
             }
 
-            if label.str != 0 {
-                let str = Box::from(profile.string_table_fetch(label.str).as_str());
-                owned_labels.push(Label {
-                    key,
-                    str: Some(str),
-                    num: 0,
-                    num_unit: None,
-                });
-            } else {
+            let normalized_label = if label.num != 0 || label.num_unit != 0 {
                 let num = label.num;
-                let num_unit = if label.num_unit != 0 {
-                    Some(profile.string_table_fetch_owned(label.num_unit))
-                } else {
-                    None
-                };
-                owned_labels.push(Label {
-                    key,
-                    str: None,
-                    num,
-                    num_unit,
-                });
-            }
+                let num_unit = profile.string_table_fetch_owned(label.num_unit);
+                let value = LabelValue::Num { num, num_unit };
+                NormalizedLabel { key, value }
+            } else {
+                let str = Box::from(profile.string_table_fetch(label.str).as_ref());
+                let value = LabelValue::Str(str);
+                NormalizedLabel { key, value }
+            };
+            owned_labels.push(normalized_label);
         }
 
         if let Some(expected_sample) = expected_timestamped_samples.next() {
             assert_eq!(owned_locations, expected_sample.locations);
             assert_eq!(sample.values, expected_sample.values);
-            assert_eq!(owned_labels, expected_sample.labels);
+
+            // Labels get ordered by LabelId which is not quite the same as
+            // insertion order, though it's often the same.
+            assert_eq!(owned_labels.len(), expected_sample.labels.len());
+            for label in expected_sample.labels.iter() {
+                assert!(
+                    owned_labels.contains(label),
+                    "{label:?} is not contained in {owned_labels:?}"
+                );
+            }
         } else {
-            let key: (&[Location], &[Label]) = (&owned_locations, &owned_labels);
+            let labels =
+                unsafe { transmute::<&[NormalizedLabel], &[LabelByKey]>(owned_labels.as_slice()) };
+            let key: (&[Location], &[LabelByKey]) = (&owned_locations, labels);
             let expected_values = samples_without_timestamps
                 .get(&key)
                 .expect("Value not found for an aggregated sample");
@@ -373,23 +454,29 @@ fn fuzz_add_sample<'a>(
     expected_sample_types: &[owned_types::ValueType],
     profile: &mut Profile,
     samples_with_timestamps: &mut Vec<&'a Sample>,
-    samples_without_timestamps: &mut HashMap<(&'a [Location], &'a [Label]), Vec<i64>>,
+    samples_without_timestamps: &mut HashMap<(&'a [Location], &'a [LabelByKey]), Vec<i64>>,
 ) {
     let r = profile.add_sample(sample.into(), *timestamp);
     if expected_sample_types.len() == sample.values.len() && sample.is_well_formed() {
         assert!(r.is_ok());
         if timestamp.is_some() {
             samples_with_timestamps.push(sample);
-        } else if let Some(existing_values) =
-            samples_without_timestamps.get_mut(&(&sample.locations, &sample.labels))
+        } else if let Some(existing_values) = samples_without_timestamps
+            .get_mut(&(&sample.locations, unsafe {
+                transmute::<&[NormalizedLabel], &[LabelByKey]>(&sample.labels)
+            }))
         {
             existing_values
                 .iter_mut()
                 .zip(sample.values.iter())
                 .for_each(|(a, b)| *a = a.saturating_add(*b));
         } else {
-            samples_without_timestamps
-                .insert((&sample.locations, &sample.labels), sample.values.clone());
+            samples_without_timestamps.insert(
+                (&sample.locations, unsafe {
+                    transmute::<&[NormalizedLabel], &[LabelByKey]>(&sample.labels)
+                }),
+                sample.values.clone(),
+            );
         }
     } else {
         assert!(r.is_err());
@@ -404,23 +491,23 @@ fn fuzz_failure_001() {
         locations: vec![],
         values: vec![],
         labels: vec![
-            Label {
+            NormalizedLabel {
                 key: Box::from(""),
-                str: Some(Box::from("")),
-                num: 0,
-                num_unit: Some(Box::from("")),
+                value: LabelValue::Str(Box::from("")),
             },
-            Label {
+            NormalizedLabel {
                 key: Box::from("local root span id"),
-                str: None,
-                num: 281474976710656,
-                num_unit: None,
+                value: LabelValue::Num {
+                    num: 281474976710656,
+                    num_unit: Box::from(""),
+                },
             },
         ],
     };
     let mut expected_profile = Profile::new(&sample_types, None);
     let mut samples_with_timestamps = Vec::new();
-    let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> = HashMap::new();
+    let mut samples_without_timestamps: HashMap<(&[Location], &[LabelByKey]), Vec<i64>> =
+        HashMap::new();
 
     let timestamp = None;
     fuzz_add_sample(
@@ -458,7 +545,7 @@ fn test_fuzz_add_sample() {
                 .collect();
             let mut expected_profile = Profile::new(&sample_types, None);
             let mut samples_with_timestamps = Vec::new();
-            let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
+            let mut samples_without_timestamps: HashMap<(&[Location], &[LabelByKey]), Vec<i64>> =
                 HashMap::new();
             for (timestamp, sample) in samples {
                 fuzz_add_sample(
@@ -496,20 +583,29 @@ fn fuzz_add_sample_with_fixed_sample_length() {
             let timestamps = Option::<Timestamp>::produce();
             let locations = Vec::<Location>::produce();
             let values = Vec::<i64>::produce().with().len(sample_len);
-            // Generate labels with unique keys
-            let labels = HashSet::<Label>::produce();
 
-            let samples =
-                Vec::<(Option<Timestamp>, Vec<Location>, Vec<i64>, HashSet<Label>)>::produce()
+            // Generate labels with unique keys. We do this by generating a
+            // `HashMap<K, V>` and then map it into a `Vec<NormalizedLabel>`.
+            let labels =
+                HashMap::<Box<str>, LabelValue>::produce()
                     .with()
-                    .values((timestamps, locations, values, labels));
+                    .map_gen(|mut hashmap| {
+                        hashmap
+                            .drain()
+                            .map(|(key, value)| NormalizedLabel { key, value })
+                            .collect::<Vec<_>>()
+                    });
+
+            let samples = Vec::produce()
+                .with()
+                .values((timestamps, locations, values, labels));
             (sample_types, samples)
         })
         .for_each(|(sample_types, samples)| {
             let api_sample_types: Vec<_> = sample_types.iter().map(api::ValueType::from).collect();
             let mut profile = Profile::new(&api_sample_types, None);
             let mut samples_with_timestamps = Vec::new();
-            let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
+            let mut samples_without_timestamps: HashMap<(&[Location], &[LabelByKey]), Vec<i64>> =
                 HashMap::new();
 
             let samples: Vec<(&Option<Timestamp>, Sample)> = samples
@@ -520,7 +616,7 @@ fn fuzz_add_sample_with_fixed_sample_length() {
                         Sample {
                             locations: locations.clone(),
                             values: values.clone(),
-                            labels: labels.clone().into_iter().collect::<Vec<Label>>(),
+                            labels: labels.clone(),
                         },
                     )
                 })
@@ -610,7 +706,7 @@ fn fuzz_api_function_calls() {
             let api_sample_types: Vec<_> = sample_types.iter().map(api::ValueType::from).collect();
             let mut profile = Profile::new(&api_sample_types, None);
             let mut samples_with_timestamps: Vec<&Sample> = Vec::new();
-            let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
+            let mut samples_without_timestamps: HashMap<(&[Location], &[LabelByKey]), Vec<i64>> =
                 HashMap::new();
             let mut endpoint_mappings: FxIndexMap<u64, &String> = FxIndexMap::default();
 

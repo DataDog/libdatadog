@@ -170,15 +170,7 @@ impl UpscalingRules {
             // get bylabel rules first (if any)
             let mut group_of_rules = labels
                 .iter()
-                .filter_map(|label| {
-                    self.get(&(
-                        label.get_key(),
-                        match label.get_value() {
-                            LabelValue::Str(str) => *str,
-                            LabelValue::Num { .. } => StringId::ZERO,
-                        },
-                    ))
-                })
+                .filter_map(|label| self.get(&(label.get_key(), label.get_str())))
                 .collect::<Vec<&Vec<UpscalingRule>>>();
 
             // get byvalue rules if any

@@ -122,7 +122,7 @@ impl Drop for TrimmedObservation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bolero::TypeGenerator;
+    use bolero::generator::*;
 
     #[test]
     fn as_mut_test() {
