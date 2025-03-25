@@ -1868,7 +1868,7 @@ dependencies = [
  "rmp",
  "rmp-serde",
  "rustls 0.23.18",
- "rustls-native-certs 0.7.3",
+ "rustls-native-certs 0.8.0",
  "serde",
  "static_assertions",
  "tokio",
