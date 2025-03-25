@@ -20,7 +20,7 @@ use hyper::Request as HyperRequest;
 pub fn new_client_periodic() -> HttpClient {
     hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
         .pool_max_idle_per_host(0)
-        .build(Connector::new())
+        .build(Connector::default())
 }
 
 /// Create a new default configuration hyper client.
@@ -28,7 +28,7 @@ pub fn new_client_periodic() -> HttpClient {
 /// It will keep connections open for a longer time and reuse them.
 pub fn new_default_client() -> HttpClient {
     hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
-        .build(Connector::new())
+        .build(Connector::default())
 }
 
 pub type HttpResponse = hyper::Response<Body>;
