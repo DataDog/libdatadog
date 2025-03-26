@@ -11,7 +11,6 @@ use std::sync::OnceLock;
 static REDACTED_NAMES: OnceLock<HashSet<&'static [u8]>> = OnceLock::new();
 fn get_redacted_names() -> &'static HashSet<&'static [u8]> {
     REDACTED_NAMES.get_or_init(|| {
-        REDACTED_NAMES_INITIALIZED.store(true, Ordering::Relaxed);
         HashSet::from([
             b"2fa" as &[u8],
             b"accesstoken",
