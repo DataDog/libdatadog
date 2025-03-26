@@ -1713,6 +1713,7 @@ dependencies = [
 name = "datadog-sidecar-ffi"
 version = "0.0.1"
 dependencies = [
+ "datadog-crashtracker-ffi",
  "datadog-ipc",
  "datadog-live-debugger",
  "datadog-remote-config",
@@ -1868,7 +1869,7 @@ dependencies = [
  "rmp",
  "rmp-serde",
  "rustls 0.23.18",
- "rustls-native-certs 0.7.3",
+ "rustls-native-certs 0.8.0",
  "serde",
  "static_assertions",
  "tokio",
