@@ -1,9 +1,21 @@
 ﻿using System;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Linq;
+using System.Globalization;
+using System.Collections.Generic;
 
 namespace DatadogLogger
 {
+    // Add this near the top of the file, inside the namespace but outside any class
+    internal static class SpanExtensions 
+    {
+        public static T[] ToArray<T>(this Span<T> span)
+        {
+            return span.ToArray();
+        }
+    }
+
     // Core FFI structures that match Rust definitions
     [StructLayout(LayoutKind.Sequential)]
     internal readonly struct FFIVec
@@ -70,6 +82,7 @@ namespace DatadogLogger
     internal readonly struct LogEvent
     {
         internal readonly LogLevel Level;
+        internal readonly CharSlice Message;
         internal readonly FFIVec Fields;
 
         public readonly Span<LogField> GetFields() => Fields.AsSpan<LogField>();
@@ -163,30 +176,42 @@ namespace DatadogLogger
 
         public bool IsEnabled(LogLevel level) => level >= _currentLevel;
 
-        public void Log(LogLevel level, string message)
+        public void Log(LogLevel level, string message, params (string Key, object Value)[] fields)
         {
             if (!IsEnabled(level))
                 return;
 
-            WriteToConsole(level, message);
+            var structuredMessage = FormatStructuredMessage(message, fields);
+            WriteToConsole(level, structuredMessage);
         }
 
-        public void LogError(string message, Exception exception = null)
+        public void LogError(string message, Exception exception = null, params (string Key, object Value)[] fields)
         {
             if (!IsEnabled(LogLevel.Error))
                 return;
 
-            WriteToConsole(LogLevel.Error, message);
+            var allFields = new List<(string Key, object Value)>(fields);
             if (exception != null)
             {
-                WriteToConsole(LogLevel.Error, exception.ToString());
+                allFields.Add(("exception_type", exception.GetType().Name));
+                allFields.Add(("exception_message", exception.Message));
+                allFields.Add(("stack_trace", exception.StackTrace));
             }
+
+            Log(LogLevel.Error, message, allFields.ToArray());
         }
 
-        public void LogWarning(string message) => Log(LogLevel.Warn, message);
-        public void LogInfo(string message) => Log(LogLevel.Info, message);
-        public void LogDebug(string message) => Log(LogLevel.Debug, message);
-        public void LogTrace(string message) => Log(LogLevel.Trace, message);
+        public void LogWarning(string message, params (string Key, object Value)[] fields) => 
+            Log(LogLevel.Warn, message, fields);
+
+        public void LogInfo(string message, params (string Key, object Value)[] fields) => 
+            Log(LogLevel.Info, message, fields);
+
+        public void LogDebug(string message, params (string Key, object Value)[] fields) => 
+            Log(LogLevel.Debug, message, fields);
+
+        public void LogTrace(string message, params (string Key, object Value)[] fields) => 
+            Log(LogLevel.Trace, message, fields);
 
         private void WriteToConsole(LogLevel level, string message)
         {
@@ -203,22 +228,44 @@ namespace DatadogLogger
             }
         }
 
+        private static string FormatStructuredMessage(string message, (string Key, object Value)[] fields)
+        {
+            var builder = new StringBuilder();
+            builder.Append(message);
+
+            if (fields.Length > 0)
+            {
+                builder.Append(" |");
+                foreach (var (key, value) in fields)
+                {
+                    builder.Append($" {key}={FormatValue(value)}");
+                }
+            }
+
+            return builder.ToString();
+        }
+
+        private static string FormatValue(object value)
+        {
+            return value switch
+            {
+                null => "null",
+                string str => $"\"{str}\"",
+                DateTime dt => dt.ToString("O"),
+                IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
+                _ => value.ToString()
+            };
+        }
+
         private static void LogHandler(LogEvent logEvent)
         {
             var logger = Instance;
-            var message = FormatLogFields(logEvent.GetFields());
-            logger.Log(logEvent.Level, message);
-        }
+            var fields = logEvent.GetFields()
+                .ToArray()
+                .Select(f => (f.Key.ToString(), (object)f.Value.ToString()))
+                .ToArray();
 
-        private static string FormatLogFields(Span<LogField> fields)
-        {
-            var builder = new StringBuilder();
-            foreach (var field in fields)
-            {
-                var (key, value) = field.Deconstruct();
-                builder.Append($"{key}: {value} ");
-            }
-            return builder.ToString().TrimEnd();
+            logger.Log(logEvent.Level, logEvent.Message.ToString(), fields);
         }
 
         private static ConsoleColor GetColorForLevel(LogLevel level) => level switch
@@ -278,6 +325,32 @@ namespace DatadogLogger
             using var logger = DatadogLogger.Instance;
             logger.Initialize(LogLevel.Debug);
 
+            await RunTestScenario("Testing structured logging:", () =>
+            {
+                logger.LogInfo("User logged in", 
+                    ("user_id", 123),
+                    ("username", "john_doe"),
+                    ("login_time", DateTime.UtcNow));
+
+                logger.LogWarning("High CPU usage detected",
+                    ("cpu_percent", 85.5),
+                    ("process_id", 1234),
+                    ("thread_count", 32));
+
+                try
+                {
+                    throw new InvalidOperationException("Something went wrong");
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError("Operation failed", ex,
+                        ("operation", "data_processing"),
+                        ("attempt", 3));
+                }
+
+                return Task.CompletedTask;
+            });
+
             await RunTestScenario("Testing built-in log messages:", () =>
             {
                 logger.LogInfo("Starting built-in log test");
@@ -332,12 +405,12 @@ namespace DatadogLogger
 
     public interface ILogger
     {
-        void Log(LogLevel level, string message);
-        void LogError(string message, Exception exception = null);
-        void LogWarning(string message);
-        void LogInfo(string message);
-        void LogDebug(string message);
-        void LogTrace(string message);
+        void Log(LogLevel level, string message, params (string Key, object Value)[] fields);
+        void LogError(string message, Exception exception = null, params (string Key, object Value)[] fields);
+        void LogWarning(string message, params (string Key, object Value)[] fields);
+        void LogInfo(string message, params (string Key, object Value)[] fields);
+        void LogDebug(string message, params (string Key, object Value)[] fields);
+        void LogTrace(string message, params (string Key, object Value)[] fields);
         bool IsEnabled(LogLevel level);
     }
 }

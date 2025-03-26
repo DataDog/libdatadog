@@ -28,10 +28,11 @@ pub struct LogField<'a> {
     pub value: CharSlice<'a>,
 }
 
-// Update log event structure to use LogField
+// Update log event structure to include message
 #[repr(C)]
 pub struct LogEvent<'a> {
     pub level: LogLevel,
+    pub message: CharSlice<'a>,
     pub fields: ddcommon_ffi::Vec<LogField<'a>>,
 }
 
@@ -56,12 +57,17 @@ where
 
         #[derive(Default)]
         struct Visitor {
+            message: Option<String>,
             fields: Vec<(String, String)>,
         }
 
         impl tracing::field::Visit for Visitor {
             fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-                self.fields.push((field.name().to_string(), format!("{value:?}")));
+                if field.name() == "message" {
+                    self.message = Some(format!("{value:?}"));
+                } else {
+                    self.fields.push((field.name().to_string(), format!("{value:?}")));
+                }
             }
         }
 
@@ -76,8 +82,10 @@ where
             })
             .collect();
 
+        let message = visitor.message.unwrap_or_default();
         let log_event = LogEvent {
             level,
+            message: CharSlice::from(message.as_str()),
             fields: ddcommon_ffi::Vec::from_std(fields),
         };
 
