@@ -306,7 +306,7 @@ mod tests {
     async fn test_run() {
         let server = MockServer::start_async().await;
 
-        let mock = server
+        let mut mock = server
             .mock_async(|when, then| {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
@@ -332,7 +332,10 @@ mod tests {
         tokio::time::sleep(BUCKETS_DURATION + Duration::from_secs(1)).await;
         // Resume time to sleep while the stats are being sent
         tokio::time::resume();
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            poll_for_mock_hit(&mut mock, 10, 100, 1, true).await,
+            "Expected max retry attempts"
+        );
 
         mock.assert_async().await;
     }
@@ -342,7 +345,7 @@ mod tests {
     async fn test_cancellation_token() {
         let server = MockServer::start_async().await;
 
-        let mock = server
+        let mut mock = server
             .mock_async(|when, then| {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
@@ -368,8 +371,10 @@ mod tests {
         });
         // Cancel token to trigger force flush
         cancellation_token.cancel();
-        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        mock.assert_async().await;
+        assert!(
+            poll_for_mock_hit(&mut mock, 10, 100, 1, true).await,
+            "Expected max retry attempts"
+        );
     }
 }
