@@ -146,7 +146,15 @@ mod https {
 
         let mut roots = rustls::RootCertStore::empty();
 
-        for cert in rustls_native_certs::load_native_certs()? {
+        let cert_result = rustls_native_certs::load_native_certs();
+        if cert_result.certs.is_empty() {
+            if let Some(err) = cert_result.errors.into_iter().next() {
+                return Err(err.into());
+            }
+        }
+        // TODO(paullgdfc): log errors even if there are valid certs, instead of ignoring them
+
+        for cert in cert_result.certs {
             //TODO: log when invalid cert is loaded
             roots.add(cert).ok();
         }
