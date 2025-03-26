@@ -133,8 +133,7 @@ pub fn setup_daemon_process(listener: OwnedHandle, spawn_cfg: &mut SpawnWorker) 
     Ok(())
 }
 
-#[no_mangle]
-pub extern "C" fn ddog_setup_crashtracking(
+pub fn ddog_setup_crashtracking(
     endpoint: Option<&Endpoint>,
     metadata: Metadata,
 ) -> bool {
