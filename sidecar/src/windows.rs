@@ -133,10 +133,7 @@ pub fn setup_daemon_process(listener: OwnedHandle, spawn_cfg: &mut SpawnWorker) 
     Ok(())
 }
 
-pub fn ddog_setup_crashtracking(
-    endpoint: Option<&Endpoint>,
-    metadata: Metadata,
-) -> bool {
+pub fn ddog_setup_crashtracking(endpoint: Option<&Endpoint>, metadata: Metadata) -> bool {
     // Ensure unique process names - we spawn one sidecar per console session id (see
     // setup/windows.rs for the reasoning)
     match write_crashtracking_trampoline(&format!(
