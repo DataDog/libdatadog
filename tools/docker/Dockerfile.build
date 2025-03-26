@@ -4,18 +4,18 @@ ARG CARGO_NET_RETRY="2"
 ARG BUILDER_IMAGE=debian_builder
 
 ### Debian builder
-FROM rust:1-slim-buster as debian_builder
+FROM rust:1-slim-buster AS debian_builder
 ENV CARGO_HOME="/root/.cargo"
 WORKDIR /build
 RUN cargo install cbindgen; mv /root/.cargo/bin/cbindgen /usr/bin/; rm -rf /root/.cargo
 
 ### Debian buildplatform builder
-FROM --platform=$BUILDPLATFORM rust:1-slim-buster as debian_builder_platform_native
+FROM --platform=$BUILDPLATFORM rust:1-slim-buster AS debian_builder_platform_native
 ENV CARGO_HOME="/root/.cargo"
 WORKDIR /build
 
 ### Alpine builder
-FROM ${ALPINE_BASE_IMAGE} as alpine_base
+FROM ${ALPINE_BASE_IMAGE} AS alpine_base
 ENV CARGO_HOME="/root/.cargo"
 WORKDIR /build
 
@@ -43,20 +43,20 @@ SHELL ["/bin/bash", "-c"]
 # Also, it doesn't understand x86_64-alpine-linux-musl like the OS's cargo.
 #RUN rustup-init -y --no-modify-path --default-toolchain stable
 
-FROM alpine_base as alpine_aws_cli
+FROM alpine_base AS alpine_aws_cli
 RUN apk add --no-cache aws-cli \
   && rm -rf /var/cache/apk/*
 
 RUN aws --version   # Just to make sure its installed alright
 
-FROM alpine_base as alpine_cbindgen
+FROM alpine_base AS alpine_cbindgen
 ENV PATH="/root/.cargo/bin:$PATH"
 ARG CARGO_BUILD_INCREMENTAL
 ARG CARGO_NET_RETRY
 ENV CARGO_NET_RETRY="${CARGO_NET_RETRY}"
 RUN cargo install cbindgen --version "^0.26" && cargo install bindgen-cli --locked && rm -rf /root/.cargo/registry /root/.cargo/git
 
-FROM alpine_aws_cli as alpine_builder
+FROM alpine_aws_cli AS alpine_builder
 COPY --from=alpine_cbindgen /root/.cargo/bin/cbindgen /usr/local/bin/cbindgen
 COPY --from=alpine_cbindgen /root/.cargo/bin/bindgen /usr/local/bin/bindgen
 
@@ -146,7 +146,7 @@ RUN echo \
 RUN cargo fetch --locked
 
 # extract cargo cache
-FROM --platform=$BUILDPLATFORM scratch as ffi_build_platform_agnostic_cache
+FROM --platform=$BUILDPLATFORM scratch AS ffi_build_platform_agnostic_cache
 COPY --from=ffi_build_platform_agnostic_cache_build /root/.cargo /root/.cargo
 COPY --from=ffi_build_platform_agnostic_cache_build /build /build
 
@@ -163,6 +163,6 @@ RUN cargo build --release --lib --workspace --exclude builder
 COPY ./ ./
 RUN cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker,datadog-library-config-ffi --release -- --out /build/output
 
-FROM scratch as ffi_build_output
+FROM scratch AS ffi_build_output
 
 COPY --from=ffi_build /build/output/ ./
