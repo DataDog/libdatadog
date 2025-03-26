@@ -1,14 +1,12 @@
-﻿using System;
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Text;
-using System.Linq;
-using System.Globalization;
-using System.Collections.Generic;
+using Serilog;
+using Serilog.Events;
 
-namespace DatadogLogger
+namespace Console
 {
     // Add this near the top of the file, inside the namespace but outside any class
-    internal static class SpanExtensions 
+    internal static class SpanExtensions
     {
         public static T[] ToArray<T>(this Span<T> span)
         {
@@ -147,10 +145,11 @@ namespace DatadogLogger
     public sealed class DatadogLogger : ILogger, IDisposable
     {
         private static readonly Lazy<DatadogLogger> LazyInstance = new(() => new DatadogLogger());
-        private const string InitializationMessage = "Logger initialized with {0} level";
-        private const string LogLevelChangeMessage = "Log level set to {0}";
+        private const string InitializationMessage = "Logger initialized with {LogLevel} level";
+        private const string LogLevelChangeMessage = "Log level set to {LogLevel}";
         private bool _isDisposed;
         private LogLevel _currentLevel = LogLevel.Debug;
+        private Serilog.ILogger _logger;
 
         private DatadogLogger() { }
 
@@ -159,10 +158,17 @@ namespace DatadogLogger
         public void Initialize(LogLevel level = LogLevel.Debug)
         {
             ThrowIfDisposed();
+
+            // Configure Serilog
+            _logger = new LoggerConfiguration()
+                .MinimumLevel.Is(ToSerilogLevel(level))
+                .WriteTo.Console(
+                    outputTemplate: "[{Level:u3}] {Message:lj}{NewLine}{Properties}{NewLine}{Exception}")
+                .CreateLogger();
+
             using var result = NativeMethods.ddog_logger_init(level, LogHandler);
             ThrowIfError(result);
             _currentLevel = level;
-            Console.WriteLine(InitializationMessage, level);
         }
 
         public void SetMaxLogLevel(LogLevel level)
@@ -171,7 +177,13 @@ namespace DatadogLogger
             using var result = NativeMethods.ddog_logger_set_max_log_level(level);
             ThrowIfError(result);
             _currentLevel = level;
-            Console.WriteLine(LogLevelChangeMessage, level);
+
+            // Reconfigure Serilog with new level
+            _logger = new LoggerConfiguration()
+                .MinimumLevel.Is(ToSerilogLevel(level))
+                .WriteTo.Console(
+                    outputTemplate: "[{Level:u3}] {Message:lj}{NewLine}{Properties}{NewLine}{Exception}")
+                .CreateLogger();
         }
 
         public bool IsEnabled(LogLevel level) => level >= _currentLevel;
@@ -181,8 +193,13 @@ namespace DatadogLogger
             if (!IsEnabled(level))
                 return;
 
-            var structuredMessage = FormatStructuredMessage(message, fields);
-            WriteToConsole(level, structuredMessage);
+            var serilogLevel = ToSerilogLevel(level);
+
+            // Create a template with named properties
+            var propertyValues = fields.Select(f => f.Value).ToArray();
+            var template = CreateTemplateWithProperties(message, fields);
+
+            _logger.Write(serilogLevel, template, propertyValues);
         }
 
         public void LogError(string message, Exception exception = null, params (string Key, object Value)[] fields)
@@ -190,92 +207,33 @@ namespace DatadogLogger
             if (!IsEnabled(LogLevel.Error))
                 return;
 
-            var allFields = new List<(string Key, object Value)>(fields);
-            if (exception != null)
-            {
-                allFields.Add(("exception_type", exception.GetType().Name));
-                allFields.Add(("exception_message", exception.Message));
-                allFields.Add(("stack_trace", exception.StackTrace));
-            }
+            // Create a template with named properties
+            var propertyValues = fields.Select(f => f.Value).ToArray();
+            var template = CreateTemplateWithProperties(message, fields);
 
-            Log(LogLevel.Error, message, allFields.ToArray());
+            _logger.Error(exception, template, propertyValues);
         }
 
-        public void LogWarning(string message, params (string Key, object Value)[] fields) => 
+        public void LogWarning(string message, params (string Key, object Value)[] fields) =>
             Log(LogLevel.Warn, message, fields);
 
-        public void LogInfo(string message, params (string Key, object Value)[] fields) => 
+        public void LogInfo(string message, params (string Key, object Value)[] fields) =>
             Log(LogLevel.Info, message, fields);
 
-        public void LogDebug(string message, params (string Key, object Value)[] fields) => 
+        public void LogDebug(string message, params (string Key, object Value)[] fields) =>
             Log(LogLevel.Debug, message, fields);
 
-        public void LogTrace(string message, params (string Key, object Value)[] fields) => 
+        public void LogTrace(string message, params (string Key, object Value)[] fields) =>
             Log(LogLevel.Trace, message, fields);
 
-        private void WriteToConsole(LogLevel level, string message)
+        private static LogEventLevel ToSerilogLevel(LogLevel level) => level switch
         {
-            var originalColor = Console.ForegroundColor;
-            try
-            {
-                Console.ForegroundColor = GetColorForLevel(level);
-                Console.Write($"[{level}] ");
-                Console.WriteLine(message);
-            }
-            finally
-            {
-                Console.ForegroundColor = originalColor;
-            }
-        }
-
-        private static string FormatStructuredMessage(string message, (string Key, object Value)[] fields)
-        {
-            var builder = new StringBuilder();
-            builder.Append(message);
-
-            if (fields.Length > 0)
-            {
-                builder.Append(" |");
-                foreach (var (key, value) in fields)
-                {
-                    builder.Append($" {key}={FormatValue(value)}");
-                }
-            }
-
-            return builder.ToString();
-        }
-
-        private static string FormatValue(object value)
-        {
-            return value switch
-            {
-                null => "null",
-                string str => $"\"{str}\"",
-                DateTime dt => dt.ToString("O"),
-                IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
-                _ => value.ToString()
-            };
-        }
-
-        private static void LogHandler(LogEvent logEvent)
-        {
-            var logger = Instance;
-            var fields = logEvent.GetFields()
-                .ToArray()
-                .Select(f => (f.Key.ToString(), (object)f.Value.ToString()))
-                .ToArray();
-
-            logger.Log(logEvent.Level, logEvent.Message.ToString(), fields);
-        }
-
-        private static ConsoleColor GetColorForLevel(LogLevel level) => level switch
-        {
-            LogLevel.Error => ConsoleColor.Red,
-            LogLevel.Warn => ConsoleColor.Yellow,
-            LogLevel.Info => ConsoleColor.White,
-            LogLevel.Debug => ConsoleColor.Gray,
-            LogLevel.Trace => ConsoleColor.DarkGray,
-            _ => ConsoleColor.White
+            LogLevel.Error => LogEventLevel.Error,
+            LogLevel.Warn => LogEventLevel.Warning,
+            LogLevel.Info => LogEventLevel.Information,
+            LogLevel.Debug => LogEventLevel.Debug,
+            LogLevel.Trace => LogEventLevel.Verbose,
+            _ => LogEventLevel.Information
         };
 
         private void ThrowIfDisposed()
@@ -295,11 +253,33 @@ namespace DatadogLogger
             }
         }
 
+        private static void LogHandler(LogEvent logEvent)
+        {
+            var logger = Instance;
+            var fields = logEvent.GetFields()
+                .ToArray()
+                .Select(f => (f.Key.ToString(), (object)f.Value.ToString()))
+                .ToArray();
+
+            logger.Log(logEvent.Level, logEvent.Message.ToString(), fields);
+        }
+
+        // Helper method to create message template with properties
+        private static string CreateTemplateWithProperties(string message, (string Key, object Value)[] fields)
+        {
+            if (fields.Length == 0)
+                return message;
+
+            var properties = string.Join(" ", fields.Select(f => $"{f.Key}={{{f.Key}}}"));
+            return $"{message} {properties}";
+        }
+
         public void Dispose()
         {
             if (_isDisposed)
                 return;
 
+            (_logger as IDisposable)?.Dispose();
             _isDisposed = true;
             GC.SuppressFinalize(this);
         }
@@ -310,46 +290,13 @@ namespace DatadogLogger
     {
         static async Task Main()
         {
-            try
-            {
-                await RunLoggerDemo();
-            }
-            catch (Exception ex)
-            {
-                WriteError(ex);
-            }
+            await RunLoggerDemo();
         }
 
         private static async Task RunLoggerDemo()
         {
             using var logger = DatadogLogger.Instance;
             logger.Initialize(LogLevel.Debug);
-
-            await RunTestScenario("Testing structured logging:", () =>
-            {
-                logger.LogInfo("User logged in", 
-                    ("user_id", 123),
-                    ("username", "john_doe"),
-                    ("login_time", DateTime.UtcNow));
-
-                logger.LogWarning("High CPU usage detected",
-                    ("cpu_percent", 85.5),
-                    ("process_id", 1234),
-                    ("thread_count", 32));
-
-                try
-                {
-                    throw new InvalidOperationException("Something went wrong");
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError("Operation failed", ex,
-                        ("operation", "data_processing"),
-                        ("attempt", 3));
-                }
-
-                return Task.CompletedTask;
-            });
 
             await RunTestScenario("Testing built-in log messages:", () =>
             {
@@ -384,22 +331,8 @@ namespace DatadogLogger
 
         private static async Task RunTestScenario(string description, Func<Task> action)
         {
-            Console.WriteLine($"\n{description}");
+            System.Console.WriteLine($"\n{description}");
             await action();
-        }
-
-        private static void WriteError(Exception ex)
-        {
-            var previousColor = Console.ForegroundColor;
-            try
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"Error: {ex.Message}");
-            }
-            finally
-            {
-                Console.ForegroundColor = previousColor;
-            }
         }
     }
 
