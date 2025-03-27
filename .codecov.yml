@@ -39,10 +39,6 @@ component_management:
       name: ddtelemetry-ffi  # this is a display name, and can be changed freely
       paths:
         - ddtelemetry-ffi
-    - component_id: dogstatsd  # this is an identifier that should not be changed
-      name: dogstatsd  # this is a display name, and can be changed freely
-      paths:
-        - dogstatsd
     - component_id: dogstatsd-client  # this is an identifier that should not be changed
       name: dogstatsd-client  # this is a display name, and can be changed freely
       paths:

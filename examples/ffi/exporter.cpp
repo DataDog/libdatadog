@@ -133,7 +133,7 @@ int main(int argc, char *argv[]) {
                             "\"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
 
   auto res = ddog_prof_Exporter_set_timeout(exporter, 30000);
-  if (res.tag == DDOG_PROF_VOID_RESULT_ERR) {
+  if (res.tag == DDOG_VOID_RESULT_ERR) {
     print_error("Failed to set the timeout", res.err);
     ddog_Error_drop(&res.err);
     return 1;
@@ -161,7 +161,7 @@ int main(int argc, char *argv[]) {
   //
   // If the request is faster than the sleep time, no cancellation takes place.
   std::thread trigger_cancel_if_request_takes_too_long_thread(
-      [](ddog_prof_CancellationToken cancel_for_background_thread) {
+      [](ddog_CancellationToken cancel_for_background_thread) {
         int timeout_ms = 5000;
         std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms));
         printf("Request took longer than %d ms, triggering asynchronous "

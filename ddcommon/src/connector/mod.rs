@@ -40,7 +40,9 @@ impl Default for Connector {
 }
 
 impl Connector {
-    pub fn new() -> Self {
+    /// Make sure this function is not called frequently. Fetching the root certificates is an
+    /// expensive operation. Access the globally cached connector via Connector::default().
+    fn new() -> Self {
         #[cfg(feature = "https")]
         {
             #[cfg(feature = "use_webpki_roots")]
@@ -144,7 +146,15 @@ mod https {
 
         let mut roots = rustls::RootCertStore::empty();
 
-        for cert in rustls_native_certs::load_native_certs()? {
+        let cert_result = rustls_native_certs::load_native_certs();
+        if cert_result.certs.is_empty() {
+            if let Some(err) = cert_result.errors.into_iter().next() {
+                return Err(err.into());
+            }
+        }
+        // TODO(paullgdfc): log errors even if there are valid certs, instead of ignoring them
+
+        for cert in cert_result.certs {
             //TODO: log when invalid cert is loaded
             roots.add(cert).ok();
         }

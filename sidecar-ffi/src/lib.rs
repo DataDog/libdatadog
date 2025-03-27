@@ -7,6 +7,8 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+#[cfg(windows)]
+use datadog_crashtracker_ffi::Metadata;
 use datadog_ipc::platform::{
     FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
 };
@@ -47,6 +49,15 @@ use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::slice;
 use std::sync::Arc;
 use std::time::Duration;
+
+#[no_mangle]
+#[cfg(target_os = "windows")]
+pub extern "C" fn ddog_setup_crashtracking(
+    endpoint: Option<&Endpoint>,
+    metadata: Metadata,
+) -> bool {
+    datadog_sidecar::ddog_setup_crashtracking(endpoint, metadata)
+}
 
 #[repr(C)]
 pub struct NativeFile {
