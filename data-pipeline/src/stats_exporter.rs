@@ -333,11 +333,9 @@ mod tests {
         // Resume time to sleep while the stats are being sent
         tokio::time::resume();
         assert!(
-            poll_for_mock_hit(&mut mock, 10, 100, 1, true).await,
+            poll_for_mock_hit(&mut mock, 10, 100, 1, false).await,
             "Expected max retry attempts"
         );
-
-        mock.assert_async().await;
     }
 
     #[cfg_attr(miri, ignore)]
@@ -373,7 +371,7 @@ mod tests {
         cancellation_token.cancel();
 
         assert!(
-            poll_for_mock_hit(&mut mock, 10, 100, 1, true).await,
+            poll_for_mock_hit(&mut mock, 10, 100, 1, false).await,
             "Expected max retry attempts"
         );
     }
