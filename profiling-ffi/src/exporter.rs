@@ -6,34 +6,17 @@
 
 use datadog_profiling::exporter;
 use datadog_profiling::exporter::{ProfileExporter, Request};
-use datadog_profiling::internal::ProfiledEndpointsStats;
+use datadog_profiling::internal::EncodedProfile;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use ddcommon_ffi::{Error, MaybeError, Timespec};
+use ddcommon_ffi::{
+    wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResult,
+};
+use function_name::named;
 use std::borrow::Cow;
-use std::ptr::NonNull;
 use std::str::FromStr;
 
-#[allow(dead_code)]
-#[repr(C)]
-pub enum ExporterNewResult {
-    Ok(NonNull<ProfileExporter>),
-    Err(Error),
-}
-
-#[allow(dead_code)]
-#[repr(C)]
-pub enum RequestBuildResult {
-    Ok(NonNull<Request>),
-    Err(Error),
-}
-
-#[allow(dead_code)]
-#[repr(C)]
-pub enum SendResult {
-    HttpResponse(HttpStatus),
-    Err(Error),
-}
+type TokioCancellationToken = tokio_util::sync::CancellationToken;
 
 #[allow(dead_code)]
 #[repr(C)]
@@ -55,9 +38,6 @@ pub struct File<'a> {
 pub extern "C" fn ddog_prof_Exporter_Slice_File_empty() -> Slice<'static, File<'static>> {
     Slice::empty()
 }
-
-// This type exists only to force cbindgen to expose an CancellationToken as an opaque type.
-pub struct CancellationToken(tokio_util::sync::CancellationToken);
 
 #[derive(Debug)]
 #[repr(C)]
@@ -146,49 +126,31 @@ pub unsafe fn try_to_endpoint(endpoint: ProfilingEndpoint) -> anyhow::Result<ddc
 /// All pointers must refer to valid objects of the correct types.
 #[no_mangle]
 #[must_use]
+#[named]
 pub unsafe extern "C" fn ddog_prof_Exporter_new(
     profiling_library_name: CharSlice,
     profiling_library_version: CharSlice,
     family: CharSlice,
     tags: Option<&ddcommon_ffi::Vec<Tag>>,
     endpoint: ProfilingEndpoint,
-) -> ExporterNewResult {
-    // Use a helper function so we can use the ? operator.
-    match ddog_prof_exporter_new_impl(
-        profiling_library_name,
-        profiling_library_version,
-        family,
-        tags,
-        endpoint,
-    ) {
-        Ok(exporter) => {
-            // Safety: Box::into_raw will always be non-null.
-            let ptr = NonNull::new_unchecked(Box::into_raw(Box::new(exporter)));
-            ExporterNewResult::Ok(ptr)
-        }
-        Err(err) => ExporterNewResult::Err(err.into()),
-    }
-}
-
-fn ddog_prof_exporter_new_impl(
-    profiling_library_name: CharSlice,
-    profiling_library_version: CharSlice,
-    family: CharSlice,
-    tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    endpoint: ProfilingEndpoint,
-) -> anyhow::Result<ProfileExporter> {
-    let library_name = profiling_library_name.to_utf8_lossy().into_owned();
-    let library_version = profiling_library_version.to_utf8_lossy().into_owned();
-    let family = family.to_utf8_lossy().into_owned();
-    let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
-    let tags = tags.map(|tags| tags.iter().cloned().collect());
-    ProfileExporter::new(
-        library_name,
-        library_version,
-        family,
-        tags,
-        converted_endpoint,
-    )
+) -> Result<Handle<ProfileExporter>> {
+    wrap_with_ffi_result!({
+        let library_name = profiling_library_name.to_utf8_lossy().into_owned();
+        let library_version = profiling_library_version.to_utf8_lossy().into_owned();
+        let family = family.to_utf8_lossy().into_owned();
+        let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
+        let tags = tags.map(|tags| tags.iter().cloned().collect());
+        anyhow::Ok(
+            ProfileExporter::new(
+                library_name,
+                library_version,
+                family,
+                tags,
+                converted_endpoint,
+            )?
+            .into(),
+        )
+    })
 }
 
 /// Sets the value for the exporter's timeout.
@@ -196,16 +158,15 @@ fn ddog_prof_exporter_new_impl(
 /// * `exporter` - ProfileExporter instance.
 /// * `timeout_ms` - timeout in milliseconds.
 #[no_mangle]
+#[named]
+#[must_use]
 pub unsafe extern "C" fn ddog_prof_Exporter_set_timeout(
-    exporter: Option<&mut ProfileExporter>,
+    mut exporter: *mut Handle<ProfileExporter>,
     timeout_ms: u64,
-) -> MaybeError {
-    if let Some(ptr) = exporter {
-        ptr.set_timeout(timeout_ms);
-        MaybeError::None
-    } else {
-        MaybeError::Some(Error::from("Invalid argument"))
-    }
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        exporter.to_inner_mut()?.set_timeout(timeout_ms);
+    })
 }
 
 /// # Safety
@@ -213,11 +174,10 @@ pub unsafe extern "C" fn ddog_prof_Exporter_set_timeout(
 /// valid `ddog_prof_Exporter_Request` object made by the Rust Global
 /// allocator that has not already been dropped.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Exporter_drop(exporter: Option<&mut ProfileExporter>) {
-    if let Some(reference) = exporter {
-        // Safety: ProfileExporter's are opaque and therefore Boxed.
-        drop(Box::from_raw(reference as *mut _))
-    }
+pub unsafe extern "C" fn ddog_prof_Exporter_drop(mut exporter: *mut Handle<ProfileExporter>) {
+    // Technically, this function has been designed so if it's double-dropped
+    // then it's okay, but it's not something that should be relied on.
+    drop(exporter.take())
 }
 
 unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> {
@@ -230,17 +190,6 @@ unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> 
             exporter::File { name, bytes }
         })
         .collect()
-}
-
-#[cfg(test)]
-impl From<RequestBuildResult> for Result<Box<Request>, String> {
-    fn from(result: RequestBuildResult) -> Self {
-        match result {
-            // Safety: Request is opaque, can only be built from Rust.
-            RequestBuildResult::Ok(ok) => Ok(unsafe { Box::from_raw(ok.as_ptr()) }),
-            RequestBuildResult::Err(err) => Err(err.to_string()),
-        }
-    }
 }
 
 /// If successful, builds a `ddog_prof_Exporter_Request` object based on the
@@ -259,54 +208,39 @@ impl From<RequestBuildResult> for Result<Box<Request>, String> {
 /// valid objects created by this module.
 /// NULL is allowed for `optional_additional_tags`, `optional_endpoints_stats`,
 /// `optional_internal_metadata_json` and `optional_info_json`.
+/// Consumes the `SerializedProfile`
 #[no_mangle]
 #[must_use]
+#[named]
 pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
-    exporter: Option<&mut ProfileExporter>,
-    start: Timespec,
-    end: Timespec,
+    mut exporter: *mut Handle<ProfileExporter>,
+    mut profile: *mut Handle<EncodedProfile>,
     files_to_compress_and_export: Slice<File>,
     files_to_export_unmodified: Slice<File>,
     optional_additional_tags: Option<&ddcommon_ffi::Vec<Tag>>,
-    optional_endpoints_stats: Option<&ProfiledEndpointsStats>,
     optional_internal_metadata_json: Option<&CharSlice>,
     optional_info_json: Option<&CharSlice>,
-) -> RequestBuildResult {
-    match exporter {
-        None => RequestBuildResult::Err(anyhow::anyhow!("exporter was null").into()),
-        Some(exporter) => {
-            let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
-            let files_to_export_unmodified = into_vec_files(files_to_export_unmodified);
-            let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
+) -> Result<Handle<Request>> {
+    wrap_with_ffi_result!({
+        let exporter = exporter.to_inner_mut()?;
+        let profile = *profile.take()?;
+        let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
+        let files_to_export_unmodified = into_vec_files(files_to_export_unmodified);
+        let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
 
-            let internal_metadata =
-                match parse_json("internal_metadata", optional_internal_metadata_json) {
-                    Ok(parsed) => parsed,
-                    Err(err) => return RequestBuildResult::Err(err.into()),
-                };
+        let internal_metadata = parse_json("internal_metadata", optional_internal_metadata_json)?;
+        let info = parse_json("info", optional_info_json)?;
 
-            let info = match parse_json("info", optional_info_json) {
-                Ok(parsed) => parsed,
-                Err(err) => return RequestBuildResult::Err(err.into()),
-            };
-
-            match exporter.build(
-                start.into(),
-                end.into(),
-                files_to_compress_and_export.as_slice(),
-                files_to_export_unmodified.as_slice(),
-                tags.as_ref(),
-                optional_endpoints_stats,
-                internal_metadata,
-                info,
-            ) {
-                Ok(request) => {
-                    RequestBuildResult::Ok(NonNull::new_unchecked(Box::into_raw(Box::new(request))))
-                }
-                Err(err) => RequestBuildResult::Err(err.into()),
-            }
-        }
-    }
+        let request = exporter.build(
+            profile,
+            files_to_compress_and_export.as_slice(),
+            files_to_export_unmodified.as_slice(),
+            tags.as_ref(),
+            internal_metadata,
+            info,
+        )?;
+        anyhow::Ok(request.into())
+    })
 }
 
 unsafe fn parse_json(
@@ -335,22 +269,10 @@ unsafe fn parse_json(
 /// pointer must point to a valid `ddog_prof_Exporter_Request` object made by
 /// the Rust Global allocator.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(
-    request: Option<&mut Option<&mut Request>>,
-) {
-    drop(rebox_request(request))
-}
-
-/// Replace the inner `*mut Request` with a nullptr to reduce chance of
-/// double-free in caller.
-unsafe fn rebox_request(request: Option<&mut Option<&mut Request>>) -> Option<Box<Request>> {
-    if let Some(ref_ptr) = request {
-        let mut tmp = None;
-        std::mem::swap(ref_ptr, &mut tmp);
-        tmp.map(|ptr| Box::from_raw(ptr as *mut _))
-    } else {
-        None
-    }
+pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(mut request: *mut Handle<Request>) {
+    // Technically, this function has been designed so if it's double-dropped
+    // then it's okay, but it's not something that should be relied on.
+    drop(request.take())
 }
 
 /// Sends the request, returning the HttpStatus.
@@ -365,51 +287,31 @@ unsafe fn rebox_request(request: Option<&mut Option<&mut Request>>) -> Option<Bo
 /// All non-null arguments MUST have been created by created by apis in this module.
 #[no_mangle]
 #[must_use]
+#[named]
 pub unsafe extern "C" fn ddog_prof_Exporter_send(
-    exporter: Option<&mut ProfileExporter>,
-    request: Option<&mut Option<&mut Request>>,
-    cancel: Option<&CancellationToken>,
-) -> SendResult {
-    match ddog_prof_exporter_send_impl(exporter, request, cancel) {
-        Ok(code) => SendResult::HttpResponse(code),
-        Err(err) => SendResult::Err(Error::from(err.context("failed ddog_prof_Exporter_send"))),
-    }
-}
+    mut exporter: *mut Handle<ProfileExporter>,
+    mut request: *mut Handle<Request>,
+    mut cancel: *mut Handle<TokioCancellationToken>,
+) -> Result<HttpStatus> {
+    wrap_with_ffi_result!({
+        let request = *request.take().context("request")?;
+        let exporter = exporter.to_inner_mut()?;
+        let cancel = cancel.to_inner_mut().ok();
+        let response = exporter.send(request, cancel.as_deref())?;
 
-unsafe fn ddog_prof_exporter_send_impl(
-    exporter: Option<&mut ProfileExporter>,
-    request: Option<&mut Option<&mut Request>>,
-    cancel: Option<&CancellationToken>,
-) -> anyhow::Result<HttpStatus> {
-    // Re-box the request first, to avoid leaks on other errors.
-    let request = match rebox_request(request) {
-        Some(boxed) => boxed,
-        None => anyhow::bail!("request was null"),
-    };
-
-    let exporter = match exporter {
-        Some(exporter) => exporter,
-        None => anyhow::bail!("exporter was null"),
-    };
-
-    let cancel = cancel.map(|ptr| &ptr.0);
-    let response = exporter.send(*request, cancel)?;
-
-    Ok(HttpStatus(response.status().as_u16()))
+        anyhow::Ok(HttpStatus(response.status().as_u16()))
+    })
 }
 
 /// Can be passed as an argument to send and then be used to asynchronously cancel it from a
 /// different thread.
 #[no_mangle]
 #[must_use]
-pub extern "C" fn ddog_CancellationToken_new() -> NonNull<CancellationToken> {
-    let token = CancellationToken(tokio_util::sync::CancellationToken::new());
-    let ptr = Box::into_raw(Box::new(token));
-    // Safety: Box::into_raw will be non-null.
-    unsafe { NonNull::new_unchecked(ptr) }
+pub extern "C" fn ddog_CancellationToken_new() -> Handle<TokioCancellationToken> {
+    TokioCancellationToken::new().into()
 }
 
-/// A cloned CancellationToken is connected to the CancellationToken it was created from.
+/// A cloned TokioCancellationToken is connected to the TokioCancellationToken it was created from.
 /// Either the cloned or the original token can be used to cancel or provided as arguments to send.
 /// The useful part is that they have independent lifetimes and can be dropped separately.
 ///
@@ -436,14 +338,12 @@ pub extern "C" fn ddog_CancellationToken_new() -> NonNull<CancellationToken> {
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_CancellationToken_clone(
-    token: Option<&CancellationToken>,
-) -> *mut CancellationToken {
-    match token {
-        Some(ptr) => {
-            let new_token = ptr.0.clone();
-            Box::into_raw(Box::new(CancellationToken(new_token)))
-        }
-        None => std::ptr::null_mut(),
+    mut token: *mut Handle<TokioCancellationToken>,
+) -> Handle<TokioCancellationToken> {
+    if let Ok(token) = token.to_inner_mut() {
+        token.clone().into()
+    } else {
+        Handle::empty()
     }
 }
 
@@ -451,17 +351,17 @@ pub unsafe extern "C" fn ddog_CancellationToken_clone(
 /// Note that cancellation is a terminal state; cancelling a token more than once does nothing.
 /// Returns `true` if token was successfully cancelled.
 #[no_mangle]
-pub extern "C" fn ddog_CancellationToken_cancel(cancel: Option<&CancellationToken>) -> bool {
-    match cancel {
-        Some(ptr) => {
-            let token = &ptr.0;
-            let will_cancel = !token.is_cancelled();
-            if will_cancel {
-                token.cancel();
-            }
-            will_cancel
+pub unsafe extern "C" fn ddog_CancellationToken_cancel(
+    mut cancel: *mut Handle<TokioCancellationToken>,
+) -> bool {
+    if let Ok(token) = cancel.to_inner_mut() {
+        let will_cancel = !token.is_cancelled();
+        if will_cancel {
+            token.cancel();
         }
-        None => false,
+        will_cancel
+    } else {
+        false
     }
 }
 
@@ -469,11 +369,10 @@ pub extern "C" fn ddog_CancellationToken_cancel(cancel: Option<&CancellationToke
 /// The `token` can be null, but non-null values must be created by the Rust
 /// Global allocator and must have not been dropped already.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_CancellationToken_drop(token: Option<&mut CancellationToken>) {
-    if let Some(reference) = token {
-        // Safety: the token is not repr(C), so it is boxed.
-        drop(Box::from_raw(reference as *mut _))
-    }
+pub unsafe extern "C" fn ddog_CancellationToken_drop(
+    mut token: *mut Handle<TokioCancellationToken>,
+) {
+    drop(token.take())
 }
 
 #[cfg(test)]
@@ -481,7 +380,7 @@ mod tests {
     use super::*;
     use ddcommon::tag;
     use ddcommon_ffi::Slice;
-    use hyper::body::HttpBody;
+    use http_body_util::BodyExt;
     use serde_json::json;
 
     fn profiling_library_name() -> CharSlice<'static> {
@@ -504,9 +403,9 @@ mod tests {
         CharSlice::from(base_url())
     }
 
-    fn parsed_event_json(request: RequestBuildResult) -> serde_json::Value {
-        let request = Result::from(request).unwrap();
-
+    fn parsed_event_json(request: ddcommon_ffi::Result<Handle<Request>>) -> serde_json::Value {
+        // Safety: This is a test
+        let request = unsafe { request.unwrap().take().unwrap() };
         // Really hacky way of getting the event.json file contents, because I didn't want to
         // implement a full multipart parser and didn't find a particularly good
         // alternative. If you do figure out a better way, there's another copy of this code
@@ -545,10 +444,8 @@ mod tests {
         };
 
         match result {
-            ExporterNewResult::Ok(mut exporter) => unsafe {
-                ddog_prof_Exporter_drop(Some(exporter.as_mut()))
-            },
-            ExporterNewResult::Err(message) => {
+            Result::Ok(mut exporter) => unsafe { ddog_prof_Exporter_drop(&mut exporter) },
+            Result::Err(message) => {
                 drop(message);
                 panic!("Should not occur!")
             }
@@ -570,38 +467,20 @@ mod tests {
             )
         };
 
-        let mut exporter = match exporter_result {
-            ExporterNewResult::Ok(e) => e,
-            ExporterNewResult::Err(_) => panic!("Should not occur!"),
-        };
+        let mut exporter = exporter_result.unwrap();
 
-        let files_to_compress_and_export: &[File] = &[File {
-            name: CharSlice::from("foo.pprof"),
-            file: ByteSlice::from(b"dummy contents" as &[u8]),
-        }];
-
-        let start = Timespec {
-            seconds: 12,
-            nanoseconds: 34,
-        };
-        let finish = Timespec {
-            seconds: 56,
-            nanoseconds: 78,
-        };
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
-                .unwrap_none();
+            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds).unwrap();
         }
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
-                Some(exporter.as_mut()),
-                start,
-                finish,
-                Slice::from(files_to_compress_and_export),
+                &mut exporter,
+                profile,
                 Slice::empty(),
-                None,
+                Slice::empty(),
                 None,
                 None,
                 None,
@@ -610,19 +489,37 @@ mod tests {
 
         let parsed_event_json = parsed_event_json(build_result);
 
-        assert_eq!(parsed_event_json["attachments"], json!(["foo.pprof"]));
+        assert_eq!(parsed_event_json["attachments"], json!(["profile.pprof"]));
         assert_eq!(parsed_event_json["endpoint_counts"], json!(null));
-        assert_eq!(
-            parsed_event_json["start"],
-            json!("1970-01-01T00:00:12.000000034Z")
-        );
-        assert_eq!(
-            parsed_event_json["end"],
-            json!("1970-01-01T00:00:56.000000078Z")
-        );
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                parsed_event_json["start"],
+                json!("1970-01-01T00:00:12.000000034Z")
+            );
+            assert_eq!(
+                parsed_event_json["end"],
+                json!("1970-01-01T00:00:56.000000078Z")
+            );
+        }
+        // Windows is less accurate on timestamps
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                parsed_event_json["start"],
+                json!("1970-01-01T00:00:12.000000000Z")
+            );
+            assert_eq!(
+                parsed_event_json["end"],
+                json!("1970-01-01T00:00:56.000000000Z")
+            );
+        }
+
         assert_eq!(parsed_event_json["family"], json!("native"));
-        assert_eq!(parsed_event_json["internal"], json!({}));
-        assert_eq!(parsed_event_json["tags_profiler"], json!(""));
+        assert_eq!(
+            parsed_event_json["internal"],
+            json!({"libdatadog_version": env!("CARGO_PKG_VERSION")})
+        );
         assert_eq!(parsed_event_json["version"], json!("4"));
 
         // TODO: Assert on contents of attachments, as well as on the headers/configuration for the
@@ -644,28 +541,12 @@ mod tests {
             )
         };
 
-        let mut exporter = match exporter_result {
-            ExporterNewResult::Ok(e) => e,
-            ExporterNewResult::Err(_) => panic!("Should not occur!"),
-        };
+        let mut exporter = exporter_result.unwrap();
 
-        let files: &[File] = &[File {
-            name: CharSlice::from("foo.pprof"),
-            file: ByteSlice::from(b"dummy contents" as &[u8]),
-        }];
-
-        let start = Timespec {
-            seconds: 12,
-            nanoseconds: 34,
-        };
-        let finish = Timespec {
-            seconds: 56,
-            nanoseconds: 78,
-        };
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
-                .unwrap_none();
+            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds).unwrap();
         }
 
         let raw_internal_metadata = CharSlice::from(
@@ -680,12 +561,10 @@ mod tests {
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
-                Some(exporter.as_mut()),
-                start,
-                finish,
-                Slice::from(files),
+                &mut exporter,
+                profile,
                 Slice::empty(),
-                None,
+                Slice::empty(),
                 None,
                 Some(&raw_internal_metadata),
                 None,
@@ -699,7 +578,8 @@ mod tests {
             json!({
                 "no_signals_workaround_enabled": "true",
                 "execution_trace_enabled": "false",
-                "extra object": {"key": [1, 2, true]}
+                "extra object": {"key": [1, 2, true]},
+                "libdatadog_version": env!("CARGO_PKG_VERSION"),
             })
         );
     }
@@ -719,52 +599,33 @@ mod tests {
             )
         };
 
-        let mut exporter = match exporter_result {
-            ExporterNewResult::Ok(e) => e,
-            ExporterNewResult::Err(_) => panic!("Should not occur!"),
-        };
+        let mut exporter = exporter_result.unwrap();
 
-        let files: &[File] = &[File {
-            name: CharSlice::from("foo.pprof"),
-            file: ByteSlice::from(b"dummy contents" as &[u8]),
-        }];
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
 
-        let start = Timespec {
-            seconds: 12,
-            nanoseconds: 34,
-        };
-        let finish = Timespec {
-            seconds: 56,
-            nanoseconds: 78,
-        };
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
-                .unwrap_none();
+            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds).unwrap();
         }
 
         let raw_internal_metadata = CharSlice::from("this is not a valid json string");
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
-                Some(exporter.as_mut()),
-                start,
-                finish,
-                Slice::from(files),
+                &mut exporter,
+                profile,
                 Slice::empty(),
-                None,
+                Slice::empty(),
                 None,
                 Some(&raw_internal_metadata),
                 None,
             )
         };
 
-        match build_result {
-            RequestBuildResult::Ok(_) => panic!("Should not happen!"),
-            RequestBuildResult::Err(message) => assert!(String::from(message).starts_with(
-                r#"Failed to parse contents of internal_metadata json string (`this is not a valid json string`)"#
-            )),
-        }
+        let message = build_result.unwrap_err();
+        assert!(String::from(message).starts_with(
+                 r#"ddog_prof_Exporter_Request_build failed: Failed to parse contents of internal_metadata json string (`this is not a valid json string`)"#
+  ));
     }
 
     #[test]
@@ -782,28 +643,12 @@ mod tests {
             )
         };
 
-        let mut exporter = match exporter_result {
-            ExporterNewResult::Ok(e) => e,
-            ExporterNewResult::Err(_) => panic!("Should not occur!"),
-        };
+        let mut exporter = exporter_result.unwrap();
 
-        let files: &[File] = &[File {
-            name: CharSlice::from("foo.pprof"),
-            file: ByteSlice::from(b"dummy contents" as &[u8]),
-        }];
-
-        let start = Timespec {
-            seconds: 12,
-            nanoseconds: 34,
-        };
-        let finish = Timespec {
-            seconds: 56,
-            nanoseconds: 78,
-        };
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
-                .unwrap_none();
+            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds).unwrap();
         }
 
         let raw_info = CharSlice::from(
@@ -839,12 +684,10 @@ mod tests {
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
-                Some(exporter.as_mut()),
-                start,
-                finish,
-                Slice::from(files),
+                &mut exporter,
+                profile,
                 Slice::empty(),
-                None,
+                Slice::empty(),
                 None,
                 None,
                 Some(&raw_info),
@@ -899,98 +742,66 @@ mod tests {
             )
         };
 
-        let mut exporter = match exporter_result {
-            ExporterNewResult::Ok(e) => e,
-            ExporterNewResult::Err(_) => panic!("Should not occur!"),
-        };
+        let exporter = &mut exporter_result.unwrap();
 
-        let files: &[File] = &[File {
-            name: CharSlice::from("foo.pprof"),
-            file: ByteSlice::from(b"dummy contents" as &[u8]),
-        }];
-
-        let start = Timespec {
-            seconds: 12,
-            nanoseconds: 34,
-        };
-        let finish = Timespec {
-            seconds: 56,
-            nanoseconds: 78,
-        };
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(Some(exporter.as_mut()), timeout_milliseconds)
-                .unwrap_none();
+            ddog_prof_Exporter_set_timeout(exporter, timeout_milliseconds).unwrap();
         }
 
         let raw_info = CharSlice::from("this is not a valid json string");
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
-                Some(exporter.as_mut()),
-                start,
-                finish,
-                Slice::from(files),
+                exporter,
+                profile,
                 Slice::empty(),
-                None,
+                Slice::empty(),
                 None,
                 None,
                 Some(&raw_info),
             )
         };
 
-        match build_result {
-            RequestBuildResult::Ok(_) => panic!("Should not happen!"),
-            RequestBuildResult::Err(message) => assert!(String::from(message).starts_with(
-                r#"Failed to parse contents of info json string (`this is not a valid json string`)"#
-            )),
-        }
+        let message = build_result.unwrap_err();
+        assert!(String::from(message).starts_with(
+            r#"ddog_prof_Exporter_Request_build failed: Failed to parse contents of info json string (`this is not a valid json string`)"#
+        ));
     }
 
     #[test]
     fn test_build_failure() {
-        let start = Timespec {
-            seconds: 12,
-            nanoseconds: 34,
-        };
-        let finish = Timespec {
-            seconds: 56,
-            nanoseconds: 78,
-        };
-
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
+        let exporter = &mut Handle::empty();
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
-                None, // No exporter, will fail
-                start,
-                finish,
+                exporter, // No exporter, will fail
+                profile,
                 Slice::empty(),
                 Slice::empty(),
-                None,
                 None,
                 None,
                 None,
             )
         };
 
-        let build_result = Result::from(build_result);
         build_result.unwrap_err();
     }
 
     #[test]
     fn send_fails_with_null() {
+        let exporter = &mut Handle::empty();
+        let request = &mut Handle::empty();
+        let cancel = &mut Handle::empty();
         unsafe {
-            match ddog_prof_Exporter_send(None, None, None) {
-                SendResult::HttpResponse(http_status) => {
-                    panic!("Expected test to fail, got {http_status:?}")
-                }
-                SendResult::Err(error) => {
-                    let actual_error = error.to_string();
-                    assert_eq!(
-                        "failed ddog_prof_Exporter_send: request was null",
-                        actual_error
+            let error = ddog_prof_Exporter_send(exporter, request, cancel)
+                .unwrap_err()
+                .to_string();
+            assert_eq!(
+                        "ddog_prof_Exporter_send failed: request: inner pointer was null, indicates use after free",
+                        error
                     );
-                }
-            }
         }
     }
 }

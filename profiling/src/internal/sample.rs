@@ -5,7 +5,7 @@ use super::*;
 use std::hash::Hash;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
+#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct Sample {
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
@@ -24,7 +24,7 @@ impl Sample {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-#[repr(transparent)]
+#[repr(C)]
 pub struct SampleId(u32);
 
 impl SampleId {

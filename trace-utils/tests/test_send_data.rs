@@ -4,8 +4,8 @@
 #[cfg(test)]
 mod tracing_integration_tests {
     use datadog_trace_utils::send_data::SendData;
-    use datadog_trace_utils::test_utils::create_test_json_span;
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
+    use datadog_trace_utils::test_utils::{create_test_json_span, create_test_no_alloc_span};
     use datadog_trace_utils::trace_utils::TracerHeaderTags;
     use datadog_trace_utils::tracer_payload::{
         DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadParams,
@@ -16,10 +16,63 @@ mod tracing_integration_tests {
     #[cfg(target_os = "linux")]
     use hyper::Uri;
     use serde_json::json;
+    use std::collections::HashMap;
     #[cfg(target_os = "linux")]
     use std::fs::Permissions;
     #[cfg(target_os = "linux")]
     use std::os::unix::fs::PermissionsExt;
+    use tinybytes::{Bytes, BytesString};
+
+    fn get_v04_trace_snapshot_test_payload() -> Bytes {
+        let mut span_1 = create_test_json_span(1234, 12342, 12341, 1, false);
+        span_1["metrics"] = json!({
+            "_dd_metric1": 1.0,
+            "_dd_metric2": 2.0
+        });
+        span_1["span_events"] = json!([
+            {
+                "name": "test_span",
+                "time_unix_nano": 1727211691770715042_u64
+            },
+            {
+                "name": "exception",
+                "time_unix_nano": 1727211691770716000_u64,
+                "attributes": {
+                    "exception.message": {"type": 0, "string_value": "Cannot divide by zero"},
+                    "exception.version": {"type": 3, "double_value": 4.2},
+                    "exception.escaped": {"type": 1, "bool_value": true},
+                    "exception.count": {"type": 2, "int_value": 1},
+                    "exception.lines": {"type": 4, "array_value": [
+                        {"type": 0, "string_value": "  File \"<string>\", line 1, in <module>"},
+                        {"type": 0, "string_value": "  File \"<string>\", line 1, in divide"},
+                    ]}
+                }
+            }
+        ]);
+
+        let mut span_2 = create_test_json_span(1234, 12343, 12341, 1, false);
+        span_2["span_links"] = json!([
+            {
+                "trace_id": 0xc151df7d6ee5e2d6_u64,
+                "span_id": 0xa3978fb9b92502a8_u64,
+                "attributes": {
+                    "link.name":"Job #123"
+                }
+            },
+            {
+                "trace_id": 0xa918bf567eec151d_u64,
+                "trace_id_high": 0x527ccbd68a74d57e_u64,
+                "span_id": 0xc08c967f0e5e7b0a_u64
+            }
+        ]);
+
+        let mut root_span = create_test_json_span(1234, 12341, 0, 0, true);
+        root_span["type"] = json!("web".to_owned());
+
+        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
+
+        tinybytes::Bytes::from(encoded_data)
+    }
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
@@ -43,17 +96,100 @@ mod tracing_integration_tests {
                 .await,
         );
 
-        let mut span_1 = create_test_json_span(1234, 12342, 12341, 1, false);
-        span_1["metrics"] = json!({
-            "_dd_metric1": 1.0,
-            "_dd_metric2": 2.0
-        });
+        let data = get_v04_trace_snapshot_test_payload();
 
-        let span_2 = create_test_json_span(1234, 12343, 12341, 1, false);
-        let mut root_span = create_test_json_span(1234, 12341, 0, 0, true);
-        root_span["type"] = json!("web".to_owned());
+        let payload_collection = TracerPayloadParams::new(
+            data,
+            &header_tags,
+            &mut DefaultTraceChunkProcessor,
+            false,
+            TraceEncoding::V04,
+        )
+        .try_into()
+        .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
 
-        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
+        let data = SendData::new(300, payload_collection, header_tags, &endpoint);
+
+        let _result = data.send().await;
+
+        test_agent
+            .assert_snapshot("compare_v04_trace_snapshot_test")
+            .await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn compare_v04_trace_meta_struct_snapshot_test() {
+        let relative_snapshot_path = "trace-utils/tests/snapshots/";
+        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
+
+        let header_tags = TracerHeaderTags {
+            lang: "test-lang",
+            lang_version: "2.0",
+            lang_interpreter: "interpreter",
+            lang_vendor: "vendor",
+            tracer_version: "1.0",
+            container_id: "id",
+            ..Default::default()
+        };
+
+        let endpoint = Endpoint::from_url(
+            test_agent
+                .get_uri_for_endpoint(
+                    "v0.4/traces",
+                    Some("compare_v04_trace_meta_struct_snapshot_test"),
+                )
+                .await,
+        );
+
+        let meta_struct_data = rmp_serde::to_vec_named(&json!({
+                "exploit": [
+                {
+                    "type": "test",
+                    "language": "nodejs",
+                    "id": "someuuid",
+                    "message": "Threat detected",
+                    "frames": [
+                    {
+                        "id": 0,
+                        "file": "test.js",
+                        "line": 1,
+                        "column": 31,
+                        "function": "test"
+                    },
+                    {
+                        "id": 1,
+                        "file": "test2.js",
+                        "line": 54,
+                        "column": 77,
+                        "function": "test"
+                    },
+                    {
+                        "id": 2,
+                        "file": "test.js",
+                        "line": 1245,
+                        "column": 41,
+                        "function": "test"
+                    },
+                    {
+                        "id": 3,
+                        "file": "test3.js",
+                        "line": 2024,
+                        "column": 32,
+                        "function": "test"
+                    }
+                    ]
+                }
+                ]
+        }))
+        .unwrap();
+
+        let mut root_span = create_test_no_alloc_span(1234, 12341, 0, 0, true);
+        root_span.r#type = BytesString::from("web");
+        root_span.meta_struct =
+            HashMap::from([(BytesString::from("appsec"), Bytes::from(meta_struct_data))]);
+
+        let encoded_data = rmp_serde::to_vec_named(&vec![vec![root_span]]).unwrap();
 
         let data = tinybytes::Bytes::from(encoded_data);
 
@@ -72,7 +208,7 @@ mod tracing_integration_tests {
         let _result = data.send().await;
 
         test_agent
-            .assert_snapshot("compare_v04_trace_snapshot_test")
+            .assert_snapshot("compare_v04_trace_meta_struct_snapshot_test")
             .await;
     }
 
@@ -179,19 +315,7 @@ mod tracing_integration_tests {
             ..Default::default()
         };
 
-        let mut span_1 = create_test_json_span(1234, 12342, 12341, 1, false);
-        span_1["metrics"] = json!({
-            "_dd_metric1": 1.0,
-            "_dd_metric2": 2.0
-        });
-
-        let span_2 = create_test_json_span(1234, 12343, 12341, 1, false);
-        let mut root_span = create_test_json_span(1234, 12341, 0, 0, true);
-        root_span["type"] = json!("web".to_owned());
-
-        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
-
-        let data = tinybytes::Bytes::from(encoded_data);
+        let data = get_v04_trace_snapshot_test_payload();
 
         let payload_collection = TracerPayloadParams::new(
             data,

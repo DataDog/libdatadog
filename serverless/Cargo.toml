@@ -9,7 +9,7 @@ env_logger = "0.10.0"
 datadog-trace-mini-agent = { path = "../trace-mini-agent" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils" }
-dogstatsd = { path = "../dogstatsd" }
+dogstatsd = { git = "https://github.com/DataDog/serverless-components/", rev = "4dfe72ab1850680f41dd79d30a937eb68e7ba6da", default-features = false }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"]}
 tokio-util = { version = "0.7", default-features = false }
 tracing = { version = "0.1", default-features = false }

@@ -1,6 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::ptr::null_mut;
+
 use anyhow::Context;
 
 /// Represents an object that should only be referred to by its handle.
@@ -9,6 +11,12 @@ use anyhow::Context;
 pub struct Handle<T> {
     // This may be null, but if not it will point to a valid <T>.
     inner: *mut T,
+}
+
+impl<T> Handle<T> {
+    pub fn empty() -> Self {
+        Self { inner: null_mut() }
+    }
 }
 
 pub trait ToInner<T> {
