@@ -136,6 +136,9 @@ impl<'a> AttributeArrayValueV05<'a> {
 }
 
 pub fn from_span_bytes(span: &SpanBytes, dict: &mut SharedDict) -> Result<Span> {
+    let service = dict.get_or_insert(&span.service)?;
+    let name = dict.get_or_insert(&span.name)?;
+    let resource = dict.get_or_insert(&span.resource)?;
     let mut meta = span.meta.iter().try_fold(
         HashMap::with_capacity(span.meta.len()),
         |mut meta, (k, v)| -> anyhow::Result<HashMap<u32, u32>> {
@@ -159,9 +162,9 @@ pub fn from_span_bytes(span: &SpanBytes, dict: &mut SharedDict) -> Result<Span> 
         );
     }
     Ok(Span {
-        service: dict.get_or_insert(&span.service)?,
-        name: dict.get_or_insert(&span.name)?,
-        resource: dict.get_or_insert(&span.resource)?,
+        service,
+        name,
+        resource,
         trace_id: span.trace_id,
         span_id: span.span_id,
         parent_id: span.parent_id,
