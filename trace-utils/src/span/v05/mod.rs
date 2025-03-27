@@ -4,10 +4,13 @@
 pub mod dict;
 
 use crate::span::v05::dict::SharedDict;
-use crate::span::SpanBytes;
+use crate::span::{AttributeArrayValue, SpanBytes, SpanEventBytes};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashMap;
+use tinybytes::BytesString;
+
+use super::{AttributeAnyValueBytes, AttributeArrayValueBytes};
 
 /// Structure that represent a TraceChunk Span which String fields are interned in a shared
 /// dictionary. The number of elements is fixed by the spec and they all need to be serialized, in
@@ -29,7 +32,121 @@ pub struct Span {
     pub r#type: u32,
 }
 
+struct SpanEventsSerializerV05<'a>(&'a [SpanEventBytes]);
+struct SpanEventSerializerV05<'a>(&'a SpanEventBytes);
+struct SpanEventAttributesSerializerV05<'a>(&'a HashMap<BytesString, AttributeAnyValueBytes>);
+struct AttributeAnyValueV05<'a>(&'a AttributeAnyValueBytes);
+
+impl serde::Serialize for SpanEventsSerializerV05<'_> {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for span_event in self.0 {
+            seq.serialize_element(&SpanEventSerializerV05(span_event))?;
+        }
+        seq.end()
+    }
+}
+
+impl serde::Serialize for SpanEventSerializerV05<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("SpanEventV05", 3)?;
+        state.serialize_field("time_unix_nano", &self.0.time_unix_nano)?;
+        state.serialize_field("name", &self.0.name)?;
+        state.serialize_field(
+            "attributes",
+            &SpanEventAttributesSerializerV05(&self.0.attributes),
+        )?;
+        state.end()
+    }
+}
+
+impl serde::Serialize for SpanEventAttributesSerializerV05<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (key, value) in self.0 {
+            map.serialize_entry(key, &AttributeAnyValueV05(value))?;
+        }
+        map.end()
+    }
+}
+
+impl serde::Serialize for AttributeAnyValueV05<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::ser::Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        match self.0 {
+            AttributeAnyValueBytes::SingleValue(v) => {
+                AttributeArrayValueV05::from_inner(v).serialize(serializer)
+            }
+            super::AttributeAnyValue::Array(attribute_array_values) => {
+                let mut seq = serializer.serialize_seq(Some(attribute_array_values.len()))?;
+                for value in attribute_array_values {
+                    seq.serialize_element(&AttributeArrayValueV05::from_inner(value))?;
+                }
+                seq.end()
+            }
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum AttributeArrayValueV05<'a> {
+    String(&'a BytesString),
+    Boolean(bool),
+    Integer(i64),
+    Double(f64),
+}
+
+impl<'a> AttributeArrayValueV05<'a> {
+    fn from_inner(v: &'a AttributeArrayValueBytes) -> Self {
+        use AttributeArrayValue::*;
+        match v {
+            String(string) => AttributeArrayValueV05::String(string),
+            Boolean(boolean) => AttributeArrayValueV05::Boolean(*boolean),
+            Integer(integer) => AttributeArrayValueV05::Integer(*integer),
+            Double(double) => AttributeArrayValueV05::Double(*double),
+        }
+    }
+}
+
 pub fn from_span_bytes(span: &SpanBytes, dict: &mut SharedDict) -> Result<Span> {
+    let mut meta = span.meta.iter().try_fold(
+        HashMap::with_capacity(span.meta.len()),
+        |mut meta, (k, v)| -> anyhow::Result<HashMap<u32, u32>> {
+            meta.insert(dict.get_or_insert(k)?, dict.get_or_insert(v)?);
+            Ok(meta)
+        },
+    )?;
+    if !span.span_links.is_empty() {
+        let serialized_span_links = serde_json::to_string(&span.span_links)?;
+        meta.insert(
+            dict.get_or_insert(&tinybytes::BytesString::from("span_links"))?,
+            dict.get_or_insert(&tinybytes::BytesString::from(serialized_span_links))?,
+        );
+    }
+    if !span.span_events.is_empty() {
+        let serialized_span_events =
+            serde_json::to_string(&SpanEventsSerializerV05(&span.span_events))?;
+        meta.insert(
+            dict.get_or_insert(&tinybytes::BytesString::from("events"))?,
+            dict.get_or_insert(&tinybytes::BytesString::from(serialized_span_events))?,
+        );
+    }
     Ok(Span {
         service: dict.get_or_insert(&span.service)?,
         name: dict.get_or_insert(&span.name)?,
@@ -40,13 +157,7 @@ pub fn from_span_bytes(span: &SpanBytes, dict: &mut SharedDict) -> Result<Span> 
         start: span.start,
         duration: span.duration,
         error: span.error,
-        meta: span.meta.iter().try_fold(
-            HashMap::with_capacity(span.meta.len()),
-            |mut meta, (k, v)| -> anyhow::Result<HashMap<u32, u32>> {
-                meta.insert(dict.get_or_insert(k)?, dict.get_or_insert(v)?);
-                Ok(meta)
-            },
-        )?,
+        meta,
         metrics: span.metrics.iter().try_fold(
             HashMap::with_capacity(span.metrics.len()),
             |mut metrics, (k, v)| -> anyhow::Result<HashMap<u32, f64>> {
@@ -60,6 +171,8 @@ pub fn from_span_bytes(span: &SpanBytes, dict: &mut SharedDict) -> Result<Span> 
 
 #[cfg(test)]
 mod tests {
+    use crate::span::SpanLinkBytes;
+
     use super::*;
     use tinybytes::BytesString;
 
@@ -82,8 +195,47 @@ mod tests {
             )]),
             metrics: HashMap::from([(BytesString::from("metrics_field"), 1.1)]),
             meta_struct: HashMap::new(),
-            span_links: vec![],
-            span_events: vec![],
+            span_links: vec![SpanLinkBytes {
+                trace_id: 12345,
+                trace_id_high: 67890,
+                span_id: 54321,
+                attributes: HashMap::from([(BytesString::from("key"), BytesString::from("val"))]),
+                tracestate: BytesString::from("tracestate_value"),
+                flags: 1,
+            }],
+            span_events: vec![
+                SpanEventBytes {
+                    time_unix_nano: 123,
+                    name: BytesString::from("ev1"),
+                    attributes: HashMap::from([(
+                        BytesString::from("str_attr"),
+                        AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::String(
+                            BytesString::from("val"),
+                        )),
+                    )]),
+                },
+                SpanEventBytes {
+                    time_unix_nano: 456,
+                    name: BytesString::from("ev2"),
+                    attributes: HashMap::from([(
+                        BytesString::from("bool_attr"),
+                        AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::Boolean(
+                            true,
+                        )),
+                    )]),
+                },
+                SpanEventBytes {
+                    time_unix_nano: 789,
+                    name: BytesString::from("ev3"),
+                    attributes: HashMap::from([(
+                        BytesString::from("list_attr"),
+                        AttributeAnyValueBytes::Array(vec![
+                            AttributeArrayValueBytes::String(BytesString::from("val1")),
+                            AttributeArrayValueBytes::String(BytesString::from("val2")),
+                        ]),
+                    )]),
+                },
+            ],
         };
 
         let mut dict = SharedDict::default();
@@ -109,7 +261,7 @@ mod tests {
         assert_eq!(v05_span.start, 1);
         assert_eq!(v05_span.duration, 111);
         assert_eq!(v05_span.error, 0);
-        assert_eq!(v05_span.meta.len(), 1);
+        assert_eq!(v05_span.meta.len(), 3);
         assert_eq!(v05_span.metrics.len(), 1);
 
         assert_eq!(
@@ -126,5 +278,24 @@ mod tests {
                 .unwrap(),
             1.1
         );
+        let mut meta = Vec::new();
+        for (key, value) in &v05_span.meta {
+            meta.push((dict[*key as usize].as_str(), dict[*value as usize].as_str()));
+        }
+        meta.sort();
+        assert_eq!(meta, &[
+            (
+                "events",
+                "[{\"time_unix_nano\":123,\"name\":\"ev1\",\"attributes\":{\"str_attr\":\"val\"}},{\"time_unix_nano\":456,\"name\":\"ev2\",\"attributes\":{\"bool_attr\":true}},{\"time_unix_nano\":789,\"name\":\"ev3\",\"attributes\":{\"list_attr\":[\"val1\",\"val2\"]}}]",
+            ),
+            (
+                "meta_field",
+                "meta_value",
+            ),
+            (
+                "span_links",
+                "[{\"trace_id\":12345,\"trace_id_high\":67890,\"span_id\":54321,\"attributes\":{\"key\":\"val\"},\"tracestate\":\"tracestate_value\",\"flags\":1}]",
+            ),
+        ]);
     }
 }
