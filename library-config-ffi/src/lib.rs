@@ -30,6 +30,7 @@ impl<'a> ProcessInfo<'a> {
 pub struct LibraryConfig {
     pub name: LibraryConfigName,
     pub value: ffi::CString,
+    pub source: LibraryConfigSource,
 }
 
 impl LibraryConfig {
@@ -40,6 +41,7 @@ impl LibraryConfig {
                 Ok(LibraryConfig {
                     name: c.name,
                     value: ffi::CString::from_std(std::ffi::CString::new(c.value)?),
+                    source: c.source,
                 })
             })
             .collect::<Result<Vec<_>, std::ffi::NulError>>()?;
