@@ -2,7 +2,7 @@
   [
     {
       "service": "test-service",
-      "name": "test_name",
+      "name": "test_exporter_v04_v05_snapshot_01",
       "resource": "test-resource",
       "trace_id": 1234,
       "span_id": 12342,
@@ -23,7 +23,7 @@
     },
     {
       "service": "test-service",
-      "name": "test_name",
+      "name": "test_exporter_v04_v05_snapshot_02",
       "resource": "test-resource",
       "trace_id": 1234,
       "span_id": 12343,
@@ -41,7 +41,7 @@
     },
     {
       "service": "test-service",
-      "name": "test_name",
+      "name": "test_exporter_v04_v05_snapshot_03",
       "resource": "test-resource",
       "trace_id": 1234,
       "span_id": 12341,

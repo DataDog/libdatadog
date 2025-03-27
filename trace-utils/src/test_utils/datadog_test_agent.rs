@@ -302,6 +302,50 @@ impl DatadogTestAgent {
             status_code, body_string
         );
     }
+
+    /// Returns the traces that have been received by the test agent. This is not necessary in the
+    /// normal course of snapshot testing, but can be useful for debugging.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec` of `serde_json::Value` representing the traces that have been received by the test
+    /// agent.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```no_run
+    /// use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
+    /// use serde_json::to_string_pretty;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let test_agent = DatadogTestAgent::new(Some("relative/path/to/snapshot"), None).await;
+    ///     let traces = test_agent.get_sent_traces().await;
+    ///     let pretty_traces = to_string_pretty(&traces).expect("Failed to convert to pretty JSON");
+    ///
+    ///     println!("{}", pretty_traces);
+    /// }
+    /// ```
+    pub async fn get_sent_traces(&self) -> Vec<serde_json::Value> {
+        let client = hyper_migration::new_default_client();
+        let uri = self.get_uri_for_endpoint("test/traces", None).await;
+
+        let res = client.get(uri).await.expect("Request failed");
+
+        let body_bytes = res
+            .into_body()
+            .collect()
+            .await
+            .expect("Read failed")
+            .to_bytes();
+
+        let body_string = String::from_utf8(body_bytes.to_vec()).expect("Conversion failed");
+
+        serde_json::from_str(&body_string).expect("Failed to parse JSON response")
+    }
+
     /// Starts a new session with the Datadog Test Agent using the provided session token and
     /// optional sampling rates. This should be called before sending data to the test-agent to
     /// configure the session parameters. Please refer to

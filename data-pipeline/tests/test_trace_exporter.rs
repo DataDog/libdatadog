@@ -16,8 +16,9 @@ mod tracing_integration_tests {
     use tinybytes::Bytes;
     use tokio::task;
 
-    fn get_v04_trace_snapshot_test_payload() -> Bytes {
+    fn get_v04_trace_snapshot_test_payload(name_prefix: &str) -> Bytes {
         let mut span_1 = create_test_json_span(1234, 12342, 12341, 1, false);
+        span_1["name"] = json!(format!("{name_prefix}_01"));
 
         span_1["metrics"] = json!({
             "_dd_metric1": 1.0,
@@ -45,6 +46,7 @@ mod tracing_integration_tests {
         ]);
 
         let mut span_2 = create_test_json_span(1234, 12343, 12341, 1, false);
+        span_2["name"] = json!(format!("{name_prefix}_02"));
         span_2["span_links"] = json!([
             {
                 "trace_id": 0xc151df7d6ee5e2d6_u64,
@@ -61,6 +63,7 @@ mod tracing_integration_tests {
         ]);
 
         let mut root_span = create_test_json_span(1234, 12341, 0, 0, true);
+        root_span["name"] = json!(format!("{name_prefix}_03"));
         root_span["type"] = json!("web".to_owned());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
@@ -83,6 +86,7 @@ mod tracing_integration_tests {
                 ("_dd_metric2".to_string(), 2.2),
             ]),
         );
+
         let span_2 = create_test_v05_span(1234, 12343, 12341, 1, false, &mut dict, None);
         let root_span = create_test_v05_span(
             1234,
@@ -103,11 +107,12 @@ mod tracing_integration_tests {
     #[tokio::test]
     async fn compare_v04_trace_snapshot_test() {
         let relative_snapshot_path = "data-pipeline/tests/snapshots/";
+        let snapshot_name = "compare_exporter_v04_trace_snapshot_test";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
         let url = test_agent.get_base_uri().await;
         let rate_param = "{\"service:test,env:test_env\": 0.5, \"service:test2,env:prod\": 0.2}";
         test_agent
-            .start_session("compare_v04_trace_snapshot_test", Some(rate_param))
+            .start_session(snapshot_name, Some(rate_param))
             .await;
 
         let task_result = task::spawn_blocking(move || {
@@ -121,11 +126,11 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
-                .set_query_params("test_session_token=compare_v04_trace_snapshot_test");
+                .set_query_params(format!("test_session_token={snapshot_name}").as_str());
 
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
-            let data = get_v04_trace_snapshot_test_payload();
+            let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_snapshot");
             let response = trace_exporter.send(data, 1);
             let expected_response = format!("{{\"rate_by_service\": {}}}", rate_param);
 
@@ -134,22 +139,28 @@ mod tracing_integration_tests {
         })
         .await;
 
+        let received_traces = test_agent.get_sent_traces().await;
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&received_traces).unwrap()
+        );
+
         assert!(task_result.is_ok());
 
-        test_agent
-            .assert_snapshot("compare_v04_trace_snapshot_test")
-            .await;
+        test_agent.assert_snapshot(snapshot_name).await;
     }
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_to_v05_trace_snapshot_test() {
         let relative_snapshot_path = "data-pipeline/tests/snapshots/";
+        let snapshot_name = "compare_exporter_v04_to_v05_trace_snapshot_test";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
         let url = test_agent.get_base_uri().await;
         let rate_param = "{\"service:test,env:test_env\": 0.5, \"service:test2,env:prod\": 0.2}";
         test_agent
-            .start_session("compare_v04_to_v05_trace_snapshot_test", Some(rate_param))
+            .start_session(snapshot_name, Some(rate_param))
             .await;
 
         let task_result = task::spawn_blocking(move || {
@@ -163,12 +174,12 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
-                .set_query_params("test_session_token=compare_v04_to_v05_trace_snapshot_test")
+                .set_query_params(format!("test_session_token={}", snapshot_name).as_str())
                 .set_input_format(TraceExporterInputFormat::V04)
                 .set_output_format(TraceExporterOutputFormat::V05);
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
-            let data = get_v04_trace_snapshot_test_payload();
+            let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_v05_snapshot");
             let response = trace_exporter.send(data, 1);
             let expected_response = format!("{{\"rate_by_service\": {}}}", rate_param);
 
@@ -179,20 +190,19 @@ mod tracing_integration_tests {
 
         assert!(task_result.is_ok());
 
-        test_agent
-            .assert_snapshot("compare_v04_to_v05_trace_snapshot_test")
-            .await;
+        test_agent.assert_snapshot(snapshot_name).await;
     }
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v05_trace_snapshot_test() {
         let relative_snapshot_path = "data-pipeline/tests/snapshots/";
+        let snapshot_name = "compare_exporter_v05_trace_snapshot_test";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
         let url = test_agent.get_base_uri().await;
         let rate_param = "{\"service:test,env:test_env\": 0.5, \"service:test2,env:prod\": 0.2}";
         test_agent
-            .start_session("compare_v05_trace_snapshot_test", Some(rate_param))
+            .start_session(snapshot_name, Some(rate_param))
             .await;
 
         let task_result = task::spawn_blocking(move || {
@@ -206,7 +216,7 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
-                .set_query_params("test_session_token=compare_v05_trace_snapshot_test")
+                .set_query_params(format!("test_session_token={}", snapshot_name).as_str())
                 .set_input_format(TraceExporterInputFormat::V05)
                 .set_output_format(TraceExporterOutputFormat::V05);
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
@@ -222,18 +232,19 @@ mod tracing_integration_tests {
 
         assert!(task_result.is_ok());
 
-        test_agent
-            .assert_snapshot("compare_v05_trace_snapshot_test")
-            .await;
+        test_agent.assert_snapshot(snapshot_name).await;
     }
 
     #[cfg_attr(miri, ignore)]
     #[cfg(target_os = "linux")]
     #[tokio::test]
-    // Validate that we can correctly send traces to the agent via UDS
+    // Validate that we can correctly send traces to the agent via UDS.
+    // NOTE: The test should match the non-UDS test above. The snapshot is different so that we can
+    // assign unique names to the spans and instantiate a unique session for the test to avoid flaky
+    // behavior when running on CI
     async fn uds_snapshot_test() {
         let relative_snapshot_path = "data-pipeline/tests/snapshots/";
-
+        let snapshot_name = "compare_exporter_v04_trace_snapshot_uds_test";
         // Create a temporary directory for the socket to be mounted in the test agent container
         let socket_dir = tempfile::Builder::new()
             .prefix("dd-trace-test-")
@@ -260,7 +271,7 @@ mod tracing_integration_tests {
 
         let rate_param = "{\"service:test,env:test_env\": 0.5, \"service:test2,env:prod\": 0.2}";
         test_agent
-            .start_session("compare_v04_trace_snapshot_test", Some(rate_param))
+            .start_session(snapshot_name, Some(rate_param))
             .await;
 
         let task_result = task::spawn_blocking(move || {
@@ -274,11 +285,11 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
-                .set_query_params("test_session_token=compare_v04_trace_snapshot_test");
+                .set_query_params(format!("test_session_token={snapshot_name}").as_str());
 
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
-            let data = get_v04_trace_snapshot_test_payload();
+            let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_snapshot_uds");
             let response = trace_exporter.send(data, 1);
             let expected_response = format!("{{\"rate_by_service\": {}}}", rate_param);
 
@@ -287,10 +298,17 @@ mod tracing_integration_tests {
         })
         .await;
 
+        // only fetch and print if there was a failure.
+        if task_result.is_err() {
+            let received_traces = test_agent.get_sent_traces().await;
+            println!(
+                "Traces received by agent: {}",
+                serde_json::to_string_pretty(&received_traces).unwrap()
+            );
+        }
+
         assert!(task_result.is_ok());
 
-        test_agent
-            .assert_snapshot("compare_v04_trace_snapshot_test")
-            .await;
+        test_agent.assert_snapshot(snapshot_name).await;
     }
 }

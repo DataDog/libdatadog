@@ -23,8 +23,10 @@ mod tracing_integration_tests {
     use std::os::unix::fs::PermissionsExt;
     use tinybytes::{Bytes, BytesString};
 
-    fn get_v04_trace_snapshot_test_payload() -> Bytes {
+    fn get_v04_trace_snapshot_test_payload(name_prefix: &str) -> Bytes {
         let mut span_1 = create_test_json_span(1234, 12342, 12341, 1, false);
+        span_1["name"] = json!(format!("{}_01", name_prefix));
+
         span_1["metrics"] = json!({
             "_dd_metric1": 1.0,
             "_dd_metric2": 2.0
@@ -51,6 +53,7 @@ mod tracing_integration_tests {
         ]);
 
         let mut span_2 = create_test_json_span(1234, 12343, 12341, 1, false);
+        span_2["name"] = json!(format!("{}_02", name_prefix));
         span_2["span_links"] = json!([
             {
                 "trace_id": 0xc151df7d6ee5e2d6_u64,
@@ -67,6 +70,7 @@ mod tracing_integration_tests {
         ]);
 
         let mut root_span = create_test_json_span(1234, 12341, 0, 0, true);
+        root_span["name"] = json!(format!("{}_03", name_prefix));
         root_span["type"] = json!("web".to_owned());
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
@@ -78,6 +82,7 @@ mod tracing_integration_tests {
     #[tokio::test]
     async fn compare_v04_trace_snapshot_test() {
         let relative_snapshot_path = "trace-utils/tests/snapshots/";
+        let snapshot_name = "compare_send_data_v04_trace_snapshot_test";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
 
         let header_tags = TracerHeaderTags {
@@ -92,11 +97,11 @@ mod tracing_integration_tests {
 
         let endpoint = Endpoint::from_url(
             test_agent
-                .get_uri_for_endpoint("v0.4/traces", Some("compare_v04_trace_snapshot_test"))
+                .get_uri_for_endpoint("v0.4/traces", Some(snapshot_name))
                 .await,
         );
 
-        let data = get_v04_trace_snapshot_test_payload();
+        let data = get_v04_trace_snapshot_test_payload("test_send_data_v04_snapshot");
 
         let payload_collection = TracerPayloadParams::new(
             data,
@@ -108,19 +113,20 @@ mod tracing_integration_tests {
         .try_into()
         .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
 
+        test_agent.start_session(snapshot_name, None).await;
+
         let data = SendData::new(300, payload_collection, header_tags, &endpoint);
 
         let _result = data.send().await;
 
-        test_agent
-            .assert_snapshot("compare_v04_trace_snapshot_test")
-            .await;
+        test_agent.assert_snapshot(snapshot_name).await;
     }
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_trace_meta_struct_snapshot_test() {
         let relative_snapshot_path = "trace-utils/tests/snapshots/";
+        let snapshot_name = "compare_send_data_v04_trace_meta_struct_snapshot_test";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
 
         let header_tags = TracerHeaderTags {
@@ -135,10 +141,7 @@ mod tracing_integration_tests {
 
         let endpoint = Endpoint::from_url(
             test_agent
-                .get_uri_for_endpoint(
-                    "v0.4/traces",
-                    Some("compare_v04_trace_meta_struct_snapshot_test"),
-                )
+                .get_uri_for_endpoint("v0.4/traces", Some(snapshot_name))
                 .await,
         );
 
@@ -185,6 +188,7 @@ mod tracing_integration_tests {
         .unwrap();
 
         let mut root_span = create_test_no_alloc_span(1234, 12341, 0, 0, true);
+        root_span.name = BytesString::from("test_send_data_v04_trace_meta_struct_snapshot_01");
         root_span.r#type = BytesString::from("web");
         root_span.meta_struct =
             HashMap::from([(BytesString::from("appsec"), Bytes::from(meta_struct_data))]);
@@ -203,13 +207,13 @@ mod tracing_integration_tests {
         .try_into()
         .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
 
+        test_agent.start_session(snapshot_name, None).await;
+
         let data = SendData::new(300, payload_collection, header_tags, &endpoint);
 
         let _result = data.send().await;
 
-        test_agent
-            .assert_snapshot("compare_v04_trace_meta_struct_snapshot_test")
-            .await;
+        test_agent.assert_snapshot(snapshot_name).await;
     }
 
     #[cfg_attr(miri, ignore)]
@@ -258,7 +262,7 @@ mod tracing_integration_tests {
     // Validate that we can correctly send traces to the agent via UDS
     async fn uds_snapshot_test() {
         let relative_snapshot_path = "trace-utils/tests/snapshots/";
-
+        let snapshot_name = "compare_send_data_v04_trace_snapshot_uds_test";
         // Create a temporary directory for the socket to be mounted in the test agent container
         let socket_dir = tempfile::Builder::new()
             .prefix("dd-trace-test-")
@@ -285,11 +289,9 @@ mod tracing_integration_tests {
                 let path = pq.path();
                 let path = path.strip_suffix('/').unwrap_or(path);
                 Some(
-                    format!(
-                        "{path}/v0.4/traces?test_session_token=compare_v04_trace_snapshot_test"
-                    )
-                    .parse()
-                    .unwrap(),
+                    format!("{path}/v0.4/traces?test_session_token={snapshot_name}")
+                        .parse()
+                        .unwrap(),
                 )
             }
         };
@@ -315,7 +317,7 @@ mod tracing_integration_tests {
             ..Default::default()
         };
 
-        let data = get_v04_trace_snapshot_test_payload();
+        let data = get_v04_trace_snapshot_test_payload("test_send_data_v04_snapshot_uds");
 
         let payload_collection = TracerPayloadParams::new(
             data,
@@ -327,12 +329,12 @@ mod tracing_integration_tests {
         .try_into()
         .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
 
+        test_agent.start_session(snapshot_name, None).await;
+
         let data = SendData::new(300, payload_collection, header_tags, &endpoint);
 
         let _result = data.send().await;
 
-        test_agent
-            .assert_snapshot("compare_v04_trace_snapshot_test")
-            .await;
+        test_agent.assert_snapshot(snapshot_name).await;
     }
 }

@@ -2,7 +2,7 @@
   [
     {
       "service": "test-service",
-      "name": "test_name",
+      "name": "test_send_data_v04_trace_meta_struct_snapshot_01",
       "resource": "test-resource",
       "trace_id": 1234,
       "span_id": 12341,
