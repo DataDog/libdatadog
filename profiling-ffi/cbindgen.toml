@@ -15,13 +15,16 @@ no_includes = true
 sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
 includes = ["common.h"]
 
+after_includes = """
+struct TokioCancellationToken;
+"""
+
 [export]
 prefix = "ddog_prof_"
 renaming_overrides_prefixing = true
 
 [export.rename]
 "ByteSlice" = "ddog_ByteSlice"
-"CancellationToken" = "ddog_CancellationToken"
 "CharSlice" = "ddog_CharSlice"
 "Endpoint" = "ddog_Endpoint"
 "Error" = "ddog_Error"
@@ -49,6 +52,55 @@ renaming_overrides_prefixing = true
 "ManagedStringId" = "ddog_prof_ManagedStringId"
 "StringWrapper" = "ddog_StringWrapper"
 "StringWrapperResult" = "ddog_StringWrapperResult"
+"VoidResult" = "ddog_VoidResult"
+
+"CbindgenIsDumbStringId" = "ddog_prof_StringId"
+
+"Slice_GenerationalIdLabelId" = "ddog_prof_Slice_LabelId"
+"Slice_GenerationalIdLocationId" = "ddog_prof_Slice_LocationId"
+
+"GenerationalId_FunctionId" = "ddog_prof_FunctionId"
+"Result_GenerationalIdFunctionId" = "ddog_prof_FunctionId_Result"
+"FunctionId" = "OpaqueFunctionId"
+
+"GenerationalId_LabelId" = "ddog_prof_LabelId"
+"Result_GenerationalIdLabelId" = "ddog_prof_LabelId_Result"
+"LabelId" = "OpaqueLabelId"
+
+"GenerationalId_LabelSetId" = "ddog_prof_LabelSetId"
+"Result_GenerationalIdLabelSetId" = "ddog_prof_LabelSetId_Result"
+"LabelSetId" = "OpaqueLabelSetId"
+
+"GenerationalId_LocationId" = "ddog_prof_LocationId"
+"Result_GenerationalIdLocationId" = "ddog_prof_LocationId_Result"
+"LocationId" = "OpaqueLocationId"
+
+"GenerationalId_MappingId" = "ddog_prof_MappingId"
+"Result_GenerationalIdMappingId" = "ddog_prof_MappingId_Result"
+"MappingId" = "OpaqueMappingId"
+
+"GenerationalId_StackTraceId" = "ddog_prof_StackTraceId"
+"Result_GenerationalIdStackTraceId" = "ddog_prof_StackTraceId_Result"
+"StackTraceId" = "OpaqueStackTraceId"
+
+"GenerationalId_StringId" = "ddog_prof_StringId"
+"Result_GenerationalIdStringId" = "ddog_prof_StringId_Result"
+"StringId" = "OpaqueStringId"
+
+"HandleProfileExporter" = "ddog_prof_ProfileExporter"
+"Handle_ProfileExporter" = "ddog_prof_ProfileExporter"
+"Result_HandleProfileExporter" = "ddog_prof_ProfileExporter_Result"
+
+"HandleRequest" = "ddog_prof_Request"
+"Handle_Request" = "ddog_prof_Request"
+"Result_HandleRequest" = "ddog_prof_Request_Result"
+
+"HandleEncodedProfile" = "ddog_prof_EncodedProfile"
+"Handle_EncodedProfile" = "ddog_prof_EncodedProfile"
+"Result_HandleEncodedProfile" = "ddog_prof_EncodedProfile_Result"
+
+"CancellationToken" = "struct ddog_OpaqueCancellationToken"
+"Handle_TokioCancellationToken" = "ddog_CancellationToken"
 
 [export.mangle]
 rename_types = "PascalCase"

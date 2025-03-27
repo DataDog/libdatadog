@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 use async_trait::async_trait;
-use hyper::{http, Body, Request, Response, StatusCode};
+use ddcommon::hyper_migration;
+use hyper::{http, StatusCode};
 use tokio::sync::mpsc::Sender;
 use tracing::debug;
 
@@ -22,9 +23,9 @@ pub trait StatsProcessor {
     async fn process_stats(
         &self,
         config: Arc<Config>,
-        req: Request<Body>,
+        req: hyper_migration::HttpRequest,
         tx: Sender<pb::ClientStatsPayload>,
-    ) -> http::Result<Response<Body>>;
+    ) -> http::Result<hyper_migration::HttpResponse>;
 }
 
 #[derive(Clone)]
@@ -35,9 +36,9 @@ impl StatsProcessor for ServerlessStatsProcessor {
     async fn process_stats(
         &self,
         config: Arc<Config>,
-        req: Request<Body>,
+        req: hyper_migration::HttpRequest,
         tx: Sender<pb::ClientStatsPayload>,
-    ) -> http::Result<Response<Body>> {
+    ) -> http::Result<hyper_migration::HttpResponse> {
         debug!("Received trace stats to process");
         let (parts, body) = req.into_parts();
 

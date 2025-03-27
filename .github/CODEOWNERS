@@ -24,4 +24,3 @@ sidecar                 @Datadog/libdatadog-php @Datadog/libdatadog-apm
 sidecar-ffi             @Datadog/libdatadog-php @Datadog/libdatadog-apm
 data-pipeline*/         @Datadog/libdatadog-apm
 ddsketch                @Datadog/libdatadog-apm @Datadog/libdatadog-telemetry
-dogstatsd/              @Datadog/serverless

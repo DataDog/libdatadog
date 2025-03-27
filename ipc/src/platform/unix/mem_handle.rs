@@ -25,7 +25,8 @@ fn shm_open<P: ?Sized + NixPath>(
     mode: Mode,
 ) -> nix::Result<std::os::unix::io::OwnedFd> {
     mman::shm_open(name, flag, mode).or_else(|e| {
-        if e == Errno::ENOTSUP {
+        // This can happen on AWS lambda
+        if e == Errno::ENOSYS || e == Errno::ENOTSUP {
             // The path has a leading slash
             let path = name.with_nix_path(|cstr| {
                 let mut path = "/tmp/libdatadog".to_string().into_bytes();
@@ -53,7 +54,7 @@ fn shm_open<P: ?Sized + NixPath>(
 
 pub fn shm_unlink<P: ?Sized + NixPath>(name: &P) -> nix::Result<()> {
     mman::shm_unlink(name).or_else(|e| {
-        if e == Errno::ENOTSUP {
+        if e == Errno::ENOSYS || e == Errno::ENOTSUP {
             unlink(name)
         } else {
             Err(e)

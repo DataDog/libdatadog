@@ -25,11 +25,16 @@ pub struct Period<'a> {
 }
 
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
+#[repr(C)]
 pub struct ManagedStringId {
     pub value: u32,
 }
 
 impl ManagedStringId {
+    pub fn empty() -> Self {
+        Self::new(0)
+    }
+
     pub fn new(value: u32) -> Self {
         ManagedStringId { value }
     }
@@ -184,7 +189,7 @@ pub struct StringIdSample<'a> {
 }
 
 #[derive(Debug)]
-#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
+#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub enum UpscalingInfo {
     Poisson {
         // sum_value_offset and count_value_offset are offsets in the profile values type array
