@@ -32,6 +32,17 @@ pub struct Span {
     pub r#type: u32,
 }
 
+///This structure is a wrapper around aa slice of span events
+/// 
+/// It is meant to overrdide the default serialization, so we can serialize attributes
+/// differently from the original impl.
+/// Span events are serialized to JSON and added to "meta" when serializing to v0.5 
+/// 
+/// The main difference with messagepacck serialization is that attributes with any types
+/// are supposed to be mapped to their natural JSON representation.
+/// 
+/// Sadly, I haven't found a good way of overriding the default Serialize behavior, other
+/// than just doing it for the whole data structures that embed it.
 struct SpanEventsSerializerV05<'a>(&'a [SpanEventBytes]);
 struct SpanEventSerializerV05<'a>(&'a SpanEventBytes);
 struct SpanEventAttributesSerializerV05<'a>(&'a HashMap<BytesString, AttributeAnyValueBytes>);
