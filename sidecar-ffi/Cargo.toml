@@ -24,6 +24,9 @@ paste = "1"
 libc = "0.2"
 dogstatsd-client = { path = "../dogstatsd-client" }
 
+[target.'cfg(windows)'.dependencies]
+datadog-crashtracker-ffi = { path = "../crashtracker-ffi", features = ["collector", "collector_windows"] }
+
 [dev-dependencies]
 http = "1.0"
 tempfile = { version = "3.3" }
