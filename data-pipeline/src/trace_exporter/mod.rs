@@ -230,11 +230,11 @@ impl TraceExporter {
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
             TraceExporterInputFormat::V04 => match msgpack_decoder::v04::from_slice(data) {
-                Ok((traces, _)) => self.send_deser_ser(TraceCollection::TraceChunk(traces)),
+                Ok((traces, _)) => self.send_trace_collection(TraceCollection::TraceChunk(traces)),
                 Err(e) => Err(TraceExporterError::Deserialization(e)),
             },
             TraceExporterInputFormat::V05 => match msgpack_decoder::v05::from_slice(data) {
-                Ok((traces, _)) => self.send_deser_ser(TraceCollection::TraceChunk(traces)),
+                Ok((traces, _)) => self.send_trace_collection(TraceCollection::TraceChunk(traces)),
                 Err(e) => Err(TraceExporterError::Deserialization(e)),
             },
         }
@@ -582,7 +582,7 @@ impl TraceExporter {
         }
     }
 
-    fn send_deser_ser(
+    pub fn send_trace_collection(
         &self,
         mut collection: TraceCollection,
     ) -> Result<String, TraceExporterError> {
