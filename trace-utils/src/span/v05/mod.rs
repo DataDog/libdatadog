@@ -32,7 +32,7 @@ pub struct Span {
     pub r#type: u32,
 }
 
-///This structure is a wrapper around aa slice of span events
+///This structure is a wrapper around a slice of span events
 ///
 /// It is meant to overrdide the default serialization, so we can serialize attributes
 /// differently from the original impl.
