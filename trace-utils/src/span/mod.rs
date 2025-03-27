@@ -147,8 +147,8 @@ pub enum AttributeAnyValue<T>
 where
     T: SpanText,
 {
-        SingleValue(AttributeArrayValue<T>),
-        Array(Vec<AttributeArrayValue<T>>),
+    SingleValue(AttributeArrayValue<T>),
+    Array(Vec<AttributeArrayValue<T>>),
 }
 
 impl<T> Serialize for AttributeAnyValue<T>
