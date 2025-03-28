@@ -56,6 +56,7 @@
       "span_links": [
         {
           "trace_id": 13930160852258120406,
+          "trace_id_high": 0,
           "span_id": 11788048577503494824,
           "attributes": {
             "link.name":"Job #123"
