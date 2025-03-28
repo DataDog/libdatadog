@@ -29,3 +29,7 @@ pub use data_pipeline_ffi::*;
 // re-export library-config ffi
 #[cfg(feature = "datadog-library-config-ffi")]
 pub use datadog_library_config_ffi::*;
+
+// re-export tracer metadata functions
+#[cfg(feature = "ddcommon-ffi")]
+pub use ddcommon_ffi::*;
