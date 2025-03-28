@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
@@ -10,9 +11,8 @@ use cargo_metadata::MetadataCommand;
 use ddcommon::hyper_migration;
 use http_body_util::BodyExt;
 use hyper::Uri;
-use testcontainers::core::AccessMode;
 use testcontainers::{
-    core::{Mount, WaitFor},
+    core::{wait::HttpWaitStrategy, AccessMode, ContainerPort, Mount, WaitFor},
     runners::AsyncRunner,
     *,
 };
@@ -34,38 +34,38 @@ struct DatadogTestAgentContainer {
 }
 
 impl Image for DatadogTestAgentContainer {
-    type Args = Vec<String>;
-
-    fn name(&self) -> String {
-        TEST_AGENT_IMAGE_NAME.to_owned()
+    fn name(&self) -> &str {
+        TEST_AGENT_IMAGE_NAME
     }
 
-    fn tag(&self) -> String {
-        TEST_AGENT_IMAGE_TAG.to_owned()
+    fn tag(&self) -> &str {
+        TEST_AGENT_IMAGE_TAG
     }
 
     fn ready_conditions(&self) -> Vec<WaitFor> {
         vec![
             WaitFor::message_on_stderr(TEST_AGENT_READY_MSG),
-            // This wait is in place because on some github runners the docker container may reset
-            // the connection even though the test-agent stderr indicates it is ready.
-            // TODO: Investigate if we can emit a message from the test-agent when it is truly
-            // ready.
-            WaitFor::Duration {
-                length: Duration::from_secs(1),
-            },
+            // Add HTTP wait strategy for the /info endpoint
+            WaitFor::Http(
+                HttpWaitStrategy::new("/info") // Endpoint to check
+                    .with_port(ContainerPort::Tcp(TEST_AGENT_PORT)) // Port to use (8126)
+                    .with_expected_status_code(200u16) // Expected status code
+                    .with_poll_interval(Duration::from_secs(1)),
+            ),
         ]
     }
 
-    fn mounts(&self) -> Box<dyn Iterator<Item = &Mount> + '_> {
+    fn mounts(&self) -> impl IntoIterator<Item = &Mount> {
         Box::new(self.mounts.iter())
     }
 
-    fn expose_ports(&self) -> Vec<u16> {
-        vec![TEST_AGENT_PORT]
+    fn expose_ports(&self) -> &[ContainerPort] {
+        &[ContainerPort::Tcp(TEST_AGENT_PORT)]
     }
 
-    fn env_vars(&self) -> Box<dyn Iterator<Item = (&String, &String)> + '_> {
+    fn env_vars(
+        &self,
+    ) -> impl IntoIterator<Item = (impl Into<Cow<'_, str>>, impl Into<Cow<'_, str>>)> {
         Box::new(self.env_vars.iter())
     }
 }
@@ -302,6 +302,50 @@ impl DatadogTestAgent {
             status_code, body_string
         );
     }
+
+    /// Returns the traces that have been received by the test agent. This is not necessary in the
+    /// normal course of snapshot testing, but can be useful for debugging.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec` of `serde_json::Value` representing the traces that have been received by the test
+    /// agent.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```no_run
+    /// use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
+    /// use serde_json::to_string_pretty;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let test_agent = DatadogTestAgent::new(Some("relative/path/to/snapshot"), None).await;
+    ///     let traces = test_agent.get_sent_traces().await;
+    ///     let pretty_traces = to_string_pretty(&traces).expect("Failed to convert to pretty JSON");
+    ///
+    ///     println!("{}", pretty_traces);
+    /// }
+    /// ```
+    pub async fn get_sent_traces(&self) -> Vec<serde_json::Value> {
+        let client = hyper_migration::new_default_client();
+        let uri = self.get_uri_for_endpoint("test/traces", None).await;
+
+        let res = client.get(uri).await.expect("Request failed");
+
+        let body_bytes = res
+            .into_body()
+            .collect()
+            .await
+            .expect("Read failed")
+            .to_bytes();
+
+        let body_string = String::from_utf8(body_bytes.to_vec()).expect("Conversion failed");
+
+        serde_json::from_str(&body_string).expect("Failed to parse JSON response")
+    }
+
     /// Starts a new session with the Datadog Test Agent using the provided session token and
     /// optional sampling rates. This should be called before sending data to the test-agent to
     /// configure the session parameters. Please refer to
