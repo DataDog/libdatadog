@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
@@ -10,9 +11,8 @@ use cargo_metadata::MetadataCommand;
 use ddcommon::hyper_migration;
 use http_body_util::BodyExt;
 use hyper::Uri;
-use testcontainers::core::AccessMode;
 use testcontainers::{
-    core::{Mount, WaitFor},
+    core::{wait::HttpWaitStrategy, AccessMode, ContainerPort, Mount, WaitFor},
     runners::AsyncRunner,
     *,
 };
@@ -34,38 +34,38 @@ struct DatadogTestAgentContainer {
 }
 
 impl Image for DatadogTestAgentContainer {
-    type Args = Vec<String>;
-
-    fn name(&self) -> String {
-        TEST_AGENT_IMAGE_NAME.to_owned()
+    fn name(&self) -> &str {
+        TEST_AGENT_IMAGE_NAME
     }
 
-    fn tag(&self) -> String {
-        TEST_AGENT_IMAGE_TAG.to_owned()
+    fn tag(&self) -> &str {
+        TEST_AGENT_IMAGE_TAG
     }
 
     fn ready_conditions(&self) -> Vec<WaitFor> {
         vec![
             WaitFor::message_on_stderr(TEST_AGENT_READY_MSG),
-            // This wait is in place because on some github runners the docker container may reset
-            // the connection even though the test-agent stderr indicates it is ready.
-            // TODO: Investigate if we can emit a message from the test-agent when it is truly
-            // ready.
-            WaitFor::Duration {
-                length: Duration::from_secs(1),
-            },
+            // Add HTTP wait strategy for the /info endpoint
+            WaitFor::Http(
+                HttpWaitStrategy::new("/info") // Endpoint to check
+                    .with_port(ContainerPort::Tcp(TEST_AGENT_PORT)) // Port to use (8126)
+                    .with_expected_status_code(200u16) // Expected status code
+                    .with_poll_interval(Duration::from_secs(1)),
+            ),
         ]
     }
 
-    fn mounts(&self) -> Box<dyn Iterator<Item = &Mount> + '_> {
+    fn mounts(&self) -> impl IntoIterator<Item = &Mount> {
         Box::new(self.mounts.iter())
     }
 
-    fn expose_ports(&self) -> Vec<u16> {
-        vec![TEST_AGENT_PORT]
+    fn expose_ports(&self) -> &[ContainerPort] {
+        &[ContainerPort::Tcp(TEST_AGENT_PORT)]
     }
 
-    fn env_vars(&self) -> Box<dyn Iterator<Item = (&String, &String)> + '_> {
+    fn env_vars(
+        &self,
+    ) -> impl IntoIterator<Item = (impl Into<Cow<'_, str>>, impl Into<Cow<'_, str>>)> {
         Box::new(self.env_vars.iter())
     }
 }
