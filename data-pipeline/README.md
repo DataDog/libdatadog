@@ -31,6 +31,7 @@ The current implementation assumes the following requisites must be met by the t
   +--------------+                 +--------------+                  +--------------+
 ```
 
+
 ## API
 
 Currently the **data-pipeline** crate exports just one module `TraceExporter` which follows a builder pattern to
