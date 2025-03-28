@@ -30,3 +30,6 @@ datadog-trace-utils = { path = "../trace-utils" }
 data-pipeline = { path = "../data-pipeline" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 tinybytes = { path = "../tinybytes" }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
+tracing-core = "0.1.32"

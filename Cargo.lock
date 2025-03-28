@@ -1342,6 +1342,9 @@ dependencies = [
  "httpmock",
  "rmp-serde",
  "tinybytes",
+ "tracing",
+ "tracing-core",
+ "tracing-subscriber",
 ]
 
 [[package]]
