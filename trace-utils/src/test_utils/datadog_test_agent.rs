@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
@@ -12,7 +13,7 @@ use http_body_util::BodyExt;
 use hyper::Uri;
 use testcontainers::core::AccessMode;
 use testcontainers::{
-    core::{Mount, WaitFor},
+    core::{ports::ContainerPort, Mount, WaitFor},
     runners::AsyncRunner,
     *,
 };
@@ -22,7 +23,7 @@ const TEST_AGENT_IMAGE_TAG: &str = "latest";
 const TEST_AGENT_READY_MSG: &str =
     "INFO:ddapm_test_agent.agent:Trace request stall seconds setting set to 0.0.";
 
-const TEST_AGENT_PORT: u16 = 8126;
+const TEST_AGENT_PORT: ContainerPort = ContainerPort::Udp(8126);
 const SAMPLE_RATE_QUERY_PARAM_KEY: &str = "agent_sample_rate_by_service";
 const SESSION_TEST_TOKEN_QUERY_PARAM_KEY: &str = "test_session_token";
 const SESSION_START_ENDPOINT: &str = "test/session/start";
@@ -31,17 +32,16 @@ const SESSION_START_ENDPOINT: &str = "test/session/start";
 struct DatadogTestAgentContainer {
     mounts: Vec<Mount>,
     env_vars: HashMap<String, String>,
+    ports: [ContainerPort; 1],
 }
 
 impl Image for DatadogTestAgentContainer {
-    type Args = Vec<String>;
-
-    fn name(&self) -> String {
-        TEST_AGENT_IMAGE_NAME.to_owned()
+    fn name(&self) -> &str {
+        TEST_AGENT_IMAGE_NAME
     }
 
-    fn tag(&self) -> String {
-        TEST_AGENT_IMAGE_TAG.to_owned()
+    fn tag(&self) -> &str {
+        TEST_AGENT_IMAGE_TAG
     }
 
     fn ready_conditions(&self) -> Vec<WaitFor> {
@@ -57,16 +57,18 @@ impl Image for DatadogTestAgentContainer {
         ]
     }
 
-    fn mounts(&self) -> Box<dyn Iterator<Item = &Mount> + '_> {
-        Box::new(self.mounts.iter())
+    fn mounts(&self) -> impl IntoIterator<Item = &Mount> {
+        self.mounts.iter()
     }
 
-    fn expose_ports(&self) -> Vec<u16> {
-        vec![TEST_AGENT_PORT]
+    fn expose_ports(&self) -> &[ContainerPort] {
+        &self.ports
     }
 
-    fn env_vars(&self) -> Box<dyn Iterator<Item = (&String, &String)> + '_> {
-        Box::new(self.env_vars.iter())
+    fn env_vars(
+        &self,
+    ) -> impl IntoIterator<Item = (impl Into<Cow<'_, str>>, impl Into<Cow<'_, str>>)> {
+        self.env_vars.iter()
     }
 }
 
@@ -99,7 +101,12 @@ impl DatadogTestAgentContainer {
             );
         }
 
-        DatadogTestAgentContainer { mounts, env_vars }
+        let ports = [TEST_AGENT_PORT];
+        DatadogTestAgentContainer {
+            mounts,
+            env_vars,
+            ports,
+        }
     }
     // The docker image requires an absolute path when mounting a volume. This function gets the
     // absolute path of the workspace and appends the provided relative path.
