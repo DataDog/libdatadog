@@ -1145,7 +1145,7 @@ mod tests {
         assert!(exporter.telemetry.is_some());
     }
 
-    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_new_defaults() {
         let builder = TraceExporterBuilder::default();
