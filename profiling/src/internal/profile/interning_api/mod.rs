@@ -35,7 +35,10 @@ impl Profile {
         unit: Option<GenerationalId<StringId>>,
     ) -> anyhow::Result<GenerationalId<LabelId>> {
         let key = key.get(self.generation)?;
-        let unit = unit.map(|u| u.get(self.generation)).transpose()?;
+        let unit = match unit {
+            Some(gen_id) => gen_id.get(self.generation)?,
+            None => StringId::ZERO,
+        };
         let id = self.labels.dedup(Label::num(key, val, unit));
         Ok(GenerationalId::new(id, self.generation))
     }

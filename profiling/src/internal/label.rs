@@ -4,48 +4,44 @@
 use super::*;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub enum LabelValue {
-    Str(StringId),
-    Num {
-        num: i64,
-        num_unit: Option<StringId>,
-    },
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct Label {
     key: StringId,
-    value: LabelValue,
+    str: StringId,
+    num: i64,
+    num_unit: StringId,
 }
 
 impl Label {
-    pub fn has_num_value(&self) -> bool {
-        matches!(self.value, LabelValue::Num { .. })
-    }
-
-    pub fn has_string_value(&self) -> bool {
-        matches!(self.value, LabelValue::Str(_))
-    }
-
+    #[inline]
     pub fn get_key(&self) -> StringId {
         self.key
     }
 
-    pub fn get_value(&self) -> &LabelValue {
-        &self.value
+    #[inline]
+    pub fn get_str(&self) -> StringId {
+        self.str
     }
 
-    pub fn num(key: StringId, num: i64, num_unit: Option<StringId>) -> Self {
+    #[inline]
+    pub fn get_num(&self) -> (i64, StringId) {
+        (self.num, self.num_unit)
+    }
+
+    pub fn num(key: StringId, num: i64, num_unit: StringId) -> Self {
         Self {
             key,
-            value: LabelValue::Num { num, num_unit },
+            str: StringId::ZERO,
+            num,
+            num_unit,
         }
     }
 
-    pub fn str(key: StringId, v: StringId) -> Self {
+    pub fn str(key: StringId, str: StringId) -> Self {
         Self {
             key,
-            value: LabelValue::Str(v),
+            str,
+            num: 0,
+            num_unit: StringId::ZERO,
         }
     }
 }
@@ -59,19 +55,11 @@ impl From<Label> for pprof::Label {
 impl From<&Label> for pprof::Label {
     fn from(l: &Label) -> pprof::Label {
         let key = l.key.to_raw_id();
-        match l.value {
-            LabelValue::Str(str) => Self {
-                key,
-                str: str.to_raw_id(),
-                num: 0,
-                num_unit: 0,
-            },
-            LabelValue::Num { num, num_unit } => Self {
-                key,
-                str: 0,
-                num,
-                num_unit: num_unit.map(StringId::into_raw_id).unwrap_or_default(),
-            },
+        Self {
+            key,
+            str: l.str.to_raw_id(),
+            num: l.num,
+            num_unit: l.num_unit.to_raw_id(),
         }
     }
 }

@@ -130,7 +130,7 @@ pub struct Label<'a> {
     pub key: &'a str,
 
     /// At most one of the following must be present
-    pub str: Option<&'a str>,
+    pub str: &'a str,
     pub num: i64,
 
     /// Should only be present when num is present.
@@ -140,7 +140,7 @@ pub struct Label<'a> {
     /// Consumers may also  interpret units like "bytes" and "kilobytes" as memory
     /// units and units like "seconds" and "nanoseconds" as time units,
     /// and apply appropriate unit conversions to these.
-    pub num_unit: Option<&'a str>,
+    pub num_unit: &'a str,
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -148,18 +148,76 @@ pub struct Label<'a> {
 pub struct StringIdLabel {
     pub key: ManagedStringId,
 
-    /// At most one of the following must be present
-    pub str: Option<ManagedStringId>,
+    /// If str is non-zero, do not use num nor num_unit.
+    pub str: ManagedStringId,
+
+    /// Only use num and num_unit if str is zero.
     pub num: i64,
 
-    /// Should only be present when num is present.
-    pub num_unit: Option<ManagedStringId>,
+    /// Only use num and num_unit if str is zero.
+    pub num_unit: ManagedStringId,
+}
+
+#[derive(thiserror::Error, Debug)]
+#[error("Label with key `key` used both str and num, given str `str` and num `num` (with num_unit `num_unit`)")]
+pub struct LabelError {
+    pub key: Box<str>,
+    pub str: Box<str>,
+    pub num: i64,
+    pub num_unit: Box<str>,
 }
 
 impl Label<'_> {
-    pub fn uses_at_most_one_of_str_and_num(&self) -> bool {
-        self.str.is_none() || (self.num == 0 && self.num_unit.is_none())
+    pub const fn uses_at_most_one_of_str_and_num(&self) -> bool {
+        let str_is_empty = self.str.is_empty();
+        let num_is_empty = self.num == 0 && self.num_unit.is_empty();
+        str_is_empty || num_is_empty
     }
+
+    pub fn try_normalize(&self) -> Result<NormalizedLabel, LabelError> {
+        let key = self.key;
+        let str = self.str;
+        let num = self.num;
+        let num_unit = self.num_unit;
+
+        let str_is_empty = str.is_empty();
+        let num_is_empty = num == 0 && num_unit.is_empty();
+        if str_is_empty || num_is_empty {
+            Ok(NormalizedLabel {
+                key,
+                str,
+                num,
+                num_unit,
+            })
+        } else {
+            Err(LabelError {
+                key: Box::from(key),
+                str: Box::from(str),
+                num,
+                num_unit: Box::from(num_unit),
+            })
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum LabelValue<'a> {
+    Str(&'a str),
+    Num { num: i64, num_unit: &'a str },
+}
+
+impl Default for LabelValue<'_> {
+    fn default() -> Self {
+        LabelValue::Str("")
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
+pub struct NormalizedLabel<'a> {
+    pub key: &'a str,
+    pub(crate) str: &'a str,
+    pub(crate) num: i64,
+    pub(crate) num_unit: &'a str,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -283,11 +341,17 @@ pub struct Profile<'a> {
     pub start_time: SystemTime,
 }
 
-fn string_table_fetch(pprof: &pprof::Profile, id: i64) -> anyhow::Result<&String> {
+#[derive(thiserror::Error, Debug)]
+#[error("String id `id` not found")]
+pub struct StringIdNotFoundError {
+    pub id: i64,
+}
+
+fn string_table_fetch(pprof: &pprof::Profile, id: i64) -> Result<&String, StringIdNotFoundError> {
     pprof
         .string_table
         .get(id as u64 as usize)
-        .ok_or_else(|| anyhow::anyhow!("String {id} was not found."))
+        .ok_or(StringIdNotFoundError { id })
 }
 
 fn mapping_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Mapping> {
@@ -400,17 +464,9 @@ impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
             for label in sample.labels.iter() {
                 labels.push(Label {
                     key: string_table_fetch(pprof, label.key)?,
-                    str: if label.str == 0 {
-                        None
-                    } else {
-                        Some(string_table_fetch(pprof, label.str)?)
-                    },
+                    str: string_table_fetch(pprof, label.str)?,
                     num: label.num,
-                    num_unit: if label.num_unit == 0 {
-                        None
-                    } else {
-                        Some(string_table_fetch(pprof, label.num_unit)?)
-                    },
+                    num_unit: string_table_fetch(pprof, label.num_unit)?,
                 })
             }
             let sample = Sample {
@@ -439,49 +495,49 @@ mod tests {
     fn label_uses_at_most_one_of_str_and_num() {
         let label = Label {
             key: "name",
-            str: Some("levi"),
+            str: "levi",
             num: 0,
-            num_unit: Some("name"), // can't use num_unit with str
+            num_unit: "name", // can't use num_unit with str
         };
         assert!(!label.uses_at_most_one_of_str_and_num());
 
         let label = Label {
             key: "name",
-            str: Some("levi"),
+            str: "levi",
             num: 10, // can't use num with str
-            num_unit: None,
+            num_unit: "",
         };
         assert!(!label.uses_at_most_one_of_str_and_num());
 
         let label = Label {
             key: "name",
-            str: Some("levi"),
+            str: "levi",
             num: 0,
-            num_unit: None,
+            num_unit: "",
         };
         assert!(label.uses_at_most_one_of_str_and_num());
 
         let label = Label {
             key: "process_id",
-            str: None,
+            str: "",
             num: 0,
-            num_unit: None,
+            num_unit: "",
         };
         assert!(label.uses_at_most_one_of_str_and_num());
 
         let label = Label {
             key: "local root span id",
-            str: None,
+            str: "",
             num: 10901,
-            num_unit: None,
+            num_unit: "",
         };
         assert!(label.uses_at_most_one_of_str_and_num());
 
         let label = Label {
             key: "duration",
-            str: None,
+            str: "",
             num: 12345,
-            num_unit: Some("nanoseconds"),
+            num_unit: "nanoseconds",
         };
         assert!(label.uses_at_most_one_of_str_and_num());
     }

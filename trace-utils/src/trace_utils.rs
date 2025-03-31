@@ -938,6 +938,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
     async fn test_get_traces_from_request_body_with_span_links() {
         let trace_input = json!([[{
             "service": "test-service",
