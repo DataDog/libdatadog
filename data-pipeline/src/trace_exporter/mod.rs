@@ -13,6 +13,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use datadog_trace_utils::msgpack_decoder::{self, decode::error::DecodeError};
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryError};
+use datadog_trace_utils::span::SpanBytes;
 use datadog_trace_utils::trace_utils::{self, TracerHeaderTags};
 use datadog_trace_utils::tracer_payload::{self, TraceCollection};
 use ddcommon::header::{
@@ -582,7 +583,15 @@ impl TraceExporter {
         }
     }
 
-    pub fn send_trace_collection(
+    pub fn send_trace_chunks(
+        &self,
+        trace_chunks: Vec<Vec<SpanBytes>>,
+    ) -> Result<String, TraceExporterError> {
+        self.check_agent_info();
+        self.send_trace_collection(TraceCollection::TraceChunk(trace_chunks))
+    }
+
+    fn send_trace_collection(
         &self,
         mut collection: TraceCollection,
     ) -> Result<String, TraceExporterError> {
