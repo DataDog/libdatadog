@@ -92,7 +92,6 @@ mod https {
 
     use rustls::ClientConfig;
 
-    #[cfg(feature = "use_webpki_roots")]
     /// When using aws-lc-rs, rustls needs to be initialized with the default CryptoProvider;
     /// sometimes this is done as a side-effect of other operations, but we need to ensure it
     /// happens here.  On non-unix platforms, ddcommon uses `ring` instead, which handles this
@@ -129,6 +128,8 @@ mod https {
     pub(super) fn build_https_connector() -> anyhow::Result<
         hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
     > {
+        ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
+
         let certs = load_root_certs()?;
         let client_config = ClientConfig::builder()
             .with_root_certificates(certs)
