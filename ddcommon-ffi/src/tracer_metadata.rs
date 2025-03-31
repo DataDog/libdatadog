@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::slice::CharSlice;
+use crate::Result;
 #[cfg(target_os = "linux")]
 use ddcommon::tracer_metadata::AnonymousFileHandle;
 use ddcommon::tracer_metadata::{self, TracerMetadata};
@@ -12,8 +13,6 @@ use std::os::raw::c_int;
 pub struct TracerMemfdHandle {
     /// File descriptor (relevant only on Linux)
     pub fd: c_int,
-    /// Whether the handle is valid
-    pub is_valid: bool,
 }
 
 /// Store tracer metadata to a file handle
@@ -31,7 +30,7 @@ pub unsafe extern "C" fn ddog_store_tracer_metadata(
     service_name: CharSlice,
     service_env: CharSlice,
     service_version: CharSlice,
-) -> TracerMemfdHandle {
+) -> Result<TracerMemfdHandle> {
     // Convert C strings to Rust types
     let metadata = TracerMetadata {
         schema_version,
@@ -61,25 +60,20 @@ pub unsafe extern "C" fn ddog_store_tracer_metadata(
     };
 
     // Call the actual implementation
-    match tracer_metadata::store_tracer_metadata(&metadata) {
-        #[cfg(target_os = "linux")]
-        Ok(handle) => {
-            use std::os::fd::{IntoRawFd, OwnedFd};
-            let AnonymousFileHandle::Linux(memfd) = handle;
-            let owned_fd: OwnedFd = memfd.into_file().into();
-            TracerMemfdHandle {
-                fd: owned_fd.into_raw_fd(),
-                is_valid: true,
+    let result: anyhow::Result<TracerMemfdHandle> =
+        match tracer_metadata::store_tracer_metadata(&metadata) {
+            #[cfg(target_os = "linux")]
+            Ok(handle) => {
+                use std::os::fd::{IntoRawFd, OwnedFd};
+                let AnonymousFileHandle::Linux(memfd) = handle;
+                let owned_fd: OwnedFd = memfd.into_file().into();
+                Ok(TracerMemfdHandle {
+                    fd: owned_fd.into_raw_fd(),
+                })
             }
-        }
-        #[cfg(not(target_os = "linux"))]
-        Ok(_) => TracerMemfdHandle {
-            fd: -1,
-            is_valid: false,
-        },
-        Err(_err) => TracerMemfdHandle {
-            fd: -1,
-            is_valid: false,
-        },
-    }
+            #[cfg(not(target_os = "linux"))]
+            Ok(_) => Err(anyhow::anyhow!("Unsupported platform")),
+            Err(err) => Err(err),
+        };
+    result.into()
 }
