@@ -58,10 +58,10 @@ pub async fn main() {
     };
 
     let dogstatsd_tags = match env_type {
-        EnvironmentType::CloudFunction => "origin:cloudfunction",
-        EnvironmentType::AzureFunction => "origin:azurefunction",
-        EnvironmentType::AzureSpringApp => "origin:azurespringapp",
-        EnvironmentType::LambdaFunction => "origin:lambda", // historical reasons
+        EnvironmentType::CloudFunction => "origin:cloudfunction,dd.origin:cloudfunction",
+        EnvironmentType::AzureFunction => "origin:azurefunction,dd.origin:azurefunction",
+        EnvironmentType::AzureSpringApp => "origin:azurespringapp,dd.origin:azurespringapp",
+        EnvironmentType::LambdaFunction => "origin:lambda,dd.origin:lambda", // historical reasons
     };
 
     let dd_api_key: Option<String> = env::var("DD_API_KEY").ok();
