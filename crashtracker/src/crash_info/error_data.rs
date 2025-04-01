@@ -23,13 +23,15 @@ impl ErrorData {
         let normalizer = blazesym::normalize::Normalizer::new();
         let pid = pid.into();
         // TODO, should we continue after error or just exit?
-        if let Err(mut e) = self.stack.normalize_ips(&normalizer, pid) {
-            errors.append(&mut e);
-        }
+        self.stack
+            .normalize_ips(&normalizer, pid)
+            .unwrap_or_else(|mut e| errors.append(&mut e));
+
         for thread in &mut self.threads {
-            if let Err(mut e) = thread.stack.normalize_ips(&normalizer, pid) {
-                errors.append(&mut e);
-            }
+            thread
+                .stack
+                .normalize_ips(&normalizer, pid)
+                .unwrap_or_else(|mut e| errors.append(&mut e));
         }
         if errors.is_empty() {
             Ok(())
@@ -45,14 +47,15 @@ impl ErrorData {
         process.map_files = false;
         let src = blazesym::symbolize::Source::Process(process);
         let symbolizer = blazesym::symbolize::Symbolizer::new();
-        if let Err(mut e) = self.stack.resolve_names(&src, &symbolizer) {
-            errors.append(&mut e);
-        }
+        self.stack
+            .resolve_names(&src, &symbolizer)
+            .unwrap_or_else(|mut e| errors.append(&mut e));
 
         for thread in &mut self.threads {
-            if let Err(mut e) = thread.stack.resolve_names(&src, &symbolizer) {
-                errors.append(&mut e);
-            }
+            thread
+                .stack
+                .resolve_names(&src, &symbolizer)
+                .unwrap_or_else(|mut e| errors.append(&mut e));
         }
         if errors.is_empty() {
             Ok(())

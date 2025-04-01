@@ -76,9 +76,9 @@ impl StackTrace {
     pub fn normalize_ips(&mut self, normalizer: &Normalizer, pid: Pid) -> Result<(), Vec<String>> {
         let mut errors = vec![];
         for frame in &mut self.frames {
-            if let Err(e) = frame.normalize_ip(normalizer, pid) {
-                errors.push(e.to_string());
-            }
+            frame
+                .normalize_ip(normalizer, pid)
+                .unwrap_or_else(|e| errors.push(e.to_string()));
         }
         if errors.is_empty() {
             Ok(())
@@ -94,9 +94,9 @@ impl StackTrace {
     ) -> Result<(), Vec<String>> {
         let mut errors = vec![];
         for frame in &mut self.frames {
-            if let Err(e) = frame.resolve_names(src, symbolizer) {
-                errors.push(e.to_string());
-            }
+            frame
+                .resolve_names(src, symbolizer)
+                .unwrap_or_else(|e| errors.push(e.to_string()));
         }
         if errors.is_empty() {
             Ok(())
