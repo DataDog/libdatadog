@@ -48,6 +48,7 @@ serde_json = {version = "1.0"}
 target-triple = "0.1.4"
 tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
+reqwest = { git = "https://github.com/seanmonstar/reqwest.git", branch = "uds" }
 
 [dev-dependencies]
 bolero = "0.13"
