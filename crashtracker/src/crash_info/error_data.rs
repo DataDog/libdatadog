@@ -22,7 +22,6 @@ impl ErrorData {
         let mut errors = vec![];
         let normalizer = blazesym::normalize::Normalizer::new();
         let pid = pid.into();
-        // TODO, should we continue after error or just exit?
         self.stack
             .normalize_ips(&normalizer, pid)
             .unwrap_or_else(|mut e| errors.append(&mut e));
