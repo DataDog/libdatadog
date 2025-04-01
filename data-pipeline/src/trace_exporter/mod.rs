@@ -586,26 +586,22 @@ impl TraceExporter {
     /// Add all spans from the given iterator into the stats concentrator
     /// # Panic
     /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
-    fn add_spans_to_stats(&self, collection: &TraceCollection) {
-        if let StatsComputationStatus::Enabled {
-            stats_concentrator,
-            cancellation_token: _,
-            exporter_handle: _,
-        } = &**self.client_side_stats.load()
-        {
-            #[allow(clippy::unwrap_used)]
-            let mut stats_concentrator = stats_concentrator.lock().unwrap();
-
-            match collection {
-                TraceCollection::TraceChunk(traces) => {
-                    let spans = traces.iter().flat_map(|trace| trace.iter());
-                    for span in spans {
-                        stats_concentrator.add_span(span);
-                    }
+    fn add_spans_to_stats(
+        &self,
+        collection: &TraceCollection,
+        concentrator: &Mutex<SpanConcentrator>,
+    ) {
+        match collection {
+            TraceCollection::TraceChunk(traces) => {
+                #[allow(clippy::unwrap_used)]
+                let mut stats_concentrator = concentrator.lock().unwrap();
+                let spans = traces.iter().flat_map(|trace| trace.iter());
+                for span in spans {
+                    stats_concentrator.add_span(span);
                 }
-                // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-                TraceCollection::V07(_) => unreachable!(),
             }
+            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            TraceCollection::V07(_) => unreachable!(),
         }
     }
 
@@ -629,11 +625,14 @@ impl TraceExporter {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         // Stats computation
-        if let StatsComputationStatus::Enabled { .. } = &**self.client_side_stats.load() {
+        if let StatsComputationStatus::Enabled {
+            stats_concentrator, ..
+        } = &**self.client_side_stats.load()
+        {
             if !self.client_computed_top_level {
                 collection.set_top_level_spans();
             }
-            self.add_spans_to_stats(&collection);
+            self.add_spans_to_stats(&collection, &stats_concentrator);
             // Once stats have been computed we can drop all chunks that are not going to be
             // sampled by the agent
             let (dropped_p0_traces, dropped_p0_spans) = collection.drop_chunks();
