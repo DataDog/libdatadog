@@ -69,11 +69,19 @@ impl CrashInfo {
 #[cfg(unix)]
 impl CrashInfo {
     pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
-        self.error.normalize_ips(pid)
+        if let Err(mut e) = self.error.normalize_ips(pid) {
+            self.log_messages.append(&mut e);
+            anyhow::bail!("Failed to normalize ips, see [log_messages] for detailed errors.")
+        }
+        Ok(())
     }
 
     pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {
-        self.error.resolve_names(pid)
+        if let Err(mut e) = self.error.resolve_names(pid) {
+            self.log_messages.append(&mut e);
+            anyhow::bail!("Failed to resolve names, see [log_messages] for detailed errors.")
+        }
+        Ok(())
     }
 }
 

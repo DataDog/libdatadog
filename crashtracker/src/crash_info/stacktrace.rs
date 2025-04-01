@@ -73,20 +73,36 @@ impl StackTrace {
 
 #[cfg(unix)]
 impl StackTrace {
-    pub fn normalize_ips(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
+    pub fn normalize_ips(&mut self, normalizer: &Normalizer, pid: Pid) -> Result<(), Vec<String>> {
+        let mut errors = vec![];
         for frame in &mut self.frames {
-            // TODO: Should this keep going on failure, and report at the end?
-            frame.normalize_ip(normalizer, pid)?;
+            if let Err(e) = frame.normalize_ip(normalizer, pid) {
+                errors.push(e.to_string());
+            }
         }
-        Ok(())
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 
-    pub fn resolve_names(&mut self, src: &Source, symbolizer: &Symbolizer) -> anyhow::Result<()> {
+    pub fn resolve_names(
+        &mut self,
+        src: &Source,
+        symbolizer: &Symbolizer,
+    ) -> Result<(), Vec<String>> {
+        let mut errors = vec![];
         for frame in &mut self.frames {
-            // TODO: Should this keep going on failure, and report at the end?
-            frame.resolve_names(src, symbolizer)?;
+            if let Err(e) = frame.resolve_names(src, symbolizer) {
+                errors.push(e.to_string());
+            }
         }
-        Ok(())
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 }
 

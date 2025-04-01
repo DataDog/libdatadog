@@ -18,29 +18,47 @@ pub struct ErrorData {
 
 #[cfg(unix)]
 impl ErrorData {
-    pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
+    pub fn normalize_ips(&mut self, pid: u32) -> Result<(), Vec<String>> {
+        let mut errors = vec![];
         let normalizer = blazesym::normalize::Normalizer::new();
         let pid = pid.into();
         // TODO, should we continue after error or just exit?
-        self.stack.normalize_ips(&normalizer, pid)?;
-        for thread in &mut self.threads {
-            thread.stack.normalize_ips(&normalizer, pid)?;
+        if let Err(mut e) = self.stack.normalize_ips(&normalizer, pid) {
+            errors.append(&mut e);
         }
-        Ok(())
+        for thread in &mut self.threads {
+            if let Err(mut e) = thread.stack.normalize_ips(&normalizer, pid) {
+                errors.append(&mut e);
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 
-    pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {
+    pub fn resolve_names(&mut self, pid: u32) -> Result<(), Vec<String>> {
+        let mut errors = vec![];
         let mut process = blazesym::symbolize::Process::new(pid.into());
         // https://github.com/libbpf/blazesym/issues/518
         process.map_files = false;
         let src = blazesym::symbolize::Source::Process(process);
         let symbolizer = blazesym::symbolize::Symbolizer::new();
-        self.stack.resolve_names(&src, &symbolizer)?;
+        if let Err(mut e) = self.stack.resolve_names(&src, &symbolizer) {
+            errors.append(&mut e);
+        }
 
         for thread in &mut self.threads {
-            thread.stack.resolve_names(&src, &symbolizer)?;
+            if let Err(mut e) = thread.stack.resolve_names(&src, &symbolizer) {
+                errors.append(&mut e);
+            }
         }
-        Ok(())
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 }
 
