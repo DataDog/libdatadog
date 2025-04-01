@@ -81,10 +81,7 @@ impl StackTrace {
                 errors += 1;
             });
         }
-        anyhow::ensure!(
-            errors == 0,
-            "Failed to normalize ips, see frame comments for details"
-        );
+        anyhow::ensure!(errors == 0);
         Ok(())
     }
 
@@ -96,10 +93,7 @@ impl StackTrace {
                 errors += 1;
             });
         }
-        anyhow::ensure!(
-            errors == 0,
-            "Failed to resolve names, see frame comments for details"
-        );
+        anyhow::ensure!(errors == 0);
         Ok(())
     }
 }
