@@ -133,8 +133,9 @@ fn resolve_frames(
             .as_ref()
             .context("Unable to resolve frames: No PID specified")?
             .pid;
-        crash_info.resolve_names(pid)?;
-        crash_info.normalize_ips(pid)?;
+        let rval1 = crash_info.resolve_names(pid);
+        let rval2 = crash_info.normalize_ips(pid);
+        rval1.context(format!("{rval2:?}"))?;
     }
     Ok(())
 }

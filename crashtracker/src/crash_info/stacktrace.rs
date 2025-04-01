@@ -73,36 +73,34 @@ impl StackTrace {
 
 #[cfg(unix)]
 impl StackTrace {
-    pub fn normalize_ips(&mut self, normalizer: &Normalizer, pid: Pid) -> Result<(), Vec<String>> {
-        let mut errors = vec![];
+    pub fn normalize_ips(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
+        let mut errors = 0;
         for frame in &mut self.frames {
-            frame
-                .normalize_ip(normalizer, pid)
-                .unwrap_or_else(|e| errors.push(e.to_string()));
+            frame.normalize_ip(normalizer, pid).unwrap_or_else(|e| {
+                frame.comments.push(e.to_string());
+                errors += 1;
+            });
         }
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+        anyhow::ensure!(
+            errors == 0,
+            "Failed to normalize ips, see frame comments for details"
+        );
+        Ok(())
     }
 
-    pub fn resolve_names(
-        &mut self,
-        src: &Source,
-        symbolizer: &Symbolizer,
-    ) -> Result<(), Vec<String>> {
-        let mut errors = vec![];
+    pub fn resolve_names(&mut self, src: &Source, symbolizer: &Symbolizer) -> anyhow::Result<()> {
+        let mut errors = 0;
         for frame in &mut self.frames {
-            frame
-                .resolve_names(src, symbolizer)
-                .unwrap_or_else(|e| errors.push(e.to_string()));
+            frame.resolve_names(src, symbolizer).unwrap_or_else(|e| {
+                frame.comments.push(e.to_string());
+                errors += 1;
+            });
         }
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+        anyhow::ensure!(
+            errors == 0,
+            "Failed to resolve names, see frame comments for details"
+        );
+        Ok(())
     }
 }
 
@@ -145,6 +143,10 @@ pub struct StackFrame {
     pub function: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
+
+    // Additional Info
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<String>,
 }
 
 impl StackFrame {
@@ -258,6 +260,8 @@ impl super::test_utils::TestInstance for StackFrame {
         let file = Some(format!("banana{seed}.rs"));
         let function = Some(format!("Bar::baz{seed}"));
         let line = Some((2 * seed + 1) as u32);
+
+        let comments = vec![format!("This is a comment on frame {seed}")];
         Self {
             ip,
             module_base_address,
@@ -272,6 +276,7 @@ impl super::test_utils::TestInstance for StackFrame {
             file,
             function,
             line,
+            comments,
         }
     }
 }

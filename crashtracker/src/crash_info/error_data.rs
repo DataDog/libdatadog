@@ -18,29 +18,29 @@ pub struct ErrorData {
 
 #[cfg(unix)]
 impl ErrorData {
-    pub fn normalize_ips(&mut self, pid: u32) -> Result<(), Vec<String>> {
-        let mut errors = vec![];
+    pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
+        let mut errors = 0;
         let normalizer = blazesym::normalize::Normalizer::new();
         let pid = pid.into();
         self.stack
             .normalize_ips(&normalizer, pid)
-            .unwrap_or_else(|mut e| errors.append(&mut e));
+            .unwrap_or_else(|_| errors += 1);
 
         for thread in &mut self.threads {
             thread
                 .stack
                 .normalize_ips(&normalizer, pid)
-                .unwrap_or_else(|mut e| errors.append(&mut e));
+                .unwrap_or_else(|_| errors += 1);
         }
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+        anyhow::ensure!(
+            errors == 0,
+            "Failed to normalize ips, see frame comments for details"
+        );
+        Ok(())
     }
 
-    pub fn resolve_names(&mut self, pid: u32) -> Result<(), Vec<String>> {
-        let mut errors = vec![];
+    pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {
+        let mut errors = 0;
         let mut process = blazesym::symbolize::Process::new(pid.into());
         // https://github.com/libbpf/blazesym/issues/518
         process.map_files = false;
@@ -48,19 +48,19 @@ impl ErrorData {
         let symbolizer = blazesym::symbolize::Symbolizer::new();
         self.stack
             .resolve_names(&src, &symbolizer)
-            .unwrap_or_else(|mut e| errors.append(&mut e));
+            .unwrap_or_else(|_| errors += 1);
 
         for thread in &mut self.threads {
             thread
                 .stack
                 .resolve_names(&src, &symbolizer)
-                .unwrap_or_else(|mut e| errors.append(&mut e));
+                .unwrap_or_else(|_| errors += 1);
         }
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+        anyhow::ensure!(
+            errors == 0,
+            "Failed to resolve names, see frame comments for details"
+        );
+        Ok(())
     }
 }
 
