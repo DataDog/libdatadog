@@ -121,7 +121,10 @@ fn get_v05_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Resul
         Value::Integer(i) => {
             span.start = i
                 .as_i64()
-                .ok_or_else(|| anyhow!("Error reading span start, value is not an integer: {i}"))?;
+                .ok_or_else(|| {
+                    println!("ASTUYVE ERROR SPAN START {:?}", i);
+                    anyhow!("Error reading span start, value is not an integer: {i}")
+                })?;
         }
         val => anyhow::bail!("Error reading span start, value is not an integer: {val}"),
     };
@@ -129,6 +132,7 @@ fn get_v05_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Resul
     match read_value(reader)? {
         Value::Integer(i) => {
             span.duration = i.as_i64().ok_or_else(|| {
+                println!("ASTUYVE ERROR SPAN DURATION{:?}", i);
                 anyhow!("Error reading span duration, value is not an integer: {i}")
             })?;
         }
@@ -204,7 +208,10 @@ fn get_v05_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Resul
 fn str_from_dict(dict: &[String], id: Integer) -> anyhow::Result<String> {
     let id = id
         .as_i64()
-        .ok_or_else(|| anyhow!("Error reading string from dict, id is not an integer: {id}"))?
+        .ok_or_else(|| {
+            println!("ASTUYVE ERROR STR FROM DICT {:?}", id);
+            anyhow!("Error reading string from dict, id is not an integer: {id}")
+        })?
         as usize;
     if id >= dict.len() {
         anyhow::bail!("Error reading string from dict, id out of bounds: {id}");
@@ -985,6 +992,99 @@ mod tests {
                 tracestate: "vendor=value".to_string(),
                 flags: 0, // Should default to 0 when omitted
             }],
+        }]];
+
+        let bytes = rmp_serde::to_vec(&trace_input).unwrap();
+        let request = Request::builder()
+            .body(hyper_migration::Body::from(bytes))
+            .unwrap();
+
+        let res = get_traces_from_request_body(request.into_body()).await;
+        assert!(res.is_ok(), "Failed to deserialize: {:?}", res);
+        assert_eq!(res.unwrap().1, expected_output);
+    }
+    
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_get_traces_from_request_body_with_serverless_span() {
+        let trace_input = json!([[
+        {
+            "trace_id": "31d0cf8a2331086c",
+            "span_id": "31d0cf8a2331086c",
+            "parent_id": "0000000000000000",
+            "name": "dns.lookup",
+            "resource": "127.0.0.1",
+            "error": 0,
+            "meta": {
+                "_dd.p.tid": "67ed492300000000",
+                "_dd.p.dm": "-0",
+                "_dd.git.commit.sha": "0286d93e4de429e573dcb0422a99f014b420f1b2",
+                "_dd.git.repository_url": "github.com/DataDog/serverless-sample-app.git",
+                "git.commit.sha": "0286d93e4de429e573dcb0422a99f014b420f1b2",
+                "git.repository_url": "github.com/DataDog/serverless-sample-app.git",
+                "_dd.origin": "lambda",
+                "service": "PricingService",
+                "env": "aj",
+                "version": "latest",
+                "runtime-id": "b3409789-d7c7-4cf6-b968-620e74b46dc3",
+                "component": "dns",
+                "span.kind": "client",
+                "dns.hostname": "127.0.0.1",
+                "dns.address": "127.0.0.1",
+                "language": "javascript"
+            },
+            "metrics": {
+                "_dd.agent_psr": 1,
+                "_dd.top_level": 1,
+                "_dd.measured": 1,
+                "process_id": 6,
+                "_sampling_priority_v1": 1
+            },
+            "start": 1743604003303002400 as i64,
+            "duration": 337891,
+            "span_links": [],
+            "service": "PricingService"
+        }
+        ]]);
+
+        let expected_output = vec![vec![pb::Span {
+            service: "PricingService".to_string(),
+            name: "dns.lookup".to_string(),
+            resource: "127.0.0.1".to_string(),
+            trace_id: 3570121796011091052,  // hex "31d0cf8a2331086c" as u64
+            span_id: 3570121796011091052,   // hex "31d0cf8a2331086c" as u64
+            parent_id: 0,                   // hex "0000000000000000" as u64
+            start: 1743604003303002400,
+            duration: 337891,
+            error: 0,
+            meta: HashMap::from([
+                ("_dd.p.tid".to_string(), "67ed492300000000".to_string()),
+                ("_dd.p.dm".to_string(), "-0".to_string()),
+                ("_dd.git.commit.sha".to_string(), "0286d93e4de429e573dcb0422a99f014b420f1b2".to_string()),
+                ("_dd.git.repository_url".to_string(), "github.com/DataDog/serverless-sample-app.git".to_string()),
+                ("git.commit.sha".to_string(), "0286d93e4de429e573dcb0422a99f014b420f1b2".to_string()),
+                ("git.repository_url".to_string(), "github.com/DataDog/serverless-sample-app.git".to_string()),
+                ("_dd.origin".to_string(), "lambda".to_string()),
+                ("service".to_string(), "PricingService".to_string()),
+                ("env".to_string(), "aj".to_string()),
+                ("version".to_string(), "latest".to_string()),
+                ("runtime-id".to_string(), "b3409789-d7c7-4cf6-b968-620e74b46dc3".to_string()),
+                ("component".to_string(), "dns".to_string()),
+                ("span.kind".to_string(), "client".to_string()),
+                ("dns.hostname".to_string(), "127.0.0.1".to_string()),
+                ("dns.address".to_string(), "127.0.0.1".to_string()),
+                ("language".to_string(), "javascript".to_string()),
+            ]),
+            metrics: HashMap::from([
+                ("_dd.agent_psr".to_string(), 1.0),
+                ("_dd.top_level".to_string(), 1.0),
+                ("_dd.measured".to_string(), 1.0),
+                ("process_id".to_string(), 6.0),
+                ("_sampling_priority_v1".to_string(), 1.0),
+            ]),
+            meta_struct: HashMap::new(),
+            r#type: "".to_string(),
+            span_links: vec![],
         }]];
 
         let bytes = rmp_serde::to_vec(&trace_input).unwrap();
