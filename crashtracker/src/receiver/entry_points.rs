@@ -135,7 +135,10 @@ fn resolve_frames(
             .pid;
         let rval1 = crash_info.resolve_names(pid);
         let rval2 = crash_info.normalize_ips(pid);
-        rval1.context(format!("{rval2:?}"))?;
+        anyhow::ensure!(
+            rval1.is_ok() && rval2.is_ok(),
+            "resolve_names: {rval1:?}\tnormalize_ips: {rval2:?}"
+        );
     }
     Ok(())
 }
