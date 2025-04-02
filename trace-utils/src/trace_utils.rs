@@ -64,6 +64,7 @@ fn get_v05_strings_dict(reader: &mut Reader<impl Buf>) -> anyhow::Result<Vec<Str
     for _ in 0..dict_size {
         match read_value(reader)? {
             Value::String(s) => {
+                println!("astuyve string without escape is: {:?}", s);
                 let parsed_string = s.into_str().ok_or_else(|| anyhow!("Error reading string dict"))?;
                 dict.push(parsed_string);
             }
