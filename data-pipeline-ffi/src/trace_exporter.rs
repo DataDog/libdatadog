@@ -37,8 +37,8 @@ pub struct TelemetryClientConfig<'a> {
     pub interval: u64,
     /// A V4 UUID that represents a tracer session. This ID should:
     /// - Be generated when the tracer starts
-    /// - Be identical within the context of a host (i.e. multiple threads/processes
-    ///   that belong to a single instrumented app should share the same runtime_id)
+    /// - Be identical within the context of a host (i.e. multiple threads/processes that belong to
+    ///   a single instrumented app should share the same runtime_id)
     /// - Be associated with traces to allow correlation between traces and telemetry data
     pub runtime_id: CharSlice<'a>,
 }
