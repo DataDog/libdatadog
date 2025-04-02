@@ -47,6 +47,9 @@ do
     esac
 done
 
+# Shift the processed options to get to the destination directory
+shift $((OPTIND-1))
+
 if test -z "${1:-}"; then
     usage 1
 fi
@@ -80,7 +83,7 @@ symbolizer=0
 # provided. At least on Alpine, libgcc_s may not even exist in the users'
 # images, so -static-libgcc is recommended there.
 case "$target" in
-  "x86_64-alpine-linux-musl"|"aarch64-alpine-linux-musl")
+    "x86_64-alpine-linux-musl"|"aarch64-alpine-linux-musl")
         expected_native_static_libs=" -lssp_nonshared -lgcc_s -lc"
         native_static_libs=" -lssp_nonshared -lc"
         # on alpine musl, Rust adds some weird runpath to cdylibs
@@ -263,7 +266,11 @@ if [[ "$target" != "x86_64-pc-windows-msvc" ]]; then
     [ -d $CRASHTRACKER_BUILD_DIR ] && rm -r $CRASHTRACKER_BUILD_DIR
     mkdir -p $CRASHTRACKER_BUILD_DIR
     cd $CRASHTRACKER_BUILD_DIR
-    cmake -S $CRASHTRACKER_SRC_DIR -DDatadog_ROOT=$ABS_DESTDIR
+    if [[ "$target" == "x86_64-apple-darwin" ]]; then
+        cmake -S $CRASHTRACKER_SRC_DIR -DDatadog_ROOT=$ABS_DESTDIR -DCMAKE_OSX_ARCHITECTURES=x86_64
+    else
+        cmake -S $CRASHTRACKER_SRC_DIR -DDatadog_ROOT=$ABS_DESTDIR
+    fi
     cmake --build .
     mkdir -p $ABS_DESTDIR/bin
     cp libdatadog-crashtracking-receiver $ABS_DESTDIR/bin
