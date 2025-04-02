@@ -62,7 +62,7 @@ pub struct CrashInfo {
 
 impl CrashInfo {
     pub fn current_schema_version() -> String {
-        "1.2".to_string()
+        "1.3".to_string()
     }
 }
 
