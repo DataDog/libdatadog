@@ -441,17 +441,18 @@ impl TraceExporter {
 
     /// !!! This function is only for testing purposes !!!
     /// This function waits the agent info to be ready by checking the agent_info state.
-    /// It will only return Ok after the agent info has been fetched at least once or Err if timeout has been reached
+    /// It will only return Ok after the agent info has been fetched at least once or Err if timeout
+    /// has been reached
     ///
     /// In production:
     /// 1) We should not synchronously wait for this to be ready before sending traces
-    /// 2) It's not guaranteed to not block forever, since the /info endpoint might
-    ///   not be available.
+    /// 2) It's not guaranteed to not block forever, since the /info endpoint might not be
+    ///    available.
     ///
     /// The `send`` function will check agent_info when running, which will only be available if the
     /// fetcher had time to reach to the agent.
-    /// Since agent_info can enable CSS computation, waiting for this during testing can make snapshots
-    /// non-determinitic.
+    /// Since agent_info can enable CSS computation, waiting for this during testing can make
+    /// snapshots non-determinitic.
     pub fn wait_agent_info_ready(&self, timeout: Duration) -> anyhow::Result<()> {
         let start = std::time::Instant::now();
         loop {
@@ -632,7 +633,7 @@ impl TraceExporter {
             if !self.client_computed_top_level {
                 collection.set_top_level_spans();
             }
-            self.add_spans_to_stats(&collection, &stats_concentrator);
+            self.add_spans_to_stats(&collection, stats_concentrator);
             // Once stats have been computed we can drop all chunks that are not going to be
             // sampled by the agent
             let (dropped_p0_traces, dropped_p0_spans) = collection.drop_chunks();
