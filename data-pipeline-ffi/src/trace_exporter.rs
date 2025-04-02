@@ -29,10 +29,17 @@ fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
     }
 }
 
+/// FFI compatible configuration for the TelemetryClient.
 #[derive(Debug)]
 #[repr(C)]
 pub struct TelemetryClientConfig<'a> {
+    /// How often telemetry should be sent, in milliseconds.
     pub interval: u64,
+    /// A V4 UUID that represents a tracer session. This ID should:
+    /// - Be generated when the tracer starts
+    /// - Be identical within the context of a host (i.e. multiple threads/processes
+    ///   that belong to a single instrumented app should share the same runtime_id)
+    /// - Be associated with traces to allow correlation between traces and telemetry data
     pub runtime_id: CharSlice<'a>,
 }
 
