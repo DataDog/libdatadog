@@ -19,35 +19,30 @@ ARG_FEATURES=""
 run_tests=true
 
 usage() {
-    echo "Usage: `basename "$0"` [-h] [-f FEATURES] [-t TRIPLET] [-T] dest-dir"
+    echo "Usage: `basename "$0"` [-h] [-f FEATURES] [-t TRIPLET] [-s] dest-dir"
     echo
     echo "Options:"
     echo "  -h          This help text"
     echo "  -f FEATURES Enable specified features (comma separated if more than one)"
     echo "  -t TRIPLET  Target triplet to build for, defaults to host triplet"
-    echo "  -T          Skip checks after building"
+    echo "  -s          Skip tests after building"
     exit $1
 }
 
-while getopts f:ht:T flag
+while getopts f:ht:s flag
 do
     case "${flag}" in
         f)
             ARG_FEATURES=${OPTARG}
-            shift
-            shift
             ;;
         h)
             usage 0
             ;;
         t)
             target=${OPTARG}
-            shift
-            shift
             ;;
-        T)
+        s)
             run_tests=false
-            shift
             ;;
     esac
 done
@@ -85,7 +80,7 @@ symbolizer=0
 # provided. At least on Alpine, libgcc_s may not even exist in the users'
 # images, so -static-libgcc is recommended there.
 case "$target" in
-  "x86_64-alpine-linux-musl"|"aarch64-alpine-linux-musl"|"i686-alpine-linux-musl")
+  "x86_64-alpine-linux-musl"|"aarch64-alpine-linux-musl")
         expected_native_static_libs=" -lssp_nonshared -lgcc_s -lc"
         native_static_libs=" -lssp_nonshared -lc"
         # on alpine musl, Rust adds some weird runpath to cdylibs
@@ -102,7 +97,7 @@ case "$target" in
         fix_macos_rpath=1
         ;;
 
-    "x86_64-unknown-linux-gnu"|"aarch64-unknown-linux-gnu"|"i686-unknown-linux-gnu")
+    "x86_64-unknown-linux-gnu"|"aarch64-unknown-linux-gnu")
         expected_native_static_libs=" -ldl -lrt -lpthread -lgcc_s -lc -lm -lrt -lpthread -lutil -ldl -lutil"
         native_static_libs=" -ldl -lrt -lpthread -lc -lm -lrt -lpthread -lutil -ldl -lutil"
         symbolizer=1
@@ -268,13 +263,7 @@ if [[ "$target" != "x86_64-pc-windows-msvc" ]]; then
     [ -d $CRASHTRACKER_BUILD_DIR ] && rm -r $CRASHTRACKER_BUILD_DIR
     mkdir -p $CRASHTRACKER_BUILD_DIR
     cd $CRASHTRACKER_BUILD_DIR
-
-    if [[ "$target" =~ ^i686 ]]; then
-        CFLAGS=-m32 CXXFLAGS=-m32 cmake -S $CRASHTRACKER_SRC_DIR -DDatadog_ROOT=$ABS_DESTDIR
-    else
-        cmake -S $CRASHTRACKER_SRC_DIR -DDatadog_ROOT=$ABS_DESTDIR
-    fi
-
+    cmake -S $CRASHTRACKER_SRC_DIR -DDatadog_ROOT=$ABS_DESTDIR
     cmake --build .
     mkdir -p $ABS_DESTDIR/bin
     cp libdatadog-crashtracking-receiver $ABS_DESTDIR/bin
