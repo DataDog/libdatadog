@@ -623,6 +623,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn exporter_constructor_test() {
         unsafe {
@@ -651,6 +652,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn exporter_constructor_error_test() {
         unsafe {

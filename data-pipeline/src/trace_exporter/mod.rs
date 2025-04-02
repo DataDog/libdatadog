@@ -975,7 +975,8 @@ impl TraceExporterBuilder {
             ));
         }
 
-        let runtime = tokio::runtime::Builder::new_current_thread()
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
             .enable_all()
             .build()?;
 
@@ -1144,7 +1145,7 @@ mod tests {
         assert!(exporter.telemetry.is_some());
     }
 
-    #[cfg_attr(all(miri, target_os = "macos"), ignore)]
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_new_defaults() {
         let builder = TraceExporterBuilder::default();

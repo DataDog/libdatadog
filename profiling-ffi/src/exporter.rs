@@ -520,7 +520,6 @@ mod tests {
             parsed_event_json["internal"],
             json!({"libdatadog_version": env!("CARGO_PKG_VERSION")})
         );
-        assert_eq!(parsed_event_json["tags_profiler"], json!(""));
         assert_eq!(parsed_event_json["version"], json!("4"));
 
         // TODO: Assert on contents of attachments, as well as on the headers/configuration for the

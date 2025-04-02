@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
+use datadog_profiling::api::ManagedStringId;
 use datadog_profiling::collections::string_storage::ManagedStringStorage as InternalManagedStringStorage;
 use ddcommon_ffi::slice::AsBytes;
 use ddcommon_ffi::{CharSlice, Error, MaybeError, Slice, StringWrapperResult};
@@ -10,12 +11,6 @@ use std::mem::MaybeUninit;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::sync::Mutex;
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(C)]
-pub struct ManagedStringId {
-    pub value: u32,
-}
 
 // A note about this being Copy:
 // We're writing code for C with C semantics but with Rust restrictions still
@@ -74,7 +69,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
 ) -> ManagedStringStorageInternResult {
     // Empty strings always get assigned id 0, no need to check.
     if string.is_empty() {
-        return anyhow::Ok(ManagedStringId { value: 0 }).into();
+        return anyhow::Ok(ManagedStringId::empty()).into();
     }
 
     (|| {
@@ -85,7 +80,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
             .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?
             .intern(string.try_to_utf8()?)?;
 
-        anyhow::Ok(ManagedStringId { value: string_id })
+        anyhow::Ok(ManagedStringId::new(string_id))
     })()
     .context("ddog_prof_ManagedStringStorage_intern failed")
     .into()
@@ -126,11 +121,9 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern_all(
 
         for (output_id, input_str) in output_slice.iter_mut().zip(strings.iter()) {
             let string_id = if input_str.is_empty() {
-                ManagedStringId { value: 0 }
+                ManagedStringId::empty()
             } else {
-                ManagedStringId {
-                    value: write_locked_storage.intern(input_str.try_to_utf8()?)?,
-                }
+                ManagedStringId::new(write_locked_storage.intern(input_str.try_to_utf8()?)?)
             };
             output_id.write(string_id);
         }
@@ -302,7 +295,7 @@ mod tests {
 
         // We're going to intern the same group of strings twice to make sure
         // that we get the same ids.
-        let mut ids_rs1 = [ManagedStringId { value: 0 }; 2];
+        let mut ids_rs1 = [ManagedStringId::empty(); 2];
         let ids1 = ids_rs1.as_mut_ptr();
         let result = unsafe {
             ddog_prof_ManagedStringStorage_intern_all(storage, strings, ids1.cast(), strings.len())
@@ -311,7 +304,7 @@ mod tests {
             panic!("{err}");
         }
 
-        let mut ids_rs2 = [ManagedStringId { value: 0 }; 2];
+        let mut ids_rs2 = [ManagedStringId::empty(); 2];
         let ids2 = ids_rs2.as_mut_ptr();
         let result = unsafe {
             ddog_prof_ManagedStringStorage_intern_all(storage, strings, ids2.cast(), strings.len())
