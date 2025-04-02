@@ -143,7 +143,10 @@ fn get_v05_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Resul
         Value::Integer(i) => {
             span.error = i
                 .as_i64()
-                .ok_or_else(|| anyhow!("Error reading span error, value is not an integer: {i}"))?
+                .ok_or_else(|| {
+                    println!("ASTUYVE ERROR ERROR {:?}", i);
+                    anyhow!("Error reading span error, value is not an integer: {i}")
+                })?
                 as i32;
         }
         val => anyhow::bail!("Error reading span error, value is not an integer: {val}"),
