@@ -33,7 +33,9 @@ while getopts f:ht:s flag
 do
     case "${flag}" in
         f)
-            ARG_FEATURES=${OPTARG}
+            # Split comma-separated values into array
+            IFS=',' read -ra FEATURE_ARRAY <<< "${OPTARG}"
+            ARG_FEATURES=("${FEATURE_ARRAY[@]}")
             ;;
         h)
             usage 0
@@ -155,8 +157,8 @@ if [[ "$symbolizer" -eq 1 ]]; then
     FEATURES+=("symbolizer")
 fi
 
-if [[ ! -z ${ARG_FEATURES} ]]; then
-    FEATURES+=($ARG_FEATURES)
+if [[ ! -z ${ARG_FEATURES:-} ]]; then
+    FEATURES+=("${ARG_FEATURES[@]}")
 fi
 
 FEATURES=$(IFS=, ; echo "${FEATURES[*]}")
