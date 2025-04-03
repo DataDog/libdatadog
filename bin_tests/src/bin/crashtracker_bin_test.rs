@@ -28,10 +28,23 @@ mod unix {
     const TEST_COLLECTOR_TIMEOUT_MS: u32 = 10_000;
 
     #[inline(never)]
-    unsafe fn deref_ptr(p: *mut u8) -> u8 {
-        *std::hint::black_box(p) = std::hint::black_box(1);
-        *std::hint::black_box(p)
+    pub unsafe fn cause_segfault() -> anyhow::Result<()> {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            std::arch::asm!("mov eax, [0]", options(nostack));
+            anyhow::bail!("Failed to cause segmentation fault on x86/x86_64")
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            std::arch::asm!("ldr x0, [xzr]", options(nostack));
+            anyhow::bail!("Failed to cause segmentation fault on arch64")
+        }
+
+        // If we're here, then return
+        anyhow::bail!("Failed to cause segmentation fault on an unsupported architecture")
     }
+}
 
     pub fn main() -> anyhow::Result<()> {
         let mut args = env::args().skip(1);
@@ -107,10 +120,7 @@ mod unix {
             "kill_sigill" => kill(Pid::this(), Signal::SIGILL)?,
             "kill_sigbus" => kill(Pid::this(), Signal::SIGBUS)?,
             "kill_sigsegv" => kill(Pid::this(), Signal::SIGSEGV)?,
-            "null_deref" => {
-                let x = unsafe { deref_ptr(std::ptr::null_mut::<u8>()) };
-                println!("{x}");
-            }
+            "null_deref" => cause_segfault(),
             "raise_sigabrt" => raise(Signal::SIGABRT)?,
             "raise_sigill" => raise(Signal::SIGILL)?,
             "raise_sigbus" => raise(Signal::SIGBUS)?,
