@@ -39,15 +39,16 @@ pub async fn get_traces_from_request_body(
     body: hyper_migration::Body,
 ) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
     let buffer = body.collect().await?.aggregate();
-    let _size = buffer.remaining();
-
-    let value = match rmp_serde::from_read(buffer.reader()) {
-        Ok(value) => value,
-        Err(err) => {
-            anyhow::bail!("Error deserializing trace from request body: {err}")
+    let size = buffer.remaining();
+    let mut reader = buffer.reader();
+    for _ in 0..size {
+        match read_value(&mut reader)? {
+            v => {
+                println!("ASTUYVE VALUE {:?}", v);
+            }
         }
-    };
-    println!("ASTUYVE VALUE {:?}", value);
+    }
+    Err(anyhow!("ASTUYVE exiting"))
     // let traces: Vec<Vec<pb::Span>> = match rmp_serde::from_read(buffer.reader()) {
     //     Ok(res) => res,
     //     Err(err) => {
@@ -55,9 +56,6 @@ pub async fn get_traces_from_request_body(
     //     }
     // };
 
-    Err(anyhow::anyhow!(
-        "Error deserializing trace from request body: expected a Vec<Vec<pb::Span>>, got {value:?}"
-    ))
     // Ok((size, traces))
 }
 
