@@ -118,7 +118,7 @@ pub struct Span {
     /// @gotags: json:"start" msg:"start"
     #[prost(int64, tag = "7")]
     #[serde(default)]
-    #[serde(deserialize_with = "deserialize_null_into_default")]
+    #[serde(deserialize_with = "deserialize_duration")]
     pub start: i64,
     /// duration is the time length of this span in nanoseconds.
     /// @gotags: json:"duration" msg:"duration"
