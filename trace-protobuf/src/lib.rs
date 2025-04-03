@@ -4,6 +4,7 @@
 #[rustfmt::skip]
 pub mod pb;
 pub mod remoteconfig;
+mod serializers;
 mod serde;
 
 #[cfg(test)]

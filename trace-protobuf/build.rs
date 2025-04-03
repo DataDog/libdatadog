@@ -61,8 +61,36 @@ fn generate_protobuf() {
 
     config.type_attribute("Span", "#[derive(Deserialize, Serialize)]");
     config.field_attribute(
-        ".pb.Span",
-        "#[serde(default)] #[serde(deserialize_with = \"deserialize_null_into_default\")]",
+        ".pb.Span.service",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.name",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.resource",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.trace_id",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.span_id",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.parent_id",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.start",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.duration",
+        "#[serde(deserialize_with = \"crate::serializers::deserialize_duration\")]",
     );
     config.field_attribute(
         ".pb.Span.meta_struct",
@@ -74,7 +102,7 @@ fn generate_protobuf() {
     );
     config.field_attribute(
         ".pb.Span.error",
-        "#[serde(skip_serializing_if = \"is_default\")]",
+        "#[serde(skip_serializing_if = \"crate::serializers::is_default\")]",
     );
 
     config.type_attribute("StatsPayload", "#[derive(Deserialize, Serialize)]");
@@ -187,38 +215,15 @@ fn generate_protobuf() {
 "
     .as_bytes();
 
-    let null_deser = &[
-        license,
-        "use serde::{Deserialize, Deserializer, Serialize};
-
-fn deserialize_null_into_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    T: Default + Deserialize<'de>,
-    D: Deserializer<'de>,
-{
-    let opt = Option::deserialize(deserializer)?;
-    Ok(opt.unwrap_or_default())
-}
-
-pub fn is_default<T: Default + PartialEq>(t: &T) -> bool {
-    t == &T::default()
-}
-
-"
-        .as_bytes(),
-    ]
-    .concat();
-
     let serde_uses = &[
         license,
         "use serde::{Deserialize, Serialize};
-
 "
         .as_bytes(),
     ]
     .concat();
 
-    prepend_to_file(null_deser, &output_path.join("pb.rs"));
+    prepend_to_file(serde_uses, &output_path.join("pb.rs"));
     prepend_to_file(serde_uses, &output_path.join("remoteconfig.rs"));
 }
 
