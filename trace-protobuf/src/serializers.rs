@@ -13,9 +13,7 @@ pub fn is_default<T: Default + PartialEq>(t: &T) -> bool {
     t == &T::default()
 }
 
-pub fn deserialize_duration<'de, D>(
-    deserializer: D,
-) -> Result<i64, D::Error>
+pub fn deserialize_duration<'de, D>(deserializer: D) -> Result<i64, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -23,12 +21,10 @@ where
     match value {
         Ok(v) => {
             if v < 0 {
-                return Ok(0)
+                return Ok(0);
             }
             Ok(v)
         }
-        Err(_) => {
-            Ok(0)
-        }
+        Err(_) => Ok(0),
     }
 }
