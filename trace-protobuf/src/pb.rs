@@ -58,6 +58,22 @@ pub struct SpanLink {
     #[serde(default)]
     pub flags: u32,
 }
+fn deserialize_duration<'de, D>(
+    deserializer: D,
+) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: i64 = Deserialize::deserialize(deserializer)?;
+    println!("ASTUYVE duration is {}", value);
+    if value < 0 {
+        println!("ASTUYVE duration negative, using 0");
+        return Ok(0)
+    }
+    Ok(value)
+    
+}
+
 #[derive(Deserialize, Serialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -108,7 +124,7 @@ pub struct Span {
     /// @gotags: json:"duration" msg:"duration"
     #[prost(int64, tag = "8")]
     #[serde(default)]
-    #[serde(deserialize_with = "deserialize_null_into_default")]
+    #[serde(deserialize_with = "deserialize_duration")]
     pub duration: i64,
     /// error is 1 if there is an error associated with this span, or 0 if there is not.
     /// @gotags: json:"error" msg:"error"
