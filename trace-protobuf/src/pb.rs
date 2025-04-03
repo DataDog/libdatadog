@@ -76,7 +76,7 @@ where
         }
         Err(e) => {
             debug!("Error parsing span duration, using 0: {:?}", e);
-            return Ok(0);
+            Ok(0)
         }
     }
 }
