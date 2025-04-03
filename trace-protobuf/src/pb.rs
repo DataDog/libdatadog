@@ -74,7 +74,8 @@ where
             Ok(v)
         }
         Err(e) => {
-            return Err(e);
+            println!("ASTUYVE duration error: {:?}", e);
+            return Ok(0);
         }
     }
 }
