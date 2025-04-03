@@ -87,16 +87,21 @@ pub struct Span {
     /// duration is the time length of this span in nanoseconds.
     /// @gotags: json:"duration" msg:"duration"
     #[prost(int64, tag = "8")]
+    #[serde(default)]
     #[serde(deserialize_with = "crate::serializers::deserialize_duration")]
     pub duration: i64,
     /// error is 1 if there is an error associated with this span, or 0 if there is not.
     /// @gotags: json:"error" msg:"error"
     #[prost(int32, tag = "9")]
+    #[serde(default)]
+    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
     #[serde(skip_serializing_if = "crate::serializers::is_default")]
     pub error: i32,
     /// meta is a mapping from tag name to tag value for string-valued tags.
     /// @gotags: json:"meta,omitempty" msg:"meta,omitempty"
     #[prost(map = "string, string", tag = "10")]
+    #[serde(default)]
+    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
     pub meta: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
@@ -104,14 +109,20 @@ pub struct Span {
     /// metrics is a mapping from tag name to tag value for numeric-valued tags.
     /// @gotags: json:"metrics,omitempty" msg:"metrics,omitempty"
     #[prost(map = "string, double", tag = "11")]
+    #[serde(default)]
+    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
     pub metrics: ::std::collections::HashMap<::prost::alloc::string::String, f64>,
     /// type is the type of the service with which this span is associated.  Example values: web, db, lambda.
     /// @gotags: json:"type" msg:"type"
     #[prost(string, tag = "12")]
+    #[serde(default)]
+    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
     pub r#type: ::prost::alloc::string::String,
     /// meta_struct is a registry of structured "other" data used by, e.g., AppSec.
     /// @gotags: json:"meta_struct,omitempty" msg:"meta_struct,omitempty"
     #[prost(map = "string, bytes", tag = "13")]
+    #[serde(default)]
+    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
     #[serde(skip_serializing_if = "::std::collections::HashMap::is_empty")]
     pub meta_struct: ::std::collections::HashMap<
         ::prost::alloc::string::String,
@@ -120,6 +131,8 @@ pub struct Span {
     /// span_links represents a collection of links, where each link defines a causal relationship between two spans.
     /// @gotags: json:"span_links,omitempty" msg:"span_links,omitempty"
     #[prost(message, repeated, tag = "14")]
+    #[serde(default)]
+    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
     #[serde(skip_serializing_if = "::prost::alloc::vec::Vec::is_empty")]
     pub span_links: ::prost::alloc::vec::Vec<SpanLink>,
 }

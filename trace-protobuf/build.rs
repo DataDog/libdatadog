@@ -90,19 +90,31 @@ fn generate_protobuf() {
     );
     config.field_attribute(
         ".pb.Span.duration",
-        "#[serde(deserialize_with = \"crate::serializers::deserialize_duration\")]",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_duration\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.meta",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.metrics",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.type",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")]",
     );
     config.field_attribute(
         ".pb.Span.meta_struct",
-        "#[serde(skip_serializing_if = \"::std::collections::HashMap::is_empty\")]",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")] #[serde(skip_serializing_if = \"::std::collections::HashMap::is_empty\")]",
     );
     config.field_attribute(
         ".pb.Span.spanLinks",
-        "#[serde(skip_serializing_if = \"::prost::alloc::vec::Vec::is_empty\")]",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")] #[serde(skip_serializing_if = \"::prost::alloc::vec::Vec::is_empty\")]",
     );
     config.field_attribute(
         ".pb.Span.error",
-        "#[serde(skip_serializing_if = \"crate::serializers::is_default\")]",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")] #[serde(skip_serializing_if = \"crate::serializers::is_default\")]",
     );
 
     config.type_attribute("StatsPayload", "#[derive(Deserialize, Serialize)]");
