@@ -1,3 +1,6 @@
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use serde::{Deserialize, Deserializer};
 
 pub fn deserialize_null_into_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
