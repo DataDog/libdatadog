@@ -49,6 +49,7 @@ fn fill_span(span: &mut SpanBytes, buf: &mut Bytes) -> Result<(), DecodeError> {
         .parse::<SpanKey>()
         .map_err(|e| DecodeError::InvalidFormat(e.message))?;
 
+    println!("ASTUYVE key is {:?}", key);
     match key {
         SpanKey::Service => span.service = read_nullable_string_bytes(buf)?,
         SpanKey::Name => span.name = read_nullable_string_bytes(buf)?,
