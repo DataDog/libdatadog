@@ -13,7 +13,6 @@ bench = false
 prost = "0.11.6"
 serde = { version = "1.0.145", features = ["derive"] }
 serde_bytes = "0.11.9"
-tracing = { version = "0.1", default-features = false }
 
 [build-dependencies]
 prost-build = { version = "0.11.9", optional = true  }
