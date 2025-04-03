@@ -217,7 +217,6 @@ fn test_crash_tracking_bin(
 }
 
 fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
-    println!("{:?}", sig_info);
     match crash_typ {
         "null_deref" =>
         // On every platform other than OSX ARM, the si_code is 1: SEGV_MAPERR
