@@ -245,7 +245,7 @@ impl<'a> From<&'a datadog_live_debugger::Probe> for Probe<'a> {
 impl<'a> From<&Probe<'a>> for ProbeMetadata<'a> {
     fn from(val: &Probe<'a>) -> Self {
         fn to_cow_option<'a>(s: &CharSlice<'a>) -> core::option::Option<Cow<'a, str>> {
-            if s.len() == 0 {
+            if s.is_empty() {
                 None
             } else {
                 unsafe { Some(s.assume_utf8().into()) }
