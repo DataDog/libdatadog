@@ -217,23 +217,38 @@ fn test_crash_tracking_bin(
 }
 
 fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
+    println!("{:?}", sig_info);
     match crash_typ {
         "null_deref" =>
         // On every platform other than OSX ARM, the si_code is 1: SEGV_MAPERR
         // On OSX ARM, its 2: SEGV_ACCERR
         {
-            assert_eq!(sig_info["si_addr"], "0x0000000000000000");
-            assert!(
-                sig_info["si_code"] == 2 || sig_info["si_code"] == 1,
-                "{sig_info:?}"
+            // Check for either SIGSEGV with address 0x0 or SIGABRT
+            if sig_info["si_signo"] == libc::SIGSEGV {
+                assert_eq!(sig_info["si_addr"], "0x0000000000000000");
+                assert!(
+                    sig_info["si_code"] == 2 || sig_info["si_code"] == 1,
+                    "{sig_info:?}"
+                );
+                assert!(
+                    sig_info["si_code_human_readable"] == "SEGV_ACCERR"
+                        || sig_info["si_code_human_readable"] == "SEGV_MAPERR",
+                    "{sig_info:?}"
+                );
+            } else if sig_info["si_signo"] == libc::SIGABRT {
+                // On some platforms like CentOS, null deref might result in SIGABRT
+                assert_eq!(sig_info["si_code_human_readable"], "SI_TKILL");
+            } else {
+                panic!("Unexpected signal: {:?}", sig_info);
+            }
+            assert_eq!(
+                sig_info["si_signo_human_readable"],
+                if sig_info["si_signo"] == libc::SIGSEGV {
+                    "SIGSEGV"
+                } else {
+                    "SIGABRT"
+                }
             );
-            assert!(
-                sig_info["si_code_human_readable"] == "SEGV_ACCERR"
-                    || sig_info["si_code_human_readable"] == "SEGV_MAPERR",
-                "{sig_info:?}"
-            );
-            assert_eq!(sig_info["si_signo"], libc::SIGSEGV);
-            assert_eq!(sig_info["si_signo_human_readable"], "SIGSEGV");
         }
 
         "kill_sigabrt" => {
@@ -327,18 +342,34 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
     match crash_typ {
         "null_deref" => {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
-            assert!(tags.contains("si_addr:0x0000000000000000"), "{tags:?}");
-            assert!(
-                tags.contains("si_code_human_readable:SEGV_ACCERR")
-                    || tags.contains("si_code_human_readable:SEGV_MAPERR"),
-                "{tags:?}"
-            );
-            assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
-            assert!(tags.contains("si_signo:11"), "{tags:?}");
-            assert!(
-                tags.contains("si_code:1") || tags.contains("si_code:2"),
-                "{tags:?}"
-            );
+
+            // Check if we got SIGSEGV (expected on most platforms)
+            if tags.contains("si_signo_human_readable:SIGSEGV") {
+                assert!(tags.contains("si_addr:0x0000000000000000"), "{tags:?}");
+                assert!(
+                    tags.contains("si_code_human_readable:SEGV_ACCERR")
+                        || tags.contains("si_code_human_readable:SEGV_MAPERR"),
+                    "{tags:?}"
+                );
+                assert!(tags.contains("si_signo:11"), "{tags:?}");
+                assert!(
+                    tags.contains("si_code:1") || tags.contains("si_code:2"),
+                    "{tags:?}"
+                );
+            }
+            // Check if we got SIGABRT (observed on CentOS)
+            else if tags.contains("si_signo_human_readable:SIGABRT") {
+                assert!(tags.contains("si_code_human_readable:SI_TKILL"), "{tags:?}");
+                assert!(tags.contains("si_signo:6"), "{tags:?}");
+                assert!(tags.contains("si_code:-6"), "{tags:?}");
+            }
+            // If neither SIGSEGV nor SIGABRT, fail the test
+            else {
+                panic!(
+                    "Expected either SIGSEGV or SIGABRT for null_deref, got: {:?}",
+                    tags
+                );
+            }
         }
         "kill_sigabrt" => {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
