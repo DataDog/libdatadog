@@ -64,14 +64,19 @@ fn deserialize_duration<'de, D>(
 where
     D: Deserializer<'de>,
 {
-    let value: i64 = Deserialize::deserialize(deserializer)?;
-    println!("ASTUYVE duration is {}", value);
-    if value < 0 {
-        println!("ASTUYVE duration negative, using 0");
-        return Ok(0)
+    let value: Result<i64, D::Error> = Deserialize::deserialize(deserializer);
+    match value {
+        Ok(v) => {
+            if v < 0 {
+                println!("ASTUYVE duration negative, using 0");
+                return Ok(0)
+            }
+            Ok(v)
+        }
+        Err(e) => {
+            return Err(e);
+        }
     }
-    Ok(value)
-    
 }
 
 #[derive(Deserialize, Serialize)]
@@ -118,7 +123,7 @@ pub struct Span {
     /// @gotags: json:"start" msg:"start"
     #[prost(int64, tag = "7")]
     #[serde(default)]
-    #[serde(deserialize_with = "deserialize_duration")]
+    #[serde(deserialize_with = "deserialize_null_into_default")]
     pub start: i64,
     /// duration is the time length of this span in nanoseconds.
     /// @gotags: json:"duration" msg:"duration"
