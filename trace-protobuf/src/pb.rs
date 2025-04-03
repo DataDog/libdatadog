@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde::{Deserialize, Deserializer, Serialize};
+use tracing::debug;
 
 fn deserialize_null_into_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
@@ -68,13 +69,13 @@ where
     match value {
         Ok(v) => {
             if v < 0 {
-                println!("ASTUYVE duration negative, using 0");
+                debug!("Found span with negative duration, using 0");
                 return Ok(0)
             }
             Ok(v)
         }
         Err(e) => {
-            println!("ASTUYVE duration error: {:?}", e);
+            debug!("Error parsing span duration, using 0: {:?}", e);
             return Ok(0);
         }
     }
