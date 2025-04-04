@@ -51,7 +51,7 @@ pub fn register_crash_handlers(config: &CrashtrackerConfiguration) -> anyhow::Re
     }
 
     if config.create_alt_stack() {
-        // SAFETY: this unsafe function has no preconditions.
+        // Safety: This function has no documented preconditions.
         unsafe { create_alt_stack()? };
     }
 
@@ -59,6 +59,7 @@ pub fn register_crash_handlers(config: &CrashtrackerConfiguration) -> anyhow::Re
 
     for signum in config.signals() {
         let index = *signum as usize;
+        // Safety: This function has no documented preconditions.
         match unsafe { register_signal_handler(*signum, config) } {
             // SAFETY:
             // There are only two functions that reference `HANDLERS``.
@@ -99,6 +100,9 @@ pub(crate) unsafe fn chain_signal_handler(
         eprintln!("Unexpected value for {signum}, cannot chain, aborting");
         _exit(EXIT_FAILURE)
     }
+    // SAFETY: All accesses to `HANDLERS` are guarded by `INIT_STARTED` and `INIT_FINISHED`.
+    // Since `INIT_FINISHED` was guaranteed to be true, we know that no code will ever mutate the
+    // static, and hence its safe to read.
     if let Some((signal, sigaction)) = &mut unsafe { HANDLERS[signum as usize] } {
         // How we chain depends on what kind of handler we're chaining to.
         // https://www.gnu.org/software/libc/manual/html_node/Signal-Handling.html
@@ -207,6 +211,6 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_max_signals() {
-        assert_eq!(SignalHandlerManager::MAX_SIGNALS, libc::SIGRTMAX());
+        assert_eq!(super::MAX_SIGNALS, libc::SIGRTMAX());
     }
 }
