@@ -10,7 +10,7 @@ use ddcommon::Endpoint;
 pub struct ConfigBuilder {
     pub endpoint: Option<Endpoint>,
     pub telemetry_debug_logging_enabled: Option<bool>,
-    pub telemetry_hearbeat_interval: Option<Duration>,
+    pub telemetry_heartbeat_interval: Option<Duration>,
 }
 
 impl ConfigBuilder {
@@ -20,11 +20,12 @@ impl ConfigBuilder {
             telemetry_debug_logging_enabled: self
                 .telemetry_debug_logging_enabled
                 .unwrap_or(other.telemetry_debug_logging_enabled),
-            telemetry_hearbeat_interval: self
-                .telemetry_hearbeat_interval
-                .unwrap_or(other.telemetry_hearbeat_interval),
+            telemetry_heartbeat_interval: self
+                .telemetry_heartbeat_interval
+                .unwrap_or(other.telemetry_heartbeat_interval),
             direct_submission_enabled: other.direct_submission_enabled,
             restartable: other.restartable,
+            debug_enabled: false,
         }
     }
 }
@@ -38,7 +39,7 @@ mod tests {
         let builder = ConfigBuilder {
             telemetry_debug_logging_enabled: Some(true),
             endpoint: None,
-            telemetry_hearbeat_interval: None,
+            telemetry_heartbeat_interval: None,
         };
 
         let merged = builder.merge(Config::default());
