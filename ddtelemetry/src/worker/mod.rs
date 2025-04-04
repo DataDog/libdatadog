@@ -902,8 +902,11 @@ pub const MAX_ITEMS: usize = 5000;
 
 #[derive(Default, Clone, Copy)]
 pub enum TelemetryWorkerFlavor {
+    /// Send all telemetry messages including lifecylce events like app-started, hearbeats,
+    /// dependencies and configurations
     #[default]
     Full,
+    /// Only send telemetry data not tied to the lifecycle of the app like logs and metrics
     MetricsLogs,
 }
 
@@ -921,6 +924,7 @@ pub struct TelemetryWorkerBuilder {
 }
 
 impl TelemetryWorkerBuilder {
+    /// Creates a new telmetry worker builder and infer host information automatically
     pub fn new_fetch_host(
         service_name: String,
         language_name: String,
@@ -939,6 +943,7 @@ impl TelemetryWorkerBuilder {
         }
     }
 
+    /// Creates a new telmetry worker builder with the given hostname
     pub fn new(
         hostname: String,
         service_name: String,
@@ -969,11 +974,17 @@ impl TelemetryWorkerBuilder {
         }
     }
 
+    /// Setter the the configuration associated with the worker
     pub fn with_config(&mut self, config: Config) -> &mut Self {
         self.config = config;
         self
     }
 
+    /// Infers the telemetry worker configuration from env variables
+    ///
+    /// This API is not desirable because other configuration sources are not
+    /// considered, but is provided for backward compatibility because the previous
+    /// `run` function used to do this.
     pub fn with_env_config(&mut self) -> &mut Self {
         self.config = config::Config::from_env();
         self
@@ -1040,7 +1051,7 @@ impl TelemetryWorkerBuilder {
         ))
     }
 
-    /// Spawns a new telemetry worker task in the current tokio runtime
+    /// Spawns a telemetry worker task in the current tokio runtime
     /// The worker will capture a reference to the runtime and use it to run it's tasks
     pub async fn spawn(self) -> Result<(TelemetryWorkerHandle, JoinHandle<()>)> {
         let tokio_runtime = tokio::runtime::Handle::current();
@@ -1056,6 +1067,7 @@ impl TelemetryWorkerBuilder {
         Ok((worker_handle, join_handle))
     }
 
+    /// Spawns a telemetry worker in a new thread and returns a handle to interact with it
     pub fn run(self) -> Result<TelemetryWorkerHandle> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
