@@ -20,6 +20,9 @@ pub mod header {
     pub const API_VERSION: HeaderName = HeaderName::from_static("dd-telemetry-api-version");
     pub const LIBRARY_LANGUAGE: HeaderName = HeaderName::from_static("dd-client-library-language");
     pub const LIBRARY_VERSION: HeaderName = HeaderName::from_static("dd-client-library-version");
+
+    /// Header key for whether to enable debug mode of telemetry.
+    pub const DEBUG_ENABLED: HeaderName = HeaderName::from_static("dd-telemetry-debug-enabled");
 }
 
 pub type ResponseFuture =
@@ -31,7 +34,14 @@ pub trait HttpClient {
 
 pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
     match &c.endpoint {
-        Some(e) => e.to_request_builder(concat!("telemetry/", env!("CARGO_PKG_VERSION"))),
+        Some(e) => {
+            let mut builder =
+                e.to_request_builder(concat!("telemetry/", env!("CARGO_PKG_VERSION")));
+            if c.debug_enabled {
+                builder = Ok(builder?.header(header::DEBUG_ENABLED, "true"))
+            }
+            builder
+        }
         None => Err(anyhow::Error::msg(
             "no valid endpoint found, can't build the request".to_string(),
         )),

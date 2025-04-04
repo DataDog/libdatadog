@@ -779,6 +779,7 @@ const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 pub struct TelemetryConfig {
     pub heartbeat: u64,
     pub runtime_id: Option<String>,
+    pub debug_enabled: bool,
 }
 
 #[allow(missing_docs)]
@@ -1020,8 +1021,9 @@ impl TraceExporterBuilder {
                     .set_language_version(&self.language_version)
                     .set_service_name(&self.service)
                     .set_tracer_version(&self.tracer_version)
-                    .set_hearbeat(telemetry_config.heartbeat)
-                    .set_url(base_url);
+                    .set_heartbeat(telemetry_config.heartbeat)
+                    .set_url(base_url)
+                    .set_debug_enabled(telemetry_config.debug_enabled);
                 if let Some(id) = telemetry_config.runtime_id {
                     builder = builder.set_runtime_id(&id);
                 }
@@ -1124,6 +1126,7 @@ mod tests {
             .enable_telemetry(Some(TelemetryConfig {
                 heartbeat: 1000,
                 runtime_id: None,
+                debug_enabled: false,
             }));
         let exporter = builder.build().unwrap();
 

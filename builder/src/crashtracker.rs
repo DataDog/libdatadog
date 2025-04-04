@@ -27,10 +27,18 @@ impl CrashTracker {
 
             let mut crashtracker_dir = project_root();
             crashtracker_dir.push("crashtracker");
-            let _dst = cmake::Config::new(crashtracker_dir.to_str().unwrap())
+            let mut config = cmake::Config::new(crashtracker_dir.to_str().unwrap());
+            let config = config
                 .define("Datadog_ROOT", datadog_root.to_str().unwrap())
-                .define("CMAKE_INSTALL_PREFIX", self.target_dir.to_string())
-                .build();
+                .define("CMAKE_INSTALL_PREFIX", self.target_dir.to_string());
+
+            let config = if self.arch.as_ref() == "x86_64-apple-darwin" {
+                config.define("CMAKE_OSX_ARCHITECTURES", "x86_64")
+            } else {
+                config
+            };
+
+            let _dst = config.build();
         }
 
         Ok(())
