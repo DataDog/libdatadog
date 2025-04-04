@@ -45,7 +45,6 @@ pub async fn push_telemetry(config: &Config, telemetry: &Telemetry<'_>) -> anyho
     let req = request_builder(config)?
         .method(http::Method::POST)
         .header(CONTENT_TYPE, ddcommon::header::APPLICATION_JSON)
-        .header("dd-telemetry-debug-enabled", "true")
         .body(serde_json::to_string(telemetry)?.into())?;
 
     let resp = client.request(req).await?;
@@ -116,5 +115,6 @@ async fn async_main() {
         api_key: Some(Cow::Owned(std::env::var("DD_API_KEY").unwrap())),
         ..Default::default()
     });
+    config.debug_enabled = true;
     push_telemetry(&config, &req).await.unwrap();
 }

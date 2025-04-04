@@ -31,11 +31,13 @@ pub struct Config {
     pub endpoint: Option<Endpoint>,
     /// Enables debug logging
     pub telemetry_debug_logging_enabled: bool,
-    pub telemetry_hearbeat_interval: Duration,
+    pub telemetry_heartbeat_interval: Duration,
     pub direct_submission_enabled: bool,
     /// Prevents LifecycleAction::Stop from terminating the worker (except if the WorkerHandle is
     /// dropped)
     pub restartable: bool,
+
+    pub debug_enabled: bool,
 }
 
 fn endpoint_with_telemetry_path(
@@ -161,9 +163,10 @@ impl Default for Config {
         Self {
             endpoint: None,
             telemetry_debug_logging_enabled: false,
-            telemetry_hearbeat_interval: Duration::from_secs(60),
+            telemetry_heartbeat_interval: Duration::from_secs(60),
             direct_submission_enabled: false,
             restartable: false,
+            debug_enabled: false,
         }
     }
 }
@@ -233,9 +236,10 @@ impl Config {
         let mut this = Self {
             endpoint: None,
             telemetry_debug_logging_enabled: settings.shared_lib_debug,
-            telemetry_hearbeat_interval: settings.telemetry_heartbeat_interval,
+            telemetry_heartbeat_interval: settings.telemetry_heartbeat_interval,
             direct_submission_enabled: settings.direct_submission_enabled,
             restartable: false,
+            debug_enabled: false,
         };
         if let Ok(url) = parse_uri(&trace_agent_url) {
             let _res = this.set_endpoint(Endpoint {

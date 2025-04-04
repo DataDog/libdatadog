@@ -14,6 +14,7 @@ use ddcommon::tag::Tag;
 use ddtelemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
 };
+use std::fmt::DebugSet;
 use std::{collections::HashMap, time::Duration};
 use tokio::task::JoinHandle;
 
@@ -65,9 +66,9 @@ impl TelemetryClientBuilder {
     }
 
     /// Sets the heartbeat notification interval in millis.
-    pub fn set_hearbeat(mut self, interval: u64) -> Self {
+    pub fn set_heartbeat(mut self, interval: u64) -> Self {
         if interval > 0 {
-            self.config.telemetry_hearbeat_interval = Duration::from_millis(interval);
+            self.config.telemetry_heartbeat_interval = Duration::from_millis(interval);
         }
         self
     }
@@ -75,6 +76,12 @@ impl TelemetryClientBuilder {
     /// Sets runtime id for the telemetry client.
     pub fn set_runtime_id(mut self, id: &str) -> Self {
         self.runtime_id = Some(id.to_string());
+        self
+    }
+
+    /// Sets the debug enabled flag for the telemetry client.
+    pub fn set_debug_enabled(mut self, debug: bool) -> Self {
+        self.config.debug_enabled = debug;
         self
     }
 
@@ -276,7 +283,7 @@ mod tests {
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
             .set_url(url)
-            .set_hearbeat(100)
+            .set_heartbeat(100)
             .build()
             .await
             .unwrap()
@@ -290,7 +297,7 @@ mod tests {
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
             .set_url("http://localhost")
-            .set_hearbeat(30);
+            .set_heartbeat(30);
 
         assert_eq!(&builder.service_name.unwrap(), "test_service");
         assert_eq!(&builder.language.unwrap(), "test_language");
@@ -301,7 +308,7 @@ mod tests {
             "http://localhost/telemetry/proxy/api/v2/apmtelemetry"
         );
         assert_eq!(
-            builder.config.telemetry_hearbeat_interval,
+            builder.config.telemetry_heartbeat_interval,
             Duration::from_millis(30)
         );
     }
@@ -660,7 +667,7 @@ mod tests {
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
             .set_url(&server.url("/"))
-            .set_hearbeat(100)
+            .set_heartbeat(100)
             .set_runtime_id("foo")
             .build()
             .await;
