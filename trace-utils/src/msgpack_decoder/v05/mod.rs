@@ -36,7 +36,7 @@ const SPAN_ELEM_COUNT: u32 = 12;
 /// # Examples
 ///
 /// ```
-/// use datadog_trace_utils::msgpack_decoder::v05::from_slice;
+/// use datadog_trace_utils::msgpack_decoder::v05::from_bytes;
 /// use rmp_serde::to_vec;
 /// use std::collections::HashMap;
 /// use tinybytes;
@@ -61,7 +61,7 @@ const SPAN_ELEM_COUNT: u32 = 12;
 /// let encoded_data = to_vec(&data).unwrap();
 /// let encoded_data_as_tinybytes = tinybytes::Bytes::from(encoded_data);
 /// let (decoded_traces, _payload_size) =
-///     from_slice(encoded_data_as_tinybytes).expect("Decoding failed");
+///     from_bytes(encoded_data_as_tinybytes).expect("Decoding failed");
 ///
 /// assert_eq!(1, decoded_traces.len());
 /// assert_eq!(1, decoded_traces[0].len());
