@@ -142,7 +142,6 @@ impl Metrics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ddtelemetry::config::Config;
     use ddtelemetry::worker::TelemetryWorkerBuilder;
 
     #[cfg_attr(miri, ignore)]
@@ -154,7 +153,7 @@ mod tests {
             "0.1".to_string(),
             "1.0".to_string(),
         )
-        .spawn_with_config(Config::default())
+        .spawn()
         .await
         .unwrap();
 

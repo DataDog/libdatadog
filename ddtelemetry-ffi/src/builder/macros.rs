@@ -6,10 +6,12 @@
 // HEADER=$(cat ddtelemetry-ffi/src/builder/macros.rs | sed '/^$/q') EXPANDED=ddtelemetry-ffi/src/builder/expanded.rs &&
 //   echo $HEADER '\n' > $EXPANDED && cargo expand -p ddtelemetry-ffi --no-default-features builder::macros |
 //   sed 's/#\[cfg(not(feature = "expanded_builder_macros"))\]/pub use macros::*;/' |
-//   sed 's/::alloc::fmt::format/std::fmt::format/' >> $EXPANDED && cargo fmt
+//   sed 's/mod macros {/#[allow(clippy::redundant_closure_call)]\n#[allow(clippy::missing_safety_doc)]\n#[allow(unused_parens)]\n#[allow(clippy::double_parens)]\nmod macros {/' |
+//   sed 's/::alloc::fmt::format/std::fmt::format/' |
+//   sed 's/::alloc::__export::must_use//' |
+//    >> $EXPANDED && cargo +nightly fmt
 // ```
 
-use ddcommon::Endpoint;
 use ddcommon_ffi as ffi;
 use ddtelemetry::worker::TelemetryWorkerBuilder;
 use ffi::slice::AsBytes;
@@ -20,7 +22,7 @@ crate::c_setters!(
     property_type => ffi::CharSlice,
     property_type_name_snakecase => str,
     property_type_name_camel_case => Str,
-    convert_fn => (|s: ffi::CharSlice| -> Result<_, String> { Ok(s.to_utf8_lossy().into_owned()) }),
+    convert_fn => (|s: ffi::CharSlice| -> Result<_, String> { Ok(Some(s.to_utf8_lossy().into_owned())) }),
     SETTERS {
         application.service_version,
         application.env,
@@ -47,17 +49,5 @@ crate::c_setters!(
     convert_fn => (|b: bool| -> Result<_, String> { Ok(b) }),
     SETTERS {
         config.telemetry_debug_logging_enabled,
-    }
-);
-
-crate::c_setters!(
-    object_name => telemetry_builder,
-    object_type => TelemetryWorkerBuilder,
-    property_type => &Endpoint,
-    property_type_name_snakecase => endpoint,
-    property_type_name_camel_case => Endpoint,
-    convert_fn => (|e: &Endpoint| -> Result<_, String> { Ok(e.clone()) }),
-    SETTERS {
-        config.endpoint,
     }
 );
