@@ -42,7 +42,7 @@ impl<'a> From<CaptureValue<'a>> for DebuggerValueAlias<'a> {
     fn from(val: CaptureValue<'a>) -> Self {
         DebuggerValueAlias {
             r#type: val.r#type.to_utf8_lossy(),
-            value: if val.value.len() == 0 {
+            value: if val.value.is_empty() {
                 None
             } else {
                 Some(val.value.to_utf8_lossy())
@@ -58,12 +58,12 @@ impl<'a> From<CaptureValue<'a>> for DebuggerValueAlias<'a> {
             entries: val.entries,
             is_null: val.is_null,
             truncated: val.truncated,
-            not_captured_reason: if val.not_captured_reason.len() == 0 {
+            not_captured_reason: if val.not_captured_reason.is_empty() {
                 None
             } else {
                 Some(val.not_captured_reason.to_utf8_lossy())
             },
-            size: if val.size.len() == 0 {
+            size: if val.size.is_empty() {
                 None
             } else {
                 Some(val.size.to_utf8_lossy())
@@ -399,7 +399,7 @@ pub fn ddog_debugger_diagnostics_create_unboxed<'a>(
             diagnostics.exception = Some(DiagnosticsError {
                 r#type: probe.status_exception.to_utf8_lossy(),
                 message: probe.status_msg.to_utf8_lossy(),
-                stacktrace: if probe.status_exception.len() > 0 {
+                stacktrace: if !probe.status_exception.is_empty() {
                     Some(probe.status_exception.to_utf8_lossy())
                 } else {
                     None
@@ -413,7 +413,7 @@ pub fn ddog_debugger_diagnostics_create_unboxed<'a>(
         service,
         ddsource: Cow::Borrowed("dd_debugger"),
         timestamp,
-        message: Some(if probe.diagnostic_msg.len() > 0 {
+        message: Some(if !probe.diagnostic_msg.is_empty() {
             probe.diagnostic_msg.to_utf8_lossy()
         } else {
             Cow::Owned(match probe.status {

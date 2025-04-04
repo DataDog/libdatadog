@@ -612,7 +612,7 @@ impl Profile {
         let local_root_span_id = if let LabelValue::Num { num, .. } = label.get_value() {
             // Safety: the value is an u64, but pprof only has signed values, so we
             // transmute it; the backend does the same.
-            unsafe { std::intrinsics::transmute::<i64, u64>(*num) }
+            unsafe { std::mem::transmute::<i64, u64>(*num) }
         } else {
             return Err(anyhow::format_err!("the local root span id label value must be sent as a number, not a string, given {:?}",
             label));
@@ -2338,7 +2338,7 @@ mod api_tests {
 
         let large_span_id = u64::MAX;
         // Safety: an u64 can fit into an i64, and we're testing that it's not mis-handled.
-        let large_num: i64 = unsafe { std::intrinsics::transmute(large_span_id) };
+        let large_num: i64 = unsafe { std::mem::transmute::<u64, i64>(large_span_id) };
 
         let id2_label = api::Label {
             key: "local root span id",

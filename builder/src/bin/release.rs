@@ -22,14 +22,8 @@ struct ReleaseArgs {
 impl From<pico_args::Arguments> for ReleaseArgs {
     fn from(mut args: pico_args::Arguments) -> Self {
         let release_args = ReleaseArgs {
-            out_dir: match args.value_from_str("--out") {
-                Ok(v) => Some(v),
-                Err(_) => None,
-            },
-            target: match args.value_from_str("--target") {
-                Ok(v) => Some(v),
-                Err(_) => None,
-            },
+            out_dir: args.value_from_str("--out").ok(),
+            target: args.value_from_str("--target").ok(),
         };
 
         args.finish();
