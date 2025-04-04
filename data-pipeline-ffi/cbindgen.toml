@@ -46,6 +46,3 @@ must_use = "DDOG_CHECK_RETURN"
 [parse]
 parse_deps = true
 include = ["ddcommon", "ddcommon-ffi", "data-pipeline"]
-
-[parse.expand]
-crates = ["data-pipeline-ffi"]
