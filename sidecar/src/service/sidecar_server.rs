@@ -679,11 +679,11 @@ impl SidecarInterface for SidecarServer {
             *session.remote_config_notify_function.lock().unwrap() = remote_config_notify_function;
         }
         session.modify_telemetry_config(|cfg| {
-            cfg.telemetry_hearbeat_interval = config.telemetry_heartbeat_interval;
+            cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
             let endpoint =
                 get_product_endpoint(ddtelemetry::config::PROD_INTAKE_SUBDOMAIN, &config.endpoint);
             cfg.set_endpoint(endpoint).ok();
-            cfg.telemetry_hearbeat_interval = config.telemetry_heartbeat_interval;
+            cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
         });
         session.modify_trace_config(|cfg| {
             let endpoint = get_product_endpoint(

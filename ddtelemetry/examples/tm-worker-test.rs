@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         url: ddcommon::parse_uri("file://./tm-worker-test.output").unwrap(),
         ..Default::default()
     });
-    builder.config.telemetry_hearbeat_interval = Some(Duration::from_secs(1));
+    builder.config.telemetry_heartbeat_interval = Some(Duration::from_secs(1));
 
     let handle = builder.run()?;
 

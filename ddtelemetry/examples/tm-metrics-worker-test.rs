@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     builder.config.endpoint = Some(ddcommon::Endpoint::from_slice(
         "file://./tm-metrics-worker-test.output",
     ));
-    builder.config.telemetry_hearbeat_interval = Some(Duration::from_secs(1));
+    builder.config.telemetry_heartbeat_interval = Some(Duration::from_secs(1));
 
     let handle = builder.run_metrics_logs()?;
 
