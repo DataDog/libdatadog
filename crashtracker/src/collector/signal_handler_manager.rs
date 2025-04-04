@@ -211,6 +211,6 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn test_max_signals() {
-        assert_eq!(super::MAX_SIGNALS, libc::SIGRTMAX());
+        assert_eq!(super::MAX_SIGNALS as libc::c_int, libc::SIGRTMAX());
     }
 }
