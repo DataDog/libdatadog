@@ -3,7 +3,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::pb::{is_default, Span};
+    use crate::pb::Span;
+    use crate::serializers::is_default;
 
     #[test]
     fn test_is_default() {
