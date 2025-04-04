@@ -76,3 +76,5 @@ use_webpki_roots = ["hyper-rustls/webpki-roots"]
 # Enable this feature to enable stubbing of cgroup
 # php directly import this crate and uses functions gated by this feature for their test
 cgroup_testing = []
+# FIPS mode uses the FIPS-compliant cryptographic provider
+fips = ["https", "hyper-rustls/fips"]
