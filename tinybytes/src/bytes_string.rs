@@ -47,6 +47,23 @@ impl BytesString {
         })
     }
 
+    pub fn from_static(value: &'static str) -> Self {
+        // SAFETY: This is safe as a str is always a valid UTF-8 slice.
+        unsafe { Self::from_bytes_unchecked(Bytes::from_static(value.as_bytes())) }
+    }
+
+    pub fn from_string(value: String) -> Self {
+        // SAFETY: This is safe as a String is always a valid UTF-8 slice.
+        unsafe { Self::from_bytes_unchecked(Bytes::from_underlying(value)) }
+    }
+
+    pub fn from_cow(cow: std::borrow::Cow<'static, str>) -> Self {
+        match cow {
+            std::borrow::Cow::Borrowed(s) => Self::from_static(s),
+            std::borrow::Cow::Owned(s) => Self::from_string(s),
+        }
+    }
+
     /// Creates a `BytesString` from a `tinybytes::Bytes` instance.
     ///
     /// This function validates that the provided `Bytes` instance contains valid UTF-8 data. If the
@@ -144,15 +161,13 @@ impl AsRef<str> for BytesString {
 
 impl From<String> for BytesString {
     fn from(value: String) -> Self {
-        // SAFETY: This is safe as a String is always a valid UTF-8 slice.
-        unsafe { Self::from_bytes_unchecked(Bytes::from_underlying(value)) }
+        Self::from_string(value)
     }
 }
 
 impl From<&'static str> for BytesString {
     fn from(value: &'static str) -> Self {
-        // SAFETY: This is safe as a str is always a valid UTF-8 slice.
-        unsafe { Self::from_bytes_unchecked(Bytes::from_static(value.as_bytes())) }
+        Self::from_static(value)
     }
 }
 
