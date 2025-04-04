@@ -304,7 +304,7 @@ mod tests {
         assert_eq!(&builder.language.unwrap(), "test_language");
         assert_eq!(&builder.language_version.unwrap(), "test_language_version");
         assert_eq!(&builder.tracer_version.unwrap(), "test_tracer_version");
-        assert_eq!(builder.config.debug_enabled, true);
+        assert!(builder.config.debug_enabled);
         assert_eq!(
             <String as AsRef<str>>::as_ref(&builder.config.endpoint.unwrap().url.to_string()),
             "http://localhost/telemetry/proxy/api/v2/apmtelemetry"
