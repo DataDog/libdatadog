@@ -210,6 +210,20 @@ pub fn read_nullable_number_bytes<T: TryFrom<Number, Error = DecodeError>>(
     read_number(unsafe { buf.as_mut_slice() }, true)?.try_into()
 }
 
+/// Read a msgpack encoded number from `buf`.
+pub fn read_number_slice<T: TryFrom<Number, Error = DecodeError>>(
+    buf: &mut &[u8],
+) -> Result<T, DecodeError> {
+    read_number(buf, false)?.try_into()
+}
+
+/// Read a msgpack encoded number from `buf` and return 0 if null.
+pub fn read_nullable_number_slice<T: TryFrom<Number, Error = DecodeError>>(
+    buf: &mut &[u8],
+) -> Result<T, DecodeError> {
+    read_number(buf, true)?.try_into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
