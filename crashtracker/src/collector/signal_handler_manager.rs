@@ -209,9 +209,8 @@ unsafe fn register_signal_handler(
 #[cfg(test)]
 mod tests {
     #[cfg(target_os = "linux")]
-    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_max_signals() {
-        assert_eq!(super::MAX_SIGNALS as libc::c_int, libc::SIGRTMAX());
+        assert!(super::MAX_SIGNALS as libc::c_int > libc::SIGRTMAX());
     }
 }
