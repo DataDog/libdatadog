@@ -13,3 +13,4 @@ pub mod internal;
 pub mod iter;
 pub mod pprof;
 pub mod serializer;
+pub mod reqwest_exporter;
