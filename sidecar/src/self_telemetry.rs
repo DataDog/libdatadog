@@ -183,15 +183,14 @@ impl SelfTelemetry {
     /// should always succeed
     /// not to bring down other functionality if we fail to initialize the internal telemetry
     pub async fn spawn_worker(mut self) {
-        let (worker, join_handle) = match TelemetryWorkerBuilder::new_fetch_host(
+        let mut builder = TelemetryWorkerBuilder::new_fetch_host(
             "datadog-ipc-helper".to_string(),
             "php".to_string(),
             "SIDECAR".to_string(),
             crate::sidecar_version!().to_string(),
-        )
-        .spawn_with_config(self.config.clone())
-        .await
-        {
+        );
+        builder.with_config(self.config.clone());
+        let (worker, join_handle) = match builder.spawn().await {
             Ok(r) => r,
             Err(_err) => {
                 self.watchdog_handle.wait_for_shutdown().await;
