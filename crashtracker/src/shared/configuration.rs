@@ -22,14 +22,14 @@ pub enum StacktraceCollection {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashtrackerConfiguration {
     // Paths to any additional files to track, if any
-    pub additional_files: Vec<String>,
-    pub create_alt_stack: bool,
-    pub use_alt_stack: bool,
-    pub endpoint: Option<Endpoint>,
-    pub resolve_frames: StacktraceCollection,
-    pub signals: Vec<i32>,
-    pub timeout_ms: u32,
-    pub unix_socket_path: Option<String>,
+    additional_files: Vec<String>,
+    create_alt_stack: bool,
+    use_alt_stack: bool,
+    endpoint: Option<Endpoint>,
+    resolve_frames: StacktraceCollection,
+    signals: Vec<i32>,
+    timeout_ms: u32,
+    unix_socket_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -119,6 +119,56 @@ impl CrashtrackerConfiguration {
             timeout_ms,
             unix_socket_path,
         })
+    }
+
+    pub fn additional_files(&self) -> &Vec<String> {
+        &self.additional_files
+    }
+
+    pub fn create_alt_stack(&self) -> bool {
+        self.create_alt_stack
+    }
+
+    pub fn use_alt_stack(&self) -> bool {
+        self.use_alt_stack
+    }
+
+    pub fn endpoint(&self) -> &Option<Endpoint> {
+        &self.endpoint
+    }
+
+    pub fn resolve_frames(&self) -> StacktraceCollection {
+        self.resolve_frames
+    }
+
+    pub fn signals(&self) -> &Vec<i32> {
+        &self.signals
+    }
+
+    pub fn timeout_ms(&self) -> u32 {
+        self.timeout_ms
+    }
+
+    pub fn unix_socket_path(&self) -> &Option<String> {
+        &self.unix_socket_path
+    }
+
+    pub fn set_create_alt_stack(&mut self, create_alt_stack: bool) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !create_alt_stack || self.use_alt_stack,
+            "Cannot create an altstack without using it"
+        );
+        self.create_alt_stack = create_alt_stack;
+        Ok(())
+    }
+
+    pub fn set_use_alt_stack(&mut self, use_alt_stack: bool) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.create_alt_stack || use_alt_stack,
+            "Cannot create an altstack without using it"
+        );
+        self.use_alt_stack = use_alt_stack;
+        Ok(())
     }
 }
 
