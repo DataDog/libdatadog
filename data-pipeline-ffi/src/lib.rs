@@ -8,4 +8,5 @@
 
 mod error;
 mod response;
+mod span;
 mod trace_exporter;
