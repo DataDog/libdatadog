@@ -62,7 +62,7 @@ pub struct CrashInfo {
 
 impl CrashInfo {
     pub fn current_schema_version() -> String {
-        "1.2".to_string()
+        "1.3".to_string()
     }
 }
 
@@ -123,13 +123,23 @@ impl CrashInfo {
 
 #[cfg(test)]
 mod tests {
+    use schemars::schema::RootSchema;
+    use std::fs;
+
     use super::*;
-    #[ignore]
     #[test]
-    /// Utility function to print the schema.
-    fn print_schema() {
+    fn test_schema_matches_rfc() {
+        let rfc_schema_filename = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../docs/RFCs/artifacts/0008-crashtracker-schema.json"
+        );
+        let rfc_schema_json = fs::read_to_string(rfc_schema_filename).expect("File to exist");
+        let rfc_schema: RootSchema = serde_json::from_str(&rfc_schema_json).expect("Valid json");
         let schema = schemars::schema_for!(CrashInfo);
-        println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+
+        assert_eq!(rfc_schema, schema);
+        // If it doesn't match, you can use this command to generate a new schema json
+        // println!("{}", serde_json::to_string_pretty(&schema).unwrap());
     }
 
     impl test_utils::TestInstance for CrashInfo {
