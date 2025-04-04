@@ -14,7 +14,6 @@ use ddcommon::tag::Tag;
 use ddtelemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
 };
-use std::fmt::DebugSet;
 use std::{collections::HashMap, time::Duration};
 use tokio::task::JoinHandle;
 
