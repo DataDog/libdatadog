@@ -759,11 +759,10 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
 
+        let mut old_profile = profile.reset_and_return_previous()?;
         if let Some(start_time) = start_time {
-            profile.set_start_time(start_time.into())?;
+            old_profile.set_start_time(start_time.into())?;
         }
-
-        let old_profile = profile.reset_and_return_previous()?;
 
         let end_time = end_time.map(SystemTime::from);
         old_profile.serialize_into_compressed_pprof(end_time, None)
