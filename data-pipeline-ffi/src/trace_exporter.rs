@@ -906,7 +906,7 @@ mod tests {
                 telemetry_cfg: Some(TelemetryConfig {
                     heartbeat: 50,
                     runtime_id: Some("foo".to_string()),
-                    debug_enabled: true
+                    debug_enabled: true,
                 }),
             };
 
