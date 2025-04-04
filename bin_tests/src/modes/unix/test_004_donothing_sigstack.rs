@@ -16,8 +16,8 @@ impl Behavior for Test {
         _output_dir: &Path,
         config: &mut CrashtrackerConfiguration,
     ) -> anyhow::Result<()> {
-        config.create_alt_stack = false;
-        config.use_alt_stack = false;
+        config.set_create_alt_stack(false)?;
+        config.set_use_alt_stack(false)?;
         Ok(())
     }
 

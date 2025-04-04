@@ -8,6 +8,7 @@ mod counters;
 mod crash_handler;
 mod emitters;
 mod saguard;
+mod signal_handler_manager;
 mod spans;
 
 pub use additional_tags::{

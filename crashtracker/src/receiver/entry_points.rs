@@ -106,7 +106,7 @@ async fn receiver_entry_point(
                 .push(format!("Error resolving frames: {e}"));
         }
         crash_info
-            .async_upload_to_endpoint(&config.endpoint)
+            .async_upload_to_endpoint(config.endpoint())
             .await?;
     }
     Ok(())
@@ -127,7 +127,7 @@ fn resolve_frames(
     config: &CrashtrackerConfiguration,
     crash_info: &mut CrashInfo,
 ) -> anyhow::Result<()> {
-    if config.resolve_frames == StacktraceCollection::EnabledWithSymbolsInReceiver {
+    if config.resolve_frames() == StacktraceCollection::EnabledWithSymbolsInReceiver {
         let pid = crash_info
             .proc_info
             .as_ref()

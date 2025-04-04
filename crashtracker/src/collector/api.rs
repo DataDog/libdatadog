@@ -3,33 +3,11 @@
 #![cfg(unix)]
 
 use crate::{
-    clear_spans, clear_traces,
-    collector::crash_handler::{configure_receiver, register_crash_handlers, restore_old_handlers},
-    crash_info::Metadata,
-    reset_counters,
-    shared::configuration::CrashtrackerReceiverConfig,
-    update_config, update_metadata, CrashtrackerConfiguration,
+    clear_spans, clear_traces, collector::crash_handler::configure_receiver,
+    collector::signal_handler_manager::register_crash_handlers, crash_info::Metadata,
+    reset_counters, shared::configuration::CrashtrackerReceiverConfig, update_config,
+    update_metadata, CrashtrackerConfiguration,
 };
-
-/// Cleans up after the crash-tracker:
-/// Unregister the crash handler, restore the previous handler (if any), and
-/// shut down the receiver.  Note that the use of this function is optional:
-/// the receiver will automatically shutdown when the pipe is closed on program
-/// exit.
-///
-/// PRECONDITIONS:
-///     This function assumes that the crash-tracker has previously been
-///     initialized.
-/// SAFETY:
-///     Crash-tracking functions are not reentrant.
-///     No other crash-handler functions should be called concurrently.
-/// ATOMICITY:
-///     This function is not atomic. A crash during its execution may lead to
-///     unexpected crash-handling behaviour.
-pub fn shutdown_crash_handler() -> anyhow::Result<()> {
-    restore_old_handlers(false)?;
-    Ok(())
-}
 
 pub static DEFAULT_SYMBOLS: [libc::c_int; 4] =
     [libc::SIGBUS, libc::SIGABRT, libc::SIGSEGV, libc::SIGILL];

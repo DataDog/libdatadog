@@ -6,21 +6,17 @@
 
 use super::emitters::emit_crashreport;
 use super::saguard::SaGuard;
+use super::signal_handler_manager::chain_signal_handler;
 use crate::crash_info::Metadata;
 use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
 use crate::shared::constants::*;
-use crate::signal_from_signum;
 use anyhow::Context;
-use libc::{
-    c_void, execve, mmap, nfds_t, sigaltstack, siginfo_t, ucontext_t, MAP_ANON, MAP_FAILED,
-    MAP_PRIVATE, PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ,
-};
+use libc::{c_void, execve, nfds_t, siginfo_t, ucontext_t};
 use libc::{poll, pollfd, POLLHUP};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use nix::sys::socket;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{close, Pid};
-use std::collections::HashMap;
 use std::ffi::CString;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -30,7 +26,7 @@ use std::os::unix::{
 };
 use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
+use std::sync::atomic::{AtomicPtr, AtomicU64};
 use std::time::{Duration, Instant};
 
 // Note that this file makes use the following async-signal safe functions in a signal handler.
@@ -254,9 +250,6 @@ fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
 // These should always be either: null_mut, or `Box::into_raw()`
 // This means that we can always clean up the memory inside one of these using
 // `Box::from_raw` to recreate the box, then dropping it.
-static ALTSTACK_INIT: AtomicBool = AtomicBool::new(false);
-static OLD_HANDLERS: AtomicPtr<HashMap<i32, (signal::Signal, SigAction)>> =
-    AtomicPtr::new(ptr::null_mut());
 static METADATA: AtomicPtr<(Metadata, String)> = AtomicPtr::new(ptr::null_mut());
 static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
 static RECEIVER_CONFIG: AtomicPtr<CrashtrackerReceiverConfig> = AtomicPtr::new(ptr::null_mut());
@@ -388,46 +381,16 @@ pub fn configure_receiver(config: CrashtrackerReceiverConfig) {
     }
 }
 
-extern "C" fn handle_posix_sigaction(signum: i32, sig_info: *mut siginfo_t, ucontext: *mut c_void) {
+pub(crate) extern "C" fn handle_posix_sigaction(
+    signum: i32,
+    sig_info: *mut siginfo_t,
+    ucontext: *mut c_void,
+) {
     // Handle the signal.  Note this has a guard to ensure that we only generate
     // one crash report per process.
     let _ = handle_posix_signal_impl(sig_info, ucontext as *mut ucontext_t);
-
-    // Once we've handled the signal, chain to any previous handlers.
-    // SAFETY: This was created by [register_crash_handlers].  There is a tiny
-    // instant of time between when the handlers are registered, and the
-    // `OLD_HANDLERS` are set.  This should be very short, but is hard to fully
-    // eliminate given the existing POSIX APIs.
-    let old_handlers = unsafe { &*OLD_HANDLERS.swap(std::ptr::null_mut(), SeqCst) };
-
-    if let Some((signal, sigaction)) = old_handlers.get(&signum) {
-        // How we chain depends on what kind of handler we're chaining to.
-        // https://www.gnu.org/software/libc/manual/html_node/Signal-Handling.html
-        // https://man7.org/linux/man-pages/man2/sigaction.2.html
-        // Follow the approach here:
-        // https://stackoverflow.com/questions/6015498/executing-default-signal-handler
-        match sigaction.handler() {
-            SigHandler::SigDfl => {
-                // In the case of a default handler, we want to invoke it so that
-                // the core-dump can be generated.  Restoring the handler then
-                // re-raising the signal accomplishes that.
-                unsafe { signal::sigaction(*signal, sigaction) }
-                    .unwrap_or_else(|_| std::process::abort());
-                // Signals are only delivered once.
-                // In the case where we were invoked because of a crash, returning
-                // is technically UB but in practice re-invokes the crashing instr
-                // and re-raises the signal. In the case where we were invoked by
-                // `raise(SIGSEGV)` we need to re-raise the signal, or the default
-                // handler will never receive it.
-                unsafe { libc::raise(signum) };
-            }
-            SigHandler::SigIgn => (), // Return and ignore the signal.
-            SigHandler::Handler(f) => f(signum),
-            SigHandler::SigAction(f) => f(signum, sig_info, ucontext),
-        };
-    } else {
-        eprintln!("Unexpected signal number {signum}, can't chain the handlers");
-    }
+    // SAFETY: No preconditions.
+    unsafe { chain_signal_handler(signum, sig_info, ucontext) };
 }
 
 fn receiver_from_socket(unix_socket_path: &str) -> anyhow::Result<Receiver> {
@@ -529,7 +492,7 @@ fn handle_posix_signal_impl(
     // to prevent hanging, but also because services capable of restarting after a crash experience
     // crashes as probabalistic queue-holding events, and so crash handling represents dead time
     // which makes the overall service increasingly incompetent at handling load.
-    let timeout_ms = config.timeout_ms;
+    let timeout_ms = config.timeout_ms();
     let start_time = Instant::now(); // This is the time at which the signal was received
 
     // During the execution of this signal handler, block ALL other signals, especially because we
@@ -543,7 +506,7 @@ fn handle_posix_signal_impl(
     // Optionally, create the receiver.  This all hinges on whether or not the configuration has a
     // non-null unix domain socket specified.  If it doesn't, then we need to check the receiver
     // configuration.  If it does, then we just connect to the socket.
-    let unix_socket_path = config.unix_socket_path.clone().unwrap_or_default();
+    let unix_socket_path = config.unix_socket_path().clone().unwrap_or_default();
 
     let receiver = if !unix_socket_path.is_empty() {
         receiver_from_socket(&unix_socket_path)?
@@ -580,149 +543,4 @@ fn handle_posix_signal_impl(
     receiver_finish(receiver, start_time, timeout_ms);
 
     res
-}
-
-/// Registers UNIX signal handlers to detect program crashes.
-/// This function can be called multiple times and will be idempotent: it will
-/// only create and set the handlers once.
-/// However, note the restriction below:
-/// PRECONDITIONS:
-///     The signal handlers should be restored before removing the receiver.
-///     `configure_receiver()` needs to be called before this function.
-/// SAFETY:
-///     Crash-tracking functions are not guaranteed to be reentrant.
-///     No other crash-handler functions should be called concurrently.
-/// ATOMICITY:
-///     This function uses a compare_and_exchange on an atomic pointer.
-///     However, setting the crash handler itself is not an atomic operation
-///     and hence it is possible that a concurrent operation could see partial
-///     execution of this function.
-///     If a crash occurs during execution of this function, it is possible that
-///     the crash handler will have been registered, but the old signal handler
-///     will not yet be stored.  This would lead to unexpected behaviour for the
-///     user.  This should only matter if something crashes concurrently with
-///     this function executing.
-pub fn register_crash_handlers(config: &CrashtrackerConfiguration) -> anyhow::Result<()> {
-    if !OLD_HANDLERS.load(SeqCst).is_null() {
-        return Ok(());
-    }
-
-    if config.create_alt_stack {
-        unsafe { create_alt_stack()? };
-    }
-    let mut old_handlers = HashMap::new();
-    // TODO: if this fails, we end in a situation where handlers have been registered with no chain
-    for signum in &config.signals {
-        let signal = signal_from_signum(*signum)?;
-        anyhow::ensure!(
-            !old_handlers.contains_key(signum),
-            "Handler already registered for {signal}"
-        );
-        let handler = unsafe { register_signal_handler(signal, config)? };
-        old_handlers.insert(*signum, (signal, handler));
-    }
-    let boxed_ptr = Box::into_raw(Box::new(old_handlers));
-
-    let res = OLD_HANDLERS.compare_exchange(ptr::null_mut(), boxed_ptr, SeqCst, SeqCst);
-    // Note this doesn't restore the old setup, and leaks `old_handlers`, but hard to recover here
-    // and the leak is small.
-    anyhow::ensure!(
-        res.is_ok(),
-        "TOCTTOU error in crashtracker::register_crash_handlers"
-    );
-
-    Ok(())
-}
-
-unsafe fn register_signal_handler(
-    signal_type: signal::Signal,
-    config: &CrashtrackerConfiguration,
-) -> anyhow::Result<SigAction> {
-    // Between this and `create_alt_stack()`, there are a few things going on.
-    // - It is generally preferable to run in an altstack, given the choice.
-    // - Crashtracking does not currently provide any particular guarantees around stack usage; in
-    //   fact, it has been observed to frequently exceed 8192 bytes (default SIGSTKSZ) in practice.
-    // - Some runtimes (Ruby) will set the altstack to a respectable size (~16k), but will check the
-    //   value of the SP during their chained handler and become upset if the altstack is not what
-    //   they expect--in these cases, it is necessary to USE the altstack without creating it.
-    // - Some runtimes (Python, Rust) will set the altstack to the default size (8k), but will not
-    //   check the value of the SP during their chained handler--in these cases, for correct
-    //   operation it is necessary to CREATE and USE the altstack.
-    // - There are no known cases where it is useful to crate but not use the altstack--this case
-    //   handled in `new()` for CrashtrackerConfiguration.
-    let extra_saflags = if config.use_alt_stack {
-        SaFlags::SA_ONSTACK
-    } else {
-        SaFlags::empty()
-    };
-
-    let sig_action = SigAction::new(
-        SigHandler::SigAction(handle_posix_sigaction),
-        SaFlags::SA_NODEFER | extra_saflags,
-        signal::SigSet::empty(),
-    );
-
-    let old_handler = signal::sigaction(signal_type, &sig_action)?;
-    Ok(old_handler)
-}
-
-pub fn restore_old_handlers(inside_signal_handler: bool) -> anyhow::Result<()> {
-    let prev = OLD_HANDLERS.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(!prev.is_null(), "No crashtracking previous signal handlers");
-    // Safety: The only nonnull pointer stored here comes from Box::into_raw()
-    let prev = unsafe { Box::from_raw(prev) };
-    for (_signum, (signal, sigaction)) in prev.iter() {
-        // Safety: The value restored here was returned from a previous sigaction call
-        unsafe { signal::sigaction(*signal, sigaction)? };
-    }
-
-    // We want to avoid freeing memory inside the handler, so just leak it
-    // This is fine since we're crashing anyway at this point
-    if inside_signal_handler {
-        Box::leak(prev);
-    }
-    Ok(())
-}
-
-/// Allocates a signal altstack, and puts a guard page at the end.
-/// Inspired by https://github.com/rust-lang/rust/pull/69969/files
-unsafe fn create_alt_stack() -> anyhow::Result<()> {
-    if ALTSTACK_INIT.load(SeqCst) {
-        return Ok(());
-    }
-
-    // Ensure that the altstack size is the greater of 16 pages or SIGSTKSZ. This is necessary
-    // because the default SIGSTKSZ is 8KB, which we're starting to run into. This new size is
-    // arbitrary, but at least it's large enough for our purposes, and yet a small enough part of
-    // the process RSS that it shouldn't be a problem.
-    let page_size = page_size::get();
-    let sigalstack_base_size = std::cmp::max(SIGSTKSZ, 16 * page_size);
-    let stackp = mmap(
-        ptr::null_mut(),
-        sigalstack_base_size + page_size,
-        PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANON,
-        -1,
-        0,
-    );
-    anyhow::ensure!(
-        stackp != MAP_FAILED,
-        "failed to allocate an alternative stack"
-    );
-    let guard_result = libc::mprotect(stackp, page_size, PROT_NONE);
-    anyhow::ensure!(
-        guard_result == 0,
-        "failed to set up alternative stack guard page"
-    );
-    let stackp = stackp.add(page_size);
-
-    let stack = libc::stack_t {
-        ss_sp: stackp,
-        ss_flags: 0,
-        ss_size: sigalstack_base_size,
-    };
-    let rval = sigaltstack(&stack, ptr::null_mut());
-    anyhow::ensure!(rval == 0, "sigaltstack failed {rval}");
-    ALTSTACK_INIT.store(true, SeqCst);
-    Ok(())
 }

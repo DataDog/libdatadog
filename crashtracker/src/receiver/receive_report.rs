@@ -259,7 +259,7 @@ pub(crate) async fn receive_report_from_stream(
 
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
     let config = config.context("Missing crashtracker configuration")?;
-    for filename in &config.additional_files {
+    for filename in config.additional_files() {
         if let Err(e) = builder.with_file(filename.clone()) {
             builder.with_log_message(e.to_string(), true)?;
         }
