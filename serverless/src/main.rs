@@ -23,6 +23,8 @@ use datadog_trace_mini_agent::{
     trace_processor,
 };
 
+use datadog_trace_utils::{config_utils::read_cloud_env, trace_utils::EnvironmentType};
+
 use dogstatsd::{
     aggregator::Aggregator as MetricsAggregator,
     constants::CONTEXTS,
@@ -31,7 +33,7 @@ use dogstatsd::{
     flusher::{Flusher, FlusherConfig},
 };
 
-use dogstatsd::metric::EMPTY_TAGS;
+use dogstatsd::metric::{SortedTags, EMPTY_TAGS};
 use tokio_util::sync::CancellationToken;
 
 const DOGSTATSD_FLUSH_INTERVAL: u64 = 10;
@@ -46,6 +48,21 @@ pub async fn main() {
         .unwrap_or("info".to_string());
     let level_filter = log::LevelFilter::from_str(&log_level).unwrap_or(log::LevelFilter::Info);
     Builder::new().filter_level(level_filter).init();
+
+    let (_, env_type) = match read_cloud_env() {
+        Some(value) => value,
+        None => {
+            error!("Unable to identify environment. Shutting down Mini Agent.");
+            return;
+        }
+    };
+
+    let dogstatsd_tags = match env_type {
+        EnvironmentType::CloudFunction => "origin:cloudfunction,dd.origin:cloudfunction",
+        EnvironmentType::AzureFunction => "origin:azurefunction,dd.origin:azurefunction",
+        EnvironmentType::AzureSpringApp => "origin:azurespringapp,dd.origin:azurespringapp",
+        EnvironmentType::LambdaFunction => "origin:lambda,dd.origin:lambda", // historical reasons
+    };
 
     let dd_api_key: Option<String> = env::var("DD_API_KEY").ok();
     let dd_dogstatsd_port: u16 = env::var("DD_DOGSTATSD_PORT")
@@ -122,8 +139,14 @@ pub async fn main() {
 
     let mut metrics_flusher = if dd_use_dogstatsd {
         debug!("Starting dogstatsd");
-        let (_, metrics_flusher) =
-            start_dogstatsd(dd_dogstatsd_port, dd_api_key, dd_site, https_proxy).await;
+        let (_, metrics_flusher) = start_dogstatsd(
+            dd_dogstatsd_port,
+            dd_api_key,
+            dd_site,
+            https_proxy,
+            dogstatsd_tags,
+        )
+        .await;
         info!("dogstatsd-udp: starting to listen on port {dd_dogstatsd_port}");
         metrics_flusher
     } else {
@@ -149,10 +172,15 @@ async fn start_dogstatsd(
     dd_api_key: Option<String>,
     dd_site: String,
     https_proxy: Option<String>,
+    dogstatsd_tags: &str,
 ) -> (CancellationToken, Option<Flusher>) {
     #[allow(clippy::expect_used)]
     let metrics_aggr = Arc::new(Mutex::new(
-        MetricsAggregator::new(EMPTY_TAGS, CONTEXTS).expect("Failed to create metrics aggregator"),
+        MetricsAggregator::new(
+            SortedTags::parse(dogstatsd_tags).unwrap_or(EMPTY_TAGS),
+            CONTEXTS,
+        )
+        .expect("Failed to create metrics aggregator"),
     ));
 
     let dogstatsd_config = DogStatsDConfig {
