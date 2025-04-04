@@ -620,7 +620,7 @@ mod tests {
                 Some(&TelemetryClientConfig {
                     interval: 1000,
                     runtime_id: CharSlice::from("foo"),
-                    debug_enabled: false,
+                    debug_enabled: true,
                 }),
             );
             assert!(error.is_none());
@@ -635,6 +635,7 @@ mod tests {
                     .unwrap(),
                 "foo"
             );
+            assert_eq!(cfg.telemetry_cfg.as_ref().unwrap().debug_enabled, true);
         }
     }
 
@@ -905,6 +906,7 @@ mod tests {
                 telemetry_cfg: Some(TelemetryConfig {
                     heartbeat: 50,
                     runtime_id: Some("foo".to_string()),
+                    debug_enabled: true
                 }),
             };
 

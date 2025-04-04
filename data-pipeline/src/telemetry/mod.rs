@@ -284,6 +284,7 @@ mod tests {
             .set_tracer_version("test_tracer_version")
             .set_url(url)
             .set_heartbeat(100)
+            .set_debug_enabled(true)
             .build()
             .await
             .unwrap()
@@ -297,12 +298,14 @@ mod tests {
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
             .set_url("http://localhost")
+            .set_debug_enabled(true)
             .set_heartbeat(30);
 
         assert_eq!(&builder.service_name.unwrap(), "test_service");
         assert_eq!(&builder.language.unwrap(), "test_language");
         assert_eq!(&builder.language_version.unwrap(), "test_language_version");
         assert_eq!(&builder.tracer_version.unwrap(), "test_tracer_version");
+        assert_eq!(builder.config.debug_enabled, true);
         assert_eq!(
             <String as AsRef<str>>::as_ref(&builder.config.endpoint.unwrap().url.to_string()),
             "http://localhost/telemetry/proxy/api/v2/apmtelemetry"
