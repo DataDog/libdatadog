@@ -3,25 +3,24 @@
 
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::map::{read_map, read_map_len};
-use crate::msgpack_decoder::decode::number::read_number_bytes;
-use crate::msgpack_decoder::decode::string::{handle_null_marker, read_string_bytes};
+use crate::msgpack_decoder::decode::number::read_number_slice;
+use crate::msgpack_decoder::decode::string::{is_null_marker, read_string_ref};
 use std::collections::HashMap;
-use tinybytes::{Bytes, BytesString};
 
 #[inline]
-pub fn read_metric_pair(buf: &mut Bytes) -> Result<(BytesString, f64), DecodeError> {
-    let key = read_string_bytes(buf)?;
-    let v = read_number_bytes(buf)?;
+pub fn read_metric_pair<'a>(buf: &mut &'a [u8]) -> Result<(&'a str, f64), DecodeError> {
+    let key = read_string_ref(buf)?;
+    let v = read_number_slice(buf)?;
 
     Ok((key, v))
 }
 #[inline]
-pub fn read_metrics(buf: &mut Bytes) -> Result<HashMap<BytesString, f64>, DecodeError> {
-    if let Some(empty_map) = handle_null_marker(buf, HashMap::default) {
-        return Ok(empty_map);
+pub fn read_metrics<'a>(buf: &mut &'a [u8]) -> Result<HashMap<&'a str, f64>, DecodeError> {
+    if is_null_marker(buf) {
+        return Ok(HashMap::default());
     }
 
-    let len = read_map_len(unsafe { buf.as_mut_slice() })?;
+    let len = read_map_len(buf)?;
 
     read_map(len, buf, read_metric_pair)
 }

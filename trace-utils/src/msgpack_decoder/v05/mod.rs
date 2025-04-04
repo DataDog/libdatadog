@@ -68,7 +68,7 @@ const SPAN_ELEM_COUNT: u32 = 12;
 /// let decoded_span = &decoded_traces[0][0];
 /// assert_eq!("", decoded_span.name.as_str());
 /// ```
-pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize), DecodeError> {
+pub fn from_bytes(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize), DecodeError> {
     let data_elem = rmp::decode::read_array_len(unsafe { data.as_mut_slice() })
         .map_err(|_| DecodeError::InvalidFormat("Unable to read payload len".to_string()))?;
 
@@ -241,12 +241,12 @@ mod tests {
     }
 
     #[test]
-    fn from_slice_invalid_size_test() {
+    fn from_bytes_invalid_size_test() {
         // 3 empty array.
         let empty_three: [u8; 3] = [0x93, 0x90, 0x90];
         let payload = unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(&empty_three) };
         let bytes = tinybytes::Bytes::from_static(payload);
-        let result = from_slice(bytes);
+        let result = from_bytes(bytes);
 
         assert!(result.is_err());
         matches!(result.err().unwrap(), DecodeError::InvalidFormat(_));
@@ -255,14 +255,14 @@ mod tests {
         let empty_one: [u8; 2] = [0x91, 0x90];
         let payload = unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(&empty_one) };
         let bytes = tinybytes::Bytes::from_static(payload);
-        let result = from_slice(bytes);
+        let result = from_bytes(bytes);
 
         assert!(result.is_err());
         matches!(result.err().unwrap(), DecodeError::InvalidFormat(_));
     }
 
     #[test]
-    fn from_slice_test() {
+    fn from_bytes_test() {
         let data: V05Payload = (
             vec![
                 "".to_string(),
@@ -293,7 +293,7 @@ mod tests {
             )]],
         );
         let msgpack = rmp_serde::to_vec(&data).unwrap();
-        let (traces, _) = from_slice(tinybytes::Bytes::from(msgpack)).unwrap();
+        let (traces, _) = from_bytes(tinybytes::Bytes::from(msgpack)).unwrap();
 
         let span = &traces[0][0];
         assert_eq!(span.service.as_str(), "my-service");
@@ -352,7 +352,7 @@ mod tests {
         );
         let payload = rmp_serde::to_vec(&data).unwrap();
         let payload = unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(&payload) };
-        let result = from_slice(tinybytes::Bytes::from_static(payload));
+        let result = from_bytes(tinybytes::Bytes::from_static(payload));
 
         assert!(result.is_err());
 
@@ -392,7 +392,7 @@ mod tests {
 
         let payload = rmp_serde::to_vec(&data).unwrap();
         let payload = unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(&payload) };
-        let result = from_slice(tinybytes::Bytes::from_static(payload));
+        let result = from_bytes(tinybytes::Bytes::from_static(payload));
 
         assert!(result.is_err());
 
