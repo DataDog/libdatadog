@@ -635,7 +635,7 @@ mod tests {
                     .unwrap(),
                 "foo"
             );
-            assert_eq!(cfg.telemetry_cfg.as_ref().unwrap().debug_enabled, true);
+            assert!(cfg.telemetry_cfg.as_ref().unwrap().debug_enabled);
         }
     }
 
