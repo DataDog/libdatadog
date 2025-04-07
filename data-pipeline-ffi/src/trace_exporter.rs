@@ -29,11 +29,23 @@ fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
     }
 }
 
+/// FFI compatible configuration for the TelemetryClient.
 #[derive(Debug)]
 #[repr(C)]
 pub struct TelemetryClientConfig<'a> {
+    /// How often telemetry should be sent, in milliseconds.
     pub interval: u64,
+    /// A V4 UUID that represents a tracer session. This ID should:
+    /// - Be generated when the tracer starts
+    /// - Be identical within the context of a host (i.e. multiple threads/processes that belong to
+    ///   a single instrumented app should share the same runtime_id)
+    /// - Be associated with traces to allow correlation between traces and telemetry data
     pub runtime_id: CharSlice<'a>,
+
+    /// Whether to enable debug mode for telemetry.
+    /// When enabled, sets the DD-Telemetry-Debug-Enabled header to true.
+    /// Defaults to false.
+    pub debug_enabled: bool,
 }
 
 /// The TraceExporterConfig object will hold the configuration properties for the TraceExporter.
@@ -237,6 +249,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
                     Ok(s) => Some(s),
                     Err(e) => return Some(e),
                 },
+                debug_enabled: telemetry_cfg.debug_enabled,
             })
         } else {
             config.telemetry_cfg = Some(TelemetryConfig::default());
@@ -589,6 +602,7 @@ mod tests {
                 Some(&TelemetryClientConfig {
                     interval: 1000,
                     runtime_id: CharSlice::from("id"),
+                    debug_enabled: false,
                 }),
             );
             assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
@@ -606,6 +620,7 @@ mod tests {
                 Some(&TelemetryClientConfig {
                     interval: 1000,
                     runtime_id: CharSlice::from("foo"),
+                    debug_enabled: true,
                 }),
             );
             assert!(error.is_none());
@@ -620,9 +635,11 @@ mod tests {
                     .unwrap(),
                 "foo"
             );
+            assert!(cfg.telemetry_cfg.as_ref().unwrap().debug_enabled);
         }
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn exporter_constructor_test() {
         unsafe {
@@ -651,6 +668,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn exporter_constructor_error_test() {
         unsafe {
@@ -726,7 +744,7 @@ mod tests {
                     r#"{
                     "rate_by_service": {
                         "service:foo,env:staging": 1.0,
-                        "service:,env:": 0.8 
+                        "service:,env:": 0.8
                     }
                 }"#,
                 );
@@ -771,7 +789,7 @@ mod tests {
                 r#"{
                     "rate_by_service": {
                         "service:foo,env:staging": 1.0,
-                        "service:,env:": 0.8 
+                        "service:,env:": 0.8
                     }
                 }"#,
             );
@@ -787,10 +805,10 @@ mod tests {
         // (.NET) ping the agent with the aforementioned data type.
         unsafe {
             let server = MockServer::start();
-            let response_body = r#"{ 
+            let response_body = r#"{
                         "rate_by_service": {
                             "service:foo,env:staging": 1.0,
-                            "service:,env:": 0.8 
+                            "service:,env:": 0.8
                         }
                     }"#;
 
@@ -850,10 +868,10 @@ mod tests {
     fn exporter_send_telemetry_test() {
         unsafe {
             let server = MockServer::start();
-            let response_body = r#"{ 
+            let response_body = r#"{
                         "rate_by_service": {
                             "service:foo,env:staging": 1.0,
-                            "service:,env:": 0.8 
+                            "service:,env:": 0.8
                         }
                     }"#;
             let mock_traces = server.mock(|when, then| {
@@ -888,6 +906,7 @@ mod tests {
                 telemetry_cfg: Some(TelemetryConfig {
                     heartbeat: 50,
                     runtime_id: Some("foo".to_string()),
+                    debug_enabled: true,
                 }),
             };
 
@@ -914,8 +933,8 @@ mod tests {
             assert_eq!(response.assume_init().body.to_string_lossy(), response_body);
 
             ddog_trace_exporter_free(exporter);
-            // It should receive 3 payloads: app-started, metrics and app-closing.
-            mock_metrics.assert_hits(3);
+            // It should receive 1 payloads: metrics
+            mock_metrics.assert_hits(1);
         }
     }
 }

@@ -19,6 +19,7 @@ pub mod slice_mut;
 pub mod string;
 pub mod tags;
 pub mod timespec;
+pub mod tracer_metadata;
 pub mod utils;
 pub mod vec;
 
