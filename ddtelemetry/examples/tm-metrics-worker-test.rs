@@ -40,7 +40,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             "file://./tm-metrics-worker-test.output",
         ))
         .unwrap();
-    builder.config.telemetry_hearbeat_interval = Duration::from_secs(1);
+    builder.config.telemetry_heartbeat_interval = Duration::from_secs(1);
+    builder.config.debug_enabled = true;
     builder.flavor = worker::TelemetryWorkerFlavor::MetricsLogs;
 
     let handle = builder.run()?;

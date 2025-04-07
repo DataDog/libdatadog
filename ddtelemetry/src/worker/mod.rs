@@ -1002,7 +1002,7 @@ impl TelemetryWorkerBuilder {
         let contexts = MetricContexts::default();
         let token = CancellationToken::new();
         let config = self.config;
-        let telemetry_hearbeat_interval = config.telemetry_hearbeat_interval;
+        let telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
         let client = http_client::from_config(&config);
 
         #[allow(clippy::unwrap_used)]
@@ -1030,7 +1030,7 @@ impl TelemetryWorkerBuilder {
                     MetricBuckets::METRICS_FLUSH_INTERVAL,
                     LifecycleAction::FlushMetricAggr,
                 ),
-                (telemetry_hearbeat_interval, LifecycleAction::FlushData),
+                (telemetry_heartbeat_interval, LifecycleAction::FlushData),
                 (
                     time::Duration::from_secs(60 * 60 * 24),
                     LifecycleAction::ExtendedHeartbeat,

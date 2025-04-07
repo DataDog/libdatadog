@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             ..Default::default()
         })
         .unwrap();
-    builder.config.telemetry_hearbeat_interval = Duration::from_secs(1);
+    builder.config.telemetry_heartbeat_interval = Duration::from_secs(1);
 
     let handle = builder.run()?;
 
