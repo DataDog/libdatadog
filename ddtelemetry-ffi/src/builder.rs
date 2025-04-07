@@ -41,7 +41,7 @@ pub unsafe extern "C" fn ddog_telemetry_builder_instantiate(
         tracer_version.to_utf8_lossy().into_owned(),
     );
     // This is not great but maintains compatibility code remove in Builder::run
-    builder.with_env_config();
+    builder.config = ddtelemetry::config::Config::from_env();
 
     let new = Box::new(builder);
     out_builder.as_ptr().write(new);
@@ -67,7 +67,7 @@ pub unsafe extern "C" fn ddog_telemetry_builder_instantiate_with_hostname(
         tracer_version.to_utf8_lossy().into_owned(),
     );
     // This is not great but maintains compatibility code remove in Builder::run
-    builder.with_env_config();
+    builder.config = ddtelemetry::config::Config::from_env();
 
     let new = Box::new(builder);
     out_builder.as_ptr().write(new);

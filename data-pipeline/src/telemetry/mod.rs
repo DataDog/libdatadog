@@ -94,7 +94,7 @@ impl TelemetryClientBuilder {
             self.language_version.unwrap(),
             self.tracer_version.unwrap(),
         );
-        builder.with_config(self.config);
+        builder.config = self.config;
         // Send only metrics and logs and drop lifecycle events
         builder.flavor = TelemetryWorkerFlavor::MetricsLogs;
 

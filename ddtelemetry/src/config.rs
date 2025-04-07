@@ -256,6 +256,7 @@ impl Config {
         this
     }
 
+    /// Get the configuration of the telemetry worker from env variables
     pub fn from_env() -> Self {
         let settings = Settings::from_env();
         Self::from_settings(&settings)

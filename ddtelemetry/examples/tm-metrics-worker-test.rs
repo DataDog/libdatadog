@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "1.56".into(),
         "none".into(),
     );
-    builder.with_env_config();
+    builder.config = ddtelemetry::config::Config::from_env();
     builder.config.telemetry_debug_logging_enabled = true;
     builder
         .config

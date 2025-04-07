@@ -189,7 +189,7 @@ impl SelfTelemetry {
             "SIDECAR".to_string(),
             crate::sidecar_version!().to_string(),
         );
-        builder.with_config(self.config.clone());
+        builder.config = self.config.clone();
         let (worker, join_handle) = match builder.spawn().await {
             Ok(r) => r,
             Err(_err) => {

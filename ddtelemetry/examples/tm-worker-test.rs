@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "none".into(),
     );
     builder.config.telemetry_debug_logging_enabled = true;
-    builder.with_env_config();
+    builder.config = ddtelemetry::config::Config::from_env();
     builder
         .config
         .set_endpoint(ddcommon::Endpoint {

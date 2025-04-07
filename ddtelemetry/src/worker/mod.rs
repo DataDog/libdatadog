@@ -6,7 +6,7 @@ mod scheduler;
 pub mod store;
 
 use crate::{
-    config::{self, Config},
+    config::Config,
     data::{self, Application, Dependency, Host, Integration, Log, Payload, Telemetry},
     metrics::{ContextKey, MetricBuckets, MetricContexts},
 };
@@ -972,22 +972,6 @@ impl TelemetryWorkerBuilder {
             config: Config::default(),
             flavor: TelemetryWorkerFlavor::default(),
         }
-    }
-
-    /// Setter the the configuration associated with the worker
-    pub fn with_config(&mut self, config: Config) -> &mut Self {
-        self.config = config;
-        self
-    }
-
-    /// Infers the telemetry worker configuration from env variables
-    ///
-    /// This API is not desirable because other configuration sources are not
-    /// considered, but is provided for backward compatibility because the previous
-    /// `run` function used to do this.
-    pub fn with_env_config(&mut self) -> &mut Self {
-        self.config = config::Config::from_env();
-        self
     }
 
     fn build_worker(

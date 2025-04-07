@@ -556,7 +556,7 @@ impl SidecarInterface for SidecarServer {
                     .clone()
                     .unwrap_or_else(ddtelemetry::config::Config::from_env);
                 config.restartable = true;
-                builder.with_config(config.clone());
+                builder.config = config.clone();
                 Some(builder.spawn().map(move |result| {
                     if result.is_ok() {
                         info!("spawning telemetry worker {config:?}");
