@@ -7,7 +7,8 @@ use self::span::decode_span;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::{SpanBytes, SpanSlice};
 
-/// Decodes a Bytes buffer into a `Vec<Vec<SpanBytes>>` object.
+/// Decodes a Bytes buffer into a `Vec<Vec<SpanBytes>>` object, also represented as a vector of
+/// `TracerPayloadV04` objects.
 ///
 /// # Arguments
 ///

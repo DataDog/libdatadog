@@ -459,9 +459,7 @@ mod tests {
         };
 
         let serialized = rmp_serde::encode::to_vec_named(&span).unwrap();
-        // let mut serialized_bytes = tinybytes::Bytes::from(serialized);
-        let mut serialized_slice =
-            unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(serialized.as_ref()) };
+        let mut serialized_slice = serialized.as_ref();
         let deserialized = decode_span(&mut serialized_slice).unwrap();
 
         assert_eq!(span.name, deserialized.name);

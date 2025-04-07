@@ -24,15 +24,16 @@ pub fn read_meta_struct<'a>(buf: &mut &'a [u8]) -> Result<HashMap<&'a str, Bytes
         let key = read_string_ref(buf)?;
         let byte_array_len = read_byte_array_len(buf)? as usize;
 
-        let buf_bytes = Bytes::copy_from_slice(buf);
-        let data = buf_bytes
-            .slice_ref(&buf_bytes[0..byte_array_len])
-            .ok_or_else(|| DecodeError::InvalidFormat("Invalid data length".to_string()))?;
-
-        // SAFETY: forwarding the buffer requires that buf is borrowed from static.
-        *buf = &buf[byte_array_len..];
-
-        Ok((key, data))
+        let slice = buf.get(0..byte_array_len);
+        if let Some(slice) = slice {
+            let data = Bytes::copy_from_slice(slice);
+            *buf = &buf[byte_array_len..];
+            Ok((key, data))
+        } else {
+            Err(DecodeError::InvalidFormat(
+                "Invalid data length".to_string(),
+            ))
+        }
     }
 
     let len = read_map_len(buf)?;
