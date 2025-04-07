@@ -123,6 +123,12 @@ fn test_crash_tracking_bin_raise_sigsegv() {
     test_crash_tracking_bin(BuildProfile::Release, "donothing", "raise_sigsegv");
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_prechain_sigabrt() {
+    test_crash_tracking_bin(BuildProfile::Release, "prechain_abort", "null_deref");
+}
+
 fn test_crash_tracking_bin(
     crash_tracking_receiver_profile: BuildProfile,
     mode: &str,
