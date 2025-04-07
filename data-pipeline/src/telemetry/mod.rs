@@ -12,7 +12,8 @@ use datadog_trace_utils::{
 };
 use ddcommon::tag::Tag;
 use ddtelemetry::worker::{
-    LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
+    LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerFlavor,
+    TelemetryWorkerHandle,
 };
 use std::{collections::HashMap, time::Duration};
 use tokio::task::JoinHandle;
@@ -93,13 +94,16 @@ impl TelemetryClientBuilder {
             self.language_version.unwrap(),
             self.tracer_version.unwrap(),
         );
+        builder.config = self.config;
+        // Send only metrics and logs and drop lifecycle events
+        builder.flavor = TelemetryWorkerFlavor::MetricsLogs;
 
         if let Some(id) = self.runtime_id {
             builder.runtime_id = Some(id);
         }
 
         let (worker, handle) = builder
-            .spawn_with_config(self.config)
+            .spawn()
             .await
             .map_err(|e| TelemetryError::Builder(e.to_string()))?;
 
@@ -306,7 +310,7 @@ mod tests {
         assert_eq!(&builder.tracer_version.unwrap(), "test_tracer_version");
         assert!(builder.config.debug_enabled);
         assert_eq!(
-            <String as AsRef<str>>::as_ref(&builder.config.endpoint.unwrap().url.to_string()),
+            <String as AsRef<str>>::as_ref(&builder.config.endpoint().unwrap().url.to_string()),
             "http://localhost/telemetry/proxy/api/v2/apmtelemetry"
         );
         assert_eq!(
@@ -677,8 +681,14 @@ mod tests {
         let client = result.unwrap();
 
         client.start().await;
+        client
+            .send(&SendPayloadTelemetry {
+                requests_count: 1,
+                ..Default::default()
+            })
+            .unwrap();
         client.shutdown().await;
-        // Check for 2 hits: app-started and app-closing.
-        telemetry_srv.assert_hits_async(2).await;
+        // One payload generate-metrics
+        telemetry_srv.assert_hits_async(1).await;
     }
 }
