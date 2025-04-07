@@ -63,16 +63,16 @@ mod unix {
         // The configuration can be modified by a Behavior (testing plan), so it is mut here.
         // Unlike a normal harness, in this harness tests are run in individual processes, so race
         // issues are avoided.
-        let mut config = CrashtrackerConfiguration {
-            additional_files: vec![],
-            create_alt_stack: true,
-            use_alt_stack: true,
-            resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
-            signals: crashtracker::default_signals(),
+        let mut config = CrashtrackerConfiguration::new(
+            vec![],
+            true,
+            true,
             endpoint,
-            timeout_ms: TEST_COLLECTOR_TIMEOUT_MS,
-            unix_socket_path: Some("".to_string()),
-        };
+            crashtracker::StacktraceCollection::WithoutSymbols,
+            crashtracker::default_signals(),
+            TEST_COLLECTOR_TIMEOUT_MS,
+            Some("".to_string()),
+        )?;
 
         let metadata = Metadata {
             library_name: "libdatadog".to_owned(),

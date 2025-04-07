@@ -19,27 +19,47 @@ pub struct ErrorData {
 #[cfg(unix)]
 impl ErrorData {
     pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
+        let mut errors = 0;
         let normalizer = blazesym::normalize::Normalizer::new();
         let pid = pid.into();
-        // TODO, should we continue after error or just exit?
-        self.stack.normalize_ips(&normalizer, pid)?;
+        self.stack
+            .normalize_ips(&normalizer, pid)
+            .unwrap_or_else(|_| errors += 1);
+
         for thread in &mut self.threads {
-            thread.stack.normalize_ips(&normalizer, pid)?;
+            thread
+                .stack
+                .normalize_ips(&normalizer, pid)
+                .unwrap_or_else(|_| errors += 1);
         }
+        anyhow::ensure!(
+            errors == 0,
+            "Failed to normalize ips, see frame comments for details"
+        );
         Ok(())
     }
 
     pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {
+        let mut errors = 0;
         let mut process = blazesym::symbolize::Process::new(pid.into());
         // https://github.com/libbpf/blazesym/issues/518
         process.map_files = false;
         let src = blazesym::symbolize::Source::Process(process);
         let symbolizer = blazesym::symbolize::Symbolizer::new();
-        self.stack.resolve_names(&src, &symbolizer)?;
+        self.stack
+            .resolve_names(&src, &symbolizer)
+            .unwrap_or_else(|_| errors += 1);
 
         for thread in &mut self.threads {
-            thread.stack.resolve_names(&src, &symbolizer)?;
+            thread
+                .stack
+                .resolve_names(&src, &symbolizer)
+                .unwrap_or_else(|_| errors += 1);
         }
+        anyhow::ensure!(
+            errors == 0,
+            "Failed to resolve names, see frame comments for details"
+        );
         Ok(())
     }
 }

@@ -556,16 +556,13 @@ impl SidecarInterface for SidecarServer {
                     .clone()
                     .unwrap_or_else(ddtelemetry::config::Config::from_env);
                 config.restartable = true;
-                Some(
-                    builder
-                        .spawn_with_config(config.clone())
-                        .map(move |result| {
-                            if result.is_ok() {
-                                info!("spawning telemetry worker {config:?}");
-                            }
-                            result
-                        }),
-                )
+                builder.config = config.clone();
+                Some(builder.spawn().map(move |result| {
+                    if result.is_ok() {
+                        info!("spawning telemetry worker {config:?}");
+                    }
+                    result
+                }))
             } else {
                 None
             };
@@ -1002,21 +999,11 @@ impl SidecarInterface for SidecarServer {
             Some(Cow::Owned(token))
         };
         debug!("Update test token of session {session_id} to {token:?}");
-        fn update_cfg<F: FnOnce(Endpoint) -> anyhow::Result<()>>(
-            endpoint: Option<Endpoint>,
-            set: F,
-            token: &Option<Cow<'static, str>>,
-        ) {
-            if let Some(mut endpoint) = endpoint {
-                endpoint.test_token.clone_from(token);
-                set(endpoint).ok();
-            }
-        }
-        session.modify_telemetry_config(|cfg| {
-            update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
+        session.modify_telemetry_config(|telemetry_cfg| {
+            telemetry_cfg.set_endpoint_test_token(token.clone());
         });
-        session.modify_trace_config(|cfg| {
-            update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
+        session.modify_trace_config(|trace_cfg| {
+            trace_cfg.set_endpoint_test_token(token.clone());
         });
         // TODO(APMSP-1377): the dogstatsd-client doesn't support test_session tokens yet
         // session.configure_dogstatsd(|cfg| {
