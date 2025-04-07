@@ -76,3 +76,5 @@ test-utils = [
 ]
 proxy = ["hyper-http-proxy"]
 compression = ["zstd", "flate2"]
+# FIPS mode uses the FIPS-compliant cryptographic provider
+fips = ["ddcommon/fips"]
