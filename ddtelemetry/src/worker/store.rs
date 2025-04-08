@@ -4,7 +4,7 @@
 use std::{collections::VecDeque, hash::Hash};
 
 mod queuehasmpap {
-    use hashbrown::{hash_map::DefaultHashBuilder, hash_table::HashTable};
+    use hashbrown::{hash_table::HashTable, DefaultHashBuilder};
     use std::{
         collections::VecDeque,
         hash::{BuildHasher, Hash},
