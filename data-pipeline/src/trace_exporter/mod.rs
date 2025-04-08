@@ -286,7 +286,7 @@ impl TraceExporter {
                 stats_concentrator.clone(),
                 self.metadata.clone(),
                 self.endpoint
-                    .try_to_path(STATS_ENDPOINT)
+                    .try_clone_with_subpath(STATS_ENDPOINT)
                     .context("failed to create Endpoint")?,
                 cancellation_token.clone(),
             );
@@ -399,7 +399,7 @@ impl TraceExporter {
             data,
             trace_count,
             self.endpoint
-                .try_to_path(self.output_format.as_path())
+                .try_clone_with_subpath(self.output_format.as_path())
                 .map_err(|e| {
                     TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
                 })?,
@@ -617,7 +617,7 @@ impl TraceExporter {
         let chunks = payload.size();
         let endpoint = self
             .endpoint
-            .try_to_path(self.output_format.as_path())
+            .try_clone_with_subpath(self.output_format.as_path())
             .map_err(|e| {
                 TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
             })?;
@@ -939,9 +939,11 @@ impl TraceExporterBuilder {
         let mut stats = StatsComputationStatus::Disabled;
 
         let info_fetcher = AgentInfoFetcher::new(
-            endpoint.try_to_path(INFO_ENDPOINT).map_err(|e| {
-                TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
-            })?,
+            endpoint
+                .try_clone_with_subpath(INFO_ENDPOINT)
+                .map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
+                })?,
             Duration::from_secs(5 * 60),
         );
 
@@ -1076,7 +1078,7 @@ mod tests {
         assert_eq!(
             exporter
                 .endpoint
-                .try_to_path(exporter.output_format.as_path())
+                .try_clone_with_subpath(exporter.output_format.as_path())
                 .unwrap()
                 .url
                 .to_string(),
@@ -1102,7 +1104,7 @@ mod tests {
         assert_eq!(
             exporter
                 .endpoint
-                .try_to_path(exporter.output_format.as_path())
+                .try_clone_with_subpath(exporter.output_format.as_path())
                 .unwrap()
                 .url
                 .to_string(),

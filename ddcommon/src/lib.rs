@@ -242,7 +242,7 @@ impl Endpoint {
                 let mut p = p.strip_suffix('/').unwrap_or(p).to_owned();
                 p.push_str(path);
                 if let Some(q) = pq.query() {
-                    p.push_str("?");
+                    p.push('?');
                     p.push_str(q);
                 }
                 PathAndQuery::from_str(p.as_str())
@@ -258,7 +258,7 @@ impl Endpoint {
     /// The given path must start with a slash (e.g. "/v0.4/traces").
     /// Returns an error if the path is not valid.
     /// All the other fields are copied.
-    pub fn try_to_path(&self, path: &str) -> anyhow::Result<Self> {
+    pub fn try_clone_with_subpath(&self, path: &str) -> anyhow::Result<Self> {
         let mut endpoint = self.clone();
         endpoint.add_path(path)?;
         Ok(endpoint)
