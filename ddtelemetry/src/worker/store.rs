@@ -4,14 +4,14 @@
 use std::{collections::VecDeque, hash::Hash};
 
 mod queuehasmpap {
-    use hashbrown::{hash_map::DefaultHashBuilder, raw::RawTable};
+    use hashbrown::{hash_map::DefaultHashBuilder, hash_table::HashTable};
     use std::{
         collections::VecDeque,
         hash::{BuildHasher, Hash},
     };
 
     pub struct QueueHashMap<K, V> {
-        table: RawTable<usize>,
+        table: HashTable<usize>,
         hash_builder: DefaultHashBuilder,
         items: VecDeque<(K, V)>,
         popped: usize,
@@ -41,8 +41,9 @@ mod queuehasmpap {
         pub fn pop_front(&mut self) -> Option<(K, V)> {
             let (k, v) = self.items.pop_front()?;
             let hash = make_hash(&self.hash_builder, &k);
-            let found = self.table.remove_entry(hash, |other| *other == self.popped);
-            debug_assert!(found.is_some());
+            if let Ok(entry) = self.table.find_entry(hash, |&other| other == self.popped) {
+                entry.remove();
+            }
             debug_assert!(self.items.len() == self.table.len());
             self.popped += 1;
             Some((k, v))
@@ -52,8 +53,8 @@ mod queuehasmpap {
             let hash = make_hash(&self.hash_builder, k);
             let idx = self
                 .table
-                .get(hash, |other| &self.items[other - self.popped].0 == k)?;
-            Some(&self.items[idx - self.popped].1)
+                .find(hash, |other| &self.items[other - self.popped].0 == k)?;
+            Some(&self.items[*idx - self.popped].1)
         }
 
         pub fn get_idx(&self, idx: usize) -> Option<&(K, V)> {
@@ -62,11 +63,11 @@ mod queuehasmpap {
 
         pub fn get_mut_or_insert(&mut self, key: K, default: V) -> (&mut V, bool) {
             let hash = make_hash(&self.hash_builder, &key);
-            if let Some(&idx) = self
+            if let Some(idx) = self
                 .table
-                .get(hash, |other| self.items[other - self.popped].0 == key)
+                .find(hash, |other| self.items[other - self.popped].0 == key)
             {
-                return (&mut self.items[idx - self.popped].1, false);
+                return (&mut self.items[*idx - self.popped].1, false);
             }
             self.insert_nocheck(hash, key, default);
 
@@ -74,17 +75,14 @@ mod queuehasmpap {
             (&mut self.items.back_mut().unwrap().1, true)
         }
 
-        // Insert a new item at the back if the queue if it doesn't yet exist.
-        //
-        // If the key already exists, replace the previous value
         pub fn insert(&mut self, key: K, value: V) -> (usize, bool) {
             let hash = make_hash(&self.hash_builder, &key);
-            if let Some(&idx) = self
+            if let Some(idx) = self
                 .table
-                .get(hash, |other| self.items[other - self.popped].0 == key)
+                .find(hash, |other| self.items[other - self.popped].0 == key)
             {
-                self.items[idx - self.popped].1 = value;
-                (idx, false)
+                self.items[*idx - self.popped].1 = value;
+                (*idx, false)
             } else {
                 (self.insert_nocheck(hash, key, value), true)
             }
@@ -108,7 +106,7 @@ mod queuehasmpap {
                 hash_builder,
                 ..
             } = self;
-            table.insert(hash, item_index, |i| {
+            table.insert_unique(hash, item_index, |i| {
                 make_hash(hash_builder, &items[i - *popped].0)
             });
             self.items.push_back((key, value));
@@ -119,7 +117,7 @@ mod queuehasmpap {
     impl<K, V> Default for QueueHashMap<K, V> {
         fn default() -> Self {
             Self {
-                table: RawTable::new(),
+                table: HashTable::new(),
                 hash_builder: DefaultHashBuilder::default(),
                 items: VecDeque::new(),
                 popped: 0,
