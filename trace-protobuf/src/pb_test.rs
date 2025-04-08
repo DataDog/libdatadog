@@ -3,8 +3,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::pb::Span;
     use crate::deserializers::is_default;
+    use crate::pb::Span;
 
     #[test]
     fn test_is_default() {

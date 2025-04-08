@@ -3,9 +3,9 @@
 
 #[rustfmt::skip]
 pub mod pb;
+mod deserializers;
 pub mod remoteconfig;
 mod serde;
-mod deserializers;
 
 #[cfg(test)]
 mod pb_test;
