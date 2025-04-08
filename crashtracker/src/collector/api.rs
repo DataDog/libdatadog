@@ -3,7 +3,7 @@
 #![cfg(unix)]
 
 use crate::{
-    clear_spans, clear_traces, collector::crash_handler::configure_receiver,
+    clear_spans, clear_traces, collector::receiver_manager::configure_receiver,
     collector::signal_handler_manager::register_crash_handlers, crash_info::Metadata,
     reset_counters, shared::configuration::CrashtrackerReceiverConfig, update_config,
     update_metadata, CrashtrackerConfiguration,
