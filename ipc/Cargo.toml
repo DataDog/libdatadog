@@ -44,7 +44,7 @@ spawn_worker = { path = "../spawn_worker" }
 [target.'cfg(not(windows))'.dependencies]
 nix = { version = "0.27.1", features = ["mman", "socket", "poll"] }
 sendfd = { version = "0.4", features = ["tokio"] }
-tokio = { version = "1.23", features = ["sync", "io-util", "signal"] }
+tokio = { version = "1.44", features = ["sync", "io-util", "signal"] }
 
 [target.'cfg(target_env = "gnu")'.build-dependencies]
 glibc_version = "0.1.2"
@@ -52,7 +52,7 @@ glibc_version = "0.1.2"
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = ["handleapi", "memoryapi", "winbase", "winerror"] }
 windows-sys = { version = "0.48.0", features = ["Win32_System", "Win32_System_WindowsProgramming", "Win32_Foundation", "Win32_System_Pipes"] }
-tokio = { version = "1.23", features = ["sync", "io-util", "signal", "net"] }
+tokio = { version = "1.44", features = ["sync", "io-util", "signal", "net"] }
 
 [lib]
 bench = false

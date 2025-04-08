@@ -30,7 +30,6 @@ derivative = "2.2.0"
 futures = { version = "0.3", default-features = false }
 futures-core = {version = "0.3.0", default-features = false}
 futures-util = {version = "0.3.0", default-features = false}
-hashbrown = { version = "0.14", default-features = false, features = ["allocator-api2"] }
 http = "1.0"
 hyper = { version = "1.6", features = ["http1", "client"] }
 http-body-util = "0.1"

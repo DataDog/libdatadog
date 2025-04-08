@@ -80,7 +80,7 @@ features = [
 version = "0.51.0"
 
 [target.'cfg(not(target_arch = "x86"))'.dependencies]
-simd-json = "0.14.1"
+simd-json = "0.15"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.27.1", features = ["socket", "mman"] }

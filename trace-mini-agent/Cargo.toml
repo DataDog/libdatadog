@@ -29,7 +29,7 @@ datadog-trace-obfuscation = { path = "../trace-obfuscation" }
 
 [dev-dependencies]
 rmp-serde = "1.1.1"
-serial_test = "2.0.0"
+serial_test = "3.2.0"
 duplicate = "0.4.1"
 tempfile = "3.3.0"
 datadog-trace-utils = { path = "../trace-utils", features=["test-utils"] }
