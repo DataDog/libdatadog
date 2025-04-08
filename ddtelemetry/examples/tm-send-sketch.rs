@@ -45,7 +45,6 @@ pub async fn push_telemetry(config: &Config, telemetry: &Telemetry<'_>) -> anyho
     let req = request_builder(config)?
         .method(http::Method::POST)
         .header(CONTENT_TYPE, ddcommon::header::APPLICATION_JSON)
-        .header("dd-telemetry-debug-enabled", "true")
         .body(serde_json::to_string(telemetry)?.into())?;
 
     let resp = client.request(req).await?;
@@ -108,13 +107,15 @@ async fn async_main() {
 
     let req = build_request(&app, &host, &payload);
 
-    let mut config = Config::get().clone();
-    config.endpoint = Some(Endpoint {
-        url: Uri::from_static(
-            "https://instrumentation-telemetry-intake.datad0g.com/api/v2/apmtelemetry",
-        ),
-        api_key: Some(Cow::Owned(std::env::var("DD_API_KEY").unwrap())),
-        ..Default::default()
-    });
+    let mut config = Config::from_env();
+    config.direct_submission_enabled = true;
+    config.debug_enabled = true;
+    config
+        .set_endpoint(Endpoint {
+            url: Uri::from_static("https://instrumentation-telemetry-intake.datad0g.com"),
+            api_key: Some(Cow::Owned(std::env::var("DD_API_KEY").unwrap())),
+            ..Default::default()
+        })
+        .unwrap();
     push_telemetry(&config, &req).await.unwrap();
 }

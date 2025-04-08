@@ -123,6 +123,12 @@ fn test_crash_tracking_bin_raise_sigsegv() {
     test_crash_tracking_bin(BuildProfile::Release, "donothing", "raise_sigsegv");
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_prechain_sigabrt() {
+    test_crash_tracking_bin(BuildProfile::Release, "prechain_abort", "null_deref");
+}
+
 fn test_crash_tracking_bin(
     crash_tracking_receiver_profile: BuildProfile,
     mode: &str,
@@ -329,7 +335,7 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
 
     let base_expected_tags: std::collections::HashSet<&str> =
         std::collections::HashSet::from_iter([
-            "data_schema_version:1.2",
+            "data_schema_version:1.3",
             "incomplete:false",
             "is_crash:true",
             "profiler_collecting_sample:1",
