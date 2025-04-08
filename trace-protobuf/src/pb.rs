@@ -52,62 +52,62 @@ pub struct Span {
     /// @gotags: json:"service" msg:"service"
     #[prost(string, tag = "1")]
     #[serde(default)]
-    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
     pub service: ::prost::alloc::string::String,
     /// name is the operation name of this span.
     /// @gotags: json:"name" msg:"name"
     #[prost(string, tag = "2")]
     #[serde(default)]
-    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
     pub name: ::prost::alloc::string::String,
     /// resource is the resource name of this span, also sometimes called the endpoint (for web spans).
     /// @gotags: json:"resource" msg:"resource"
     #[prost(string, tag = "3")]
     #[serde(default)]
-    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
     pub resource: ::prost::alloc::string::String,
     /// traceID is the ID of the trace to which this span belongs.
     /// @gotags: json:"trace_id" msg:"trace_id"
     #[prost(uint64, tag = "4")]
     #[serde(default)]
-    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
     pub trace_id: u64,
     /// spanID is the ID of this span.
     /// @gotags: json:"span_id" msg:"span_id"
     #[prost(uint64, tag = "5")]
     #[serde(default)]
-    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
     pub span_id: u64,
     /// parentID is the ID of this span's parent, or zero if this span has no parent.
     /// @gotags: json:"parent_id" msg:"parent_id"
     #[prost(uint64, tag = "6")]
     #[serde(default)]
-    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
     pub parent_id: u64,
     /// start is the number of nanoseconds between the Unix epoch and the beginning of this span.
     /// @gotags: json:"start" msg:"start"
     #[prost(int64, tag = "7")]
     #[serde(default)]
-    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
     pub start: i64,
     /// duration is the time length of this span in nanoseconds.
     /// @gotags: json:"duration" msg:"duration"
     #[prost(int64, tag = "8")]
     #[serde(default)]
-    #[serde(deserialize_with = "crate::serializers::deserialize_duration")]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_duration")]
     pub duration: i64,
     /// error is 1 if there is an error associated with this span, or 0 if there is not.
     /// @gotags: json:"error" msg:"error"
     #[prost(int32, tag = "9")]
     #[serde(default)]
-    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
-    #[serde(skip_serializing_if = "crate::serializers::is_default")]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
+    #[serde(skip_serializing_if = "crate::deserializers::is_default")]
     pub error: i32,
     /// meta is a mapping from tag name to tag value for string-valued tags.
     /// @gotags: json:"meta,omitempty" msg:"meta,omitempty"
     #[prost(map = "string, string", tag = "10")]
     #[serde(default)]
-    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
     pub meta: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
@@ -116,19 +116,19 @@ pub struct Span {
     /// @gotags: json:"metrics,omitempty" msg:"metrics,omitempty"
     #[prost(map = "string, double", tag = "11")]
     #[serde(default)]
-    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
     pub metrics: ::std::collections::HashMap<::prost::alloc::string::String, f64>,
     /// type is the type of the service with which this span is associated.  Example values: web, db, lambda.
     /// @gotags: json:"type" msg:"type"
     #[prost(string, tag = "12")]
     #[serde(default)]
-    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
     pub r#type: ::prost::alloc::string::String,
     /// meta_struct is a registry of structured "other" data used by, e.g., AppSec.
     /// @gotags: json:"meta_struct,omitempty" msg:"meta_struct,omitempty"
     #[prost(map = "string, bytes", tag = "13")]
     #[serde(default)]
-    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
     #[serde(skip_serializing_if = "::std::collections::HashMap::is_empty")]
     pub meta_struct: ::std::collections::HashMap<
         ::prost::alloc::string::String,
@@ -138,7 +138,7 @@ pub struct Span {
     /// @gotags: json:"span_links,omitempty" msg:"span_links,omitempty"
     #[prost(message, repeated, tag = "14")]
     #[serde(default)]
-    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
     #[serde(skip_serializing_if = "::prost::alloc::vec::Vec::is_empty")]
     pub span_links: ::prost::alloc::vec::Vec<SpanLink>,
 }
