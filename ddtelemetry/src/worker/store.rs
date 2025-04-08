@@ -3,7 +3,7 @@
 
 use std::{collections::VecDeque, hash::Hash};
 
-mod queuehasmpap {
+mod queuehashmap {
     use hashbrown::{hash_table::HashTable, DefaultHashBuilder};
     use std::{
         collections::VecDeque,
@@ -130,7 +130,7 @@ mod queuehasmpap {
     }
 }
 
-pub use queuehasmpap::QueueHashMap;
+pub use queuehashmap::QueueHashMap;
 
 #[derive(Default)]
 /// Stores telemetry data item, like dependencies and integrations
