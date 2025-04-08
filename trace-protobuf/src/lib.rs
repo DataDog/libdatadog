@@ -5,6 +5,7 @@
 pub mod pb;
 pub mod remoteconfig;
 mod serde;
+mod serializers;
 
 #[cfg(test)]
 mod pb_test;
