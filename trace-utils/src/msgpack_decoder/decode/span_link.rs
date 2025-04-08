@@ -4,7 +4,7 @@
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::number::read_number_slice;
 use crate::msgpack_decoder::decode::string::{
-    is_null_marker, read_str_map_to_strings, read_string_ref,
+    handle_null_marker, read_str_map_to_strings, read_string_ref,
 };
 use crate::span::SpanLinkSlice;
 use std::str::FromStr;
@@ -29,7 +29,7 @@ use std::str::FromStr;
 pub(crate) fn read_span_links<'a>(
     buf: &mut &'a [u8],
 ) -> Result<Vec<SpanLinkSlice<'a>>, DecodeError> {
-    if is_null_marker(buf) {
+    if handle_null_marker(buf) {
         return Ok(Vec::default());
     }
 

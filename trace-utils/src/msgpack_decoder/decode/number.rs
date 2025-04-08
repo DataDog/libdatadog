@@ -4,7 +4,6 @@
 use crate::msgpack_decoder::decode::error::DecodeError;
 use rmp::{decode::RmpRead, Marker};
 use std::fmt;
-use tinybytes::Bytes;
 
 #[derive(Debug, PartialEq)]
 pub enum Number {
@@ -198,18 +197,6 @@ fn read_number(buf: &mut &[u8], allow_null: bool) -> Result<Number, DecodeError>
     }
 }
 
-pub fn read_number_bytes<T: TryFrom<Number, Error = DecodeError>>(
-    buf: &mut Bytes,
-) -> Result<T, DecodeError> {
-    read_number(unsafe { buf.as_mut_slice() }, false)?.try_into()
-}
-
-pub fn read_nullable_number_bytes<T: TryFrom<Number, Error = DecodeError>>(
-    buf: &mut Bytes,
-) -> Result<T, DecodeError> {
-    read_number(unsafe { buf.as_mut_slice() }, true)?.try_into()
-}
-
 /// Read a msgpack encoded number from `buf`.
 pub fn read_number_slice<T: TryFrom<Number, Error = DecodeError>>(
     buf: &mut &[u8],
@@ -231,45 +218,45 @@ mod tests {
     use std::f64;
 
     #[test]
-    fn test_decoding_not_nullable_bytes_to_unsigned() {
+    fn test_decoding_not_nullable_slice_to_unsigned() {
         let mut buf = Vec::new();
         let expected_value = 42;
         let val = json!(expected_value);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut bytes = Bytes::from(buf.clone());
-        let result: u8 = read_number_bytes(&mut bytes).unwrap();
+        let mut slice = buf.as_slice();
+        let result: u8 = read_number_slice(&mut slice).unwrap();
         assert_eq!(result, expected_value);
     }
 
     #[test]
-    fn test_decoding_not_nullable_bytes_to_signed() {
+    fn test_decoding_not_nullable_slice_to_signed() {
         let mut buf = Vec::new();
         let expected_value = 42;
         let val = json!(expected_value);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut bytes = Bytes::from(buf.clone());
-        let result: i8 = read_number_bytes(&mut bytes).unwrap();
+        let mut slice = buf.as_slice();
+        let result: i8 = read_number_slice(&mut slice).unwrap();
         assert_eq!(result, expected_value);
     }
 
     #[test]
-    fn test_decoding_not_nullable_bytes_to_float() {
+    fn test_decoding_not_nullable_slice_to_float() {
         let mut buf = Vec::new();
         let expected_value = 42.98;
         let val = json!(expected_value);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut bytes = Bytes::from(buf.clone());
-        let result: f64 = read_number_bytes(&mut bytes).unwrap();
+        let mut slice = buf.as_slice();
+        let result: f64 = read_number_slice(&mut slice).unwrap();
         assert_eq!(result, expected_value);
     }
 
     #[test]
-    fn test_decoding_null_through_read_number_bytes_raises_exception() {
+    fn test_decoding_null_through_read_number_slice_raises_exception() {
         let mut buf = Vec::new();
         let val = json!(null);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut bytes = Bytes::from(buf.clone());
-        let result: Result<u8, DecodeError> = read_number_bytes(&mut bytes);
+        let mut slice = buf.as_slice();
+        let result: Result<u8, DecodeError> = read_number_slice(&mut slice);
         assert!(matches!(result, Err(DecodeError::InvalidType(_))));
 
         assert_eq!(
@@ -279,32 +266,32 @@ mod tests {
     }
 
     #[test]
-    fn test_decoding_null_bytes_to_unsigned() {
+    fn test_decoding_null_slice_to_unsigned() {
         let mut buf = Vec::new();
         let val = json!(null);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut bytes = Bytes::from(buf.clone());
-        let result: u8 = read_nullable_number_bytes(&mut bytes).unwrap();
+        let mut slice = buf.as_slice();
+        let result: u8 = read_nullable_number_slice(&mut slice).unwrap();
         assert_eq!(result, 0);
     }
 
     #[test]
-    fn test_decoding_null_bytes_to_signed() {
+    fn test_decoding_null_slice_to_signed() {
         let mut buf = Vec::new();
         let val = json!(null);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut bytes = Bytes::from(buf.clone());
-        let result: i8 = read_nullable_number_bytes(&mut bytes).unwrap();
+        let mut slice = buf.as_slice();
+        let result: i8 = read_nullable_number_slice(&mut slice).unwrap();
         assert_eq!(result, 0);
     }
 
     #[test]
-    fn test_decoding_null_bytes_to_float() {
+    fn test_decoding_null_slice_to_float() {
         let mut buf = Vec::new();
         let val = json!(null);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut bytes = Bytes::from(buf.clone());
-        let result: f64 = read_nullable_number_bytes(&mut bytes).unwrap();
+        let mut slice = buf.as_slice();
+        let result: f64 = read_nullable_number_slice(&mut slice).unwrap();
         assert_eq!(result, 0.0);
     }
 

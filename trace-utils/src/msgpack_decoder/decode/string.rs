@@ -5,7 +5,6 @@ use crate::msgpack_decoder::decode::error::DecodeError;
 use rmp::decode;
 use rmp::decode::DecodeStringError;
 use std::collections::HashMap;
-use tinybytes::{Bytes, BytesString};
 
 // https://docs.rs/rmp/latest/rmp/enum.Marker.html#variant.Null (0xc0 == 192)
 const NULL_MARKER: &u8 = &0xc0;
@@ -27,7 +26,7 @@ pub fn read_string_ref_nomut(buf: &[u8]) -> Result<(&str, &[u8]), DecodeError> {
     })
 }
 
-/// Read a string from from the slices `buf`.
+/// Read a string from the slices `buf`.
 ///
 /// # Errors
 /// Fails if the buffer doesn't contain a valid utf8 msgpack string.
@@ -45,53 +44,18 @@ pub fn read_string_ref<'a>(buf: &mut &'a [u8]) -> Result<&'a str, DecodeError> {
 /// Fails if the buffer doesn't contain a valid utf8 msgpack string or a null marker.
 #[inline]
 pub fn read_nullable_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, DecodeError> {
-    if is_null_marker(buf) {
+    if handle_null_marker(buf) {
         Ok("")
     } else {
         read_string_ref(buf)
     }
 }
 
-// TODO : remove this function when v05 is done
-#[inline]
-pub fn read_string_bytes(buf: &mut Bytes) -> Result<BytesString, DecodeError> {
-    // Note: we need to pass a &'static lifetime here, otherwise it'll complain
-    read_string_ref_nomut(unsafe { buf.as_mut_slice() }).map(|(str, newbuf)| {
-        let string = BytesString::from_bytes_slice(buf, str);
-        *unsafe { buf.as_mut_slice() } = newbuf;
-        string
-    })
-}
-
-// #[inline]
-// pub fn read_nullable_string_bytes(buf: &mut Bytes) -> Result<BytesString, DecodeError> {
-//     if let Some(empty_string) = handle_null_marker(buf, BytesString::default) {
-//         Ok(empty_string)
-//     } else {
-//         read_string_bytes(buf)
-//     }
-// }
-
-// #[inline]
-// // Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
-// // BytesStrings.
-// pub fn read_str_map_to_bytes_strings(
-//     buf: &mut Bytes,
-// ) -> Result<HashMap<BytesString, BytesString>, DecodeError> {
-//     let len = decode::read_map_len(unsafe { buf.as_mut_slice() })
-//         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str
-// map".to_owned()))?;
-
-//     #[allow(clippy::expect_used)]
-//     let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to
-// usize"));     for _ in 0..len {
-//         let key = read_string_bytes(buf)?;
-//         let value = read_string_bytes(buf)?;
-//         map.insert(key, value);
-//     }
-//     Ok(map)
-// }
-
+/// Read a hashmap of (string, string) from the slices `buf`.
+///
+/// # Errors
+/// Fails if the buffer does not contain a valid map length prefix,
+/// or if any key or value is not a valid utf8 msgpack string.
 #[inline]
 pub fn read_str_map_to_strings<'a>(
     buf: &mut &'a [u8],
@@ -109,38 +73,29 @@ pub fn read_str_map_to_strings<'a>(
     Ok(map)
 }
 
+/// Read a nullable hashmap of (string, string) from the slices `buf`.
+///
+/// # Errors
+/// Fails if the buffer does not contain a valid map length prefix,
+/// or if any key or value is not a valid utf8 msgpack string.
 #[inline]
 pub fn read_nullable_str_map_to_strings<'a>(
     buf: &mut &'a [u8],
 ) -> Result<HashMap<&'a str, &'a str>, DecodeError> {
-    if is_null_marker(buf) {
+    if handle_null_marker(buf) {
         return Ok(HashMap::default());
     }
 
     read_str_map_to_strings(buf)
 }
 
-// TODO : remove this function when v05 is done
-/// When you want to "peek" if the next value is a null marker, and only advance the buffer if it is
-/// null and return the default value. If it is not null, you can continue to decode as expected.
+/// Handle the null value by peeking if the next value is a null marker, and will only advance the
+/// buffer if it is null. If it is not null, you can continue to decode as expected.
+///
+/// # Returns
+/// A boolean indicating whether the next value is null or not.
 #[inline]
-pub fn handle_null_marker<T, F>(buf: &mut Bytes, default: F) -> Option<T>
-where
-    F: FnOnce() -> T,
-{
-    let slice = unsafe { buf.as_mut_slice() };
-
-    if is_null_marker(slice) {
-        Some(default())
-    } else {
-        None
-    }
-}
-
-/// When you want to "peek" if the next value is a null marker, and only advance the buffer if it is
-/// null. If it is not null, you can continue to decode as expected.
-#[inline]
-pub fn is_null_marker(buf: &mut &[u8]) -> bool {
+pub fn handle_null_marker(buf: &mut &[u8]) -> bool {
     if buf.first() == Some(NULL_MARKER) {
         *buf = &buf[1..];
         true

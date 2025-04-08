@@ -3,7 +3,7 @@
 
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::number::read_number_slice;
-use crate::msgpack_decoder::decode::string::{is_null_marker, read_string_ref};
+use crate::msgpack_decoder::decode::string::{handle_null_marker, read_string_ref};
 use crate::span::{AttributeAnyValueSlice, AttributeArrayValueSlice, SpanEventSlice};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -27,7 +27,7 @@ use std::str::FromStr;
 pub(crate) fn read_span_events<'a>(
     buf: &mut &'a [u8],
 ) -> Result<Vec<SpanEventSlice<'a>>, DecodeError> {
-    if is_null_marker(buf) {
+    if handle_null_marker(buf) {
         return Ok(Vec::default());
     }
 
@@ -171,7 +171,7 @@ fn decode_attribute_any<'a>(buf: &mut &'a [u8]) -> Result<AttributeAnyValueSlice
 fn read_attributes_array<'a>(
     buf: &mut &'a [u8],
 ) -> Result<Vec<AttributeArrayValueSlice<'a>>, DecodeError> {
-    if is_null_marker(buf) {
+    if handle_null_marker(buf) {
         return Ok(Vec::default());
     }
 

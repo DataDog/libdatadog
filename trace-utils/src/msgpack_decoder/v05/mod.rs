@@ -5,7 +5,7 @@ use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::{
     map::read_map_len,
     number::read_number_slice,
-    string::{is_null_marker, read_string_ref},
+    string::{handle_null_marker, read_string_ref},
 };
 use crate::span::{SpanBytes, SpanSlice};
 use std::collections::HashMap;
@@ -147,9 +147,7 @@ pub fn from_slice(mut data: &[u8]) -> Result<(Vec<Vec<SpanSlice>>, usize), Decod
     Ok((traces, start_len - data.len()))
 }
 
-fn deserialize_dict<'a>(
-    data: &mut &'a [u8],
-) -> Result<Vec<&'a str>, DecodeError> {
+fn deserialize_dict<'a>(data: &mut &'a [u8]) -> Result<Vec<&'a str>, DecodeError> {
     let dict_len = rmp::decode::read_array_len(data)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read dictionary len".to_string()))?;
 
@@ -161,10 +159,7 @@ fn deserialize_dict<'a>(
     Ok(dict)
 }
 
-fn deserialize_span<'a>(
-    data: &mut &[u8],
-    dict: &[&'a str],
-) -> Result<SpanSlice<'a>, DecodeError> {
+fn deserialize_span<'a>(data: &mut &[u8], dict: &[&'a str]) -> Result<SpanSlice<'a>, DecodeError> {
     let mut span = SpanSlice::default();
     let span_len = rmp::decode::read_array_len(data)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read dictionary len".to_string()))?;
@@ -191,10 +186,7 @@ fn deserialize_span<'a>(
     Ok(span)
 }
 
-fn get_from_dict<'a>(
-    data: &mut &[u8],
-    dict: &[&'a str],
-) -> Result<&'a str, DecodeError> {
+fn get_from_dict<'a>(data: &mut &[u8], dict: &[&'a str]) -> Result<&'a str, DecodeError> {
     let index: u32 = read_number_slice(data)?;
     match dict.get(index as usize) {
         Some(value) => Ok(value),
@@ -225,7 +217,7 @@ fn read_metrics<'a>(
     buf: &mut &[u8],
     dict: &[&'a str],
 ) -> Result<HashMap<&'a str, f64>, DecodeError> {
-    if is_null_marker(buf) {
+    if handle_null_marker(buf) {
         return Ok(HashMap::default());
     }
 
@@ -280,11 +272,9 @@ mod tests {
     fn deserialize_dict_test() {
         let dict = vec!["foo", "bar", "baz"];
         let mpack = rmp_serde::to_vec(&dict).unwrap();
-        let mut encoded_mpack = mpack.as_ref();
-        // let mut payload = tinybytes::Bytes::from(mpack);
+        let mut payload = mpack.as_ref();
 
-        let result = deserialize_dict(&mut encoded_mpack).unwrap();
-        let result: Vec<&str> = result.iter().map(|e| *e).collect();
+        let result = deserialize_dict(&mut payload).unwrap();
         assert_eq!(dict, result);
     }
 
