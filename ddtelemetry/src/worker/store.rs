@@ -75,6 +75,9 @@ mod queuehashmap {
             (&mut self.items.back_mut().unwrap().1, true)
         }
 
+        // Insert a new item at the back if the queue if it doesn't yet exist.
+        //
+        // If the key already exists, replace the previous value
         pub fn insert(&mut self, key: K, value: V) -> (usize, bool) {
             let hash = make_hash(&self.hash_builder, &key);
             if let Some(idx) = self
