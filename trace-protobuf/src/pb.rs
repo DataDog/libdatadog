@@ -69,14 +69,20 @@ pub struct Span {
     /// traceID is the ID of the trace to which this span belongs.
     /// @gotags: json:"trace_id" msg:"trace_id"
     #[prost(uint64, tag = "4")]
+    #[serde(default)]
+    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
     pub trace_id: u64,
     /// spanID is the ID of this span.
     /// @gotags: json:"span_id" msg:"span_id"
     #[prost(uint64, tag = "5")]
+    #[serde(default)]
+    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
     pub span_id: u64,
     /// parentID is the ID of this span's parent, or zero if this span has no parent.
     /// @gotags: json:"parent_id" msg:"parent_id"
     #[prost(uint64, tag = "6")]
+    #[serde(default)]
+    #[serde(deserialize_with = "crate::serializers::deserialize_null_into_default")]
     pub parent_id: u64,
     /// start is the number of nanoseconds between the Unix epoch and the beginning of this span.
     /// @gotags: json:"start" msg:"start"

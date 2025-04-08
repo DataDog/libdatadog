@@ -26,7 +26,6 @@ fn main() -> Result<()> {
 
     Ok(())
 }
-
 #[cfg(feature = "generate-protobuf")]
 fn generate_protobuf() {
     let mut config = prost_build::Config::new();
@@ -73,15 +72,15 @@ fn generate_protobuf() {
         "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")]",
     );
     config.field_attribute(
-        ".pb.Span.trace_id",
+        ".pb.Span.traceID",
         "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")]",
     );
     config.field_attribute(
-        ".pb.Span.span_id",
+        ".pb.Span.spanID",
         "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")]",
     );
     config.field_attribute(
-        ".pb.Span.parent_id",
+        ".pb.Span.parentID",
         "#[serde(default)] #[serde(deserialize_with = \"crate::serializers::deserialize_null_into_default\")]",
     );
     config.field_attribute(
