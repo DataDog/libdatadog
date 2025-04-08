@@ -103,9 +103,10 @@ where
     pub meta: HashMap<T, T>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub metrics: HashMap<T, f64>,
+    // TODO: Replace `Bytes` with a wrapper that borrows the underlying
+    // slice and serializes to bytes in MessagePack.
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta_struct: HashMap<T, Bytes>, /* TODO: check if the meta_struct is cloned or/and if i
-                                         * have to do something about it */
+    pub meta_struct: HashMap<T, Bytes>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub span_links: Vec<SpanLink<T>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

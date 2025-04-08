@@ -83,38 +83,62 @@ pub fn from_bytes(data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize)
         })
         .collect();
     Ok((traces_owned, size))
-
-    // let data_elem = rmp::decode::read_array_len(unsafe { data.as_mut_slice() })
-    //     .map_err(|_| DecodeError::InvalidFormat("Unable to read payload len".to_string()))?;
-
-    // if data_elem != PAYLOAD_LEN {
-    //     return Err(DecodeError::InvalidFormat(
-    //         "Invalid payload size".to_string(),
-    //     ));
-    // }
-
-    // let dict = deserialize_dict(&mut data)?;
-
-    // let trace_count = rmp::decode::read_array_len(unsafe { data.as_mut_slice() })
-    //     .map_err(|_| DecodeError::InvalidFormat("Unable to read trace len".to_string()))?;
-
-    // let mut traces: Vec<Vec<SpanBytes>> = Vec::with_capacity(trace_count as usize);
-    // let start_len = data.len();
-
-    // for _ in 0..trace_count {
-    //     let span_count = rmp::decode::read_array_len(unsafe { data.as_mut_slice() })
-    //         .map_err(|_| DecodeError::InvalidFormat("Unable to read span len".to_string()))?;
-    //     let mut trace: Vec<SpanBytes> = Vec::with_capacity(span_count as usize);
-
-    //     for _ in 0..span_count {
-    //         let span = deserialize_span(&mut data, &dict)?;
-    //         trace.push(span);
-    //     }
-    //     traces.push(trace);
-    // }
-    // Ok((traces, start_len - data.len()))
 }
 
+/// Decodes a slice of bytes into a `Vec<Vec<SpanSlice>>` object.
+/// The resulting spans have the same lifetime as the initial buffer.
+///
+/// # Arguments
+///
+/// * `data` - A slice of bytes containing the encoded data. Bytes are expected to be encoded
+///   msgpack data containing a list of a list of v05 spans.
+///
+/// # Returns
+///
+/// * `Ok(Vec<Vec<SpanSlice>>)` - A vector of decoded `Vec<SpanSlice>` objects if successful.
+/// * `Err(DecodeError)` - An error if the decoding process fails.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - The array length for trace count or span count cannot be read.
+/// - Any span cannot be decoded.
+///
+/// # Examples
+///
+/// ```
+/// use datadog_trace_utils::msgpack_decoder::v05::from_slice;
+/// use rmp_serde::to_vec;
+/// use std::collections::HashMap;
+/// use tinybytes;
+///
+/// let data = (
+///     vec!["".to_string()],
+///     vec![vec![(
+///         0,
+///         0,
+///         0,
+///         1,
+///         2,
+///         3,
+///         4,
+///         5,
+///         6,
+///         HashMap::<u32, u32>::new(),
+///         HashMap::<u32, f64>::new(),
+///         0,
+///     )]],
+/// );
+/// let encoded_data = to_vec(&data).unwrap();
+/// let encoded_data_as_tinybytes = tinybytes::Bytes::from(encoded_data);
+/// let (decoded_traces, _payload_size) =
+///     from_slice(&encoded_data_as_tinybytes).expect("Decoding failed");
+///
+/// assert_eq!(1, decoded_traces.len());
+/// assert_eq!(1, decoded_traces[0].len());
+/// let decoded_span = &decoded_traces[0][0];
+/// assert_eq!("", decoded_span.name);
+/// ```
 pub fn from_slice(mut data: &[u8]) -> Result<(Vec<Vec<SpanSlice>>, usize), DecodeError> {
     let data_elem = rmp::decode::read_array_len(&mut data)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read payload len".to_string()))?;

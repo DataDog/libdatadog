@@ -71,12 +71,12 @@ pub fn from_bytes(data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize)
 ///
 /// # Arguments
 ///
-/// * `data` - A tinybytes Bytes buffer containing the encoded data. Bytes are expected to be
-///   encoded msgpack data containing a list of a list of v04 spans.
+/// * `data` - A slice of bytes containing the encoded data. Bytes are expected to be encoded
+///   msgpack data containing a list of a list of v04 spans.
 ///
 /// # Returns
 ///
-/// * `Ok(Vec<TracerPayloadV04>)` - A vector of decoded `TracerPayloadV04` objects if successful.
+/// * `Ok(Vec<TracerPayloadV04>)` - A vector of decoded `Vec<SpanSlice>` objects if successful.
 /// * `Err(DecodeError)` - An error if the decoding process fails.
 ///
 /// # Errors

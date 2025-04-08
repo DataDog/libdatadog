@@ -49,8 +49,8 @@ mod tests {
         let meta = HashMap::from([("key".to_string(), Bytes::from(vec![1, 2, 3, 4]))]);
 
         let serialized = rmp_serde::to_vec_named(&meta).unwrap();
-        let mut slice =
-            unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(serialized.as_ref()) };
+        let mut slice = serialized.as_ref();
+            // unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(serialized.as_ref()) };
         let res = read_meta_struct(&mut slice).unwrap();
 
         assert_eq!(res.get("key").unwrap().to_vec(), vec![1, 2, 3, 4]);
@@ -61,8 +61,7 @@ mod tests {
         let meta = HashMap::from([("key".to_string(), vec![1, 2, 3, 4])]);
 
         let serialized = rmp_serde::to_vec_named(&meta).unwrap();
-        let mut slice =
-            unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(serialized.as_ref()) };
+        let mut slice = serialized.as_ref();
         let res = read_meta_struct(&mut slice);
 
         assert!(res.is_err());
