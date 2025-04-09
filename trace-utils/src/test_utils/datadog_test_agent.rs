@@ -101,6 +101,12 @@ impl DatadogTestAgentContainer {
 
         DatadogTestAgentContainer { mounts, env_vars }
     }
+
+    pub fn with_env(mut self, key: &str, value: &str) -> Self {
+        self.env_vars.insert(key.to_string(), value.to_string());
+        self
+    }
+
     // The docker image requires an absolute path when mounting a volume. This function gets the
     // absolute path of the workspace and appends the provided relative path.
     fn calculate_volume_absolute_path(relative_snapshot_path: &str) -> String {
@@ -193,6 +199,19 @@ impl DatadogTestAgent {
     ) -> Self {
         DatadogTestAgent {
             container: DatadogTestAgentContainer::new(relative_snapshot_path, absolute_socket_path)
+                .start()
+                .await
+                .expect("Unable to start DatadogTestAgent, is the Docker Daemon running?"),
+        }
+    }
+
+    pub async fn new_create_snapshot(
+        relative_snapshot_path: Option<&str>,
+        absolute_socket_path: Option<&str>,
+    ) -> Self {
+        DatadogTestAgent {
+            container: DatadogTestAgentContainer::new(relative_snapshot_path, absolute_socket_path)
+                .with_env("SNAPSHOT_CI", "0")
                 .start()
                 .await
                 .expect("Unable to start DatadogTestAgent, is the Docker Daemon running?"),
