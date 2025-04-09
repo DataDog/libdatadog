@@ -184,7 +184,7 @@ pub unsafe extern "C" fn ddog_add_span_meta_struct(
 // ------------------- SpanLinkBytes -------------------
 
 #[no_mangle]
-pub extern "C" fn ddog_span_new_link(span_ptr: *mut SpanBytes) -> *mut SpanLinkBytes {
+pub unsafe extern "C" fn ddog_span_new_link(span_ptr: *mut SpanBytes) -> *mut SpanLinkBytes {
     new_vector_item!(span_ptr, span_links, SpanLinkBytes)
 }
 
@@ -230,7 +230,7 @@ pub unsafe extern "C" fn ddog_add_link_attributes(
 // ------------------- SpanEventBytes -------------------
 
 #[no_mangle]
-pub extern "C" fn ddog_span_new_event(span_ptr: *mut SpanBytes) -> *mut SpanEventBytes {
+pub unsafe extern "C" fn ddog_span_new_event(span_ptr: *mut SpanBytes) -> *mut SpanEventBytes {
     new_vector_item!(span_ptr, span_events, SpanEventBytes)
 }
 
