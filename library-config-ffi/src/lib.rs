@@ -31,6 +31,7 @@ pub struct LibraryConfig {
     pub name: LibraryConfigName,
     pub value: ffi::CString,
     pub source: LibraryConfigSource,
+    pub config_id: ffi::CString,
 }
 
 impl LibraryConfig {
@@ -42,6 +43,7 @@ impl LibraryConfig {
                     name: c.name,
                     value: ffi::CString::from_std(std::ffi::CString::new(c.value)?),
                     source: c.source,
+                    config_id: ffi::CString::from_std(std::ffi::CString::new(c.config_id.unwrap_or_default())?),
                 })
             })
             .collect::<Result<Vec<_>, std::ffi::NulError>>()?;
