@@ -44,7 +44,7 @@ pub(crate) struct Receiver {
 
 impl Receiver {
     /// # Safety
-    ///     'receiver_uds' should maintain the requirements of 'UnixStream::from_raw_fd'.
+    ///     receiver_uds should maintain the requirements of UnixStream::from_raw_fd.
     ///     The safety comment there seems to imply that the main thing is that the fd must
     ///     be open.  But they could be clearer about what they mean.
     ///     https://doc.rust-lang.org/std/os/fd/trait.FromRawFd.html
