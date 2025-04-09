@@ -85,9 +85,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMe
 }
 
 pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
-    unsafe {
-        _ = munmap(mapped.ptr.as_ptr(), mapped.mem.get_size());
-    }
+    _ = unsafe { munmap(mapped.ptr, mapped.mem.get_size()) };
 }
 
 static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
