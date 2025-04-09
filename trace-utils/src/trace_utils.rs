@@ -716,6 +716,7 @@ mod tests {
     use ddcommon::Endpoint;
     use hyper::Request;
     use serde_json::json;
+    use std::fs;
     use tinybytes::BytesString;
 
     fn find_index_in_dict(dict: &[BytesString], value: &str) -> Option<u32> {
@@ -994,6 +995,86 @@ mod tests {
         let res = get_traces_from_request_body(request.into_body()).await;
         assert!(res.is_ok(), "Failed to deserialize: {:?}", res);
         assert_eq!(res.unwrap().1, expected_output);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_get_traces_from_request_body_with_problematic_hex_data() {
+        // Read the binary data from the logs_error_traces.hex file
+        // This file contains hex-encoded data that previously failed to decode
+        let hex_data = fs::read_to_string("logs_error_traces.hex")
+            .expect("Failed to read logs_error_traces.hex file");
+
+        // Convert hex string to bytes
+        let mut bytes = Vec::new();
+        let mut chars = hex_data.chars();
+
+        while let (Some(a), Some(b)) = (chars.next(), chars.next()) {
+            if let Ok(byte) = u8::from_str_radix(&format!("{}{}", a, b), 16) {
+                bytes.push(byte);
+            }
+        }
+
+        // Create the request body and try to decode it
+        let request = Request::builder()
+            .body(hyper_migration::Body::from(bytes.clone()))
+            .unwrap();
+
+        // We expect this to fail with a specific error message from the decoder
+        // The main point of this test is to verify that problematic payloads result in clean
+        // error messages rather than panics
+        let res = get_traces_from_request_body(request.into_body()).await;
+        
+        // For debugging purposes, print the error if present
+        if let Err(ref e) = res {
+            println!("Decoding error (expected): {}", e);
+        }
+        
+        // We expect an error when trying to decode this payload
+        assert!(res.is_err(), "Expected decoding to fail, but it succeeded");
+    }
+    
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_get_v05_traces_from_request_body_with_problematic_hex_data() {
+        // Read the binary data from the logs_error_traces.hex file
+        // This file contains hex-encoded data that previously failed to decode
+        let hex_data = fs::read_to_string("logs_error_traces.hex")
+            .expect("Failed to read logs_error_traces.hex file");
+
+        // Convert hex string to bytes
+        let mut bytes = Vec::new();
+        let mut chars = hex_data.chars();
+
+        while let (Some(a), Some(b)) = (chars.next(), chars.next()) {
+            if let Ok(byte) = u8::from_str_radix(&format!("{}{}", a, b), 16) {
+                bytes.push(byte);
+            }
+        }
+
+        // Try to decode with the v05 decoder
+        let res = get_v05_traces_from_request_body(hyper_migration::Body::from(bytes)).await;
+        
+        // Debug what happened with the decoding
+        match &res {
+            Ok((size, traces)) => {
+                println!("V05 decoding succeeded with payload size: {} bytes", size);
+                println!("Number of traces: {}", traces.len());
+                
+                for (i, trace) in traces.iter().enumerate() {
+                    println!("Trace {}: spans {}", trace[0].trace_id, trace.len());
+                    
+                    // for (j, span) in trace.iter().enumerate() {
+                    //     println!("  trace ID {}: service={}, name={}, resource={}", 
+                    //              j, span.service, span.name, span.resource);
+                    // }
+                }
+            },
+            Err(e) => {
+                println!("V05 decoding error: {}", e);
+            }
+        }
+        assert_eq!(1, 0);
     }
 
     #[test]
