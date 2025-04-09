@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #![cfg(unix)]
-
-// This is needed for vfork.  Using vfork is removed on mac and deprecated on linux 
+// This is needed for vfork.  Using vfork is removed on mac and deprecated on linux
 // https://github.com/rust-lang/libc/issues/1596
 // TODO: This is a problem, we should fix it.
 #![allow(deprecated)]
