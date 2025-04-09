@@ -140,6 +140,12 @@ pub fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool
     }
 }
 
+/// Kills the program without raising an abort or calling at_exit
+pub fn terminate() -> ! {
+    // Safety: No preconditions
+    unsafe { _exit(EXIT_FAILURE) }
+}
+
 /// true if successful wait, false if timeout occurred.
 pub fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
     let mut poll_fds = [pollfd {
@@ -163,9 +169,4 @@ pub fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<boo
             Ok(true) // POLLHUP detected
         }
     }
-}
-
-/// Kills the program without raising an abort or calling at_exit
-pub fn terminate() -> ! {
-    unsafe { _exit(EXIT_FAILURE) }
 }
