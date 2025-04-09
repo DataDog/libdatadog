@@ -757,6 +757,7 @@ pub struct TraceExporterBuilder {
     compute_stats_by_span_kind: bool,
     peer_tags: Vec<String>,
     telemetry: Option<TelemetryConfig>,
+    test_session_token: Option<String>,
 }
 
 impl TraceExporterBuilder {
@@ -873,6 +874,12 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Set the session token
+    pub fn set_test_session_token(&mut self, test_session_token: &str) -> &mut Self {
+        self.test_session_token = Some(test_session_token.to_string());
+        self
+    }
+
     /// Enable stats computation on traces sent through this exporter
     pub fn enable_stats(&mut self, bucket_size: Duration) -> &mut Self {
         self.stats_bucket_size = Some(bucket_size);
@@ -932,6 +939,7 @@ impl TraceExporterBuilder {
 
         let endpoint = Endpoint {
             url: agent_url,
+            test_token: self.test_session_token.map(|token| token.into()),
             ..Default::default()
         };
 
