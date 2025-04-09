@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use tokio::select;
 use tokio::sync::mpsc;
 use tokio::task::{JoinError, JoinHandle};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 const DEFAULT_FLUSH_INTERVAL_MS: u64 = 5_000;
 const DEFAULT_MIN_FORCE_FLUSH_SIZE_BYTES: u32 = 1_000_000;
@@ -243,24 +243,26 @@ impl TraceFlusher {
 
     async fn send_and_handle_trace(&self, send_data: SendData) {
         let endpoint = send_data.get_target().clone();
-        let response = send_data.send().await;
-        self.metrics.lock_or_panic().update(&response);
-        match response.last_result {
+        match send_data.send().await {
             Ok(response) => {
-                if endpoint.api_key.is_none() {
-                    // not when intake
-                    match response.into_body().collect().await {
-                        Ok(body) => {
-                            self.write_remote_configs(endpoint.clone(), body.to_bytes().to_vec())
+                self.metrics.lock_or_panic().update(&response);
+                if let Some(response) = response.last_success_response {
+                    if endpoint.api_key.is_none() {
+                        // not when intake
+                        match response.into_body().collect().await {
+                            Ok(body) => self
+                                .write_remote_configs(endpoint.clone(), body.to_bytes().to_vec()),
+                            Err(e) => error!("Error receiving agent configuration: {e:?}"),
                         }
-                        Err(e) => error!("Error receiving agent configuration: {e:?}"),
                     }
+                    info!("Successfully flushed traces to {endpoint:?}");
+                } else if let Some(e) = response.last_error {
+                    error!("Error sending trace to {endpoint:?}: {e:?}");
+                } else {
+                    warn!("No traces sent");
                 }
-                info!("Successfully flushed traces to {endpoint:?}");
             }
-            Err(e) => {
-                error!("Error sending trace: {e:?}");
-            }
+            Err(e) => error!("Failed submitting traces: {e:?}"),
         }
     }
 

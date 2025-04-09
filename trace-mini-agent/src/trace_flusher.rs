@@ -73,16 +73,17 @@ impl TraceFlusher for ServerlessTraceFlusher {
         debug!("Flushing {} traces", traces.len());
 
         for traces in trace_utils::coalesce_send_data(traces) {
-            match traces
-                .send_proxy(self.config.proxy_url.as_deref())
-                .await
-                .last_result
-            {
-                Ok(_) => debug!("Successfully flushed traces"),
-                Err(e) => {
-                    error!("Error sending trace: {e:?}")
-                    // TODO: Retries
+            match traces.send_proxy(self.config.proxy_url.as_deref()).await {
+                Ok(result) => {
+                    if result.last_success_response.is_some() {
+                        debug!("Successfully flushed traces")
+                    }
+                    if let Some(e) = result.last_error {
+                        error!("Error sending trace: {e:?}")
+                        // TODO: Retries
+                    }
                 }
+                Err(e) => error!("Error submitting trace: {e:?}"),
             }
         }
     }

@@ -251,9 +251,9 @@ mod tracing_integration_tests {
 
         let data = SendData::new(0, payload_collection, header_tags, &endpoint);
 
-        let result = data.send().await;
+        let result = data.send().await.unwrap();
 
-        assert!(result.last_result.is_ok());
+        assert!(result.last_success_response.is_some());
     }
 
     #[cfg_attr(miri, ignore)]
