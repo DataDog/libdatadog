@@ -33,7 +33,9 @@ pub enum SendWithRetryError {
 impl std::fmt::Display for SendWithRetryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SendWithRetryError::Http(_, _) => write!(f, "Http error code received"),
+            SendWithRetryError::Http(ref response, _) => {
+                write!(f, "Http error code {} received", response.status())
+            }
             SendWithRetryError::Timeout(_) => write!(f, "Request timed out"),
             SendWithRetryError::Network(error, _) => write!(f, "Network error: {error}"),
             SendWithRetryError::Build(_) => {

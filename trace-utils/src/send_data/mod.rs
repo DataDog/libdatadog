@@ -209,8 +209,8 @@ impl SendData {
     ///
     /// # Returns
     ///
-    /// A `SendDataResult` instance containing the result of the operation.
-    pub async fn send(&self) -> SendDataResult {
+    /// A `Result<SendDataResult>` instance containing the result of the operation.
+    pub async fn send(&self) -> anyhow::Result<SendDataResult> {
         self.send_internal(None).await
     }
 
@@ -218,12 +218,12 @@ impl SendData {
     ///
     /// # Returns
     ///
-    /// A `SendDataResult` instance containing the result of the operation.
-    pub async fn send_proxy(&self, http_proxy: Option<&str>) -> SendDataResult {
+    /// A `Result<SendDataResult>` instance containing the result of the operation.
+    pub async fn send_proxy(&self, http_proxy: Option<&str>) -> anyhow::Result<SendDataResult> {
         self.send_internal(http_proxy).await
     }
 
-    async fn send_internal(&self, http_proxy: Option<&str>) -> SendDataResult {
+    async fn send_internal(&self, http_proxy: Option<&str>) -> anyhow::Result<SendDataResult> {
         if self.use_protobuf() {
             self.send_with_protobuf(http_proxy).await
         } else {
@@ -280,21 +280,17 @@ impl SendData {
         }
     }
 
-    async fn send_with_protobuf(&self, http_proxy: Option<&str>) -> SendDataResult {
+    async fn send_with_protobuf(&self, http_proxy: Option<&str>) -> anyhow::Result<SendDataResult> {
         let mut result = SendDataResult::default();
 
         #[allow(clippy::unwrap_used)]
-        let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
+        let chunks = u64::try_from(self.tracer_payloads.size())?;
 
         match &self.tracer_payloads {
             TracerPayloadCollection::V07(payloads) => {
                 let agent_payload = construct_agent_payload(payloads.to_vec());
-                let serialized_trace_payload = match serialize_proto_payload(&agent_payload)
-                    .context("Failed to serialize trace agent payload, dropping traces")
-                {
-                    Ok(p) => p,
-                    Err(e) => return result.error(e),
-                };
+                let serialized_trace_payload = serialize_proto_payload(&agent_payload)
+                    .context("Failed to serialize trace agent payload, dropping traces")?;
                 let mut request_headers = self.headers.clone();
 
                 #[cfg(feature = "compression")]
@@ -312,13 +308,13 @@ impl SendData {
 
                 result.update(response, bytes_sent, chunks);
 
-                result
+                Ok(result)
             }
-            _ => result,
+            _ => Err(anyhow!("Tried to send non-v07 payload via protobuf")),
         }
     }
 
-    async fn send_with_msgpack(&self, http_proxy: Option<&str>) -> SendDataResult {
+    async fn send_with_msgpack(&self, http_proxy: Option<&str>) -> anyhow::Result<SendDataResult> {
         let mut result = SendDataResult::default();
         let mut futures = FuturesUnordered::new();
 
@@ -326,44 +322,35 @@ impl SendData {
             TracerPayloadCollection::V07(payloads) => {
                 for tracer_payload in payloads {
                     #[allow(clippy::unwrap_used)]
-                    let chunks = u64::try_from(tracer_payload.chunks.len()).unwrap();
+                    let chunks = u64::try_from(tracer_payload.chunks.len())?;
                     let mut headers = self.headers.clone();
                     headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
                     headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
 
-                    let payload = match rmp_serde::to_vec_named(tracer_payload) {
-                        Ok(p) => p,
-                        Err(e) => return result.error(anyhow!(e)),
-                    };
+                    let payload = rmp_serde::to_vec_named(tracer_payload)?;
 
                     futures.push(self.send_payload(chunks, payload, headers, http_proxy));
                 }
             }
             TracerPayloadCollection::V04(payload) => {
                 #[allow(clippy::unwrap_used)]
-                let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
+                let chunks = u64::try_from(self.tracer_payloads.size())?;
                 let mut headers = self.headers.clone();
                 headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
                 headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
 
-                let payload = match rmp_serde::to_vec_named(payload) {
-                    Ok(p) => p,
-                    Err(e) => return result.error(anyhow!(e)),
-                };
+                let payload = rmp_serde::to_vec_named(payload)?;
 
                 futures.push(self.send_payload(chunks, payload, headers, http_proxy));
             }
             TracerPayloadCollection::V05(payload) => {
                 #[allow(clippy::unwrap_used)]
-                let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
+                let chunks = u64::try_from(self.tracer_payloads.size())?;
                 let mut headers = self.headers.clone();
                 headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
                 headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
 
-                let payload = match rmp_serde::to_vec(payload) {
-                    Ok(p) => p,
-                    Err(e) => return result.error(anyhow!(e)),
-                };
+                let payload = rmp_serde::to_vec(payload)?;
 
                 futures.push(self.send_payload(chunks, payload, headers, http_proxy));
             }
@@ -373,11 +360,8 @@ impl SendData {
             match futures.next().await {
                 Some((response, payload_len, chunks)) => {
                     result.update(response, payload_len, chunks);
-                    if result.last_result.is_err() {
-                        return result;
-                    }
                 }
-                None => return result,
+                None => return Ok(result),
             }
         }
     }
@@ -408,6 +392,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::send_with_retry::SendWithRetryError;
     use crate::test_utils::create_test_no_alloc_span;
     use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, RootSpanTags};
     use crate::tracer_header_tags::TracerHeaderTags;
@@ -568,11 +553,11 @@ mod tests {
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
-        let res = data.send().await;
+        let res = data.send().await.unwrap();
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status(), 202);
+        assert_eq!(res.last_success_response.unwrap().status(), 202);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -613,11 +598,11 @@ mod tests {
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
-        let res = data.send().await;
+        let res = data.send().await.unwrap();
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status(), 202);
+        assert_eq!(res.last_success_response.unwrap().status(), 202);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -672,11 +657,11 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let res = data.send().await;
+        let res = data.send().await.unwrap();
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status(), 200);
+        assert_eq!(res.last_success_response.unwrap().status(), 200);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -730,11 +715,11 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let res = data.send().await;
+        let res = data.send().await.unwrap();
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status(), 200);
+        assert_eq!(res.last_success_response.unwrap().status(), 200);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -774,11 +759,11 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let res = data.send().await;
+        let res = data.send().await.unwrap();
 
         mock.assert_hits_async(2).await;
 
-        assert_eq!(res.last_result.unwrap().status(), 200);
+        assert_eq!(res.last_success_response.unwrap().status(), 200);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -815,12 +800,15 @@ mod tests {
             },
         );
 
-        let res = data.send().await;
+        let res = data.send().await.unwrap();
 
         mock.assert_hits_async(5).await;
 
-        assert!(res.last_result.is_ok());
-        assert_eq!(res.last_result.unwrap().status(), 500);
+        assert!(res.last_success_response.is_none());
+        let SendWithRetryError::Http(response, _) = res.last_error.unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(response.status(), 500);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 1);
@@ -847,9 +835,9 @@ mod tests {
             },
         );
 
-        let res = data.send().await;
+        let res = data.send().await.unwrap();
 
-        assert!(res.last_result.is_err());
+        assert!(res.last_success_response.is_none());
         match std::env::consts::OS {
             "windows" => {
                 // On windows the TCP/IP stack returns a timeout error (at hyper level) rather
@@ -914,7 +902,7 @@ mod tests {
             },
         );
 
-        let res = data.send().await;
+        let res = data.send().await.unwrap();
 
         mock.assert_hits_async(5).await;
 
@@ -956,11 +944,11 @@ mod tests {
             },
         );
 
-        let res = data.send().await;
+        let res = data.send().await.unwrap();
 
         mock.assert_hits_async(10).await;
 
-        assert_eq!(res.errors_timeout, 1);
+        assert_eq!(res.errors_timeout, 2);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
         assert_eq!(res.requests_count, 5);
