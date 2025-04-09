@@ -26,7 +26,7 @@ const NOT_COMMITTED: usize = 1 << (usize::BITS - 1);
 
 pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<MappedMem<T>> {
     let shm = handle.get_shm_mut();
-    let ptr = unsafe {
+    let raw_ptr = unsafe {
         MapViewOfFile(
             shm.handle.as_raw_handle() as HANDLE,
             FILE_MAP_WRITE,
@@ -35,9 +35,9 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
             MAPPING_MAX_SIZE,
         )
     };
-    if ptr.is_null() {
+    let Some(ptr) = NonNull::new(raw_ptr) else {
         return Err(Error::last_os_error());
-    }
+    };
     if shm.size & NOT_COMMITTED != 0 {
         shm.size &= !NOT_COMMITTED;
         if shm.size == 0 {
@@ -63,7 +63,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
 
 pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
     unsafe {
-        UnmapViewOfFile(mapped.ptr.cast_const());
+        UnmapViewOfFile(mapped.ptr.as_ptr().cast_const());
     }
 }
 
