@@ -2081,13 +2081,13 @@ dependencies = [
 [[package]]
 name = "dogstatsd"
 version = "0.1.0"
-source = "git+https://github.com/DataDog/serverless-components/?rev=4dfe72ab1850680f41dd79d30a937eb68e7ba6da#4dfe72ab1850680f41dd79d30a937eb68e7ba6da"
+source = "git+https://github.com/DataDog/serverless-components/?rev=1be056e037e345488b148b60c3214deff4fcf511#1be056e037e345488b148b60c3214deff4fcf511"
 dependencies = [
  "datadog-protos",
  "ddsketch-agent",
  "derive_more",
  "fnv",
- "hashbrown 0.14.5",
+ "hashbrown 0.15.1",
  "protobuf",
  "regex",
  "reqwest",
