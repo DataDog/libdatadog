@@ -45,7 +45,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
             shm.size = unsafe {
                 let mut info = MaybeUninit::<MEMORY_BASIC_INFORMATION>::uninit();
                 if VirtualQuery(
-                    ptr,
+                    ptr.as_ptr().cast_const(),
                     info.as_mut_ptr(),
                     mem::size_of::<MEMORY_BASIC_INFORMATION>(),
                 ) == 0
