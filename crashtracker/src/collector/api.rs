@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
+use super::receiver_manager::Receiver;
 use crate::{
     clear_spans, clear_traces, collector::signal_handler_manager::register_crash_handlers,
     crash_info::Metadata, reset_counters, shared::configuration::CrashtrackerReceiverConfig,
     update_config, update_metadata, CrashtrackerConfiguration,
 };
-
-use super::receiver_manager::Receiver;
 
 pub static DEFAULT_SYMBOLS: [libc::c_int; 4] =
     [libc::SIGBUS, libc::SIGABRT, libc::SIGSEGV, libc::SIGILL];
