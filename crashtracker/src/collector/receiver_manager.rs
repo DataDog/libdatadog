@@ -46,7 +46,8 @@ pub(crate) struct Receiver {
 impl Receiver {
     /// Safety: `receiver_uds` should maintain the requirements of `UnixStream::from_raw_fd`.
     ///         The safety comment there seems to imply that the main thing is that the fd must
-    ///         be open.
+    ///         be open.  But they could be clearer about what they mean.
+    ///         https://doc.rust-lang.org/std/os/fd/trait.FromRawFd.html
     pub(crate) unsafe fn receiver_unix_stream(&mut self) -> UnixStream {
         // Safety: precondition of this function
         unsafe { UnixStream::from_raw_fd(self.receiver_uds) }

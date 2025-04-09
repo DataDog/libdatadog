@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #![cfg(unix)]
-#![allow(deprecated)]
 
 use super::emitters::emit_crashreport;
 use super::receiver_manager::{
