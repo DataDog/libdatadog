@@ -8,7 +8,7 @@ use std::ffi::{CStr, CString};
 use std::io::Error;
 use std::mem::MaybeUninit;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
-use std::ptr::null_mut;
+use std::ptr::{null_mut, NonNull};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::{io, mem};
 use winapi::shared::minwindef::{DWORD, LPVOID};
@@ -55,7 +55,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
                 info.assume_init().RegionSize
             };
         } else {
-            unsafe { VirtualAlloc(ptr, shm.size, MEM_COMMIT, PAGE_READWRITE) };
+            unsafe { VirtualAlloc(ptr.as_ptr(), shm.size, MEM_COMMIT, PAGE_READWRITE) };
         }
     }
     Ok(MappedMem { ptr, mem: handle })
@@ -178,7 +178,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
         let new_size = self.mem.get_shm().size;
         unsafe {
             VirtualAlloc(
-                (self.ptr as usize + current_size) as LPVOID,
+                (self.ptr.as_ptr() as usize + current_size) as LPVOID,
                 new_size - current_size,
                 MEM_COMMIT,
                 PAGE_READWRITE,
