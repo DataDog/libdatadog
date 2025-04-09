@@ -8,5 +8,5 @@
 
 mod error;
 mod response;
-mod span;
+pub mod span;
 mod trace_exporter;
