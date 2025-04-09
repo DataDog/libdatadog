@@ -13,7 +13,7 @@ use nix::sys::socket;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{close, Pid};
 use std::os::unix::io::{IntoRawFd, RawFd};
-use std::os::unix::net::UnixStream;
+use std::os::unix::{io::FromRawFd, net::UnixStream};
 use std::ptr;
 use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::Ordering::SeqCst;
@@ -39,8 +39,12 @@ pub(crate) struct Receiver {
 }
 
 impl Receiver {
-    pub(crate) fn receiver_uds(&self) -> i32 {
-        self.receiver_uds
+    /// Safety: `receiver_uds` should maintain the requirements of `UnixStream::from_raw_fd`.
+    ///         The safety comment there seems to imply that the main thing is that the fd must
+    ///         be open.
+    pub(crate) unsafe fn receiver_unix_stream(&mut self) -> UnixStream {
+        // Safety: precondition of this function
+        unsafe { UnixStream::from_raw_fd(self.receiver_uds) }
     }
 }
 

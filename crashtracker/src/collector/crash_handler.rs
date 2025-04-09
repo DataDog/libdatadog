@@ -16,7 +16,6 @@ use anyhow::Context;
 use libc::{c_void, siginfo_t, ucontext_t};
 use nix::sys::signal;
 use std::io::Write;
-use std::os::unix::{io::FromRawFd, net::UnixStream};
 use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::atomic::{AtomicPtr, AtomicU64};
@@ -158,14 +157,15 @@ fn handle_posix_signal_impl(
     // configuration.  If it does, then we just connect to the socket.
     let unix_socket_path = config.unix_socket_path().clone().unwrap_or_default();
 
-    let receiver = if !unix_socket_path.is_empty() {
+    let mut receiver = if !unix_socket_path.is_empty() {
         receiver_from_socket(&unix_socket_path)?
     } else {
         make_receiver()?
     };
 
     // No matter how the receiver was created, attach to its stream
-    let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.receiver_uds()) };
+    // Safety: the receiver was just created, and we haven't closed its FD.
+    let mut unix_stream = unsafe { receiver.receiver_unix_stream() };
 
     // Currently the emission of the crash report doesn't have a firm time guarantee
     // In a future patch, the timeout parameter should be passed into the IPC loop here and
