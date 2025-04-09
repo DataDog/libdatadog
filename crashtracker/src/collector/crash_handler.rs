@@ -4,9 +4,7 @@
 #![cfg(unix)]
 
 use super::emitters::emit_crashreport;
-use super::receiver_manager::{
-    has_receiver_config, make_receiver, receiver_finish, receiver_from_socket,
-};
+use super::receiver_manager::Receiver;
 use super::saguard::SaGuard;
 use super::signal_handler_manager::chain_signal_handler;
 use crate::crash_info::Metadata;
@@ -133,7 +131,6 @@ fn handle_posix_signal_impl(
     let metadata_ptr = METADATA.swap(ptr::null_mut(), SeqCst);
     anyhow::ensure!(!metadata_ptr.is_null(), "No crashtracking metadata");
     let (_metadata, metadata_string) = unsafe { metadata_ptr.as_ref().context("metadata ptr")? };
-    anyhow::ensure!(has_receiver_config(), "No receiver config");
 
     // Since we've gotten this far, we're going to start working on the crash report. This
     // operation needs to be mindful of the total walltime elapsed during handling. This isn't only
@@ -157,9 +154,9 @@ fn handle_posix_signal_impl(
     let unix_socket_path = config.unix_socket_path().clone().unwrap_or_default();
 
     let mut receiver = if !unix_socket_path.is_empty() {
-        receiver_from_socket(&unix_socket_path)?
+        Receiver::from_socket(&unix_socket_path)?
     } else {
-        make_receiver()?
+        Receiver::from_stored_config()?
     };
 
     // No matter how the receiver was created, attach to its stream
@@ -184,7 +181,7 @@ fn handle_posix_signal_impl(
         .context("Could not shutdown writing on the stream")?;
 
     // We're done. Wrap up our interaction with the receiver.
-    receiver_finish(receiver, start_time, timeout_ms);
+    receiver.finish(start_time, timeout_ms);
 
     res
 }

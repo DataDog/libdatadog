@@ -3,11 +3,12 @@
 #![cfg(unix)]
 
 use crate::{
-    clear_spans, clear_traces, collector::receiver_manager::configure_receiver,
-    collector::signal_handler_manager::register_crash_handlers, crash_info::Metadata,
-    reset_counters, shared::configuration::CrashtrackerReceiverConfig, update_config,
-    update_metadata, CrashtrackerConfiguration,
+    clear_spans, clear_traces, collector::signal_handler_manager::register_crash_handlers,
+    crash_info::Metadata, reset_counters, shared::configuration::CrashtrackerReceiverConfig,
+    update_config, update_metadata, CrashtrackerConfiguration,
 };
+
+use super::receiver_manager::Receiver;
 
 pub static DEFAULT_SYMBOLS: [libc::c_int; 4] =
     [libc::SIGBUS, libc::SIGABRT, libc::SIGSEGV, libc::SIGILL];
@@ -45,7 +46,7 @@ pub fn on_fork(
 
     update_metadata(metadata)?;
     update_config(config)?;
-    configure_receiver(receiver_config);
+    Receiver::update_stored_config(receiver_config);
     Ok(())
 }
 
@@ -66,7 +67,7 @@ pub fn init(
 ) -> anyhow::Result<()> {
     update_metadata(metadata)?;
     update_config(config.clone())?;
-    configure_receiver(receiver_config);
+    Receiver::update_stored_config(receiver_config);
     register_crash_handlers(&config)?;
     Ok(())
 }

@@ -4,7 +4,7 @@
 #![cfg(unix)]
 
 use anyhow::Context;
-use libc::{execve, nfds_t, poll, pollfd, POLLHUP};
+use libc::{_exit, execve, nfds_t, poll, pollfd, EXIT_FAILURE, POLLHUP};
 use nix::errno::Errno;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
@@ -163,4 +163,9 @@ pub fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<boo
             Ok(true) // POLLHUP detected
         }
     }
+}
+
+/// Kills the program without raising an abort or calling at_exit
+pub fn terminate() -> ! {
+    unsafe { _exit(EXIT_FAILURE) }
 }
