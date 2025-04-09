@@ -36,7 +36,7 @@ mod unix {
 
         #[cfg(target_arch = "aarch64")]
         {
-            std::arch::asm!("ldr x0, [xzr]", options(nostack));
+            std::arch::asm!("mov x0, #0", "ldr x1, [x0]", options(nostack));
         }
         anyhow::bail!("Failed to cause segmentation fault")
     }
