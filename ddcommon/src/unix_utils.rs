@@ -4,9 +4,12 @@
 #![cfg(unix)]
 
 use anyhow::Context;
-use libc::execve;
+use libc::{execve, nfds_t, poll, pollfd, POLLHUP};
 use nix::errno::Errno;
+use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+use nix::unistd::Pid;
 use std::os::fd::IntoRawFd;
+use std::time::{Duration, Instant};
 use std::{
     ffi::CString,
     fs::{File, OpenOptions},
@@ -105,4 +108,59 @@ pub fn open_file_or_quiet(filename: Option<&str>) -> anyhow::Result<RawFd> {
         },
     )?;
     Ok(file.into_raw_fd())
+}
+
+/// Non-blocking child reaper
+/// * If the child process has exited, return true
+/// * If the child process cannot be found, return false
+/// * If the child is still alive, or some other error occurs, return an error Either way, after
+///   this returns, you probably don't have to do anything else.
+// Note: some resources indicate it is unsafe to call `waitpid` from a signal handler, especially
+//       on macos, where the OS will terminate an offending process.  This appears to be untrue
+//       and `waitpid()` is characterized as async-signal safe by POSIX.
+pub fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
+    let timeout = Duration::from_millis(timeout_ms.into());
+    let start_time = Instant::now();
+
+    loop {
+        match waitpid(pid, Some(WaitPidFlag::WNOHANG)) {
+            Ok(WaitStatus::StillAlive) => anyhow::ensure!(
+                start_time.elapsed() <= timeout,
+                "Timeout waiting for child process to exit"
+            ),
+            Ok(_status) => return Ok(true),
+            Err(nix::Error::ECHILD) => {
+                // Non-availability of the specified process is weird, since we should have
+                // exclusive access to reaping its exit, but at the very least means there is
+                // nothing further for us to do.
+                return Ok(true);
+            }
+            _ => anyhow::bail!("Error waiting for child process to exit"),
+        }
+    }
+}
+
+/// true if successful wait, false if timeout occurred.
+pub fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
+    let mut poll_fds = [pollfd {
+        fd: target_fd,
+        events: POLLHUP,
+        revents: 0,
+    }];
+
+    match unsafe { poll(poll_fds.as_mut_ptr(), poll_fds.len() as nfds_t, timeout_ms) } {
+        -1 => Err(anyhow::anyhow!(
+            "poll failed with errno: {}",
+            std::io::Error::last_os_error()
+        )),
+        0 => Ok(false), // Timeout occurred
+        _ => {
+            let revents = poll_fds[0].revents;
+            anyhow::ensure!(
+                revents & POLLHUP != 0,
+                "poll returned unexpected result: revents = {revents}"
+            );
+            Ok(true) // POLLHUP detected
+        }
+    }
 }

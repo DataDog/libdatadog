@@ -6,18 +6,19 @@
 use crate::shared::configuration::CrashtrackerReceiverConfig;
 use crate::shared::constants::*;
 use anyhow::Context;
-use ddcommon::unix_utils::{open_file_or_quiet, PreparedExecve};
-use libc::{_exit, nfds_t, poll, pollfd, EXIT_FAILURE, POLLHUP};
+use ddcommon::unix_utils::{
+    open_file_or_quiet, reap_child_non_blocking, wait_for_pollhup, PreparedExecve,
+};
+use libc::{_exit, EXIT_FAILURE};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use nix::sys::socket;
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::{close, Pid};
 use std::os::unix::io::{IntoRawFd, RawFd};
 use std::os::unix::{io::FromRawFd, net::UnixStream};
 use std::ptr;
 use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::Ordering::SeqCst;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 static RECEIVER_ARGS: AtomicPtr<PreparedExecve> = AtomicPtr::new(ptr::null_mut());
 static RECEIVER_CONFIG: AtomicPtr<CrashtrackerReceiverConfig> = AtomicPtr::new(ptr::null_mut());
@@ -109,36 +110,6 @@ pub(crate) fn receiver_finish(receiver: Receiver, start_time: Instant, timeout_m
     }
 }
 
-/// Non-blocking child reaper
-/// * If the child process has exited, return true
-/// * If the child process cannot be found, return false
-/// * If the child is still alive, or some other error occurs, return an error Either way, after
-///   this returns, you probably don't have to do anything else.
-// Note: some resources indicate it is unsafe to call `waitpid` from a signal handler, especially
-//       on macos, where the OS will terminate an offending process.  This appears to be untrue
-//       and `waitpid()` is characterized as async-signal safe by POSIX.
-pub(crate) fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
-    let timeout = Duration::from_millis(timeout_ms.into());
-    let start_time = Instant::now();
-
-    loop {
-        match waitpid(pid, Some(WaitPidFlag::WNOHANG)) {
-            Ok(WaitStatus::StillAlive) => anyhow::ensure!(
-                start_time.elapsed() <= timeout,
-                "Timeout waiting for child process to exit"
-            ),
-            Ok(_status) => return Ok(true),
-            Err(nix::Error::ECHILD) => {
-                // Non-availability of the specified process is weird, since we should have
-                // exclusive access to reaping its exit, but at the very least means there is
-                // nothing further for us to do.
-                return Ok(true);
-            }
-            _ => anyhow::bail!("Error waiting for child process to exit"),
-        }
-    }
-}
-
 /// Wrapper around the child process that will run the crash receiver
 fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout: RawFd) -> ! {
     // File descriptor management
@@ -179,31 +150,6 @@ fn run_receiver_child(uds_parent: RawFd, uds_child: RawFd, stderr: RawFd, stdout
     // If we reach this point, execve failed, so just exit
     unsafe {
         _exit(EXIT_FAILURE);
-    }
-}
-
-/// true if successful wait, false if timeout occurred.
-pub(crate) fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
-    let mut poll_fds = [pollfd {
-        fd: target_fd,
-        events: POLLHUP,
-        revents: 0,
-    }];
-
-    match unsafe { poll(poll_fds.as_mut_ptr(), poll_fds.len() as nfds_t, timeout_ms) } {
-        -1 => Err(anyhow::anyhow!(
-            "poll failed with errno: {}",
-            std::io::Error::last_os_error()
-        )),
-        0 => Ok(false), // Timeout occurred
-        _ => {
-            let revents = poll_fds[0].revents;
-            anyhow::ensure!(
-                revents & POLLHUP != 0,
-                "poll returned unexpected result: revents = {revents}"
-            );
-            Ok(true) // POLLHUP detected
-        }
     }
 }
 

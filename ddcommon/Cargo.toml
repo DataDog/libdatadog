@@ -43,8 +43,7 @@ serde = { version = "1.0", features = ["derive"] }
 static_assertions = "1.1.0"
 libc = "0.2"
 const_format = "0.2.34"
-nix = "0.27.1"
-
+nix = { version = "0.27.1", features = ["process"] }
 [target.'cfg(windows)'.dependencies.windows-sys]
 version = "0.52"
 features = ["Win32_Foundation", "Win32_System_Performance"]
