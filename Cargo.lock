@@ -477,7 +477,7 @@ dependencies = [
  "datadog-profiling",
  "ddcommon",
  "libc",
- "nix 0.27.1",
+ "nix",
  "once_cell",
  "serde_json",
  "strum",
@@ -1374,7 +1374,7 @@ dependencies = [
  "goblin",
  "http 1.1.0",
  "libc",
- "nix 0.27.1",
+ "nix",
  "num-derive",
  "num-traits",
  "os_info",
@@ -1441,7 +1441,7 @@ dependencies = [
  "io-lifetimes",
  "libc",
  "memfd",
- "nix 0.27.1",
+ "nix",
  "page_size",
  "pin-project",
  "pretty_assertions",
@@ -1691,7 +1691,7 @@ dependencies = [
  "manual_future",
  "memory-stats",
  "microseh",
- "nix 0.27.1",
+ "nix",
  "prctl",
  "priority-queue",
  "rand 0.8.5",
@@ -3638,18 +3638,6 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nix"
-version = "0.27.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
-dependencies = [
- "bitflags 2.6.0",
- "cfg-if",
- "libc",
- "memoffset",
-]
-
-[[package]]
-name = "nix"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
@@ -3658,6 +3646,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -4098,7 +4087,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "059a34f111a9dee2ce1ac2826a68b24601c4298cfeb1a587c3cb493d5ab46f52"
 dependencies = [
  "libc",
- "nix 0.29.0",
+ "nix",
 ]
 
 [[package]]
@@ -5327,7 +5316,7 @@ dependencies = [
  "io-lifetimes",
  "kernel32-sys",
  "memfd",
- "nix 0.27.1",
+ "nix",
  "rlimit",
  "tempfile",
  "winapi 0.2.8",
