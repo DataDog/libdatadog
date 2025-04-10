@@ -260,6 +260,9 @@ pub type AttributeAnyValueSlice<'a> = AttributeAnyValue<&'a str>;
 pub type AttributeArrayValueSlice<'a> = AttributeArrayValue<&'a str>;
 
 impl SpanSlice<'_> {
+    /// Converts a borrowed `SpanSlice` into an owned `SpanBytes`, by resolving all internal
+    /// references into slices of the provided `Bytes` buffer. Returns `None` if any slice is
+    /// out of bounds or invalid.
     pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<SpanBytes> {
         Some(SpanBytes {
             service: BytesString::try_from_bytes_slice(bytes, self.service)?,
@@ -307,6 +310,9 @@ impl SpanSlice<'_> {
 }
 
 impl SpanLinkSlice<'_> {
+    /// Converts a borrowed `SpanLinkSlice` into an owned `SpanLinkBytes`, using the provided
+    /// `Bytes` buffer to resolve all referenced strings. Returns `None` if conversion fails due
+    /// to invalid slice ranges.
     pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<SpanLinkBytes> {
         Some(SpanLinkBytes {
             trace_id: self.trace_id,
@@ -329,6 +335,9 @@ impl SpanLinkSlice<'_> {
 }
 
 impl SpanEventSlice<'_> {
+    /// Converts a borrowed `SpanEventSlice` into an owned `SpanEventBytes`, resolving references
+    /// into the provided `Bytes` buffer. Fails with `None` if any slice is invalid or cannot be
+    /// converted.
     pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<SpanEventBytes> {
         Some(SpanEventBytes {
             time_unix_nano: self.time_unix_nano,
@@ -348,6 +357,9 @@ impl SpanEventSlice<'_> {
 }
 
 impl AttributeAnyValueSlice<'_> {
+    /// Converts a borrowed `AttributeAnyValueSlice` into its owned `AttributeAnyValueBytes`
+    /// representation, using the provided `Bytes` buffer. Recursively processes inner values if
+    /// it's an array.
     pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<AttributeAnyValueBytes> {
         match self {
             AttributeAnyValue::SingleValue(value) => {
@@ -364,6 +376,9 @@ impl AttributeAnyValueSlice<'_> {
 }
 
 impl AttributeArrayValueSlice<'_> {
+    /// Converts a single `AttributeArrayValueSlice` item into its owned form
+    /// (`AttributeArrayValueBytes`), borrowing data from the provided `Bytes` buffer when
+    /// necessary.
     pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<AttributeArrayValueBytes> {
         match self {
             AttributeArrayValue::String(value) => Some(AttributeArrayValue::String(
