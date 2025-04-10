@@ -118,7 +118,7 @@ mod tracing_integration_tests {
         let task_result = task::spawn_blocking(move || {
             let mut builder = TraceExporter::builder();
             builder
-                .set_url(url.to_string().as_ref())
+                .set_url(url.to_string().as_str())
                 .set_language("test-lang")
                 .set_language_version("2.0")
                 .set_language_interpreter_vendor("vendor")
@@ -126,7 +126,7 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
-                .set_query_params(format!("test_session_token={snapshot_name}").as_str());
+                .set_test_session_token(snapshot_name);
 
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
@@ -166,7 +166,7 @@ mod tracing_integration_tests {
         let task_result = task::spawn_blocking(move || {
             let mut builder = TraceExporter::builder();
             builder
-                .set_url(url.to_string().as_ref())
+                .set_url(url.to_string().as_str())
                 .set_language("test-lang")
                 .set_language_version("2.0")
                 .set_language_interpreter_vendor("vendor")
@@ -174,7 +174,7 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
-                .set_query_params(format!("test_session_token={}", snapshot_name).as_str())
+                .set_test_session_token(snapshot_name)
                 .set_input_format(TraceExporterInputFormat::V04)
                 .set_output_format(TraceExporterOutputFormat::V05);
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
@@ -208,7 +208,7 @@ mod tracing_integration_tests {
         let task_result = task::spawn_blocking(move || {
             let mut builder = TraceExporter::builder();
             builder
-                .set_url(url.to_string().as_ref())
+                .set_url(url.to_string().as_str())
                 .set_language("test-lang")
                 .set_language_version("2.0")
                 .set_language_interpreter_vendor("vendor")
@@ -216,7 +216,7 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
-                .set_query_params(format!("test_session_token={}", snapshot_name).as_str())
+                .set_test_session_token(snapshot_name)
                 .set_input_format(TraceExporterInputFormat::V05)
                 .set_output_format(TraceExporterOutputFormat::V05);
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
@@ -277,15 +277,15 @@ mod tracing_integration_tests {
         let task_result = task::spawn_blocking(move || {
             let mut builder = TraceExporter::builder();
             builder
-                .set_url(url.to_string().as_ref())
+                .set_url(url.to_string().as_str())
                 .set_language("test-lang")
                 .set_language_version("2.0")
                 .set_language_interpreter_vendor("vendor")
                 .set_language_interpreter("interpreter")
                 .set_tracer_version("1.0")
                 .set_env("test_env")
-                .set_service("test")
-                .set_query_params(format!("test_session_token={snapshot_name}").as_str());
+                .set_test_session_token(snapshot_name)
+                .set_service("test");
 
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 

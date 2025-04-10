@@ -9,6 +9,7 @@ use crate::{
     health_metrics, health_metrics::HealthMetric, span_concentrator::SpanConcentrator,
     stats_exporter,
 };
+use anyhow::Context;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use datadog_trace_utils::msgpack_decoder::{self, decode::error::DecodeError};
@@ -24,13 +25,12 @@ use dogstatsd_client::{new, Client, DogStatsDAction};
 use either::Either;
 use error::BuilderErrorKind;
 use http_body_util::BodyExt;
-use hyper::http::uri::PathAndQuery;
-use hyper::{header::CONTENT_TYPE, Method, Uri};
+use hyper::{header::CONTENT_TYPE, Method};
 use log::{error, info};
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::{borrow::Borrow, collections::HashMap, str::FromStr, time};
+use std::{borrow::Borrow, collections::HashMap, time};
 use tokio::{runtime::Runtime, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
@@ -67,56 +67,12 @@ pub enum TraceExporterOutputFormat {
 
 impl TraceExporterOutputFormat {
     /// Add the agent trace endpoint path to the URL.
-    fn add_path(&self, url: &Uri) -> Uri {
-        add_path(
-            url,
-            match self {
-                TraceExporterOutputFormat::V04 => "/v0.4/traces",
-                TraceExporterOutputFormat::V05 => "/v0.5/traces",
-            },
-        )
-    }
-
-    #[cfg(feature = "test-utils")]
-    // This function is only intended for testing purposes so we don't need to go to all the trouble
-    // of breaking the uri down and parsing it as rigorously as we would if we were using it in
-    // production code.
-    fn add_query(&self, url: &Uri, query: &str) -> Uri {
-        let url = format!("{}?{}", url, query);
-
-        // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-        #[allow(clippy::expect_used)]
-        Uri::from_str(&url).expect("Failed to create Uri from string")
-    }
-}
-
-/// Add a path to the URL.
-///
-/// # Arguments
-///
-/// * `url` - The URL to which the path is to be added.
-/// * `path` - The path to be added to the URL.
-fn add_path(url: &Uri, path: &str) -> Uri {
-    let p_and_q = url.path_and_query();
-
-    #[allow(clippy::unwrap_used)]
-    let new_p_and_q = match p_and_q {
-        Some(pq) => {
-            let p = pq.path();
-            let mut p = p.strip_suffix('/').unwrap_or(p).to_owned();
-            p.push_str(path);
-
-            PathAndQuery::from_str(p.as_str())
+    fn as_path(&self) -> &str {
+        match self {
+            TraceExporterOutputFormat::V04 => "/v0.4/traces",
+            TraceExporterOutputFormat::V05 => "/v0.5/traces",
         }
-        None => PathAndQuery::from_str(path),
     }
-    // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-    .unwrap();
-    let mut parts = url.clone().into_parts();
-    parts.path_and_query = Some(new_p_and_q);
-    // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-    #[allow(clippy::unwrap_used)]
-    Uri::from_parts(parts).unwrap()
 }
 
 #[derive(Clone, Default, Debug)]
@@ -208,8 +164,6 @@ pub struct TraceExporter {
     agent_info: AgentInfoArc,
     previous_info_state: ArcSwapOption<String>,
     telemetry: Option<TelemetryClient>,
-    #[cfg(feature = "test-utils")]
-    query_params: Option<String>,
 }
 
 impl TraceExporter {
@@ -331,7 +285,9 @@ impl TraceExporter {
                 bucket_size,
                 stats_concentrator.clone(),
                 self.metadata.clone(),
-                Endpoint::from_url(add_path(&self.endpoint.url, STATS_ENDPOINT)),
+                self.endpoint
+                    .try_clone_with_subpath(STATS_ENDPOINT)
+                    .context("failed to create Endpoint")?,
                 cancellation_token.clone(),
             );
 
@@ -442,7 +398,11 @@ impl TraceExporter {
         self.send_data_to_url(
             data,
             trace_count,
-            self.output_format.add_path(&self.endpoint.url),
+            self.endpoint
+                .try_clone_with_subpath(self.output_format.as_path())
+                .map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
+                })?,
         )
     }
 
@@ -450,15 +410,14 @@ impl TraceExporter {
         &self,
         data: &[u8],
         trace_count: usize,
-        uri: Uri,
+        endpoint: Endpoint,
     ) -> Result<String, TraceExporterError> {
         self.runtime.block_on(async {
-            let mut req_builder = hyper::Request::builder()
-                .uri(uri)
-                .header(
-                    hyper::header::USER_AGENT,
-                    concat!("Tracer/", env!("CARGO_PKG_VERSION")),
-                )
+            // SAFETY: the user agent is a valid header value
+            #[allow(clippy::unwrap_used)]
+            let mut req_builder = endpoint
+                .to_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))
+                .unwrap()
                 .method(Method::POST);
 
             let headers: HashMap<&'static str, String> = self.metadata.borrow().into();
@@ -656,10 +615,12 @@ impl TraceExporter {
         };
 
         let chunks = payload.size();
-        let endpoint = Endpoint {
-            url: self.get_agent_url(),
-            ..self.endpoint.clone()
-        };
+        let endpoint = self
+            .endpoint
+            .try_clone_with_subpath(self.output_format.as_path())
+            .map_err(|e| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
+            })?;
         let mut headers: HashMap<&str, String> = header_tags.into();
         headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
         headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
@@ -759,18 +720,6 @@ impl TraceExporter {
             }
         })
     }
-
-    fn get_agent_url(&self) -> Uri {
-        #[cfg(feature = "test-utils")]
-        {
-            if let Some(query) = &self.query_params {
-                let url = self.output_format.add_path(&self.endpoint.url);
-                return self.output_format.add_query(&url, query);
-            }
-        }
-
-        self.output_format.add_path(&self.endpoint.url)
-    }
 }
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
@@ -801,9 +750,6 @@ pub struct TraceExporterBuilder {
     dogstatsd_url: Option<String>,
     client_computed_stats: bool,
     client_computed_top_level: bool,
-    #[cfg(feature = "test-utils")]
-    /// not supported in production, but useful for interacting with the test-agent
-    query_params: Option<String>,
     // Stats specific fields
     /// A Some value enables stats-computation, None if it is disabled
     stats_bucket_size: Option<Duration>,
@@ -811,6 +757,7 @@ pub struct TraceExporterBuilder {
     compute_stats_by_span_kind: bool,
     peer_tags: Vec<String>,
     telemetry: Option<TelemetryConfig>,
+    test_session_token: Option<String>,
 }
 
 impl TraceExporterBuilder {
@@ -927,6 +874,12 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Set the session token
+    pub fn set_test_session_token(&mut self, test_session_token: &str) -> &mut Self {
+        self.test_session_token = Some(test_session_token.to_string());
+        self
+    }
+
     /// Enable stats computation on traces sent through this exporter
     pub fn enable_stats(&mut self, bucket_size: Duration) -> &mut Self {
         self.stats_bucket_size = Some(bucket_size);
@@ -958,14 +911,6 @@ impl TraceExporterBuilder {
         self
     }
 
-    #[cfg(feature = "test-utils")]
-    /// Set query parameters to be used in the URL when communicating with the test-agent. This is
-    /// not supported in production as the real agent doesn't accept query params.
-    pub fn set_query_params(&mut self, query_params: &str) -> &mut Self {
-        self.query_params = Some(query_params.to_owned());
-        self
-    }
-
     #[allow(missing_docs)]
     pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
@@ -992,11 +937,21 @@ impl TraceExporterBuilder {
             TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
         })?;
 
+        let endpoint = Endpoint {
+            url: agent_url,
+            test_token: self.test_session_token.map(|token| token.into()),
+            ..Default::default()
+        };
+
         let libdatadog_version = tag!("libdatadog_version", env!("CARGO_PKG_VERSION"));
         let mut stats = StatsComputationStatus::Disabled;
 
         let info_fetcher = AgentInfoFetcher::new(
-            Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT)),
+            endpoint
+                .try_clone_with_subpath(INFO_ENDPOINT)
+                .map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
+                })?,
             Duration::from_secs(5 * 60),
         );
 
@@ -1038,7 +993,7 @@ impl TraceExporterBuilder {
         }
 
         Ok(TraceExporter {
-            endpoint: Endpoint::from_url(agent_url),
+            endpoint,
             metadata: TracerMetadata {
                 tracer_version: self.tracer_version,
                 language_version: self.language_version,
@@ -1064,8 +1019,6 @@ impl TraceExporterBuilder {
             agent_info,
             previous_info_state: ArcSwapOption::new(None),
             telemetry,
-            #[cfg(feature = "test-utils")]
-            query_params: self.query_params,
         })
     }
 
@@ -1132,8 +1085,10 @@ mod tests {
 
         assert_eq!(
             exporter
-                .output_format
-                .add_path(&exporter.endpoint.url)
+                .endpoint
+                .try_clone_with_subpath(exporter.output_format.as_path())
+                .unwrap()
+                .url
                 .to_string(),
             "http://192.168.1.1:8127/v0.4/traces"
         );
@@ -1156,8 +1111,10 @@ mod tests {
 
         assert_eq!(
             exporter
-                .output_format
-                .add_path(&exporter.endpoint.url)
+                .endpoint
+                .try_clone_with_subpath(exporter.output_format.as_path())
+                .unwrap()
+                .url
                 .to_string(),
             "http://127.0.0.1:8126/v0.4/traces"
         );
