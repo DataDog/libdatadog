@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use cargo_metadata::MetadataCommand;
-use ddcommon::hyper_migration;
+use ddcommon::hyper_migration::{self, Body};
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::{Request, Response, Uri};
@@ -11,8 +11,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
-
-use ddcommon::hyper_migration::Body;
 use testcontainers::{
     core::{wait::HttpWaitStrategy, AccessMode, ContainerPort, Mount, WaitFor},
     runners::AsyncRunner,
@@ -447,7 +445,7 @@ impl DatadogTestAgent {
     /// # Arguments
     ///
     /// * `req` - A `Request<Body>` representing the HTTP request to be sent.
-    /// * `max_retries` - An `i32` specifying the maximum number of retry attempts.
+    /// * `max_attempts` - An `i32` specifying the maximum number of request attempts to be made.
     ///
     /// # Returns
     ///
@@ -459,7 +457,7 @@ impl DatadogTestAgent {
     async fn agent_request_with_retry(
         &self,
         req: Request<Body>,
-        max_retries: i32,
+        max_attempts: i32,
     ) -> anyhow::Result<Response<Incoming>> {
         let mut attempts = 1;
         let mut delay_ms = 100;
@@ -485,29 +483,22 @@ impl DatadogTestAgent {
                             "Request failed with status code: {}. Request attempt {} of {}",
                             response.status(),
                             attempts,
-                            max_retries
+                            max_attempts
                         );
-                        last_response = Some(Ok(response));
+                        last_response = Ok(response);
                     }
                 }
                 Err(e) => {
                     println!(
                         "Request failed with error: {}. Request attempt {} of {}",
-                        e, attempts, max_retries
+                        e, attempts, max_attempts
                     );
-                    last_response = Some(Err(e))
+                    last_response = Err(e)
                 }
             }
 
-            if attempts >= max_retries {
-                return match last_response {
-                    Some(Ok(resp)) => Ok(resp),
-                    Some(Err(e)) => Err(anyhow::Error::new(e)),
-                    None => Err(anyhow::anyhow!(
-                        "No response received after {} attempts",
-                        max_retries
-                    )),
-                };
+            if attempts >= max_attempts {
+                return Ok(last_response?);
             }
 
             tokio::time::sleep(Duration::from_millis(delay_ms)).await;
