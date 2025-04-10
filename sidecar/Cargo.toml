@@ -79,11 +79,12 @@ features = [
 ]
 version = "0.51.0"
 
+# simd-json v0.15 uses Rust 2024 Edition, so it needs Rust 1.85+.
 [target.'cfg(not(target_arch = "x86"))'.dependencies]
-simd-json = "0.14.1"
+simd-json = "=0.14"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.27.1", features = ["socket", "mman"] }
+nix = { version = "0.29", features = ["socket", "mman"] }
 sendfd = { version = "0.4", features = ["tokio"] }
 
 [target.'cfg(windows)'.dependencies]
