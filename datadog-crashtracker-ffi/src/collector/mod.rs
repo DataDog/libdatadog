@@ -16,6 +16,40 @@ pub use spans::*;
 
 #[no_mangle]
 #[must_use]
+/// Disables the crashtracker.
+/// Note that this does not restore the old signal handlers, but rather turns crash-tracking into a
+/// no-op, and then chains the old handlers.  This means that handlers registered after the
+/// crashtracker will continue to work as expected.
+///
+/// # Preconditions
+///   None
+/// # Safety
+///   None
+/// # Atomicity
+///   This function is atomic and idempotent.  Calling it multiple times is allowed.
+pub unsafe extern "C" fn ddog_crasht_disable() -> VoidResult {
+    datadog_crashtracker::disable_crashtracker();
+    VoidResult::Ok(true)
+}
+
+#[no_mangle]
+#[must_use]
+/// Enables the crashtracker, if had been previously disabled.
+/// If crashtracking has not been initialized, this function will have no effect.
+///
+/// # Preconditions
+///   None
+/// # Safety
+///   None
+/// # Atomicity
+///   This function is atomic and idempotent.  Calling it multiple times is allowed.
+pub unsafe extern "C" fn ddog_crasht_enable() -> VoidResult {
+    datadog_crashtracker::enable_crashtracker();
+    VoidResult::Ok(true)
+}
+
+#[no_mangle]
+#[must_use]
 #[named]
 /// Reinitialize the crash-tracking infrastructure after a fork.
 /// This should be one of the first things done after a fork, to minimize the

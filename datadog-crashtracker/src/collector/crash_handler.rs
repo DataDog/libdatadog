@@ -15,7 +15,7 @@ use nix::sys::signal;
 use std::io::Write;
 use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
-use std::sync::atomic::{AtomicPtr, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
 use std::time::Instant;
 
 // Note that this file makes use the following async-signal safe functions in a signal handler.
@@ -100,10 +100,44 @@ pub(crate) extern "C" fn handle_posix_sigaction(
     unsafe { chain_signal_handler(signum, sig_info, ucontext) };
 }
 
+static CRASHTRACKER_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Disables the crashtracker.
+/// Note that this does not restore the old signal handlers, but rather turns crash-tracking into a
+/// no-op, and then chains the old handlers.  This means that handlers registered after the
+/// crashtracker will continue to work as expected.
+///
+/// # Preconditions
+///   None
+/// # Safety
+///   None
+/// # Atomicity
+///   This function is atomic and idempotent.  Calling it multiple times is allowed.
+pub fn disable_crashtracker() {
+    CRASHTRACKER_ENABLED.store(false, SeqCst);
+}
+
+/// Enables the crashtracker, if had been previously disabled.
+/// If crashtracking has not been initialized, this function will have no effect.
+///
+/// # Preconditions
+///   None
+/// # Safety
+///   None
+/// # Atomicity
+///   This function is atomic and idempotent.  Calling it multiple times is allowed.
+pub fn enable_crashtracker() {
+    CRASHTRACKER_ENABLED.store(true, SeqCst);
+}
+
 fn handle_posix_signal_impl(
     sig_info: *const siginfo_t,
     ucontext: *const ucontext_t,
 ) -> anyhow::Result<()> {
+    if !CRASHTRACKER_ENABLED.load(SeqCst) {
+        return Ok(());
+    }
+
     // If this is a SIGSEGV signal, it could be called due to a stack overflow. In that case, since
     // this signal allocates to the stack and cannot guarantee it is running without SA_NODEFER, it
     // is possible that we will re-emit the signal. Contemporary unices handle this just fine (no
