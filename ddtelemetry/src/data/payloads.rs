@@ -25,6 +25,7 @@ pub struct Configuration {
     pub name: String,
     pub value: String,
     pub origin: ConfigurationOrigin,
+    pub config_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]

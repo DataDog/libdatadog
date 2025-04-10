@@ -108,6 +108,7 @@ pub unsafe extern "C" fn ddog_telemetry_builder_with_config(
         name,
         value,
         origin,
+        config_id: None,
     });
     MaybeError::None
 }

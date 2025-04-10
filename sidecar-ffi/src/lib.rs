@@ -390,6 +390,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
         name: config_key.to_utf8_lossy().into_owned(),
         value: config_value.to_utf8_lossy().into_owned(),
         origin,
+        config_id: None,
     });
     try_c!(blocking::enqueue_actions(
         transport,
