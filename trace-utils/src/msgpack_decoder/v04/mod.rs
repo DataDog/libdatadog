@@ -163,10 +163,8 @@ mod tests {
     #[test]
     fn test_empty_array() {
         let encoded_data = vec![0x90];
-        let encoded_data =
-            unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(encoded_data.as_ref()) };
-        let bytes = tinybytes::Bytes::from_static(encoded_data);
-        let (_decoded_traces, decoded_size) = from_bytes(bytes).expect("Decoding failed");
+        let slice = encoded_data.as_ref();
+        let (_decoded_traces, decoded_size) = from_slice(slice).expect("Decoding failed");
 
         assert_eq!(0, decoded_size);
     }
@@ -501,11 +499,9 @@ mod tests {
         let mut encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
         // This changes the map size from 11 to 12 to trigger an InvalidMarkerRead error.
         encoded_data[2] = 0x8c;
-        let encoded_data =
-            unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(encoded_data.as_ref()) };
-        let bytes = tinybytes::Bytes::from_static(encoded_data);
+        let slice = encoded_data.as_ref();
 
-        let result = from_bytes(bytes);
+        let result = from_slice(slice);
         assert_eq!(
             Err(DecodeError::InvalidFormat(
                 "Expected at least bytes 1, but only got 0 (pos 0)".to_owned()
@@ -524,11 +520,9 @@ mod tests {
             ..Default::default()
         };
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-        let encoded_data =
-            unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(encoded_data.as_ref()) };
-        let bytes = tinybytes::Bytes::from_static(encoded_data);
+        let slice = encoded_data.as_ref();
 
-        let result = from_bytes(bytes);
+        let result = from_slice(slice);
         assert_eq!(
             Err(DecodeError::Utf8Error(
                 "invalid utf-8 sequence of 1 bytes from index 1".to_owned()
@@ -544,12 +538,9 @@ mod tests {
         // This changes the entire payload to a map with 12 keys in order to trigger an error when
         // reading the array len of traces
         encoded_data[0] = 0x8c;
-        let encoded_data =
-            unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(encoded_data.as_ref()) };
-        let bytes = tinybytes::Bytes::from_static(encoded_data);
+        let slice = encoded_data.as_ref();
 
-        let result = from_bytes(bytes);
-
+        let result = from_slice(slice);
         assert_eq!(
             Err(DecodeError::InvalidFormat(
                 "Unable to read array len for trace count".to_string()
@@ -565,13 +556,9 @@ mod tests {
         // This changes the entire payload to a map with 12 keys in order to trigger an error when
         // reading the array len of spans
         encoded_data[1] = 0x8c;
+        let slice = encoded_data.as_ref();
 
-        let encoded_data =
-            unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(encoded_data.as_ref()) };
-        let bytes = tinybytes::Bytes::from_static(encoded_data);
-
-        let result = from_bytes(bytes);
-
+        let result = from_slice(slice);
         assert_eq!(
             Err(DecodeError::InvalidFormat(
                 "Unable to read array len for span count".to_owned()
@@ -587,12 +574,9 @@ mod tests {
         // Modify the encoded data to cause a type mismatch by changing the marker for the `name`
         // field to an integer marker
         encoded_data[3] = 0x01;
-        let encoded_data =
-            unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(encoded_data.as_ref()) };
-        let bytes = tinybytes::Bytes::from_static(encoded_data);
+        let slice = encoded_data.as_ref();
 
-        let result = from_bytes(bytes);
-
+        let result = from_slice(slice);
         assert_eq!(
             Err(DecodeError::InvalidType(
                 "Type mismatch at marker FixPos(1)".to_owned()

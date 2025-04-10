@@ -103,7 +103,7 @@ where
     pub meta: HashMap<T, T>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub metrics: HashMap<T, f64>,
-    // TODO: Replace `Bytes` with a wrapper that borrows the underlying
+    // TODO: APMSP-1941 - Replace `Bytes` with a wrapper that borrows the underlying
     // slice and serializes to bytes in MessagePack.
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub meta_struct: HashMap<T, Bytes>,

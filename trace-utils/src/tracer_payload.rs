@@ -378,7 +378,6 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
     /// ```
     fn try_into(self) -> Result<TracerPayloadCollection, Self::Error> {
         match self.encoding_type {
-            // The goal here is to ultimately replace the usage of `from_bytes` with `from_slice`.
             TraceEncoding::V04 => {
                 let (traces, size) = match msgpack_decoder::v04::from_bytes(self.data) {
                     Ok(res) => res,

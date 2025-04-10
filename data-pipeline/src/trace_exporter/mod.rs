@@ -229,7 +229,6 @@ impl TraceExporter {
 
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
-            // The goal here is to ultimately replace the usage of `from_bytes` with `from_slice`.
             TraceExporterInputFormat::V04 => match msgpack_decoder::v04::from_bytes(data) {
                 Ok((traces, _)) => self.send_deser_ser(TraceCollection::TraceChunk(traces)),
                 Err(e) => Err(TraceExporterError::Deserialization(e)),
