@@ -3,9 +3,10 @@
 use super::crash_handler::handle_posix_sigaction;
 use crate::shared::configuration::CrashtrackerConfiguration;
 use crate::signal_from_signum;
+use ddcommon::unix_utils::terminate;
 use libc::{
-    _exit, c_void, mmap, sigaltstack, siginfo_t, EXIT_FAILURE, MAP_ANON, MAP_FAILED, MAP_PRIVATE,
-    PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ,
+    c_void, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE, PROT_READ,
+    PROT_WRITE, SIGSTKSZ,
 };
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler};
 use std::ptr;
@@ -94,11 +95,11 @@ pub(crate) unsafe fn chain_signal_handler(
 ) {
     if !INIT_FINISHED.load(SeqCst) {
         eprintln!("Crashed during signal handler setup, cannot chain {signum}, aborting");
-        _exit(EXIT_FAILURE)
+        terminate()
     }
     if signum < 0 || signum >= MAX_SIGNALS as i32 {
         eprintln!("Unexpected value for {signum}, cannot chain, aborting");
-        _exit(EXIT_FAILURE)
+        terminate()
     }
     // SAFETY: All accesses to `HANDLERS` are guarded by `INIT_STARTED` and `INIT_FINISHED`.
     // Since `INIT_FINISHED` was guaranteed to be true, we know that no code will ever mutate the
@@ -114,8 +115,7 @@ pub(crate) unsafe fn chain_signal_handler(
                 // In the case of a default handler, we want to invoke it so that
                 // the core-dump can be generated.  Restoring the handler then
                 // re-raising the signal accomplishes that.
-                unsafe { signal::sigaction(*signal, sigaction) }
-                    .unwrap_or_else(|_| _exit(EXIT_FAILURE));
+                unsafe { signal::sigaction(*signal, sigaction) }.unwrap_or_else(|_| terminate());
                 // Signals are only delivered once.
                 // In the case where we were invoked because of a crash, returning
                 // is technically UB but in practice re-invokes the crashing instr
@@ -130,7 +130,7 @@ pub(crate) unsafe fn chain_signal_handler(
         }
     } else {
         eprintln!("Missing chain handler for {signum}, cannot chain, aborting");
-        _exit(EXIT_FAILURE)
+        terminate()
     }
 }
 

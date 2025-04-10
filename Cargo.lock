@@ -1869,6 +1869,7 @@ dependencies = [
  "log",
  "maplit",
  "memfd",
+ "nix",
  "pin-project",
  "rand 0.8.5",
  "regex",
