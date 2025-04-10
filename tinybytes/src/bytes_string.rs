@@ -83,6 +83,25 @@ impl BytesString {
         }
     }
 
+    /// Creates a `Option<BytesString>` from a string slice within the given buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - A `tinybytes::Bytes` instance that will be converted into a `BytesString`.
+    /// * `slice` - The string slice pointing into the given bytes that will form the `BytesString`.
+    ///
+    /// # Return
+    ///
+    /// Returns `None` if `slice` is not pointing into `bytes`.
+    pub fn try_from_bytes_slice(bytes: &Bytes, slice: &str) -> Option<Self> {
+        // SAFETY: This is safe as a str slice is definitely a valid UTF-8 slice.
+        unsafe {
+            Some(Self::from_bytes_unchecked(
+                bytes.slice_ref(slice.as_bytes())?,
+            ))
+        }
+    }
+
     /// Creates a `BytesString` from a `tinybytes::Bytes` instance without validating the bytes.
     ///
     /// This function does not perform any validation on the provided bytes, and assumes that the

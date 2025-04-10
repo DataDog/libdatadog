@@ -379,7 +379,7 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
     fn try_into(self) -> Result<TracerPayloadCollection, Self::Error> {
         match self.encoding_type {
             TraceEncoding::V04 => {
-                let (traces, size) = match msgpack_decoder::v04::from_slice(self.data) {
+                let (traces, size) = match msgpack_decoder::v04::from_bytes(self.data) {
                     Ok(res) => res,
                     Err(e) => {
                         anyhow::bail!("Error deserializing trace from request body: {e}")
@@ -399,7 +399,7 @@ impl<'a, T: TraceChunkProcessor + 'a> TryInto<TracerPayloadCollection>
                 )?)
             },
             TraceEncoding::V05 => {
-                let (traces, size) = match msgpack_decoder::v05::from_slice(self.data) {
+                let (traces, size) = match msgpack_decoder::v05::from_bytes(self.data) {
                     Ok(res) => res,
                     Err(e) => {
                         anyhow::bail!("Error deserializing trace from request body: {e}")
