@@ -1,16 +1,16 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use cargo_metadata::MetadataCommand;
+use ddcommon::hyper_migration::{self, Body};
+use http_body_util::BodyExt;
+use hyper::body::Incoming;
+use hyper::{Request, Response, Uri};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
-
-use cargo_metadata::MetadataCommand;
-use ddcommon::hyper_migration;
-use http_body_util::BodyExt;
-use hyper::Uri;
 use testcontainers::{
     core::{wait::HttpWaitStrategy, AccessMode, ContainerPort, Mount, WaitFor},
     runners::AsyncRunner,
@@ -282,11 +282,21 @@ impl DatadogTestAgent {
     ///
     /// * `snapshot_token` - A string slice that holds the snapshot token.
     pub async fn assert_snapshot(&self, snapshot_token: &str) {
-        let client = hyper_migration::new_default_client();
         let uri = self
             .get_uri_for_endpoint("test/session/snapshot", Some(snapshot_token))
             .await;
-        let res = client.get(uri).await.expect("Request failed");
+
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .body(Body::empty())
+            .expect("Failed to create request");
+
+        let res = self
+            .agent_request_with_retry(req, 5)
+            .await
+            .expect("request failed");
+
         let status_code = res.status();
         let body_bytes = res
             .into_body()
@@ -329,10 +339,18 @@ impl DatadogTestAgent {
     /// }
     /// ```
     pub async fn get_sent_traces(&self) -> Vec<serde_json::Value> {
-        let client = hyper_migration::new_default_client();
         let uri = self.get_uri_for_endpoint("test/traces", None).await;
 
-        let res = client.get(uri).await.expect("Request failed");
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .body(Body::empty())
+            .expect("Failed to create request");
+
+        let res = self
+            .agent_request_with_retry(req, 5)
+            .await
+            .expect("request failed");
 
         let body_bytes = res
             .into_body()
@@ -383,7 +401,7 @@ impl DatadogTestAgent {
         session_token: &str,
         agent_sample_rates_by_service: Option<&str>,
     ) {
-        let client = hyper_migration::new_default_client();
+        // let client = hyper_migration::new_default_client();
 
         let mut query_params_map = HashMap::new();
         query_params_map.insert(SESSION_TEST_TOKEN_QUERY_PARAM_KEY, session_token);
@@ -395,7 +413,16 @@ impl DatadogTestAgent {
             .get_uri_for_endpoint_and_params(SESSION_START_ENDPOINT, query_params_map)
             .await;
 
-        let res = client.get(uri).await.expect("Request failed");
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .body(Body::empty())
+            .expect("Failed to create request");
+
+        let res = self
+            .agent_request_with_retry(req, 5)
+            .await
+            .expect("request failed");
 
         assert_eq!(
             res.status(),
@@ -404,5 +431,79 @@ impl DatadogTestAgent {
             SESSION_START_ENDPOINT,
             res.status()
         );
+    }
+
+    /// Sends an HTTP request to the Datadog Test Agent with rudimentary retry logic.
+    ///
+    /// In rare situations when tests are running on CI, the container running the test agent may
+    /// reset the network connection even after ready states pass. Instead of adding arbitrary
+    /// sleeps to these tests, we can just retry the request. This function should not be used for
+    /// requests that are actually being tested, like sending payloads to the test agent. It should
+    /// only be used for requests to setup the test. Examples of when you would use this
+    /// function are for starting sessions or getting snapshot results.
+    ///
+    /// # Arguments
+    ///
+    /// * `req` - A `Request<Body>` representing the HTTP request to be sent.
+    /// * `max_attempts` - An `i32` specifying the maximum number of request attempts to be made.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Response<Incoming>)` - If the request succeeds. The status may or may not be
+    ///   successful.
+    /// * `Err(anyhow::Error)` - If all retry attempts fail or an error occurs during the request.
+    ///
+    /// ```
+    async fn agent_request_with_retry(
+        &self,
+        req: Request<Body>,
+        max_attempts: i32,
+    ) -> anyhow::Result<Response<Incoming>> {
+        let mut attempts = 1;
+        let mut delay_ms = 100;
+        let (parts, body) = req.into_parts();
+        let body_bytes = body
+            .collect()
+            .await
+            .expect("Failed to collect body")
+            .to_bytes();
+        let mut last_response;
+
+        loop {
+            let client = hyper_migration::new_default_client();
+            let req = Request::from_parts(parts.clone(), Body::from_bytes(body_bytes.clone()));
+            let res = client.request(req).await;
+
+            match res {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        return Ok(response);
+                    } else {
+                        println!(
+                            "Request failed with status code: {}. Request attempt {} of {}",
+                            response.status(),
+                            attempts,
+                            max_attempts
+                        );
+                        last_response = Ok(response);
+                    }
+                }
+                Err(e) => {
+                    println!(
+                        "Request failed with error: {}. Request attempt {} of {}",
+                        e, attempts, max_attempts
+                    );
+                    last_response = Err(e)
+                }
+            }
+
+            if attempts >= max_attempts {
+                return Ok(last_response?);
+            }
+
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            delay_ms *= 2;
+            attempts += 1;
+        }
     }
 }
