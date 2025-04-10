@@ -3,10 +3,10 @@
 
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::map::{read_map, read_map_len};
-use crate::msgpack_decoder::decode::string::{handle_null_marker, read_string_bytes};
+use crate::msgpack_decoder::decode::string::{handle_null_marker, read_string_ref};
 use rmp::decode;
 use std::collections::HashMap;
-use tinybytes::{Bytes, BytesString};
+use tinybytes::Bytes;
 
 fn read_byte_array_len(buf: &mut &[u8]) -> Result<u32, DecodeError> {
     decode::read_bin_len(buf).map_err(|_| {
@@ -15,27 +15,28 @@ fn read_byte_array_len(buf: &mut &[u8]) -> Result<u32, DecodeError> {
 }
 
 #[inline]
-pub fn read_meta_struct(buf: &mut Bytes) -> Result<HashMap<BytesString, Bytes>, DecodeError> {
-    if let Some(empty_map) = handle_null_marker(buf, HashMap::default) {
-        return Ok(empty_map);
+pub fn read_meta_struct<'a>(buf: &mut &'a [u8]) -> Result<HashMap<&'a str, Bytes>, DecodeError> {
+    if handle_null_marker(buf) {
+        return Ok(HashMap::default());
     }
 
-    fn read_meta_struct_pair(buf: &mut Bytes) -> Result<(BytesString, Bytes), DecodeError> {
-        let key = read_string_bytes(buf)?;
-        let byte_array_len = read_byte_array_len(unsafe { buf.as_mut_slice() })? as usize;
+    fn read_meta_struct_pair<'a>(buf: &mut &'a [u8]) -> Result<(&'a str, Bytes), DecodeError> {
+        let key = read_string_ref(buf)?;
+        let byte_array_len = read_byte_array_len(buf)? as usize;
 
-        let data = buf
-            .slice_ref(&buf[0..byte_array_len])
-            .ok_or_else(|| DecodeError::InvalidFormat("Invalid data length".to_string()))?;
-        unsafe {
-            // SAFETY: forwarding the buffer requires that buf is borrowed from static.
-            *buf.as_mut_slice() = &buf.as_mut_slice()[byte_array_len..];
+        let slice = buf.get(0..byte_array_len);
+        if let Some(slice) = slice {
+            let data = Bytes::copy_from_slice(slice);
+            *buf = &buf[byte_array_len..];
+            Ok((key, data))
+        } else {
+            Err(DecodeError::InvalidFormat(
+                "Invalid data length".to_string(),
+            ))
         }
-
-        Ok((key, data))
     }
 
-    let len = read_map_len(unsafe { buf.as_mut_slice() })?;
+    let len = read_map_len(buf)?;
     read_map(len, buf, read_meta_struct_pair)
 }
 
@@ -47,8 +48,9 @@ mod tests {
     fn read_meta_test() {
         let meta = HashMap::from([("key".to_string(), Bytes::from(vec![1, 2, 3, 4]))]);
 
-        let mut bytes = Bytes::from(rmp_serde::to_vec_named(&meta).unwrap());
-        let res = read_meta_struct(&mut bytes).unwrap();
+        let serialized = rmp_serde::to_vec_named(&meta).unwrap();
+        let mut slice = serialized.as_ref();
+        let res = read_meta_struct(&mut slice).unwrap();
 
         assert_eq!(res.get("key").unwrap().to_vec(), vec![1, 2, 3, 4]);
     }
@@ -57,8 +59,9 @@ mod tests {
     fn read_meta_wrong_family_test() {
         let meta = HashMap::from([("key".to_string(), vec![1, 2, 3, 4])]);
 
-        let mut bytes = Bytes::from(rmp_serde::to_vec_named(&meta).unwrap());
-        let res = read_meta_struct(&mut bytes);
+        let serialized = rmp_serde::to_vec_named(&meta).unwrap();
+        let mut slice = serialized.as_ref();
+        let res = read_meta_struct(&mut slice);
 
         assert!(res.is_err());
         matches!(res.unwrap_err(), DecodeError::InvalidFormat(_));
