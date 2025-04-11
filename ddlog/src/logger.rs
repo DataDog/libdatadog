@@ -1,11 +1,14 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use ddcommon_ffi::{CharSlice, Error};
 use std::cmp::PartialOrd;
 use std::sync::Arc;
 use tracing::{debug, error, info, Event, Level as TracingLevel};
 use tracing_core::Field;
-use tracing_subscriber::{Registry, Layer, reload};
-use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::filter::LevelFilter;
-use ddcommon_ffi::{CharSlice, Error};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::{reload, Layer, Registry};
 
 /// Represents the severity levels for logging.
 /// ```
@@ -87,7 +90,8 @@ where
                 if field.name() == "message" {
                     self.message = Some(format!("{value:?}"));
                 } else {
-                    self.fields.push((field.name().to_string(), format!("{value:?}")));
+                    self.fields
+                        .push((field.name().to_string(), format!("{value:?}")));
                 }
             }
         }
@@ -95,7 +99,8 @@ where
         let mut visitor = Visitor::default();
         event.record(&mut visitor);
 
-        let fields = visitor.fields
+        let fields = visitor
+            .fields
             .iter()
             .map(|(key, value)| LogField {
                 key: CharSlice::from(key.as_str()),
@@ -194,10 +199,10 @@ pub fn logger_set_log_level(log_level: LogLevel) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use ddcommon_ffi::slice::AsBytes;
     use std::sync::{Mutex, Once};
     use tracing::warn;
-    use ddcommon_ffi::slice::AsBytes;
-    use super::*;
 
     // Store owned events rather than borrowed ones
     #[derive(Debug, Clone)]
@@ -225,12 +230,17 @@ mod tests {
         let stored = StoredEvent {
             level: event.level,
             message: event.message.try_to_utf8().unwrap().to_string(),
-            fields: event.fields.as_slice().iter().map(|f| {
-                (
-                    f.key.try_to_utf8().unwrap().to_string(),
-                    f.value.try_to_utf8().unwrap().to_string()
-                )
-            }).collect(),
+            fields: event
+                .fields
+                .as_slice()
+                .iter()
+                .map(|f| {
+                    (
+                        f.key.try_to_utf8().unwrap().to_string(),
+                        f.value.try_to_utf8().unwrap().to_string(),
+                    )
+                })
+                .collect(),
         };
         events.push(stored);
     }
@@ -263,15 +273,27 @@ mod tests {
         assert_eq!(captured[0].level, LogLevel::Info);
         assert_eq!(captured[0].message.as_str(), "Info captured");
         assert_eq!(captured[0].fields.len(), 2);
-        assert!(captured[0].fields.iter().any(|(k, v)| k == "request_id" && v == "\"req2\""));
-        assert!(captured[0].fields.iter().any(|(k, v)| k == "status" && v == "200"));
+        assert!(captured[0]
+            .fields
+            .iter()
+            .any(|(k, v)| k == "request_id" && v == "\"req2\""));
+        assert!(captured[0]
+            .fields
+            .iter()
+            .any(|(k, v)| k == "status" && v == "200"));
 
         // Second message (Error)
         assert_eq!(captured[1].level, LogLevel::Error);
         assert_eq!(captured[1].message.as_str(), "Error captured");
         assert_eq!(captured[1].fields.len(), 2);
-        assert!(captured[1].fields.iter().any(|(k, v)| k == "request_id" && v == "\"req5\""));
-        assert!(captured[1].fields.iter().any(|(k, v)| k == "error_code" && v == "404"));
+        assert!(captured[1]
+            .fields
+            .iter()
+            .any(|(k, v)| k == "request_id" && v == "\"req5\""));
+        assert!(captured[1]
+            .fields
+            .iter()
+            .any(|(k, v)| k == "error_code" && v == "404"));
 
         // This should error
         assert!(logger_init(LogLevel::Debug, test_callback).is_err());

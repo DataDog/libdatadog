@@ -1,3 +1,6 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use ddcommon_ffi::Error;
 use ddlog::logger::{logger_init, logger_set_log_level, LogCallback, LogLevel};
 
@@ -31,6 +34,9 @@ pub extern "C" fn ddog_logger_set_log_level(log_level: LogLevel) -> Option<Box<E
 ///
 /// Returns `None` on success, or a boxed `Error` if initialization fails.
 #[no_mangle]
-pub extern "C" fn ddog_logger_init(log_level: LogLevel, callback: LogCallback) -> Option<Box<Error>> {
+pub extern "C" fn ddog_logger_init(
+    log_level: LogLevel,
+    callback: LogCallback,
+) -> Option<Box<Error>> {
     logger_init(log_level, callback).err().map(Box::new)
 }
