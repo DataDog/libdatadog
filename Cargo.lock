@@ -1903,6 +1903,7 @@ name = "ddlog"
 version = "17.0.0"
 dependencies = [
  "ddcommon-ffi",
+ "once_cell",
  "tracing",
  "tracing-core",
  "tracing-subscriber",

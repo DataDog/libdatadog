@@ -201,7 +201,8 @@ pub fn logger_set_log_level(log_level: LogLevel) -> Result<(), Error> {
 mod tests {
     use super::*;
     use ddcommon_ffi::slice::AsBytes;
-    use std::sync::{Mutex};
+    use once_cell::sync::Lazy;
+    use std::sync::Mutex;
     use tracing::{debug, error, info, warn};
 
     // Store owned events rather than borrowed ones
@@ -212,18 +213,17 @@ mod tests {
         fields: Vec<(String, String)>,
     }
 
-    static mut TEST_EVENTS: Option<Arc<Mutex<Vec<StoredEvent>>>> = None;
+    static TEST_EVENTS: Lazy<Arc<Mutex<Vec<StoredEvent>>>> =
+        Lazy::new(|| Arc::new(Mutex::new(Vec::new())));
 
     fn setup_test_events() -> Arc<Mutex<Vec<StoredEvent>>> {
-        let events = Arc::new(Mutex::new(Vec::new()));
-        unsafe {
-            TEST_EVENTS = Some(events.clone());
-        }
+        let events = TEST_EVENTS.clone();
+        events.lock().unwrap().clear(); // Clear any existing events
         events
     }
 
     extern "C" fn test_callback(event: LogEvent) {
-        let events = unsafe { TEST_EVENTS.as_ref().unwrap() };
+        let events = TEST_EVENTS.clone();
         let mut events = events.lock().unwrap();
 
         // Convert to owned event before storing
