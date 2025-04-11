@@ -64,7 +64,7 @@ COPY --from=alpine_cbindgen /root/.cargo/bin/bindgen /usr/local/bin/bindgen
 ### Cache cargo metadata between builds
 FROM debian_builder_platform_native AS ffi_build_platform_agnostic_cache_build
 # update cache cargo.io metadata
-RUN cargo search nothing --limit 1 
+RUN cargo search nothing --limit 1
 
 # create stubs to cache compilation of dependendencies
 COPY [ "Cargo.lock", "Cargo.toml", "./"]
@@ -73,9 +73,11 @@ COPY "build-common/Cargo.toml" "build-common/"
 COPY "crashtracker/Cargo.toml" "crashtracker/"
 COPY "crashtracker-ffi/Cargo.toml" "crashtracker-ffi/"
 COPY "ddcommon/Cargo.toml" "ddcommon/"
-COPY "ddcommon-ffi/Cargo.toml" "ddcommon-ffi/" 
+COPY "ddcommon-ffi/Cargo.toml" "ddcommon-ffi/"
 COPY "ddtelemetry/Cargo.toml" "ddtelemetry/"
 COPY "ddtelemetry-ffi/Cargo.toml" "ddtelemetry-ffi/"
+COPY "ddlog/Cargo.toml" "ddlog/"
+COPY "ddlog-ffi/Cargo.toml" "ddlog-ffi/"
 COPY "ddsketch/Cargo.toml" "ddsketch/"
 COPY "dogstatsd-client/Cargo.toml" "dogstatsd-client/"
 COPY "dynamic-configuration/Cargo.toml" "dynamic-configuration/"
