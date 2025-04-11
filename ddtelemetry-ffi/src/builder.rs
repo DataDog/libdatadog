@@ -101,14 +101,20 @@ pub unsafe extern "C" fn ddog_telemetry_builder_with_config(
     name: ffi::CharSlice,
     value: ffi::CharSlice,
     origin: data::ConfigurationOrigin,
+    config_id: ffi::CharSlice,
 ) -> MaybeError {
     let name = name.to_utf8_lossy().into_owned();
     let value = value.to_utf8_lossy().into_owned();
+    let config_id = if config_id.is_empty() {
+        None
+    } else {
+        Some(config_id.to_utf8_lossy().into_owned())
+    };
     builder.configurations.insert(data::Configuration {
         name,
         value,
         origin,
-        config_id: None,
+        config_id,
     });
     MaybeError::None
 }
