@@ -201,7 +201,7 @@ pub fn logger_set_log_level(log_level: LogLevel) -> Result<(), Error> {
 mod tests {
     use super::*;
     use ddcommon_ffi::slice::AsBytes;
-    use std::sync::{Mutex, Once};
+    use std::sync::{Mutex};
     use tracing::{debug, error, info, warn};
 
     // Store owned events rather than borrowed ones
