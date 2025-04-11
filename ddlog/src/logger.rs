@@ -4,7 +4,7 @@
 use ddcommon_ffi::{CharSlice, Error};
 use std::cmp::PartialOrd;
 use std::sync::Arc;
-use tracing::{debug, error, info, Event, Level as TracingLevel};
+use tracing::{Event, Level as TracingLevel};
 use tracing_core::Field;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -122,12 +122,12 @@ where
 
 impl From<&TracingLevel> for LogLevel {
     fn from(level: &TracingLevel) -> Self {
-        match level {
-            &TracingLevel::TRACE => LogLevel::Trace,
-            &TracingLevel::DEBUG => LogLevel::Debug,
-            &TracingLevel::INFO => LogLevel::Info,
-            &TracingLevel::WARN => LogLevel::Warn,
-            &TracingLevel::ERROR => LogLevel::Error,
+        match *level {
+            TracingLevel::TRACE => LogLevel::Trace,
+            TracingLevel::DEBUG => LogLevel::Debug,
+            TracingLevel::INFO => LogLevel::Info,
+            TracingLevel::WARN => LogLevel::Warn,
+            TracingLevel::ERROR => LogLevel::Error,
         }
     }
 }
@@ -202,7 +202,7 @@ mod tests {
     use super::*;
     use ddcommon_ffi::slice::AsBytes;
     use std::sync::{Mutex, Once};
-    use tracing::warn;
+    use tracing::{debug, error, info, warn};
 
     // Store owned events rather than borrowed ones
     #[derive(Debug, Clone)]
