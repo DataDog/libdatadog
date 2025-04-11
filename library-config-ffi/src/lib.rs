@@ -43,7 +43,9 @@ impl LibraryConfig {
                     name: c.name,
                     value: ffi::CString::from_std(std::ffi::CString::new(c.value)?),
                     source: c.source,
-                    config_id: ffi::CString::from_std(std::ffi::CString::new(c.config_id.unwrap_or_default())?),
+                    config_id: ffi::CString::from_std(std::ffi::CString::new(
+                        c.config_id.unwrap_or_default(),
+                    )?),
                 })
             })
             .collect::<Result<Vec<_>, std::ffi::NulError>>()?;
