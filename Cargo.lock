@@ -1324,7 +1324,6 @@ dependencies = [
  "httpmock",
  "hyper 1.6.0",
  "hyper-util",
- "log",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1334,6 +1333,7 @@ dependencies = [
  "tinybytes",
  "tokio",
  "tokio-util",
+ "tracing",
  "uuid",
 ]
 
@@ -1401,7 +1401,6 @@ dependencies = [
  "ddcommon-ffi",
  "function_name",
  "libc",
- "log",
  "serde",
  "serde_json",
  "symbolic-common",
@@ -1831,7 +1830,6 @@ dependencies = [
  "httpmock",
  "hyper 1.6.0",
  "hyper-http-proxy",
- "log",
  "prost 0.11.9",
  "rand 0.8.5",
  "rmp",
@@ -1843,6 +1841,7 @@ dependencies = [
  "testcontainers",
  "tinybytes",
  "tokio",
+ "tracing",
  "urlencoding",
  "zstd",
 ]
@@ -1866,7 +1865,6 @@ dependencies = [
  "hyper-util",
  "indexmap 2.6.0",
  "libc",
- "log",
  "maplit",
  "memfd",
  "nix",
