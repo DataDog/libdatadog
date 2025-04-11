@@ -39,6 +39,7 @@ members = [
   "dogstatsd-client",
   "library-config-ffi",
   "library-config",
+  "ddlog-ffi", "ddlog",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2

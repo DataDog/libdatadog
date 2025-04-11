@@ -1,0 +1,10 @@
+[package]
+name = "ddlog-ffi"
+rust-version.workspace = true
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+ddlog = { path = "../ddlog" }
+ddcommon-ffi = { path = "../ddcommon-ffi" }

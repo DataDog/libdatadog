@@ -1,0 +1,13 @@
+[package]
+name = "ddlog"
+description = "A bridge from Rust to {language} logging"
+rust-version.workspace = true
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+tracing = { version = "0.1", default-features = false }
+tracing-subscriber = { version = "0.3" }
+tracing-core = { version = "0.1", default-features = false }
