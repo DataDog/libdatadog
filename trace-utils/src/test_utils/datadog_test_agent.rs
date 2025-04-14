@@ -493,7 +493,6 @@ impl DatadogTestAgent {
                     }
                 }
                 Err(e) => {
-                    // Try direct downcast
 
                     let hyper_err = (&e as &dyn Any).downcast_ref::<hyper::Error>();
 
@@ -501,18 +500,44 @@ impl DatadogTestAgent {
                         "Request failed with error: {}. \n Source: {:?}, Request attempt {} of {}",
                         e, hyper_err, attempts, max_attempts
                     );
-
+                    
                     last_response = Err(e)
                 }
             }
 
             if attempts >= max_attempts {
+                self.print_container_logs().await;
                 return Ok(last_response?);
             }
 
             tokio::time::sleep(Duration::from_millis(delay_ms)).await;
             delay_ms *= 2;
             attempts += 1;
+        }
+    }
+
+    pub async fn print_container_logs(&self) {
+        match self.container.stdout_to_vec().await {
+            Ok(stdout_bytes) => {
+                // Convert bytes to string, replacing invalid UTF-8 sequences
+                let logs = String::from_utf8_lossy(&stdout_bytes);
+                println!("Test agent container stdout logs:");
+                println!("{}", logs);
+            },
+            Err(err) => {
+                println!("Failed to get container stdout: {}", err);
+            }
+        }
+
+        match self.container.stderr_to_vec().await {
+            Ok(stderr_bytes) => {
+                let logs = String::from_utf8_lossy(&stderr_bytes);
+                println!("Test agent container stderr logs:");
+                println!("{}", logs);
+            },
+            Err(err) => {
+                println!("Failed to get container stderr: {}", err);
+            }
         }
     }
 }
