@@ -6,6 +6,9 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 
+[lib]
+bench = false
+
 [dependencies]
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 tracing = { version = "0.1", default-features = false }
