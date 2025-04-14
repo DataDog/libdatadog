@@ -63,7 +63,16 @@ jobs:
       - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(tracing_integration_tests::)'"
         if: runner.os == 'Linux'
         shell: bash
-        run: cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(tracing_integration_tests::)'
+        run: |
+          set -e
+          for i in {1..10}; do
+            echo "===== Run $i/10 ====="
+            cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(tracing_integration_tests::)' || {
+              echo "Run $i FAILED"
+              exit 1
+            }
+            echo "Run $i SUCCEEDED"
+          done
         env:
           RUST_BACKTRACE: 1
       - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'"
