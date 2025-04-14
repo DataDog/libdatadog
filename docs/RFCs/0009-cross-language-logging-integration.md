@@ -1,6 +1,6 @@
 # RFC: Cross-Language Logging Integration for libdatadog
 
-*Once approved, this will be moved to [https://github.com/DataDog/libdatadog/tree/main/docs/RFCs](https://github.com/DataDog/libdatadog/tree/main/docs/RFCs)*
+Status: Approved (.NET)
 
 ## Overview
 
