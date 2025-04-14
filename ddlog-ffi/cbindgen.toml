@@ -6,7 +6,7 @@ tab_width = 2
 header = """// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 """
-include_guard = "DDOG_LOGS_H"
+include_guard = "DDOG_LOG_H"
 style = "both"
 
 no_includes = true
@@ -34,4 +34,4 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["ddcommon-ffi", "ddlogs"]
+include = ["ddcommon-ffi", "ddlog"]
