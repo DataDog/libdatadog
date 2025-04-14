@@ -16,6 +16,7 @@ use testcontainers::{
     runners::AsyncRunner,
     *,
 };
+use std::any::Any;
 
 const TEST_AGENT_IMAGE_NAME: &str = "ghcr.io/datadog/dd-apm-test-agent/ddapm-test-agent";
 const TEST_AGENT_IMAGE_TAG: &str = "latest";
@@ -191,6 +192,7 @@ impl DatadogTestAgent {
         relative_snapshot_path: Option<&str>,
         absolute_socket_path: Option<&str>,
     ) -> Self {
+        println!("starting container with relative_snapshot_path: {:?}, absolute_socket_path: {:?}", relative_snapshot_path, absolute_socket_path);
         DatadogTestAgent {
             container: DatadogTestAgentContainer::new(relative_snapshot_path, absolute_socket_path)
                 .start()
@@ -285,6 +287,8 @@ impl DatadogTestAgent {
         let uri = self
             .get_uri_for_endpoint("test/session/snapshot", Some(snapshot_token))
             .await;
+
+        println!("uri for assert snapshot: {}", uri);
 
         let req = Request::builder()
             .method("GET")
@@ -401,8 +405,6 @@ impl DatadogTestAgent {
         session_token: &str,
         agent_sample_rates_by_service: Option<&str>,
     ) {
-        // let client = hyper_migration::new_default_client();
-
         let mut query_params_map = HashMap::new();
         query_params_map.insert(SESSION_TEST_TOKEN_QUERY_PARAM_KEY, session_token);
         if let Some(agent_sample_rates_by_service) = agent_sample_rates_by_service {
@@ -412,6 +414,8 @@ impl DatadogTestAgent {
         let uri = self
             .get_uri_for_endpoint_and_params(SESSION_START_ENDPOINT, query_params_map)
             .await;
+
+        println!("Starting session with URI: {}", uri);
 
         let req = Request::builder()
             .method("GET")
@@ -489,10 +493,15 @@ impl DatadogTestAgent {
                     }
                 }
                 Err(e) => {
+                    // Try direct downcast
+
+                    let hyper_err = (&e as &dyn Any).downcast_ref::<hyper::Error>();
+
                     println!(
-                        "Request failed with error: {}. Request attempt {} of {}",
-                        e, attempts, max_attempts
+                        "Request failed with error: {}. \n Source: {:?}, Request attempt {} of {}",
+                        e, hyper_err, attempts, max_attempts
                     );
+
                     last_response = Err(e)
                 }
             }
