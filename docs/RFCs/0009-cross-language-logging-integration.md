@@ -71,11 +71,11 @@ pub struct LogEvent<'a> {
 /// Log level enumeration
 #[repr(C)]
 pub enum LogLevel {
-    Debug = 0,
-    Info = 1,
-    Warn = 2,
-    Error = 3,
-    Trace = 4,
+    Trace = 0,
+    Debug = 1,
+    Info = 2,
+    Warn = 3,
+    Error = 4,
 }
 
 /// Thread-safe callback function for log message handling
