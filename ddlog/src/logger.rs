@@ -11,6 +11,10 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{reload, Layer, Registry};
 
 /// Represents the severity levels for logging.
+///
+/// Mimics tracing levels defined at
+/// https://github.com/tokio-rs/tracing/blob/dfc2c8b81889f1bc65f053e574de32ec79b72ce1/tracing-core/src/metadata.rs#L582
+///
 /// ```
 /// use ddlog::logger::LogLevel;
 ///
@@ -87,6 +91,8 @@ where
         impl tracing::field::Visit for Visitor {
             fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
                 // tracing uses special field named message that contains the log text
+                // we should avoid using message as a field name
+                // https://github.com/tokio-rs/tracing/issues/3195
                 if field.name() == "message" {
                     self.message = Some(format!("{value:?}"));
                 } else {
