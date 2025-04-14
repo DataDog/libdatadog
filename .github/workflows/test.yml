@@ -65,7 +65,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          for i in {1..10}; do
+          for i in {1..100}; do
             echo "===== Run $i/10 ====="
             cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(tracing_integration_tests::)' || {
               echo "Run $i FAILED"
