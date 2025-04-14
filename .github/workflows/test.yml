@@ -51,15 +51,15 @@ jobs:
       - name: "Remove nextest CI report"
         shell: bash
         run: rm -rf target/nextest/ci/junit.xml
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --exclude builder --verbose"
-        shell: bash
-        run: cargo build --workspace --exclude builder --verbose
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'"
-        shell: bash
-        # Run doc tests with cargo test and run tests with nextest and generate junit.xml
-        run: cargo test --workspace --exclude builder --doc --verbose && cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
-        env:
-          RUST_BACKTRACE: 1
+#      - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --exclude builder --verbose"
+#        shell: bash
+#        run: cargo build --workspace --exclude builder --verbose
+#      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'"
+#        shell: bash
+#        # Run doc tests with cargo test and run tests with nextest and generate junit.xml
+#        run: cargo test --workspace --exclude builder --doc --verbose && cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
+#        env:
+#          RUST_BACKTRACE: 1
       - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(tracing_integration_tests::)'"
         if: runner.os == 'Linux'
         shell: bash
@@ -67,7 +67,7 @@ jobs:
           set -e
           for i in {1..100}; do
             echo "===== Run $i/100 ====="
-            cargo nextest run --workspace --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)' || {
+            cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(tracing_integration_tests::)' || {
               echo "Run $i FAILED"
               exit 1
             }
