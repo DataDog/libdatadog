@@ -13,8 +13,9 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use datadog_trace_utils::msgpack_decoder::{self, decode::error::DecodeError};
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryError};
+use datadog_trace_utils::span::SpanBytes;
 use datadog_trace_utils::trace_utils::{self, TracerHeaderTags};
-use datadog_trace_utils::tracer_payload::{self, TraceCollection};
+use datadog_trace_utils::tracer_payload;
 use ddcommon::header::{
     APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
 };
@@ -230,11 +231,11 @@ impl TraceExporter {
         match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
             TraceExporterInputFormat::V04 => match msgpack_decoder::v04::from_bytes(data) {
-                Ok((traces, _)) => self.send_deser_ser(TraceCollection::TraceChunk(traces)),
+                Ok((traces, _)) => self.send_deser_ser(traces),
                 Err(e) => Err(TraceExporterError::Deserialization(e)),
             },
             TraceExporterInputFormat::V05 => match msgpack_decoder::v05::from_bytes(data) {
-                Ok((traces, _)) => self.send_deser_ser(TraceCollection::TraceChunk(traces)),
+                Ok((traces, _)) => self.send_deser_ser(traces),
                 Err(e) => Err(TraceExporterError::Deserialization(e)),
             },
         }
@@ -559,7 +560,7 @@ impl TraceExporter {
     /// Add all spans from the given iterator into the stats concentrator
     /// # Panic
     /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
-    fn add_spans_to_stats(&self, collection: &TraceCollection) {
+    fn add_spans_to_stats(&self, traces: &[Vec<SpanBytes>]) {
         if let StatsComputationStatus::Enabled {
             stats_concentrator,
             cancellation_token: _,
@@ -569,25 +570,19 @@ impl TraceExporter {
             #[allow(clippy::unwrap_used)]
             let mut stats_concentrator = stats_concentrator.lock().unwrap();
 
-            match collection {
-                TraceCollection::TraceChunk(traces) => {
-                    let spans = traces.iter().flat_map(|trace| trace.iter());
-                    for span in spans {
-                        stats_concentrator.add_span(span);
-                    }
-                }
-                // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-                TraceCollection::V07(_) => unreachable!(),
+            let spans = traces.iter().flat_map(|trace| trace.iter());
+            for span in spans {
+                stats_concentrator.add_span(span);
             }
         }
     }
 
     fn send_deser_ser(
         &self,
-        mut collection: TraceCollection,
+        mut traces: Vec<Vec<SpanBytes>>,
     ) -> Result<String, TraceExporterError> {
         self.emit_metric(
-            HealthMetric::Count(health_metrics::STAT_DESER_TRACES, collection.len() as i64),
+            HealthMetric::Count(health_metrics::STAT_DESER_TRACES, traces.len() as i64),
             None,
         );
 
@@ -596,12 +591,17 @@ impl TraceExporter {
         // Stats computation
         if let StatsComputationStatus::Enabled { .. } = &**self.client_side_stats.load() {
             if !self.client_computed_top_level {
-                collection.set_top_level_spans();
+                for chunk in traces.iter_mut() {
+                    datadog_trace_utils::span::trace_utils::compute_top_level_span(chunk);
+                }
             }
-            self.add_spans_to_stats(&collection);
+            self.add_spans_to_stats(&traces);
             // Once stats have been computed we can drop all chunks that are not going to be
             // sampled by the agent
-            let (dropped_p0_traces, dropped_p0_spans) = collection.drop_chunks();
+            let datadog_trace_utils::span::trace_utils::DroppedP0Stats {
+                dropped_p0_traces,
+                dropped_p0_spans,
+            } = datadog_trace_utils::span::trace_utils::drop_chunks(&mut traces);
 
             // Update the headers to indicate that stats have been computed and forward dropped
             // traces counts
@@ -611,49 +611,23 @@ impl TraceExporter {
             header_tags.dropped_p0_spans = dropped_p0_spans;
         }
 
-        let payload = match self.input_format {
-            TraceExporterInputFormat::V04 => match self.output_format {
-                TraceExporterOutputFormat::V04 => trace_utils::collect_trace_chunks(
-                    collection,
-                    &header_tags,
-                    &mut tracer_payload::DefaultTraceChunkProcessor,
-                    self.endpoint.api_key.is_some(),
-                    false,
-                )
-                .map_err(|e| {
-                    TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
-                })?,
-                TraceExporterOutputFormat::V05 => trace_utils::collect_trace_chunks(
-                    collection,
-                    &header_tags,
-                    &mut tracer_payload::DefaultTraceChunkProcessor,
-                    self.endpoint.api_key.is_some(),
-                    true,
-                )
-                .map_err(|e| {
-                    TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
-                })?,
-            },
-            TraceExporterInputFormat::V05 => match self.output_format {
-                TraceExporterOutputFormat::V05 => trace_utils::collect_trace_chunks(
-                    collection,
-                    &header_tags,
-                    &mut tracer_payload::DefaultTraceChunkProcessor,
-                    self.endpoint.api_key.is_some(),
-                    true,
-                )
-                .map_err(|e| {
-                    TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
-                })?,
+        let use_v05_format = match (self.input_format, self.output_format) {
+            (TraceExporterInputFormat::V04, TraceExporterOutputFormat::V04) => false,
+            (TraceExporterInputFormat::V04, TraceExporterOutputFormat::V05)
+            | (TraceExporterInputFormat::V05, TraceExporterOutputFormat::V05) => true,
+            (TraceExporterInputFormat::V05, TraceExporterOutputFormat::V04) => {
                 // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-                _ => unreachable!(
-                    "Conversion from v05 to {:?} not implemented",
-                    self.output_format
-                ),
-            },
-            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-            _ => unreachable!("Input format not implemented"),
+                unreachable!("Conversion from v05 to v04 not implemented")
+            }
+            (TraceExporterInputFormat::Proxy, _) => {
+                // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+                unreachable!("Codepath invalid for proxy mode",)
+            }
         };
+        let payload: tracer_payload::TraceChunks =
+            trace_utils::collect_trace_chunks(traces, use_v05_format).map_err(|e| {
+                TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
+            })?;
 
         let chunks = payload.size();
         let endpoint = Endpoint {
@@ -667,14 +641,12 @@ impl TraceExporter {
 
         let strategy = RetryStrategy::default();
         let mp_payload = match &payload {
-            tracer_payload::TracerPayloadCollection::V04(p) => {
+            tracer_payload::TraceChunks::V04(p) => {
                 rmp_serde::to_vec_named(p).map_err(TraceExporterError::Serialization)?
             }
-            tracer_payload::TracerPayloadCollection::V05(p) => {
+            tracer_payload::TraceChunks::V05(p) => {
                 rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)?
             }
-            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-            _ => unreachable!("Serialization for v07 not implemented"),
         };
 
         let payload_len = mp_payload.len();

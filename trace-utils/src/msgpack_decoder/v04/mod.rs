@@ -17,7 +17,8 @@ use crate::span::{SpanBytes, SpanSlice};
 ///
 /// # Returns
 ///
-/// * `Ok(Vec<TracerPayloadV04>)` - A vector of decoded `TracerPayloadV04` objects if successful.
+/// * `Ok(Vec<TracerPayloadV04>, usize)` - A vector of decoded `Vec<SpanSlice>` objects if
+///   successful. and the number of bytes in the slice used by the decoder.
 /// * `Err(DecodeError)` - An error if the decoding process fails.
 ///
 /// # Errors
@@ -76,7 +77,8 @@ pub fn from_bytes(data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize)
 ///
 /// # Returns
 ///
-/// * `Ok(Vec<TracerPayloadV04>)` - A vector of decoded `Vec<SpanSlice>` objects if successful.
+/// * `Ok(Vec<TracerPayloadV04>, usize)` - A vector of decoded `Vec<SpanSlice>` objects if
+///   successful. and the number of bytes in the slice used by the decoder.
 /// * `Err(DecodeError)` - An error if the decoding process fails.
 ///
 /// # Errors
