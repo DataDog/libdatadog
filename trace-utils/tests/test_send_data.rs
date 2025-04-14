@@ -101,6 +101,8 @@ mod tracing_integration_tests {
                 .await,
         );
 
+        println!("send_data compare_v0_trace_snapshot_test is using url: {:?}", &endpoint);
+
         let data = get_v04_trace_snapshot_test_payload("test_send_data_v04_snapshot");
 
         let payload_collection = TracerPayloadParams::new(
@@ -144,6 +146,8 @@ mod tracing_integration_tests {
                 .get_uri_for_endpoint("v0.4/traces", Some(snapshot_name))
                 .await,
         );
+
+        println!("send_data compare_v0_trace_meta_struct_test is using url: {:?}", &endpoint);
 
         let meta_struct_data = rmp_serde::to_vec_named(&json!({
                 "exploit": [
@@ -235,6 +239,8 @@ mod tracing_integration_tests {
         let endpoint =
             Endpoint::from_url(test_agent.get_uri_for_endpoint("v0.4/traces", None).await);
 
+        println!("send_data send_empty_v04_trace_test is using url: {:?}", &endpoint);
+
         let empty_data = vec![0x90];
         let data = tinybytes::Bytes::from(empty_data);
         let tracer_header_tags = &TracerHeaderTags::default();
@@ -298,6 +304,7 @@ mod tracing_integration_tests {
         parts.path_and_query = p_q;
 
         let url = Uri::from_parts(parts).unwrap();
+        println!("data pipeline uds_snapshot_url is using url: {}", url);
 
         let test_agent = DatadogTestAgent::new(
             Some(relative_snapshot_path),

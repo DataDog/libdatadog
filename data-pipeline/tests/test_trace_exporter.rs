@@ -117,6 +117,7 @@ mod tracing_integration_tests {
 
         let task_result = task::spawn_blocking(move || {
             let mut builder = TraceExporter::builder();
+            println!("data pipeline compare_v04_trace_snapshot_test is using url: {}", url);
             builder
                 .set_url(url.to_string().as_ref())
                 .set_language("test-lang")
@@ -164,6 +165,8 @@ mod tracing_integration_tests {
             .await;
 
         let task_result = task::spawn_blocking(move || {
+            println!("data pipeline compare_v04_to_v05_trace_snapshot_test is using url: {}", url);
+
             let mut builder = TraceExporter::builder();
             builder
                 .set_url(url.to_string().as_ref())
@@ -206,6 +209,8 @@ mod tracing_integration_tests {
             .await;
 
         let task_result = task::spawn_blocking(move || {
+            println!("data pipeline compare_v0_trace_snapshot_test is using url: {}", url);
+
             let mut builder = TraceExporter::builder();
             builder
                 .set_url(url.to_string().as_ref())
@@ -263,6 +268,7 @@ mod tracing_integration_tests {
         let absolute_socket_path = socket_dir.path().join("apm.socket");
         let url = format!("unix://{}", absolute_socket_path.display());
 
+        println!("data pipeline uds_snapshot_url is using url: {}", url);
         let test_agent = DatadogTestAgent::new(
             Some(relative_snapshot_path),
             Some(&absolute_socket_dir_path),
