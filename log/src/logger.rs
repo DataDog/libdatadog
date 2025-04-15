@@ -16,7 +16,7 @@ use tracing_subscriber::{reload, Layer, Registry};
 /// https://github.com/tokio-rs/tracing/blob/dfc2c8b81889f1bc65f053e574de32ec79b72ce1/tracing-core/src/metadata.rs#L582
 ///
 /// ```
-/// use ddlog::logger::LogLevel;
+/// use datadog-log::logger::LogLevel;
 ///
 /// let level = LogLevel::Info;
 /// assert!(level > LogLevel::Debug);

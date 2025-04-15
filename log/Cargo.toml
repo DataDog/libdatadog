@@ -1,5 +1,5 @@
 [package]
-name = "ddlog"
+name = "datadog-log"
 description = "A bridge from Rust to {language} logging"
 rust-version.workspace = true
 edition.workspace = true

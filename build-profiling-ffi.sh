@@ -152,7 +152,7 @@ FEATURES=(
     "datadog-profiling-ffi/ddtelemetry-ffi"
     "datadog-profiling-ffi/demangler"
     "datadog-library-config-ffi"
-    "ddlog-ffi"
+    "datadog-log-ffi"
 )
 if [[ "$symbolizer" -eq 1 ]]; then
     FEATURES+=("symbolizer")
