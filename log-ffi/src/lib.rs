@@ -1,8 +1,8 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ddcommon_ffi::Error;
 use datadog_log::logger::{logger_init, logger_set_log_level, LogCallback, LogLevel};
+use ddcommon_ffi::Error;
 
 /// Updates the log level for the logger.
 ///
