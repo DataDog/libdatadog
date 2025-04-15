@@ -903,7 +903,7 @@ impl TraceExporterBuilder {
         self
     }
 
-    /// Set the session token
+    /// Set the `X-Datadog-Test-Session-Token` header. Only used for testing with the test agent.
     pub fn set_test_session_token(&mut self, test_session_token: &str) -> &mut Self {
         self.test_session_token = Some(test_session_token.to_string());
         self

@@ -66,6 +66,7 @@ pub struct TraceExporterConfig {
     output_format: TraceExporterOutputFormat,
     compute_stats: bool,
     telemetry_cfg: Option<TelemetryConfig>,
+    test_session_token: Option<String>,
 }
 
 #[no_mangle]
@@ -274,6 +275,23 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_compute_stats(
     }
 }
 
+/// Sets the `X-Datadog-Test-Session-Token` header. Only used for testing with the test agent.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_test_session_token(
+    config: Option<&mut TraceExporterConfig>,
+    token: CharSlice,
+) -> Option<Box<ExporterError>> {
+    if let Option::Some(handle) = config {
+        handle.test_session_token = match sanitize_string(token) {
+            Ok(s) => Some(s),
+            Err(e) => return Some(e),
+        };
+        None
+    } else {
+        gen_error!(ErrorCode::InvalidArgument)
+    }
+}
+
 /// Create a new TraceExporter instance.
 ///
 /// # Arguments
@@ -311,6 +329,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
         if let Some(cfg) = &config.telemetry_cfg {
             builder.enable_telemetry(Some(cfg.clone()));
+        }
+
+        if let Some(token) = &config.test_session_token {
+            builder.set_test_session_token(token);
         }
 
         match builder.build() {
@@ -407,6 +429,7 @@ mod tests {
             assert_eq!(cfg.output_format, TraceExporterOutputFormat::V04);
             assert!(!cfg.compute_stats);
             assert!(cfg.telemetry_cfg.is_none());
+            assert!(cfg.test_session_token.is_none());
 
             ddog_trace_exporter_config_free(cfg);
         }
@@ -764,6 +787,7 @@ mod tests {
                 output_format: TraceExporterOutputFormat::V04,
                 compute_stats: false,
                 telemetry_cfg: None,
+                test_session_token: None,
             };
 
             let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
@@ -833,6 +857,7 @@ mod tests {
                 output_format: TraceExporterOutputFormat::V04,
                 compute_stats: false,
                 telemetry_cfg: None,
+                test_session_token: None,
             };
 
             let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
@@ -908,6 +933,7 @@ mod tests {
                     runtime_id: Some("foo".to_string()),
                     debug_enabled: true,
                 }),
+                test_session_token: None,
             };
 
             let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
