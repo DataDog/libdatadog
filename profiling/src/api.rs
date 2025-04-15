@@ -31,11 +31,11 @@ pub struct ManagedStringId {
 }
 
 impl ManagedStringId {
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self::new(0)
     }
 
-    pub fn new(value: u32) -> Self {
+    pub const fn new(value: u32) -> Self {
         ManagedStringId { value }
     }
 }
@@ -130,7 +130,7 @@ pub struct Label<'a> {
     pub key: &'a str,
 
     /// At most one of the following must be present
-    pub str: Option<&'a str>,
+    pub str: &'a str,
     pub num: i64,
 
     /// Should only be present when num is present.
@@ -140,7 +140,7 @@ pub struct Label<'a> {
     /// Consumers may also  interpret units like "bytes" and "kilobytes" as memory
     /// units and units like "seconds" and "nanoseconds" as time units,
     /// and apply appropriate unit conversions to these.
-    pub num_unit: Option<&'a str>,
+    pub num_unit: &'a str,
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -149,16 +149,16 @@ pub struct StringIdLabel {
     pub key: ManagedStringId,
 
     /// At most one of the following must be present
-    pub str: Option<ManagedStringId>,
+    pub str: ManagedStringId,
     pub num: i64,
 
     /// Should only be present when num is present.
-    pub num_unit: Option<ManagedStringId>,
+    pub num_unit: ManagedStringId,
 }
 
 impl Label<'_> {
     pub fn uses_at_most_one_of_str_and_num(&self) -> bool {
-        self.str.is_none() || (self.num == 0 && self.num_unit.is_none())
+        self.str.is_empty() || (self.num == 0 && self.num_unit.is_empty())
     }
 }
 
@@ -400,17 +400,9 @@ impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
             for label in sample.labels.iter() {
                 labels.push(Label {
                     key: string_table_fetch(pprof, label.key)?,
-                    str: if label.str == 0 {
-                        None
-                    } else {
-                        Some(string_table_fetch(pprof, label.str)?)
-                    },
+                    str: string_table_fetch(pprof, label.str)?,
                     num: label.num,
-                    num_unit: if label.num_unit == 0 {
-                        None
-                    } else {
-                        Some(string_table_fetch(pprof, label.num_unit)?)
-                    },
+                    num_unit: string_table_fetch(pprof, label.num_unit)?,
                 })
             }
             let sample = Sample {
@@ -439,49 +431,49 @@ mod tests {
     fn label_uses_at_most_one_of_str_and_num() {
         let label = Label {
             key: "name",
-            str: Some("levi"),
+            str: "levi",
             num: 0,
-            num_unit: Some("name"), // can't use num_unit with str
+            num_unit: "name", // can't use num_unit with str
         };
         assert!(!label.uses_at_most_one_of_str_and_num());
 
         let label = Label {
             key: "name",
-            str: Some("levi"),
+            str: "levi",
             num: 10, // can't use num with str
-            num_unit: None,
+            num_unit: "",
         };
         assert!(!label.uses_at_most_one_of_str_and_num());
 
         let label = Label {
             key: "name",
-            str: Some("levi"),
+            str: "levi",
             num: 0,
-            num_unit: None,
+            num_unit: "",
         };
         assert!(label.uses_at_most_one_of_str_and_num());
 
         let label = Label {
             key: "process_id",
-            str: None,
+            str: "",
             num: 0,
-            num_unit: None,
+            num_unit: "",
         };
         assert!(label.uses_at_most_one_of_str_and_num());
 
         let label = Label {
             key: "local root span id",
-            str: None,
+            str: "",
             num: 10901,
-            num_unit: None,
+            num_unit: "",
         };
         assert!(label.uses_at_most_one_of_str_and_num());
 
         let label = Label {
             key: "duration",
-            str: None,
+            str: "",
             num: 12345,
-            num_unit: Some("nanoseconds"),
+            num_unit: "nanoseconds",
         };
         assert!(label.uses_at_most_one_of_str_and_num());
     }

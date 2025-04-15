@@ -32,10 +32,10 @@ impl Profile {
         &mut self,
         key: GenerationalId<StringId>,
         val: i64,
-        unit: Option<GenerationalId<StringId>>,
+        unit: GenerationalId<StringId>,
     ) -> anyhow::Result<GenerationalId<LabelId>> {
         let key = key.get(self.generation)?;
-        let unit = unit.map(|u| u.get(self.generation)).transpose()?;
+        let unit = unit.get(self.generation)?;
         let id = self.labels.dedup(Label::num(key, val, unit));
         Ok(GenerationalId::new(id, self.generation))
     }

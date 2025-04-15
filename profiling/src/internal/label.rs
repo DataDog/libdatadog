@@ -6,10 +6,7 @@ use super::*;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum LabelValue {
     Str(StringId),
-    Num {
-        num: i64,
-        num_unit: Option<StringId>,
-    },
+    Num { num: i64, num_unit: StringId },
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -35,7 +32,7 @@ impl Label {
         &self.value
     }
 
-    pub fn num(key: StringId, num: i64, num_unit: Option<StringId>) -> Self {
+    pub fn num(key: StringId, num: i64, num_unit: StringId) -> Self {
         Self {
             key,
             value: LabelValue::Num { num, num_unit },
@@ -70,7 +67,7 @@ impl From<&Label> for pprof::Label {
                 key,
                 str: 0,
                 num,
-                num_unit: num_unit.map(StringId::into_raw_id).unwrap_or_default(),
+                num_unit: num_unit.into_raw_id(),
             },
         }
     }

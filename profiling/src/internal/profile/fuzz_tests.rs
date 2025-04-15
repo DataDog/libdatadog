@@ -43,7 +43,7 @@ pub struct Label {
     pub key: Box<str>,
 
     /// At most one of the following must be present
-    pub str: Option<Box<str>>,
+    pub str: Box<str>,
     pub num: i64,
 
     /// Should only be present when num is present.
@@ -53,16 +53,16 @@ pub struct Label {
     /// Consumers may also  interpret units like "bytes" and "kilobytes" as memory
     /// units and units like "seconds" and "nanoseconds" as time units,
     /// and apply appropriate unit conversions to these.
-    pub num_unit: Option<Box<str>>,
+    pub num_unit: Box<str>,
 }
 
 impl<'a> From<&'a Label> for api::Label<'a> {
     fn from(value: &'a Label) -> Self {
         Self {
             key: &value.key,
-            str: value.str.as_deref(),
+            str: &value.str,
             num: value.num,
-            num_unit: value.num_unit.as_deref(),
+            num_unit: &value.num_unit,
         }
     }
 }
@@ -193,10 +193,10 @@ pub struct Sample {
 
 #[cfg(test)]
 impl Sample {
-    /// Checks if the sample is well formed.  Useful in testing.
+    /// Checks if the sample is well-formed.  Useful in testing.
     pub fn is_well_formed(&self) -> bool {
         let labels_are_unique = {
-            let mut uniq = std::collections::HashSet::new();
+            let mut uniq = HashSet::new();
             self.labels.iter().map(|l| &l.key).all(|x| uniq.insert(x))
         };
         labels_are_unique
@@ -280,7 +280,7 @@ fn assert_samples_eq(
                 Default::default()
             };
             // internal::Location::to_pprof() always creates a single line.
-            assert!(location.lines.len() == 1);
+            assert_eq!(1, location.lines.len());
             let line = location.lines[0];
             let function = profile.functions[line.function_id as usize - 1];
             assert!(!location.is_folded);
@@ -333,20 +333,16 @@ fn assert_samples_eq(
                 let str = Box::from(profile.string_table_fetch(label.str).as_str());
                 owned_labels.push(Label {
                     key,
-                    str: Some(str),
+                    str,
                     num: 0,
-                    num_unit: None,
+                    num_unit: Box::from(""),
                 });
             } else {
                 let num = label.num;
-                let num_unit = if label.num_unit != 0 {
-                    Some(profile.string_table_fetch_owned(label.num_unit))
-                } else {
-                    None
-                };
+                let num_unit = profile.string_table_fetch_owned(label.num_unit);
                 owned_labels.push(Label {
                     key,
-                    str: None,
+                    str: Box::from(""),
                     num,
                     num_unit,
                 });
@@ -406,15 +402,15 @@ fn fuzz_failure_001() {
         labels: vec![
             Label {
                 key: Box::from(""),
-                str: Some(Box::from("")),
+                str: Box::from(""),
                 num: 0,
-                num_unit: Some(Box::from("")),
+                num_unit: Box::from(""),
             },
             Label {
                 key: Box::from("local root span id"),
-                str: None,
+                str: Box::from(""),
                 num: 281474976710656,
-                num_unit: None,
+                num_unit: Box::from(""),
             },
         ],
     };
