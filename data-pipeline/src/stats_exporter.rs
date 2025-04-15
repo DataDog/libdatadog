@@ -21,8 +21,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{span_concentrator::SpanConcentrator, trace_exporter::TracerMetadata};
 
-const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
-
 /// An exporter that concentrates and sends stats to the agent
 #[derive(Debug)]
 pub struct StatsExporter {
@@ -173,15 +171,6 @@ fn encode_stats_payload(
     }
 }
 
-/// Return the stats endpoint url to send stats to the agent at `agent_url`
-pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<hyper::Uri> {
-    let mut parts = agent_url.parse::<hyper::Uri>()?.into_parts();
-    parts.path_and_query = Some(hyper::http::uri::PathAndQuery::from_static(
-        STATS_ENDPOINT_PATH,
-    ));
-    Ok(hyper::Uri::from_parts(parts)?)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,6 +184,7 @@ mod tests {
     fn is_send<T: Send>() {}
     fn is_sync<T: Sync>() {}
 
+    const STATS_ENDPOINT: &str = "/v0.6/stats";
     const BUCKETS_DURATION: Duration = Duration::from_secs(10);
 
     /// Fails to compile if stats exporter is not Send and Sync
@@ -261,7 +251,7 @@ mod tests {
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
-            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+            Endpoint::from_slice(&server.url(STATS_ENDPOINT)),
             CancellationToken::new(),
         );
 
@@ -288,7 +278,7 @@ mod tests {
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
-            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+            Endpoint::from_slice(&server.url(STATS_ENDPOINT)),
             CancellationToken::new(),
         );
 
@@ -320,7 +310,7 @@ mod tests {
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
-            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+            Endpoint::from_slice(&server.url(STATS_ENDPOINT)),
             CancellationToken::new(),
         );
 
@@ -360,7 +350,7 @@ mod tests {
             buckets_duration,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
-            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+            Endpoint::from_slice(&server.url(STATS_ENDPOINT)),
             cancellation_token.clone(),
         );
 
