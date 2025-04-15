@@ -1,13 +1,13 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::{v05, SpanBytes};
+use crate::span::{v05, Span, SpanBytes, SpanText};
 use crate::trace_utils::collect_trace_chunks;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
 use datadog_trace_protobuf::pb;
 use std::cmp::Ordering;
 use std::iter::Iterator;
-use tinybytes;
+use tinybytes::{self, BytesString};
 
 pub type TracerPayloadV04 = Vec<SpanBytes>;
 pub type TracerPayloadV05 = Vec<v05::Span>;
@@ -22,14 +22,14 @@ pub enum TraceEncoding {
 }
 
 #[derive(Debug, Clone)]
-pub enum TraceChunks {
+pub enum TraceChunks<T: SpanText> {
     /// Collection of TraceChunkSpan.
-    V04(Vec<Vec<SpanBytes>>),
+    V04(Vec<Vec<Span<T>>>),
     /// Collection of TraceChunkSpan with de-duplicated strings.
-    V05((Vec<tinybytes::BytesString>, Vec<Vec<v05::Span>>)),
+    V05((Vec<T>, Vec<Vec<v05::Span>>)),
 }
 
-impl TraceChunks {
+impl TraceChunks<BytesString> {
     pub fn into_tracer_payload_collection(self) -> TracerPayloadCollection {
         match self {
             TraceChunks::V04(traces) => TracerPayloadCollection::V04(traces),
@@ -38,7 +38,7 @@ impl TraceChunks {
     }
 }
 
-impl TraceChunks {
+impl<T: SpanText> TraceChunks<T> {
     /// Returns the number of traces in the chunk
     pub fn size(&self) -> usize {
         match self {
@@ -222,7 +222,7 @@ impl TraceChunkProcessor for DefaultTraceChunkProcessor {
 pub fn decode_to_trace_chunks(
     data: tinybytes::Bytes,
     encoding_type: TraceEncoding,
-) -> Result<(TraceChunks, usize), anyhow::Error> {
+) -> Result<(TraceChunks<BytesString>, usize), anyhow::Error> {
     let (data, size) = match encoding_type {
         TraceEncoding::V04 => msgpack_decoder::v04::from_bytes(data),
         TraceEncoding::V05 => msgpack_decoder::v05::from_bytes(data),

@@ -624,10 +624,9 @@ impl TraceExporter {
                 unreachable!("Codepath invalid for proxy mode",)
             }
         };
-        let payload: tracer_payload::TraceChunks =
-            trace_utils::collect_trace_chunks(traces, use_v05_format).map_err(|e| {
-                TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
-            })?;
+        let payload = trace_utils::collect_trace_chunks(traces, use_v05_format).map_err(|e| {
+            TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
+        })?;
 
         let chunks = payload.size();
         let endpoint = Endpoint {

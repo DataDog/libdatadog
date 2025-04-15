@@ -3,8 +3,8 @@
 
 pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
-use crate::span::v05;
 use crate::span::v05::dict::SharedDict;
+use crate::span::{v05, SpanText};
 pub use crate::tracer_header_tags::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use crate::tracer_payload::{self, TraceChunks};
@@ -597,10 +597,10 @@ macro_rules! parse_root_span_tags {
     }
 }
 
-pub fn collect_trace_chunks(
-    traces: Vec<Vec<crate::span::SpanBytes>>,
+pub fn collect_trace_chunks<T: SpanText>(
+    traces: Vec<Vec<crate::span::Span<T>>>,
     use_v05_format: bool,
-) -> anyhow::Result<TraceChunks> {
+) -> anyhow::Result<TraceChunks<T>> {
     if use_v05_format {
         let mut shared_dict = SharedDict::default();
         let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
@@ -608,7 +608,7 @@ pub fn collect_trace_chunks(
             let v05_trace = trace.iter().try_fold(
                 Vec::with_capacity(trace.len()),
                 |mut acc, span| -> anyhow::Result<Vec<v05::Span>> {
-                    acc.push(v05::from_span_bytes(span, &mut shared_dict)?);
+                    acc.push(v05::from_span(span, &mut shared_dict)?);
                     Ok(acc)
                 },
             )?;
