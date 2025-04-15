@@ -19,8 +19,6 @@ pub enum TraceEncoding {
     V04,
     /// v054 encoding (TracerPayloadV04).
     V05,
-    /// v0.7 encoding (TracerPayload).
-    V07,
 }
 
 #[derive(Debug, Clone)]
@@ -228,11 +226,6 @@ pub fn decode_to_trace_chunks(
     let (data, size) = match encoding_type {
         TraceEncoding::V04 => msgpack_decoder::v04::from_bytes(data),
         TraceEncoding::V05 => msgpack_decoder::v05::from_bytes(data),
-        // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-        #[allow(clippy::unimplemented)]
-        _ => unimplemented!(
-            "Encodings other than TraceEncoding::V04 and TraceEncoding::V05 not implemented yet."
-        ),
     }
     .map_err(|e| anyhow::format_err!("Error deserializing trace from request body: {e}"))?;
 
