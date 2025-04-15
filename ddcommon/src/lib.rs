@@ -6,6 +6,7 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+use http::{uri::PathAndQuery, Uri};
 use hyper::{
     header::HeaderValue,
     http::uri::{self},
@@ -229,6 +230,40 @@ impl Endpoint {
     /// Default value for the timeout field in milliseconds.
     pub const DEFAULT_TIMEOUT: u64 = 3_000;
 
+    /// Add a path to the url of an `Endpoint`.
+    ///
+    /// The given path must start with a slash (e.g. "/v0.4/traces").
+    /// Returns an error if the path is not valid.
+    pub fn add_path(&mut self, path: &str) -> anyhow::Result<()> {
+        let mut parts = self.url.clone().into_parts();
+        parts.path_and_query = Some(match parts.path_and_query {
+            Some(pq) => {
+                let p = pq.path();
+                let mut p = p.strip_suffix('/').unwrap_or(p).to_owned();
+                p.push_str(path);
+                if let Some(q) = pq.query() {
+                    p.push('?');
+                    p.push_str(q);
+                }
+                PathAndQuery::from_str(p.as_str())
+            }
+            None => PathAndQuery::from_str(path),
+        }?);
+        self.url = Uri::from_parts(parts)?;
+        Ok(())
+    }
+
+    /// Create a new `Endpoint` by extending the url with the given path.
+    ///
+    /// The given path must start with a slash (e.g. "/v0.4/traces").
+    /// Returns an error if the path is not valid.
+    /// All the other fields are copied.
+    pub fn try_clone_with_subpath(&self, path: &str) -> anyhow::Result<Self> {
+        let mut endpoint = self.clone();
+        endpoint.add_path(path)?;
+        Ok(endpoint)
+    }
+
     /// Return a request builder with the following headers:
     /// - User agent
     /// - Api key
@@ -283,6 +318,34 @@ impl Endpoint {
         Endpoint {
             url,
             ..Default::default()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_add_path() {
+        let test_cases = [
+            ("http://test.com/", "/foo", "http://test.com/foo"),
+            ("http://test.com/bar", "/foo", "http://test.com/bar/foo"),
+            (
+                "http://test.com/bar",
+                "/foo/baz",
+                "http://test.com/bar/foo/baz",
+            ),
+            (
+                "http://test.com/bar?data=dog&product=apm",
+                "/foo/baz",
+                "http://test.com/bar/foo/baz?data=dog&product=apm",
+            ),
+        ];
+        for (url, path, expected) in test_cases {
+            let mut endpoint = Endpoint::from_url(url.parse().unwrap());
+            endpoint.add_path(path).unwrap();
+            assert_eq!(endpoint.url, expected);
         }
     }
 }
