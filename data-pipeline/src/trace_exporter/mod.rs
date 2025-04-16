@@ -249,7 +249,7 @@ impl TraceExporter {
         })
         .map_err(|err| {
             if let TraceExporterError::Deserialization(ref e) = err {
-                error!(?err, "Error deserializing trace from request body");
+                error!(?e, "Error deserializing trace from request body");
                 self.emit_metric(
                     HealthMetric::Count(health_metrics::STAT_DESER_TRACES_ERRORS, 1),
                     None,
