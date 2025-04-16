@@ -13,7 +13,7 @@ use datadog_trace_obfuscation::obfuscate::obfuscate_span;
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::trace_utils::{self};
 use datadog_trace_utils::trace_utils::{EnvironmentType, SendData};
-use datadog_trace_utils::tracer_payload::{TraceChunkProcessor, TraceCollection};
+use datadog_trace_utils::tracer_payload::TraceChunkProcessor;
 
 use crate::{
     config::Config,
@@ -96,15 +96,14 @@ impl TraceProcessor for ServerlessTraceProcessor {
             }
         };
 
-        let payload = match trace_utils::collect_trace_chunks(
-            TraceCollection::V07(traces),
+        let payload = match trace_utils::collect_pb_trace_chunks(
+            traces,
             &tracer_header_tags,
             &mut ChunkProcessor {
                 config: config.clone(),
                 mini_agent_metadata: mini_agent_metadata.clone(),
             },
             true, // In mini agent, we always send agentless
-            false,
         ) {
             Ok(res) => res,
             Err(err) => {

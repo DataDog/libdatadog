@@ -3,8 +3,7 @@
 
 pub mod dict;
 
-use crate::span::v05::dict::SharedDict;
-use crate::span::SpanBytes;
+use crate::span::{v05::dict::SharedDict, SpanText};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -29,7 +28,10 @@ pub struct Span {
     pub r#type: u32,
 }
 
-pub fn from_span_bytes(span: &SpanBytes, dict: &mut SharedDict) -> Result<Span> {
+pub fn from_span<T: SpanText>(
+    span: &crate::span::Span<T>,
+    dict: &mut SharedDict<T>,
+) -> Result<Span> {
     Ok(Span {
         service: dict.get_or_insert(&span.service)?,
         name: dict.get_or_insert(&span.name)?,
@@ -61,6 +63,7 @@ pub fn from_span_bytes(span: &SpanBytes, dict: &mut SharedDict) -> Result<Span> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::span::SpanBytes;
     use tinybytes::BytesString;
 
     #[test]
@@ -87,7 +90,7 @@ mod tests {
         };
 
         let mut dict = SharedDict::default();
-        let v05_span = from_span_bytes(&span, &mut dict).unwrap();
+        let v05_span = from_span(&span, &mut dict).unwrap();
 
         let dict = dict.dict();
 
