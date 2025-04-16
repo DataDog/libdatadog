@@ -249,10 +249,7 @@ impl TraceExporter {
         })
         .map_err(|err| {
             if let TraceExporterError::Deserialization(ref e) = err {
-                error!(
-                    err = e.to_string(),
-                    "Error deserializing trace from request body"
-                );
+                error!(?err, "Error deserializing trace from request body");
                 self.emit_metric(
                     HealthMetric::Count(health_metrics::STAT_DESER_TRACES_ERRORS, 1),
                     None,
@@ -503,10 +500,7 @@ impl TraceExporter {
                                 // This should really never happen as response_status is a
                                 // `NonZeroU16`, but if the response status or tag requirements
                                 // ever change in the future we still don't want to panic.
-                                error!(
-                                    err = tag_err.to_string(),
-                                    "Failed to serialize response_code to tag"
-                                )
+                                error!(?tag_err, "Failed to serialize response_code to tag")
                             }
                         }
                         return Err(TraceExporterError::Request(RequestError::new(
@@ -714,10 +708,7 @@ impl TraceExporter {
                             let body = match response.into_body().collect().await {
                                 Ok(body) => body.to_bytes(),
                                 Err(err) => {
-                                    error!(
-                                        err = err.to_string(),
-                                        "Error reading agent response body"
-                                    );
+                                    error!(?err, "Error reading agent response body");
                                     return Err(TraceExporterError::from(err));
                                 }
                             };
