@@ -248,6 +248,8 @@ jobs:
         uses: docker/bake-action@4ba453fbc2db7735392b93edf935aaf9b1e8f747 # 6.5.0
         with:
           targets: ${{ matrix.target }}
-          set: |
-            *.cache-from=type=gha,scope=${{ matrix.target }}
-            *.cache-to=type=gha,mode=max,scope=${{ matrix.target }}
+          # Caching is useful, when it works. We are routinely hanging, maybe this:
+          # https://github.com/docker/buildx/issues/537
+          #set: |
+          #  *.cache-from=type=gha,scope=${{ matrix.target }}
+          #  *.cache-to=type=gha,mode=max,scope=${{ matrix.target }}
