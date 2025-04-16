@@ -91,7 +91,7 @@ type LogCallback = extern "C" fn(event: LogEvent);
 /// @returns: None if successful, Error if initialization fails
 /// Note: If an error is returned, it must be released using `ddog_Error_drop`.
 #[no_mangle]
-pub extern "C" fn ddog_log_logger_init(log_level: LogLevel, callback: LogCallback) -> Option<Box<Error>> {
+pub extern "C" fn ddog_log_init(log_level: LogLevel, callback: LogCallback) -> Option<Box<Error>> {
     // Implementation details
 }
 
@@ -101,7 +101,7 @@ pub extern "C" fn ddog_log_logger_init(log_level: LogLevel, callback: LogCallbac
 /// @returns: None if successful, Error if setting log level fails
 /// Note: If an error is returned, it must be released using `ddog_Error_drop`.
 #[no_mangle]
-pub extern "C" fn ddog_log_logger_set_log_level(log_level: LogLevel) -> Option<Box<Error>> {
+pub extern "C" fn ddog_log_set_log_level(log_level: LogLevel) -> Option<Box<Error>> {
     // Implementation details
 }
 ```
