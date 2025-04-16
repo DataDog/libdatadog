@@ -15,13 +15,13 @@ use datadog_trace_protobuf::pb;
 use ddcommon::{azure_app_services, hyper_migration};
 use http_body_util::BodyExt;
 use hyper::body::Buf;
-use log::error;
 use rmp::decode::read_array_len;
 use rmpv::decode::read_value;
 use rmpv::{Integer, Value};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
+use tracing::error;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
