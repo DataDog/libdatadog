@@ -4,8 +4,8 @@
 //! This includes the aggregation key to group spans together and the computation of stats from a
 //! span.
 use datadog_trace_protobuf::pb;
-use datadog_trace_utils::span::Span;
 use datadog_trace_utils::span::trace_utils;
+use datadog_trace_utils::span::Span;
 use datadog_trace_utils::span::SpanText;
 use std::borrow::Borrow;
 use std::borrow::Cow;
@@ -112,7 +112,7 @@ impl<'a> AggregationKey<'a> {
     /// key.
     pub(super) fn from_span<T>(span: &'a Span<T>, peer_tag_keys: &'a [String]) -> Self
     where
-        T: SpanText + AsRef<str>
+        T: SpanText + AsRef<str>,
     {
         let span_kind = span
             .meta
@@ -206,15 +206,15 @@ fn client_or_producer<T>(span_kind: T) -> bool
 where
     T: SpanText + ToString,
 {
-    matches!(span_kind.to_string().to_lowercase().as_str(), "client" | "producer")
+    matches!(
+        span_kind.to_string().to_lowercase().as_str(),
+        "client" | "producer"
+    )
 }
 
 /// Parse the meta tags of a span and return a list of the peer tags based on the list of
 /// `peer_tag_keys`
-fn get_peer_tags<'k, 'v, T>(
-    span: &'v Span<T>,
-    peer_tag_keys: &'k [String],
-) -> Vec<(&'k str, &'v T)>
+fn get_peer_tags<'k, 'v, T>(span: &'v Span<T>, peer_tag_keys: &'k [String]) -> Vec<(&'k str, &'v T)>
 where
     T: SpanText,
 {
@@ -340,17 +340,16 @@ fn encode_grouped_stats(key: AggregationKey, group: GroupedStats) -> pb::ClientG
 
 #[cfg(test)]
 mod tests {
-    use datadog_trace_utils::span::SpanSlice;
+    use datadog_trace_utils::span::{SpanBytes, SpanSlice};
 
     use super::*;
 
-
     #[test]
     fn test_aggregation_key_from_span() {
-        let test_cases: Vec<(SpanSlice, AggregationKey)> = vec![
+        let test_cases: Vec<(SpanBytes, AggregationKey)> = vec![
             // Root span
             (
-                SpanSlice {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -368,7 +367,7 @@ mod tests {
             ),
             // Span with span kind
             (
-                SpanSlice {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -388,7 +387,7 @@ mod tests {
             ),
             // Span with peer tags but peertags aggregation disabled
             (
-                SpanSlice {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -411,7 +410,7 @@ mod tests {
             ),
             // Span with multiple peer tags but peertags aggregation disabled
             (
-                SpanSlice {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -437,7 +436,7 @@ mod tests {
             // Span with multiple peer tags but peertags aggregation disabled and span kind is
             // server
             (
-                SpanSlice {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -462,7 +461,7 @@ mod tests {
             ),
             // Span from synthetics
             (
-                SpanSlice {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -482,7 +481,7 @@ mod tests {
             ),
             // Span with status code in meta
             (
-                SpanSlice {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -503,7 +502,7 @@ mod tests {
             ),
             // Span with invalid status code in meta
             (
-                SpanSlice {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -523,7 +522,7 @@ mod tests {
             ),
             // Span with status code in metrics
             (
-                SpanSlice {
+                SpanBytes {
                     service: "service".into(),
                     name: "op".into(),
                     resource: "res".into(),
@@ -554,15 +553,12 @@ mod tests {
             // Span with peer tags with peertags aggregation enabled
             (
                 SpanSlice {
-                    service: "service".into(),
-                    name: "op".into(),
-                    resource: "res".into(),
+                    service: "service",
+                    name: "op",
+                    resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
-                        ("span.kind".into(), "client".into()),
-                        ("aws.s3.bucket".into(), "bucket-a".into()),
-                    ]),
+                    meta: HashMap::from([("span.kind", "client"), ("aws.s3.bucket", "bucket-a")]),
                     ..Default::default()
                 },
                 AggregationKey {
@@ -578,16 +574,16 @@ mod tests {
             // Span with multiple peer tags with peertags aggregation enabled
             (
                 SpanSlice {
-                    service: "service".into(),
-                    name: "op".into(),
-                    resource: "res".into(),
+                    service: "service",
+                    name: "op",
+                    resource: "res",
                     span_id: 1,
                     parent_id: 0,
                     meta: HashMap::from([
-                        ("span.kind".into(), "producer".into()),
-                        ("aws.s3.bucket".into(), "bucket-a".into()),
-                        ("db.instance".into(), "dynamo.test.us1".into()),
-                        ("db.system".into(), "dynamodb".into()),
+                        ("span.kind", "producer"),
+                        ("aws.s3.bucket", "bucket-a"),
+                        ("db.instance", "dynamo.test.us1"),
+                        ("db.system", "dynamodb"),
                     ]),
                     ..Default::default()
                 },
@@ -609,16 +605,16 @@ mod tests {
             // server
             (
                 SpanSlice {
-                    service: "service".into(),
-                    name: "op".into(),
-                    resource: "res".into(),
+                    service: "service",
+                    name: "op",
+                    resource: "res",
                     span_id: 1,
                     parent_id: 0,
                     meta: HashMap::from([
-                        ("span.kind".into(), "server".into()),
-                        ("aws.s3.bucket".into(), "bucket-a".into()),
-                        ("db.instance".into(), "dynamo.test.us1".into()),
-                        ("db.system".into(), "dynamodb".into()),
+                        ("span.kind", "server"),
+                        ("aws.s3.bucket", "bucket-a"),
+                        ("db.instance", "dynamo.test.us1"),
+                        ("db.system", "dynamodb"),
                     ]),
                     ..Default::default()
                 },

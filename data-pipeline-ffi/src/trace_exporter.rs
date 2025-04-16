@@ -360,10 +360,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
     // necessary that the trace be static for the life of the FFI function call as the caller
     // currently owns the memory.
     //APMSP-1621 - Properly fix this sharp-edge by allocating memory on the Rust side
-    match exporter.send(
-        trace.as_slice(),
-        trace_count,
-    ) {
+    match exporter.send(trace.as_slice(), trace_count) {
         Ok(resp) => {
             if let Some(result) = response_out {
                 result

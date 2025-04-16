@@ -65,9 +65,7 @@ mod tracing_integration_tests {
         root_span["name"] = json!(format!("{name_prefix}_03"));
         root_span["type"] = json!("web".to_owned());
 
-        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
-
-        encoded_data
+        rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap()
     }
 
     fn get_v05_trace_snapshot_test_payload() -> Vec<u8> {
@@ -98,9 +96,8 @@ mod tracing_integration_tests {
         );
 
         let traces = (dict.dict(), vec![vec![span_1, span_2, root_span]]);
-        let encoded_data = rmp_serde::to_vec(&traces).unwrap();
 
-        encoded_data
+        rmp_serde::to_vec(&traces).unwrap()
     }
 
     #[cfg_attr(miri, ignore)]
