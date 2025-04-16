@@ -201,9 +201,7 @@ impl Bytes {
         &mut self.slice
     }
 
-    // private
-
-    fn from_underlying(value: impl UnderlyingBytes) -> Self {
+    pub fn from_underlying(value: impl UnderlyingBytes) -> Self {
         unsafe {
             // SAFETY:
             // * the pointer associated with a slice is non null and valid for the length of the
@@ -216,6 +214,8 @@ impl Bytes {
             Self::from_raw_refcount(ptr, len, make_refcounted(value))
         }
     }
+
+    // private
 
     #[inline]
     fn safe_slice_ref(&self, start: usize, end: usize) -> Self {
