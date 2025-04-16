@@ -12,6 +12,9 @@ use std::fmt;
 use std::hash::Hash;
 use std::str::FromStr;
 use tinybytes::{Bytes, BytesString};
+use v05::dict::SharedDict;
+
+use crate::tracer_payload::TraceChunks;
 
 #[derive(Debug, PartialEq)]
 pub enum SpanKey {
@@ -60,9 +63,9 @@ impl FromStr for SpanKey {
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.
-pub trait SpanText: Eq + Hash + Borrow<str> + Serialize {}
+pub trait SpanText: Eq + Hash + Borrow<str> + Serialize + Default + Clone {}
 /// Implement the SpanText trait for any type which satisfies the sub traits.
-impl<T: Eq + Hash + Borrow<str> + Serialize> SpanText for T {}
+impl<T: Eq + Hash + Borrow<str> + Serialize + Default + Clone> SpanText for T {}
 
 /// Checks if the `value` represents an empty string. Used to skip serializing empty strings
 /// with serde.
@@ -258,6 +261,10 @@ pub type SpanLinkSlice<'a> = SpanLink<&'a str>;
 pub type SpanEventSlice<'a> = SpanEvent<&'a str>;
 pub type AttributeAnyValueSlice<'a> = AttributeAnyValue<&'a str>;
 pub type AttributeArrayValueSlice<'a> = AttributeArrayValue<&'a str>;
+
+pub type TraceChunksBytes = TraceChunks<BytesString>;
+
+pub type SharedDictBytes = SharedDict<BytesString>;
 
 impl SpanSlice<'_> {
     /// Converts a borrowed `SpanSlice` into an owned `SpanBytes`, by resolving all internal

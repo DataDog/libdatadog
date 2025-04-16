@@ -6,10 +6,7 @@ use super::*;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum LabelValue {
     Str(StringId),
-    Num {
-        num: i64,
-        num_unit: Option<StringId>,
-    },
+    Num { num: i64, num_unit: StringId },
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -35,7 +32,7 @@ impl Label {
         &self.value
     }
 
-    pub fn num(key: StringId, num: i64, num_unit: Option<StringId>) -> Self {
+    pub fn num(key: StringId, num: i64, num_unit: StringId) -> Self {
         Self {
             key,
             value: LabelValue::Num { num, num_unit },
@@ -70,7 +67,7 @@ impl From<&Label> for pprof::Label {
                 key,
                 str: 0,
                 num,
-                num_unit: num_unit.map(StringId::into_raw_id).unwrap_or_default(),
+                num_unit: num_unit.into_raw_id(),
             },
         }
     }
@@ -108,19 +105,24 @@ impl LabelId {
 /// You should only use the impl functions to modify this.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub struct LabelSet {
-    // Guaranteed to be sorted by [Self::new]
-    sorted_labels: Box<[LabelId]>,
+    labels: Box<[LabelId]>,
 }
 
 impl LabelSet {
     pub fn iter(&self) -> core::slice::Iter<'_, LabelId> {
-        self.sorted_labels.iter()
+        self.labels.iter()
     }
 
-    pub fn new(mut v: Vec<LabelId>) -> Self {
-        v.sort_unstable();
-        let sorted_labels = v.into_boxed_slice();
-        Self { sorted_labels }
+    pub fn new(labels: Box<[LabelId]>) -> Self {
+        // Once upon a time label ids were guaranteed to be sorted. However,
+        // this makes testing difficult because the order of input labels and
+        // output labels can make a difference.
+        // Unless there is some reason lost to time, we do not need to sort
+        // these. Save some cycles, and if a given language increases memory,
+        // then it means they aren't adding labels in the same order every
+        // time, and they should examine that--but it shouldn't be a
+        // correctness issue, as far as I know.
+        Self { labels }
     }
 }
 

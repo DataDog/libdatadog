@@ -2,58 +2,60 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::HashMap;
-use tinybytes::{Bytes, BytesString};
+
+use crate::span::SpanText;
 
 /// This struct represents the shared dictionary used for interning all the strings belonging to a
 /// v05 trace chunk.
-pub struct SharedDict {
+pub struct SharedDict<T> {
     /// Map strings with their index (O(1) retrieval complexity).
-    string_map: HashMap<BytesString, usize>,
+    string_map: HashMap<T, usize>,
     /// Since the collection needs to be ordered an additional vector to keep the insertion order.
-    dict: Vec<BytesString>,
+    dict: Vec<T>,
 }
 
-impl SharedDict {
+impl<T: SpanText> SharedDict<T> {
     /// Gets the index of the interned string. If the string is not part of the dictionary it is
     /// added and its corresponding index returned.
     ///
     /// # Arguments:
     ///
     /// * `str`: string to look up in the dictionary.
-    pub fn get_or_insert(&mut self, str: &BytesString) -> Result<u32, std::num::TryFromIntError> {
-        if let Some(index) = self.string_map.get(str) {
+    pub fn get_or_insert(&mut self, s: &T) -> Result<u32, std::num::TryFromIntError> {
+        if let Some(index) = self.string_map.get(s.borrow()) {
             (*index).try_into()
         } else {
             let index = self.dict.len();
-            self.dict.push(str.clone());
-            self.string_map.insert(str.clone(), index);
+            self.dict.push(s.clone());
+            self.string_map.insert(s.clone(), index);
             index.try_into()
         }
     }
 
     /// Returns the dictionary. This method consumes the structure.
-    pub fn dict(mut self) -> Vec<BytesString> {
+    pub fn dict(mut self) -> Vec<T> {
         std::mem::take(&mut self.dict)
     }
 }
 
-impl Default for SharedDict {
+impl<T: SpanText> Default for SharedDict<T> {
     fn default() -> Self {
-        let empty_str = unsafe { BytesString::from_bytes_unchecked(Bytes::from_static(b"")) };
         Self {
-            string_map: HashMap::from([(empty_str.clone(), 0)]),
-            dict: vec![empty_str.clone()],
+            string_map: HashMap::from([(T::default(), 0)]),
+            dict: vec![T::default()],
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use tinybytes::{Bytes, BytesString};
+
     use super::*;
 
     #[test]
     fn default_test() {
-        let dict = SharedDict::default();
+        let dict: SharedDict<BytesString> = SharedDict::default();
 
         assert_eq!(dict.string_map.len(), 1);
         assert_eq!(dict.dict.len(), 1);

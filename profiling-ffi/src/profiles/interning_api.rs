@@ -70,7 +70,13 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_label_num(
     key: GenerationalId<StringId>,
     val: i64,
 ) -> Result<GenerationalId<LabelId>> {
-    wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_label_num(key, val, None) })
+    wrap_with_ffi_result!({
+        profile_ptr_to_inner(profile)?.intern_label_num(
+            key,
+            val,
+            GenerationalId::new_immortal(StringId::ZERO),
+        )
+    })
 }
 
 /// This function interns its argument into the profiler.
@@ -93,7 +99,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_label_num_with_unit(
     val: i64,
     unit: GenerationalId<StringId>,
 ) -> Result<GenerationalId<LabelId>> {
-    wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_label_num(key, val, Some(unit)) })
+    wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_label_num(key, val, unit) })
 }
 
 /// This function interns its argument into the profiler.

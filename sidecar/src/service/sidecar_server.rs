@@ -16,7 +16,7 @@ use datadog_ipc::tarpc;
 use datadog_ipc::tarpc::context::Context;
 use datadog_ipc::transport::Transport;
 use datadog_trace_utils::trace_utils::SendData;
-use datadog_trace_utils::tracer_payload;
+use datadog_trace_utils::tracer_payload::decode_to_trace_chunks;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
 use ddcommon::{Endpoint, MutexExt};
 use ddtelemetry::worker::{
@@ -275,20 +275,15 @@ impl SidecarServer {
             headers
         );
 
-        let mut size = 0;
-        let mut processor = tracer_payload::DefaultTraceChunkProcessor;
-        let mut payload_params = tracer_payload::TracerPayloadParams::new(
-            data,
-            &headers,
-            &mut processor,
-            target.api_key.is_some(),
-            TraceEncoding::V04,
-        );
-        payload_params.measure_size(&mut size);
-        match payload_params.try_into() {
-            Ok(payload) => {
+        match decode_to_trace_chunks(data, TraceEncoding::V04) {
+            Ok((payload, size)) => {
                 trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
-                let data = SendData::new(size, payload, headers, target);
+                let data = SendData::new(
+                    size,
+                    payload.into_tracer_payload_collection(),
+                    headers,
+                    target,
+                );
                 self.trace_flusher.enqueue(data);
             }
             Err(e) => {

@@ -60,10 +60,10 @@ jobs:
         run: cargo test --workspace --exclude builder --doc --verbose && cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
         env:
           RUST_BACKTRACE: 1
-      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(tracing_integration_tests::)'"
+      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'"
         if: runner.os == 'Linux'
         shell: bash
-        run: cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(tracing_integration_tests::)'
+        run: cargo nextest run --workspace --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
         env:
           RUST_BACKTRACE: 1
       - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'"
@@ -248,6 +248,8 @@ jobs:
         uses: docker/bake-action@4ba453fbc2db7735392b93edf935aaf9b1e8f747 # 6.5.0
         with:
           targets: ${{ matrix.target }}
-          set: |
-            *.cache-from=type=gha,scope=${{ matrix.target }}
-            *.cache-to=type=gha,mode=max,scope=${{ matrix.target }}
+          # Caching is useful, when it works. We are routinely hanging, maybe this:
+          # https://github.com/docker/buildx/issues/537
+          #set: |
+          #  *.cache-from=type=gha,scope=${{ matrix.target }}
+          #  *.cache-to=type=gha,mode=max,scope=${{ matrix.target }}

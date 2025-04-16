@@ -38,6 +38,9 @@ pub extern "C" fn ddog_log_set_log_level(log_level: LogEventLevel) -> Option<Box
 ///
 /// Returns `None` on success, or a boxed `Error` if initialization fails.
 #[no_mangle]
-pub extern "C" fn ddog_log_init(log_level: LogEventLevel, callback: LogCallback) -> Option<Box<Error>> {
+pub extern "C" fn ddog_log_init(
+    log_level: LogEventLevel,
+    callback: LogCallback,
+) -> Option<Box<Error>> {
     logger_init(log_level, callback).err().map(Box::new)
 }
