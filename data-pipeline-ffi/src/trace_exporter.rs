@@ -360,9 +360,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
     // necessary that the trace be static for the life of the FFI function call as the caller
     // currently owns the memory.
     //APMSP-1621 - Properly fix this sharp-edge by allocating memory on the Rust side
-    let static_trace: ByteSlice<'static> = std::mem::transmute(trace);
     match exporter.send(
-        tinybytes::Bytes::from_static(static_trace.as_slice()),
+        trace.as_slice(),
         trace_count,
     ) {
         Ok(resp) => {
@@ -381,7 +380,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
 mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;
-    use datadog_trace_utils::span::SpanBytes;
+    use datadog_trace_utils::span::SpanSlice;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::{borrow::Borrow, mem::MaybeUninit};
@@ -775,7 +774,7 @@ mod tests {
 
             assert_eq!(ret, None);
 
-            let data = rmp_serde::to_vec_named::<Vec<Vec<SpanBytes>>>(&vec![vec![]]).unwrap();
+            let data = rmp_serde::to_vec_named::<Vec<Vec<SpanSlice>>>(&vec![vec![]]).unwrap();
             let traces = ByteSlice::new(&data);
             ret = ddog_trace_exporter_send(
                 Some(exporter.as_ref()),
