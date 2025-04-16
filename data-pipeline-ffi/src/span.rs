@@ -1,6 +1,9 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::ffi::CString;
+use std::os::raw::c_char;
+
 use datadog_trace_utils::span::{
     AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes,
 };
@@ -21,6 +24,22 @@ macro_rules! set_string_field {
     }};
 }
 
+// Get the ByteString field of the given pointer.
+macro_rules! get_string_field {
+    ($ptr:expr, $field:ident) => {{
+        if $ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+
+        let object = &mut *$ptr;
+
+        match CString::new(object.$field.as_str()) {
+            Ok(string) => string.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }};
+}
+
 // Set a numerical field of the given pointer.
 macro_rules! set_numeric_field {
     ($ptr:expr, $value:expr, $field:ident) => {{
@@ -32,6 +51,20 @@ macro_rules! set_numeric_field {
     }};
 }
 
+// Get a field from the given pointer.
+macro_rules! get_numeric_field {
+    ($ptr:expr, $field:ident) => {{
+        if $ptr.is_null() {
+            return 0;
+        }
+
+        let object = &mut *$ptr;
+
+        object.$field
+    }};
+}
+
+// Insert an element in the given hashmap field.
 macro_rules! insert_hashmap {
     ($ptr:expr, $key:expr, $value:expr, $field:ident) => {{
         if $ptr.is_null() {
@@ -40,6 +73,56 @@ macro_rules! insert_hashmap {
         let object = &mut *$ptr;
         let bytes_str_key = BytesString::from_slice($key.as_bytes()).unwrap_or_default();
         object.$field.insert(bytes_str_key, $value);
+    }};
+}
+
+macro_rules! remove_hashmap {
+    ($ptr:expr, $key:expr, $field:ident) => {{
+        if $ptr.is_null() {
+            return;
+        }
+        let object = &mut *$ptr;
+        let bytes_str_key = BytesString::from_slice($key.as_bytes()).unwrap_or_default();
+        object.$field.remove(&bytes_str_key);
+    }};
+}
+
+macro_rules! exists_hashmap {
+    ($ptr:expr, $key:expr, $field:ident) => {{
+        if $ptr.is_null() {
+            return false;
+        }
+        let object = &mut *$ptr;
+        let bytes_str_key = BytesString::from_slice($key.as_bytes()).unwrap_or_default();
+        return object.$field.contains_key(&bytes_str_key);
+    }};
+}
+
+macro_rules! get_keys_hashmap {
+    ($span_ptr:expr, $out_count:expr, $field:ident) => {{
+        if $span_ptr.is_null() || $out_count.is_null() {
+            return std::ptr::null_mut();
+        }
+
+        let span = &mut *$span_ptr;
+
+        let mut slices: Vec<*mut c_char> = Vec::with_capacity(span.$field.len());
+
+        for key in span.$field.keys() {
+            match CString::new(key.as_str()) {
+                Ok(cstring) => {
+                    slices.push(cstring.into_raw());
+                }
+                Err(_) => {
+                    continue;
+                }
+            };
+        }
+
+        let slice_box = slices.into_boxed_slice();
+        *$out_count = slice_box.len();
+
+        Box::into_raw(slice_box) as *mut *mut c_char
     }};
 }
 
@@ -108,8 +191,18 @@ pub unsafe extern "C" fn ddog_set_span_service(ptr: *mut SpanBytes, slice: CharS
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ddog_get_span_service(ptr: *mut SpanBytes) -> *mut c_char {
+    get_string_field!(ptr, service)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ddog_set_span_name(ptr: *mut SpanBytes, slice: CharSlice) {
     set_string_field!(ptr, slice, name);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_get_span_name(ptr: *mut SpanBytes) -> *mut c_char {
+    get_string_field!(ptr, name)
 }
 
 #[no_mangle]
@@ -118,8 +211,18 @@ pub unsafe extern "C" fn ddog_set_span_resource(ptr: *mut SpanBytes, slice: Char
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ddog_get_span_resource(ptr: *mut SpanBytes) -> *mut c_char {
+    get_string_field!(ptr, resource)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ddog_set_span_type(ptr: *mut SpanBytes, slice: CharSlice) {
     set_string_field!(ptr, slice, r#type);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_get_span_type(ptr: *mut SpanBytes) -> *mut c_char {
+    get_string_field!(ptr, r#type)
 }
 
 #[no_mangle]
@@ -128,8 +231,18 @@ pub unsafe extern "C" fn ddog_set_span_trace_id(ptr: *mut SpanBytes, value: u64)
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ddog_get_span_trace_id(ptr: *mut SpanBytes) -> u64 {
+    get_numeric_field!(ptr, trace_id)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ddog_set_span_span_id(ptr: *mut SpanBytes, value: u64) {
     set_numeric_field!(ptr, value, span_id);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_get_span_span_id(ptr: *mut SpanBytes) -> u64 {
+    get_numeric_field!(ptr, span_id)
 }
 
 #[no_mangle]
@@ -138,8 +251,18 @@ pub unsafe extern "C" fn ddog_set_span_parent_id(ptr: *mut SpanBytes, value: u64
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ddog_get_span_parent_id(ptr: *mut SpanBytes) -> u64 {
+    get_numeric_field!(ptr, parent_id)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ddog_set_span_start(ptr: *mut SpanBytes, value: i64) {
     set_numeric_field!(ptr, value, start);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_get_span_start(ptr: *mut SpanBytes) -> i64 {
+    get_numeric_field!(ptr, start)
 }
 
 #[no_mangle]
@@ -148,8 +271,18 @@ pub unsafe extern "C" fn ddog_set_span_duration(ptr: *mut SpanBytes, value: i64)
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ddog_get_span_duration(ptr: *mut SpanBytes) -> i64 {
+    get_numeric_field!(ptr, duration)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ddog_set_span_error(ptr: *mut SpanBytes, value: i32) {
     set_numeric_field!(ptr, value, error);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_get_span_error(ptr: *mut SpanBytes) -> i32 {
+    get_numeric_field!(ptr, error)
 }
 
 #[no_mangle]
@@ -163,8 +296,89 @@ pub unsafe extern "C" fn ddog_add_span_meta(ptr: *mut SpanBytes, key: CharSlice,
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ddog_del_span_meta(ptr: *mut SpanBytes, key: CharSlice) {
+    remove_hashmap!(ptr, key, meta);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_get_span_meta(ptr: *mut SpanBytes, key: CharSlice) -> *mut c_char {
+    if ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let span = &mut *ptr;
+
+    let bytes_str_key = BytesString::from_slice(key.as_bytes()).unwrap_or_default();
+
+    match span.meta.get(&bytes_str_key) {
+        Some(value) => {
+            let cstring = match CString::new(value.as_str()) {
+                Ok(s) => s,
+                Err(_) => CString::new("").unwrap_or_default(),
+            };
+            cstring.into_raw()
+        }
+        None => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_has_span_meta(ptr: *mut SpanBytes, key: CharSlice) -> bool {
+    exists_hashmap!(ptr, key, meta);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_span_meta_get_keys(
+    span_ptr: *mut SpanBytes,
+    out_count: *mut usize,
+) -> *mut *mut c_char {
+    get_keys_hashmap!(span_ptr, out_count, meta)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ddog_add_span_metrics(ptr: *mut SpanBytes, key: CharSlice, val: f64) {
     insert_hashmap!(ptr, key, val, metrics);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_del_span_metrics(ptr: *mut SpanBytes, key: CharSlice) {
+    remove_hashmap!(ptr, key, metrics);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_get_span_metrics(
+    ptr: *mut SpanBytes,
+    key: CharSlice,
+    result: *mut f64,
+) -> bool {
+    if ptr.is_null() {
+        return false;
+    }
+
+    let span = &mut *ptr;
+
+    let bytes_str_key = BytesString::from_slice(key.as_bytes()).unwrap_or_default();
+
+    match span.metrics.get(&bytes_str_key) {
+        Some(&value) => {
+            *result = value;
+            true
+        }
+        None => false,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_has_span_metrics(ptr: *mut SpanBytes, key: CharSlice) -> bool {
+    exists_hashmap!(ptr, key, metrics);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_span_metrics_get_keys(
+    span_ptr: *mut SpanBytes,
+    out_count: *mut usize,
+) -> *mut *mut c_char {
+    get_keys_hashmap!(span_ptr, out_count, metrics)
 }
 
 #[no_mangle]
@@ -179,6 +393,22 @@ pub unsafe extern "C" fn ddog_add_span_meta_struct(
         Bytes::copy_from_slice(val.as_bytes()),
         meta_struct
     );
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_span_free_keys_ptr(keys_ptr: *mut *mut c_char, count: usize) {
+    if keys_ptr.is_null() {
+        return;
+    }
+
+    let slice = std::slice::from_raw_parts_mut(keys_ptr, count);
+
+    for &mut ptr in slice.iter_mut() {
+        if !ptr.is_null() {
+            drop(CString::from_raw(ptr));
+        }
+    }
+    drop(Box::from_raw(slice));
 }
 
 // ------------------- SpanLinkBytes -------------------
