@@ -125,7 +125,7 @@ pub struct StringIdLocation {
     pub line: i64,
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Label<'a> {
     pub key: &'a str,
 
