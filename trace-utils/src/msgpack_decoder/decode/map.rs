@@ -4,7 +4,6 @@
 use crate::msgpack_decoder::decode::error::DecodeError;
 use rmp::{decode, decode::RmpRead, Marker};
 use std::collections::HashMap;
-use tinybytes::Bytes;
 
 /// Reads a map from the buffer and returns it as a `HashMap`.
 ///
@@ -14,7 +13,7 @@ use tinybytes::Bytes;
 /// # Arguments
 ///
 /// * `len` - The number of key-value pairs to read from the buffer.
-/// * `buf` - A reference to the Bytes containing the encoded map data.
+/// * `buf` - A reference to the slice containing the encoded map data.
 /// * `read_pair` - A function that reads a key-value pair from the buffer and returns it as a
 ///   `Result<(K, V), DecodeError>`.
 ///
@@ -34,14 +33,14 @@ use tinybytes::Bytes;
 /// * `V` - The type of the values in the map.
 /// * `F` - The type of the function used to read key-value pairs from the buffer.
 #[inline]
-pub fn read_map<K, V, F>(
+pub fn read_map<'a, K, V, F>(
     len: usize,
-    buf: &mut Bytes,
+    buf: &mut &'a [u8],
     read_pair: F,
 ) -> Result<HashMap<K, V>, DecodeError>
 where
     K: std::hash::Hash + Eq,
-    F: Fn(&mut Bytes) -> Result<(K, V), DecodeError>,
+    F: Fn(&mut &'a [u8]) -> Result<(K, V), DecodeError>,
 {
     let mut map = HashMap::with_capacity(len);
     for _ in 0..len {

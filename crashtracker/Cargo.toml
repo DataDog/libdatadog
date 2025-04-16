@@ -37,7 +37,7 @@ ddcommon = {path = "../ddcommon"}
 ddtelemetry = {path = "../ddtelemetry"}
 http = "1.0"
 libc = "0.2"
-nix = { version = "0.27.1", features = ["poll", "signal", "socket"] }
+nix = { version = "0.29", features = ["poll", "signal", "socket"] }
 num-derive = "0.4.2"
 num-traits = "0.2.19"
 os_info = "3.7.0"

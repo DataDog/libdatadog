@@ -8,7 +8,7 @@ use std::ffi::{CStr, CString};
 use std::io::Error;
 use std::mem::MaybeUninit;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
-use std::ptr::null_mut;
+use std::ptr::{null_mut, NonNull};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::{io, mem};
 use winapi::shared::minwindef::{DWORD, LPVOID};
@@ -26,7 +26,7 @@ const NOT_COMMITTED: usize = 1 << (usize::BITS - 1);
 
 pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<MappedMem<T>> {
     let shm = handle.get_shm_mut();
-    let ptr = unsafe {
+    let raw_ptr = unsafe {
         MapViewOfFile(
             shm.handle.as_raw_handle() as HANDLE,
             FILE_MAP_WRITE,
@@ -35,9 +35,9 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
             MAPPING_MAX_SIZE,
         )
     };
-    if ptr.is_null() {
+    let Some(ptr) = NonNull::new(raw_ptr) else {
         return Err(Error::last_os_error());
-    }
+    };
     if shm.size & NOT_COMMITTED != 0 {
         shm.size &= !NOT_COMMITTED;
         if shm.size == 0 {
@@ -45,7 +45,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
             shm.size = unsafe {
                 let mut info = MaybeUninit::<MEMORY_BASIC_INFORMATION>::uninit();
                 if VirtualQuery(
-                    ptr,
+                    ptr.as_ptr().cast_const(),
                     info.as_mut_ptr(),
                     mem::size_of::<MEMORY_BASIC_INFORMATION>(),
                 ) == 0
@@ -55,7 +55,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
                 info.assume_init().RegionSize
             };
         } else {
-            unsafe { VirtualAlloc(ptr, shm.size, MEM_COMMIT, PAGE_READWRITE) };
+            unsafe { VirtualAlloc(ptr.as_ptr(), shm.size, MEM_COMMIT, PAGE_READWRITE) };
         }
     }
     Ok(MappedMem { ptr, mem: handle })
@@ -63,7 +63,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
 
 pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
     unsafe {
-        UnmapViewOfFile(mapped.ptr.cast_const());
+        UnmapViewOfFile(mapped.ptr.as_ptr().cast_const());
     }
 }
 
@@ -178,7 +178,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
         let new_size = self.mem.get_shm().size;
         unsafe {
             VirtualAlloc(
-                (self.ptr as usize + current_size) as LPVOID,
+                (self.ptr.as_ptr() as usize + current_size) as LPVOID,
                 new_size - current_size,
                 MEM_COMMIT,
                 PAGE_READWRITE,

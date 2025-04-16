@@ -26,7 +26,6 @@ fn main() -> Result<()> {
 
     Ok(())
 }
-
 #[cfg(feature = "generate-protobuf")]
 fn generate_protobuf() {
     let mut config = prost_build::Config::new();
@@ -61,20 +60,60 @@ fn generate_protobuf() {
 
     config.type_attribute("Span", "#[derive(Deserialize, Serialize)]");
     config.field_attribute(
-        ".pb.Span",
-        "#[serde(default)] #[serde(deserialize_with = \"deserialize_null_into_default\")]",
+        ".pb.Span.service",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.name",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.resource",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.traceID",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.spanID",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.parentID",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.start",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.duration",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_duration\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.meta",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.metrics",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")]",
+    );
+    config.field_attribute(
+        ".pb.Span.type",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")]",
     );
     config.field_attribute(
         ".pb.Span.meta_struct",
-        "#[serde(skip_serializing_if = \"::std::collections::HashMap::is_empty\")]",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")] #[serde(skip_serializing_if = \"::std::collections::HashMap::is_empty\")]",
     );
     config.field_attribute(
         ".pb.Span.spanLinks",
-        "#[serde(skip_serializing_if = \"::prost::alloc::vec::Vec::is_empty\")]",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")] #[serde(skip_serializing_if = \"::prost::alloc::vec::Vec::is_empty\")]",
     );
     config.field_attribute(
         ".pb.Span.error",
-        "#[serde(skip_serializing_if = \"is_default\")]",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")] #[serde(skip_serializing_if = \"crate::deserializers::is_default\")]",
     );
 
     config.type_attribute("StatsPayload", "#[derive(Deserialize, Serialize)]");
@@ -187,38 +226,15 @@ fn generate_protobuf() {
 "
     .as_bytes();
 
-    let null_deser = &[
-        license,
-        "use serde::{Deserialize, Deserializer, Serialize};
-
-fn deserialize_null_into_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-where
-    T: Default + Deserialize<'de>,
-    D: Deserializer<'de>,
-{
-    let opt = Option::deserialize(deserializer)?;
-    Ok(opt.unwrap_or_default())
-}
-
-pub fn is_default<T: Default + PartialEq>(t: &T) -> bool {
-    t == &T::default()
-}
-
-"
-        .as_bytes(),
-    ]
-    .concat();
-
     let serde_uses = &[
         license,
         "use serde::{Deserialize, Serialize};
-
 "
         .as_bytes(),
     ]
     .concat();
 
-    prepend_to_file(null_deser, &output_path.join("pb.rs"));
+    prepend_to_file(serde_uses, &output_path.join("pb.rs"));
     prepend_to_file(serde_uses, &output_path.join("remoteconfig.rs"));
 }
 

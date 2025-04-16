@@ -7,36 +7,12 @@ mod spans;
 
 use super::crash_info::Metadata;
 pub use additional_tags::*;
-use anyhow::Context;
 pub use counters::*;
 use datadog_crashtracker::{CrashtrackerReceiverConfig, DEFAULT_SYMBOLS};
 pub use datatypes::*;
 use ddcommon_ffi::{wrap_with_void_ffi_result, Slice, VoidResult};
 use function_name::named;
 pub use spans::*;
-
-#[no_mangle]
-#[must_use]
-/// Cleans up after the crash-tracker:
-/// Unregister the crash handler, restore the previous handler (if any), and
-/// shut down the receiver.  Note that the use of this function is optional:
-/// the receiver will automatically shutdown when the pipe is closed on program
-/// exit.
-///
-/// # Preconditions
-///   This function assumes that the crashtracker has previously been
-///   initialized.
-/// # Safety
-///   Crash-tracking functions are not reentrant.
-///   No other crash-handler functions should be called concurrently.
-/// # Atomicity
-///   This function is not atomic. A crash during its execution may lead to
-///   unexpected crash-handling behaviour.
-pub unsafe extern "C" fn ddog_crasht_shutdown() -> VoidResult {
-    datadog_crashtracker::shutdown_crash_handler()
-        .context("ddog_crasht_shutdown failed")
-        .into()
-}
 
 #[no_mangle]
 #[must_use]

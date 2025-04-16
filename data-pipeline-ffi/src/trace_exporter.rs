@@ -933,8 +933,8 @@ mod tests {
             assert_eq!(response.assume_init().body.to_string_lossy(), response_body);
 
             ddog_trace_exporter_free(exporter);
-            // It should receive 3 payloads: app-started, metrics and app-closing.
-            mock_metrics.assert_hits(3);
+            // It should receive 1 payloads: metrics
+            mock_metrics.assert_hits(1);
         }
     }
 }

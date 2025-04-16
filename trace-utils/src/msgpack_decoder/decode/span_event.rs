@@ -2,15 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::msgpack_decoder::decode::number::read_number_bytes;
-use crate::msgpack_decoder::decode::string::{
-    handle_null_marker, read_string_bytes, read_string_ref,
-};
-use crate::span::{AttributeAnyValueBytes, AttributeArrayValueBytes, SpanEventBytes};
-use rmp::decode::ValueReadError;
+use crate::msgpack_decoder::decode::number::read_number_slice;
+use crate::msgpack_decoder::decode::string::{handle_null_marker, read_string_ref};
+use crate::span::{AttributeAnyValueSlice, AttributeArrayValueSlice, SpanEventSlice};
 use std::collections::HashMap;
 use std::str::FromStr;
-use tinybytes::{Bytes, BytesString};
 
 /// Reads a slice of bytes and decodes it into a vector of `SpanEvent` objects.
 ///
@@ -28,16 +24,18 @@ use tinybytes::{Bytes, BytesString};
 /// This function will return an error if:
 /// - The marker for the array length cannot be read.
 /// - Any `SpanEvent` cannot be decoded.
-pub(crate) fn read_span_events(buf: &mut Bytes) -> Result<Vec<SpanEventBytes>, DecodeError> {
-    if let Some(empty_vec) = handle_null_marker(buf, Vec::default) {
-        return Ok(empty_vec);
+pub(crate) fn read_span_events<'a>(
+    buf: &mut &'a [u8],
+) -> Result<Vec<SpanEventSlice<'a>>, DecodeError> {
+    if handle_null_marker(buf) {
+        return Ok(Vec::default());
     }
 
-    let len = rmp::decode::read_array_len(unsafe { buf.as_mut_slice() }).map_err(|_| {
+    let len = rmp::decode::read_array_len(buf).map_err(|_| {
         DecodeError::InvalidType("Unable to get array len for span events".to_owned())
     })?;
 
-    let mut vec: Vec<SpanEventBytes> = Vec::with_capacity(len as usize);
+    let mut vec: Vec<SpanEventSlice> = Vec::with_capacity(len as usize);
     for _ in 0..len {
         vec.push(decode_span_event(buf)?);
     }
@@ -65,15 +63,15 @@ impl FromStr for SpanEventKey {
     }
 }
 
-fn decode_span_event(buf: &mut Bytes) -> Result<SpanEventBytes, DecodeError> {
-    let mut event = SpanEventBytes::default();
-    let event_size = rmp::decode::read_map_len(unsafe { buf.as_mut_slice() })
+fn decode_span_event<'a>(buf: &mut &'a [u8]) -> Result<SpanEventSlice<'a>, DecodeError> {
+    let mut event = SpanEventSlice::default();
+    let event_size = rmp::decode::read_map_len(buf)
         .map_err(|_| DecodeError::InvalidType("Unable to get map len for event size".to_owned()))?;
 
     for _ in 0..event_size {
-        match read_string_ref(unsafe { buf.as_mut_slice() })?.parse::<SpanEventKey>()? {
-            SpanEventKey::TimeUnixNano => event.time_unix_nano = read_number_bytes(buf)?,
-            SpanEventKey::Name => event.name = read_string_bytes(buf)?,
+        match read_string_ref(buf)?.parse::<SpanEventKey>()? {
+            SpanEventKey::TimeUnixNano => event.time_unix_nano = read_number_slice(buf)?,
+            SpanEventKey::Name => event.name = read_string_ref(buf)?,
             SpanEventKey::Attributes => event.attributes = read_attributes_map(buf)?,
         }
     }
@@ -81,16 +79,16 @@ fn decode_span_event(buf: &mut Bytes) -> Result<SpanEventBytes, DecodeError> {
     Ok(event)
 }
 
-fn read_attributes_map(
-    buf: &mut Bytes,
-) -> Result<HashMap<BytesString, AttributeAnyValueBytes>, DecodeError> {
-    let len = rmp::decode::read_map_len(unsafe { buf.as_mut_slice() })
+fn read_attributes_map<'a>(
+    buf: &mut &'a [u8],
+) -> Result<HashMap<&'a str, AttributeAnyValueSlice<'a>>, DecodeError> {
+    let len = rmp::decode::read_map_len(buf)
         .map_err(|_| DecodeError::InvalidType("Unable to get map len for attributes".to_owned()))?;
 
     #[allow(clippy::expect_used)]
     let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
     for _ in 0..len {
-        let key = read_string_bytes(buf)?;
+        let key = read_string_ref(buf)?;
         let value = decode_attribute_any(buf)?;
         map.insert(key, value);
     }
@@ -123,16 +121,11 @@ impl FromStr for AttributeAnyKey {
     }
 }
 
-pub fn read_boolean_bytes(buf: &mut Bytes) -> Result<bool, ValueReadError> {
-    rmp::decode::read_bool(unsafe { buf.as_mut_slice() })
-}
-
-fn decode_attribute_any(buf: &mut Bytes) -> Result<AttributeAnyValueBytes, DecodeError> {
-    let mut attribute: Option<AttributeAnyValueBytes> = None;
-    let attribute_size =
-        rmp::decode::read_map_len(unsafe { buf.as_mut_slice() }).map_err(|_| {
-            DecodeError::InvalidType("Unable to get map len for attribute size".to_owned())
-        })?;
+fn decode_attribute_any<'a>(buf: &mut &'a [u8]) -> Result<AttributeAnyValueSlice<'a>, DecodeError> {
+    let mut attribute: Option<AttributeAnyValueSlice> = None;
+    let attribute_size = rmp::decode::read_map_len(buf).map_err(|_| {
+        DecodeError::InvalidType("Unable to get map len for attribute size".to_owned())
+    })?;
 
     if attribute_size != 2 {
         return Err(DecodeError::InvalidFormat(
@@ -142,15 +135,15 @@ fn decode_attribute_any(buf: &mut Bytes) -> Result<AttributeAnyValueBytes, Decod
     let mut attribute_type: Option<u8> = None;
 
     for _ in 0..attribute_size {
-        match read_string_ref(unsafe { buf.as_mut_slice() })?.parse::<AttributeAnyKey>()? {
-            AttributeAnyKey::Type => attribute_type = Some(read_number_bytes(buf)?),
+        match read_string_ref(buf)?.parse::<AttributeAnyKey>()? {
+            AttributeAnyKey::Type => attribute_type = Some(read_number_slice(buf)?),
             AttributeAnyKey::SingleValue(key) => {
-                attribute = Some(AttributeAnyValueBytes::SingleValue(get_attribute_from_key(
+                attribute = Some(AttributeAnyValueSlice::SingleValue(get_attribute_from_key(
                     buf, key,
                 )?))
             }
             AttributeAnyKey::ArrayValue => {
-                attribute = Some(AttributeAnyValueBytes::Array(read_attributes_array(buf)?))
+                attribute = Some(AttributeAnyValueSlice::Array(read_attributes_array(buf)?))
             }
         }
     }
@@ -175,16 +168,18 @@ fn decode_attribute_any(buf: &mut Bytes) -> Result<AttributeAnyValueBytes, Decod
     }
 }
 
-fn read_attributes_array(buf: &mut Bytes) -> Result<Vec<AttributeArrayValueBytes>, DecodeError> {
-    if let Some(empty_vec) = handle_null_marker(buf, Vec::default) {
-        return Ok(empty_vec);
+fn read_attributes_array<'a>(
+    buf: &mut &'a [u8],
+) -> Result<Vec<AttributeArrayValueSlice<'a>>, DecodeError> {
+    if handle_null_marker(buf) {
+        return Ok(Vec::default());
     }
 
-    let len = rmp::decode::read_array_len(unsafe { buf.as_mut_slice() }).map_err(|_| {
+    let len = rmp::decode::read_array_len(buf).map_err(|_| {
         DecodeError::InvalidType("Unable to get array len for event attributes".to_owned())
     })?;
 
-    let mut vec: Vec<AttributeArrayValueBytes> = Vec::with_capacity(len as usize);
+    let mut vec: Vec<AttributeArrayValueSlice> = Vec::with_capacity(len as usize);
     if len > 0 {
         let first = decode_attribute_array(buf, None)?;
         let array_type = (&first).into();
@@ -222,44 +217,43 @@ impl FromStr for AttributeArrayKey {
     }
 }
 
-fn get_attribute_from_key(
-    buf: &mut Bytes,
+fn get_attribute_from_key<'a>(
+    buf: &mut &'a [u8],
     key: AttributeArrayKey,
-) -> Result<AttributeArrayValueBytes, DecodeError> {
+) -> Result<AttributeArrayValueSlice<'a>, DecodeError> {
     match key {
         AttributeArrayKey::StringValue => {
-            Ok(AttributeArrayValueBytes::String(read_string_bytes(buf)?))
+            Ok(AttributeArrayValueSlice::String(read_string_ref(buf)?))
         }
         AttributeArrayKey::BoolValue => {
-            let boolean = read_boolean_bytes(buf);
+            let boolean = rmp::decode::read_bool(buf);
             if let Ok(value) = boolean {
                 match value {
-                    true => Ok(AttributeArrayValueBytes::Boolean(true)),
-                    false => Ok(AttributeArrayValueBytes::Boolean(false)),
+                    true => Ok(AttributeArrayValueSlice::Boolean(true)),
+                    false => Ok(AttributeArrayValueSlice::Boolean(false)),
                 }
             } else {
                 Err(DecodeError::InvalidType("Invalid boolean field".to_owned()))
             }
         }
         AttributeArrayKey::IntValue => {
-            Ok(AttributeArrayValueBytes::Integer(read_number_bytes(buf)?))
+            Ok(AttributeArrayValueSlice::Integer(read_number_slice(buf)?))
         }
         AttributeArrayKey::DoubleValue => {
-            Ok(AttributeArrayValueBytes::Double(read_number_bytes(buf)?))
+            Ok(AttributeArrayValueSlice::Double(read_number_slice(buf)?))
         }
         _ => Err(DecodeError::InvalidFormat("Invalid attribute".to_owned())),
     }
 }
 
-fn decode_attribute_array(
-    buf: &mut Bytes,
+fn decode_attribute_array<'a>(
+    buf: &mut &'a [u8],
     array_type: Option<u8>,
-) -> Result<AttributeArrayValueBytes, DecodeError> {
-    let mut attribute: Option<AttributeArrayValueBytes> = None;
-    let attribute_size =
-        rmp::decode::read_map_len(unsafe { buf.as_mut_slice() }).map_err(|_| {
-            DecodeError::InvalidType("Unable to get map len for attribute size".to_owned())
-        })?;
+) -> Result<AttributeArrayValueSlice<'a>, DecodeError> {
+    let mut attribute: Option<AttributeArrayValueSlice> = None;
+    let attribute_size = rmp::decode::read_map_len(buf).map_err(|_| {
+        DecodeError::InvalidType("Unable to get map len for attribute size".to_owned())
+    })?;
 
     if attribute_size != 2 {
         return Err(DecodeError::InvalidFormat(
@@ -269,8 +263,8 @@ fn decode_attribute_array(
     let mut attribute_type: Option<u8> = None;
 
     for _ in 0..attribute_size {
-        match read_string_ref(unsafe { buf.as_mut_slice() })?.parse::<AttributeArrayKey>()? {
-            AttributeArrayKey::Type => attribute_type = Some(read_number_bytes(buf)?),
+        match read_string_ref(buf)?.parse::<AttributeArrayKey>()? {
+            AttributeArrayKey::Type => attribute_type = Some(read_number_slice(buf)?),
             key => attribute = Some(get_attribute_from_key(buf, key)?),
         }
     }

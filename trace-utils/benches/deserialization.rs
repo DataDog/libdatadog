@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::{black_box, criterion_group, Criterion};
-use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
-use datadog_trace_utils::tracer_payload::{
-    DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadCollection, TracerPayloadParams,
-};
+use datadog_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
 use serde_json::{json, Value};
 
 fn generate_spans(num_spans: usize, trace_id: u64) -> Vec<Value> {
@@ -65,7 +62,6 @@ pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
     let data = rmp_serde::to_vec(&generate_trace_chunks(20, 2_075))
         .expect("Failed to serialize test spans.");
     let data_as_bytes = tinybytes::Bytes::copy_from_slice(&data);
-    let tracer_header_tags = &TracerHeaderTags::default();
 
     c.bench_function(
         "benching deserializing traces from msgpack to their internal representation ",
@@ -73,16 +69,8 @@ pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
             b.iter_batched(
                 || data_as_bytes.clone(),
                 |data_as_bytes| {
-                    let result: anyhow::Result<TracerPayloadCollection> = black_box(
-                        TracerPayloadParams::new(
-                            data_as_bytes,
-                            tracer_header_tags,
-                            &mut DefaultTraceChunkProcessor,
-                            false,
-                            TraceEncoding::V04,
-                        )
-                        .try_into(),
-                    );
+                    let result =
+                        black_box(decode_to_trace_chunks(data_as_bytes, TraceEncoding::V04));
                     assert!(result.is_ok());
                     // Return the result to avoid measuring the deallocation time
                     result

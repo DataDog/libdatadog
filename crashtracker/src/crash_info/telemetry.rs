@@ -157,7 +157,7 @@ impl TelemetryCrashUploader {
 
         tokio::time::timeout(
             std::time::Duration::from_millis({
-                if let Some(endp) = self.cfg.endpoint.as_ref() {
+                if let Some(endp) = self.cfg.endpoint() {
                     endp.timeout_ms
                 } else {
                     Endpoint::DEFAULT_TIMEOUT
@@ -235,7 +235,7 @@ mod tests {
         assert_eq!(metadata.runtime_id, "xyz");
         let cfg = t.cfg;
         assert_eq!(
-            cfg.endpoint.unwrap().url.to_string(),
+            cfg.endpoint().unwrap().url.to_string(),
             "http://localhost:8126/telemetry/proxy/api/v2/apmtelemetry"
         );
     }
@@ -278,7 +278,7 @@ mod tests {
         assert_eq!(
             HashSet::from_iter([
                 "collecting_sample:1",
-                "data_schema_version:1.2",
+                "data_schema_version:1.3",
                 "incomplete:true",
                 "is_crash:true",
                 "not_profiling:0",

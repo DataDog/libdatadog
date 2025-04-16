@@ -3,6 +3,7 @@
 
 #[rustfmt::skip]
 pub mod pb;
+mod deserializers;
 pub mod remoteconfig;
 mod serde;
 

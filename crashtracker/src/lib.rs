@@ -64,8 +64,8 @@ mod shared;
 pub use collector::{
     begin_op, clear_additional_tags, clear_spans, clear_traces, consume_and_emit_additional_tags,
     default_signals, end_op, init, insert_additional_tag, insert_span, insert_trace, on_fork,
-    remove_additional_tag, remove_span, remove_trace, reset_counters, shutdown_crash_handler,
-    update_config, update_metadata, OpTypes, DEFAULT_SYMBOLS,
+    remove_additional_tag, remove_span, remove_trace, reset_counters, update_config,
+    update_metadata, OpTypes, DEFAULT_SYMBOLS,
 };
 
 #[cfg(all(windows, feature = "collector_windows"))]

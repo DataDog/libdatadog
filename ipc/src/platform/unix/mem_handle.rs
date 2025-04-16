@@ -16,6 +16,7 @@ use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
 use std::num::NonZeroUsize;
+use std::os::fd::AsFd;
 use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::{AtomicI32, Ordering};
 
@@ -63,7 +64,7 @@ pub fn shm_unlink<P: ?Sized + NixPath>(name: &P) -> nix::Result<()> {
 }
 
 pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMem<T>> {
-    let fd = handle.get_shm().handle.as_owned_fd()?;
+    let fd = handle.get_shm().handle.as_owned_fd()?.as_fd();
     if let Some(size) = NonZeroUsize::new(handle.get_shm().size) {
         Ok(MappedMem {
             ptr: unsafe {
@@ -72,7 +73,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMe
                     size,
                     ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
                     MapFlags::MAP_SHARED,
-                    Some(fd),
+                    fd,
                     0,
                 )?
             },
@@ -84,9 +85,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMe
 }
 
 pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
-    unsafe {
-        _ = munmap(mapped.ptr, mapped.mem.get_size());
-    }
+    _ = unsafe { munmap(mapped.ptr, mapped.mem.get_size()) };
 }
 
 static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);

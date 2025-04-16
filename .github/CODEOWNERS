@@ -24,3 +24,8 @@ sidecar                 @Datadog/libdatadog-php @Datadog/libdatadog-apm
 sidecar-ffi             @Datadog/libdatadog-php @Datadog/libdatadog-apm
 data-pipeline*/         @Datadog/libdatadog-apm
 ddsketch                @Datadog/libdatadog-apm @Datadog/libdatadog-telemetry
+
+# Most of the bin_tests are owned by the profiling team, but some are owned by the core team
+bin_tests/              @Datadog/libdatadog-profiling
+bin_tests/tests/test_the_tests.rs   @Datadog/libdatadog-core
+bin_tests/src/bin/test_the_tests.rs @Datadog/libdatadog-core

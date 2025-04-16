@@ -106,7 +106,7 @@ async fn receiver_entry_point(
                 .push(format!("Error resolving frames: {e}"));
         }
         crash_info
-            .async_upload_to_endpoint(&config.endpoint)
+            .async_upload_to_endpoint(config.endpoint())
             .await?;
     }
     Ok(())
@@ -127,14 +127,18 @@ fn resolve_frames(
     config: &CrashtrackerConfiguration,
     crash_info: &mut CrashInfo,
 ) -> anyhow::Result<()> {
-    if config.resolve_frames == StacktraceCollection::EnabledWithSymbolsInReceiver {
+    if config.resolve_frames() == StacktraceCollection::EnabledWithSymbolsInReceiver {
         let pid = crash_info
             .proc_info
             .as_ref()
             .context("Unable to resolve frames: No PID specified")?
             .pid;
-        crash_info.resolve_names(pid)?;
-        crash_info.normalize_ips(pid)?;
+        let rval1 = crash_info.resolve_names(pid);
+        let rval2 = crash_info.normalize_ips(pid);
+        anyhow::ensure!(
+            rval1.is_ok() && rval2.is_ok(),
+            "resolve_names: {rval1:?}\tnormalize_ips: {rval2:?}"
+        );
     }
     Ok(())
 }

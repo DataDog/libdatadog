@@ -31,7 +31,7 @@ kernel32-sys = "0.2.2"
 
 [target.'cfg(not(windows))'.dependencies]
 memfd = { version = "0.6" }
-nix = { version = "0.27.1", features = ["dir", "process"] }
+nix = { version = "0.29", features = ["dir", "process"] }
 tempfile = { version = "3.3" }
 
 [target.'cfg(windows)'.dev-dependencies]

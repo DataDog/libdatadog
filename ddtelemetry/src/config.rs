@@ -3,7 +3,6 @@
 
 use ddcommon::{config::parse_env, parse_uri, Endpoint};
 use http::{uri::PathAndQuery, Uri};
-use std::sync::OnceLock;
 use std::{borrow::Cow, time::Duration};
 
 pub const DEFAULT_DD_SITE: &str = "datadoghq.com";
@@ -18,17 +17,12 @@ const TRACE_SOCKET_PATH: &str = "/var/run/datadog/apm.socket";
 const DEFAULT_AGENT_HOST: &str = "localhost";
 const DEFAULT_AGENT_PORT: u16 = 8126;
 
-// TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
-static CFG: OnceLock<Config> = OnceLock::new();
-
-fn get_cfg() -> &'static Config {
-    CFG.get_or_init(Config::from_env)
-}
-
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     /// Endpoint to send the data to
-    pub endpoint: Option<Endpoint>,
+    /// This is private and should be interacted with throught the set_endpoint function
+    /// to ensure the url path is properly set
+    pub(crate) endpoint: Option<Endpoint>,
     /// Enables debug logging
     pub telemetry_debug_logging_enabled: bool,
     pub telemetry_heartbeat_interval: Duration,
@@ -221,12 +215,22 @@ impl Config {
         settings.api_key.clone().map(Cow::Owned)
     }
 
+    pub fn endpoint(&self) -> Option<&Endpoint> {
+        self.endpoint.as_ref()
+    }
+
     pub fn set_endpoint(&mut self, endpoint: Endpoint) -> anyhow::Result<()> {
         self.endpoint = Some(endpoint_with_telemetry_path(
             endpoint,
             self.direct_submission_enabled,
         )?);
         Ok(())
+    }
+
+    pub fn set_endpoint_test_token<T: Into<Cow<'static, str>>>(&mut self, test_token: Option<T>) {
+        if let Some(endpoint) = &mut self.endpoint {
+            endpoint.test_token = test_token.map(|t| t.into());
+        }
     }
 
     pub fn from_settings(settings: &Settings) -> Self {
@@ -252,13 +256,10 @@ impl Config {
         this
     }
 
+    /// Get the configuration of the telemetry worker from env variables
     pub fn from_env() -> Self {
         let settings = Settings::from_env();
         Self::from_settings(&settings)
-    }
-
-    pub fn get() -> &'static Self {
-        get_cfg()
     }
 
     /// set_host sets the host telemetry should connect to.
