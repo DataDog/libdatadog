@@ -58,7 +58,7 @@ impl Profile {
         let labels = labels
             .iter()
             .map(|l| l.get(self.generation))
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .collect::<anyhow::Result<Box<_>>>()?;
         let labels = LabelSet::new(labels);
         let id = self.label_sets.dedup(labels);
         Ok(GenerationalId::new(id, self.generation))

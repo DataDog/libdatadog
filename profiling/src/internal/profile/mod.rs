@@ -125,7 +125,7 @@ impl Profile {
             self.validate_sample_labels(&sample)?;
         }
 
-        let labels: Vec<_> = sample
+        let labels: Box<_> = sample
             .labels
             .iter()
             .map(|label| {
@@ -163,20 +163,23 @@ impl Profile {
 
         self.validate_string_id_sample_labels(&sample)?;
 
-        let mut labels = Vec::with_capacity(sample.labels.len());
-        for label in &sample.labels {
-            let key = self.resolve(label.key)?;
-            let internal_label = if label.str != ManagedStringId::empty() {
-                let str = self.resolve(label.str)?;
-                Label::str(key, str)
-            } else {
-                let num = label.num;
-                let num_unit = self.resolve(label.num_unit)?;
-                Label::num(key, num, num_unit)
-            };
+        let labels = sample
+            .labels
+            .iter()
+            .map(|label| -> anyhow::Result<LabelId> {
+                let key = self.resolve(label.key)?;
+                let internal_label = if label.str != ManagedStringId::empty() {
+                    let str = self.resolve(label.str)?;
+                    Label::str(key, str)
+                } else {
+                    let num = label.num;
+                    let num_unit = self.resolve(label.num_unit)?;
+                    Label::num(key, num, num_unit)
+                };
 
-            labels.push(self.labels.dedup(internal_label));
-        }
+                Ok(self.labels.dedup(internal_label))
+            })
+            .collect::<Result<Box<[_]>, _>>()?;
 
         let mut locations = Vec::with_capacity(sample.locations.len());
         for location in &sample.locations {
@@ -189,7 +192,7 @@ impl Profile {
     fn add_sample_internal(
         &mut self,
         values: &[i64],
-        labels: Vec<LabelId>,
+        labels: Box<[LabelId]>,
         locations: Vec<LocationId>,
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<()> {
