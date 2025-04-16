@@ -16,14 +16,14 @@ use tracing_subscriber::{reload, Layer, Registry};
 /// https://github.com/tokio-rs/tracing/blob/dfc2c8b81889f1bc65f053e574de32ec79b72ce1/tracing-core/src/metadata.rs#L582
 ///
 /// ```
-/// use datadog-log::logger::LogLevel;
+/// use datadog_log::logger::LogEventLevel;
 ///
-/// let level = LogLevel::Info;
-/// assert!(level > LogLevel::Debug);
+/// let level = LogEventLevel::Info;
+/// assert!(level > LogEventLevel::Debug);
 /// ```
 #[repr(C)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LogLevel {
+pub enum LogEventLevel {
     /// The "trace" level.
     ///
     /// Designates very low priority, often extremely verbose, information.
@@ -59,7 +59,7 @@ pub struct LogField<'a> {
 #[repr(C)]
 pub struct LogEvent<'a> {
     /// The severity level of the log event
-    pub level: LogLevel,
+    pub level: LogEventLevel,
     /// The main message of the log event
     pub message: CharSlice<'a>,
     /// Additional context fields associated with the log event
@@ -80,7 +80,7 @@ where
     S: tracing::Subscriber,
 {
     fn on_event<'a>(&self, event: &Event<'a>, _ctx: tracing_subscriber::layer::Context<'a, S>) {
-        let level = LogLevel::from(event.metadata().level());
+        let level = LogEventLevel::from(event.metadata().level());
 
         #[derive(Default)]
         struct Visitor {
@@ -126,26 +126,26 @@ where
     }
 }
 
-impl From<&TracingLevel> for LogLevel {
+impl From<&TracingLevel> for LogEventLevel {
     fn from(level: &TracingLevel) -> Self {
         match *level {
-            TracingLevel::TRACE => LogLevel::Trace,
-            TracingLevel::DEBUG => LogLevel::Debug,
-            TracingLevel::INFO => LogLevel::Info,
-            TracingLevel::WARN => LogLevel::Warn,
-            TracingLevel::ERROR => LogLevel::Error,
+            TracingLevel::TRACE => LogEventLevel::Trace,
+            TracingLevel::DEBUG => LogEventLevel::Debug,
+            TracingLevel::INFO => LogEventLevel::Info,
+            TracingLevel::WARN => LogEventLevel::Warn,
+            TracingLevel::ERROR => LogEventLevel::Error,
         }
     }
 }
 
-impl From<LogLevel> for LevelFilter {
-    fn from(level: LogLevel) -> Self {
+impl From<LogEventLevel> for LevelFilter {
+    fn from(level: LogEventLevel) -> Self {
         match level {
-            LogLevel::Trace => LevelFilter::TRACE,
-            LogLevel::Debug => LevelFilter::DEBUG,
-            LogLevel::Info => LevelFilter::INFO,
-            LogLevel::Warn => LevelFilter::WARN,
-            LogLevel::Error => LevelFilter::ERROR,
+            LogEventLevel::Trace => LevelFilter::TRACE,
+            LogEventLevel::Debug => LevelFilter::DEBUG,
+            LogEventLevel::Info => LevelFilter::INFO,
+            LogEventLevel::Warn => LevelFilter::WARN,
+            LogEventLevel::Error => LevelFilter::ERROR,
         }
     }
 }
@@ -170,7 +170,7 @@ static RELOAD_HANDLE: std::sync::OnceLock<ReloadHandle> = std::sync::OnceLock::n
 /// # Returns
 ///
 /// Returns `Ok` on success, or an `Error` if the initialization fails.
-pub fn logger_init(log_level: LogLevel, callback: LogCallback) -> Result<(), Error> {
+pub fn logger_init(log_level: LogEventLevel, callback: LogCallback) -> Result<(), Error> {
     let level_filter = LevelFilter::from(log_level);
     let (filter_layer, reload_handle) = reload::Layer::new(level_filter);
 
@@ -198,7 +198,7 @@ pub fn logger_init(log_level: LogLevel, callback: LogCallback) -> Result<(), Err
 /// # Returns
 ///
 /// Returns `Ok` on success, or an `Error` if the update fails.
-pub fn logger_set_log_level(log_level: LogLevel) -> Result<(), Error> {
+pub fn logger_set_log_level(log_level: LogEventLevel) -> Result<(), Error> {
     let level_filter = LevelFilter::from(log_level);
     RELOAD_HANDLE
         .get()
@@ -218,7 +218,7 @@ mod tests {
     // Store owned events rather than borrowed ones
     #[derive(Debug, Clone)]
     struct StoredEvent {
-        level: LogLevel,
+        level: LogEventLevel,
         message: String,
         fields: Vec<(String, String)>,
     }
@@ -260,7 +260,7 @@ mod tests {
         let events = setup_test_events();
 
         // Initialize with Info level
-        assert!(logger_init(LogLevel::Info, test_callback).is_ok());
+        assert!(logger_init(LogEventLevel::Info, test_callback).is_ok());
 
         // This should not appear (below Info)
         debug!(request_id = "req1", "Debug filtered");
@@ -268,7 +268,7 @@ mod tests {
         info!(request_id = "req2", status = 200, "Info captured");
 
         // Change to Error level
-        assert!(logger_set_log_level(LogLevel::Error).is_ok());
+        assert!(logger_set_log_level(LogEventLevel::Error).is_ok());
 
         // These should not appear (below Error)
         info!(request_id = "req3", "Info filtered");
@@ -280,7 +280,7 @@ mod tests {
         assert_eq!(captured.len(), 2, "Should have captured exactly 2 messages");
 
         // First message (Info)
-        assert_eq!(captured[0].level, LogLevel::Info);
+        assert_eq!(captured[0].level, LogEventLevel::Info);
         assert_eq!(captured[0].message.as_str(), "Info captured");
         assert_eq!(captured[0].fields.len(), 2);
         assert!(captured[0]
@@ -293,7 +293,7 @@ mod tests {
             .any(|(k, v)| k == "status" && v == "200"));
 
         // Second message (Error)
-        assert_eq!(captured[1].level, LogLevel::Error);
+        assert_eq!(captured[1].level, LogEventLevel::Error);
         assert_eq!(captured[1].message.as_str(), "Error captured");
         assert_eq!(captured[1].fields.len(), 2);
         assert!(captured[1]
@@ -306,6 +306,6 @@ mod tests {
             .any(|(k, v)| k == "error_code" && v == "404"));
 
         // This should error
-        assert!(logger_init(LogLevel::Debug, test_callback).is_err());
+        assert!(logger_init(LogEventLevel::Debug, test_callback).is_err());
     }
 }

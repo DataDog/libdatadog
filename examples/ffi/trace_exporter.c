@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <datadog/common.h>
 #include <datadog/data-pipeline.h>
+#include <datadog/log.h>
 
 enum {
     SUCCESS,
@@ -17,8 +18,55 @@ void handle_error(ddog_TraceExporterError *err) {
     ddog_trace_exporter_error_free(err);
 }
 
+void handle_log_error(ddog_Error *err) {
+    fprintf(stderr, "Operation failed with error: %d", err->message);
+    ddog_Error_drop(err);
+}
+
+void log_callback(ddog_LogEvent event) {
+    char* level = event.level == DDOG_LOG_EVENT_LEVEL_DEBUG ? "DEBUG" :
+                  event.level == DDOG_LOG_EVENT_LEVEL_INFO ? "INFO" :
+                  event.level == DDOG_LOG_EVENT_LEVEL_WARN ? "WARN" :
+                  event.level == DDOG_LOG_EVENT_LEVEL_ERROR ? "ERROR" : "TRACE";
+
+    printf("%s :: %.*s :: ", level, (int)event.message.len, (char *)event.message.ptr);
+    for (size_t i = 0; i < event.fields.len; ++i) {
+        printf("%.*s: %.*s%s",
+               (int)event.fields.ptr[i].key.len, (char *)event.fields.ptr[i].key.ptr,
+               (int)event.fields.ptr[i].value.len, (char *)event.fields.ptr[i].value.ptr,
+               (i < event.fields.len - 1) ? ", " : "");
+    }
+    printf("\n");
+}
+
+int log_init() {
+    ddog_LogEventLevel log_level = DDOG_LOG_EVENT_LEVEL_DEBUG;
+    ddog_LogCallback callback = log_callback;
+
+    // Initialize the logger
+    struct ddog_Error *err = ddog_log_init(log_level, callback);
+    if (err) {
+        handle_log_error(err);
+        return 1;
+    }
+
+    // Set the log level, just for checking the API
+    err = ddog_log_set_log_level(DDOG_LOG_EVENT_LEVEL_TRACE);
+    if (err) {
+        handle_log_error(err);
+        return 1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
+    if (log_init() != 0) {
+        fprintf(stderr, "Failed to initialize logger\n");
+        return 1;
+    }
+
     int error;
 
     ddog_TraceExporter* trace_exporter;
