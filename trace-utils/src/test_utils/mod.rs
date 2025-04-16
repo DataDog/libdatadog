@@ -15,9 +15,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::send_data::SendData;
-use crate::span::v05;
-use crate::span::v05::dict::SharedDict;
 use crate::span::SpanBytes;
+use crate::span::{v05, SharedDictBytes};
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use datadog_trace_protobuf::pb;
@@ -230,7 +229,7 @@ pub fn create_test_v05_span(
     parent_id: u64,
     start: i64,
     is_top_level: bool,
-    dict: &mut SharedDict,
+    dict: &mut SharedDictBytes,
     metrics: Option<Vec<(String, f64)>>,
 ) -> v05::Span {
     let mut meta = HashMap::from([
