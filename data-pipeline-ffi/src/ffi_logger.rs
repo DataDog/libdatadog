@@ -9,6 +9,7 @@ use tracing_subscriber::filter::LevelFilter;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::Once;
+use std::thread;
 
 // Define the LogLevel enum that will be exported to FFI
 #[repr(C)]
@@ -151,26 +152,31 @@ pub extern "C" fn ddog_logger_set_max_log_level(log_level: LogLevel) -> Option<B
 // Add a helper function to trigger logs with all levels and template
 #[no_mangle]
 pub extern "C" fn trigger_logs() {
-    for level in [LogLevel::Trace, LogLevel::Debug, LogLevel::Info, LogLevel::Warn, LogLevel::Error] {
-        match level {
-            LogLevel::Trace => trace!("This ia a trace log"),
-            LogLevel::Debug => debug!("This is a debug log"),
-            LogLevel::Info => info!("This is an info log"),
-            LogLevel::Warn => warn!("This is a warn log"),
-            LogLevel::Error => error!("This is an error log"),
-        }
+    let thread_id = std::thread::current().id();
+    for i in 0..10_000 {
+        info!(?thread_id, i, "Hello from background thread");
     }
 }
 
 #[no_mangle]
 pub extern "C" fn trigger_logs_with_args() {
-    let name = "Alice";
-    let time = "2025-03-21T10:00:00Z";
+    let mut handles = Vec::new();
 
-    info!(name, time, "User logged in");
-    info!("User logged in {} {}", name, time);
-    info!(template = "User logged in {} {}", arg1 = name, arg2= time);
-    error!(user_id = 42, reason = "timeout", "Login failed");
+    for i in 0..10 {
+        let handle = thread::spawn(move || {
+            for j in 0..10_000 {
+                info!("Hello from background thread {}: {}", i, j);
+            }
+        });
+        handles.push(handle);
+    }
+    for handle in handles {
+        let _ = handle.join();
+    }
+
+    for i in 0..10_000 {
+        info!("Hello from main thread: {}", i);
+    }
 }
 
 #[cfg(test)]
