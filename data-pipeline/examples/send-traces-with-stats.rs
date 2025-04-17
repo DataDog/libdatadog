@@ -55,8 +55,7 @@ fn main() {
         traces.push(trace);
     }
     let data = rmp_serde::to_vec_named(&traces).unwrap();
-    let data_as_slice = data.as_ref();
 
-    exporter.send(data_as_slice, 100).unwrap();
+    exporter.send(data.as_ref(), 100).unwrap();
     exporter.shutdown(None).unwrap();
 }

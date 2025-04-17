@@ -128,9 +128,8 @@ mod tracing_integration_tests {
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
             let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_snapshot");
-            let data = data.as_ref();
 
-            let response = trace_exporter.send(data, 1);
+            let response = trace_exporter.send(data.as_ref(), 1);
             let expected_response = format!("{{\"rate_by_service\": {}}}", rate_param);
 
             assert!(response.is_ok());
@@ -179,9 +178,8 @@ mod tracing_integration_tests {
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
             let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_v05_snapshot");
-            let data = data.as_ref();
 
-            let response = trace_exporter.send(data, 1);
+            let response = trace_exporter.send(data.as_ref(), 1);
             let expected_response = format!("{{\"rate_by_service\": {}}}", rate_param);
 
             assert!(response.is_ok());
@@ -223,9 +221,8 @@ mod tracing_integration_tests {
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
             let data = get_v05_trace_snapshot_test_payload();
-            let data = data.as_ref();
 
-            let response = trace_exporter.send(data, 1);
+            let response = trace_exporter.send(data.as_ref(), 1);
             let expected_response = format!("{{\"rate_by_service\": {}}}", rate_param);
 
             assert!(response.is_ok());
@@ -293,9 +290,8 @@ mod tracing_integration_tests {
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
             let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_snapshot_uds");
-            let data = data.as_ref();
 
-            let response = trace_exporter.send(data, 1);
+            let response = trace_exporter.send(data.as_ref(), 1);
             let expected_response = format!("{{\"rate_by_service\": {}}}", rate_param);
 
             assert!(response.is_ok());

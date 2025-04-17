@@ -1236,7 +1236,6 @@ mod tests {
         }];
 
         let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
-        let data = data.as_ref();
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {
@@ -1245,7 +1244,7 @@ mod tests {
             })
         }
 
-        let result = exporter.send(data, 1);
+        let result = exporter.send(data.as_ref(), 1);
         // Error received because server is returning an empty body.
         assert!(result.is_err());
 
@@ -1313,7 +1312,6 @@ mod tests {
         }];
 
         let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
-        let data = data.as_ref();
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {
@@ -1322,7 +1320,7 @@ mod tests {
             })
         }
 
-        exporter.send(data, 1).unwrap();
+        exporter.send(data.as_ref(), 1).unwrap();
 
         exporter
             .shutdown(Some(Duration::from_millis(500)))
@@ -1403,9 +1401,10 @@ mod tests {
             }],
         ];
         let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
-        let data = data.as_ref();
 
-        let _result = exporter.send(data, 1).expect("failed to send trace");
+        let _result = exporter
+            .send(data.as_ref(), 1)
+            .expect("failed to send trace");
 
         assert_eq!(
             &format!(
@@ -1479,8 +1478,7 @@ mod tests {
             ..Default::default()
         }]];
         let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
-        let data = data.as_ref();
-        let result = exporter.send(data, 1);
+        let result = exporter.send(data.as_ref(), 1);
 
         assert!(result.is_err());
 
@@ -1536,8 +1534,7 @@ mod tests {
             ..Default::default()
         }]];
         let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
-        let data = data.as_ref();
-        let result = exporter.send(data, 1).unwrap();
+        let result = exporter.send(data.as_ref(), 1).unwrap();
 
         assert_eq!(
             result,
@@ -1607,8 +1604,7 @@ mod tests {
             ..Default::default()
         }]];
         let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
-        let data = data.as_ref();
-        let code = match exporter.send(data, 1).unwrap_err() {
+        let code = match exporter.send(data.as_ref(), 1).unwrap_err() {
             TraceExporterError::Request(e) => Some(e.status()),
             _ => None,
         }
@@ -1643,8 +1639,7 @@ mod tests {
             ..Default::default()
         }]];
         let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
-        let data = data.as_ref();
-        let err = exporter.send(data, 1);
+        let err = exporter.send(data.as_ref(), 1);
 
         assert!(err.is_err());
         assert_eq!(
@@ -1698,8 +1693,7 @@ mod tests {
         let exporter = builder.build().unwrap();
 
         let traces = vec![0x90];
-        let data = traces.as_ref();
-        let result = exporter.send(data, 1).unwrap();
+        let result = exporter.send(traces.as_ref(), 1).unwrap();
         assert_eq!(result.body, response_body);
 
         traces_endpoint.assert_hits(1);
@@ -1747,8 +1741,7 @@ mod tests {
 
         let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (vec![], vec![]);
         let traces = rmp_serde::to_vec(&v5).unwrap();
-        let data = traces.as_ref();
-        let result = exporter.send(data, 1).unwrap();
+        let result = exporter.send(traces.as_ref(), 1).unwrap();
         assert_eq!(result.body, response_body);
 
         traces_endpoint.assert_hits(1);
@@ -1808,8 +1801,7 @@ mod tests {
         let exporter = builder.build().unwrap();
 
         let traces = vec![0x90];
-        let data = traces.as_ref();
-        let result = exporter.send(data, 1).unwrap();
+        let result = exporter.send(traces.as_ref(), 1).unwrap();
         assert_eq!(result.body, response_body);
 
         traces_endpoint.assert_hits(1);
@@ -1894,7 +1886,6 @@ mod tests {
         }];
 
         let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
-        let data = data.as_ref();
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {
@@ -1903,7 +1894,7 @@ mod tests {
             })
         }
 
-        let _ = exporter.send(data, 1).unwrap();
+        let _ = exporter.send(data.as_ref(), 1).unwrap();
 
         exporter.shutdown(None).unwrap();
 

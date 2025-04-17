@@ -112,12 +112,12 @@ impl<'a> AggregationKey<'a> {
     /// key.
     pub(super) fn from_span<T>(span: &'a Span<T>, peer_tag_keys: &'a [String]) -> Self
     where
-        T: SpanText + AsRef<str>,
+        T: SpanText,
     {
         let span_kind = span
             .meta
             .get(TAG_SPANKIND)
-            .map(|s| s.as_ref())
+            .map(|s| s.borrow())
             .unwrap_or_default();
         let peer_tags = if client_or_producer(span_kind) {
             get_peer_tags(span, peer_tag_keys)
@@ -125,20 +125,20 @@ impl<'a> AggregationKey<'a> {
             vec![]
         };
         Self {
-            resource_name: span.resource.as_ref().into(),
-            service_name: span.service.as_ref().into(),
-            operation_name: span.name.as_ref().into(),
-            span_type: span.r#type.as_ref().into(),
+            resource_name: span.resource.borrow().into(),
+            service_name: span.service.borrow().into(),
+            operation_name: span.name.borrow().into(),
+            span_type: span.r#type.borrow().into(),
             span_kind: span_kind.into(),
             http_status_code: get_status_code(span),
             is_synthetics_request: span
                 .meta
                 .get(TAG_ORIGIN)
-                .is_some_and(|origin| origin.as_ref().starts_with(TAG_SYNTHETICS)),
+                .is_some_and(|origin| origin.borrow().starts_with(TAG_SYNTHETICS)),
             is_trace_root: span.parent_id == 0,
             peer_tags: peer_tags
                 .into_iter()
-                .map(|(k, v)| (k.into(), v.as_ref().into()))
+                .map(|(k, v)| (k.into(), v.borrow().into()))
                 .collect(),
         }
     }
@@ -190,12 +190,12 @@ impl From<pb::ClientGroupedStats> for AggregationKey<'static> {
 /// Return the status code of a span based on the metrics and meta tags.
 fn get_status_code<T>(span: &Span<T>) -> u32
 where
-    T: SpanText + AsRef<str>,
+    T: SpanText,
 {
     if let Some(status_code) = span.metrics.get(TAG_STATUS_CODE) {
         *status_code as u32
     } else if let Some(status_code) = span.meta.get(TAG_STATUS_CODE) {
-        status_code.as_ref().parse().unwrap_or(0)
+        status_code.borrow().parse().unwrap_or(0)
     } else {
         0
     }
@@ -204,10 +204,10 @@ where
 /// Return true if the span kind is "client" or "producer"
 fn client_or_producer<T>(span_kind: T) -> bool
 where
-    T: SpanText + ToString,
+    T: SpanText,
 {
     matches!(
-        span_kind.to_string().to_lowercase().as_str(),
+        span_kind.borrow().to_lowercase().as_str(),
         "client" | "producer"
     )
 }

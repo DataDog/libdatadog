@@ -27,18 +27,18 @@ fn align_timestamp(t: u64, bucket_size: u64) -> u64 {
 /// Return true if the span has a span.kind that is eligible for stats computation
 fn compute_stats_for_span_kind<T>(span: &Span<T>, span_kinds_stats_computed: &[String]) -> bool
 where
-    T: SpanText + AsRef<str>,
+    T: SpanText,
 {
     !span_kinds_stats_computed.is_empty()
         && span.meta.get("span.kind").is_some_and(|span_kind| {
-            span_kinds_stats_computed.contains(&span_kind.as_ref().to_lowercase())
+            span_kinds_stats_computed.contains(&span_kind.borrow().to_lowercase())
         })
 }
 
 /// Return true if the span should be ignored for stats computation
 fn should_ignore_span<T>(span: &Span<T>, span_kinds_stats_computed: &[String]) -> bool
 where
-    T: SpanText + AsRef<str>,
+    T: SpanText,
 {
     !(trace_utils::has_top_level(span)
         || trace_utils::is_measured(span)
@@ -121,7 +121,7 @@ impl SpanConcentrator {
     /// computation.
     pub fn add_span<T>(&mut self, span: &Span<T>)
     where
-        T: SpanText + AsRef<str>,
+        T: SpanText,
     {
         // If the span is elligible for stats computation
         if !should_ignore_span(span, self.span_kinds_stats_computed.as_slice()) {
