@@ -10,7 +10,8 @@ use blazesym::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use symbolic_demangle::demangle;
+use symbolic_common::Name;
+use symbolic_demangle::{Demangle, DemangleOptions};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StackTrace {
@@ -199,13 +200,16 @@ impl StackFrame {
         }
         Ok(())
     }
+}
 
+impl StackFrame {
     pub fn demangle_name(&mut self) -> anyhow::Result<()> {
         if let Some(name) = &self.function {
-            let demangled = demangle(name);
-            if demangled != *name {
-                self.mangled_name = Some(name.clone());
-                self.function = Some(demangled.to_string());
+            if let Some(demangled) = Name::from(name).demangle(DemangleOptions::name_only()) {
+                if demangled != *name {
+                    self.mangled_name = Some(name.clone());
+                    self.function = Some(demangled.to_string());
+                }
             }
         }
         Ok(())
@@ -288,5 +292,63 @@ impl super::test_utils::TestInstance for StackFrame {
             line,
             comments,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_demangle_rust() {
+        let mut frame = StackFrame::new();
+        frame.function = Some("_ZN3std2rt10lang_start17h7a87e81ecc4a9d6cE".to_string());
+        frame.demangle_name().unwrap();
+        assert_eq!(frame.function, Some("std::rt::lang_start".to_string()));
+        assert_eq!(frame.mangled_name, Some("_ZN3std2rt10lang_start17h7a87e81ecc4a9d6cE".to_string()));
+    }
+
+    #[test]
+    fn test_demangle_cpp() {
+        let mut frame = StackFrame::new();
+        frame.function = Some("_ZN3Foo3barEv".to_string());
+        frame.demangle_name().unwrap();
+        assert_eq!(frame.function, Some("Foo::bar".to_string()));
+        assert_eq!(frame.mangled_name, Some("_ZN3Foo3barEv".to_string()));
+    }
+
+    #[test]
+    fn test_demangle_msvc() {
+        let mut frame = StackFrame::new();
+        frame.function = Some("?bar@Foo@@QEAAXXZ".to_string());
+        frame.demangle_name().unwrap();
+        assert_eq!(frame.function, Some("Foo::bar".to_string()));
+        assert_eq!(frame.mangled_name, Some("?bar@Foo@@QEAAXXZ".to_string()));
+    }
+
+    #[test]
+    fn test_demangle_unmangled() {
+        let mut frame = StackFrame::new();
+        frame.function = Some("main".to_string());
+        frame.demangle_name().unwrap();
+        assert_eq!(frame.function, Some("main".to_string()));
+        assert_eq!(frame.mangled_name, None);
+    }
+
+    #[test]
+    fn test_demangle_empty() {
+        let mut frame = StackFrame::new();
+        frame.demangle_name().unwrap();
+        assert_eq!(frame.function, None);
+        assert_eq!(frame.mangled_name, None);
+    }
+
+    #[test]
+    fn test_demangle_invalid() {
+        let mut frame = StackFrame::new();
+        frame.function = Some("invalid_mangled_name".to_string());
+        frame.demangle_name().unwrap();
+        assert_eq!(frame.function, Some("invalid_mangled_name".to_string()));
+        assert_eq!(frame.mangled_name, None);
     }
 }
