@@ -64,6 +64,10 @@ impl CrashInfo {
     pub fn current_schema_version() -> String {
         "1.3".to_string()
     }
+
+    pub fn demangle_names(&mut self) -> anyhow::Result<()> {
+        self.error.demangle_names()
+    }
 }
 
 #[cfg(unix)]

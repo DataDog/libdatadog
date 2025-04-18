@@ -71,6 +71,18 @@ impl StackTrace {
         self.incomplete = incomplete;
         Ok(())
     }
+
+    pub fn demangle_names(&mut self) -> anyhow::Result<()> {
+        let mut errors = 0;
+        for frame in &mut self.frames {
+            frame.demangle_name().unwrap_or_else(|e| {
+                frame.comments.push(e.to_string());
+                errors += 1;
+            });
+        }
+        anyhow::ensure!(errors == 0);
+        Ok(())
+    }
 }
 
 #[cfg(unix)]
@@ -308,7 +320,10 @@ mod tests {
         frame.function = Some("_ZN3std2rt10lang_start17h7a87e81ecc4a9d6cE".to_string());
         frame.demangle_name().unwrap();
         assert_eq!(frame.function, Some("std::rt::lang_start".to_string()));
-        assert_eq!(frame.mangled_name, Some("_ZN3std2rt10lang_start17h7a87e81ecc4a9d6cE".to_string()));
+        assert_eq!(
+            frame.mangled_name,
+            Some("_ZN3std2rt10lang_start17h7a87e81ecc4a9d6cE".to_string())
+        );
     }
 
     #[test]
