@@ -7,9 +7,7 @@ mod tracing_integration_tests {
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use datadog_trace_utils::test_utils::{create_test_json_span, create_test_no_alloc_span};
     use datadog_trace_utils::trace_utils::TracerHeaderTags;
-    use datadog_trace_utils::tracer_payload::{
-        DefaultTraceChunkProcessor, TraceEncoding, TracerPayloadParams,
-    };
+    use datadog_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
     #[cfg(target_os = "linux")]
     use ddcommon::connector::uds::socket_path_to_uri;
     use ddcommon::Endpoint;
@@ -103,19 +101,17 @@ mod tracing_integration_tests {
 
         let data = get_v04_trace_snapshot_test_payload("test_send_data_v04_snapshot");
 
-        let payload_collection = TracerPayloadParams::new(
-            data,
-            &header_tags,
-            &mut DefaultTraceChunkProcessor,
-            false,
-            TraceEncoding::V04,
-        )
-        .try_into()
-        .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
+        let (payload_collection, _size) = decode_to_trace_chunks(data, TraceEncoding::V04)
+            .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
 
         test_agent.start_session(snapshot_name, None).await;
 
-        let data = SendData::new(300, payload_collection, header_tags, &endpoint);
+        let data = SendData::new(
+            300,
+            payload_collection.into_tracer_payload_collection(),
+            header_tags,
+            &endpoint,
+        );
 
         let _result = data.send().await;
 
@@ -197,19 +193,17 @@ mod tracing_integration_tests {
 
         let data = tinybytes::Bytes::from(encoded_data);
 
-        let payload_collection = TracerPayloadParams::new(
-            data,
-            &header_tags,
-            &mut DefaultTraceChunkProcessor,
-            false,
-            TraceEncoding::V04,
-        )
-        .try_into()
-        .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
+        let (payload_collection, _) = decode_to_trace_chunks(data, TraceEncoding::V04)
+            .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
 
         test_agent.start_session(snapshot_name, None).await;
 
-        let data = SendData::new(300, payload_collection, header_tags, &endpoint);
+        let data = SendData::new(
+            300,
+            payload_collection.into_tracer_payload_collection(),
+            header_tags,
+            &endpoint,
+        );
 
         let _result = data.send().await;
 
@@ -237,19 +231,16 @@ mod tracing_integration_tests {
 
         let empty_data = vec![0x90];
         let data = tinybytes::Bytes::from(empty_data);
-        let tracer_header_tags = &TracerHeaderTags::default();
 
-        let payload_collection = TracerPayloadParams::new(
-            data,
-            tracer_header_tags,
-            &mut DefaultTraceChunkProcessor,
-            false,
-            TraceEncoding::V04,
-        )
-        .try_into()
-        .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
+        let (payload_collection, _) = decode_to_trace_chunks(data, TraceEncoding::V04)
+            .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
 
-        let data = SendData::new(0, payload_collection, header_tags, &endpoint);
+        let data = SendData::new(
+            0,
+            payload_collection.into_tracer_payload_collection(),
+            header_tags,
+            &endpoint,
+        );
 
         let result = data.send().await;
 
@@ -319,19 +310,17 @@ mod tracing_integration_tests {
 
         let data = get_v04_trace_snapshot_test_payload("test_send_data_v04_snapshot_uds");
 
-        let payload_collection = TracerPayloadParams::new(
-            data,
-            &header_tags,
-            &mut DefaultTraceChunkProcessor,
-            false,
-            TraceEncoding::V04,
-        )
-        .try_into()
-        .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
+        let (payload_collection, size) = decode_to_trace_chunks(data, TraceEncoding::V04)
+            .expect("unable to convert TracerPayloadParams to TracerPayloadCollection");
 
         test_agent.start_session(snapshot_name, None).await;
 
-        let data = SendData::new(300, payload_collection, header_tags, &endpoint);
+        let data = SendData::new(
+            size,
+            payload_collection.into_tracer_payload_collection(),
+            header_tags,
+            &endpoint,
+        );
 
         let _result = data.send().await;
 
