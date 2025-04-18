@@ -58,6 +58,7 @@ mod tests {
                 default_signals(),
                 3000,
                 None,
+                true,
             )?)?,
         )
         .await?;
