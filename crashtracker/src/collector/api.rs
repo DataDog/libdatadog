@@ -247,7 +247,6 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
         timeout_ms,
         None,
         true,
-        true,
     )?;
     let metadata = Metadata::new(
         "libname".to_string(),
@@ -373,7 +372,6 @@ fn test_altstack_use_nocreate() -> anyhow::Result<()> {
         signals,
         timeout_ms,
         None,
-        true,
         true,
     )?;
     let metadata = Metadata::new(
@@ -504,7 +502,6 @@ fn test_altstack_nouse() -> anyhow::Result<()> {
         signals,
         timeout_ms,
         None,
-        true,
         true,
     )?;
     let metadata = Metadata::new(
@@ -670,7 +667,6 @@ fn test_waitall_nohang() -> anyhow::Result<()> {
         signals,
         timeout_ms,
         None,
-        true,
         true,
     )?;
 
