@@ -10,6 +10,7 @@ use blazesym::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use symbolic_demangle::demangle;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StackTrace {
@@ -137,6 +138,8 @@ pub struct StackFrame {
     pub function: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mangled_name: Option<String>,
 
     // Additional Info
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -192,6 +195,17 @@ impl StackFrame {
                 Symbolized::Unknown(reason) => {
                     anyhow::bail!("Couldn't symbolize {ip}: {reason}");
                 }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn demangle_name(&mut self) -> anyhow::Result<()> {
+        if let Some(name) = &self.function {
+            let demangled = demangle(name);
+            if demangled != *name {
+                self.mangled_name = Some(name.clone());
+                self.function = Some(demangled.to_string());
             }
         }
         Ok(())
@@ -253,6 +267,7 @@ impl super::test_utils::TestInstance for StackFrame {
         let column = Some(2 * seed as u32);
         let file = Some(format!("banana{seed}.rs"));
         let function = Some(format!("Bar::baz{seed}"));
+        let mangled_name = Some(format!("_ZN3Bar3baz{seed}E"));
         let line = Some((2 * seed + 1) as u32);
 
         let comments = vec![format!("This is a comment on frame {seed}")];
@@ -269,6 +284,7 @@ impl super::test_utils::TestInstance for StackFrame {
             column,
             file,
             function,
+            mangled_name,
             line,
             comments,
         }
