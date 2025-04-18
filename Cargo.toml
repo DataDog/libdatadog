@@ -30,7 +30,6 @@ members = [
   "trace-utils",
   "spawn_worker",
   "tests/spawn_from_lib",
-  "serverless",
   "bin_tests",
   "data-pipeline",
   "data-pipeline-ffi",
@@ -68,9 +67,6 @@ codegen-units = 1
 debug = "line-tables-only"
 lto = true
 opt-level = "s"            # optimize for size
-
-[profile.release.package.datadog-serverless-trace-mini-agent]
-strip = true
 
 [profile.bench]
 codegen-units = 1
