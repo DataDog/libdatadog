@@ -204,11 +204,14 @@ impl StackFrame {
 
 impl StackFrame {
     pub fn demangle_name(&mut self) -> anyhow::Result<()> {
-        if let Some(name) = &self.function {
-            if let Some(demangled) = Name::from(name).demangle(DemangleOptions::name_only()) {
-                if demangled != *name {
-                    self.mangled_name = Some(name.clone());
+        if let Some(name) = self.function.take() {
+            match Name::from(&name).demangle(DemangleOptions::name_only()) {
+                Some(demangled) if demangled != name => {
+                    self.mangled_name = Some(name);
                     self.function = Some(demangled.to_string());
+                }
+                _ => {
+                    self.function = Some(name);
                 }
             }
         }
