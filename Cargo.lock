@@ -1311,7 +1311,6 @@ dependencies = [
  "arc-swap",
  "bytes",
  "criterion",
- "data-pipeline",
  "datadog-ddsketch",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
