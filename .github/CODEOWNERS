@@ -15,7 +15,6 @@ README.md               @Datadog/libdatadog
 trace-normalization     @Datadog/serverless @Datadog/libdatadog-apm
 trace-obfuscation       @Datadog/serverless @Datadog/libdatadog-apm
 trace-protobuf          @Datadog/serverless @Datadog/libdatadog-apm
-trace-mini-agent        @Datadog/serverless
 trace-utils             @Datadog/serverless @Datadog/libdatadog-apm
 dynamic-configuration   @Datadog/libdatadog-php @Datadog/libdatadog-apm
 remote-config           @Datadog/libdatadog-php @Datadog/libdatadog-apm @Datadog/remote-config

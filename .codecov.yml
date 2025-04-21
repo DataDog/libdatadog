@@ -71,10 +71,6 @@ component_management:
       name: tinybytes  # this is a display name, and can be changed freely
       paths:
         - tinybytes
-    - component_id: trace-mini-agent  # this is an identifier that should not be changed
-      name: trace-mini-agent  # this is a display name, and can be changed freely
-      paths:
-        - trace-mini-agent
     - component_id: trace-normalization  # this is an identifier that should not be changed
       name: trace-normalization  # this is a display name, and can be changed freely
       paths:

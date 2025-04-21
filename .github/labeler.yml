@@ -24,7 +24,6 @@ ci-build:
 mini-agent:
 - changed-files:
   - any-glob-to-any-file: [
-      'trace-mini-agent/**/*',
       'trace-normalization/**/*',
       'trace-obfuscation/**/*',
       'trace-utils/**/*',
