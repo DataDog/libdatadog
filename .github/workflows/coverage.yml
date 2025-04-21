@@ -25,9 +25,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: Install Rust
         run: rustup install nightly-2024-12-16 && rustup default nightly-2024-12-16
-      - name: Install Protoc Binary
-        shell: bash
-        run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
