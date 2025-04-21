@@ -55,10 +55,6 @@ component_management:
       name: profiling-ffi  # this is a display name, and can be changed freely
       paths:
         - profiling-ffi
-    - component_id: serverless  # this is an identifier that should not be changed
-      name: serverless  # this is a display name, and can be changed freely
-      paths:
-        - serverless
     - component_id: sidecar  # this is an identifier that should not be changed
       name: sidecar  # this is a display name, and can be changed freely
       paths:

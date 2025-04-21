@@ -17,7 +17,6 @@ trace-obfuscation       @Datadog/serverless @Datadog/libdatadog-apm
 trace-protobuf          @Datadog/serverless @Datadog/libdatadog-apm
 trace-mini-agent        @Datadog/serverless
 trace-utils             @Datadog/serverless @Datadog/libdatadog-apm
-serverless              @Datadog/serverless
 dynamic-configuration   @Datadog/libdatadog-php @Datadog/libdatadog-apm
 remote-config           @Datadog/libdatadog-php @Datadog/libdatadog-apm @Datadog/remote-config
 sidecar                 @Datadog/libdatadog-php @Datadog/libdatadog-apm

@@ -100,7 +100,6 @@ COPY "tools/Cargo.toml" "tools/"
 COPY "tools/cc_utils/Cargo.toml" "tools/cc_utils/"
 COPY "tools/sidecar_mockgen/Cargo.toml" "tools/sidecar_mockgen/"
 COPY "spawn_worker/Cargo.toml" "spawn_worker/"
-COPY "serverless/Cargo.toml" "serverless/"
 COPY "tests/spawn_from_lib/Cargo.toml" "tests/spawn_from_lib/"
 COPY "ipc/Cargo.toml" "ipc/"
 COPY "ipc/macros/Cargo.toml" "ipc/macros/"
@@ -132,7 +131,6 @@ RUN echo \
     profiling-replayer/src/main.rs \
     profiling/benches/interning_strings.rs \
     profiling/benches/main.rs \
-    serverless/src/main.rs \
     tools/sidecar_mockgen/src/bin/sidecar_mockgen.rs \
     tools/src/bin/dedup_headers.rs \
     trace-normalization/benches/normalization_utils.rs \
