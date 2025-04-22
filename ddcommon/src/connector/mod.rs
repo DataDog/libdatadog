@@ -97,17 +97,22 @@ mod https {
     /// happens here.  On non-unix platforms, ddcommon uses `ring` instead, which handles this
     /// at rustls initialization. TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
     /// In fips mode we expect someone to have done this already.
+    #[cfg(not(feature = "fips"))]
     fn ensure_crypto_provider_initialized() {
         use std::sync::OnceLock;
         static INIT_CRYPTO_PROVIDER: OnceLock<()> = OnceLock::new();
         INIT_CRYPTO_PROVIDER.get_or_init(|| {
-            #[cfg(all(unix, not(feature = "fips")))]
+            #[cfg(unix)]
             #[allow(clippy::expect_used)]
             rustls::crypto::aws_lc_rs::default_provider()
                 .install_default()
                 .expect("Failed to install default CryptoProvider");
         });
     }
+
+    // This this actually needs to be done by the user somewhere in their own main.
+    #[cfg(feature = "fips")]
+    fn ensure_crypto_provider_initialized() {}
 
     #[cfg(feature = "use_webpki_roots")]
     pub(super) fn build_https_connector_with_webpki_roots() -> anyhow::Result<
