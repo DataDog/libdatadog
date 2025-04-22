@@ -128,41 +128,17 @@ mod https {
     pub(super) fn build_https_connector() -> anyhow::Result<
         hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
     > {
+        use rustls_platform_verifier::BuilderVerifierExt;
         ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
 
-        let certs = load_root_certs()?;
         let client_config = ClientConfig::builder()
-            .with_root_certificates(certs)
+            .with_platform_verifier()
             .with_no_client_auth();
         Ok(hyper_rustls::HttpsConnectorBuilder::new()
             .with_tls_config(client_config)
             .https_or_http()
             .enable_http1()
             .build())
-    }
-
-    #[cfg(not(feature = "use_webpki_roots"))]
-    fn load_root_certs() -> anyhow::Result<rustls::RootCertStore> {
-        use super::errors;
-
-        let mut roots = rustls::RootCertStore::empty();
-
-        let cert_result = rustls_native_certs::load_native_certs();
-        if cert_result.certs.is_empty() {
-            if let Some(err) = cert_result.errors.into_iter().next() {
-                return Err(err.into());
-            }
-        }
-        // TODO(paullgdfc): log errors even if there are valid certs, instead of ignoring them
-
-        for cert in cert_result.certs {
-            //TODO: log when invalid cert is loaded
-            roots.add(cert).ok();
-        }
-        if roots.is_empty() {
-            return Err(errors::Error::NoValidCertifacteRootsFound.into());
-        }
-        Ok(roots)
     }
 }
 
