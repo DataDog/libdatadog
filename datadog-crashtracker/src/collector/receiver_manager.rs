@@ -12,7 +12,8 @@ use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiv
 use crate::shared::constants::*;
 use anyhow::Context;
 use ddcommon::unix_utils::{
-    alt_fork, open_file_or_quiet, reap_child_non_blocking, terminate, wait_for_pollhup, PreparedExecve,
+    alt_fork, open_file_or_quiet, reap_child_non_blocking, terminate, wait_for_pollhup,
+    PreparedExecve,
 };
 use libc::{siginfo_t, ucontext_t};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
@@ -104,7 +105,7 @@ impl WatchedProcess {
         .map(|(a, b)| (a.into_raw_fd(), b.into_raw_fd()))?;
 
         // See ddcommon::unix_utils for platform-specific comments on alt_fork()
-        match  alt_fork() {
+        match alt_fork() {
             0 => {
                 // Child (noreturn)
                 let _ = unsafe { libc::close(uds_parent) };
@@ -149,13 +150,11 @@ impl WatchedProcess {
                     ppid,
                 );
             }
-            pid if pid > 0 => {
-                Ok(WatchedProcess {
-                    uds_fd: self.uds_fd,
-                    pid,
-                    oneshot: true,
-                })
-            }
+            pid if pid > 0 => Ok(WatchedProcess {
+                uds_fd: self.uds_fd,
+                pid,
+                oneshot: true,
+            }),
             _ => {
                 // Error
                 Err(anyhow::anyhow!("Failed to fork collector process"))
@@ -214,9 +213,9 @@ fn run_receiver_child(
     }
 
     // Close unused file descriptors
-    let _ = unsafe{ libc::close(uds_child) };
-    let _ = unsafe{ libc::close(stderr) };
-    let _ = unsafe{ libc::close(stdout) };
+    let _ = unsafe { libc::close(uds_child) };
+    let _ = unsafe { libc::close(stderr) };
+    let _ = unsafe { libc::close(stdout) };
 
     // Before we actually execve, let's make sure that the signal handler in the receiver is set to
     // a default disposition.

@@ -7,6 +7,7 @@ use super::receiver_manager::WatchedProcess;
 use super::signal_handler_manager::chain_signal_handler;
 use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
+use crate::shared::constants::DD_CRASHTRACK_MINIMUM_REAP_TIME_MS;
 use libc::{c_void, siginfo_t, ucontext_t};
 use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
@@ -150,7 +151,6 @@ fn handle_posix_signal_impl(
     anyhow::ensure!(!config_ptr.is_null(), "No crashtracking config");
     let (config, config_str) = unsafe { &*config_ptr };
 
-
     let metadata_ptr = METADATA.swap(ptr::null_mut(), SeqCst);
     anyhow::ensure!(!metadata_ptr.is_null(), "No crashtracking metadata");
     let (_metadata, metadata_string) = unsafe { &*metadata_ptr };
@@ -169,17 +169,16 @@ fn handle_posix_signal_impl(
         WatchedProcess::from_stored_config()?
     };
 
-    let collector = receiver.to_collector(
-        config,
-        config_str,
-        metadata_string,
-        sig_info,
-        ucontext,
-    )?;
+    let collector =
+        receiver.to_collector(config, config_str, metadata_string, sig_info, ucontext)?;
 
     // We're done. Wrap up our interaction with the receiver.
-    receiver.finish(start_time, timeout_ms);
     collector.finish(start_time, timeout_ms);
+    let timeout_ms = std::cmp::min(
+        timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32),
+        DD_CRASHTRACK_MINIMUM_REAP_TIME_MS,
+    );
+    receiver.finish(start_time, timeout_ms);
 
     Ok(())
 }
