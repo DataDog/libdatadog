@@ -3,16 +3,11 @@
 
 #![cfg(unix)]
 
-use super::emitters::emit_crashreport;
-use super::receiver_manager::Receiver;
-use super::saguard::SaGuard;
+use super::receiver_manager::WatchedProcess;
 use super::signal_handler_manager::chain_signal_handler;
 use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
-use anyhow::Context;
 use libc::{c_void, siginfo_t, ucontext_t};
-use nix::sys::signal;
-use std::io::Write;
 use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
@@ -23,7 +18,7 @@ use std::time::Instant;
 // - clock_gettime
 // - close (although Rust may call `free` because we call the higher-level nix interface)
 // - dup2
-// - fork (but specifically only because it does so without calling atfork handlers)
+// - fork (on MacOS; Linux calls `fork()` directly as syscall)
 // - kill
 // - poll
 // - raise
@@ -138,12 +133,8 @@ fn handle_posix_signal_impl(
         return Ok(());
     }
 
-    // If this is a SIGSEGV signal, it could be called due to a stack overflow. In that case, since
-    // this signal allocates to the stack and cannot guarantee it is running without SA_NODEFER, it
-    // is possible that we will re-emit the signal. Contemporary unices handle this just fine (no
-    // deadlock), but it does mean we will fail.  Currently this situation is not detected.
-    // In general, handlers do not know their own stack usage requirements in advance and are
-    // incapable of guaranteeing that they will not overflow the stack.
+    // If this code hits a stack overflow, then it will result in a segfault.  That situation is
+    // protected by the one-time guard.
 
     // One-time guard to guarantee at most one crash per process
     static NUM_TIMES_CALLED: AtomicU64 = AtomicU64::new(0);
@@ -153,69 +144,42 @@ fn handle_posix_signal_impl(
         return Ok(());
     }
 
-    // Leak config and metadata to avoid calling `drop` during a crash
-    // Note that these operations also replace the global states.  When the one-time guard is
-    // passed, all global configuration and metadata becomes invalid.
-    // In a perfet world, we'd also grab the receiver config in this section, but since the
-    // execution forks based on whether or not the receiver is configured, we check that later.
-    let config = CONFIG.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(!config.is_null(), "No crashtracking config");
-    let (config, config_str) = unsafe { config.as_ref().context("No crashtracking receiver")? };
+    // Get references to the configs.  Rather than copying the structs, keep them as references.
+    // NB: this clears the global variables, so they can't be used again.
+    let config_ptr = CONFIG.swap(ptr::null_mut(), SeqCst);
+    anyhow::ensure!(!config_ptr.is_null(), "No crashtracking config");
+    let (config, config_str) = unsafe { &*config_ptr };
+
 
     let metadata_ptr = METADATA.swap(ptr::null_mut(), SeqCst);
     anyhow::ensure!(!metadata_ptr.is_null(), "No crashtracking metadata");
-    let (_metadata, metadata_string) = unsafe { metadata_ptr.as_ref().context("metadata ptr")? };
+    let (_metadata, metadata_string) = unsafe { &*metadata_ptr };
 
-    // Since we've gotten this far, we're going to start working on the crash report. This
-    // operation needs to be mindful of the total walltime elapsed during handling. This isn't only
-    // to prevent hanging, but also because services capable of restarting after a crash experience
-    // crashes as probabalistic queue-holding events, and so crash handling represents dead time
-    // which makes the overall service increasingly incompetent at handling load.
     let timeout_ms = config.timeout_ms();
     let start_time = Instant::now(); // This is the time at which the signal was received
-
-    // During the execution of this signal handler, block ALL other signals, especially because we
-    // cannot control whether or not we run with SA_NODEFER (crashtracker might have been chained).
-    // The especially problematic signals are SIGCHLD and SIGPIPE, which are possibly delivered due
-    // to the execution of this handler.
-    // SaGuard ensures that signals are restored to their original state even if control flow is
-    // disrupted.
-    let _guard = SaGuard::<2>::new(&[signal::SIGCHLD, signal::SIGPIPE])?;
 
     // Optionally, create the receiver.  This all hinges on whether or not the configuration has a
     // non-null unix domain socket specified.  If it doesn't, then we need to check the receiver
     // configuration.  If it does, then we just connect to the socket.
     let unix_socket_path = config.unix_socket_path().clone().unwrap_or_default();
 
-    let mut receiver = if !unix_socket_path.is_empty() {
-        Receiver::from_socket(&unix_socket_path)?
+    let receiver = if !unix_socket_path.is_empty() {
+        WatchedProcess::from_socket(&unix_socket_path)?
     } else {
-        Receiver::from_stored_config()?
+        WatchedProcess::from_stored_config()?
     };
 
-    // No matter how the receiver was created, attach to its stream
-    // Safety: the receiver was just created, and we haven't closed its FD.
-    let mut unix_stream = unsafe { receiver.receiver_unix_stream() };
-
-    // Currently the emission of the crash report doesn't have a firm time guarantee
-    // In a future patch, the timeout parameter should be passed into the IPC loop here and
-    // checked periodically.
-    let res = emit_crashreport(
-        &mut unix_stream,
+    let collector = receiver.to_collector(
         config,
         config_str,
         metadata_string,
         sig_info,
         ucontext,
-    );
-
-    let _ = unix_stream.flush();
-    unix_stream
-        .shutdown(std::net::Shutdown::Write)
-        .context("Could not shutdown writing on the stream")?;
+    )?;
 
     // We're done. Wrap up our interaction with the receiver.
     receiver.finish(start_time, timeout_ms);
+    collector.finish(start_time, timeout_ms);
 
-    res
+    Ok(())
 }
