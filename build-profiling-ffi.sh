@@ -64,7 +64,7 @@ fi
 
 mkdir -v -p "$destdir/include/datadog" "$destdir/lib/pkgconfig" "$destdir/cmake"
 
-version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < profiling-ffi/Cargo.toml)
+version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < crates/datadog-profiling-ffi/Cargo.toml)
 if [ -z ${target+x} ]; then
     target="$(rustc -vV | awk '/^host:/ { print $2 }')"
 fi
@@ -123,13 +123,13 @@ case "$target" in
 esac
 
 echo "Recognized platform '${target}'. Adding libs: ${native_static_libs}"
-sed < profiling-ffi/datadog_profiling.pc.in "s/@Datadog_VERSION@/${version}/g" \
+sed < crates/datadog-profiling-ffi/datadog_profiling.pc.in "s/@Datadog_VERSION@/${version}/g" \
     > "$destdir/lib/pkgconfig/datadog_profiling.pc"
 
-sed < profiling-ffi/datadog_profiling_with_rpath.pc.in "s/@Datadog_VERSION@/${version}/g" \
+sed < crates/datadog-profiling-ffi/datadog_profiling_with_rpath.pc.in "s/@Datadog_VERSION@/${version}/g" \
     > "$destdir/lib/pkgconfig/datadog_profiling_with_rpath.pc"
 
-sed < profiling-ffi/datadog_profiling-static.pc.in "s/@Datadog_VERSION@/${version}/g" \
+sed < crates/datadog-profiling-ffi/datadog_profiling-static.pc.in "s/@Datadog_VERSION@/${version}/g" \
     | sed "s/@Datadog_LIBRARIES@/${native_static_libs}/g" \
     > "$destdir/lib/pkgconfig/datadog_profiling-static.pc"
 
@@ -165,7 +165,7 @@ FEATURES=$(IFS=, ; echo "${FEATURES[*]}")
 echo "Building for features: $FEATURES"
 
 # build inside the crate to use the config.toml file
-( cd profiling-ffi && DESTDIR="$destdir" cargo build --features $FEATURES --release --target "${target}" )
+( cd crates/datadog-profiling-ffi && DESTDIR="$destdir" cargo build --features $FEATURES --release --target "${target}" )
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
@@ -206,7 +206,7 @@ fi
 
 if $run_tests; then
     echo "Checking that native-static-libs are as expected for this platform..."
-    cd profiling-ffi
+    cd crates/datadog-profiling-ffi
     actual_native_static_libs="$(cargo rustc --release --target "${target}" -- --print=native-static-libs 2>&1 | awk -F ':' '/note: native-static-libs:/ { print $3 }')"
     echo "Actual native-static-libs:${actual_native_static_libs}"
     echo "Expected native-static-libs:${expected_native_static_libs}"

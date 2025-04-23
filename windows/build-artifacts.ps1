@@ -32,7 +32,7 @@ $features = @(
 
 Write-Host "Building for features: $features" -ForegroundColor Magenta
 
-pushd profiling-ffi
+pushd crates/datadog-profiling-ffi
 Invoke-Call -ScriptBlock { cargo build --features $features --target i686-pc-windows-msvc --release --target-dir $output_dir }
 Invoke-Call -ScriptBlock { cargo build --features $features --target i686-pc-windows-msvc --target-dir $output_dir }
 Invoke-Call -ScriptBlock { cargo build --features $features --target x86_64-pc-windows-msvc --release --target-dir $output_dir }

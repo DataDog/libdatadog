@@ -48,13 +48,13 @@ component_management:
       paths:
         - ipc
     - component_id: profiling  # this is an identifier that should not be changed
-      name: profiling  # this is a display name, and can be changed freely
+      name: datadog-profiling  # this is a display name, and can be changed freely
       paths:
-        - profiling
+        - crates/datadog-profiling
     - component_id: profiling-ffi  # this is an identifier that should not be changed
-      name: profiling-ffi  # this is a display name, and can be changed freely
+      name: datadog-profiling-ffi  # this is a display name, and can be changed freely
       paths:
-        - profiling-ffi
+        - crates/datadog-profiling-ffi
     - component_id: sidecar  # this is an identifier that should not be changed
       name: sidecar  # this is a display name, and can be changed freely
       paths:

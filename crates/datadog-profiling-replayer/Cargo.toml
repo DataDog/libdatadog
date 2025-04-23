@@ -10,9 +10,9 @@ license.workspace = true
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.3.21", features = ["cargo", "color", "derive"] }
-datadog-profiling = { path = "../profiling"}
+datadog-profiling = { path = "../datadog-profiling"}
 prost = "0.13.5"
-sysinfo = {version = "0.29.8", default-features = false}
+sysinfo = { version = "0.29.8", default-features = false }
 
 [[bin]]
 name = "datadog-profiling-replayer"

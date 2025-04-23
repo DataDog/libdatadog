@@ -23,8 +23,8 @@ bitmaps = "3.2.0"
 byteorder = { version = "1.5", features = ["std"] }
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
-datadog-alloc = {path = "../alloc"}
-ddcommon = {path = "../ddcommon"}
+datadog-alloc = {path = "../datadog-alloc"}
+ddcommon = {path = "../../ddcommon"}
 derivative = "2.2.0"
 futures = { version = "0.3", default-features = false }
 http = "1.0"

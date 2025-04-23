@@ -1,8 +1,8 @@
 profiling:
 - changed-files:
   - any-glob-to-any-file: [
-      'profiling/**/*',
-      'profiling-ffi/**/*',
+      'crates/datadog-profiling/**/*',
+      'crates/datadog-profiling-ffi/**/*',
     ]
 
 common:

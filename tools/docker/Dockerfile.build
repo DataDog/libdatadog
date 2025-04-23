@@ -68,7 +68,7 @@ RUN cargo search nothing --limit 1
 
 # create stubs to cache compilation of dependendencies
 COPY [ "Cargo.lock", "Cargo.toml", "./"]
-COPY "alloc/Cargo.toml" "alloc/"
+COPY "crates/datadog-alloc/Cargo.toml" "crates/datadog-alloc/"
 COPY "build-common/Cargo.toml" "build-common/"
 COPY "crashtracker/Cargo.toml" "crashtracker/"
 COPY "crashtracker-ffi/Cargo.toml" "crashtracker-ffi/"
@@ -83,9 +83,9 @@ COPY "library-config-ffi/Cargo.toml" "library-config-ffi/"
 COPY "library-config/Cargo.toml" "library-config/"
 COPY "live-debugger/Cargo.toml" "live-debugger/"
 COPY "live-debugger-ffi/Cargo.toml" "live-debugger-ffi/"
-COPY "profiling/Cargo.toml" "profiling/"
-COPY "profiling-ffi/Cargo.toml" "profiling-ffi/"
-COPY "profiling-replayer/Cargo.toml" "profiling-replayer/"
+COPY "crates/datadog-profiling/Cargo.toml" "crates/datadog-profiling/"
+COPY "crates/datadog-profiling-ffi/Cargo.toml" "crates/datadog-profiling-ffi/"
+COPY "crates/datadog-profiling-replayer/Cargo.toml" "crates/datadog-profiling-replayer/"
 COPY "remote-config/Cargo.toml" "remote-config/"
 COPY "sidecar/Cargo.toml" "sidecar/"
 COPY "sidecar/macros/Cargo.toml" "sidecar/macros/"
@@ -127,9 +127,9 @@ RUN echo \
     ipc/tarpc/tarpc/tests/compile_fail.rs \
     ipc/tarpc/tarpc/tests/dataservice.rs \
     ipc/tarpc/tarpc/tests/service_functional.rs \
-    profiling-replayer/src/main.rs \
-    profiling/benches/interning_strings.rs \
-    profiling/benches/main.rs \
+    crates/datadog-profiling-replayer/src/main.rs \
+    crates/datadog-profiling/benches/interning_strings.rs \
+    crates/datadog-profiling/benches/main.rs \
     tools/sidecar_mockgen/src/bin/sidecar_mockgen.rs \
     tools/src/bin/dedup_headers.rs \
     trace-normalization/benches/normalization_utils.rs \

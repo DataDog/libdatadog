@@ -12,7 +12,7 @@ edition = "2021"
 once_cell = "1.18"
 anyhow = "1.0"
 current_platform = "0.2.0"
-datadog-profiling = { path = "../profiling" }
+datadog-profiling = { path = "../crates/datadog-profiling" }
 datadog-crashtracker = { path = "../crashtracker" }
 ddcommon = { path = "../ddcommon" }
 tempfile = "3.3"
