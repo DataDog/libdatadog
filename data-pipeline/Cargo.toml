@@ -51,7 +51,6 @@ path = "benches/main.rs"
 
 [dev-dependencies]
 criterion = "0.5.1"
-data-pipeline = { path = ".", features = ["test-utils"] }
 datadog-trace-utils = { path = "../trace-utils", features = ["test-utils"] }
 httpmock = "0.7.0"
 rand = "0.8.5"
@@ -62,6 +61,3 @@ tokio = { version = "1.23", features = [
     "time",
     "test-util",
 ], default-features = false }
-
-[features]
-test-utils = []
