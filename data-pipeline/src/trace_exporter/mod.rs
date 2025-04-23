@@ -77,18 +77,6 @@ impl TraceExporterOutputFormat {
             },
         )
     }
-
-    #[cfg(feature = "test-utils")]
-    // This function is only intended for testing purposes so we don't need to go to all the trouble
-    // of breaking the uri down and parsing it as rigorously as we would if we were using it in
-    // production code.
-    fn add_query(&self, url: &Uri, query: &str) -> Uri {
-        let url = format!("{}?{}", url, query);
-
-        // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-        #[allow(clippy::expect_used)]
-        Uri::from_str(&url).expect("Failed to create Uri from string")
-    }
 }
 
 /// Add a path to the URL.
@@ -209,8 +197,6 @@ pub struct TraceExporter {
     agent_info: AgentInfoArc,
     previous_info_state: ArcSwapOption<String>,
     telemetry: Option<TelemetryClient>,
-    #[cfg(feature = "test-utils")]
-    query_params: Option<String>,
 }
 
 impl TraceExporter {
@@ -732,14 +718,6 @@ impl TraceExporter {
     }
 
     fn get_agent_url(&self) -> Uri {
-        #[cfg(feature = "test-utils")]
-        {
-            if let Some(query) = &self.query_params {
-                let url = self.output_format.add_path(&self.endpoint.url);
-                return self.output_format.add_query(&url, query);
-            }
-        }
-
         self.output_format.add_path(&self.endpoint.url)
     }
 }
@@ -772,9 +750,6 @@ pub struct TraceExporterBuilder {
     dogstatsd_url: Option<String>,
     client_computed_stats: bool,
     client_computed_top_level: bool,
-    #[cfg(feature = "test-utils")]
-    /// not supported in production, but useful for interacting with the test-agent
-    query_params: Option<String>,
     // Stats specific fields
     /// A Some value enables stats-computation, None if it is disabled
     stats_bucket_size: Option<Duration>,
@@ -782,6 +757,7 @@ pub struct TraceExporterBuilder {
     compute_stats_by_span_kind: bool,
     peer_tags: Vec<String>,
     telemetry: Option<TelemetryConfig>,
+    test_session_token: Option<String>,
 }
 
 impl TraceExporterBuilder {
@@ -898,6 +874,12 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Set the `X-Datadog-Test-Session-Token` header. Only used for testing with the test agent.
+    pub fn set_test_session_token(&mut self, test_session_token: &str) -> &mut Self {
+        self.test_session_token = Some(test_session_token.to_string());
+        self
+    }
+
     /// Enable stats computation on traces sent through this exporter
     pub fn enable_stats(&mut self, bucket_size: Duration) -> &mut Self {
         self.stats_bucket_size = Some(bucket_size);
@@ -926,14 +908,6 @@ impl TraceExporterBuilder {
         } else {
             self.telemetry = Some(TelemetryConfig::default());
         }
-        self
-    }
-
-    #[cfg(feature = "test-utils")]
-    /// Set query parameters to be used in the URL when communicating with the test-agent. This is
-    /// not supported in production as the real agent doesn't accept query params.
-    pub fn set_query_params(&mut self, query_params: &str) -> &mut Self {
-        self.query_params = Some(query_params.to_owned());
         self
     }
 
@@ -1009,7 +983,11 @@ impl TraceExporterBuilder {
         }
 
         Ok(TraceExporter {
-            endpoint: Endpoint::from_url(agent_url),
+            endpoint: Endpoint {
+                url: agent_url,
+                test_token: self.test_session_token.map(|token| token.into()),
+                ..Default::default()
+            },
             metadata: TracerMetadata {
                 tracer_version: self.tracer_version,
                 language_version: self.language_version,
@@ -1035,8 +1013,6 @@ impl TraceExporterBuilder {
             agent_info,
             previous_info_state: ArcSwapOption::new(None),
             telemetry,
-            #[cfg(feature = "test-utils")]
-            query_params: self.query_params,
         })
     }
 
