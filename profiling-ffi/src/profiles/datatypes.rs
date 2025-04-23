@@ -835,7 +835,6 @@ mod tests {
     #[test]
     // TODO FIX
     #[cfg_attr(miri, ignore)]
-
     fn aggregate_samples() -> anyhow::Result<()> {
         unsafe {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");

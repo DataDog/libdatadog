@@ -7,7 +7,7 @@ use serde::ser::{Serialize, Serializer};
 use std::fmt::{Debug, Formatter};
 use std::{borrow::Borrow, hash, str::Utf8Error};
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Default, Eq, PartialEq)]
 pub struct BytesString {
     bytes: Bytes,
 }
@@ -138,14 +138,6 @@ impl BytesString {
     /// Returns `true` if the underlying bytes are empty.
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
-    }
-}
-
-impl Default for BytesString {
-    fn default() -> Self {
-        Self {
-            bytes: Bytes::empty(),
-        }
     }
 }
 
