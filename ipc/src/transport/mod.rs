@@ -76,7 +76,7 @@ where
                 Some(Err(e)) => Some(Err(e.into())),
                 None => None,
             })
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+            .map_err(io::Error::other)
     }
 }
 
@@ -92,7 +92,7 @@ where
         self.project()
             .inner
             .poll_ready(cx)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+            .map_err(io::Error::other)
     }
 
     fn start_send(self: Pin<&mut Self>, item: SinkItem) -> io::Result<()> {
@@ -101,23 +101,21 @@ where
         let mut message = this.channel_metadata.lock().unwrap();
         let message = message.create_message(item)?;
 
-        this.inner
-            .start_send(message)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        this.inner.start_send(message).map_err(io::Error::other)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         self.project()
             .inner
             .poll_flush(cx)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+            .map_err(io::Error::other)
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         self.project()
             .inner
             .poll_close(cx)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+            .map_err(io::Error::other)
     }
 }
 
