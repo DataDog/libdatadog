@@ -7,15 +7,17 @@
 // TODO: This is a problem, we should fix it.
 #![allow(deprecated)]
 
-use crate::shared::configuration::CrashtrackerReceiverConfig;
+use super::emitters::emit_crashreport;
+use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
 use crate::shared::constants::*;
 use anyhow::Context;
 use ddcommon::unix_utils::{
-    open_file_or_quiet, reap_child_non_blocking, terminate, wait_for_pollhup, PreparedExecve,
+    alt_fork, open_file_or_quiet, reap_child_non_blocking, terminate, wait_for_pollhup, PreparedExecve,
 };
+use libc::{siginfo_t, ucontext_t};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use nix::sys::socket;
-use nix::unistd::{close, Pid};
+use nix::unistd::Pid;
 use std::os::unix::io::{IntoRawFd, RawFd};
 use std::os::unix::{io::FromRawFd, net::UnixStream};
 use std::ptr;
@@ -26,64 +28,37 @@ use std::time::Instant;
 static RECEIVER_CONFIG: AtomicPtr<(CrashtrackerReceiverConfig, PreparedExecve)> =
     AtomicPtr::new(ptr::null_mut());
 
-// The use of fork or vfork is influenced by the availability of the function in the host libc.
-// Macos seems to have deprecated vfork.  The reason to prefer vfork is to suppress atfork
-// handlers.  This is OK because macos is primarily a test platform, and we have system-level
-// testing on Linux in various CI environments.
-#[cfg(target_os = "macos")]
-use libc::fork as vfork;
-
-#[cfg(target_os = "linux")]
-use libc::vfork;
-
-pub(crate) struct Receiver {
-    receiver_uds: RawFd,
-    receiver_pid: i32,
+pub(crate) struct WatchedProcess {
+    uds_fd: RawFd,
+    pid: i32,
     oneshot: bool,
 }
 
-impl Receiver {
-    /// # Safety:
-    ///   receiver_uds should maintain the requirements of UnixStream::from_raw_fd.
-    ///   The safety comment there seems to imply that the main thing is that the fd must
-    ///   be open.  But they could be clearer about what they mean.
-    ///   https://doc.rust-lang.org/std/os/fd/trait.FromRawFd.html
-    ///   It is an error to call this twice
-    pub(crate) unsafe fn receiver_unix_stream(&mut self) -> UnixStream {
-        // Safety: precondition of this function
-        unsafe { UnixStream::from_raw_fd(self.receiver_uds) }
-    }
-
+impl WatchedProcess {
     pub(crate) fn finish(self, start_time: Instant, timeout_ms: u32) {
         let pollhup_allowed_ms = timeout_ms
             .saturating_sub(start_time.elapsed().as_millis() as u32)
             .min(i32::MAX as u32) as i32;
-        let _ = wait_for_pollhup(self.receiver_uds, pollhup_allowed_ms);
+        let _ = wait_for_pollhup(self.uds_fd, pollhup_allowed_ms);
 
-        // If this is a oneshot-type receiver (i.e., we spawned it), then we now need to ensure it
-        // gets cleaned up.
-        // We explicitly avoid the case where the receiver PID is 1.  This is unbelievably unlikely,
-        // but should the situation arise we just walk away and let the PID leak.
-        if self.oneshot && self.receiver_pid > 1 {
-            // Either the receiver is done, it timed out, or something failed.
-            // In any case, can't guarantee that the receiver will exit.
-            // SIGKILL will ensure that the process ends eventually, but there's
-            // no bound on that time.
-            // We emit SIGKILL and try to reap its exit status for the remaining time, then give up.
-            unsafe {
-                libc::kill(self.receiver_pid, libc::SIGKILL);
-            }
-
-            let receiver_pid_as_pid = Pid::from_raw(self.receiver_pid);
+        if self.oneshot {
+            // If we have less than the minimum amount of time, give ourselves a few scheduler slices
+            // worth of headroom to help guarantee that we don't leak a zombie process.
+            let _ = unsafe { libc::kill(self.pid, libc::SIGKILL) };
             let reaping_allowed_ms = std::cmp::min(
                 timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32),
                 DD_CRASHTRACK_MINIMUM_REAP_TIME_MS,
             );
-
-            let _ = reap_child_non_blocking(receiver_pid_as_pid, reaping_allowed_ms);
+            let _ = reap_child_non_blocking(Pid::from_raw(self.pid), reaping_allowed_ms);
         }
     }
 
+    /// # Safety:
+    ///   uds_fd should maintain the requirements of UnixStream::from_raw_fd.
+    ///   The safety comment there seems to imply that the main thing is that the fd must
+    ///   be open.  But they could be clearer about what they mean.
+    ///   https://doc.rust-lang.org/std/os/fd/trait.FromRawFd.html
+    ///   It is an error to call this twice
     pub(crate) fn from_socket(unix_socket_path: &str) -> anyhow::Result<Self> {
         // Creates a fake "Receiver", which can be waited on like a normal receiver.
         // This is intended to support configurations where the collector is speaking to a
@@ -101,12 +76,12 @@ impl Receiver {
         };
         #[cfg(not(target_os = "linux"))]
         let unix_stream = UnixStream::connect(unix_socket_path);
-        let receiver_uds = unix_stream
+        let uds_fd = unix_stream
             .context("Failed to connect to receiver")?
             .into_raw_fd();
         Ok(Self {
-            receiver_uds,
-            receiver_pid: 0,
+            uds_fd,
+            pid: 0,
             oneshot: false,
         })
     }
@@ -128,33 +103,62 @@ impl Receiver {
         .context("Failed to create Unix domain socket pair")
         .map(|(a, b)| (a.into_raw_fd(), b.into_raw_fd()))?;
 
-        // We need to spawn a process without calling atfork handlers, since this is happening
-        // inside of a signal handler.  Moreover, preference is given to
-        // multiplatform-uniform solutions. Although `vfork()` is deprecated, the
-        // alternatives have limitations
-        // * `fork()` calls atfork handlers
-        // * There is no guarantee that `posix_spawn()` will not call `fork()` internally
-        // * `clone()`/`clone3()` are Linux-specific
-        // Accordingly, use `vfork()` for now
-        // NB -- on macos the underlying implementation here is actually `fork()`!  See the top of
-        // this file for details.
-        match unsafe { vfork() } {
+        // See ddcommon::unix_utils for platform-specific comments on alt_fork()
+        match  alt_fork() {
             0 => {
                 // Child (noreturn)
-                run_receiver_child(prepared_exec, uds_parent, uds_child, stderr, stdout)
+                let _ = unsafe { libc::close(uds_parent) };
+                run_receiver_child(prepared_exec, uds_child, stderr, stdout)
             }
             pid if pid > 0 => {
                 // Parent
-                let _ = close(uds_child);
-                Ok(Receiver {
-                    receiver_uds: uds_parent,
-                    receiver_pid: pid,
+                let _ = unsafe { libc::close(uds_child) };
+                Ok(WatchedProcess {
+                    uds_fd: uds_parent,
+                    pid,
                     oneshot: true,
                 })
             }
             _ => {
                 // Error
-                Err(anyhow::anyhow!("Failed to fork receiver process"))
+                Err(anyhow::anyhow!("Failed to create receiver process"))
+            }
+        }
+    }
+
+    pub(crate) fn to_collector(
+        &self,
+        config: &CrashtrackerConfiguration,
+        config_str: &str,
+        metadata_str: &str,
+        sig_info: *const siginfo_t,
+        ucontext: *const ucontext_t,
+    ) -> anyhow::Result<Self> {
+        let ppid = unsafe { libc::getppid() };
+
+        match alt_fork() {
+            0 => {
+                // Child (does not exit from this function)
+                run_collector_child(
+                    config,
+                    config_str,
+                    metadata_str,
+                    sig_info,
+                    ucontext,
+                    self,
+                    ppid,
+                );
+            }
+            pid if pid > 0 => {
+                Ok(WatchedProcess {
+                    uds_fd: self.uds_fd,
+                    pid,
+                    oneshot: true,
+                })
+            }
+            _ => {
+                // Error
+                Err(anyhow::anyhow!("Failed to fork collector process"))
             }
         }
     }
@@ -198,7 +202,6 @@ impl Receiver {
 /// Wrapper around the child process that will run the crash receiver
 fn run_receiver_child(
     prepared_exec: &PreparedExecve,
-    uds_parent: RawFd,
     uds_child: RawFd,
     stderr: RawFd,
     stdout: RawFd,
@@ -211,10 +214,9 @@ fn run_receiver_child(
     }
 
     // Close unused file descriptors
-    let _ = close(uds_parent);
-    let _ = close(uds_child);
-    let _ = close(stderr);
-    let _ = close(stdout);
+    let _ = unsafe{ libc::close(uds_child) };
+    let _ = unsafe{ libc::close(stderr) };
+    let _ = unsafe{ libc::close(stdout) };
 
     // Before we actually execve, let's make sure that the signal handler in the receiver is set to
     // a default disposition.
@@ -233,4 +235,58 @@ fn run_receiver_child(
     prepared_exec.exec().unwrap_or_else(|_| terminate());
     // If we reach this point, execve failed, so just exit
     terminate();
+}
+
+pub(crate) fn run_collector_child(
+    config: &CrashtrackerConfiguration,
+    config_str: &str,
+    metadata_str: &str,
+    sig_info: *const siginfo_t,
+    ucontext: *const ucontext_t,
+    receiver: &WatchedProcess,
+    ppid: libc::pid_t,
+) -> ! {
+    // the collector process currently runs without access to stdio.  there are two ways to resolve
+    // this:
+    // - reuse the stdio files used for the receiver
+    //   + con: we don't controll flushes to stdio, so the writes from the two processes may
+    //     interleave parts of a single message
+    // - create two new stdio files for the collector
+    //   + con: that's _another_ two options to fill out in the config
+    let _ = unsafe { libc::close(0) };
+    let _ = unsafe { libc::close(1) };
+    let _ = unsafe { libc::close(2) };
+
+    // Before we start reading or writing to the socket, we need to disable SIGPIPE because we
+    // don't control the emission implementation enough to send MSG_NOSIGNAL.
+    // NB - collector is running in its own process, so this doesn't affect the watchdog process
+    let _ = unsafe {
+        signal::sigaction(
+            signal::SIGPIPE,
+            &SigAction::new(SigHandler::SigIgn, SaFlags::empty(), SigSet::empty()),
+        )
+    };
+
+    // We're ready to emit the crashreport
+    let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.uds_fd) };
+
+    let report = emit_crashreport(
+        &mut unix_stream,
+        config,
+        config_str,
+        metadata_str,
+        sig_info,
+        ucontext,
+        ppid,
+    );
+    if let Err(e) = report {
+        eprintln!("Failed to flush crash report: {e}");
+        unsafe { libc::_exit(-1) };
+    }
+
+    // If we reach this point, then we exit.  We're done.
+    // Note that since we're a forked process, we call `_exiit` in favor of:
+    // - `exit()`, because calling the atexit handlers might mutate shared state
+    // - `abort()`, because raising SIGABRT might cause other problems
+    unsafe { libc::_exit(0) };
 }
