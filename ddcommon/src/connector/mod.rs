@@ -224,10 +224,14 @@ mod tests {
     /// are not found
     async fn test_missing_root_certificates_only_allow_http_connections() {
         const ENV_SSL_CERT_FILE: &str = "SSL_CERT_FILE";
+        const ENV_SSL_CERT_DIR: &str = "SSL_CERT_DIR";
         let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
+        let old_dir_value = env::var(ENV_SSL_CERT_DIR).unwrap_or_default();
 
         env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
+        env::set_var(ENV_SSL_CERT_DIR, "this/folder/does/not/exist");
         let mut connector = Connector::new();
+
         assert!(matches!(connector, Connector::Http(_)));
 
         let stream = connector
@@ -241,6 +245,7 @@ mod tests {
         );
 
         env::set_var(ENV_SSL_CERT_FILE, old_value);
+        env::set_var(ENV_SSL_CERT_DIR, old_dir_value);
     }
 
     #[tokio::test]
