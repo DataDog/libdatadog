@@ -20,7 +20,6 @@ pub mod connector;
 pub mod entity_id;
 #[macro_use]
 pub mod cstr;
-pub mod alt_fork;
 pub mod config;
 pub mod hyper_migration;
 pub mod rate_limiter;
