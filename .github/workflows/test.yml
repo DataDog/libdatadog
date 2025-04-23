@@ -56,19 +56,19 @@ jobs:
         # Run doc tests with cargo test and run tests with nextest and generate junit.xml
         run: cargo test --workspace --exclude builder --doc --verbose && cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
         env:
-          RUST_BACKTRACE: 1
+          RUST_BACKTRACE: full
       - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'"
         if: runner.os == 'Linux'
         shell: bash
         run: cargo nextest run --workspace --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
         env:
-          RUST_BACKTRACE: 1
+          RUST_BACKTRACE: full
       - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'"
         shell: bash
         run: cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'
         env:
           RUSTFLAGS: "-C prefer-dynamic"
-          RUST_BACKTRACE: 1
+          RUST_BACKTRACE: full
       - name: Report Test Results
         if: success() || failure()
         uses: mikepenz/action-junit-report@db71d41eb79864e25ab0337e395c352e84523afe # 4.3.1
