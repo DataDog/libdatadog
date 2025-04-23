@@ -43,8 +43,8 @@ impl WatchedProcess {
         let _ = wait_for_pollhup(self.uds_fd, pollhup_allowed_ms);
 
         if self.oneshot {
-            // If we have less than the minimum amount of time, give ourselves a few scheduler slices
-            // worth of headroom to help guarantee that we don't leak a zombie process.
+            // If we have less than the minimum amount of time, give ourselves a few scheduler
+            // slices worth of headroom to help guarantee that we don't leak a zombie process.
             let _ = unsafe { libc::kill(self.pid, libc::SIGKILL) };
             let reaping_allowed_ms = std::cmp::min(
                 timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32),
