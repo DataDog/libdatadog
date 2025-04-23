@@ -46,9 +46,10 @@ jobs:
         run: |
           # shellcheck disable=SC2046
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
-            export AWS_LC_FIPS_SYS_NO_ASM=1
-          fi
-          cargo clippy --workspace --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.78.0 ] || [ ${{ matrix.rust_version }} = stable ] && echo -Aunknown-lints -Ainvalid_reference_casting -Aclippy::redundant-closure-call)
+            export AWS_LC_FIPS_SYS_NO_ASM=1;
+          fi;
+          cargo clippy --workspace --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.78.0 ] || [ ${{ matrix.rust_version }} = stable ] && echo -Aunknown-lints -Ainvalid_reference_casting -Aclippy::redundant-closure-call);
+
   licensecheck:
     runs-on: ubuntu-latest
     name: "Presence of licence headers"
