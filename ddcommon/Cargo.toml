@@ -69,6 +69,7 @@ hyper-rustls = { version = "0.27", default-features = false, features = [
 indexmap = "2.2"
 maplit = "1.0"
 
+
 [features]
 default = ["https"]
 https = ["tokio-rustls", "rustls", "hyper-rustls", "rustls-native-certs"]
@@ -77,4 +78,9 @@ use_webpki_roots = ["hyper-rustls/webpki-roots"]
 # php directly import this crate and uses functions gated by this feature for their test
 cgroup_testing = []
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
-fips = ["https", "hyper-rustls/fips"]
+fips = ["https", "unix-fips-support"]
+unix-fips-support = []
+
+[target.'cfg(unix)'.features]
+# On Unix, the unix-fips-support feature enables hyper-rustls/fips
+unix-fips-support = ["hyper-rustls/fips"]
