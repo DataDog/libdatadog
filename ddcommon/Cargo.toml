@@ -49,13 +49,24 @@ version = "0.52"
 features = ["Win32_Foundation", "Win32_System_Performance"]
 
 [target.'cfg(unix)'.dependencies]
+memfd = { version = "0.6" }
+
+[target.'cfg(all(unix, not(feature = "fips")))'.dependencies]
 hyper-rustls = { version = "0.27", default-features = false, features = [
     "native-tokio",
     "http1",
     "tls12",
     "aws-lc-rs",
 ], optional = true }
-memfd = { version = "0.6" }
+
+[target.'cfg(all(unix, feature = "fips"))'.dependencies]
+hyper-rustls = { version = "0.27", default-features = false, features = [
+    "native-tokio",
+    "http1",
+    "tls12",
+    "aws-lc-rs",
+    "fips",
+], optional = true }
 
 [target.'cfg(not(unix))'.dependencies]
 hyper-rustls = { version = "0.27", default-features = false, features = [
@@ -78,9 +89,4 @@ use_webpki_roots = ["hyper-rustls/webpki-roots"]
 # php directly import this crate and uses functions gated by this feature for their test
 cgroup_testing = []
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
-fips = ["https", "unix-fips-support"]
-unix-fips-support = []
-
-[target.'cfg(unix)'.features]
-# On Unix, the unix-fips-support feature enables hyper-rustls/fips
-unix-fips-support = ["hyper-rustls/fips"]
+fips = ["https", "hyper-rustls"]
