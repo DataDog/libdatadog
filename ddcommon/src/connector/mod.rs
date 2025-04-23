@@ -113,9 +113,7 @@ mod https {
     // This this actually needs to be done by the user somewhere in their own main.
     // This will only be active on Unix platforms
     #[cfg(all(feature = "fips", not(coverage)))]
-    fn ensure_crypto_provider_initialized() {
-        compile_error!("is this what we are trying to compile in coverage?");
-    }
+    fn ensure_crypto_provider_initialized() {}
 
     #[cfg(feature = "use_webpki_roots")]
     pub(super) fn build_https_connector_with_webpki_roots() -> anyhow::Result<
