@@ -78,3 +78,6 @@ use_webpki_roots = ["hyper-rustls/webpki-roots"]
 cgroup_testing = []
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["https", "hyper-rustls/fips"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
