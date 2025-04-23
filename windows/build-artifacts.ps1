@@ -46,7 +46,7 @@ Set-Location ..
 
 Write-Host "Generating headers" -ForegroundColor Magenta
 Invoke-Call -ScriptBlock { cbindgen --crate ddcommon-ffi --config ddcommon-ffi/cbindgen.toml --output $output_dir\common.h }
-Invoke-Call -ScriptBlock { cbindgen --crate datadog-profiling-ffi --config profiling-ffi/cbindgen.toml --output $output_dir\profiling.h }
+Invoke-Call -ScriptBlock { cbindgen --crate datadog-profiling-ffi --config crates/datadog-profiling-ffi/cbindgen.toml --output $output_dir\profiling.h }
 Invoke-Call -ScriptBlock { cbindgen --crate ddtelemetry-ffi --config ddtelemetry-ffi/cbindgen.toml --output $output_dir\telemetry.h }
 Invoke-Call -ScriptBlock { cbindgen --crate data-pipeline-ffi --config data-pipeline-ffi/cbindgen.toml --output $output_dir"\data-pipeline.h" }
 Invoke-Call -ScriptBlock { cbindgen --crate datadog-crashtracker-ffi --config crashtracker-ffi/cbindgen.toml --output $output_dir"\crashtracker.h" }
