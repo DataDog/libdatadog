@@ -16,17 +16,17 @@ tokio-console = ["tokio/full", "tokio/tracing", "console-subscriber"]
 anyhow = { version = "1.0" }
 arrayref = "0.3.7"
 priority-queue = "2.1.1"
-ddcommon = { path = "../../ddcommon" }
+ddcommon = { path = "../ddcommon" }
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 
-ddtelemetry = { path = "../../ddtelemetry", features = ["tracing"] }
-data-pipeline = { path = "../../data-pipeline" }
-datadog-trace-utils = { path = "../../trace-utils" }
+ddtelemetry = { path = "../ddtelemetry", features = ["tracing"] }
+data-pipeline = { path = "../data-pipeline" }
+datadog-trace-utils = { path = "../trace-utils" }
 datadog-remote-config = { path = "../datadog-remote-config" }
 datadog-live-debugger = { path = "../datadog-live-debugger" }
 datadog-crashtracker = { path = "../datadog-crashtracker" }
-dogstatsd-client = { path = "../../dogstatsd-client" }
-tinybytes = { path = "../../tinybytes" }
+dogstatsd-client = { path = "../dogstatsd-client" }
+tinybytes = { path = "../tinybytes" }
 
 futures = { version = "0.3", default-features = false }
 manual_future = "0.1.1"
@@ -43,7 +43,7 @@ serde_with = "3.6.0"
 bincode = { version = "1.3.3" }
 serde_json = "1.0"
 base64 = "0.22.1"
-spawn_worker = { path = "../../spawn_worker" }
+spawn_worker = { path = "../spawn_worker" }
 zwohash = "0.1.2"
 sha2 = "0.10"
 tokio = { version = "1.35.1", features = [
@@ -88,7 +88,7 @@ nix = { version = "0.29", features = ["socket", "mman"] }
 sendfd = { version = "0.4", features = ["tokio"] }
 
 [target.'cfg(windows)'.dependencies]
-ddcommon-ffi = { path = "../../ddcommon-ffi", default-features = false }
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 datadog-crashtracker-ffi = { path = "../datadog-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
 winapi = { version = "0.3.9", features = ["securitybaseapi", "sddl"] }
 windows-sys = { version = "0.52.0", features = ["Win32_System_SystemInformation"] }
@@ -101,8 +101,8 @@ libc = { version = "0.2" }
 tempfile = { version = "3.3" }
 httpmock = "0.7.0"
 datadog-remote-config = { path = "../datadog-remote-config", features = ["test"] }
-datadog-trace-utils = { path = "../../trace-utils", features = ["test-utils"] }
-datadog-dynamic-configuration = { path = "../../datadog-dynamic-configuration", features = ["test"] }
+datadog-trace-utils = { path = "../trace-utils", features = ["test-utils"] }
+datadog-dynamic-configuration = { path = "../datadog-dynamic-configuration", features = ["test"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [

@@ -6,15 +6,15 @@ component_management:
     - component_id: crashtracker  # this is an identifier that should not be changed
       name: crashtracker  # this is a display name, and can be changed freely
       paths:
-        - crashtracker
+        - datadog-crashtracker
     - component_id: crashtracker-ffi  # this is an identifier that should not be changed
       name: crashtracker-ffi  # this is a display name, and can be changed freely
       paths:
-        - crashtracker-ffi
+        - datadog-crashtracker-ffi
     - component_id: datadog-alloc  # this is an identifier that should not be changed
       name: datadog-alloc  # this is a display name, and can be changed freely
       paths:
-        - alloc
+        - datadog-alloc
     - component_id: data-pipeline  # this is an identifier that should not be changed
       name: data-pipeline  # this is a display name, and can be changed freely
       paths:
@@ -50,11 +50,11 @@ component_management:
     - component_id: profiling  # this is an identifier that should not be changed
       name: datadog-profiling  # this is a display name, and can be changed freely
       paths:
-        - crates/datadog-profiling
+        - datadog-profiling
     - component_id: profiling-ffi  # this is an identifier that should not be changed
       name: datadog-profiling-ffi  # this is a display name, and can be changed freely
       paths:
-        - crates/datadog-profiling-ffi
+        - datadog-profiling-ffi
     - component_id: sidecar  # this is an identifier that should not be changed
       name: sidecar  # this is a display name, and can be changed freely
       paths:

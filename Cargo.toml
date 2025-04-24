@@ -4,7 +4,22 @@
 [workspace]
 members = [
   "builder",
-  "crates/*",
+  "datadog-alloc",
+  "datadog-crashtracker",
+  "datadog-crashtracker-ffi",
+  "datadog-ipc",
+  "datadog-ipc-macros",
+  "datadog-library-config",
+  "datadog-library-config-ffi",
+  "datadog-live-debugger",
+  "datadog-live-debugger-ffi",
+  "datadog-profiling",
+  "datadog-profiling-ffi",
+  "datadog-profiling-replayer",
+  "datadog-remote-config",
+  "datadog-sidecar",
+  "datadog-sidecar-ffi",
+  "datadog-sidecar-macros",
   "ddcommon",
   "ddcommon-ffi",
   "ddtelemetry",
@@ -23,8 +38,6 @@ members = [
   "ddsketch",
   "tinybytes",
   "dogstatsd-client",
-  "datadog-library-config-ffi",
-  "datadog-library-config",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2

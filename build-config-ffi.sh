@@ -24,7 +24,7 @@ fi
 
 mkdir -v -p "$destdir/include/datadog" "$destdir/lib/pkgconfig" "$destdir/cmake"
 
-version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < crates/datadog-profiling-ffi/Cargo.toml)
+version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < datadog-profiling-ffi/Cargo.toml)
 target="$(rustc -vV | awk '/^host:/ { print $2 }')"
 shared_library_suffix=".so"
 static_library_suffix=".a"

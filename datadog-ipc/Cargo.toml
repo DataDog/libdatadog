@@ -17,12 +17,12 @@ serde = { version = "1.0", default-features = false, features = ["derive"] }
 tokio-serde = { version = "0.8", features = ["bincode"] }
 tokio-util = { version = "0.7.11", features = ["codec"] }
 libc = { version = "0.2" }
-tinybytes = { path = "../../tinybytes", optional = true }
+tinybytes = { path = "../tinybytes", optional = true }
 
 # tarpc needed extensions to allow 1 way communication and to export some internal structs
 tarpc = { path = "tarpc/tarpc", default-features = false, features = ["serde-transport"], package = "tarpc" }
 
-ddcommon = { path = "../../ddcommon" }
+ddcommon = { path = "../ddcommon" }
 datadog-ipc-macros = { path = "../datadog-ipc-macros" }
 
 [dev-dependencies]
@@ -39,7 +39,7 @@ tokio = { version = "1.23", features = [
 ] }
 tracing = { version = "0.1" }
 tracing-subscriber = { version = "0.3.11" }
-spawn_worker = { path = "../../spawn_worker" }
+spawn_worker = { path = "../spawn_worker" }
 
 [target.'cfg(not(windows))'.dependencies]
 nix = { version = "0.29", features = ["fs", "mman", "process", "poll", "socket"] }

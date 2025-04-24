@@ -13,7 +13,7 @@ use ddcommon_ffi::{slice::AsBytes, wrap_with_void_ffi_result, CharSlice, VoidRes
 /// signal handler is dangerous, so we fork a sidecar to do the stuff we aren't
 /// allowed to do in the handler.
 ///
-/// See comments in [crates/datadog-crashtracker/lib.rs] for a full architecture description.
+/// See comments in [datadog-crashtracker/lib.rs] for a full architecture description.
 /// # Safety
 /// No safety concerns
 pub unsafe extern "C" fn ddog_crasht_receiver_entry_point_stdin() -> VoidResult {
@@ -30,7 +30,7 @@ pub unsafe extern "C" fn ddog_crasht_receiver_entry_point_stdin() -> VoidResult 
 /// signal handler is dangerous, so we fork a sidecar to do the stuff we aren't
 /// allowed to do in the handler.
 ///
-/// See comments in [crates/datadog-crashtracker/lib.rs] for a full architecture
+/// See comments in [datadog-crashtracker/lib.rs] for a full architecture
 /// description.
 /// # Safety
 /// No safety concerns

@@ -113,7 +113,6 @@ impl Profiling {
             let file_in = file.to_string() + ".in";
 
             let mut pc_origin: PathBuf = project_root();
-            pc_origin.push("crates");
             pc_origin.push("datadog-profiling-ffi");
             pc_origin.push(file_in);
 

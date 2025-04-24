@@ -1,8 +1,8 @@
 *                           @Datadog/libdatadog-core
-crates/datadog-alloc/       @Datadog/libdatadog-profiling
+datadog-alloc/              @Datadog/libdatadog-profiling
 build-profiling-ffi.sh      @Datadog/libdatadog-profiling
-crates/datadog-crasht*/     @Datadog/libdatadog-profiling
-crates/datadog-profiling*/  @Datadog/libdatadog-profiling
+datadog-crashtracking/      @Datadog/libdatadog-profiling
+datadog-profiling*/         @Datadog/libdatadog-profiling
 ddtelemetry*/               @Datadog/libdatadog-telemetry
 ruby/                       @Datadog/libdatadog-ruby
 Cargo.*                     @Datadog/libdatadog
@@ -17,9 +17,9 @@ trace-obfuscation           @Datadog/serverless @Datadog/libdatadog-apm
 trace-protobuf              @Datadog/serverless @Datadog/libdatadog-apm
 trace-utils                 @Datadog/serverless @Datadog/libdatadog-apm
 datadog-dynamic-configuration   @Datadog/libdatadog-php @Datadog/libdatadog-apm
-crates/datadog-remote-config    @Datadog/libdatadog-php @Datadog/libdatadog-apm @Datadog/remote-config
-crates/datadog-sidecar          @Datadog/libdatadog-php @Datadog/libdatadog-apm
-crates/datadog-sidecar-ffi      @Datadog/libdatadog-php @Datadog/libdatadog-apm
+datadog-remote-config       @Datadog/libdatadog-php @Datadog/libdatadog-apm @Datadog/remote-config
+datadog-sidecar             @Datadog/libdatadog-php @Datadog/libdatadog-apm
+datadog-sidecar-ffi         @Datadog/libdatadog-php @Datadog/libdatadog-apm
 data-pipeline*/             @Datadog/libdatadog-apm
 ddsketch                    @Datadog/libdatadog-apm @Datadog/libdatadog-telemetry
 
