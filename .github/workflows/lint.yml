@@ -45,10 +45,10 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
-            export AWS_LC_FIPS_SYS_NO_ASM=1;
-          fi;
+            export AWS_LC_FIPS_SYS_NO_ASM=1
+          fi
           # shellcheck disable=SC2046
-          cargo clippy --workspace --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.78.0 ] || [ ${{ matrix.rust_version }} = stable ] && echo -Aunknown-lints -Ainvalid_reference_casting -Aclippy::redundant-closure-call);
+          cargo clippy --workspace --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.78.0 ] || [ ${{ matrix.rust_version }} = stable ] && echo -Aunknown-lints -Ainvalid_reference_casting -Aclippy::redundant-closure-call)
 
   licensecheck:
     runs-on: ubuntu-latest

@@ -80,4 +80,12 @@ cgroup_testing = []
 fips = ["https", "hyper-rustls/fips"]
 
 [lints.rust]
+# We run coverage checks in our github actions. These checks are run with
+# --all-features which is incompatible with our fips feature. The crypto
+# provider default needs to be set by the caller in fips mode. For now, we want
+# to make sure that the coverage tests use the non-fips version of the crypto
+# provider initialization logic, so we added a coverage cfg check on the
+# function in src/connector/mod.rs. The coverage config is actually not used in
+# normal environments, so we need to let the rust linter know that it is in
+# fact a real thing, though one that shows up only in some situations.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }

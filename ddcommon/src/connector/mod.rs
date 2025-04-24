@@ -110,8 +110,8 @@ mod https {
         });
     }
 
-    // This this actually needs to be done by the user somewhere in their own main.
-    // This will only be active on Unix platforms
+    // This actually needs to be done by the user somewhere in their own main. This will only
+    // be active on Unix platforms
     #[cfg(all(feature = "fips", not(coverage)))]
     fn ensure_crypto_provider_initialized() {}
 
