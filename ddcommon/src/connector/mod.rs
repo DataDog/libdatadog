@@ -96,6 +96,8 @@ mod https {
     /// sometimes this is done as a side-effect of other operations, but we need to ensure it
     /// happens here.  On non-unix platforms, ddcommon uses `ring` instead, which handles this
     /// at rustls initialization. TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
+    /// In fips mode we expect someone to have done this already.
+    #[cfg(any(not(feature = "fips"), coverage))]
     fn ensure_crypto_provider_initialized() {
         use std::sync::OnceLock;
         static INIT_CRYPTO_PROVIDER: OnceLock<()> = OnceLock::new();
@@ -107,6 +109,11 @@ mod https {
                 .expect("Failed to install default CryptoProvider");
         });
     }
+
+    // This actually needs to be done by the user somewhere in their own main. This will only
+    // be active on Unix platforms
+    #[cfg(all(feature = "fips", not(coverage)))]
+    fn ensure_crypto_provider_initialized() {}
 
     #[cfg(feature = "use_webpki_roots")]
     pub(super) fn build_https_connector_with_webpki_roots() -> anyhow::Result<
