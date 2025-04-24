@@ -73,7 +73,7 @@ esac
 cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
 
-crate_dir="library-config-ffi"
+crate_dir="datadog-library-config-ffi"
 crate="datadog-library-config-ffi"
 
 

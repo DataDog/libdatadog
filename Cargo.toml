@@ -23,8 +23,8 @@ members = [
   "ddsketch",
   "tinybytes",
   "dogstatsd-client",
-  "library-config-ffi",
-  "library-config",
+  "datadog-library-config-ffi",
+  "datadog-library-config",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
