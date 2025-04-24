@@ -10,8 +10,6 @@ members = [
   "ddtelemetry",
   "ddtelemetry-ffi",
   "tools",
-  "ipc",
-  "ipc/macros",
   "live-debugger",
   "live-debugger-ffi",
   "remote-config",

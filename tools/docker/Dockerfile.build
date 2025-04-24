@@ -100,11 +100,11 @@ COPY "tools/cc_utils/Cargo.toml" "tools/cc_utils/"
 COPY "tools/sidecar_mockgen/Cargo.toml" "tools/sidecar_mockgen/"
 COPY "spawn_worker/Cargo.toml" "spawn_worker/"
 COPY "tests/spawn_from_lib/Cargo.toml" "tests/spawn_from_lib/"
-COPY "ipc/Cargo.toml" "ipc/"
-COPY "ipc/macros/Cargo.toml" "ipc/macros/"
-COPY "ipc/tarpc/Cargo.toml" "ipc/tarpc/"
-COPY "ipc/tarpc/tarpc/Cargo.toml" "ipc/tarpc/tarpc/"
-COPY "ipc/tarpc/plugins/Cargo.toml" "ipc/tarpc/plugins/"
+COPY "crates/datadog-ipc/Cargo.toml" "crates/datadog-ipc/"
+COPY "crates/datadog-ipc-macros/Cargo.toml" "crates/datadog-ipc-macros/"
+COPY "crates/datadog-ipc/tarpc/Cargo.toml" "crates/datadog-ipc/tarpc/"
+COPY "crates/datadog-ipc/tarpc/tarpc/Cargo.toml" "crates/datadog-ipc/tarpc/tarpc/"
+COPY "crates/datadog-ipc/tarpc/plugins/Cargo.toml" "crates/datadog-ipc/tarpc/plugins/"
 COPY "data-pipeline/Cargo.toml" "data-pipeline/"
 COPY "data-pipeline-ffi/Cargo.toml" "data-pipeline-ffi/"
 COPY "bin_tests/Cargo.toml"  "bin_tests/"
@@ -118,15 +118,15 @@ RUN echo \
     bin_tests/src/bin/test_the_tests.rs \
     builder/src/bin/release.rs \
     ddtelemetry/examples/tm-worker-test.rs \
-    ipc/benches/ipc.rs \
-    ipc/tarpc/tarpc/examples/compression.rs \
-    ipc/tarpc/tarpc/examples/custom_transport.rs \
-    ipc/tarpc/tarpc/examples/pubsub.rs \
-    ipc/tarpc/tarpc/examples/readme.rs \
-    ipc/tarpc/tarpc/examples/tracing.rs \
-    ipc/tarpc/tarpc/tests/compile_fail.rs \
-    ipc/tarpc/tarpc/tests/dataservice.rs \
-    ipc/tarpc/tarpc/tests/service_functional.rs \
+    crates/datadog-ipc/benches/ipc.rs \
+    crates/datadog-ipc/tarpc/tarpc/examples/compression.rs \
+    crates/datadog-ipc/tarpc/tarpc/examples/custom_transport.rs \
+    crates/datadog-ipc/tarpc/tarpc/examples/pubsub.rs \
+    crates/datadog-ipc/tarpc/tarpc/examples/readme.rs \
+    crates/datadog-ipc/tarpc/tarpc/examples/tracing.rs \
+    crates/datadog-ipc/tarpc/tarpc/tests/compile_fail.rs \
+    crates/datadog-ipc/tarpc/tarpc/tests/dataservice.rs \
+    crates/datadog-ipc/tarpc/tarpc/tests/service_functional.rs \
     crates/datadog-profiling-replayer/src/main.rs \
     crates/datadog-profiling/benches/interning_strings.rs \
     crates/datadog-profiling/benches/main.rs \

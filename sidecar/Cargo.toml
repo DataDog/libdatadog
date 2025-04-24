@@ -34,8 +34,8 @@ http = "1.0"
 hyper = { version = "1.6", features = ["http1", "client"] }
 http-body-util = "0.1"
 
-datadog-ipc = { path = "../ipc", features = ["tiny-bytes"] }
-datadog-ipc-macros = { path = "../ipc/macros" }
+datadog-ipc = { path = "../crates/datadog-ipc", features = ["tiny-bytes"] }
+datadog-ipc-macros = { path = "../crates/datadog-ipc-macros" }
 
 rand = "0.8.3"
 serde = { version = "1.0", features = ["derive", "rc"] }
