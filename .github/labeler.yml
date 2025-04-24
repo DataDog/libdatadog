@@ -45,8 +45,8 @@ dogstatsd:
 sidecar:
 - changed-files:
   - any-glob-to-any-file: [
-      'sidecar/**/*',
-      'sidecar-ffi/**/*',
+      'crates/datadog-sidecar/**/*',
+      'crates/datadog-sidecar-ffi/**/*',
     ]
 
 data-pipeline:
