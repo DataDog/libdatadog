@@ -79,7 +79,7 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_trace_snapshot_test() {
-        let relative_snapshot_path = "trace-utils/tests/snapshots/";
+        let relative_snapshot_path = "datadog-trace-utils/tests/snapshots/";
         let snapshot_name = "compare_send_data_v04_trace_snapshot_test";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
 
@@ -121,7 +121,7 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_trace_meta_struct_snapshot_test() {
-        let relative_snapshot_path = "trace-utils/tests/snapshots/";
+        let relative_snapshot_path = "datadog-trace-utils/tests/snapshots/";
         let snapshot_name = "compare_send_data_v04_trace_meta_struct_snapshot_test";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
 
@@ -252,7 +252,7 @@ mod tracing_integration_tests {
     #[cfg(target_os = "linux")]
     // Validate that we can correctly send traces to the agent via UDS
     async fn uds_snapshot_test() {
-        let relative_snapshot_path = "trace-utils/tests/snapshots/";
+        let relative_snapshot_path = "datadog-trace-utils/tests/snapshots/";
         let snapshot_name = "compare_send_data_v04_trace_snapshot_uds_test";
         // Create a temporary directory for the socket to be mounted in the test agent container
         let socket_dir = tempfile::Builder::new()
