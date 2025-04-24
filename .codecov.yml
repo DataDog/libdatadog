@@ -4,11 +4,11 @@ comment:
 component_management:
   individual_components:
     - component_id: crashtracker  # this is an identifier that should not be changed
-      name: crashtracker  # this is a display name, and can be changed freely
+      name: datadog-crashtracker  # this is a display name, and can be changed freely
       paths:
         - datadog-crashtracker
     - component_id: crashtracker-ffi  # this is an identifier that should not be changed
-      name: crashtracker-ffi  # this is a display name, and can be changed freely
+      name: datadog-crashtracker-ffi  # this is a display name, and can be changed freely
       paths:
         - datadog-crashtracker-ffi
     - component_id: datadog-alloc  # this is an identifier that should not be changed
@@ -44,9 +44,9 @@ component_management:
       paths:
         - dogstatsd-client
     - component_id: ipc  # this is an identifier that should not be changed
-      name: ipc  # this is a display name, and can be changed freely
+      name: datadog-ipc  # this is a display name, and can be changed freely
       paths:
-        - ipc
+        - datadog-ipc
     - component_id: profiling  # this is an identifier that should not be changed
       name: datadog-profiling  # this is a display name, and can be changed freely
       paths:
@@ -56,13 +56,13 @@ component_management:
       paths:
         - datadog-profiling-ffi
     - component_id: sidecar  # this is an identifier that should not be changed
-      name: sidecar  # this is a display name, and can be changed freely
+      name: datadog-sidecar  # this is a display name, and can be changed freely
       paths:
-        - sidecar
+        - datadog-sidecar
     - component_id: sidecar-ffi  # this is an identifier that should not be changed
-      name: sidecar-ffi  # this is a display name, and can be changed freely
+      name: datdog-sidecar-ffi  # this is a display name, and can be changed freely
       paths:
-        - sidecar-ffi
+        - datadog-sidecar-ffi
     - component_id: spawn-worker  # this is an identifier that should not be changed
       name: spawn-worker  # this is a display name, and can be changed freely
       paths:
