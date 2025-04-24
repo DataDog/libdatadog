@@ -16,7 +16,7 @@ trace-normalization         @Datadog/serverless @Datadog/libdatadog-apm
 trace-obfuscation           @Datadog/serverless @Datadog/libdatadog-apm
 trace-protobuf              @Datadog/serverless @Datadog/libdatadog-apm
 trace-utils                 @Datadog/serverless @Datadog/libdatadog-apm
-dynamic-configuration       @Datadog/libdatadog-php @Datadog/libdatadog-apm
+datadog-dynamic-configuration   @Datadog/libdatadog-php @Datadog/libdatadog-apm
 crates/datadog-remote-config    @Datadog/libdatadog-php @Datadog/libdatadog-apm @Datadog/remote-config
 crates/datadog-sidecar          @Datadog/libdatadog-php @Datadog/libdatadog-apm
 crates/datadog-sidecar-ffi      @Datadog/libdatadog-php @Datadog/libdatadog-apm

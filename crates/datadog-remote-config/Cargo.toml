@@ -10,7 +10,7 @@ test = ["hyper/server", "hyper-util"]
 [dependencies]
 anyhow = { version = "1.0" }
 ddcommon = { path = "../../ddcommon" }
-datadog-dynamic-configuration = { path = "../../dynamic-configuration" }
+datadog-dynamic-configuration = { path = "../../datadog-dynamic-configuration" }
 datadog-trace-protobuf = { path = "../../trace-protobuf" }
 datadog-live-debugger = { path = "../datadog-live-debugger" }
 hyper = { version = "1.6", features = ["http1", "client"] }
