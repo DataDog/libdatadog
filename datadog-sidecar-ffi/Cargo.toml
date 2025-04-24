@@ -13,7 +13,7 @@ bench = false
 [dependencies]
 ddtelemetry = { path = "../ddtelemetry" }
 datadog-sidecar = { path = "../datadog-sidecar" }
-datadog-trace-utils = { path = "../trace-utils" }
+datadog-trace-utils = { path = "../datadog-trace-utils" }
 datadog-ipc = { path = "../datadog-ipc" }
 ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }

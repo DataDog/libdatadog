@@ -72,18 +72,18 @@ component_management:
       paths:
         - tinybytes
     - component_id: trace-normalization  # this is an identifier that should not be changed
-      name: trace-normalization  # this is a display name, and can be changed freely
+      name: datadog-trace-normalization  # this is a display name, and can be changed freely
       paths:
-        - trace-normalization
+        - datadog-trace-normalization
     - component_id: trace-obfuscation  # this is an identifier that should not be changed
-      name: trace-obfuscation  # this is a display name, and can be changed freely
+      name: datadog-trace-obfuscation  # this is a display name, and can be changed freely
       paths:
-        - trace-obfuscation
+        - datadog-trace-obfuscation
     - component_id: trace-protobuf  # this is an identifier that should not be changed
-      name: trace-protobuf  # this is a display name, and can be changed freely
+      name: datadog-trace-protobuf  # this is a display name, and can be changed freely
       paths:
-        - trace-protobuf
+        - datadog-trace-protobuf
     - component_id: trace-utils  # this is an identifier that should not be changed
-      name: trace-utils  # this is a display name, and can be changed freely
+      name: datadog-trace-utils  # this is a display name, and can be changed freely
       paths:
-        - trace-utils
+        - datadog-trace-utils

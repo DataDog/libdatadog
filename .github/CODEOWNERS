@@ -12,10 +12,10 @@ LICENSE*                    @Datadog/libdatadog
 NOTICE                      @Datadog/libdatadog
 rustfmt.toml                @Datadog/libdatadog
 README.md                   @Datadog/libdatadog
-trace-normalization         @Datadog/serverless @Datadog/libdatadog-apm
-trace-obfuscation           @Datadog/serverless @Datadog/libdatadog-apm
-trace-protobuf              @Datadog/serverless @Datadog/libdatadog-apm
-trace-utils                 @Datadog/serverless @Datadog/libdatadog-apm
+datadog-trace-normalization @Datadog/serverless @Datadog/libdatadog-apm
+datadog-trace-obfuscation   @Datadog/serverless @Datadog/libdatadog-apm
+datadog-trace-protobuf      @Datadog/serverless @Datadog/libdatadog-apm
+datadog-trace-utils         @Datadog/serverless @Datadog/libdatadog-apm
 datadog-dynamic-configuration   @Datadog/libdatadog-php @Datadog/libdatadog-apm
 datadog-remote-config       @Datadog/libdatadog-php @Datadog/libdatadog-apm @Datadog/remote-config
 datadog-sidecar             @Datadog/libdatadog-php @Datadog/libdatadog-apm

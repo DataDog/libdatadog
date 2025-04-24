@@ -26,8 +26,8 @@ log = "0.4"
 serde_json = "1.0"
 futures = { version = "0.3", default-features = false }
 ddcommon = { path = "../ddcommon" }
-datadog-trace-protobuf = { path = "../trace-protobuf" }
-datadog-trace-normalization = { path = "../trace-normalization" }
+datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
+datadog-trace-normalization = { path = "../datadog-trace-normalization" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 rand = "0.8.5"
 bytes = "1.6.0"

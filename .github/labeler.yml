@@ -24,9 +24,9 @@ ci-build:
 mini-agent:
 - changed-files:
   - any-glob-to-any-file: [
-      'trace-normalization/**/*',
-      'trace-obfuscation/**/*',
-      'trace-utils/**/*',
+      'datadog-trace-normalization/**/*',
+      'datadog-trace-obfuscation/**/*',
+      'datadog-trace-utils/**/*',
     ]
 
 telemetry:
