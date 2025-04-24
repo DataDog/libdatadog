@@ -159,9 +159,79 @@ enum StatsComputationStatus {
         stats_concentrator: Arc<Mutex<SpanConcentrator>>,
         cancellation_token: CancellationToken,
         exporter_handle: JoinHandle<()>,
+        metadata: TracerMetadata,
+        endpoint: Endpoint,
+    },
+    OnPause {
+        stats_concentrator: Arc<Mutex<SpanConcentrator>>,
+        metadata: TracerMetadata,
+        endpoint: Endpoint,
     },
 }
 
+trait WorkerTask {
+    fn is_running(&self) -> bool;
+    fn spawn(&mut self, runtime: &Runtime);
+    fn stop(&mut self);
+}
+
+impl WorkerTask for StatsComputationStatus {
+    fn is_running(&self) -> bool {
+        match self {
+            StatsComputationStatus::Enabled { .. } => true,
+            _ => false,
+        }
+    }
+
+    fn spawn(&mut self, runtime: &Runtime) {
+        match self {
+            StatsComputationStatus::OnPause {
+                stats_concentrator,
+                metadata,
+                endpoint,
+            } => {
+                let cancellation_token = CancellationToken::new();
+                let mut stats_exporter = stats_exporter::StatsExporter::new(
+                    stats_concentrator.lock().unwrap().get_bucket_size(),
+                    stats_concentrator.clone(),
+                    metadata.clone(),
+                    endpoint.clone(),
+                    cancellation_token.clone(),
+                );
+                let exporter_handle = runtime.spawn(async move {
+                    stats_exporter.run().await;
+                });
+                *self = StatsComputationStatus::Enabled {
+                    stats_concentrator: stats_concentrator.clone(),
+                    cancellation_token,
+                    exporter_handle,
+                    metadata: metadata.clone(),
+                    endpoint: endpoint.clone(),
+                };
+            }
+            _ => {}
+        }
+    }
+
+    fn stop(&mut self) {
+        match self {
+            StatsComputationStatus::Enabled {
+                stats_concentrator,
+                cancellation_token: _,
+                exporter_handle: _,
+                metadata,
+                endpoint,
+            } => {
+                *self = StatsComputationStatus::OnPause {
+                    stats_concentrator: stats_concentrator.clone(),
+                    metadata: metadata.clone(),
+                    endpoint: endpoint.clone(),
+                };
+            }
+            _ => {}
+        }
+    }
+}
 /// The TraceExporter ingest traces from the tracers serialized as messagepack and forward them to
 /// the agent while applying some transformation.
 ///
@@ -188,7 +258,7 @@ pub struct TraceExporter {
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
-    runtime: Runtime,
+    runtime: Arc<Mutex<Option<Arc<Runtime>>>>,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
@@ -197,12 +267,46 @@ pub struct TraceExporter {
     agent_info: AgentInfoArc,
     previous_info_state: ArcSwapOption<String>,
     telemetry: Option<TelemetryClient>,
+    shutdown_token: Arc<Mutex<CancellationToken>>,
 }
 
 impl TraceExporter {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
+    }
+
+    pub fn run_worker(&self) {
+        let (runtime, token) = {
+            let mut runtime_guard = self.runtime.lock().unwrap();
+            let runtime = match runtime_guard.as_ref() {
+                Some(runtime) => runtime.clone(),
+                None => {
+                    // Create a new current thread runtime with all features enabled
+                    let runtime = Arc::new(
+                        tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .unwrap(),
+                    );
+                    *runtime_guard = Some(runtime.clone());
+                    runtime
+                }
+            };
+            let token = CancellationToken::new();
+            *self.shutdown_token.lock().unwrap() = token.clone();
+            (runtime, token)
+        };
+        runtime.block_on(async move {
+            token.cancelled_owned().await;
+        });
+    }
+
+    pub fn stop_worker(&self) {
+        self.shutdown_token.lock().unwrap().cancel();
+        let runtime = self.runtime.lock().unwrap().take();
+
+        drop(runtime);
     }
 
     /// Send msgpack serialized traces to the agent
@@ -248,9 +352,44 @@ impl TraceExporter {
 
     /// Safely shutdown the TraceExporter and all related tasks
     pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
+        self.stop_worker();
         if let Some(timeout) = timeout {
-            match self.runtime.block_on(async {
-                tokio::time::timeout(timeout, async {
+            match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    tokio::time::timeout(timeout, async {
+                        let stats_status: Option<StatsComputationStatus> =
+                            Arc::<StatsComputationStatus>::into_inner(
+                                self.client_side_stats.into_inner(),
+                            );
+                        if let Some(StatsComputationStatus::Enabled {
+                            stats_concentrator: _,
+                            cancellation_token,
+                            exporter_handle,
+                            metadata: _,
+                            endpoint: _,
+                        }) = stats_status
+                        {
+                            cancellation_token.cancel();
+                            let _ = exporter_handle.await;
+                        }
+                        if let Some(telemetry) = self.telemetry {
+                            telemetry.shutdown().await;
+                        }
+                    })
+                    .await
+                }) {
+                Ok(()) => Ok(()),
+                Err(e) => Err(TraceExporterError::Io(e.into())),
+            }
+        } else {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
                     let stats_status: Option<StatsComputationStatus> =
                         Arc::<StatsComputationStatus>::into_inner(
                             self.client_side_stats.into_inner(),
@@ -259,6 +398,8 @@ impl TraceExporter {
                         stats_concentrator: _,
                         cancellation_token,
                         exporter_handle,
+                        metadata: _,
+                        endpoint: _,
                     }) = stats_status
                     {
                         cancellation_token.cancel();
@@ -267,29 +408,7 @@ impl TraceExporter {
                     if let Some(telemetry) = self.telemetry {
                         telemetry.shutdown().await;
                     }
-                })
-                .await
-            }) {
-                Ok(()) => Ok(()),
-                Err(e) => Err(TraceExporterError::Io(e.into())),
-            }
-        } else {
-            self.runtime.block_on(async {
-                let stats_status: Option<StatsComputationStatus> =
-                    Arc::<StatsComputationStatus>::into_inner(self.client_side_stats.into_inner());
-                if let Some(StatsComputationStatus::Enabled {
-                    stats_concentrator: _,
-                    cancellation_token,
-                    exporter_handle,
-                }) = stats_status
-                {
-                    cancellation_token.cancel();
-                    let _ = exporter_handle.await;
-                }
-                if let Some(telemetry) = self.telemetry {
-                    telemetry.shutdown().await;
-                }
-            });
+                });
             Ok(())
         }
     }
@@ -322,7 +441,9 @@ impl TraceExporter {
                 cancellation_token.clone(),
             );
 
-            let exporter_handle = self.runtime.spawn(async move {
+            let runtime = self.runtime.lock().unwrap().as_ref().unwrap().clone();
+            // TODO: Move this task to a WorkerTask struct to enable restarting after fork.
+            let exporter_handle = runtime.spawn(async move {
                 stats_exporter.run().await;
             });
 
@@ -331,6 +452,8 @@ impl TraceExporter {
                     stats_concentrator,
                     cancellation_token,
                     exporter_handle,
+                    metadata: self.metadata.clone(),
+                    endpoint: self.endpoint.clone(),
                 }));
         };
         Ok(())
@@ -344,11 +467,18 @@ impl TraceExporter {
             stats_concentrator,
             cancellation_token,
             exporter_handle: _,
+            metadata: _,
+            endpoint: _,
         } = &**self.client_side_stats.load()
         {
-            self.runtime.block_on(async {
-                cancellation_token.cancel();
-            });
+            self.runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_on(async {
+                    cancellation_token.cancel();
+                });
             #[allow(clippy::unwrap_used)]
             let bucket_size = stats_concentrator.lock().unwrap().get_bucket_size();
 
@@ -371,6 +501,7 @@ impl TraceExporter {
             {
                 match &**self.client_side_stats.load() {
                     StatsComputationStatus::Disabled => {}
+                    StatsComputationStatus::OnPause { .. } => {}
                     StatsComputationStatus::DisabledByAgent { .. } => {
                         if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
                             // Client-side stats is supported by the agent
@@ -396,6 +527,8 @@ impl TraceExporter {
                         stats_concentrator,
                         cancellation_token: _,
                         exporter_handle: _,
+                        metadata: _,
+                        endpoint: _,
                     } => {
                         if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
                             #[allow(clippy::unwrap_used)]
@@ -439,93 +572,102 @@ impl TraceExporter {
         trace_count: usize,
         uri: Uri,
     ) -> Result<String, TraceExporterError> {
-        self.runtime.block_on(async {
-            let mut req_builder = hyper::Request::builder()
-                .uri(uri)
-                .header(
-                    hyper::header::USER_AGENT,
-                    concat!("Tracer/", env!("CARGO_PKG_VERSION")),
-                )
-                .method(Method::POST);
+        self.runtime
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .block_on(async {
+                let mut req_builder = hyper::Request::builder()
+                    .uri(uri)
+                    .header(
+                        hyper::header::USER_AGENT,
+                        concat!("Tracer/", env!("CARGO_PKG_VERSION")),
+                    )
+                    .method(Method::POST);
 
-            let headers: HashMap<&'static str, String> = self.metadata.borrow().into();
+                let headers: HashMap<&'static str, String> = self.metadata.borrow().into();
 
-            for (key, value) in &headers {
-                req_builder = req_builder.header(*key, value);
-            }
-            req_builder = req_builder
-                .header("Content-type", "application/msgpack")
-                .header("X-Datadog-Trace-Count", trace_count.to_string().as_str());
+                for (key, value) in &headers {
+                    req_builder = req_builder.header(*key, value);
+                }
+                req_builder = req_builder
+                    .header("Content-type", "application/msgpack")
+                    .header("X-Datadog-Trace-Count", trace_count.to_string().as_str());
 
-            #[allow(clippy::unwrap_used)]
-            let req = req_builder
-                .body(hyper_migration::Body::from_bytes(Bytes::copy_from_slice(
-                    data,
-                )))
-                // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-                .unwrap();
+                #[allow(clippy::unwrap_used)]
+                let req = req_builder
+                    .body(hyper_migration::Body::from_bytes(Bytes::copy_from_slice(
+                        data,
+                    )))
+                    // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+                    .unwrap();
 
-            match hyper_migration::new_default_client().request(req).await {
-                Ok(response) => {
-                    let response_status = response.status();
-                    if !response_status.is_success() {
-                        // TODO: Properly handle non-OK states to prevent possible panics
-                        // (APMSP-18190).
-                        #[allow(clippy::unwrap_used)]
-                        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
-                        let response_body =
-                            String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                        let resp_tag_res = &Tag::new("response_code", response_status.as_str());
-                        match resp_tag_res {
-                            Ok(resp_tag) => {
+                match hyper_migration::new_default_client().request(req).await {
+                    Ok(response) => {
+                        let response_status = response.status();
+                        if !response_status.is_success() {
+                            // TODO: Properly handle non-OK states to prevent possible panics
+                            // (APMSP-18190).
+                            #[allow(clippy::unwrap_used)]
+                            let body_bytes =
+                                response.into_body().collect().await.unwrap().to_bytes();
+                            let response_body =
+                                String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
+                            let resp_tag_res = &Tag::new("response_code", response_status.as_str());
+                            match resp_tag_res {
+                                Ok(resp_tag) => {
+                                    self.emit_metric(
+                                        HealthMetric::Count(
+                                            health_metrics::STAT_SEND_TRACES_ERRORS,
+                                            1,
+                                        ),
+                                        Some(vec![&resp_tag]),
+                                    );
+                                }
+                                Err(tag_err) => {
+                                    // This should really never happen as response_status is a
+                                    // `NonZeroU16`, but if the response status or tag requirements
+                                    // ever change in the future we still don't want to panic.
+                                    error!("Failed to serialize response_code to tag {}", tag_err)
+                                }
+                            }
+                            return Err(TraceExporterError::Request(RequestError::new(
+                                response_status,
+                                &response_body,
+                            )));
+                            //anyhow::bail!("Agent did not accept traces: {response_body}");
+                        }
+                        match response.into_body().collect().await {
+                            Ok(body) => {
+                                self.emit_metric(
+                                    HealthMetric::Count(
+                                        health_metrics::STAT_SEND_TRACES,
+                                        trace_count as i64,
+                                    ),
+                                    None,
+                                );
+                                Ok(String::from_utf8_lossy(&body.to_bytes()).to_string())
+                            }
+                            Err(err) => {
                                 self.emit_metric(
                                     HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                                    Some(vec![&resp_tag]),
+                                    None,
                                 );
-                            }
-                            Err(tag_err) => {
-                                // This should really never happen as response_status is a
-                                // `NonZeroU16`, but if the response status or tag requirements
-                                // ever change in the future we still don't want to panic.
-                                error!("Failed to serialize response_code to tag {}", tag_err)
+                                Err(TraceExporterError::from(err))
+                                // anyhow::bail!("Error reading agent response body: {err}");
                             }
                         }
-                        return Err(TraceExporterError::Request(RequestError::new(
-                            response_status,
-                            &response_body,
-                        )));
-                        //anyhow::bail!("Agent did not accept traces: {response_body}");
                     }
-                    match response.into_body().collect().await {
-                        Ok(body) => {
-                            self.emit_metric(
-                                HealthMetric::Count(
-                                    health_metrics::STAT_SEND_TRACES,
-                                    trace_count as i64,
-                                ),
-                                None,
-                            );
-                            Ok(String::from_utf8_lossy(&body.to_bytes()).to_string())
-                        }
-                        Err(err) => {
-                            self.emit_metric(
-                                HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                                None,
-                            );
-                            Err(TraceExporterError::from(err))
-                            // anyhow::bail!("Error reading agent response body: {err}");
-                        }
+                    Err(err) => {
+                        self.emit_metric(
+                            HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                            None,
+                        );
+                        Err(TraceExporterError::from(err))
                     }
                 }
-                Err(err) => {
-                    self.emit_metric(
-                        HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                        None,
-                    );
-                    Err(TraceExporterError::from(err))
-                }
-            }
-        })
+            })
     }
 
     /// Emit a health metric to dogstatsd
@@ -551,6 +693,8 @@ impl TraceExporter {
             stats_concentrator,
             cancellation_token: _,
             exporter_handle: _,
+            metadata: _,
+            endpoint: _,
         } = &**self.client_side_stats.load()
         {
             #[allow(clippy::unwrap_used)]
@@ -636,7 +780,26 @@ impl TraceExporter {
 
         let payload_len = mp_payload.len();
 
-        self.runtime.block_on(async {
+        let runtime = {
+            let mut runtime_guard = self.runtime.lock().unwrap();
+            let runtime = match runtime_guard.as_ref() {
+                Some(runtime) => runtime.clone(),
+                None => {
+                    // Create a new current thread runtime with all features enabled
+                    let runtime = Arc::new(
+                        tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .unwrap(),
+                    );
+                    *runtime_guard = Some(runtime.clone());
+                    runtime
+                }
+            };
+            runtime
+        };
+
+        runtime.block_on(async {
             // Send traces to the agent
             let result = send_with_retry(&endpoint, mp_payload, &headers, &strategy, None).await;
 
@@ -921,10 +1084,11 @@ impl TraceExporterBuilder {
             ));
         }
 
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()?;
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?,
+        );
 
         let dogstatsd = self.dogstatsd_url.and_then(|u| {
             new(Endpoint::from_slice(&u)).ok() // If we couldn't set the endpoint return
@@ -1006,12 +1170,13 @@ impl TraceExporterBuilder {
             input_format: self.input_format,
             output_format: self.output_format,
             client_computed_top_level: self.client_computed_top_level,
-            runtime,
+            runtime: Arc::new(Mutex::new(Some(runtime))),
             dogstatsd,
             common_stats_tags: vec![libdatadog_version],
             client_side_stats: ArcSwap::new(stats.into()),
             agent_info,
             previous_info_state: ArcSwapOption::new(None),
+            shutdown_token: Arc::new(Mutex::new(CancellationToken::new())),
             telemetry,
         })
     }
@@ -1215,9 +1380,15 @@ mod tests {
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {
-            exporter.runtime.block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            exporter
+                .runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_on(async {
+                    sleep(Duration::from_millis(100)).await;
+                })
         }
 
         let result = exporter.send(data.as_ref(), 1);
@@ -1291,9 +1462,15 @@ mod tests {
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {
-            exporter.runtime.block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            exporter
+                .runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_on(async {
+                    sleep(Duration::from_millis(100)).await;
+                })
         }
 
         exporter.send(data.as_ref(), 1).unwrap();
@@ -1674,9 +1851,15 @@ mod tests {
 
         traces_endpoint.assert_hits(1);
         while metrics_endpoint.hits() == 0 {
-            exporter.runtime.block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            exporter
+                .runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_on(async {
+                    sleep(Duration::from_millis(100)).await;
+                })
         }
         metrics_endpoint.assert_hits(1);
     }
@@ -1722,9 +1905,15 @@ mod tests {
 
         traces_endpoint.assert_hits(1);
         while metrics_endpoint.hits() == 0 {
-            exporter.runtime.block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            exporter
+                .runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_on(async {
+                    sleep(Duration::from_millis(100)).await;
+                })
         }
         metrics_endpoint.assert_hits(1);
     }
@@ -1782,9 +1971,15 @@ mod tests {
 
         traces_endpoint.assert_hits(1);
         while metrics_endpoint.hits() == 0 {
-            exporter.runtime.block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            exporter
+                .runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_on(async {
+                    sleep(Duration::from_millis(100)).await;
+                })
         }
         metrics_endpoint.assert_hits(1);
     }
@@ -1865,9 +2060,15 @@ mod tests {
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {
-            exporter.runtime.block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            exporter
+                .runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_on(async {
+                    sleep(Duration::from_millis(100)).await;
+                })
         }
 
         let _ = exporter.send(data.as_ref(), 1).unwrap();
