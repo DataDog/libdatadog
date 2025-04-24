@@ -70,8 +70,8 @@ RUN cargo search nothing --limit 1
 COPY [ "Cargo.lock", "Cargo.toml", "./"]
 COPY "crates/datadog-alloc/Cargo.toml" "crates/datadog-alloc/"
 COPY "build-common/Cargo.toml" "build-common/"
-COPY "crashtracker/Cargo.toml" "crashtracker/"
-COPY "crashtracker-ffi/Cargo.toml" "crashtracker-ffi/"
+COPY "crates/datadog-crashtracker/Cargo.toml" "crates/datadog-crashtracker/"
+COPY "crates/datadog-crashtracker-ffi/Cargo.toml" "crates/datadog-crashtracker-ffi/"
 COPY "ddcommon/Cargo.toml" "ddcommon/"
 COPY "ddcommon-ffi/Cargo.toml" "ddcommon-ffi/" 
 COPY "ddtelemetry/Cargo.toml" "ddtelemetry/"

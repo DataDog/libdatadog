@@ -35,7 +35,7 @@ build_common = { path = "../../build-common" }
 [dependencies]
 anyhow = "1.0"
 data-pipeline-ffi = { path = "../../data-pipeline-ffi", default-features = false, optional = true }
-datadog-crashtracker-ffi = { path = "../../crashtracker-ffi", default-features = false, optional = true}
+datadog-crashtracker-ffi = { path = "../datadog-crashtracker-ffi", default-features = false, optional = true}
 datadog-library-config-ffi = {  path = "../../library-config-ffi", default-features = false, optional = true }
 datadog-profiling = { path = "../datadog-profiling" }
 ddcommon = { path = "../../ddcommon"}

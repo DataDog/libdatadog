@@ -4,12 +4,7 @@
 [workspace]
 members = [
   "builder",
-  "crashtracker",
-  "crashtracker-ffi",
-  "crates/datadog-alloc",
-  "crates/datadog-profiling",
-  "crates/datadog-profiling-ffi",
-  "crates/datadog-profiling-replayer",
+  "crates/*",
   "ddcommon",
   "ddcommon-ffi",
   "ddtelemetry",

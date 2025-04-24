@@ -1,7 +1,7 @@
 *                           @Datadog/libdatadog-core
 crates/datadog-alloc/       @Datadog/libdatadog-profiling
 build-profiling-ffi.sh      @Datadog/libdatadog-profiling
-crashtracker/               @Datadog/libdatadog-profiling
+crates/datadog-crasht*/     @Datadog/libdatadog-profiling
 crates/datadog-profiling*/  @Datadog/libdatadog-profiling
 ddtelemetry*/               @Datadog/libdatadog-telemetry
 ruby/                       @Datadog/libdatadog-ruby

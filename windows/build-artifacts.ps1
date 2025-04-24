@@ -49,7 +49,7 @@ Invoke-Call -ScriptBlock { cbindgen --crate ddcommon-ffi --config ddcommon-ffi/c
 Invoke-Call -ScriptBlock { cbindgen --crate datadog-profiling-ffi --config crates/datadog-profiling-ffi/cbindgen.toml --output $output_dir\profiling.h }
 Invoke-Call -ScriptBlock { cbindgen --crate ddtelemetry-ffi --config ddtelemetry-ffi/cbindgen.toml --output $output_dir\telemetry.h }
 Invoke-Call -ScriptBlock { cbindgen --crate data-pipeline-ffi --config data-pipeline-ffi/cbindgen.toml --output $output_dir"\data-pipeline.h" }
-Invoke-Call -ScriptBlock { cbindgen --crate datadog-crashtracker-ffi --config crashtracker-ffi/cbindgen.toml --output $output_dir"\crashtracker.h" }
+Invoke-Call -ScriptBlock { cbindgen --crate datadog-crashtracker-ffi --config crates/datadog-crashtracker-ffi/cbindgen.toml --output $output_dir"\crashtracker.h" }
 Invoke-Call -ScriptBlock { cbindgen --crate datadog-library-config-ffi --config library-config-ffi/cbindgen.toml --output $output_dir"\library-config.h" }
 Invoke-Call -ScriptBlock { .\target\release\dedup_headers $output_dir"\common.h"  $output_dir"\profiling.h" $output_dir"\telemetry.h" $output_dir"\data-pipeline.h" $output_dir"\crashtracker.h" $output_dir"\library-config.h"}
 

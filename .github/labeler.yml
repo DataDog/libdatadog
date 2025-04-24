@@ -59,6 +59,6 @@ data-pipeline:
 crashtracker:
 - changed-files:
   - any-glob-to-any-file: [
-    'crashtracker/**/*',
-    'crashtracker-ffi/**/*',
+    'crates/datadog-crashtracker/**/*',
+    'crates/datadog-crashtracker-ffi/**/*',
   ]

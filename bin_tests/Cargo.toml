@@ -13,7 +13,7 @@ once_cell = "1.18"
 anyhow = "1.0"
 current_platform = "0.2.0"
 datadog-profiling = { path = "../crates/datadog-profiling" }
-datadog-crashtracker = { path = "../crashtracker" }
+datadog-crashtracker = { path = "../crates/datadog-crashtracker" }
 ddcommon = { path = "../ddcommon" }
 tempfile = "3.3"
 serde_json = { version = "1.0" }
