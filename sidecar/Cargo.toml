@@ -23,7 +23,7 @@ ddtelemetry = { path = "../ddtelemetry", features = ["tracing"] }
 data-pipeline = { path = "../data-pipeline" }
 datadog-trace-utils = { path = "../trace-utils" }
 datadog-remote-config = { path = "../remote-config" }
-datadog-live-debugger = { path = "../live-debugger" }
+datadog-live-debugger = { path = "../crates/datadog-live-debugger" }
 datadog-crashtracker = { path = "../crates/datadog-crashtracker" }
 dogstatsd-client = { path = "../dogstatsd-client" }
 tinybytes = { path = "../tinybytes" }

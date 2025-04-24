@@ -12,7 +12,7 @@ anyhow = { version = "1.0" }
 ddcommon = { path = "../ddcommon" }
 datadog-dynamic-configuration = { path = "../dynamic-configuration" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
-datadog-live-debugger = { path = "../live-debugger" }
+datadog-live-debugger = { path = "../crates/datadog-live-debugger" }
 hyper = { version = "1.6", features = ["http1", "client"] }
 http-body-util = "0.1"
 http = "1.0"

@@ -6,7 +6,7 @@ version = "0.0.1"
 
 [dependencies]
 anyhow = "1.0"
-ddcommon = { path = "../ddcommon" }
+ddcommon = { path = "../../ddcommon" }
 hyper = { version = "1.6", features = ["http1", "client"] }
 http-body-util = "0.1"
 
