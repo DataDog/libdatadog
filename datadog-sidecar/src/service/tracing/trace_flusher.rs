@@ -25,7 +25,6 @@ use tracing::{debug, error, info};
 
 const DEFAULT_FLUSH_INTERVAL_MS: u64 = 5_000;
 const DEFAULT_MIN_FORCE_FLUSH_SIZE_BYTES: u32 = 1_000_000;
-const DEFAULT_MIN_FORCE_DROP_SIZE_BYTES: u32 = 10_000_000;
 
 /// `TraceFlusherStats` holds stats of the trace flusher like the count of allocated shared memory
 /// for agent config, agent config writers, last used entries in agent configs, and the size of send
@@ -103,7 +102,7 @@ impl Default for TraceFlusher {
             inner: Mutex::new(TraceFlusherData::default()),
             interval_ms: AtomicU64::new(DEFAULT_FLUSH_INTERVAL_MS),
             min_force_flush_size_bytes: AtomicU32::new(DEFAULT_MIN_FORCE_FLUSH_SIZE_BYTES),
-            min_force_drop_size_bytes: AtomicU32::new(DEFAULT_MIN_FORCE_DROP_SIZE_BYTES),
+            min_force_drop_size_bytes: AtomicU32::new(trace_utils::MAX_PAYLOAD_SIZE as u32),
             remote_config: Mutex::new(Default::default()),
             metrics: Mutex::new(Default::default()),
         }
@@ -120,20 +119,24 @@ impl TraceFlusher {
         let mut flush_data = self.inner.lock_or_panic();
         let flush_data = flush_data.deref_mut();
 
-        flush_data.traces.send_data_size += data.len();
-
-        if flush_data.traces.send_data_size
-            > self.min_force_drop_size_bytes.load(Ordering::Relaxed) as usize
-        {
+        if data.len() > self.min_force_drop_size_bytes.load(Ordering::Relaxed) as usize {
+            error!(
+                "Error sending trace. Individual trace size of {}B exceeds {}B limit",
+                data.len(),
+                self.min_force_drop_size_bytes.load(Ordering::Relaxed) as usize
+            );
             return;
         }
 
+        flush_data.traces.send_data_size += data.len();
         flush_data.traces.send_data.push(data);
+
         if flush_data.flusher.is_none() {
             let (force_flush, completer) = ManualFuture::new();
             flush_data.flusher = Some(self.clone().start_trace_flusher(force_flush));
             flush_data.traces.force_flush = Some(completer);
         }
+
         if flush_data.traces.send_data_size
             > self.min_force_flush_size_bytes.load(Ordering::Relaxed) as usize
         {
@@ -321,7 +324,11 @@ mod tests {
     // observe that a request to the trace agent is not made. Then enqueue a third trace exceeding
     // the min force flush size, and observe that a request to the trace agent is made.
     async fn test_min_flush_size() {
-        let trace_flusher = Arc::new(TraceFlusher::default());
+        // Set the interval high enough that it can't cause a false positive
+        let trace_flusher = Arc::new(TraceFlusher {
+            interval_ms: AtomicU64::new(20_000),
+            ..TraceFlusher::default()
+        });
 
         let server = MockServer::start();
 
@@ -399,10 +406,12 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn test_flush_drop_size() {
+    // Test scenario: Enqueue a trace with a size greater than the minimum force drop size, and
+    // observe that it is not sent.
+    async fn test_drop_size_no_flush() {
         // Set the interval high enough that it can't cause a false positive
         let trace_flusher = Arc::new(TraceFlusher {
-            interval_ms: AtomicU64::new(10_000),
+            interval_ms: AtomicU64::new(20_000),
             ..TraceFlusher::default()
         });
         let server = MockServer::start();
@@ -413,6 +422,7 @@ mod tests {
                     .body(r#"{"status":"ok"}"#);
             })
             .await;
+
         let size = trace_flusher
             .min_force_drop_size_bytes
             .load(Ordering::Relaxed) as usize
