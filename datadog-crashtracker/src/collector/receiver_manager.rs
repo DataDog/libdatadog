@@ -1,26 +1,15 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#![cfg(unix)]
-// This is needed for vfork.  Using vfork is removed on mac and deprecated on linux
-// https://github.com/rust-lang/libc/issues/1596
-// TODO: This is a problem, we should fix it.
-#![allow(deprecated)]
+use super::process_handle::ProcessHandle;
 
-use super::emitters::emit_crashreport;
-use crate::shared::configuration::{CrashtrackerConfiguration, CrashtrackerReceiverConfig};
-use crate::shared::constants::*;
+use crate::shared::configuration::CrashtrackerReceiverConfig;
 use anyhow::Context;
-use ddcommon::unix_utils::{
-    alt_fork, open_file_or_quiet, reap_child_non_blocking, terminate, wait_for_pollhup,
-    PreparedExecve,
-};
-use libc::{siginfo_t, ucontext_t};
+use ddcommon::unix_utils::{alt_fork, open_file_or_quiet, terminate, PreparedExecve};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use nix::sys::socket;
-use nix::unistd::Pid;
 use std::os::unix::io::{IntoRawFd, RawFd};
-use std::os::unix::{io::FromRawFd, net::UnixStream};
+use std::os::unix::net::UnixStream;
 use std::ptr;
 use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::Ordering::SeqCst;
@@ -29,37 +18,11 @@ use std::time::Instant;
 static RECEIVER_CONFIG: AtomicPtr<(CrashtrackerReceiverConfig, PreparedExecve)> =
     AtomicPtr::new(ptr::null_mut());
 
-pub(crate) struct WatchedProcess {
-    uds_fd: RawFd,
-    pid: i32,
-    oneshot: bool,
+pub(crate) struct Receiver {
+    pub handle: ProcessHandle,
 }
 
-impl WatchedProcess {
-    pub(crate) fn finish(self, start_time: Instant, timeout_ms: u32) {
-        let pollhup_allowed_ms = timeout_ms
-            .saturating_sub(start_time.elapsed().as_millis() as u32)
-            .min(i32::MAX as u32) as i32;
-        let _ = wait_for_pollhup(self.uds_fd, pollhup_allowed_ms);
-
-        if self.oneshot {
-            // If we have less than the minimum amount of time, give ourselves a few scheduler
-            // slices worth of headroom to help guarantee that we don't leak a zombie process.
-            let _ = unsafe { libc::kill(self.pid, libc::SIGKILL) };
-            let reaping_allowed_ms = std::cmp::min(
-                timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32),
-                DD_CRASHTRACK_MINIMUM_REAP_TIME_MS,
-            );
-            let _ = reap_child_non_blocking(Pid::from_raw(self.pid), reaping_allowed_ms);
-        }
-    }
-
-    /// # Safety:
-    ///   uds_fd should maintain the requirements of UnixStream::from_raw_fd.
-    ///   The safety comment there seems to imply that the main thing is that the fd must
-    ///   be open.  But they could be clearer about what they mean.
-    ///   https://doc.rust-lang.org/std/os/fd/trait.FromRawFd.html
-    ///   It is an error to call this twice
+impl Receiver {
     pub(crate) fn from_socket(unix_socket_path: &str) -> anyhow::Result<Self> {
         // Creates a fake "Receiver", which can be waited on like a normal receiver.
         // This is intended to support configurations where the collector is speaking to a
@@ -81,13 +44,11 @@ impl WatchedProcess {
             .context("Failed to connect to receiver")?
             .into_raw_fd();
         Ok(Self {
-            uds_fd,
-            pid: 0,
-            oneshot: false,
+            handle: ProcessHandle::new(uds_fd, 0, false),
         })
     }
 
-    pub(crate) fn from_config(
+    pub(crate) fn spawn_from_config(
         config: &CrashtrackerReceiverConfig,
         prepared_exec: &PreparedExecve,
     ) -> anyhow::Result<Self> {
@@ -114,10 +75,8 @@ impl WatchedProcess {
             pid if pid > 0 => {
                 // Parent
                 let _ = unsafe { libc::close(uds_child) };
-                Ok(WatchedProcess {
-                    uds_fd: uds_parent,
-                    pid,
-                    oneshot: true,
+                Ok(Self {
+                    handle: ProcessHandle::new(uds_parent, pid, false),
                 })
             }
             _ => {
@@ -127,48 +86,13 @@ impl WatchedProcess {
         }
     }
 
-    pub(crate) fn to_collector(
-        &self,
-        config: &CrashtrackerConfiguration,
-        config_str: &str,
-        metadata_str: &str,
-        sig_info: *const siginfo_t,
-        ucontext: *const ucontext_t,
-    ) -> anyhow::Result<Self> {
-        let ppid = unsafe { libc::getppid() };
-
-        match alt_fork() {
-            0 => {
-                // Child (does not exit from this function)
-                run_collector_child(
-                    config,
-                    config_str,
-                    metadata_str,
-                    sig_info,
-                    ucontext,
-                    self,
-                    ppid,
-                );
-            }
-            pid if pid > 0 => Ok(WatchedProcess {
-                uds_fd: self.uds_fd,
-                pid,
-                oneshot: true,
-            }),
-            _ => {
-                // Error
-                Err(anyhow::anyhow!("Failed to fork collector process"))
-            }
-        }
-    }
-
-    pub(crate) fn from_stored_config() -> anyhow::Result<Self> {
+    pub(crate) fn spawn_from_stored_config() -> anyhow::Result<Self> {
         let receiver_config = RECEIVER_CONFIG.swap(ptr::null_mut(), SeqCst);
         anyhow::ensure!(!receiver_config.is_null(), "No receiver config");
         // Intentionally leak since we're in a signal handler
         let (config, prepared_exec) =
             unsafe { receiver_config.as_ref().context("receiver config")? };
-        Self::from_config(config, prepared_exec)
+        Self::spawn_from_config(config, prepared_exec)
     }
 
     /// Ensures that the receiver has the configuration when it starts.
@@ -195,6 +119,10 @@ impl WatchedProcess {
                 std::mem::drop(Box::from_raw(old));
             }
         }
+    }
+
+    pub fn finish(self, start_time: Instant, timeout_ms: u32) {
+        self.handle.finish(start_time, timeout_ms);
     }
 }
 
@@ -234,58 +162,4 @@ fn run_receiver_child(
     prepared_exec.exec().unwrap_or_else(|_| terminate());
     // If we reach this point, execve failed, so just exit
     terminate();
-}
-
-pub(crate) fn run_collector_child(
-    config: &CrashtrackerConfiguration,
-    config_str: &str,
-    metadata_str: &str,
-    sig_info: *const siginfo_t,
-    ucontext: *const ucontext_t,
-    receiver: &WatchedProcess,
-    ppid: libc::pid_t,
-) -> ! {
-    // the collector process currently runs without access to stdio.  there are two ways to resolve
-    // this:
-    // - reuse the stdio files used for the receiver
-    //   + con: we don't controll flushes to stdio, so the writes from the two processes may
-    //     interleave parts of a single message
-    // - create two new stdio files for the collector
-    //   + con: that's _another_ two options to fill out in the config
-    let _ = unsafe { libc::close(0) };
-    let _ = unsafe { libc::close(1) };
-    let _ = unsafe { libc::close(2) };
-
-    // Before we start reading or writing to the socket, we need to disable SIGPIPE because we
-    // don't control the emission implementation enough to send MSG_NOSIGNAL.
-    // NB - collector is running in its own process, so this doesn't affect the watchdog process
-    let _ = unsafe {
-        signal::sigaction(
-            signal::SIGPIPE,
-            &SigAction::new(SigHandler::SigIgn, SaFlags::empty(), SigSet::empty()),
-        )
-    };
-
-    // We're ready to emit the crashreport
-    let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.uds_fd) };
-
-    let report = emit_crashreport(
-        &mut unix_stream,
-        config,
-        config_str,
-        metadata_str,
-        sig_info,
-        ucontext,
-        ppid,
-    );
-    if let Err(e) = report {
-        eprintln!("Failed to flush crash report: {e}");
-        unsafe { libc::_exit(-1) };
-    }
-
-    // If we reach this point, then we exit.  We're done.
-    // Note that since we're a forked process, we call `_exiit` in favor of:
-    // - `exit()`, because calling the atexit handlers might mutate shared state
-    // - `abort()`, because raising SIGABRT might cause other problems
-    unsafe { libc::_exit(0) };
 }

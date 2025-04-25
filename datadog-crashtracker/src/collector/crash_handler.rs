@@ -3,7 +3,8 @@
 
 #![cfg(unix)]
 
-use super::receiver_manager::WatchedProcess;
+use super::collector_manager::Collector;
+use super::receiver_manager::Receiver;
 use super::signal_handler_manager::chain_signal_handler;
 use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
@@ -145,8 +146,9 @@ fn handle_posix_signal_impl(
         return Ok(());
     }
 
-    // Get references to the configs.  Rather than copying the structs, keep them as references.
-    // NB: this clears the global variables, so they can't be used again.
+    // Leak config and metadata to avoid calling `drop` during a crash
+    // Note that these operations also replace the global states.  When the one-time guard is
+    // passed, all global configuration and metadata becomes invalid.
     let config_ptr = CONFIG.swap(ptr::null_mut(), SeqCst);
     anyhow::ensure!(!config_ptr.is_null(), "No crashtracking config");
     let (config, config_str) = unsafe { &*config_ptr };
@@ -163,14 +165,20 @@ fn handle_posix_signal_impl(
     // configuration.  If it does, then we just connect to the socket.
     let unix_socket_path = config.unix_socket_path().clone().unwrap_or_default();
 
-    let receiver = if !unix_socket_path.is_empty() {
-        WatchedProcess::from_socket(&unix_socket_path)?
+    let receiver = if unix_socket_path.is_empty() {
+        Receiver::spawn_from_stored_config()?
     } else {
-        WatchedProcess::from_stored_config()?
+        Receiver::from_socket(&unix_socket_path)?
     };
 
-    let collector =
-        receiver.to_collector(config, config_str, metadata_string, sig_info, ucontext)?;
+    let collector = Collector::spawn(
+        &receiver,
+        config,
+        config_str,
+        metadata_string,
+        sig_info,
+        ucontext,
+    )?;
 
     // We're done. Wrap up our interaction with the receiver.
     collector.finish(start_time, timeout_ms);
