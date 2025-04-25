@@ -32,11 +32,15 @@ impl ProcessHandle {
             // If we have less than the minimum amount of time, give ourselves a few scheduler
             // slices worth of headroom to help guarantee that we don't leak a zombie process.
             let _ = unsafe { libc::kill(self.pid, libc::SIGKILL) };
+
+            // `self` is actually a handle to a child process and `self.pid` is the child process's
+            // pid.
+            let child_pid = Pid::from_raw(self.pid);
             let reaping_allowed_ms = std::cmp::min(
                 timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32),
                 DD_CRASHTRACK_MINIMUM_REAP_TIME_MS,
             );
-            let _ = reap_child_non_blocking(Pid::from_raw(self.pid), reaping_allowed_ms);
+            let _ = reap_child_non_blocking(child_pid, reaping_allowed_ms);
         }
     }
 }
