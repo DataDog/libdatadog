@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-use super::receiver_manager::WatchedProcess;
+use super::receiver_manager::Receiver;
 use crate::{
     clear_spans, clear_traces, collector::signal_handler_manager::register_crash_handlers,
     crash_info::Metadata, reset_counters, shared::configuration::CrashtrackerReceiverConfig,
@@ -45,7 +45,7 @@ pub fn on_fork(
 
     update_metadata(metadata)?;
     update_config(config)?;
-    WatchedProcess::update_stored_config(receiver_config);
+    Receiver::update_stored_config(receiver_config);
     Ok(())
 }
 
@@ -66,7 +66,7 @@ pub fn init(
 ) -> anyhow::Result<()> {
     update_metadata(metadata)?;
     update_config(config.clone())?;
-    WatchedProcess::update_stored_config(receiver_config);
+    Receiver::update_stored_config(receiver_config);
     register_crash_handlers(&config)?;
     Ok(())
 }
