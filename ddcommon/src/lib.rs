@@ -21,9 +21,11 @@ pub mod entity_id;
 #[macro_use]
 pub mod cstr;
 pub mod config;
+pub mod hyper_migration;
 pub mod rate_limiter;
 pub mod tag;
 pub mod tracer_metadata;
+pub mod unix_utils;
 
 /// Extension trait for `Mutex` to provide a method that acquires a lock, panicking if the lock is
 /// poisoned.
@@ -103,9 +105,12 @@ pub mod header {
         HeaderName::from_static("x-datadog-test-session-token");
 }
 
-pub type HttpClient = hyper::Client<connector::Connector, hyper::Body>;
-pub type HttpResponse = hyper::Response<hyper::Body>;
+pub type HttpClient = hyper_migration::HttpClient;
+pub type HttpResponse = hyper_migration::HttpResponse;
 pub type HttpRequestBuilder = hyper::http::request::Builder;
+
+// Used by tag! macro
+pub use const_format;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct Endpoint {

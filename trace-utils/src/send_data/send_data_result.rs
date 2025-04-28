@@ -3,13 +3,13 @@
 
 use crate::send_with_retry::{SendWithRetryError, SendWithRetryResult};
 use anyhow::anyhow;
-use hyper::{Body, Response};
+use ddcommon::hyper_migration;
 use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct SendDataResult {
     /// Keeps track of the last request result.
-    pub last_result: anyhow::Result<Response<Body>>,
+    pub last_result: anyhow::Result<hyper_migration::HttpResponse>,
     /// Count metric for 'trace_api.requests'.
     pub requests_count: u64,
     /// Count metric for 'trace_api.responses'. Each key maps a different HTTP status code.

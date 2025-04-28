@@ -12,24 +12,34 @@ autobenches = false
 [dependencies]
 anyhow = { version = "1.0" }
 arc-swap = "1.7.1"
-hyper = {version = "0.14", features = ["client", "server", "runtime", "backports", "deprecated"], default-features = false}
+hyper = { version = "1.6", features = ["http1", "client"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy"] }
+http = "1.0"
+http-body-util = "0.1"
 log = "0.4"
 rmp-serde = "1.1.1"
 serde = "1.0.209"
 serde_json = "1.0.127"
 bytes = "1.4"
 either = "1.13.0"
-tokio = { version = "1.23", features = ["rt", "test-util", "time"], default-features = false }
+tokio = { version = "1.23", features = [
+    "rt",
+    "test-util",
+    "time",
+], default-features = false }
 
 ddcommon = { path = "../ddcommon" }
 ddtelemetry = { path = "../ddtelemetry" }
 datadog-trace-protobuf = { path = "../trace-protobuf" }
 datadog-trace-utils = { path = "../trace-utils" }
-datadog-ddsketch = { path = "../ddsketch"}
-dogstatsd-client = { path = "../dogstatsd-client"}
+datadog-ddsketch = { path = "../ddsketch" }
+dogstatsd-client = { path = "../dogstatsd-client" }
 uuid = { version = "1.10.0", features = ["v4"] }
 tokio-util = "0.7.11"
-tinybytes =  { path = "../tinybytes", features = ["bytes_string", "serialization"] }
+tinybytes = { path = "../tinybytes", features = [
+    "bytes_string",
+    "serialization",
+] }
 
 [lib]
 bench = false
@@ -41,13 +51,13 @@ path = "benches/main.rs"
 
 [dev-dependencies]
 criterion = "0.5.1"
-data-pipeline = { path = ".", features = ["test-utils"] }
 datadog-trace-utils = { path = "../trace-utils", features = ["test-utils"] }
 httpmock = "0.7.0"
 rand = "0.8.5"
 regex = "1.5"
 tempfile = "3.3.0"
-tokio = {version = "1.23", features = ["rt", "time", "test-util"], default-features = false}
-
-[features]
-test-utils = []
+tokio = { version = "1.23", features = [
+    "rt",
+    "time",
+    "test-util",
+], default-features = false }

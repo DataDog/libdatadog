@@ -9,7 +9,7 @@ use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::trace_utils::SendDataResult;
 use ddcommon::{Endpoint, MutexExt};
 use futures::future::join_all;
-use hyper::body::HttpBody;
+use http_body_util::BodyExt;
 use manual_future::{ManualFuture, ManualFutureCompleter};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;

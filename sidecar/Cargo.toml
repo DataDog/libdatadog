@@ -30,8 +30,9 @@ tinybytes = { path = "../tinybytes" }
 
 futures = { version = "0.3", default-features = false }
 manual_future = "0.1.1"
-http = "0.2"
-hyper = { version = "0.14", features = ["client", "backports", "deprecated"], default-features = false }
+http = "1.0"
+hyper = { version = "1.6", features = ["http1", "client"] }
+http-body-util = "0.1"
 
 datadog-ipc = { path = "../ipc", features = ["tiny-bytes"] }
 datadog-ipc-macros = { path = "../ipc/macros" }
@@ -63,7 +64,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "env-filter",
 ], optional = true }
 chrono = "0.4.31"
-console-subscriber = { version = "0.1", optional = true }
+console-subscriber = { version = "0.4", optional = true }
 libc = { version = "0.2" }
 
 # watchdog and self telemetry
@@ -78,14 +79,17 @@ features = [
 ]
 version = "0.51.0"
 
+# simd-json v0.15 uses Rust 2024 Edition, so it needs Rust 1.85+.
 [target.'cfg(not(target_arch = "x86"))'.dependencies]
-simd-json = "0.14.1"
+simd-json = "=0.14"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.27.1", features = ["socket", "mman"] }
+nix = { version = "0.29", features = ["socket", "mman"] }
 sendfd = { version = "0.4", features = ["tokio"] }
 
 [target.'cfg(windows)'.dependencies]
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+datadog-crashtracker-ffi = { path = "../crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
 winapi = { version = "0.3.9", features = ["securitybaseapi", "sddl"] }
 windows-sys = { version = "0.52.0", features = ["Win32_System_SystemInformation"] }
 

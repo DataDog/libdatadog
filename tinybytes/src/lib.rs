@@ -13,6 +13,9 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(feature = "serde")]
+use serde::Serialize;
+
 /// Immutable bytes type with zero copy cloning and slicing.
 #[derive(Clone)]
 pub struct Bytes {
@@ -83,7 +86,7 @@ impl Bytes {
     ///
     /// let slice = bytes.slice(6..11);
     /// assert_eq!(slice.as_ref(), b"world");
-    /// ```    
+    /// ```
     pub fn slice(&self, range: impl RangeBounds<usize>) -> Self {
         use std::ops::Bound;
 
@@ -148,7 +151,7 @@ impl Bytes {
     ///
     /// let invalid_subset = b"invalid";
     /// assert!(bytes.slice_ref(invalid_subset).is_none());
-    /// ```    
+    /// ```
     pub fn slice_ref(&self, subset: &[u8]) -> Option<Bytes> {
         // An empty slice can be a subset of any slice.
         if subset.is_empty() {
@@ -275,6 +278,16 @@ impl hash::Hash for Bytes {
 impl fmt::Debug for Bytes {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(self.as_slice(), f)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl Serialize for Bytes {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.as_slice())
     }
 }
 

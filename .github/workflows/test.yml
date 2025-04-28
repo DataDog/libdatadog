@@ -19,7 +19,7 @@ jobs:
     steps:
       - name: Free Disk Space (Ubuntu only)
         if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # 1.3.1
         with:
           tool-cache: false
           android: true
@@ -30,7 +30,7 @@ jobs:
           swap-storage: true
 
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: Cache
         uses: ./.github/actions/cache
         with:
@@ -41,11 +41,8 @@ jobs:
       - id: rust-version
         # On Windows run happens in a PowerShell, so start bash explicitly
         run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
-      - name: Install Protoc Binary
-        shell: bash
-        run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
       - name: Install cargo nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
           tool: nextest@0.9.81
       - name: "Remove nextest CI report"
@@ -59,22 +56,22 @@ jobs:
         # Run doc tests with cargo test and run tests with nextest and generate junit.xml
         run: cargo test --workspace --exclude builder --doc --verbose && cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
         env:
-          RUST_BACKTRACE: 1
-      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(tracing_integration_tests::)'"
+          RUST_BACKTRACE: full
+      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'"
         if: runner.os == 'Linux'
         shell: bash
-        run: cargo nextest run --workspace --exclude builder --profile ci --verbose -E 'test(tracing_integration_tests::)'
+        run: cargo nextest run --workspace --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
         env:
-          RUST_BACKTRACE: 1
+          RUST_BACKTRACE: full
       - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'"
         shell: bash
         run: cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'
         env:
           RUSTFLAGS: "-C prefer-dynamic"
-          RUST_BACKTRACE: 1
+          RUST_BACKTRACE: full
       - name: Report Test Results
         if: success() || failure()
-        uses: mikepenz/action-junit-report@v4
+        uses: mikepenz/action-junit-report@db71d41eb79864e25ab0337e395c352e84523afe # 4.3.1
         with:
           report_paths: "target/nextest/ci/junit.xml"
           check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
@@ -98,7 +95,7 @@ jobs:
             flags: "-C target-feature=+crt-static"
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
 
       - name: Setup output dir
         shell: bash
@@ -111,7 +108,7 @@ jobs:
 
       - name: Free Disk Space (Ubuntu only)
         if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # 1.3.1
         with:
           tool-cache: false
           android: true
@@ -144,7 +141,7 @@ jobs:
           cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker,library-config --release -- --out $LIBDD_OUTPUT_FOLDER
 
       - name: 'Publish libdatadog'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1
         # Only upload the artifacts built with the default Rust version
         if: (success() || failure()) && matrix.rust_version == ''
         with:
@@ -201,7 +198,7 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # 1.3.1
         with:
           tool-cache: true
           android: true
@@ -211,7 +208,7 @@ jobs:
           docker-images: false
           swap-storage: true
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: Cache
         uses: ./.github/actions/cache
         with:
@@ -237,17 +234,19 @@ jobs:
     steps:
       -
         name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       -
         name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # 3.10.0
         with:
           buildkitd-config: .github/buildkitd-16-cores.toml
       -
         name: Build and Generate FFI
-        uses: docker/bake-action@v4.5.0
+        uses: docker/bake-action@4ba453fbc2db7735392b93edf935aaf9b1e8f747 # 6.5.0
         with:
           targets: ${{ matrix.target }}
-          set: |
-            *.cache-from=type=gha,scope=${{ matrix.target }}
-            *.cache-to=type=gha,mode=max,scope=${{ matrix.target }}
+          # Caching is useful, when it works. We are routinely hanging, maybe this:
+          # https://github.com/docker/buildx/issues/537
+          #set: |
+          #  *.cache-from=type=gha,scope=${{ matrix.target }}
+          #  *.cache-to=type=gha,mode=max,scope=${{ matrix.target }}

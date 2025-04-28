@@ -10,7 +10,7 @@ license.workspace = true
 
 [lib]
 crate-type = ["lib"]
-bench =false
+bench = false
 
 [dependencies]
 anyhow = "1.0"
@@ -18,37 +18,35 @@ futures = "0.3"
 futures-core = { version = "0.3.0", default-features = false }
 futures-util = { version = "0.3.0", default-features = false }
 hex = "0.4"
-http = "0.2"
-hyper = { version = "0.14", features = [
+hyper = { version = "1.6", features = ["http1", "client"] }
+hyper-util = { version = "0.1.10", features = [
     "http1",
     "client",
-    "tcp",
-    "stream",
-    "backports",
-    "deprecated"
-], default-features = false }
+    "client-legacy",
+] }
+http = "1.0"
+http-body = "1.0"
+http-body-util = "0.1"
+tower-service = "0.3"
 cc = "1.1.31"
-hyper-util = "0.1.3"
 log = { version = "0.4" }
 pin-project = "1"
 rand = "0.8.3"
 regex = "1.5"
 rmp = "0.8.14"
 rmp-serde = "1.3.0"
-rustls = { version = "0.23", default-features = false }
-rustls-native-certs = { version = "0.7" }
+rustls = { version = "0.23", default-features = false, optional = true }
+rustls-native-certs = { version = "0.8.1", optional = true }
 tokio = { version = "1.23", features = ["rt", "macros"] }
-tokio-rustls = { version = "0.26", default-features = false }
+tokio-rustls = { version = "0.26", default-features = false, optional = true }
 serde = { version = "1.0", features = ["derive"] }
 static_assertions = "1.1.0"
 libc = "0.2"
-
+const_format = "0.2.34"
+nix = { version = "0.29", features = ["process"] }
 [target.'cfg(windows)'.dependencies.windows-sys]
 version = "0.52"
-features = [
-    "Win32_Foundation",
-    "Win32_System_Performance",
-]
+features = ["Win32_Foundation", "Win32_System_Performance"]
 
 [target.'cfg(unix)'.dependencies]
 hyper-rustls = { version = "0.27", default-features = false, features = [
@@ -56,7 +54,7 @@ hyper-rustls = { version = "0.27", default-features = false, features = [
     "http1",
     "tls12",
     "aws-lc-rs",
-] }
+], optional = true }
 memfd = { version = "0.6" }
 
 [target.'cfg(not(unix))'.dependencies]
@@ -65,15 +63,29 @@ hyper-rustls = { version = "0.27", default-features = false, features = [
     "http1",
     "tls12",
     "ring",
-] }
+], optional = true }
 
 [dev-dependencies]
 indexmap = "2.2"
 maplit = "1.0"
 
 [features]
-default = []
+default = ["https"]
+https = ["tokio-rustls", "rustls", "hyper-rustls", "rustls-native-certs"]
 use_webpki_roots = ["hyper-rustls/webpki-roots"]
 # Enable this feature to enable stubbing of cgroup
 # php directly import this crate and uses functions gated by this feature for their test
 cgroup_testing = []
+# FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
+fips = ["https", "hyper-rustls/fips"]
+
+[lints.rust]
+# We run coverage checks in our github actions. These checks are run with
+# --all-features which is incompatible with our fips feature. The crypto
+# provider default needs to be set by the caller in fips mode. For now, we want
+# to make sure that the coverage tests use the non-fips version of the crypto
+# provider initialization logic, so we added a coverage cfg check on the
+# function in src/connector/mod.rs. The coverage config is actually not used in
+# normal environments, so we need to let the rust linter know that it is in
+# fact a real thing, though one that shows up only in some situations.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }

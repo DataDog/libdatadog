@@ -7,6 +7,8 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+#[cfg(windows)]
+use datadog_crashtracker_ffi::Metadata;
 use datadog_ipc::platform::{
     FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
 };
@@ -47,6 +49,15 @@ use std::os::windows::io::{FromRawHandle, RawHandle};
 use std::slice;
 use std::sync::Arc;
 use std::time::Duration;
+
+#[no_mangle]
+#[cfg(target_os = "windows")]
+pub extern "C" fn ddog_setup_crashtracking(
+    endpoint: Option<&Endpoint>,
+    metadata: Metadata,
+) -> bool {
+    datadog_sidecar::ddog_setup_crashtracking(endpoint, metadata)
+}
 
 #[repr(C)]
 pub struct NativeFile {
@@ -374,11 +385,18 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     config_key: ffi::CharSlice,
     config_value: ffi::CharSlice,
     origin: data::ConfigurationOrigin,
+    config_id: ffi::CharSlice,
 ) -> MaybeError {
+    let config_id = if config_id.is_empty() {
+        None
+    } else {
+        Some(config_id.to_utf8_lossy().into_owned())
+    };
     let config_entry = TelemetryActions::AddConfig(data::Configuration {
         name: config_key.to_utf8_lossy().into_owned(),
         value: config_value.to_utf8_lossy().into_owned(),
         origin,
+        config_id,
     });
     try_c!(blocking::enqueue_actions(
         transport,

@@ -476,20 +476,20 @@ mod tests {
         bolero::check!()
             .with_generator((obs_len_gen, num_ts_samples_gen, num_samples_gen))
             .and_then(|(observations_len, num_ts_samples, num_samples)| {
-                let ts_samples = Vec::<(Sample, Timestamp, Vec<i64>)>::gen()
+                let ts_samples = Vec::<(Sample, Timestamp, Vec<i64>)>::produce()
                     .with()
                     .values((
-                        Sample::gen(),
-                        Timestamp::gen(),
-                        Vec::<i64>::gen().with().len(observations_len),
+                        Sample::produce(),
+                        Timestamp::produce(),
+                        Vec::<i64>::produce().with().len(observations_len),
                     ))
                     .len(num_ts_samples);
 
-                let no_ts_samples = Vec::<(Sample, Vec<i64>)>::gen()
+                let no_ts_samples = Vec::<(Sample, Vec<i64>)>::produce()
                     .with()
                     .values((
-                        Sample::gen(),
-                        Vec::<i64>::gen().with().len(observations_len),
+                        Sample::produce(),
+                        Vec::<i64>::produce().with().len(observations_len),
                     ))
                     .len(num_samples);
 
@@ -516,14 +516,18 @@ mod tests {
         bolero::check!()
             .with_generator((num_ts_samples_gen, num_samples_gen))
             .and_then(|(num_ts_samples, num_samples)| {
-                let ts_samples = Vec::<(Sample, Timestamp, Vec<i64>)>::gen()
+                let ts_samples = Vec::<(Sample, Timestamp, Vec<i64>)>::produce()
                     .with()
-                    .values((Sample::gen(), Timestamp::gen(), Vec::<i64>::gen()))
+                    .values((
+                        Sample::produce(),
+                        Timestamp::produce(),
+                        Vec::<i64>::produce(),
+                    ))
                     .len(num_ts_samples);
 
-                let no_ts_samples = Vec::<(Sample, Vec<i64>)>::gen()
+                let no_ts_samples = Vec::<(Sample, Vec<i64>)>::produce()
                     .with()
-                    .values((Sample::gen(), Vec::<i64>::gen()))
+                    .values((Sample::produce(), Vec::<i64>::produce()))
                     .len(num_samples);
                 (ts_samples, no_ts_samples)
             })

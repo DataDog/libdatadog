@@ -104,10 +104,7 @@ where
                 }
             }
         }
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            "couldn't read entire item",
-        ))
+        Err(io::Error::other("couldn't read entire item"))
     }
 
     fn do_send(&mut self, req: OutgoingItem) -> Result<(), io::Error> {
@@ -192,10 +189,7 @@ where
                 return resp.message.map_err(|e| io::Error::new(e.kind, e.detail));
             }
         }
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            "Request is without a response",
-        ))
+        Err(io::Error::other("Request is without a response"))
     }
 }
 

@@ -28,9 +28,17 @@ mod unix {
     const TEST_COLLECTOR_TIMEOUT_MS: u32 = 10_000;
 
     #[inline(never)]
-    unsafe fn deref_ptr(p: *mut u8) -> u8 {
-        *std::hint::black_box(p) = std::hint::black_box(1);
-        *std::hint::black_box(p)
+    pub unsafe fn cause_segfault() -> anyhow::Result<()> {
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            std::arch::asm!("mov eax, [0]", options(nostack));
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            std::arch::asm!("mov x0, #0", "ldr x1, [x0]", options(nostack));
+        }
+        anyhow::bail!("Failed to cause segmentation fault")
     }
 
     pub fn main() -> anyhow::Result<()> {
@@ -55,16 +63,16 @@ mod unix {
         // The configuration can be modified by a Behavior (testing plan), so it is mut here.
         // Unlike a normal harness, in this harness tests are run in individual processes, so race
         // issues are avoided.
-        let mut config = CrashtrackerConfiguration {
-            additional_files: vec![],
-            create_alt_stack: true,
-            use_alt_stack: true,
-            resolve_frames: crashtracker::StacktraceCollection::WithoutSymbols,
-            signals: crashtracker::default_signals(),
+        let mut config = CrashtrackerConfiguration::new(
+            vec![],
+            true,
+            true,
             endpoint,
-            timeout_ms: TEST_COLLECTOR_TIMEOUT_MS,
-            unix_socket_path: Some("".to_string()),
-        };
+            crashtracker::StacktraceCollection::WithoutSymbols,
+            crashtracker::default_signals(),
+            TEST_COLLECTOR_TIMEOUT_MS,
+            Some("".to_string()),
+        )?;
 
         let metadata = Metadata {
             library_name: "libdatadog".to_owned(),
@@ -107,10 +115,7 @@ mod unix {
             "kill_sigill" => kill(Pid::this(), Signal::SIGILL)?,
             "kill_sigbus" => kill(Pid::this(), Signal::SIGBUS)?,
             "kill_sigsegv" => kill(Pid::this(), Signal::SIGSEGV)?,
-            "null_deref" => {
-                let x = unsafe { deref_ptr(std::ptr::null_mut::<u8>()) };
-                println!("{x}");
-            }
+            "null_deref" => unsafe { cause_segfault()? },
             "raise_sigabrt" => raise(Signal::SIGABRT)?,
             "raise_sigill" => raise(Signal::SIGILL)?,
             "raise_sigbus" => raise(Signal::SIGBUS)?,

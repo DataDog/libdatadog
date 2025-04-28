@@ -1,17 +1,18 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use cargo_metadata::MetadataCommand;
+use ddcommon::hyper_migration::{self, Body};
+use http_body_util::BodyExt;
+use hyper::body::Incoming;
+use hyper::{Request, Response, Uri};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
-
-use cargo_metadata::MetadataCommand;
-use hyper::body::HttpBody;
-use hyper::{Client, Uri};
-use testcontainers::core::AccessMode;
 use testcontainers::{
-    core::{Mount, WaitFor},
+    core::{wait::HttpWaitStrategy, AccessMode, ContainerPort, Mount, WaitFor},
     runners::AsyncRunner,
     *,
 };
@@ -33,38 +34,38 @@ struct DatadogTestAgentContainer {
 }
 
 impl Image for DatadogTestAgentContainer {
-    type Args = Vec<String>;
-
-    fn name(&self) -> String {
-        TEST_AGENT_IMAGE_NAME.to_owned()
+    fn name(&self) -> &str {
+        TEST_AGENT_IMAGE_NAME
     }
 
-    fn tag(&self) -> String {
-        TEST_AGENT_IMAGE_TAG.to_owned()
+    fn tag(&self) -> &str {
+        TEST_AGENT_IMAGE_TAG
     }
 
     fn ready_conditions(&self) -> Vec<WaitFor> {
         vec![
             WaitFor::message_on_stderr(TEST_AGENT_READY_MSG),
-            // This wait is in place because on some github runners the docker container may reset
-            // the connection even though the test-agent stderr indicates it is ready.
-            // TODO: Investigate if we can emit a message from the test-agent when it is truly
-            // ready.
-            WaitFor::Duration {
-                length: Duration::from_secs(1),
-            },
+            // Add HTTP wait strategy for the /info endpoint
+            WaitFor::Http(
+                HttpWaitStrategy::new("/info") // Endpoint to check
+                    .with_port(ContainerPort::Tcp(TEST_AGENT_PORT)) // Port to use (8126)
+                    .with_expected_status_code(200u16) // Expected status code
+                    .with_poll_interval(Duration::from_secs(1)),
+            ),
         ]
     }
 
-    fn mounts(&self) -> Box<dyn Iterator<Item = &Mount> + '_> {
+    fn mounts(&self) -> impl IntoIterator<Item = &Mount> {
         Box::new(self.mounts.iter())
     }
 
-    fn expose_ports(&self) -> Vec<u16> {
-        vec![TEST_AGENT_PORT]
+    fn expose_ports(&self) -> &[ContainerPort] {
+        &[ContainerPort::Tcp(TEST_AGENT_PORT)]
     }
 
-    fn env_vars(&self) -> Box<dyn Iterator<Item = (&String, &String)> + '_> {
+    fn env_vars(
+        &self,
+    ) -> impl IntoIterator<Item = (impl Into<Cow<'_, str>>, impl Into<Cow<'_, str>>)> {
         Box::new(self.env_vars.iter())
     }
 }
@@ -281,11 +282,21 @@ impl DatadogTestAgent {
     ///
     /// * `snapshot_token` - A string slice that holds the snapshot token.
     pub async fn assert_snapshot(&self, snapshot_token: &str) {
-        let client = Client::new();
         let uri = self
             .get_uri_for_endpoint("test/session/snapshot", Some(snapshot_token))
             .await;
-        let res = client.get(uri).await.expect("Request failed");
+
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .body(Body::empty())
+            .expect("Failed to create request");
+
+        let res = self
+            .agent_request_with_retry(req, 5)
+            .await
+            .expect("request failed");
+
         let status_code = res.status();
         let body_bytes = res
             .into_body()
@@ -301,6 +312,58 @@ impl DatadogTestAgent {
             status_code, body_string
         );
     }
+
+    /// Returns the traces that have been received by the test agent. This is not necessary in the
+    /// normal course of snapshot testing, but can be useful for debugging.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec` of `serde_json::Value` representing the traces that have been received by the test
+    /// agent.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    ///
+    /// ```no_run
+    /// use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
+    /// use serde_json::to_string_pretty;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let test_agent = DatadogTestAgent::new(Some("relative/path/to/snapshot"), None).await;
+    ///     let traces = test_agent.get_sent_traces().await;
+    ///     let pretty_traces = to_string_pretty(&traces).expect("Failed to convert to pretty JSON");
+    ///
+    ///     println!("{}", pretty_traces);
+    /// }
+    /// ```
+    pub async fn get_sent_traces(&self) -> Vec<serde_json::Value> {
+        let uri = self.get_uri_for_endpoint("test/traces", None).await;
+
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .body(Body::empty())
+            .expect("Failed to create request");
+
+        let res = self
+            .agent_request_with_retry(req, 5)
+            .await
+            .expect("request failed");
+
+        let body_bytes = res
+            .into_body()
+            .collect()
+            .await
+            .expect("Read failed")
+            .to_bytes();
+
+        let body_string = String::from_utf8(body_bytes.to_vec()).expect("Conversion failed");
+
+        serde_json::from_str(&body_string).expect("Failed to parse JSON response")
+    }
+
     /// Starts a new session with the Datadog Test Agent using the provided session token and
     /// optional sampling rates. This should be called before sending data to the test-agent to
     /// configure the session parameters. Please refer to
@@ -338,7 +401,7 @@ impl DatadogTestAgent {
         session_token: &str,
         agent_sample_rates_by_service: Option<&str>,
     ) {
-        let client = Client::new();
+        // let client = hyper_migration::new_default_client();
 
         let mut query_params_map = HashMap::new();
         query_params_map.insert(SESSION_TEST_TOKEN_QUERY_PARAM_KEY, session_token);
@@ -350,7 +413,16 @@ impl DatadogTestAgent {
             .get_uri_for_endpoint_and_params(SESSION_START_ENDPOINT, query_params_map)
             .await;
 
-        let res = client.get(uri).await.expect("Request failed");
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .body(Body::empty())
+            .expect("Failed to create request");
+
+        let res = self
+            .agent_request_with_retry(req, 5)
+            .await
+            .expect("request failed");
 
         assert_eq!(
             res.status(),
@@ -359,5 +431,79 @@ impl DatadogTestAgent {
             SESSION_START_ENDPOINT,
             res.status()
         );
+    }
+
+    /// Sends an HTTP request to the Datadog Test Agent with rudimentary retry logic.
+    ///
+    /// In rare situations when tests are running on CI, the container running the test agent may
+    /// reset the network connection even after ready states pass. Instead of adding arbitrary
+    /// sleeps to these tests, we can just retry the request. This function should not be used for
+    /// requests that are actually being tested, like sending payloads to the test agent. It should
+    /// only be used for requests to setup the test. Examples of when you would use this
+    /// function are for starting sessions or getting snapshot results.
+    ///
+    /// # Arguments
+    ///
+    /// * `req` - A `Request<Body>` representing the HTTP request to be sent.
+    /// * `max_attempts` - An `i32` specifying the maximum number of request attempts to be made.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Response<Incoming>)` - If the request succeeds. The status may or may not be
+    ///   successful.
+    /// * `Err(anyhow::Error)` - If all retry attempts fail or an error occurs during the request.
+    ///
+    /// ```
+    async fn agent_request_with_retry(
+        &self,
+        req: Request<Body>,
+        max_attempts: i32,
+    ) -> anyhow::Result<Response<Incoming>> {
+        let mut attempts = 1;
+        let mut delay_ms = 100;
+        let (parts, body) = req.into_parts();
+        let body_bytes = body
+            .collect()
+            .await
+            .expect("Failed to collect body")
+            .to_bytes();
+        let mut last_response;
+
+        loop {
+            let client = hyper_migration::new_default_client();
+            let req = Request::from_parts(parts.clone(), Body::from_bytes(body_bytes.clone()));
+            let res = client.request(req).await;
+
+            match res {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        return Ok(response);
+                    } else {
+                        println!(
+                            "Request failed with status code: {}. Request attempt {} of {}",
+                            response.status(),
+                            attempts,
+                            max_attempts
+                        );
+                        last_response = Ok(response);
+                    }
+                }
+                Err(e) => {
+                    println!(
+                        "Request failed with error: {}. Request attempt {} of {}",
+                        e, attempts, max_attempts
+                    );
+                    last_response = Err(e)
+                }
+            }
+
+            if attempts >= max_attempts {
+                return Ok(last_response?);
+            }
+
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            delay_ms *= 2;
+            attempts += 1;
+        }
     }
 }

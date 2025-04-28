@@ -3,18 +3,18 @@
 
 pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
-use crate::span::v05;
 use crate::span::v05::dict::SharedDict;
+use crate::span::{v05, SpanText};
 pub use crate::tracer_header_tags::TracerHeaderTags;
-use crate::tracer_payload;
-use crate::tracer_payload::{TraceCollection, TracerPayloadCollection};
+use crate::tracer_payload::TracerPayloadCollection;
+use crate::tracer_payload::{self, TraceChunks};
 use anyhow::anyhow;
 use bytes::buf::Reader;
 use datadog_trace_normalization::normalizer;
 use datadog_trace_protobuf::pb;
-use ddcommon::azure_app_services;
-use hyper::body::HttpBody;
-use hyper::{body::Buf, Body};
+use ddcommon::{azure_app_services, hyper_migration};
+use http_body_util::BodyExt;
+use hyper::body::Buf;
 use log::error;
 use rmp::decode::read_array_len;
 use rmpv::decode::read_value;
@@ -36,7 +36,7 @@ const SPAN_ELEMENT_COUNT: usize = 12;
 
 /// First value of returned tuple is the payload size
 pub async fn get_traces_from_request_body(
-    body: Body,
+    body: hyper_migration::Body,
 ) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
     let buffer = body.collect().await?.aggregate();
     let size = buffer.remaining();
@@ -226,7 +226,7 @@ fn get_v05_string(
 }
 
 pub async fn get_v05_traces_from_request_body(
-    body: Body,
+    body: hyper_migration::Body,
 ) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
     let buffer = body.collect().await?.aggregate();
     let body_size = buffer.remaining();
@@ -597,100 +597,96 @@ macro_rules! parse_root_span_tags {
     }
 }
 
-pub fn collect_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
-    traces: TraceCollection,
+pub fn collect_trace_chunks<T: SpanText>(
+    traces: Vec<Vec<crate::span::Span<T>>>,
+    use_v05_format: bool,
+) -> anyhow::Result<TraceChunks<T>> {
+    if use_v05_format {
+        let mut shared_dict = SharedDict::default();
+        let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
+        for trace in traces {
+            let v05_trace = trace.iter().try_fold(
+                Vec::with_capacity(trace.len()),
+                |mut acc, span| -> anyhow::Result<Vec<v05::Span>> {
+                    acc.push(v05::from_span(span, &mut shared_dict)?);
+                    Ok(acc)
+                },
+            )?;
+
+            v05_traces.push(v05_trace);
+        }
+        Ok(TraceChunks::V05((shared_dict.dict(), v05_traces)))
+    } else {
+        Ok(TraceChunks::V04(traces))
+    }
+}
+
+pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
+    mut traces: Vec<Vec<pb::Span>>,
     tracer_header_tags: &TracerHeaderTags,
     process_chunk: &mut T,
     is_agentless: bool,
-    use_v05_format: bool,
 ) -> anyhow::Result<TracerPayloadCollection> {
-    match traces {
-        TraceCollection::TraceChunk(traces) => {
-            if use_v05_format {
-                let mut shared_dict = SharedDict::default();
-                let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
-                for trace in traces {
-                    let v05_trace = trace.iter().try_fold(
-                        Vec::with_capacity(trace.len()),
-                        |mut acc, span| -> anyhow::Result<Vec<v05::Span>> {
-                            acc.push(v05::from_span_bytes(span, &mut shared_dict)?);
-                            Ok(acc)
-                        },
-                    )?;
+    let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
 
-                    v05_traces.push(v05_trace);
-                }
-                Ok(TracerPayloadCollection::V05((
-                    shared_dict.dict(),
-                    v05_traces,
-                )))
-            } else {
-                Ok(TracerPayloadCollection::V04(traces))
+    // We'll skip setting the global metadata and rely on the agent to unpack these
+    let mut gathered_root_span_tags = !is_agentless;
+    let mut root_span_tags = RootSpanTags::default();
+
+    for trace in traces.iter_mut() {
+        if is_agentless {
+            if let Err(e) = normalizer::normalize_trace(trace) {
+                error!("Error normalizing trace: {e}");
             }
         }
-        TraceCollection::V07(mut traces) => {
-            let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
 
-            // We'll skip setting the global metadata and rely on the agent to unpack these
-            let mut gathered_root_span_tags = !is_agentless;
-            let mut root_span_tags = RootSpanTags::default();
+        let mut chunk = construct_trace_chunk(trace.to_vec());
 
-            for trace in traces.iter_mut() {
-                if is_agentless {
-                    if let Err(e) = normalizer::normalize_trace(trace) {
-                        error!("Error normalizing trace: {e}");
-                    }
-                }
-
-                let mut chunk = construct_trace_chunk(trace.to_vec());
-
-                let root_span_index = match get_root_span_index(trace) {
-                    Ok(res) => res,
-                    Err(e) => {
-                        error!("Error getting the root span index of a trace, skipping. {e}");
-                        continue;
-                    }
-                };
-
-                if let Err(e) = normalizer::normalize_chunk(&mut chunk, root_span_index) {
-                    error!("Error normalizing trace chunk: {e}");
-                }
-
-                for span in chunk.spans.iter_mut() {
-                    // TODO: obfuscate & truncate spans
-                    if tracer_header_tags.client_computed_top_level {
-                        update_tracer_top_level(span);
-                    }
-                }
-
-                if !tracer_header_tags.client_computed_top_level {
-                    compute_top_level_span(&mut chunk.spans);
-                }
-
-                process_chunk.process(&mut chunk, root_span_index);
-
-                trace_chunks.push(chunk);
-
-                if !gathered_root_span_tags {
-                    gathered_root_span_tags = true;
-                    let meta_map = &trace[root_span_index].meta;
-                    parse_root_span_tags!(
-                        meta_map,
-                        {
-                            "env" => root_span_tags.env,
-                            "version" => root_span_tags.app_version,
-                            "_dd.hostname" => root_span_tags.hostname,
-                            "runtime-id" => root_span_tags.runtime_id,
-                        }
-                    );
-                }
+        let root_span_index = match get_root_span_index(trace) {
+            Ok(res) => res,
+            Err(e) => {
+                error!("Error getting the root span index of a trace, skipping. {e}");
+                continue;
             }
+        };
 
-            Ok(TracerPayloadCollection::V07(vec![
-                construct_tracer_payload(trace_chunks, tracer_header_tags, root_span_tags),
-            ]))
+        if let Err(e) = normalizer::normalize_chunk(&mut chunk, root_span_index) {
+            error!("Error normalizing trace chunk: {e}");
+        }
+
+        for span in chunk.spans.iter_mut() {
+            // TODO: obfuscate & truncate spans
+            if tracer_header_tags.client_computed_top_level {
+                update_tracer_top_level(span);
+            }
+        }
+
+        if !tracer_header_tags.client_computed_top_level {
+            compute_top_level_span(&mut chunk.spans);
+        }
+
+        process_chunk.process(&mut chunk, root_span_index);
+
+        trace_chunks.push(chunk);
+
+        if !gathered_root_span_tags {
+            gathered_root_span_tags = true;
+            let meta_map = &trace[root_span_index].meta;
+            parse_root_span_tags!(
+                meta_map,
+                {
+                    "env" => root_span_tags.env,
+                    "version" => root_span_tags.app_version,
+                    "_dd.hostname" => root_span_tags.hostname,
+                    "runtime-id" => root_span_tags.runtime_id,
+                }
+            );
         }
     }
+
+    Ok(TracerPayloadCollection::V07(vec![
+        construct_tracer_payload(trace_chunks, tracer_header_tags, root_span_tags),
+    ]))
 }
 
 /// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
@@ -832,7 +828,7 @@ mod tests {
             )]],
         );
         let bytes = rmp_serde::to_vec(&data).unwrap();
-        let res = get_v05_traces_from_request_body(hyper::body::Body::from(bytes)).await;
+        let res = get_v05_traces_from_request_body(hyper_migration::Body::from(bytes)).await;
         assert!(res.is_ok());
         let (_, traces) = res.unwrap();
         let span = traces[0][0].clone();
@@ -929,7 +925,7 @@ mod tests {
         for (trace_input, output) in pairs {
             let bytes = rmp_serde::to_vec(&vec![&trace_input]).unwrap();
             let request = Request::builder()
-                .body(hyper::body::Body::from(bytes))
+                .body(hyper_migration::Body::from(bytes))
                 .unwrap();
             let res = get_traces_from_request_body(request.into_body()).await;
             assert!(res.is_ok());
@@ -938,6 +934,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_get_traces_from_request_body_with_span_links() {
         let trace_input = json!([[{
             "service": "test-service",
@@ -987,7 +984,7 @@ mod tests {
 
         let bytes = rmp_serde::to_vec(&trace_input).unwrap();
         let request = Request::builder()
-            .body(hyper::body::Body::from(bytes))
+            .body(hyper_migration::Body::from(bytes))
             .unwrap();
 
         let res = get_traces_from_request_body(request.into_body()).await;
@@ -1125,17 +1122,10 @@ mod tests {
     fn test_collect_trace_chunks_v05() {
         let chunk = vec![create_test_no_alloc_span(123, 456, 789, 1, true)];
 
-        let collection = collect_trace_chunks(
-            TraceCollection::TraceChunk(vec![chunk]),
-            &TracerHeaderTags::default(),
-            &mut tracer_payload::DefaultTraceChunkProcessor,
-            false,
-            true,
-        )
-        .unwrap();
+        let collection = collect_trace_chunks(vec![chunk], true).unwrap();
 
         let (dict, traces) = match collection {
-            TracerPayloadCollection::V05(payload) => payload,
+            TraceChunks::V05(payload) => payload,
             _ => panic!("Unexpected type"),
         };
 

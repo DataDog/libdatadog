@@ -25,16 +25,20 @@ pub struct Configuration {
     pub name: String,
     pub value: String,
     pub origin: ConfigurationOrigin,
+    pub config_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
 #[repr(C)]
+#[serde(rename_all = "snake_case")]
 pub enum ConfigurationOrigin {
     EnvVar,
     Code,
     DdConfig,
     RemoteConfig,
     Default,
+    LocalStableConfig,
+    FleetStableConfig,
 }
 
 #[derive(Serialize, Debug)]

@@ -25,10 +25,9 @@ impl HandlesTransport for &mut ChannelMetadata {
             let handle = hint.as_raw_fd();
             #[cfg(windows)]
             let handle = hint.as_raw_handle();
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("can't provide expected handle for hint: {:?}", handle),
-            )
+            io::Error::other(format!(
+                "can't provide expected handle for hint: {handle:?}"
+            ))
         })
     }
 }

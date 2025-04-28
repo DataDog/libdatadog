@@ -25,12 +25,17 @@ pub struct Period<'a> {
 }
 
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
+#[repr(C)]
 pub struct ManagedStringId {
     pub value: u32,
 }
 
 impl ManagedStringId {
-    pub fn new(value: u32) -> Self {
+    pub const fn empty() -> Self {
+        Self::new(0)
+    }
+
+    pub const fn new(value: u32) -> Self {
         ManagedStringId { value }
     }
 }
@@ -78,9 +83,6 @@ pub struct Function<'a> {
 
     /// Source file containing the function.
     pub filename: &'a str,
-
-    /// Line number in source file.
-    pub start_line: i64,
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -89,7 +91,6 @@ pub struct StringIdFunction {
     pub name: ManagedStringId,
     pub system_name: ManagedStringId,
     pub filename: ManagedStringId,
-    pub start_line: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -124,12 +125,12 @@ pub struct StringIdLocation {
     pub line: i64,
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Label<'a> {
     pub key: &'a str,
 
     /// At most one of the following must be present
-    pub str: Option<&'a str>,
+    pub str: &'a str,
     pub num: i64,
 
     /// Should only be present when num is present.
@@ -139,7 +140,7 @@ pub struct Label<'a> {
     /// Consumers may also  interpret units like "bytes" and "kilobytes" as memory
     /// units and units like "seconds" and "nanoseconds" as time units,
     /// and apply appropriate unit conversions to these.
-    pub num_unit: Option<&'a str>,
+    pub num_unit: &'a str,
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -148,16 +149,16 @@ pub struct StringIdLabel {
     pub key: ManagedStringId,
 
     /// At most one of the following must be present
-    pub str: Option<ManagedStringId>,
+    pub str: ManagedStringId,
     pub num: i64,
 
     /// Should only be present when num is present.
-    pub num_unit: Option<ManagedStringId>,
+    pub num_unit: ManagedStringId,
 }
 
 impl Label<'_> {
     pub fn uses_at_most_one_of_str_and_num(&self) -> bool {
-        self.str.is_none() || (self.num == 0 && self.num_unit.is_none())
+        self.str.is_empty() || (self.num == 0 && self.num_unit.is_empty())
     }
 }
 
@@ -188,7 +189,7 @@ pub struct StringIdSample<'a> {
 }
 
 #[derive(Debug)]
-#[cfg_attr(test, derive(bolero_generator::TypeGenerator))]
+#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub enum UpscalingInfo {
     Poisson {
         // sum_value_offset and count_value_offset are offsets in the profile values type array
@@ -216,8 +217,7 @@ impl std::fmt::Display for UpscalingInfo {
                 sampling_distance,
             } => write!(
                 f,
-                "Poisson = sum_value_offset: {}, count_value_offset: {}, sampling_distance: {}",
-                sum_value_offset, count_value_offset, sampling_distance
+                "Poisson = sum_value_offset: {sum_value_offset}, count_value_offset: {count_value_offset}, sampling_distance: {sampling_distance}"
             ),
             UpscalingInfo::PoissonNonSampleTypeCount {
                 sum_value_offset,
@@ -225,11 +225,10 @@ impl std::fmt::Display for UpscalingInfo {
                 sampling_distance,
             } => write!(
                 f,
-                "Poisson = sum_value_offset: {}, count_value: {}, sampling_distance: {}",
-                sum_value_offset, count_value, sampling_distance
+                "Poisson = sum_value_offset: {sum_value_offset}, count_value: {count_value}, sampling_distance: {sampling_distance}",
             ),
             UpscalingInfo::Proportional { scale } => {
-                write!(f, "Proportional = scale: {}", scale)
+                write!(f, "Proportional = scale: {scale}")
             }
         }
     }
@@ -245,15 +244,11 @@ impl UpscalingInfo {
             } => {
                 anyhow::ensure!(
                     sum_value_offset < &number_of_values && count_value_offset < &number_of_values,
-                    "sum_value_offset {} and count_value_offset {} must be strictly less than {}",
-                    sum_value_offset,
-                    count_value_offset,
-                    number_of_values
+                    "sum_value_offset {sum_value_offset} and count_value_offset {count_value_offset} must be strictly less than {number_of_values}"
                 );
                 anyhow::ensure!(
                     sampling_distance != &0,
-                    "sampling_distance {} must be greater than 0",
-                    sampling_distance
+                    "sampling_distance {sampling_distance} must be greater than 0"
                 )
             }
             UpscalingInfo::PoissonNonSampleTypeCount {
@@ -263,19 +258,15 @@ impl UpscalingInfo {
             } => {
                 anyhow::ensure!(
                     sum_value_offset < &number_of_values,
-                    "sum_value_offset {} must be strictly less than {}",
-                    sum_value_offset,
-                    number_of_values
+                    "sum_value_offset {sum_value_offset} must be strictly less than {number_of_values}"
                 );
                 anyhow::ensure!(
                     count_value != &0,
-                    "count_value {} must be greater than 0",
-                    count_value
+                    "count_value {count_value} must be greater than 0"
                 );
                 anyhow::ensure!(
                     sampling_distance != &0,
-                    "sampling_distance {} must be greater than 0",
-                    sampling_distance
+                    "sampling_distance {sampling_distance} must be greater than 0"
                 )
             }
             UpscalingInfo::Proportional { scale: _ } => (),
@@ -326,7 +317,6 @@ fn function_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Function> {
             name: string_table_fetch(pprof, function.name)?,
             system_name: string_table_fetch(pprof, function.system_name)?,
             filename: string_table_fetch(pprof, function.filename)?,
-            start_line: function.start_line,
         }),
         None => anyhow::bail!("Function {id} was not found."),
     }
@@ -410,17 +400,9 @@ impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
             for label in sample.labels.iter() {
                 labels.push(Label {
                     key: string_table_fetch(pprof, label.key)?,
-                    str: if label.str == 0 {
-                        None
-                    } else {
-                        Some(string_table_fetch(pprof, label.str)?)
-                    },
+                    str: string_table_fetch(pprof, label.str)?,
                     num: label.num,
-                    num_unit: if label.num_unit == 0 {
-                        None
-                    } else {
-                        Some(string_table_fetch(pprof, label.num_unit)?)
-                    },
+                    num_unit: string_table_fetch(pprof, label.num_unit)?,
                 })
             }
             let sample = Sample {
@@ -449,49 +431,49 @@ mod tests {
     fn label_uses_at_most_one_of_str_and_num() {
         let label = Label {
             key: "name",
-            str: Some("levi"),
+            str: "levi",
             num: 0,
-            num_unit: Some("name"), // can't use num_unit with str
+            num_unit: "name", // can't use num_unit with str
         };
         assert!(!label.uses_at_most_one_of_str_and_num());
 
         let label = Label {
             key: "name",
-            str: Some("levi"),
+            str: "levi",
             num: 10, // can't use num with str
-            num_unit: None,
+            num_unit: "",
         };
         assert!(!label.uses_at_most_one_of_str_and_num());
 
         let label = Label {
             key: "name",
-            str: Some("levi"),
+            str: "levi",
             num: 0,
-            num_unit: None,
+            num_unit: "",
         };
         assert!(label.uses_at_most_one_of_str_and_num());
 
         let label = Label {
             key: "process_id",
-            str: None,
+            str: "",
             num: 0,
-            num_unit: None,
+            num_unit: "",
         };
         assert!(label.uses_at_most_one_of_str_and_num());
 
         let label = Label {
             key: "local root span id",
-            str: None,
+            str: "",
             num: 10901,
-            num_unit: None,
+            num_unit: "",
         };
         assert!(label.uses_at_most_one_of_str_and_num());
 
         let label = Label {
             key: "duration",
-            str: None,
+            str: "",
             num: 12345,
-            num_unit: Some("nanoseconds"),
+            num_unit: "nanoseconds",
         };
         assert!(label.uses_at_most_one_of_str_and_num());
     }

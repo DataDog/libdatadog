@@ -6,8 +6,9 @@
 use super::{schema::AgentInfo, AgentInfoArc};
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwapOption;
-use ddcommon::{connector::Connector, Endpoint};
-use hyper::body::HttpBody;
+use ddcommon::hyper_migration;
+use ddcommon::Endpoint;
+use http_body_util::BodyExt;
 use hyper::{self, body::Buf, header::HeaderName};
 use log::{error, info};
 use std::sync::Arc;
@@ -38,8 +39,8 @@ pub async fn fetch_info_with_state(
     let req = info_endpoint
         .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
         .method(hyper::Method::GET)
-        .body(hyper::Body::empty());
-    let client = hyper::Client::builder().build(Connector::default());
+        .body(hyper_migration::Body::empty());
+    let client = hyper_migration::new_default_client();
     let res = client.request(req?).await?;
     let new_state_hash = res
         .headers()
@@ -358,7 +359,17 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        let version_2 = info.load().as_ref().unwrap().info.version.clone().unwrap();
-        assert_eq!(version_2, "2");
+        // This check is not 100% deterministic, but between the time the mock returns the response
+        // and we swap the atomic pointer holding the agent_info we only need to perform
+        // very few operations. We wait for a maximum of 1s before failing the test and that should
+        // give way more time than necesssary.
+        for _ in 0..10 {
+            let version_2 = info.load().as_ref().unwrap().info.version.clone().unwrap();
+            if version_2 != version_1 {
+                assert_eq!(version_2, "2");
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 }

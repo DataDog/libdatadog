@@ -6,13 +6,14 @@ use datadog_ipc::rate_limiter::ShmLimiterMemory;
 use datadog_trace_utils::config_utils::trace_intake_url_prefixed;
 use ddcommon::Endpoint;
 use http::uri::PathAndQuery;
+use std::borrow::Cow;
 use std::ffi::CString;
 use std::str::FromStr;
 use std::sync::{Mutex, OnceLock};
 
-static SHM_LIMITER: OnceLock<Mutex<ShmLimiterMemory>> = OnceLock::new();
+static SHM_LIMITER: OnceLock<Mutex<ShmLimiterMemory<()>>> = OnceLock::new();
 
-pub fn get_shm_limiter() -> &'static Mutex<ShmLimiterMemory> {
+pub fn get_shm_limiter() -> &'static Mutex<ShmLimiterMemory<()>> {
     #[allow(clippy::unwrap_used)]
     SHM_LIMITER.get_or_init(|| Mutex::new(ShmLimiterMemory::create(shm_limiter_path()).unwrap()))
 }
@@ -36,6 +37,12 @@ impl Config {
             ..endpoint
         });
         Ok(())
+    }
+
+    pub fn set_endpoint_test_token<T: Into<Cow<'static, str>>>(&mut self, test_token: Option<T>) {
+        if let Some(endpoint) = &mut self.endpoint {
+            endpoint.test_token = test_token.map(|t| t.into());
+        }
     }
 }
 

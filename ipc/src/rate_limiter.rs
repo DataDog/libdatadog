@@ -21,7 +21,7 @@ struct ShmLimiterData<'a, Inner> {
     _phantom: PhantomData<&'a ShmLimiterMemory<Inner>>,
 }
 
-pub struct ShmLimiterMemory<Inner = ()> {
+pub struct ShmLimiterMemory<Inner> {
     mem: Arc<RwLock<MappedMem<NamedShmHandle>>>,
     last_size: AtomicU32,
     _phantom: PhantomData<Inner>,
@@ -195,7 +195,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
     }
 }
 
-pub struct ShmLimiter<Inner = ()> {
+pub struct ShmLimiter<Inner> {
     idx: u32,
     memory: ShmLimiterMemory<Inner>,
 }
@@ -295,7 +295,7 @@ impl<Inner> Drop for ShmLimiter<Inner> {
 
 pub enum AnyLimiter {
     Local(LocalLimiter),
-    Shm(ShmLimiter),
+    Shm(ShmLimiter<()>),
 }
 
 impl AnyLimiter {

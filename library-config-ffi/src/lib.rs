@@ -30,6 +30,8 @@ impl<'a> ProcessInfo<'a> {
 pub struct LibraryConfig {
     pub name: ffi::CString,
     pub value: ffi::CString,
+    pub source: LibraryConfigSource,
+    pub config_id: ffi::CString,
 }
 
 impl LibraryConfig {
@@ -40,6 +42,10 @@ impl LibraryConfig {
                 Ok(LibraryConfig {
                     name: ffi::CString::from_std(std::ffi::CString::new(c.name)?),
                     value: ffi::CString::from_std(std::ffi::CString::new(c.value)?),
+                    source: c.source,
+                    config_id: ffi::CString::from_std(std::ffi::CString::new(
+                        c.config_id.unwrap_or_default(),
+                    )?),
                 })
             })
             .collect::<Result<Vec<_>, std::ffi::NulError>>()?;
@@ -52,7 +58,7 @@ pub struct Configurator<'a> {
     language: CharSlice<'a>,
     fleet_path: Option<ffi::CStr<'a>>,
     local_path: Option<ffi::CStr<'a>>,
-    process_info: Option<ProcessInfo<'a>>,
+    process_info: Option<lib_config::ProcessInfo>,
 }
 
 // type FfiConfigurator<'a>  = Configurator<'a>;
@@ -92,7 +98,14 @@ pub extern "C" fn ddog_library_configurator_with_process_info<'a>(
     c: &mut Configurator<'a>,
     p: ProcessInfo<'a>,
 ) {
-    c.process_info = Some(p);
+    c.process_info = Some(p.ffi_to_rs());
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_library_configurator_with_detect_process_info(c: &mut Configurator) {
+    c.process_info = Some(lib_config::ProcessInfo::detect_global(
+        c.language.to_utf8_lossy().into_owned(),
+    ));
 }
 
 #[no_mangle]
@@ -115,15 +128,16 @@ pub extern "C" fn ddog_library_configurator_get(
             .map(|p| p.into_std().to_str())
             .transpose()?
             .unwrap_or(lib_config::Configurator::FLEET_STABLE_CONFIGURATION_PATH);
-        let process_info = configurator
-            .process_info
-            .as_ref()
-            .map(|p| p.ffi_to_rs())
-            .unwrap_or_else(|| {
-                lib_config::ProcessInfo::detect_global(
+        let detected_process_info;
+        let process_info = match configurator.process_info {
+            Some(ref p) => p,
+            None => {
+                detected_process_info = lib_config::ProcessInfo::detect_global(
                     configurator.language.to_utf8_lossy().into_owned(),
-                )
-            });
+                );
+                &detected_process_info
+            }
+        };
 
         configurator.inner.get_config_from_file(
             local_path.as_ref(),

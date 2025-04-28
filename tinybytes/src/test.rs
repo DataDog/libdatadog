@@ -143,6 +143,24 @@ fn test_bytes_drop_frees_underlying() {
     assert_eq!(get_counter(&counter), 1);
 }
 
+#[cfg(feature = "serde")]
+#[test]
+fn test_serialization() {
+    static DATA: [u8; 4] = [1, 2, 3, 4];
+
+    // Check that Bytes are serialized as a byte array.
+    let payload = rmp_serde::to_vec(&Bytes::from_static(&DATA)).unwrap();
+
+    // Bin family byte descriptor + 1 byte len + data
+    assert_eq!(payload.len(), 6);
+    // 0xc4 (length is upto (2^8) -1 bytes
+    assert_eq!(payload[0], 0xc4);
+    // Byte encoding length
+    assert_eq!(payload[1], 4);
+    // data
+    assert_eq!(&payload[2..], &DATA);
+}
+
 struct CountingU8 {
     inner: Box<[u8]>,
     count: Arc<AtomicUsize>,

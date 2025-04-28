@@ -1,19 +1,17 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-mod builder;
 pub mod http_client;
 mod scheduler;
 pub mod store;
 
 use crate::{
-    config::{self, Config},
+    config::Config,
     data::{self, Application, Dependency, Host, Integration, Log, Payload, Telemetry},
     metrics::{ContextKey, MetricBuckets, MetricContexts},
-    worker::builder::ConfigBuilder,
 };
-use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
+use ddcommon::{hyper_migration, tag::Tag};
 
 use std::iter::Sum;
 use std::ops::Add;
@@ -34,7 +32,7 @@ use futures::{
     channel::oneshot,
     future::{self},
 };
-use http::{header, HeaderValue, Request};
+use http::{header, HeaderValue};
 use serde::{Deserialize, Serialize};
 use tokio::{
     runtime::{self, Handle},
@@ -641,7 +639,7 @@ impl TelemetryWorker {
         self.send_request(req).await
     }
 
-    fn build_request(&self, payload: &data::Payload) -> Result<Request<hyper::Body>> {
+    fn build_request(&self, payload: &data::Payload) -> Result<hyper_migration::HttpRequest> {
         let seq_id = self.next_seq_id();
         let tel = Telemetry {
             api_version: data::ApiVersion::V2,
@@ -679,11 +677,11 @@ impl TelemetryWorker {
                 &tel.application.tracer_version.clone(),
             );
 
-        let body = hyper::Body::from(serialize::serialize(&tel)?);
+        let body = hyper_migration::Body::from(serialize::serialize(&tel)?);
         Ok(req.body(body)?)
     }
 
-    async fn send_request(&self, req: Request<hyper::Body>) -> Result<()> {
+    async fn send_request(&self, req: hyper_migration::HttpRequest) -> Result<()> {
         tokio::select! {
             _ = self.cancellation_token.cancelled() => {
                 Err(anyhow::anyhow!("Request cancelled"))
@@ -701,7 +699,7 @@ impl TelemetryWorker {
                     Ok(_) => {
                         Ok(())
                     }
-                    Err(e) => Err(e.into()),
+                    Err(e) => Err(e),
                 }
             }
         }
@@ -722,6 +720,7 @@ impl TelemetryWorker {
     }
 }
 
+#[derive(Debug)]
 struct InnerTelemetryShutdown {
     is_shutdown: Mutex<bool>,
     condvar: Condvar,
@@ -746,7 +745,7 @@ impl InnerTelemetryShutdown {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 /// TelemetryWorkerHandle is a handle which allows interactions with the telemetry worker.
 /// The handle is safe to use across threads.
 ///
@@ -901,6 +900,16 @@ impl TelemetryWorkerHandle {
 /// How many dependencies/integrations/configs we keep in memory at most
 pub const MAX_ITEMS: usize = 5000;
 
+#[derive(Default, Clone, Copy)]
+pub enum TelemetryWorkerFlavor {
+    /// Send all telemetry messages including lifecylce events like app-started, hearbeats,
+    /// dependencies and configurations
+    #[default]
+    Full,
+    /// Only send telemetry data not tied to the lifecycle of the app like logs and metrics
+    MetricsLogs,
+}
+
 pub struct TelemetryWorkerBuilder {
     pub host: Host,
     pub application: Application,
@@ -910,10 +919,12 @@ pub struct TelemetryWorkerBuilder {
     pub configurations: store::Store<data::Configuration>,
     pub native_deps: bool,
     pub rust_shared_lib_deps: bool,
-    pub config: builder::ConfigBuilder,
+    pub config: Config,
+    pub flavor: TelemetryWorkerFlavor,
 }
 
 impl TelemetryWorkerBuilder {
+    /// Creates a new telmetry worker builder and infer host information automatically
     pub fn new_fetch_host(
         service_name: String,
         language_name: String,
@@ -932,6 +943,7 @@ impl TelemetryWorkerBuilder {
         }
     }
 
+    /// Creates a new telmetry worker builder with the given hostname
     pub fn new(
         hostname: String,
         service_name: String,
@@ -957,13 +969,13 @@ impl TelemetryWorkerBuilder {
             configurations: store::Store::new(MAX_ITEMS),
             native_deps: true,
             rust_shared_lib_deps: false,
-            config: ConfigBuilder::default(),
+            config: Config::default(),
+            flavor: TelemetryWorkerFlavor::default(),
         }
     }
 
     fn build_worker(
         self,
-        external_config: Config,
         tokio_runtime: Handle,
     ) -> Result<(TelemetryWorkerHandle, TelemetryWorker)> {
         let (tx, mailbox) = mpsc::channel(5000);
@@ -973,8 +985,8 @@ impl TelemetryWorkerBuilder {
         });
         let contexts = MetricContexts::default();
         let token = CancellationToken::new();
-        let config = self.config.merge(external_config);
-        let telemetry_hearbeat_interval = config.telemetry_hearbeat_interval;
+        let config = self.config;
+        let telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
         let client = http_client::from_config(&config);
 
         #[allow(clippy::unwrap_used)]
@@ -1002,7 +1014,7 @@ impl TelemetryWorkerBuilder {
                     MetricBuckets::METRICS_FLUSH_INTERVAL,
                     LifecycleAction::FlushMetricAggr,
                 ),
-                (telemetry_hearbeat_interval, LifecycleAction::FlushData),
+                (telemetry_heartbeat_interval, LifecycleAction::FlushData),
                 (
                     time::Duration::from_secs(60 * 60 * 24),
                     LifecycleAction::ExtendedHeartbeat,
@@ -1023,55 +1035,35 @@ impl TelemetryWorkerBuilder {
         ))
     }
 
+    /// Spawns a telemetry worker task in the current tokio runtime
+    /// The worker will capture a reference to the runtime and use it to run it's tasks
     pub async fn spawn(self) -> Result<(TelemetryWorkerHandle, JoinHandle<()>)> {
-        // TODO Paul LGDC: Is that really what we want?
-        let config = config::Config::from_env();
-        self.spawn_with_config(config).await
-    }
-
-    pub async fn spawn_with_config(
-        self,
-        config: Config,
-    ) -> Result<(TelemetryWorkerHandle, JoinHandle<()>)> {
         let tokio_runtime = tokio::runtime::Handle::current();
 
-        let (worker_handle, worker) = self.build_worker(config, tokio_runtime.clone())?;
+        let flavor = self.flavor;
+        let (worker_handle, worker) = self.build_worker(tokio_runtime.clone())?;
 
-        let join_handle = tokio_runtime.spawn(worker.run());
+        let join_handle = match flavor {
+            TelemetryWorkerFlavor::Full => tokio_runtime.spawn(worker.run()),
+            TelemetryWorkerFlavor::MetricsLogs => tokio_runtime.spawn(worker.run_metrics_logs()),
+        };
 
         Ok((worker_handle, join_handle))
     }
 
-    // Starts a telemetry worker that only sends metrics and logs, no lifecycle events
-    pub fn run_metrics_logs(self) -> Result<TelemetryWorkerHandle> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-
-        let config = config::Config::from_env();
-
-        let (handle, worker) = self.build_worker(config, runtime.handle().clone())?;
-        let notify_shutdown = handle.shutdown.clone();
-        std::thread::spawn(move || {
-            runtime.block_on(worker.run_metrics_logs());
-            runtime.shutdown_background();
-            notify_shutdown.shutdown_finished();
-        });
-
-        Ok(handle)
-    }
-
+    /// Spawns a telemetry worker in a new thread and returns a handle to interact with it
     pub fn run(self) -> Result<TelemetryWorkerHandle> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-
-        let config = config::Config::from_env();
-        let (handle, worker) = self.build_worker(config, runtime.handle().clone())?;
-
+        let flavor = self.flavor;
+        let (handle, worker) = self.build_worker(runtime.handle().clone())?;
         let notify_shutdown = handle.shutdown.clone();
         std::thread::spawn(move || {
-            runtime.block_on(worker.run());
+            match flavor {
+                TelemetryWorkerFlavor::Full => runtime.block_on(worker.run()),
+                TelemetryWorkerFlavor::MetricsLogs => runtime.block_on(worker.run_metrics_logs()),
+            }
             runtime.shutdown_background();
             notify_shutdown.shutdown_finished();
         });

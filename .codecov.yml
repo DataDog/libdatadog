@@ -39,10 +39,6 @@ component_management:
       name: ddtelemetry-ffi  # this is a display name, and can be changed freely
       paths:
         - ddtelemetry-ffi
-    - component_id: dogstatsd  # this is an identifier that should not be changed
-      name: dogstatsd  # this is a display name, and can be changed freely
-      paths:
-        - dogstatsd
     - component_id: dogstatsd-client  # this is an identifier that should not be changed
       name: dogstatsd-client  # this is a display name, and can be changed freely
       paths:
@@ -59,10 +55,6 @@ component_management:
       name: profiling-ffi  # this is a display name, and can be changed freely
       paths:
         - profiling-ffi
-    - component_id: serverless  # this is an identifier that should not be changed
-      name: serverless  # this is a display name, and can be changed freely
-      paths:
-        - serverless
     - component_id: sidecar  # this is an identifier that should not be changed
       name: sidecar  # this is a display name, and can be changed freely
       paths:
@@ -79,10 +71,6 @@ component_management:
       name: tinybytes  # this is a display name, and can be changed freely
       paths:
         - tinybytes
-    - component_id: trace-mini-agent  # this is an identifier that should not be changed
-      name: trace-mini-agent  # this is a display name, and can be changed freely
-      paths:
-        - trace-mini-agent
     - component_id: trace-normalization  # this is an identifier that should not be changed
       name: trace-normalization  # this is a display name, and can be changed freely
       paths:

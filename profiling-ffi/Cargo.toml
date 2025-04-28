@@ -15,7 +15,7 @@ crate-type = ["staticlib", "cdylib"]
 bench = false
 
 [features]
-default = []
+default = ["ddcommon-ffi"]
 cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 ddtelemetry-ffi = ["dep:ddtelemetry-ffi"]
 symbolizer = ["symbolizer-ffi"]
@@ -27,24 +27,25 @@ crashtracker-collector = ["crashtracker-ffi", "datadog-crashtracker-ffi/collecto
 crashtracker-receiver = ["crashtracker-ffi", "datadog-crashtracker-ffi/receiver"]
 demangler = ["crashtracker-ffi", "datadog-crashtracker-ffi/demangler"]
 datadog-library-config-ffi = ["dep:datadog-library-config-ffi"]
+ddcommon-ffi = ["dep:ddcommon-ffi"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow = "1.0"
-datadog-crashtracker-ffi = { path = "../crashtracker-ffi", default-features = false, optional = true}
-datadog-profiling = { path = "../profiling" }
-hyper = { version = "0.14", features = ["backports", "deprecated"], default-features = false }
-ddcommon = { path = "../ddcommon"}
-ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
-ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
-libc = "0.2"
-tokio-util = "0.7.1"
-serde_json = { version = "1.0" }
-futures = { version = "0.3", default-features = false }
-symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
-symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"] }
-symbolic-common = "12.8.0"
 data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
+datadog-crashtracker-ffi = { path = "../crashtracker-ffi", default-features = false, optional = true}
 datadog-library-config-ffi = {  path = "../library-config-ffi", default-features = false, optional = true }
+datadog-profiling = { path = "../profiling" }
+ddcommon = { path = "../ddcommon"}
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false, optional = true }
+ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
+function_name = "0.3.0"
+futures = { version = "0.3", default-features = false }
+http-body-util = "0.1"
+hyper = { version = "1.6", features = ["http1", "client"] }
+libc = "0.2"
+serde_json = { version = "1.0" }
+symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
+tokio-util = "0.7.1"
