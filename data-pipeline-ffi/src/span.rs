@@ -1,13 +1,26 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::ffi::c_char;
-
+use datadog_ipc::platform::{MappedMem, ShmHandle};
+use datadog_sidecar_ffi::{
+    ddog_alloc_anon_shm_handle, ddog_map_shm, ddog_sidecar_send_trace_v04_bytes,
+    ddog_sidecar_send_trace_v04_shm, ddog_unmap_shm, TracerHeaderTags,
+};
 use datadog_trace_utils::span::{
     AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes,
 };
-use ddcommon_ffi::slice::{AsBytes, CharSlice};
+use ddcommon_ffi::{
+    ddog_Error_message,
+    slice::{AsBytes, CharSlice},
+    MaybeError,
+};
+use std::ffi::c_char;
+use std::ffi::c_void;
+use std::io::Cursor;
+use std::slice;
 use tinybytes::{Bytes, BytesString};
+
+use datadog_sidecar::service::{blocking::SidecarTransport, InstanceId};
 
 // ---------------- Macros -------------------
 
@@ -184,12 +197,40 @@ pub unsafe extern "C" fn ddog_free_traces(ptr: *mut TracesBytes) {
 
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_get_traces_size(ptr: *mut TracesBytes) -> usize {
+    if ptr.is_null() {
+        return 0;
+    }
+
+    let object = &mut *ptr;
+    object.len()
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_get_trace(ptr: *mut TracesBytes, index: usize) -> *mut TraceBytes {
+    if ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let object = &mut *ptr;
+    if index >= object.len() {
+        return std::ptr::null_mut();
+    }
+
+    &mut object[index] as *mut TraceBytes
+}
+
+// ------------------ TracesBytes ------------------
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_traces_new_trace(ptr: *mut TracesBytes) -> *mut TraceBytes {
     if ptr.is_null() {
         return std::ptr::null_mut();
     }
 
-    let object = unsafe { &mut *ptr };
+    let object = &mut *ptr;
     object.push(TraceBytes::default());
     object.last_mut().unwrap_unchecked() as *mut TraceBytes
 }
@@ -201,9 +242,20 @@ pub unsafe extern "C" fn ddog_trace_new_span(ptr: *mut TraceBytes) -> *mut SpanB
         return std::ptr::null_mut();
     }
 
-    let object = unsafe { &mut *ptr };
+    let object = &mut *ptr;
     object.push(SpanBytes::default());
     object.last_mut().unwrap_unchecked() as *mut SpanBytes
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_get_trace_size(ptr: *mut TraceBytes) -> usize {
+    if ptr.is_null() {
+        return 0;
+    }
+
+    let object = &mut *ptr;
+    object.len()
 }
 
 // ------------------- SpanBytes -------------------
@@ -228,7 +280,7 @@ pub unsafe extern "C" fn ddog_span_debug_log(ptr: *const SpanBytes) -> CharSlice
 
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_span_free_debug_log(slice: CharSlice<'static>) {
+pub unsafe extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
     let data = slice.as_slice();
 
     if data.is_empty() {
@@ -614,6 +666,151 @@ pub unsafe extern "C" fn ddog_add_event_attributes_float(
 ) {
     set_event_attribute!(ptr, key, AttributeArrayValueBytes::Double(val));
 }
+
+// ------------------- Export Functions -------------------
+
+#[repr(C)]
+#[derive()]
+pub struct SenderParameters {
+    pub tracer_headers_tags: TracerHeaderTags<'static>,
+    pub transport: Box<SidecarTransport>,
+    pub instance_id: *mut InstanceId,
+    pub limit: usize,
+    pub n_requests: i64,
+    pub buffer_size: i64,
+    pub url: CharSlice<'static>,
+}
+
+unsafe fn check_error(msg: &str, maybe_error: MaybeError) -> bool {
+    if maybe_error != MaybeError::None {
+        let error = ddog_Error_message(maybe_error.to_std_ref());
+        let error_msg = format!("{}: {}", msg, error);
+        // TODO: proper log
+        eprintln!("{}", error_msg);
+        return false;
+    }
+    true
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_serialize_trace_into_c_string(
+    trace_ptr: *mut TraceBytes,
+) -> CharSlice<'static> {
+    if trace_ptr.is_null() {
+        return CharSlice::empty();
+    }
+
+    let trace = &*trace_ptr;
+    match rmp_serde::encode::to_vec_named(trace) {
+        Ok(vec) => {
+            let boxed_str = vec.into_boxed_slice();
+            let boxed_len = boxed_str.len();
+
+            let leaked_ptr = Box::into_raw(boxed_str) as *const c_char;
+
+            CharSlice::from_raw_parts(leaked_ptr, boxed_len)
+        }
+        Err(_) => CharSlice::empty(),
+    }
+}
+
+unsafe fn serialize_traces_into_mapped_memory(
+    traces_ptr: *const TracesBytes,
+    buf_ptr: *mut c_void,
+    cap: usize,
+) -> usize {
+    if traces_ptr.is_null() || buf_ptr.is_null() || cap == 0 {
+        return 0;
+    }
+
+    // view the raw buffer as &mut [u8]
+    let dst = slice::from_raw_parts_mut(buf_ptr.cast::<u8>(), cap);
+    let mut cursor = Cursor::new(dst);
+
+    match rmp_serde::encode::write_named(&mut cursor, &*traces_ptr) {
+        Ok(()) => cursor.position() as usize,
+        Err(_) => 0,
+    }
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
+    traces_ptr: *mut TracesBytes,
+    parameters: &mut SenderParameters,
+) {
+    if traces_ptr.is_null() || parameters.transport.is_closed() {
+        // TODO: proper log
+        return;
+    }
+
+    let traces = &*traces_ptr;
+    let mut shm: *mut ShmHandle = std::ptr::null_mut();
+    let mut mapped_shm: *mut MappedMem<ShmHandle> = std::ptr::null_mut();
+
+    if !check_error(
+        "Failed allocating shared memory",
+        ddog_alloc_anon_shm_handle(parameters.limit, &mut shm),
+    ) {
+        return;
+    }
+
+    let mut size: usize = 0;
+    let mut pointer = std::ptr::null_mut();
+    if !check_error(
+        "Failed mapping shared memory",
+        ddog_map_shm(Box::from_raw(shm), &mut mapped_shm, &mut pointer, &mut size),
+    ) {
+        return;
+    }
+
+    let boxed_mapped_shm = Box::from_raw(mapped_shm);
+
+    let written = serialize_traces_into_mapped_memory(traces, pointer, size);
+    ddog_unmap_shm(boxed_mapped_shm);
+    if !written == 0 {
+        return;
+    }
+
+    let mut size_hint = written;
+    if parameters.n_requests > 0 {
+        size_hint = size_hint.max((parameters.buffer_size / parameters.n_requests + 1) as usize);
+    }
+
+    let send_error = ddog_sidecar_send_trace_v04_shm(
+        &mut parameters.transport,
+        &*parameters.instance_id,
+        Box::from_raw(shm),
+        size_hint,
+        &parameters.tracer_headers_tags,
+    );
+
+    loop {
+        if send_error != MaybeError::None {
+            let mut buffer = vec![0u8; written];
+            pointer = buffer.as_mut_ptr() as *mut c_void;
+            serialize_traces_into_mapped_memory(traces, pointer, written);
+
+            let retry_error = ddog_sidecar_send_trace_v04_bytes(
+                &mut parameters.transport,
+                &*parameters.instance_id,
+                CharSlice::from_raw_parts(pointer.cast(), written),
+                &parameters.tracer_headers_tags,
+            );
+
+            if !check_error("Failed sending traces to the sidecar", retry_error) {
+                // TODO: proper log
+            } else {
+                break;
+            }
+        }
+
+        // TODO: proper log
+    }
+}
+
+// ------------------- Tests -------------------
 
 #[cfg(test)]
 mod tests {
