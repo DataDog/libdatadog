@@ -1431,8 +1431,12 @@ version = "19.1.0"
 dependencies = [
  "build_common",
  "data-pipeline",
+ "datadog-ipc",
+ "datadog-sidecar",
+ "datadog-sidecar-ffi",
  "datadog-trace-utils",
  "ddcommon-ffi",
+ "ddtelemetry-ffi",
  "httpmock",
  "rmp-serde",
  "tinybytes",
