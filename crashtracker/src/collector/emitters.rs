@@ -92,12 +92,13 @@ pub(crate) fn emit_crashreport(
     metadata_string: &str,
     sig_info: *const siginfo_t,
     ucontext: *const ucontext_t,
+    ppid: i32,
 ) -> anyhow::Result<()> {
     emit_metadata(pipe, metadata_string)?;
     emit_config(pipe, config_str)?;
     emit_siginfo(pipe, sig_info)?;
     emit_ucontext(pipe, ucontext)?;
-    emit_procinfo(pipe)?;
+    emit_procinfo(pipe, ppid)?;
     emit_counters(pipe)?;
     emit_spans(pipe)?;
     consume_and_emit_additional_tags(pipe)?;
@@ -137,9 +138,8 @@ fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn emit_procinfo(w: &mut impl Write) -> anyhow::Result<()> {
+fn emit_procinfo(w: &mut impl Write, pid: i32) -> anyhow::Result<()> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
-    let pid = nix::unistd::getpid();
     writeln!(w, "{{\"pid\": {pid} }}")?;
     writeln!(w, "{DD_CRASHTRACK_END_PROCINFO}")?;
     w.flush()?;
@@ -147,9 +147,8 @@ fn emit_procinfo(w: &mut impl Write) -> anyhow::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-/// `/proc/self/maps` is very useful for debugging, and difficult to get from
-/// the child process (permissions issues on Linux).  Emit it directly onto the
-/// pipe to get around this.
+/// Assumes that the memory layout of the current process (child) is identical to
+/// the layout of the target process (parent), which should always be true.
 fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
     emit_text_file(w, "/proc/self/maps")?;
     Ok(())
