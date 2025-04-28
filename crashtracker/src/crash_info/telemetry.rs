@@ -108,7 +108,6 @@ impl TelemetryCrashUploader {
 
         let message = serde_json::to_string(crash_info)?;
 
-        let stack_trace = serde_json::to_string(&crash_info.error.stack)?;
         let tags = extract_crash_info_tags(crash_info).unwrap_or_default();
 
         let tracer_time = crash_info.timestamp.parse::<DateTime<Utc>>().map_or_else(
@@ -131,7 +130,8 @@ impl TelemetryCrashUploader {
             payload: &data::Payload::Logs(vec![data::Log {
                 message,
                 level: LogLevel::Error,
-                stack_trace: Some(stack_trace),
+                // The stacktrace is already included in the `crash_info` inside `message`.
+                stack_trace: None,
                 tags,
                 is_sensitive: true,
                 count: 1,
