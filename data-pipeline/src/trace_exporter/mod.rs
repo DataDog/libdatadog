@@ -1220,6 +1220,11 @@ mod tests {
             })
         }
 
+        // Wait for the agent_info state to be updated once the /info endpoint has been polled
+        exporter.runtime.block_on(async {
+            sleep(Duration::from_millis(300)).await;
+        });
+
         let result = exporter.send(data.as_ref(), 1);
         // Error received because server is returning an empty body.
         assert!(result.is_err());
