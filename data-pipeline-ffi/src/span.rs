@@ -683,10 +683,7 @@ pub struct SenderParameters {
 
 unsafe fn check_error(msg: &str, maybe_error: MaybeError) -> bool {
     if maybe_error != MaybeError::None {
-        let error = ddog_Error_message(maybe_error.to_std_ref());
-        let error_msg = format!("{}: {}", msg, error);
-        // TODO: proper log
-        eprintln!("{}", error_msg);
+        tracing::error!("{}: {}", msg, ddog_Error_message(maybe_error.to_std_ref()));
         return false;
     }
     true
@@ -740,12 +737,19 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     traces_ptr: *mut TracesBytes,
     parameters: &mut SenderParameters,
 ) {
-    if traces_ptr.is_null() || parameters.transport.is_closed() {
-        // TODO: proper log
+    if traces_ptr.is_null() {
+        tracing::error!("Invalid traces pointer");
         return;
     }
 
     let traces = &*traces_ptr;
+    let size: usize = traces.iter().map(|trace| trace.len()).sum();
+
+    if parameters.transport.is_closed() {
+        tracing::info!("Skipping flushing traces of size {} as connection to sidecar failed", size);
+        return;
+    }
+
     let mut shm: *mut ShmHandle = std::ptr::null_mut();
     let mut mapped_shm: *mut MappedMem<ShmHandle> = std::ptr::null_mut();
 
@@ -799,14 +803,14 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
                 &parameters.tracer_headers_tags,
             );
 
-            if !check_error("Failed sending traces to the sidecar", retry_error) {
-                // TODO: proper log
+            if check_error("Failed sending traces to the sidecar", retry_error) {
+                tracing::debug!("Failed sending traces via shm to sidecar: {}", ddog_Error_message(send_error.to_std_ref()));
             } else {
                 break;
             }
         }
 
-        // TODO: proper log
+        tracing::info!("Flushing traces of size {} to send-queue for {}", size, parameters.url);
     }
 }
 
