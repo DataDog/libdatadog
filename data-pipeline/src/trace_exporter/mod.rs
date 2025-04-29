@@ -211,13 +211,13 @@ impl TraceExporter {
     }
 
     /// Send msgpack serialized traces to the agent
-    /// 
+    ///
     /// # Arguments
-    /// 
-    /// * data: A slice containing the serialized traces. This slice should be encoded following
-    /// the input_format passed to the TraceExporter on creating.
+    ///
+    /// * data: A slice containing the serialized traces. This slice should be encoded following the
+    ///   input_format passed to the TraceExporter on creating.
     /// * trace_count: The number of traces in the data
-    /// 
+    ///
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent
     /// * Err(TraceExporterError): An error detailling what went wrong in the process
@@ -426,7 +426,8 @@ impl TraceExporter {
     }
 
     /// !!! This function is only for testing purposes !!!
-    /// This function waits the agent info to be ready by checking the agent_info state.
+    ///
+    /// Waits the agent info to be ready by checking the agent_info state.
     /// It will only return Ok after the agent info has been fetched at least once or Err if timeout
     /// has been reached
     ///
@@ -439,6 +440,7 @@ impl TraceExporter {
     /// fetcher had time to reach to the agent.
     /// Since agent_info can enable CSS computation, waiting for this during testing can make
     /// snapshots non-determinitic.
+    #[cfg(feature = "test-utils")]
     pub fn wait_agent_info_ready(&self, timeout: Duration) -> anyhow::Result<()> {
         let start = std::time::Instant::now();
         loop {
@@ -588,10 +590,10 @@ impl TraceExporter {
     }
 
     /// Send a list of trace chunks to the agent
-    /// 
+    ///
     /// # Arguments
     /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
-    /// 
+    ///
     /// # Returns
     /// * Ok(String): The response from the agent
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
