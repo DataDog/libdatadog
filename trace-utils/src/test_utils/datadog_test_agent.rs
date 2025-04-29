@@ -147,7 +147,7 @@ impl DatadogTestAgentContainer {
 /// #[tokio::main]
 /// async fn main() {
 ///     // Create a new DatadogTestAgent instance
-///     let test_agent = DatadogTestAgent::new(Some("relative/path/to/snapshot"), None).await;
+///     let test_agent = DatadogTestAgent::new(Some("relative/path/to/snapshot"), None, &[]).await;
 ///
 ///     // Get the URI for a specific endpoint
 ///     let uri = test_agent
@@ -190,24 +190,19 @@ impl DatadogTestAgent {
     ///   socket directory. This directory will get mounted in the docker container running the
     ///   test-agent. It is recommended to use a temporary directory for this purpose. If no socket
     ///   path is provided the test agent will not be configured for UDS transport.
+    /// * `test_agent_extra_env` - An optional slice of tuples containing env variables to be added
+    ///   to the test agent container.
     /// # Returns
     ///
     /// A new `DatadogTestAgent`.
     pub async fn new(
         relative_snapshot_path: Option<&str>,
         absolute_socket_path: Option<&str>,
-    ) -> Self {
-        Self::new_with_env(relative_snapshot_path, absolute_socket_path, &[]).await
-    }
-
-    pub async fn new_with_env(
-        relative_snapshot_path: Option<&str>,
-        absolute_socket_path: Option<&str>,
-        env_vars: &[(&str, &str)],
+        test_agent_extra_env: &[(&str, &str)],
     ) -> Self {
         let mut container =
             DatadogTestAgentContainer::new(relative_snapshot_path, absolute_socket_path);
-        for (key, value) in env_vars {
+        for (key, value) in test_agent_extra_env {
             container = container.with_env(key, value);
         }
 
@@ -351,7 +346,7 @@ impl DatadogTestAgent {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let test_agent = DatadogTestAgent::new(Some("relative/path/to/snapshot"), None).await;
+    ///     let test_agent = DatadogTestAgent::new(Some("relative/path/to/snapshot"), None, &[]).await;
     ///     let traces = test_agent.get_sent_traces().await;
     ///     let pretty_traces = to_string_pretty(&traces).expect("Failed to convert to pretty JSON");
     ///
@@ -407,7 +402,7 @@ impl DatadogTestAgent {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    ///     let test_agent = DatadogTestAgent::new(Some("relative/path/to/snapshot"), None).await;
+    ///     let test_agent = DatadogTestAgent::new(Some("relative/path/to/snapshot"), None, &[]).await;
     ///     let session_token = "test_session_token";
     ///     let sample_rates = "{\"service:test,env:test_env\": 0.5, \"service:test2,env:prod\": 0.2}";
     ///
