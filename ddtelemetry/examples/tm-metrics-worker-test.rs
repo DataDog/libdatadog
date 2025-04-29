@@ -32,13 +32,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         "1.56".into(),
         "none".into(),
     );
-    builder.config.telemetry_debug_logging_enabled = Some(true);
-    builder.config.endpoint = Some(ddcommon::Endpoint::from_slice(
-        "file://./tm-metrics-worker-test.output",
-    ));
-    builder.config.telemetry_hearbeat_interval = Some(Duration::from_secs(1));
+    builder.config = ddtelemetry::config::Config::from_env();
+    builder.config.telemetry_debug_logging_enabled = true;
+    builder
+        .config
+        .set_endpoint(ddcommon::Endpoint::from_slice(
+            "file://./tm-metrics-worker-test.output",
+        ))
+        .unwrap();
+    builder.config.telemetry_heartbeat_interval = Duration::from_secs(1);
+    builder.config.debug_enabled = true;
+    builder.flavor = worker::TelemetryWorkerFlavor::MetricsLogs;
 
-    let handle = builder.run_metrics_logs()?;
+    let handle = builder.run()?;
 
     let ping_metric = handle.register_metric_context(
         "test_telemetry.ping".into(),

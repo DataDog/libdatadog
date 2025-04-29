@@ -58,14 +58,14 @@ impl SidecarTransport {
     pub fn set_read_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
         match self.inner.lock() {
             Ok(mut t) => t.set_read_timeout(timeout),
-            Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.to_string())),
+            Err(e) => Err(io::Error::other(e.to_string())),
         }
     }
 
     pub fn set_write_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
         match self.inner.lock() {
             Ok(mut t) => t.set_write_timeout(timeout),
-            Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.to_string())),
+            Err(e) => Err(io::Error::other(e.to_string())),
         }
     }
 
@@ -81,14 +81,14 @@ impl SidecarTransport {
     pub fn send(&mut self, item: SidecarInterfaceRequest) -> io::Result<()> {
         match self.inner.lock() {
             Ok(mut t) => t.send(item),
-            Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.to_string())),
+            Err(e) => Err(io::Error::other(e.to_string())),
         }
     }
 
     pub fn call(&mut self, item: SidecarInterfaceRequest) -> io::Result<SidecarInterfaceResponse> {
         match self.inner.lock() {
             Ok(mut t) => t.call(item),
-            Err(e) => Err(io::Error::new(io::ErrorKind::Other, e.to_string())),
+            Err(e) => Err(io::Error::other(e.to_string())),
         }
     }
 }

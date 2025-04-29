@@ -15,10 +15,10 @@ const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
 fn set_top_level_span<'a, T>(span: &mut Span<T>, is_top_level: bool)
 where
-    T: SpanText + From<&'a str>,
+    T: SpanText,
 {
     if is_top_level {
-        span.metrics.insert(TOP_LEVEL_KEY.into(), 1.0);
+        span.metrics.insert(T::from_static_str(TOP_LEVEL_KEY), 1.0);
     } else {
         span.metrics.remove(TOP_LEVEL_KEY);
     }
@@ -30,9 +30,9 @@ where
 ///   - OR its parent is unknown (other part of the code, distributed trace)
 ///   - OR its parent belongs to another service (in that case it's a "local root" being the highest
 ///     ancestor of other spans belonging to this service and attached to it).
-pub fn compute_top_level_span<'a, T>(trace: &mut [Span<T>])
+pub fn compute_top_level_span<T>(trace: &mut [Span<T>])
 where
-    T: SpanText + Clone + From<&'a str>,
+    T: SpanText,
 {
     let mut span_id_to_service: HashMap<u64, T> = HashMap::new();
     for span in trace.iter() {
@@ -81,6 +81,76 @@ pub fn is_partial_snapshot<T: SpanText>(span: &Span<T>) -> bool {
     span.metrics
         .get(PARTIAL_VERSION_KEY)
         .is_some_and(|v| *v >= 0.0)
+}
+
+pub struct DroppedP0Stats {
+    pub dropped_p0_traces: usize,
+    pub dropped_p0_spans: usize,
+}
+
+// Keys used for sampling
+const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
+const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
+const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
+
+/// Remove spans and chunks from a TraceCollection only keeping the ones that may be sampled by
+/// the agent.
+///
+/// # Returns
+///
+/// A tuple containing the dropped p0 stats, the first value correspond the amount of traces
+/// dropped and the latter to the spans dropped.
+pub fn drop_chunks<T>(traces: &mut Vec<Vec<Span<T>>>) -> DroppedP0Stats
+where
+    T: SpanText,
+{
+    let mut dropped_p0_traces = 0;
+    let mut dropped_p0_spans = 0;
+
+    traces.retain_mut(|chunk| {
+        // List of spans to keep even if the chunk is dropped
+        let mut sampled_indexes = Vec::new();
+        for (index, span) in chunk.iter().enumerate() {
+            // ErrorSampler
+            if span.error == 1 {
+                // We send chunks containing an error
+                return true;
+            }
+            // PrioritySampler and NoPrioritySampler
+            let priority = span.metrics.get(SAMPLING_PRIORITY_KEY);
+            if has_top_level(span) && (priority.is_none() || priority.is_some_and(|p| *p > 0.0)) {
+                // We send chunks with positive priority or no priority
+                return true;
+            }
+            // SingleSpanSampler and AnalyzedSpansSampler
+            else if span
+                .metrics
+                .get(SAMPLING_SINGLE_SPAN_MECHANISM)
+                .is_some_and(|m| *m == 8.0)
+                || span.metrics.contains_key(SAMPLING_ANALYTICS_RATE_KEY)
+            {
+                // We send spans sampled by single-span sampling or analyzed spans
+                sampled_indexes.push(index);
+            }
+        }
+        dropped_p0_spans += chunk.len() - sampled_indexes.len();
+        if sampled_indexes.is_empty() {
+            // If no spans were sampled we can drop the whole chunk
+            dropped_p0_traces += 1;
+            return false;
+        }
+        let sampled_spans = sampled_indexes
+            .iter()
+            .map(|i| std::mem::take(&mut chunk[*i]))
+            .collect();
+        *chunk = sampled_spans;
+        true
+    });
+
+    DroppedP0Stats {
+        dropped_p0_traces,
+        dropped_p0_spans,
+    }
 }
 
 #[cfg(test)]
@@ -175,5 +245,119 @@ mod tests {
             })
             .collect();
         assert_eq!(spans_marked_as_top_level, [1, 4, 5])
+    }
+
+    #[test]
+    fn test_drop_chunks() {
+        let chunk_with_priority = vec![
+            SpanBytes {
+                span_id: 1,
+                metrics: HashMap::from([
+                    (SAMPLING_PRIORITY_KEY.into(), 1.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            SpanBytes {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_with_null_priority = vec![
+            SpanBytes {
+                span_id: 1,
+                metrics: HashMap::from([
+                    (SAMPLING_PRIORITY_KEY.into(), 0.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            SpanBytes {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_without_priority = vec![
+            SpanBytes {
+                span_id: 1,
+                metrics: HashMap::from([(TRACER_TOP_LEVEL_KEY.into(), 1.0)]),
+                ..Default::default()
+            },
+            SpanBytes {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_with_error = vec![
+            SpanBytes {
+                span_id: 1,
+                error: 1,
+                metrics: HashMap::from([
+                    (SAMPLING_PRIORITY_KEY.into(), 0.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            SpanBytes {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+        ];
+        let chunk_with_a_single_span = vec![
+            SpanBytes {
+                span_id: 1,
+                metrics: HashMap::from([
+                    (SAMPLING_PRIORITY_KEY.into(), 0.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            SpanBytes {
+                span_id: 2,
+                parent_id: 1,
+                metrics: HashMap::from([(SAMPLING_SINGLE_SPAN_MECHANISM.into(), 8.0)]),
+                ..Default::default()
+            },
+        ];
+        let chunk_with_analyzed_span = vec![
+            SpanBytes {
+                span_id: 1,
+                metrics: HashMap::from([
+                    (SAMPLING_PRIORITY_KEY.into(), 0.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            SpanBytes {
+                span_id: 2,
+                parent_id: 1,
+                metrics: HashMap::from([(SAMPLING_ANALYTICS_RATE_KEY.into(), 1.0)]),
+                ..Default::default()
+            },
+        ];
+
+        let chunks_and_expected_sampled_spans = vec![
+            (chunk_with_priority, 2),
+            (chunk_with_null_priority, 0),
+            (chunk_without_priority, 2),
+            (chunk_with_error, 2),
+            (chunk_with_a_single_span, 1),
+            (chunk_with_analyzed_span, 1),
+        ];
+
+        for (chunk, expected_count) in chunks_and_expected_sampled_spans.into_iter() {
+            let mut traces = vec![chunk];
+            drop_chunks(&mut traces);
+
+            if expected_count == 0 {
+                assert!(traces.is_empty());
+            } else {
+                assert_eq!(traces[0].len(), expected_count);
+            }
+        }
     }
 }

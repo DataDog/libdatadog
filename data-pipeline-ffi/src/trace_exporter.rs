@@ -29,11 +29,23 @@ fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
     }
 }
 
+/// FFI compatible configuration for the TelemetryClient.
 #[derive(Debug)]
 #[repr(C)]
 pub struct TelemetryClientConfig<'a> {
+    /// How often telemetry should be sent, in milliseconds.
     pub interval: u64,
+    /// A V4 UUID that represents a tracer session. This ID should:
+    /// - Be generated when the tracer starts
+    /// - Be identical within the context of a host (i.e. multiple threads/processes that belong to
+    ///   a single instrumented app should share the same runtime_id)
+    /// - Be associated with traces to allow correlation between traces and telemetry data
     pub runtime_id: CharSlice<'a>,
+
+    /// Whether to enable debug mode for telemetry.
+    /// When enabled, sets the DD-Telemetry-Debug-Enabled header to true.
+    /// Defaults to false.
+    pub debug_enabled: bool,
 }
 
 /// The TraceExporterConfig object will hold the configuration properties for the TraceExporter.
@@ -54,6 +66,7 @@ pub struct TraceExporterConfig {
     output_format: TraceExporterOutputFormat,
     compute_stats: bool,
     telemetry_cfg: Option<TelemetryConfig>,
+    test_session_token: Option<String>,
 }
 
 #[no_mangle]
@@ -237,6 +250,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
                     Ok(s) => Some(s),
                     Err(e) => return Some(e),
                 },
+                debug_enabled: telemetry_cfg.debug_enabled,
             })
         } else {
             config.telemetry_cfg = Some(TelemetryConfig::default());
@@ -255,6 +269,23 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_compute_stats(
 ) -> Option<Box<ExporterError>> {
     if let Option::Some(config) = config {
         config.compute_stats = is_enabled;
+        None
+    } else {
+        gen_error!(ErrorCode::InvalidArgument)
+    }
+}
+
+/// Sets the `X-Datadog-Test-Session-Token` header. Only used for testing with the test agent.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_test_session_token(
+    config: Option<&mut TraceExporterConfig>,
+    token: CharSlice,
+) -> Option<Box<ExporterError>> {
+    if let Option::Some(handle) = config {
+        handle.test_session_token = match sanitize_string(token) {
+            Ok(s) => Some(s),
+            Err(e) => return Some(e),
+        };
         None
     } else {
         gen_error!(ErrorCode::InvalidArgument)
@@ -298,6 +329,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
         if let Some(cfg) = &config.telemetry_cfg {
             builder.enable_telemetry(Some(cfg.clone()));
+        }
+
+        if let Some(token) = &config.test_session_token {
+            builder.set_test_session_token(token);
         }
 
         match builder.build() {
@@ -344,14 +379,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
         None => return gen_error!(ErrorCode::InvalidArgument),
     };
 
-    // necessary that the trace be static for the life of the FFI function call as the caller
-    // currently owns the memory.
-    //APMSP-1621 - Properly fix this sharp-edge by allocating memory on the Rust side
-    let static_trace: ByteSlice<'static> = std::mem::transmute(trace);
-    match exporter.send(
-        tinybytes::Bytes::from_static(static_trace.as_slice()),
-        trace_count,
-    ) {
+    match exporter.send(&trace, trace_count) {
         Ok(resp) => {
             if let Some(result) = response_out {
                 result
@@ -368,7 +396,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
 mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;
-    use datadog_trace_utils::span::SpanBytes;
+    use datadog_trace_utils::span::SpanSlice;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::{borrow::Borrow, mem::MaybeUninit};
@@ -394,6 +422,7 @@ mod tests {
             assert_eq!(cfg.output_format, TraceExporterOutputFormat::V04);
             assert!(!cfg.compute_stats);
             assert!(cfg.telemetry_cfg.is_none());
+            assert!(cfg.test_session_token.is_none());
 
             ddog_trace_exporter_config_free(cfg);
         }
@@ -589,6 +618,7 @@ mod tests {
                 Some(&TelemetryClientConfig {
                     interval: 1000,
                     runtime_id: CharSlice::from("id"),
+                    debug_enabled: false,
                 }),
             );
             assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
@@ -606,6 +636,7 @@ mod tests {
                 Some(&TelemetryClientConfig {
                     interval: 1000,
                     runtime_id: CharSlice::from("foo"),
+                    debug_enabled: true,
                 }),
             );
             assert!(error.is_none());
@@ -620,6 +651,7 @@ mod tests {
                     .unwrap(),
                 "foo"
             );
+            assert!(cfg.telemetry_cfg.as_ref().unwrap().debug_enabled);
         }
     }
 
@@ -728,7 +760,7 @@ mod tests {
                     r#"{
                     "rate_by_service": {
                         "service:foo,env:staging": 1.0,
-                        "service:,env:": 0.8 
+                        "service:,env:": 0.8
                     }
                 }"#,
                 );
@@ -748,6 +780,7 @@ mod tests {
                 output_format: TraceExporterOutputFormat::V04,
                 compute_stats: false,
                 telemetry_cfg: None,
+                test_session_token: None,
             };
 
             let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
@@ -759,7 +792,7 @@ mod tests {
 
             assert_eq!(ret, None);
 
-            let data = rmp_serde::to_vec_named::<Vec<Vec<SpanBytes>>>(&vec![vec![]]).unwrap();
+            let data = rmp_serde::to_vec_named::<Vec<Vec<SpanSlice>>>(&vec![vec![]]).unwrap();
             let traces = ByteSlice::new(&data);
             ret = ddog_trace_exporter_send(
                 Some(exporter.as_ref()),
@@ -773,7 +806,7 @@ mod tests {
                 r#"{
                     "rate_by_service": {
                         "service:foo,env:staging": 1.0,
-                        "service:,env:": 0.8 
+                        "service:,env:": 0.8
                     }
                 }"#,
             );
@@ -789,10 +822,10 @@ mod tests {
         // (.NET) ping the agent with the aforementioned data type.
         unsafe {
             let server = MockServer::start();
-            let response_body = r#"{ 
+            let response_body = r#"{
                         "rate_by_service": {
                             "service:foo,env:staging": 1.0,
-                            "service:,env:": 0.8 
+                            "service:,env:": 0.8
                         }
                     }"#;
 
@@ -817,6 +850,7 @@ mod tests {
                 output_format: TraceExporterOutputFormat::V04,
                 compute_stats: false,
                 telemetry_cfg: None,
+                test_session_token: None,
             };
 
             let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
@@ -852,10 +886,10 @@ mod tests {
     fn exporter_send_telemetry_test() {
         unsafe {
             let server = MockServer::start();
-            let response_body = r#"{ 
+            let response_body = r#"{
                         "rate_by_service": {
                             "service:foo,env:staging": 1.0,
-                            "service:,env:": 0.8 
+                            "service:,env:": 0.8
                         }
                     }"#;
             let mock_traces = server.mock(|when, then| {
@@ -890,7 +924,9 @@ mod tests {
                 telemetry_cfg: Some(TelemetryConfig {
                     heartbeat: 50,
                     runtime_id: Some("foo".to_string()),
+                    debug_enabled: true,
                 }),
+                test_session_token: None,
             };
 
             let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
@@ -916,8 +952,8 @@ mod tests {
             assert_eq!(response.assume_init().body.to_string_lossy(), response_body);
 
             ddog_trace_exporter_free(exporter);
-            // It should receive 3 payloads: app-started, metrics and app-closing.
-            mock_metrics.assert_hits(3);
+            // It should receive 1 payloads: metrics
+            mock_metrics.assert_hits(1);
         }
     }
 }

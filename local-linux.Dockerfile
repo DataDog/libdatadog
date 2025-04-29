@@ -13,7 +13,12 @@ RUN apt-get update && \
     protobuf-compiler \
     docker.io \
     sudo \
+    wget \
     && rm -rf /var/lib/apt/lists/*
+
+# We need go in order to build aws-lc-fips-sys
+RUN wget -O go1.24.2.linux-arm64.tar.gz https://go.dev/dl/go1.24.2.linux-arm64.tar.gz \
+    && tar -C /usr/local -xzf go1.24.2.linux-arm64.tar.gz
 
 # Docker-in-Docker configuration (necessary for integration tests)
 RUN mkdir -p /var/lib/docker

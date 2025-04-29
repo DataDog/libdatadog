@@ -12,6 +12,9 @@ use std::fmt;
 use std::hash::Hash;
 use std::str::FromStr;
 use tinybytes::{Bytes, BytesString};
+use v05::dict::SharedDict;
+
+use crate::tracer_payload::TraceChunks;
 
 #[derive(Debug, PartialEq)]
 pub enum SpanKey {
@@ -60,9 +63,21 @@ impl FromStr for SpanKey {
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.
-pub trait SpanText: Eq + Hash + Borrow<str> + Serialize {}
-/// Implement the SpanText trait for any type which satisfies the sub traits.
-impl<T: Eq + Hash + Borrow<str> + Serialize> SpanText for T {}
+pub trait SpanText: Eq + Hash + Borrow<str> + Serialize + Default + Clone {
+    fn from_static_str(value: &'static str) -> Self;
+}
+
+impl <'a> SpanText for &'a str {
+    fn from_static_str(value: &'static str) -> Self {
+        value
+    }
+}
+
+impl SpanText for BytesString {
+    fn from_static_str(value: &'static str) -> Self {
+        BytesString::from_static(value)
+    }
+}
 
 /// Checks if the `value` represents an empty string. Used to skip serializing empty strings
 /// with serde.
@@ -103,6 +118,8 @@ where
     pub meta: HashMap<T, T>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub metrics: HashMap<T, f64>,
+    // TODO: APMSP-1941 - Replace `Bytes` with a wrapper that borrows the underlying
+    // slice and serializes to bytes in MessagePack.
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub meta_struct: HashMap<T, Bytes>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -251,6 +268,148 @@ pub type SpanEventBytes = SpanEvent<BytesString>;
 pub type AttributeAnyValueBytes = AttributeAnyValue<BytesString>;
 pub type AttributeArrayValueBytes = AttributeArrayValue<BytesString>;
 
+pub type SpanSlice<'a> = Span<&'a str>;
+pub type SpanLinkSlice<'a> = SpanLink<&'a str>;
+pub type SpanEventSlice<'a> = SpanEvent<&'a str>;
+pub type AttributeAnyValueSlice<'a> = AttributeAnyValue<&'a str>;
+pub type AttributeArrayValueSlice<'a> = AttributeArrayValue<&'a str>;
+
+pub type TraceChunksBytes = TraceChunks<BytesString>;
+
+pub type SharedDictBytes = SharedDict<BytesString>;
+
+impl SpanSlice<'_> {
+    /// Converts a borrowed `SpanSlice` into an owned `SpanBytes`, by resolving all internal
+    /// references into slices of the provided `Bytes` buffer. Returns `None` if any slice is
+    /// out of bounds or invalid.
+    pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<SpanBytes> {
+        Some(SpanBytes {
+            service: BytesString::try_from_bytes_slice(bytes, self.service)?,
+            name: BytesString::try_from_bytes_slice(bytes, self.name)?,
+            resource: BytesString::try_from_bytes_slice(bytes, self.resource)?,
+            r#type: BytesString::try_from_bytes_slice(bytes, self.r#type)?,
+            trace_id: self.trace_id,
+            span_id: self.span_id,
+            parent_id: self.parent_id,
+            start: self.start,
+            duration: self.duration,
+            error: self.error,
+            meta: self
+                .meta
+                .iter()
+                .map(|(k, v)| {
+                    Some((
+                        BytesString::try_from_bytes_slice(bytes, k)?,
+                        BytesString::try_from_bytes_slice(bytes, v)?,
+                    ))
+                })
+                .collect::<Option<HashMap<BytesString, BytesString>>>()?,
+            metrics: self
+                .metrics
+                .iter()
+                .map(|(k, v)| Some((BytesString::try_from_bytes_slice(bytes, k)?, *v)))
+                .collect::<Option<HashMap<BytesString, f64>>>()?,
+            meta_struct: self
+                .meta_struct
+                .iter()
+                .map(|(k, v)| Some((BytesString::try_from_bytes_slice(bytes, k)?, v.clone())))
+                .collect::<Option<HashMap<BytesString, Bytes>>>()?,
+            span_links: self
+                .span_links
+                .iter()
+                .map(|link| link.try_to_bytes(bytes))
+                .collect::<Option<Vec<SpanLinkBytes>>>()?,
+            span_events: self
+                .span_events
+                .iter()
+                .map(|event| event.try_to_bytes(bytes))
+                .collect::<Option<Vec<SpanEventBytes>>>()?,
+        })
+    }
+}
+
+impl SpanLinkSlice<'_> {
+    /// Converts a borrowed `SpanLinkSlice` into an owned `SpanLinkBytes`, using the provided
+    /// `Bytes` buffer to resolve all referenced strings. Returns `None` if conversion fails due
+    /// to invalid slice ranges.
+    pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<SpanLinkBytes> {
+        Some(SpanLinkBytes {
+            trace_id: self.trace_id,
+            trace_id_high: self.trace_id_high,
+            span_id: self.span_id,
+            attributes: self
+                .attributes
+                .iter()
+                .map(|(k, v)| {
+                    Some((
+                        BytesString::try_from_bytes_slice(bytes, k)?,
+                        BytesString::try_from_bytes_slice(bytes, v)?,
+                    ))
+                })
+                .collect::<Option<HashMap<BytesString, BytesString>>>()?,
+            tracestate: BytesString::try_from_bytes_slice(bytes, self.tracestate)?,
+            flags: self.flags,
+        })
+    }
+}
+
+impl SpanEventSlice<'_> {
+    /// Converts a borrowed `SpanEventSlice` into an owned `SpanEventBytes`, resolving references
+    /// into the provided `Bytes` buffer. Fails with `None` if any slice is invalid or cannot be
+    /// converted.
+    pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<SpanEventBytes> {
+        Some(SpanEventBytes {
+            time_unix_nano: self.time_unix_nano,
+            name: BytesString::try_from_bytes_slice(bytes, self.name)?,
+            attributes: self
+                .attributes
+                .iter()
+                .map(|(k, v)| {
+                    Some((
+                        BytesString::try_from_bytes_slice(bytes, k)?,
+                        v.try_to_bytes(bytes)?,
+                    ))
+                })
+                .collect::<Option<HashMap<BytesString, AttributeAnyValueBytes>>>()?,
+        })
+    }
+}
+
+impl AttributeAnyValueSlice<'_> {
+    /// Converts a borrowed `AttributeAnyValueSlice` into its owned `AttributeAnyValueBytes`
+    /// representation, using the provided `Bytes` buffer. Recursively processes inner values if
+    /// it's an array.
+    pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<AttributeAnyValueBytes> {
+        match self {
+            AttributeAnyValue::SingleValue(value) => {
+                Some(AttributeAnyValue::SingleValue(value.try_to_bytes(bytes)?))
+            }
+            AttributeAnyValue::Array(value) => Some(AttributeAnyValue::Array(
+                value
+                    .iter()
+                    .map(|attribute| attribute.try_to_bytes(bytes))
+                    .collect::<Option<Vec<AttributeArrayValueBytes>>>()?,
+            )),
+        }
+    }
+}
+
+impl AttributeArrayValueSlice<'_> {
+    /// Converts a single `AttributeArrayValueSlice` item into its owned form
+    /// (`AttributeArrayValueBytes`), borrowing data from the provided `Bytes` buffer when
+    /// necessary.
+    pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<AttributeArrayValueBytes> {
+        match self {
+            AttributeArrayValue::String(value) => Some(AttributeArrayValue::String(
+                BytesString::try_from_bytes_slice(bytes, value)?,
+            )),
+            AttributeArrayValue::Boolean(value) => Some(AttributeArrayValue::Boolean(*value)),
+            AttributeArrayValue::Integer(value) => Some(AttributeArrayValue::Integer(*value)),
+            AttributeArrayValue::Double(value) => Some(AttributeArrayValue::Double(*value)),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct SpanKeyParseError {
     pub message: String,
@@ -335,31 +494,26 @@ mod tests {
         };
 
         let serialized = rmp_serde::encode::to_vec_named(&span).unwrap();
-        let mut serialized_bytes = tinybytes::Bytes::from(serialized);
-        let deserialized = decode_span(&mut serialized_bytes).unwrap();
+        let mut serialized_slice = serialized.as_ref();
+        let deserialized = decode_span(&mut serialized_slice).unwrap();
 
-        assert_eq!(span.name, deserialized.name.as_str());
-        assert_eq!(span.resource, deserialized.resource.as_str());
+        assert_eq!(span.name, deserialized.name);
+        assert_eq!(span.resource, deserialized.resource);
         assert_eq!(
             span.span_links[0].trace_id,
             deserialized.span_links[0].trace_id
         );
         assert_eq!(
             span.span_links[0].tracestate,
-            deserialized.span_links[0].tracestate.as_str()
+            deserialized.span_links[0].tracestate
         );
-        assert_eq!(
-            span.span_events[0].name,
-            deserialized.span_events[0].name.as_str()
-        );
+        assert_eq!(span.span_events[0].name, deserialized.span_events[0].name);
         assert_eq!(
             span.span_events[0].time_unix_nano,
             deserialized.span_events[0].time_unix_nano
         );
         for attribut in &deserialized.span_events[0].attributes {
-            assert!(span.span_events[0]
-                .attributes
-                .contains_key(attribut.0.as_str()))
+            assert!(span.span_events[0].attributes.contains_key(attribut.0))
         }
     }
 

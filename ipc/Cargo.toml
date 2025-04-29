@@ -42,7 +42,7 @@ tracing-subscriber = { version = "0.3.11" }
 spawn_worker = { path = "../spawn_worker" }
 
 [target.'cfg(not(windows))'.dependencies]
-nix = { version = "0.27.1", features = ["mman", "socket", "poll"] }
+nix = { version = "0.29", features = ["fs", "mman", "process", "poll", "socket"] }
 sendfd = { version = "0.4", features = ["tokio"] }
 tokio = { version = "1.23", features = ["sync", "io-util", "signal"] }
 
