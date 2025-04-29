@@ -230,12 +230,8 @@ impl TraceExporter {
 
         let res = match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
-            TraceExporterInputFormat::V04 => {
-                self.send_deser(data, trace_count, DeserInputFormat::V04)
-            }
-            TraceExporterInputFormat::V05 => {
-                self.send_deser(data, trace_count, DeserInputFormat::V05)
-            }
+            TraceExporterInputFormat::V04 => self.send_deser(data, DeserInputFormat::V04),
+            TraceExporterInputFormat::V05 => self.send_deser(data, DeserInputFormat::V05),
         }?;
         if res.is_empty() {
             return Err(TraceExporterError::Agent(
@@ -609,13 +605,8 @@ impl TraceExporter {
     fn send_deser(
         &self,
         data: &[u8],
-        trace_count: usize,
         format: DeserInputFormat,
     ) -> Result<String, TraceExporterError> {
-        self.emit_metric(
-            HealthMetric::Count(health_metrics::STAT_DESER_TRACES, trace_count as i64),
-            None,
-        );
         let (traces, _) = match format {
             DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
             DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
@@ -628,6 +619,11 @@ impl TraceExporter {
             );
             TraceExporterError::Deserialization(e)
         })?;
+        self.emit_metric(
+            HealthMetric::Count(health_metrics::STAT_DESER_TRACES, traces.len() as i64),
+            None,
+        );
+
         self.send_trace_chunks_inner(traces)
     }
 
