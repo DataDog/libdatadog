@@ -47,6 +47,7 @@ impl BytesString {
         })
     }
 
+    #[inline]
     pub fn from_static(value: &'static str) -> Self {
         // SAFETY: This is safe as a str is always a valid UTF-8 slice.
         unsafe { Self::from_bytes_unchecked(Bytes::from_static(value.as_bytes())) }
@@ -57,6 +58,7 @@ impl BytesString {
         unsafe { Self::from_bytes_unchecked(Bytes::from_underlying(value)) }
     }
 
+    #[inline]
     pub fn from_cow(cow: std::borrow::Cow<'static, str>) -> Self {
         match cow {
             std::borrow::Cow::Borrowed(s) => Self::from_static(s),
@@ -278,6 +280,13 @@ mod tests {
 
     #[test]
     fn test_from_static_str() {
+        let static_str = "hello";
+        let bytes_string = BytesString::from_static(static_str);
+        assert_eq!(bytes_string.as_str(), "hello")
+    }
+
+    #[test]
+    fn test_from_static_str_impl() {
         let static_str = "hello";
         let bytes_string = BytesString::from(static_str);
         assert_eq!(bytes_string.as_str(), "hello")

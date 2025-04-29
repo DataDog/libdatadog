@@ -199,6 +199,11 @@ pub struct TraceExporter {
     telemetry: Option<TelemetryClient>,
 }
 
+enum DeserInputFormat {
+    V04,
+    V05,
+}
+
 impl TraceExporter {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {
@@ -206,7 +211,16 @@ impl TraceExporter {
     }
 
     /// Send msgpack serialized traces to the agent
-    #[allow(missing_docs)]
+    /// 
+    /// # Arguments
+    /// 
+    /// * data: A slice containing the serialized traces. This slice should be encoded following
+    /// the input_format passed to the TraceExporter on creating.
+    /// * trace_count: The number of traces in the data
+    /// 
+    /// # Returns
+    /// * Ok(AgentResponse): The response from the agent
+    /// * Err(TraceExporterError): An error detailling what went wrong in the process
     pub fn send(
         &self,
         data: &[u8],
@@ -214,36 +228,22 @@ impl TraceExporter {
     ) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
 
-        match self.input_format {
+        let res = match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
-            TraceExporterInputFormat::V04 => match msgpack_decoder::v04::from_slice(data) {
-                Ok((traces, _)) => self.send_trace_collection(traces),
-                Err(e) => Err(TraceExporterError::Deserialization(e)),
-            },
-            TraceExporterInputFormat::V05 => match msgpack_decoder::v05::from_slice(data) {
-                Ok((traces, _)) => self.send_trace_collection(traces),
-                Err(e) => Err(TraceExporterError::Deserialization(e)),
-            },
+            TraceExporterInputFormat::V04 => {
+                self.send_deser(data, trace_count, DeserInputFormat::V04)
+            }
+            TraceExporterInputFormat::V05 => {
+                self.send_deser(data, trace_count, DeserInputFormat::V05)
+            }
+        }?;
+        if res.is_empty() {
+            return Err(TraceExporterError::Agent(
+                error::AgentErrorKind::EmptyResponse,
+            ));
         }
-        .and_then(|res| {
-            if res.is_empty() {
-                return Err(TraceExporterError::Agent(
-                    error::AgentErrorKind::EmptyResponse,
-                ));
-            }
 
-            Ok(AgentResponse::from(res))
-        })
-        .map_err(|err| {
-            if let TraceExporterError::Deserialization(ref e) = err {
-                error!("Error deserializing trace from request body: {e}");
-                self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_DESER_TRACES_ERRORS, 1),
-                    None,
-                );
-            }
-            err
-        })
+        Ok(AgentResponse::from(res))
     }
 
     /// Safely shutdown the TraceExporter and all related tasks
@@ -587,23 +587,52 @@ impl TraceExporter {
         }
     }
 
+    /// Send a list of trace chunks to the agent
+    /// 
+    /// # Arguments
+    /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
+    /// 
+    /// # Returns
+    /// * Ok(String): The response from the agent
+    /// * Err(TraceExporterError): An error detailing what went wrong in the process
     pub fn send_trace_chunks<T: SpanText>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<String, TraceExporterError> {
         self.check_agent_info();
-        self.send_trace_collection(trace_chunks)
+        self.send_trace_chunks_inner(trace_chunks)
     }
 
-    fn send_trace_collection<T: SpanText>(
+    /// Deserializes, processes and sends trace chunks to the agent
+    fn send_deser(
+        &self,
+        data: &[u8],
+        trace_count: usize,
+        format: DeserInputFormat,
+    ) -> Result<String, TraceExporterError> {
+        self.emit_metric(
+            HealthMetric::Count(health_metrics::STAT_DESER_TRACES, trace_count as i64),
+            None,
+        );
+        let (traces, _) = match format {
+            DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
+            DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
+        }
+        .map_err(|e| {
+            error!("Error deserializing trace from request body: {e}");
+            self.emit_metric(
+                HealthMetric::Count(health_metrics::STAT_DESER_TRACES_ERRORS, 1),
+                None,
+            );
+            TraceExporterError::Deserialization(e)
+        })?;
+        self.send_trace_chunks_inner(traces)
+    }
+
+    fn send_trace_chunks_inner<T: SpanText>(
         &self,
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<String, TraceExporterError> {
-        self.emit_metric(
-            HealthMetric::Count(health_metrics::STAT_DESER_TRACES, traces.len() as i64),
-            None,
-        );
-
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         // Stats computation
@@ -632,18 +661,9 @@ impl TraceExporter {
             header_tags.dropped_p0_spans = dropped_p0_spans;
         }
 
-        let use_v05_format = match (self.input_format, self.output_format) {
-            (TraceExporterInputFormat::V04, TraceExporterOutputFormat::V04) => false,
-            (TraceExporterInputFormat::V04, TraceExporterOutputFormat::V05)
-            | (TraceExporterInputFormat::V05, TraceExporterOutputFormat::V05) => true,
-            (TraceExporterInputFormat::V05, TraceExporterOutputFormat::V04) => {
-                // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-                unreachable!("Conversion from v05 to v04 not implemented")
-            }
-            (TraceExporterInputFormat::Proxy, _) => {
-                // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-                unreachable!("Codepath invalid for proxy mode",)
-            }
+        let use_v05_format = match self.output_format {
+            TraceExporterOutputFormat::V05 => true,
+            TraceExporterOutputFormat::V04 => false,
         };
         let payload = trace_utils::collect_trace_chunks(traces, use_v05_format).map_err(|e| {
             TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
