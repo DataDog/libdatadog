@@ -57,10 +57,12 @@ impl<'a> TryFrom<ReceiverConfig<'a>> for datadog_crashtracker::CrashtrackerRecei
 pub struct Config<'a> {
     pub additional_files: Slice<'a, CharSlice<'a>>,
     pub create_alt_stack: bool,
-    pub use_alt_stack: bool,
+    pub demangle_names: bool,
     /// The endpoint to send the crash report to (can be a file://).
     /// If None, the crashtracker will infer the agent host from env variables.
     pub endpoint: Option<&'a Endpoint>,
+    /// Optional filename for a unix domain socket if the receiver is used asynchonously
+    pub optional_unix_socket_filename: CharSlice<'a>,
     pub resolve_frames: StacktraceCollection,
     /// The set of signals we should be registered for.
     /// If empty, use the default set.
@@ -69,8 +71,7 @@ pub struct Config<'a> {
     /// This is given as a uint32_t, but the actual timeout needs to fit inside of an i32 (max
     /// 2^31-1). This is a limitation of the various interfaces used to guarantee the timeout.
     pub timeout_ms: u32,
-    /// Optional filename for a unix domain socket if the receiver is used asynchonously
-    pub optional_unix_socket_filename: CharSlice<'a>,
+    pub use_alt_stack: bool,
 }
 
 impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration {
@@ -90,6 +91,7 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
         let signals = value.signals.iter().copied().collect();
         let timeout_ms = value.timeout_ms;
         let unix_socket_path = value.optional_unix_socket_filename.try_to_string_option()?;
+        let demangle_names = value.demangle_names;
         Self::new(
             additional_files,
             create_alt_stack,
@@ -99,6 +101,7 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
             signals,
             timeout_ms,
             unix_socket_path,
+            demangle_names,
         )
     }
 }

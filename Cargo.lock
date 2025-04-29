@@ -1412,6 +1412,8 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "symbolic-common",
+ "symbolic-demangle",
  "tempfile",
  "tokio",
  "uuid",
