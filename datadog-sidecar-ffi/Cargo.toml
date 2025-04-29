@@ -23,6 +23,9 @@ datadog-live-debugger = { path = "../datadog-live-debugger" }
 paste = "1"
 libc = "0.2"
 dogstatsd-client = { path = "../dogstatsd-client" }
+tracing = { version = "0.1", default-features = false }
+data-pipeline-ffi = { path = "../data-pipeline-ffi" }
+
 
 [target.'cfg(windows)'.dependencies]
 datadog-crashtracker-ffi = { path = "../datadog-crashtracker-ffi", features = ["collector", "collector_windows"] }

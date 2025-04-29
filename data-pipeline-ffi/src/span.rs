@@ -1,26 +1,15 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_ipc::platform::{MappedMem, ShmHandle};
-use datadog_sidecar_ffi::{
-    ddog_alloc_anon_shm_handle, ddog_map_shm, ddog_sidecar_send_trace_v04_bytes,
-    ddog_sidecar_send_trace_v04_shm, ddog_unmap_shm, TracerHeaderTags,
-};
 use datadog_trace_utils::span::{
     AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes,
 };
-use ddcommon_ffi::{
-    ddog_Error_message,
-    slice::{AsBytes, CharSlice},
-    MaybeError,
-};
+use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use std::ffi::c_char;
 use std::ffi::c_void;
 use std::io::Cursor;
 use std::slice;
 use tinybytes::{Bytes, BytesString};
-
-use datadog_sidecar::service::{blocking::SidecarTransport, InstanceId};
 
 // ---------------- Macros -------------------
 
@@ -669,26 +658,6 @@ pub unsafe extern "C" fn ddog_add_event_attributes_float(
 
 // ------------------- Export Functions -------------------
 
-#[repr(C)]
-#[derive()]
-pub struct SenderParameters {
-    pub tracer_headers_tags: TracerHeaderTags<'static>,
-    pub transport: Box<SidecarTransport>,
-    pub instance_id: *mut InstanceId,
-    pub limit: usize,
-    pub n_requests: i64,
-    pub buffer_size: i64,
-    pub url: CharSlice<'static>,
-}
-
-unsafe fn check_error(msg: &str, maybe_error: MaybeError) -> bool {
-    if maybe_error != MaybeError::None {
-        tracing::error!("{}: {}", msg, ddog_Error_message(maybe_error.to_std_ref()));
-        return false;
-    }
-    true
-}
-
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_serialize_trace_into_c_string(
@@ -712,7 +681,7 @@ pub unsafe extern "C" fn ddog_serialize_trace_into_c_string(
     }
 }
 
-unsafe fn serialize_traces_into_mapped_memory(
+pub unsafe fn serialize_traces_into_mapped_memory(
     traces_ptr: *const TracesBytes,
     buf_ptr: *mut c_void,
     cap: usize,
@@ -728,89 +697,6 @@ unsafe fn serialize_traces_into_mapped_memory(
     match rmp_serde::encode::write_named(&mut cursor, &*traces_ptr) {
         Ok(()) => cursor.position() as usize,
         Err(_) => 0,
-    }
-}
-
-#[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
-    traces_ptr: *mut TracesBytes,
-    parameters: &mut SenderParameters,
-) {
-    if traces_ptr.is_null() {
-        tracing::error!("Invalid traces pointer");
-        return;
-    }
-
-    let traces = &*traces_ptr;
-    let size: usize = traces.iter().map(|trace| trace.len()).sum();
-
-    if parameters.transport.is_closed() {
-        tracing::info!("Skipping flushing traces of size {} as connection to sidecar failed", size);
-        return;
-    }
-
-    let mut shm: *mut ShmHandle = std::ptr::null_mut();
-    let mut mapped_shm: *mut MappedMem<ShmHandle> = std::ptr::null_mut();
-
-    if !check_error(
-        "Failed allocating shared memory",
-        ddog_alloc_anon_shm_handle(parameters.limit, &mut shm),
-    ) {
-        return;
-    }
-
-    let mut size: usize = 0;
-    let mut pointer = std::ptr::null_mut();
-    if !check_error(
-        "Failed mapping shared memory",
-        ddog_map_shm(Box::from_raw(shm), &mut mapped_shm, &mut pointer, &mut size),
-    ) {
-        return;
-    }
-
-    let boxed_mapped_shm = Box::from_raw(mapped_shm);
-
-    let written = serialize_traces_into_mapped_memory(traces, pointer, size);
-    ddog_unmap_shm(boxed_mapped_shm);
-    if !written == 0 {
-        return;
-    }
-
-    let mut size_hint = written;
-    if parameters.n_requests > 0 {
-        size_hint = size_hint.max((parameters.buffer_size / parameters.n_requests + 1) as usize);
-    }
-
-    let send_error = ddog_sidecar_send_trace_v04_shm(
-        &mut parameters.transport,
-        &*parameters.instance_id,
-        Box::from_raw(shm),
-        size_hint,
-        &parameters.tracer_headers_tags,
-    );
-
-    loop {
-        if send_error != MaybeError::None {
-            let mut buffer = vec![0u8; written];
-            pointer = buffer.as_mut_ptr() as *mut c_void;
-            serialize_traces_into_mapped_memory(traces, pointer, written);
-
-            let retry_error = ddog_sidecar_send_trace_v04_bytes(
-                &mut parameters.transport,
-                &*parameters.instance_id,
-                CharSlice::from_raw_parts(pointer.cast(), written),
-                &parameters.tracer_headers_tags,
-            );
-
-            if check_error("Failed sending traces to the sidecar", retry_error) {
-                tracing::debug!("Failed sending traces via shm to sidecar: {}", ddog_Error_message(send_error.to_std_ref()));
-            } else {
-                break;
-            }
-        }
-
-        tracing::info!("Flushing traces of size {} to send-queue for {}", size, parameters.url);
     }
 }
 
