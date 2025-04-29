@@ -7,6 +7,7 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+use data_pipeline_ffi::span::{serialize_traces_into_mapped_memory, TracesBytes};
 #[cfg(windows)]
 use datadog_crashtracker_ffi::Metadata;
 use datadog_ipc::platform::{
@@ -31,7 +32,7 @@ use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigRea
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddcommon_ffi as ffi;
-use ddcommon_ffi::{CharSlice, MaybeError};
+use ddcommon_ffi::{ddog_Error_message, CharSlice, MaybeError};
 use ddtelemetry::{
     data::{self, Dependency, Integration},
     worker::{LifecycleAction, TelemetryActions},
@@ -993,6 +994,123 @@ pub unsafe extern "C" fn ddog_get_agent_info_env<'a>(
         .and_then(|c| c.default_env.as_ref())
         .map(|s| ffi::CharSlice::from(s.as_str()))
         .unwrap_or(ffi::CharSlice::empty())
+}
+
+#[macro_export]
+macro_rules! check {
+    ($failable:expr, $msg:expr) => {
+        match $failable {
+            Ok(o) => o,
+            Err(e) => {
+                tracing::error!("{}: {}", $msg, e);
+                return;
+            }
+        }
+    };
+}
+
+#[repr(C)]
+#[derive()]
+pub struct SenderParameters {
+    pub tracer_headers_tags: TracerHeaderTags<'static>,
+    pub transport: Box<SidecarTransport>,
+    pub instance_id: *mut InstanceId,
+    pub limit: usize,
+    pub n_requests: i64,
+    pub buffer_size: i64,
+    pub url: CharSlice<'static>,
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
+    traces_ptr: *mut TracesBytes,
+    parameters: &mut SenderParameters,
+) {
+    if traces_ptr.is_null() {
+        tracing::error!("Invalid traces pointer");
+        return;
+    }
+
+    let traces = &*traces_ptr;
+    let size: usize = traces.iter().map(|trace| trace.len()).sum();
+
+    // Check connection to the sidecar
+    if parameters.transport.is_closed() {
+        tracing::info!(
+            "Skipping flushing traces of size {} as connection to sidecar failed",
+            size
+        );
+        return;
+    }
+
+    // Create and map shared memory
+    let shm = check!(
+        ShmHandle::new(parameters.limit),
+        "Failed to create shared memory"
+    );
+
+    let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
+
+    // Write traces to the shared memory
+    let slice = mapped_shm.as_slice_mut();
+    let pointer = slice as *mut [u8] as *mut c_void;
+    let size = slice.len();
+
+    let written = serialize_traces_into_mapped_memory(traces, pointer, size);
+
+    // Send traces to the sidecar via the shared memory handler
+    let mut size_hint = written;
+    if parameters.n_requests > 0 {
+        size_hint = size_hint.max((parameters.buffer_size / parameters.n_requests + 1) as usize);
+    }
+
+    let send_error = match blocking::send_trace_v04_shm(
+        &mut parameters.transport,
+        &*parameters.instance_id,
+        shm,
+        size_hint,
+        check!(
+            (&parameters.tracer_headers_tags).try_into(),
+            "Failed to convert tracer headers tags"
+        ),
+    ) {
+        Ok(_) => MaybeError::None,
+        Err(e) => MaybeError::Some(ddcommon_ffi::Error::from(format!("{:?}", e))),
+    };
+
+    // Retry sending traces via bytes if there was an error
+    loop {
+        if send_error != MaybeError::None {
+            let mut buffer = vec![0u8; written];
+            let pointer = buffer.as_mut_ptr() as *mut c_void;
+            serialize_traces_into_mapped_memory(traces, pointer, written);
+
+            match blocking::send_trace_v04_bytes(
+                &mut parameters.transport,
+                &*parameters.instance_id,
+                CharSlice::from_raw_parts(pointer.cast(), written)
+                    .as_bytes()
+                    .to_vec(),
+                check!(
+                    (&parameters.tracer_headers_tags).try_into(),
+                    "Failed to convert tracer headers tags"
+                ),
+            ) {
+                Ok(_) => break,
+                Err(_) => tracing::debug!(
+                    "Failed sending traces via shm to sidecar: {}",
+                    ddog_Error_message(send_error.to_std_ref())
+                ),
+            };
+        }
+
+        tracing::info!(
+            "Flushing traces of size {} to send-queue for {}",
+            size,
+            parameters.url
+        );
+    }
 }
 
 /// Drops the agent info reader.
