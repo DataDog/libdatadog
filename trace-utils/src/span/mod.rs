@@ -67,7 +67,7 @@ pub trait SpanText: Eq + Hash + Borrow<str> + Serialize + Default + Clone {
     fn from_static_str(value: &'static str) -> Self;
 }
 
-impl <'a> SpanText for &'a str {
+impl SpanText for &str {
     fn from_static_str(value: &'static str) -> Self {
         value
     }

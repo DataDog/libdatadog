@@ -13,7 +13,7 @@ const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
-fn set_top_level_span<'a, T>(span: &mut Span<T>, is_top_level: bool)
+fn set_top_level_span<T>(span: &mut Span<T>, is_top_level: bool)
 where
     T: SpanText,
 {

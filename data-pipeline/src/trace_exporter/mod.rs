@@ -13,7 +13,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use datadog_trace_utils::msgpack_decoder::{self, decode::error::DecodeError};
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryError};
-use datadog_trace_utils::span::{Span, SpanBytes, SpanText};
+use datadog_trace_utils::span::{Span, SpanText};
 use datadog_trace_utils::trace_utils::{self, TracerHeaderTags};
 use datadog_trace_utils::tracer_payload;
 use ddcommon::header::{

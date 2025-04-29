@@ -197,21 +197,22 @@ impl DatadogTestAgent {
         relative_snapshot_path: Option<&str>,
         absolute_socket_path: Option<&str>,
     ) -> Self {
-        DatadogTestAgent {
-            container: DatadogTestAgentContainer::new(relative_snapshot_path, absolute_socket_path)
-                .start()
-                .await
-                .expect("Unable to start DatadogTestAgent, is the Docker Daemon running?"),
-        }
+        Self::new_with_env(relative_snapshot_path, absolute_socket_path, &[]).await
     }
 
-    pub async fn new_create_snapshot(
+    pub async fn new_with_env(
         relative_snapshot_path: Option<&str>,
         absolute_socket_path: Option<&str>,
+        env_vars: &[(&str, &str)],
     ) -> Self {
+        let mut container =
+            DatadogTestAgentContainer::new(relative_snapshot_path, absolute_socket_path);
+        for (key, value) in env_vars {
+            container = container.with_env(key, value);
+        }
+
         DatadogTestAgent {
-            container: DatadogTestAgentContainer::new(relative_snapshot_path, absolute_socket_path)
-                .with_env("SNAPSHOT_CI", "0")
+            container: container
                 .start()
                 .await
                 .expect("Unable to start DatadogTestAgent, is the Docker Daemon running?"),
