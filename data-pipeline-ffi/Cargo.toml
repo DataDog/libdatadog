@@ -29,11 +29,8 @@ datadog-trace-utils = { path = "../datadog-trace-utils" }
 [dependencies]
 data-pipeline = { path = "../data-pipeline" }
 datadog-ipc = { path = "../ipc" }
-datadog-sidecar = { path = "../sidecar" }
-datadog-sidecar-ffi = { path = "../sidecar-ffi" }
 datadog-trace-utils = { path = "../trace-utils" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false }
 rmp-serde = "1.1.1"
 tinybytes = { path = "../tinybytes" }
-tracing = { version = "0.1", default-features = false }
