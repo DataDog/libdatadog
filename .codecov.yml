@@ -4,17 +4,17 @@ comment:
 component_management:
   individual_components:
     - component_id: crashtracker  # this is an identifier that should not be changed
-      name: crashtracker  # this is a display name, and can be changed freely
+      name: datadog-crashtracker  # this is a display name, and can be changed freely
       paths:
-        - crashtracker
+        - datadog-crashtracker
     - component_id: crashtracker-ffi  # this is an identifier that should not be changed
-      name: crashtracker-ffi  # this is a display name, and can be changed freely
+      name: datadog-crashtracker-ffi  # this is a display name, and can be changed freely
       paths:
-        - crashtracker-ffi
+        - datadog-crashtracker-ffi
     - component_id: datadog-alloc  # this is an identifier that should not be changed
       name: datadog-alloc  # this is a display name, and can be changed freely
       paths:
-        - alloc
+        - datadog-alloc
     - component_id: data-pipeline  # this is an identifier that should not be changed
       name: data-pipeline  # this is a display name, and can be changed freely
       paths:
@@ -44,25 +44,25 @@ component_management:
       paths:
         - dogstatsd-client
     - component_id: ipc  # this is an identifier that should not be changed
-      name: ipc  # this is a display name, and can be changed freely
+      name: datadog-ipc  # this is a display name, and can be changed freely
       paths:
-        - ipc
+        - datadog-ipc
     - component_id: profiling  # this is an identifier that should not be changed
-      name: profiling  # this is a display name, and can be changed freely
+      name: datadog-profiling  # this is a display name, and can be changed freely
       paths:
-        - profiling
+        - datadog-profiling
     - component_id: profiling-ffi  # this is an identifier that should not be changed
-      name: profiling-ffi  # this is a display name, and can be changed freely
+      name: datadog-profiling-ffi  # this is a display name, and can be changed freely
       paths:
-        - profiling-ffi
+        - datadog-profiling-ffi
     - component_id: sidecar  # this is an identifier that should not be changed
-      name: sidecar  # this is a display name, and can be changed freely
+      name: datadog-sidecar  # this is a display name, and can be changed freely
       paths:
-        - sidecar
+        - datadog-sidecar
     - component_id: sidecar-ffi  # this is an identifier that should not be changed
-      name: sidecar-ffi  # this is a display name, and can be changed freely
+      name: datdog-sidecar-ffi  # this is a display name, and can be changed freely
       paths:
-        - sidecar-ffi
+        - datadog-sidecar-ffi
     - component_id: spawn-worker  # this is an identifier that should not be changed
       name: spawn-worker  # this is a display name, and can be changed freely
       paths:
@@ -72,18 +72,18 @@ component_management:
       paths:
         - tinybytes
     - component_id: trace-normalization  # this is an identifier that should not be changed
-      name: trace-normalization  # this is a display name, and can be changed freely
+      name: datadog-trace-normalization  # this is a display name, and can be changed freely
       paths:
-        - trace-normalization
+        - datadog-trace-normalization
     - component_id: trace-obfuscation  # this is an identifier that should not be changed
-      name: trace-obfuscation  # this is a display name, and can be changed freely
+      name: datadog-trace-obfuscation  # this is a display name, and can be changed freely
       paths:
-        - trace-obfuscation
+        - datadog-trace-obfuscation
     - component_id: trace-protobuf  # this is an identifier that should not be changed
-      name: trace-protobuf  # this is a display name, and can be changed freely
+      name: datadog-trace-protobuf  # this is a display name, and can be changed freely
       paths:
-        - trace-protobuf
+        - datadog-trace-protobuf
     - component_id: trace-utils  # this is an identifier that should not be changed
-      name: trace-utils  # this is a display name, and can be changed freely
+      name: datadog-trace-utils  # this is a display name, and can be changed freely
       paths:
-        - trace-utils
+        - datadog-trace-utils

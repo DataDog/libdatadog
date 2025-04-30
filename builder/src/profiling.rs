@@ -113,7 +113,7 @@ impl Profiling {
             let file_in = file.to_string() + ".in";
 
             let mut pc_origin: PathBuf = project_root();
-            pc_origin.push("profiling-ffi");
+            pc_origin.push("datadog-profiling-ffi");
             pc_origin.push(file_in);
 
             let pc_target: PathBuf = [pc_dir.as_os_str(), OsStr::new(file)].iter().collect();

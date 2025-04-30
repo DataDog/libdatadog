@@ -26,7 +26,7 @@ impl CrashTracker {
             datadog_root.push(self.target_dir.as_ref());
 
             let mut crashtracker_dir = project_root();
-            crashtracker_dir.push("crashtracker");
+            crashtracker_dir.push("datadog-crashtracker");
             let mut config = cmake::Config::new(crashtracker_dir.to_str().unwrap());
             let config = config
                 .define("Datadog_ROOT", datadog_root.to_str().unwrap())

@@ -1,0 +1,38 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "datadog-sidecar-ffi"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+bench = false
+
+[dependencies]
+ddtelemetry = { path = "../ddtelemetry" }
+datadog-sidecar = { path = "../datadog-sidecar" }
+datadog-trace-utils = { path = "../datadog-trace-utils" }
+datadog-ipc = { path = "../datadog-ipc" }
+ddcommon = { path = "../ddcommon" }
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false }
+datadog-remote-config = { path = "../datadog-remote-config" }
+datadog-live-debugger = { path = "../datadog-live-debugger" }
+paste = "1"
+libc = "0.2"
+dogstatsd-client = { path = "../dogstatsd-client" }
+
+[target.'cfg(windows)'.dependencies]
+datadog-crashtracker-ffi = { path = "../datadog-crashtracker-ffi", features = ["collector", "collector_windows"] }
+
+[dev-dependencies]
+http = "1.0"
+tempfile = { version = "3.3" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    "cfg(coverage_nightly)",
+    'cfg(feature, values("prefer_dynamic"))',
+] }

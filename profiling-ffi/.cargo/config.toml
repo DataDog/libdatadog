@@ -1,5 +1,0 @@
-[build]
-rustflags = ["-C", "relocation-model=pic"]
-
-[target.'cfg(target_os = "windows")']
-rustflags = ["-C", "relocation-model=pic", "-C", "target-feature=+crt-static"]
