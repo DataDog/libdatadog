@@ -210,7 +210,7 @@ pub unsafe extern "C" fn ddog_get_trace(ptr: *mut TracesBytes, index: usize) -> 
     &mut object[index] as *mut TraceBytes
 }
 
-// ------------------ TracesBytes ------------------
+// ------------------ TraceBytes ------------------
 
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
@@ -245,6 +245,21 @@ pub unsafe extern "C" fn ddog_get_trace_size(ptr: *mut TraceBytes) -> usize {
 
     let object = &mut *ptr;
     object.len()
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_get_span(ptr: *mut TraceBytes, index: usize) -> *mut SpanBytes {
+    if ptr.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    let object = &mut *ptr;
+    if index >= object.len() {
+        return std::ptr::null_mut();
+    }
+
+    &mut object[index] as *mut SpanBytes
 }
 
 // ------------------- SpanBytes -------------------
@@ -347,13 +362,13 @@ pub unsafe extern "C" fn ddog_get_span_trace_id(ptr: *mut SpanBytes) -> u64 {
 
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_span_span_id(ptr: *mut SpanBytes, value: u64) {
+pub unsafe extern "C" fn ddog_set_span_id(ptr: *mut SpanBytes, value: u64) {
     set_numeric_field!(ptr, value, span_id);
 }
 
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_span_span_id(ptr: *mut SpanBytes) -> u64 {
+pub unsafe extern "C" fn ddog_get_span_id(ptr: *mut SpanBytes) -> u64 {
     get_numeric_field!(ptr, span_id)
 }
 
@@ -527,6 +542,47 @@ pub unsafe extern "C" fn ddog_add_span_meta_struct(
 
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_del_span_meta_struct(ptr: *mut SpanBytes, key: CharSlice) {
+    remove_hashmap!(ptr, key, meta_struct);
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_get_span_meta_struct(
+    ptr: *mut SpanBytes,
+    key: CharSlice,
+) -> CharSlice<'static> {
+    if ptr.is_null() {
+        return CharSlice::empty();
+    }
+
+    let span = &mut *ptr;
+
+    let bytes_str_key = BytesString::from_slice(key.as_bytes()).unwrap_or_default();
+
+    match span.meta_struct.get(&bytes_str_key) {
+        Some(value) => CharSlice::from_raw_parts(value.as_ptr().cast(), value.len()),
+        None => CharSlice::empty(),
+    }
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_has_span_meta_struct(ptr: *mut SpanBytes, key: CharSlice) -> bool {
+    exists_hashmap!(ptr, key, meta_struct);
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_span_meta_struct_get_keys(
+    span_ptr: *mut SpanBytes,
+    out_count: *mut usize,
+) -> *mut CharSlice<'static> {
+    get_keys_hashmap!(span_ptr, out_count, meta_struct)
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_span_free_keys_ptr(keys_ptr: *mut CharSlice<'static>, count: usize) {
     if keys_ptr.is_null() {
         return;
@@ -681,6 +737,7 @@ pub unsafe extern "C" fn ddog_serialize_trace_into_c_string(
     }
 }
 
+#[allow(clippy::missing_safety_doc)]
 pub unsafe fn serialize_traces_into_mapped_memory(
     traces_ptr: *const TracesBytes,
     buf_ptr: *mut c_void,
@@ -896,7 +953,7 @@ mod tests {
             ddog_set_span_resource(span_ptr, CharSlice::from("resource"));
             ddog_set_span_type(span_ptr, CharSlice::from("type"));
             ddog_set_span_trace_id(span_ptr, 1);
-            ddog_set_span_span_id(span_ptr, 2);
+            ddog_set_span_id(span_ptr, 2);
             ddog_set_span_parent_id(span_ptr, 3);
             ddog_set_span_start(span_ptr, 4);
             ddog_set_span_duration(span_ptr, 5);
