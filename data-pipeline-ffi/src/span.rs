@@ -5,149 +5,94 @@ use datadog_trace_utils::span::{
     AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes,
 };
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
-use std::ffi::c_char;
-use std::ffi::c_void;
-use std::io::Cursor;
-use std::slice;
+use std::ffi::{c_char, CString};
 use tinybytes::{Bytes, BytesString};
 
 // ---------------- Macros -------------------
 
 // Set a BytesString field of the given pointer.
 macro_rules! set_string_field {
-    ($ptr:expr, $slice:expr, $field:ident) => {{
-        if $ptr.is_null() || $slice.is_empty() {
+    ($ref:expr, $slice:expr) => {{
+        if $slice.is_empty() {
             return;
         }
 
-        let object = &mut *$ptr;
-        object.$field = BytesString::from_slice($slice.as_bytes()).unwrap_or_default();
+        $ref = BytesString::from_slice($slice.as_bytes()).unwrap_or_default();
     }};
 }
 
 // Get the ByteString field of the given pointer.
 macro_rules! get_string_field {
-    ($ptr:expr, $field:ident) => {{
-        if $ptr.is_null() {
-            return CharSlice::empty();
-        }
-
-        let object = &mut *$ptr;
-
-        CharSlice::from_raw_parts(
-            object.$field.as_str().as_ptr().cast(),
-            object.$field.as_str().len(),
-        )
-    }};
-}
-
-// Set a numerical field of the given pointer.
-macro_rules! set_numeric_field {
-    ($ptr:expr, $value:expr, $field:ident) => {{
-        if $ptr.is_null() {
-            return;
-        }
-        let object = &mut *$ptr;
-        object.$field = $value;
-    }};
-}
-
-// Get a field from the given pointer.
-macro_rules! get_numeric_field {
-    ($ptr:expr, $field:ident) => {{
-        if $ptr.is_null() {
-            return 0;
-        }
-
-        let object = &mut *$ptr;
-
-        object.$field
+    ($ref:expr) => {{
+        let string = $ref.as_str();
+        let c_string: CString = CString::new(string).unwrap_or_default();
+        let raw: *mut c_char = c_string.into_raw();
+        unsafe { CharSlice::from_raw_parts(raw as *const c_char, string.len()) }
     }};
 }
 
 // Insert an element in the given hashmap field.
 macro_rules! insert_hashmap {
-    ($ptr:expr, $key:expr, $value:expr, $field:ident) => {{
-        if $ptr.is_null() {
+    ($ref:expr, $key:expr, $value:expr) => {{
+        if $key.is_empty() {
             return;
         }
-        let object = &mut *$ptr;
+
         let bytes_str_key = BytesString::from_slice($key.as_bytes()).unwrap_or_default();
-        object.$field.insert(bytes_str_key, $value);
+        $ref.insert(bytes_str_key, $value);
     }};
 }
 
 macro_rules! remove_hashmap {
-    ($ptr:expr, $key:expr, $field:ident) => {{
-        if $ptr.is_null() {
-            return;
-        }
-        let object = &mut *$ptr;
+    ($ref:expr, $key:expr) => {{
         let bytes_str_key = BytesString::from_slice($key.as_bytes()).unwrap_or_default();
-        object.$field.remove(&bytes_str_key);
+        $ref.remove(&bytes_str_key);
     }};
 }
 
 macro_rules! exists_hashmap {
-    ($ptr:expr, $key:expr, $field:ident) => {{
-        if $ptr.is_null() {
-            return false;
-        }
-        let object = &mut *$ptr;
+    ($ref:expr, $key:expr) => {{
         let bytes_str_key = BytesString::from_slice($key.as_bytes()).unwrap_or_default();
-        return object.$field.contains_key(&bytes_str_key);
+        $ref.contains_key(&bytes_str_key)
     }};
 }
 
 macro_rules! get_keys_hashmap {
-    ($span_ptr:expr, $out_count:expr, $field:ident) => {{
-        if $span_ptr.is_null() || $out_count.is_null() {
-            return std::ptr::null_mut();
+    ($ref:expr, $out_count:expr) => {{
+        unsafe {
+            let mut key_strs: Vec<&str> = $ref.keys().map(|k| k.as_str()).collect();
+
+            key_strs.sort_unstable();
+
+            let mut slices = Vec::with_capacity(key_strs.len());
+            for key in key_strs {
+                let c_string: CString = CString::new(key).unwrap();
+                let raw: *mut c_char = c_string.into_raw();
+                slices.push(CharSlice::from_raw_parts(raw as *const c_char, key.len()));
+            }
+
+            let slice_box = slices.into_boxed_slice();
+            *$out_count = slice_box.len();
+
+            Box::into_raw(slice_box) as *mut CharSlice<'static>
         }
-
-        let span = &mut *$span_ptr;
-
-        let mut slices: Vec<CharSlice<'static>> = Vec::with_capacity(span.$field.len());
-
-        for key in span.$field.keys() {
-            let value = CharSlice::from_raw_parts(key.as_str().as_ptr().cast(), key.as_str().len());
-            slices.push(value);
-        }
-
-        let slice_box = slices.into_boxed_slice();
-        *$out_count = slice_box.len();
-
-        Box::into_raw(slice_box) as *mut CharSlice<'static>
     }};
 }
 
 macro_rules! new_vector_item {
-    ($ptr:expr, $field:ident, $item_type:ty) => {{
-        if $ptr.is_null() {
-            return std::ptr::null_mut();
-        }
-
-        let object = unsafe { &mut *$ptr };
-        object.$field.push(<$item_type>::default());
-
-        let item = object.$field.last_mut().unwrap();
-
-        item as *mut $item_type
+    ($ref:expr, $item_type:ty) => {{
+        $ref.push(<$item_type>::default());
+        unsafe { $ref.last_mut().unwrap_unchecked() }
     }};
 }
 
 macro_rules! set_event_attribute {
-    ($ptr:expr, $key:expr, $new_item:expr) => {{
-        if $ptr.is_null() {
-            return;
-        }
-
-        let event = unsafe { &mut *$ptr };
+    ($event:expr, $key:expr, $new_item:expr) => {{
         let key = BytesString::from_slice($key.as_bytes()).unwrap_or_default();
         let value = $new_item;
 
         // Remove previous value if it exists
-        let previous = event.attributes.remove(&key);
+        let previous = $event.attributes.remove(&key);
 
         // Merge the previous value with the new one
         let merged = match previous {
@@ -162,7 +107,7 @@ macro_rules! set_event_attribute {
         };
 
         // Insert the merged value back into the map
-        event.attributes.insert(key, merged);
+        $event.attributes.insert(key, merged);
     }};
 }
 
@@ -172,335 +117,236 @@ pub type TraceBytes = Vec<SpanBytes>;
 pub type TracesBytes = Vec<TraceBytes>;
 
 #[no_mangle]
-pub extern "C" fn ddog_get_traces() -> *mut TracesBytes {
-    Box::into_raw(Box::default())
+pub extern "C" fn ddog_get_traces() -> Box<TracesBytes> {
+    Box::default()
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_free_traces(ptr: *mut TracesBytes) {
-    if !ptr.is_null() {
-        drop(Box::from_raw(ptr));
-    }
+pub extern "C" fn ddog_free_traces(_traces: Box<TracesBytes>) {}
+
+#[no_mangle]
+pub extern "C" fn ddog_get_traces_size(traces: &mut TracesBytes) -> usize {
+    traces.len()
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_traces_size(ptr: *mut TracesBytes) -> usize {
-    if ptr.is_null() {
-        return 0;
+pub extern "C" fn ddog_get_trace(traces: &mut TracesBytes, index: usize) -> Box<TraceBytes> {
+    if index >= traces.len() {
+        return Box::default();
     }
 
-    let object = &mut *ptr;
-    object.len()
-}
-
-#[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_trace(ptr: *mut TracesBytes, index: usize) -> *mut TraceBytes {
-    if ptr.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    let object = &mut *ptr;
-    if index >= object.len() {
-        return std::ptr::null_mut();
-    }
-
-    &mut object[index] as *mut TraceBytes
+    unsafe { Box::from_raw(traces.get_unchecked_mut(index) as *mut TraceBytes) }
 }
 
 // ------------------ TraceBytes ------------------
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_traces_new_trace(ptr: *mut TracesBytes) -> *mut TraceBytes {
-    if ptr.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    let object = &mut *ptr;
-    object.push(TraceBytes::default());
-    object.last_mut().unwrap_unchecked() as *mut TraceBytes
+pub extern "C" fn ddog_traces_new_trace(traces: &mut TracesBytes) -> &mut TraceBytes {
+    new_vector_item!(traces, TraceBytes)
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_trace_new_span(ptr: *mut TraceBytes) -> *mut SpanBytes {
-    if ptr.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    let object = &mut *ptr;
-    object.push(SpanBytes::default());
-    object.last_mut().unwrap_unchecked() as *mut SpanBytes
+pub extern "C" fn ddog_get_trace_size(trace: &mut TraceBytes) -> usize {
+    trace.len()
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_trace_size(ptr: *mut TraceBytes) -> usize {
-    if ptr.is_null() {
-        return 0;
+pub extern "C" fn ddog_get_span(trace: &mut TraceBytes, index: usize) -> Box<SpanBytes> {
+    if index >= trace.len() {
+        return Box::default();
     }
 
-    let object = &mut *ptr;
-    object.len()
-}
-
-#[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_span(ptr: *mut TraceBytes, index: usize) -> *mut SpanBytes {
-    if ptr.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    let object = &mut *ptr;
-    if index >= object.len() {
-        return std::ptr::null_mut();
-    }
-
-    &mut object[index] as *mut SpanBytes
+    unsafe { Box::from_raw(trace.get_unchecked_mut(index) as *mut SpanBytes) }
 }
 
 // ------------------- SpanBytes -------------------
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_span_debug_log(ptr: *const SpanBytes) -> CharSlice<'static> {
-    if ptr.is_null() {
-        return CharSlice::empty();
-    }
-
-    let span = &*ptr;
-    let debug_str = format!("{:?}", span);
-
-    let boxed_str = debug_str.into_boxed_str();
-    let boxed_len = boxed_str.len();
-
-    let leaked_ptr = Box::into_raw(boxed_str) as *const c_char;
-
-    CharSlice::from_raw_parts(leaked_ptr, boxed_len)
+pub extern "C" fn ddog_trace_new_span(trace: &mut TraceBytes) -> &mut SpanBytes {
+    new_vector_item!(trace, SpanBytes)
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
-    let data = slice.as_slice();
+pub extern "C" fn ddog_span_debug_log(span: &SpanBytes) -> CharSlice<'static> {
+    unsafe {
+        let debug_str = format!("{:?}", span);
+        let cstring = CString::new(debug_str).unwrap_or_default();
+        let len = cstring.to_bytes().len();
 
-    if data.is_empty() {
+        CharSlice::from_raw_parts(cstring.into_raw().cast(), len)
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
+    let slice_ptr = slice.as_ptr() as *mut c_char;
+    if slice_ptr.is_null() {
         return;
     }
 
-    let data_ptr = data.as_ptr() as *mut u8;
-
-    // Memory should be valid UTF-8 if it came from ddog_span_debug_log
-    drop(Box::from_raw(
-        std::str::from_utf8_mut(std::slice::from_raw_parts_mut(data_ptr, data.len()))
-            .unwrap_unchecked(),
-    ));
+    unsafe {
+        let _ = CString::from_raw(slice_ptr as *mut c_char);
+    }
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_span_service(ptr: *mut SpanBytes, slice: CharSlice) {
-    set_string_field!(ptr, slice, service);
+pub extern "C" fn ddog_set_span_service(span: &mut SpanBytes, slice: CharSlice) {
+    set_string_field!(span.service, slice);
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_span_service(ptr: *mut SpanBytes) -> CharSlice<'static> {
-    get_string_field!(ptr, service)
+pub extern "C" fn ddog_get_span_service(span: &mut SpanBytes) -> CharSlice<'static> {
+    get_string_field!(span.service)
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_span_name(ptr: *mut SpanBytes, slice: CharSlice) {
-    set_string_field!(ptr, slice, name);
+pub extern "C" fn ddog_set_span_name(span: &mut SpanBytes, slice: CharSlice) {
+    set_string_field!(span.name, slice);
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_span_name(ptr: *mut SpanBytes) -> CharSlice<'static> {
-    get_string_field!(ptr, name)
+pub extern "C" fn ddog_get_span_name(span: &mut SpanBytes) -> CharSlice<'static> {
+    get_string_field!(span.name)
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_span_resource(ptr: *mut SpanBytes, slice: CharSlice) {
-    set_string_field!(ptr, slice, resource);
+pub extern "C" fn ddog_set_span_resource(span: &mut SpanBytes, slice: CharSlice) {
+    set_string_field!(span.resource, slice);
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_span_resource(ptr: *mut SpanBytes) -> CharSlice<'static> {
-    get_string_field!(ptr, resource)
+pub extern "C" fn ddog_get_span_resource(span: &mut SpanBytes) -> CharSlice<'static> {
+    get_string_field!(span.resource)
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_span_type(ptr: *mut SpanBytes, slice: CharSlice) {
-    set_string_field!(ptr, slice, r#type);
+pub extern "C" fn ddog_set_span_type(span: &mut SpanBytes, slice: CharSlice) {
+    set_string_field!(span.r#type, slice);
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_span_type(ptr: *mut SpanBytes) -> CharSlice<'static> {
-    get_string_field!(ptr, r#type)
+pub extern "C" fn ddog_get_span_type(span: &mut SpanBytes) -> CharSlice<'static> {
+    get_string_field!(span.r#type)
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_span_trace_id(ptr: *mut SpanBytes, value: u64) {
-    set_numeric_field!(ptr, value, trace_id);
+pub extern "C" fn ddog_set_span_trace_id(span: &mut SpanBytes, value: u64) {
+    span.trace_id = value;
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_span_trace_id(ptr: *mut SpanBytes) -> u64 {
-    get_numeric_field!(ptr, trace_id)
+pub extern "C" fn ddog_get_span_trace_id(span: &mut SpanBytes) -> u64 {
+    span.trace_id
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_span_id(ptr: *mut SpanBytes, value: u64) {
-    set_numeric_field!(ptr, value, span_id);
+pub extern "C" fn ddog_set_span_id(span: &mut SpanBytes, value: u64) {
+    span.span_id = value;
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_span_id(ptr: *mut SpanBytes) -> u64 {
-    get_numeric_field!(ptr, span_id)
+pub extern "C" fn ddog_get_span_id(span: &mut SpanBytes) -> u64 {
+    span.span_id
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_span_parent_id(ptr: *mut SpanBytes, value: u64) {
-    set_numeric_field!(ptr, value, parent_id);
+pub extern "C" fn ddog_set_span_parent_id(span: &mut SpanBytes, value: u64) {
+    span.parent_id = value;
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_span_parent_id(ptr: *mut SpanBytes) -> u64 {
-    get_numeric_field!(ptr, parent_id)
+pub extern "C" fn ddog_get_span_parent_id(span: &mut SpanBytes) -> u64 {
+    span.parent_id
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_span_start(ptr: *mut SpanBytes, value: i64) {
-    set_numeric_field!(ptr, value, start);
+pub extern "C" fn ddog_set_span_start(span: &mut SpanBytes, value: i64) {
+    span.start = value;
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_span_start(ptr: *mut SpanBytes) -> i64 {
-    get_numeric_field!(ptr, start)
+pub extern "C" fn ddog_get_span_start(span: &mut SpanBytes) -> i64 {
+    span.start
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_span_duration(ptr: *mut SpanBytes, value: i64) {
-    set_numeric_field!(ptr, value, duration);
+pub extern "C" fn ddog_set_span_duration(span: &mut SpanBytes, value: i64) {
+    span.duration = value;
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_span_duration(ptr: *mut SpanBytes) -> i64 {
-    get_numeric_field!(ptr, duration)
+pub extern "C" fn ddog_get_span_duration(span: &mut SpanBytes) -> i64 {
+    span.duration
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_span_error(ptr: *mut SpanBytes, value: i32) {
-    set_numeric_field!(ptr, value, error);
+pub extern "C" fn ddog_set_span_error(span: &mut SpanBytes, value: i32) {
+    span.error = value;
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_span_error(ptr: *mut SpanBytes) -> i32 {
-    get_numeric_field!(ptr, error)
+pub extern "C" fn ddog_get_span_error(span: &mut SpanBytes) -> i32 {
+    span.error
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_add_span_meta(ptr: *mut SpanBytes, key: CharSlice, val: CharSlice) {
+pub extern "C" fn ddog_add_span_meta(span: &mut SpanBytes, key: CharSlice, value: CharSlice) {
     insert_hashmap!(
-        ptr,
+        span.meta,
         key,
-        BytesString::from_slice(val.as_bytes()).unwrap_or_default(),
-        meta
+        BytesString::from_slice(value.as_bytes()).unwrap_or_default()
     );
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_del_span_meta(ptr: *mut SpanBytes, key: CharSlice) {
-    remove_hashmap!(ptr, key, meta);
+pub extern "C" fn ddog_del_span_meta(span: &mut SpanBytes, key: CharSlice) {
+    remove_hashmap!(span.meta, key);
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_span_meta(
-    ptr: *mut SpanBytes,
-    key: CharSlice,
-) -> CharSlice<'static> {
-    if ptr.is_null() {
-        return CharSlice::empty();
-    }
-
-    let span = &mut *ptr;
-
+pub extern "C" fn ddog_get_span_meta(span: &mut SpanBytes, key: CharSlice) -> CharSlice<'static> {
     let bytes_str_key = BytesString::from_slice(key.as_bytes()).unwrap_or_default();
-
     match span.meta.get(&bytes_str_key) {
-        Some(value) => {
-            CharSlice::from_raw_parts(value.as_str().as_ptr().cast(), value.as_str().len())
-        }
+        Some(value) => unsafe {
+            let string = value.as_str();
+            let c_string: CString = CString::new(string).unwrap_or_default();
+            let raw: *mut c_char = c_string.into_raw();
+            CharSlice::from_raw_parts(raw as *const c_char, string.len())
+        },
         None => CharSlice::empty(),
     }
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_has_span_meta(ptr: *mut SpanBytes, key: CharSlice) -> bool {
-    exists_hashmap!(ptr, key, meta);
+pub extern "C" fn ddog_has_span_meta(span: &mut SpanBytes, key: CharSlice) -> bool {
+    exists_hashmap!(span.meta, key)
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_span_meta_get_keys(
-    span_ptr: *mut SpanBytes,
-    out_count: *mut usize,
+pub extern "C" fn ddog_span_meta_get_keys(
+    span: &mut SpanBytes,
+    out_count: &mut usize,
 ) -> *mut CharSlice<'static> {
-    get_keys_hashmap!(span_ptr, out_count, meta)
+    get_keys_hashmap!(span.meta, out_count)
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_add_span_metrics(ptr: *mut SpanBytes, key: CharSlice, val: f64) {
-    insert_hashmap!(ptr, key, val, metrics);
+pub extern "C" fn ddog_add_span_metrics(span: &mut SpanBytes, key: CharSlice, val: f64) {
+    insert_hashmap!(span.metrics, key, val);
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_del_span_metrics(ptr: *mut SpanBytes, key: CharSlice) {
-    remove_hashmap!(ptr, key, metrics);
+pub extern "C" fn ddog_del_span_metrics(span: &mut SpanBytes, key: CharSlice) {
+    remove_hashmap!(span.metrics, key);
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_span_metrics(
-    ptr: *mut SpanBytes,
+pub extern "C" fn ddog_get_span_metrics(
+    span: &mut SpanBytes,
     key: CharSlice,
-    result: *mut f64,
+    result: &mut f64,
 ) -> bool {
-    if ptr.is_null() {
-        return false;
-    }
-
-    let span = &mut *ptr;
-
     let bytes_str_key = BytesString::from_slice(key.as_bytes()).unwrap_or_default();
-
     match span.metrics.get(&bytes_str_key) {
         Some(&value) => {
             *result = value;
@@ -511,170 +357,146 @@ pub unsafe extern "C" fn ddog_get_span_metrics(
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_has_span_metrics(ptr: *mut SpanBytes, key: CharSlice) -> bool {
-    exists_hashmap!(ptr, key, metrics);
+pub extern "C" fn ddog_has_span_metrics(span: &mut SpanBytes, key: CharSlice) -> bool {
+    exists_hashmap!(span.metrics, key)
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_span_metrics_get_keys(
-    span_ptr: *mut SpanBytes,
-    out_count: *mut usize,
+pub extern "C" fn ddog_span_metrics_get_keys(
+    span: &mut SpanBytes,
+    out_count: &mut usize,
 ) -> *mut CharSlice<'static> {
-    get_keys_hashmap!(span_ptr, out_count, metrics)
+    get_keys_hashmap!(span.metrics, out_count)
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_add_span_meta_struct(
-    ptr: *mut SpanBytes,
-    key: CharSlice,
-    val: CharSlice,
-) {
+pub extern "C" fn ddog_add_span_meta_struct(span: &mut SpanBytes, key: CharSlice, val: CharSlice) {
     insert_hashmap!(
-        ptr,
+        span.meta_struct,
         key,
-        Bytes::copy_from_slice(val.as_bytes()),
-        meta_struct
+        Bytes::copy_from_slice(val.as_bytes())
     );
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_del_span_meta_struct(ptr: *mut SpanBytes, key: CharSlice) {
-    remove_hashmap!(ptr, key, meta_struct);
+pub extern "C" fn ddog_del_span_meta_struct(span: &mut SpanBytes, key: CharSlice) {
+    remove_hashmap!(span.meta_struct, key);
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_get_span_meta_struct(
-    ptr: *mut SpanBytes,
+pub extern "C" fn ddog_get_span_meta_struct(
+    span: &mut SpanBytes,
     key: CharSlice,
 ) -> CharSlice<'static> {
-    if ptr.is_null() {
-        return CharSlice::empty();
-    }
-
-    let span = &mut *ptr;
-
     let bytes_str_key = BytesString::from_slice(key.as_bytes()).unwrap_or_default();
-
     match span.meta_struct.get(&bytes_str_key) {
-        Some(value) => CharSlice::from_raw_parts(value.as_ptr().cast(), value.len()),
+        Some(value) => unsafe { CharSlice::from_raw_parts(value.as_ptr().cast(), value.len()) },
         None => CharSlice::empty(),
     }
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_has_span_meta_struct(ptr: *mut SpanBytes, key: CharSlice) -> bool {
-    exists_hashmap!(ptr, key, meta_struct);
+pub extern "C" fn ddog_has_span_meta_struct(span: &mut SpanBytes, key: CharSlice) -> bool {
+    exists_hashmap!(span.meta_struct, key)
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_span_meta_struct_get_keys(
-    span_ptr: *mut SpanBytes,
-    out_count: *mut usize,
+pub extern "C" fn ddog_span_meta_struct_get_keys(
+    span: &mut SpanBytes,
+    out_count: &mut usize,
 ) -> *mut CharSlice<'static> {
-    get_keys_hashmap!(span_ptr, out_count, meta_struct)
+    get_keys_hashmap!(span.meta_struct, out_count)
 }
 
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_span_free_keys_ptr(keys_ptr: *mut CharSlice<'static>, count: usize) {
-    if keys_ptr.is_null() {
+    if keys_ptr.is_null() || count == 0 {
         return;
     }
 
-    drop(Box::from_raw(std::slice::from_raw_parts_mut(
-        keys_ptr, count,
-    )));
+    let slice: &[CharSlice<'static>] = std::slice::from_raw_parts(keys_ptr, count);
+
+    for cs in slice {
+        let cs_ptr = cs.as_ptr() as *mut c_char;
+        if !cs_ptr.is_null() {
+            let _ = CString::from_raw(cs_ptr);
+        }
+    }
+
+    let _ = Vec::from_raw_parts(keys_ptr, count, count);
 }
 
 // ------------------- SpanLinkBytes -------------------
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_span_new_link(span_ptr: *mut SpanBytes) -> *mut SpanLinkBytes {
-    new_vector_item!(span_ptr, span_links, SpanLinkBytes)
+pub extern "C" fn ddog_span_new_link(span: &mut SpanBytes) -> &mut SpanLinkBytes {
+    new_vector_item!(span.span_links, SpanLinkBytes)
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_link_tracestate(ptr: *mut SpanLinkBytes, slice: CharSlice) {
-    set_string_field!(ptr, slice, tracestate);
+pub extern "C" fn ddog_set_link_tracestate(link: &mut SpanLinkBytes, slice: CharSlice) {
+    set_string_field!(link.tracestate, slice);
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_link_trace_id(ptr: *mut SpanLinkBytes, val: u64) {
-    set_numeric_field!(ptr, val, trace_id);
+pub extern "C" fn ddog_set_link_trace_id(link: &mut SpanLinkBytes, value: u64) {
+    link.trace_id = value;
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_link_trace_id_high(ptr: *mut SpanLinkBytes, val: u64) {
-    set_numeric_field!(ptr, val, trace_id_high);
+pub extern "C" fn ddog_set_link_trace_id_high(link: &mut SpanLinkBytes, value: u64) {
+    link.trace_id_high = value;
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_link_span_id(ptr: *mut SpanLinkBytes, val: u64) {
-    set_numeric_field!(ptr, val, span_id);
+pub extern "C" fn ddog_set_link_span_id(link: &mut SpanLinkBytes, value: u64) {
+    link.span_id = value;
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_link_flags(ptr: *mut SpanLinkBytes, val: u64) {
-    set_numeric_field!(ptr, val, flags);
+pub extern "C" fn ddog_set_link_flags(link: &mut SpanLinkBytes, value: u64) {
+    link.flags = value;
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_add_link_attributes(
-    ptr: *mut SpanLinkBytes,
+pub extern "C" fn ddog_add_link_attributes(
+    link: &mut SpanLinkBytes,
     key: CharSlice,
     val: CharSlice,
 ) {
     insert_hashmap!(
-        ptr,
+        link.attributes,
         key,
-        BytesString::from_slice(val.as_bytes()).unwrap_or_default(),
-        attributes
+        BytesString::from_slice(val.as_bytes()).unwrap_or_default()
     );
 }
 
 // ------------------- SpanEventBytes -------------------
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_span_new_event(span_ptr: *mut SpanBytes) -> *mut SpanEventBytes {
-    new_vector_item!(span_ptr, span_events, SpanEventBytes)
+pub extern "C" fn ddog_span_new_event(span: &mut SpanBytes) -> &mut SpanEventBytes {
+    new_vector_item!(span.span_events, SpanEventBytes)
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_event_name(ptr: *mut SpanEventBytes, slice: CharSlice) {
-    set_string_field!(ptr, slice, name);
+pub extern "C" fn ddog_set_event_name(event: &mut SpanEventBytes, slice: CharSlice) {
+    set_string_field!(event.name, slice);
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_set_event_time(ptr: *mut SpanEventBytes, val: u64) {
-    set_numeric_field!(ptr, val, time_unix_nano);
+pub extern "C" fn ddog_set_event_time(event: &mut SpanEventBytes, val: u64) {
+    event.time_unix_nano = val;
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_add_event_attributes_str(
-    ptr: *mut SpanEventBytes,
+pub extern "C" fn ddog_add_event_attributes_str(
+    event: &mut SpanEventBytes,
     key: CharSlice,
     val: CharSlice,
 ) {
     set_event_attribute!(
-        ptr,
+        event,
         key,
         AttributeArrayValueBytes::String(
             BytesString::from_slice(val.as_bytes()).unwrap_or_default()
@@ -683,77 +505,45 @@ pub unsafe extern "C" fn ddog_add_event_attributes_str(
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_add_event_attributes_bool(
-    ptr: *mut SpanEventBytes,
+pub extern "C" fn ddog_add_event_attributes_bool(
+    event: &mut SpanEventBytes,
     key: CharSlice,
     val: bool,
 ) {
-    set_event_attribute!(ptr, key, AttributeArrayValueBytes::Boolean(val));
+    set_event_attribute!(event, key, AttributeArrayValueBytes::Boolean(val));
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_add_event_attributes_int(
-    ptr: *mut SpanEventBytes,
+pub extern "C" fn ddog_add_event_attributes_int(
+    event: &mut SpanEventBytes,
     key: CharSlice,
     val: i64,
 ) {
-    set_event_attribute!(ptr, key, AttributeArrayValueBytes::Integer(val));
+    set_event_attribute!(event, key, AttributeArrayValueBytes::Integer(val));
 }
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_add_event_attributes_float(
-    ptr: *mut SpanEventBytes,
+pub extern "C" fn ddog_add_event_attributes_float(
+    event: &mut SpanEventBytes,
     key: CharSlice,
     val: f64,
 ) {
-    set_event_attribute!(ptr, key, AttributeArrayValueBytes::Double(val));
+    set_event_attribute!(event, key, AttributeArrayValueBytes::Double(val));
 }
 
 // ------------------- Export Functions -------------------
 
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_serialize_trace_into_c_string(
-    trace_ptr: *mut TraceBytes,
-) -> CharSlice<'static> {
-    if trace_ptr.is_null() {
-        return CharSlice::empty();
-    }
-
-    let trace = &*trace_ptr;
-    match rmp_serde::encode::to_vec_named(trace) {
+pub extern "C" fn ddog_serialize_trace_into_c_string(trace: &mut TraceBytes) -> CharSlice<'static> {
+    match rmp_serde::encode::to_vec_named(&vec![trace]) {
         Ok(vec) => {
-            let boxed_str = vec.into_boxed_slice();
-            let boxed_len = boxed_str.len();
-
-            let leaked_ptr = Box::into_raw(boxed_str) as *const c_char;
-
-            CharSlice::from_raw_parts(leaked_ptr, boxed_len)
+            let string = vec.into_boxed_slice();
+            let len = string.len();
+            let c_string: CString = CString::new(string).unwrap_or_default();
+            let raw: *mut c_char = c_string.into_raw();
+            unsafe { CharSlice::from_raw_parts(raw as *const c_char, len) }
         }
         Err(_) => CharSlice::empty(),
-    }
-}
-
-#[allow(clippy::missing_safety_doc)]
-pub unsafe fn serialize_traces_into_mapped_memory(
-    traces_ptr: *const TracesBytes,
-    buf_ptr: *mut c_void,
-    cap: usize,
-) -> usize {
-    if traces_ptr.is_null() || buf_ptr.is_null() || cap == 0 {
-        return 0;
-    }
-
-    // view the raw buffer as &mut [u8]
-    let dst = slice::from_raw_parts_mut(buf_ptr.cast::<u8>(), cap);
-    let mut cursor = Cursor::new(dst);
-
-    match rmp_serde::encode::write_named(&mut cursor, &*traces_ptr) {
-        Ok(()) => cursor.position() as usize,
-        Err(_) => 0,
     }
 }
 
@@ -777,233 +567,203 @@ mod tests {
 
     #[test]
     fn test_empty_span() {
-        unsafe {
-            let traces_ptr = ddog_get_traces();
-            let trace_ptr = ddog_traces_new_trace(traces_ptr);
-            let span_ptr = ddog_trace_new_span(trace_ptr);
+        let mut traces = ddog_get_traces();
+        let trace = ddog_traces_new_trace(traces.as_mut());
+        let span = ddog_trace_new_span(trace);
 
-            let empty_span = &*span_ptr;
-            let default_span = SpanBytes::default();
+        let default_span = SpanBytes::default();
 
-            assert_eq!(*empty_span, default_span);
+        assert_eq!(*span, default_span);
 
-            ddog_free_traces(traces_ptr);
-        }
+        ddog_free_traces(traces);
     }
 
     #[test]
     fn test_empty_event() {
-        unsafe {
-            let traces_ptr = ddog_get_traces();
-            let trace_ptr = ddog_traces_new_trace(traces_ptr);
-            let span_ptr = ddog_trace_new_span(trace_ptr);
-            let event_ptr = ddog_span_new_event(span_ptr);
-            let event_ref = &*event_ptr;
+        let mut traces = ddog_get_traces();
+        let trace = ddog_traces_new_trace(traces.as_mut());
+        let span = ddog_trace_new_span(trace);
+        let event = ddog_span_new_event(span);
 
-            let default_event = SpanEventBytes::default();
-            assert_eq!(*event_ref, default_event);
+        let default_event = SpanEventBytes::default();
+        assert_eq!(*event, default_event);
+        assert_eq!(span.span_events.len(), 1);
 
-            let span_ref = &*span_ptr;
-            assert_eq!(span_ref.span_events.len(), 1);
-
-            ddog_free_traces(traces_ptr);
-        }
+        ddog_free_traces(traces);
     }
 
     #[test]
     fn test_empty_link() {
-        unsafe {
-            let traces_ptr = ddog_get_traces();
-            let trace_ptr = ddog_traces_new_trace(traces_ptr);
-            let span_ptr = ddog_trace_new_span(trace_ptr);
-            let link_ptr = ddog_span_new_link(span_ptr);
+        let mut traces = ddog_get_traces();
+        let trace = ddog_traces_new_trace(traces.as_mut());
+        let span = ddog_trace_new_span(trace);
+        let link = ddog_span_new_link(span);
 
-            let link_ref = &*link_ptr;
-            let expected_link = SpanLinkBytes::default();
-            assert_eq!(*link_ref, expected_link);
+        let expected_link = SpanLinkBytes::default();
+        assert_eq!(*link, expected_link);
+        assert_eq!(span.span_links.len(), 1);
 
-            let span_ref = &*span_ptr;
-            assert_eq!(span_ref.span_links.len(), 1);
-
-            ddog_free_traces(traces_ptr);
-        }
+        ddog_free_traces(traces);
     }
 
     #[test]
     fn test_full_link() {
-        unsafe {
-            let traces_ptr = ddog_get_traces();
-            let trace_ptr = ddog_traces_new_trace(traces_ptr);
-            let span_ptr = ddog_trace_new_span(trace_ptr);
-            let link_ptr = ddog_span_new_link(span_ptr);
+        let mut traces = ddog_get_traces();
+        let trace = ddog_traces_new_trace(traces.as_mut());
+        let span = ddog_trace_new_span(trace);
+        let link = ddog_span_new_link(span);
 
-            ddog_set_link_trace_id(link_ptr, 1);
-            ddog_set_link_trace_id_high(link_ptr, 2);
-            ddog_set_link_span_id(link_ptr, 3);
-            ddog_set_link_flags(link_ptr, 4);
-            ddog_set_link_tracestate(link_ptr, CharSlice::from("tracestate"));
-            ddog_add_link_attributes(
-                link_ptr,
-                CharSlice::from("attribute"),
-                CharSlice::from("value"),
-            );
+        ddog_set_link_trace_id(link, 1);
+        ddog_set_link_trace_id_high(link, 2);
+        ddog_set_link_span_id(link, 3);
+        ddog_set_link_flags(link, 4);
+        ddog_set_link_tracestate(link, CharSlice::from("tracestate"));
+        ddog_add_link_attributes(link, CharSlice::from("attribute"), CharSlice::from("value"));
 
-            let link_ref = &*link_ptr;
-            let expected_link = SpanLinkBytes {
-                trace_id: 1,
-                trace_id_high: 2,
-                span_id: 3,
-                attributes: HashMap::from([(get_bytes_str("attribute"), get_bytes_str("value"))]),
-                tracestate: get_bytes_str("tracestate"),
-                flags: 4,
-            };
-            assert_eq!(*link_ref, expected_link);
+        let expected_link = SpanLinkBytes {
+            trace_id: 1,
+            trace_id_high: 2,
+            span_id: 3,
+            attributes: HashMap::from([(get_bytes_str("attribute"), get_bytes_str("value"))]),
+            tracestate: get_bytes_str("tracestate"),
+            flags: 4,
+        };
+        assert_eq!(*link, expected_link);
 
-            let span_ref = &*span_ptr;
-            assert_eq!(span_ref.span_links.len(), 1);
-            assert_eq!(span_ref.span_links[0], expected_link);
+        assert_eq!(span.span_links.len(), 1);
+        assert_eq!(span.span_links[0], expected_link);
 
-            ddog_free_traces(traces_ptr);
-        }
+        ddog_free_traces(traces);
     }
 
     #[test]
     fn test_full_event() {
-        unsafe {
-            let traces_ptr = ddog_get_traces();
-            let trace_ptr = ddog_traces_new_trace(traces_ptr);
-            let span_ptr = ddog_trace_new_span(trace_ptr);
-            let event_ptr = ddog_span_new_event(span_ptr);
+        let mut traces = ddog_get_traces();
+        let trace = ddog_traces_new_trace(traces.as_mut());
+        let span = ddog_trace_new_span(trace);
+        let event = ddog_span_new_event(span);
 
-            ddog_set_event_time(event_ptr, 1);
-            ddog_set_event_name(event_ptr, CharSlice::from("name"));
-            ddog_add_event_attributes_str(
-                event_ptr,
-                CharSlice::from("str_attribute"),
-                CharSlice::from("value"),
-            );
-            ddog_add_event_attributes_bool(event_ptr, CharSlice::from("bool_attribute"), false);
-            ddog_add_event_attributes_int(event_ptr, CharSlice::from("int_attribute"), 1);
-            ddog_add_event_attributes_float(event_ptr, CharSlice::from("array_attribute"), 2.0);
-            ddog_add_event_attributes_str(
-                event_ptr,
-                CharSlice::from("array_attribute"),
-                CharSlice::from("other_value"),
-            );
+        ddog_set_event_time(event, 1);
+        ddog_set_event_name(event, CharSlice::from("name"));
+        ddog_add_event_attributes_str(
+            event,
+            CharSlice::from("str_attribute"),
+            CharSlice::from("value"),
+        );
+        ddog_add_event_attributes_bool(event, CharSlice::from("bool_attribute"), false);
+        ddog_add_event_attributes_int(event, CharSlice::from("int_attribute"), 1);
+        ddog_add_event_attributes_float(event, CharSlice::from("array_attribute"), 2.0);
+        ddog_add_event_attributes_str(
+            event,
+            CharSlice::from("array_attribute"),
+            CharSlice::from("other_value"),
+        );
 
-            let event_ref = &*event_ptr;
-            let expected_event = SpanEventBytes {
-                time_unix_nano: 1,
-                name: get_bytes_str("name"),
-                attributes: HashMap::from([
-                    (
-                        get_bytes_str("str_attribute"),
-                        AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::String(
-                            get_bytes_str("value"),
-                        )),
-                    ),
-                    (
-                        get_bytes_str("bool_attribute"),
-                        AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::Boolean(
-                            false,
-                        )),
-                    ),
-                    (
-                        get_bytes_str("int_attribute"),
-                        AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::Integer(1)),
-                    ),
-                    (
-                        get_bytes_str("array_attribute"),
-                        AttributeAnyValueBytes::Array(vec![
-                            AttributeArrayValueBytes::Double(2.0),
-                            AttributeArrayValueBytes::String(get_bytes_str("other_value")),
-                        ]),
-                    ),
-                ]),
-            };
-            assert_eq!(*event_ref, expected_event);
+        let expected_event = SpanEventBytes {
+            time_unix_nano: 1,
+            name: get_bytes_str("name"),
+            attributes: HashMap::from([
+                (
+                    get_bytes_str("str_attribute"),
+                    AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::String(
+                        get_bytes_str("value"),
+                    )),
+                ),
+                (
+                    get_bytes_str("bool_attribute"),
+                    AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::Boolean(false)),
+                ),
+                (
+                    get_bytes_str("int_attribute"),
+                    AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::Integer(1)),
+                ),
+                (
+                    get_bytes_str("array_attribute"),
+                    AttributeAnyValueBytes::Array(vec![
+                        AttributeArrayValueBytes::Double(2.0),
+                        AttributeArrayValueBytes::String(get_bytes_str("other_value")),
+                    ]),
+                ),
+            ]),
+        };
+        assert_eq!(*event, expected_event);
 
-            let span_ref = &*span_ptr;
-            assert_eq!(span_ref.span_events.len(), 1);
-            assert_eq!(span_ref.span_events[0], expected_event);
+        assert_eq!(span.span_events.len(), 1);
+        assert_eq!(span.span_events[0], expected_event);
 
-            ddog_free_traces(traces_ptr);
-        }
+        ddog_free_traces(traces);
     }
 
     #[test]
     fn test_full_span() {
-        unsafe {
-            let traces_ptr = ddog_get_traces();
-            let trace_ptr = ddog_traces_new_trace(traces_ptr);
-            let span_ptr = ddog_trace_new_span(trace_ptr);
-            let link_ptr = ddog_span_new_link(span_ptr);
+        let mut traces = ddog_get_traces();
+        let trace = ddog_traces_new_trace(traces.as_mut());
+        let span = ddog_trace_new_span(trace);
+        let link = ddog_span_new_link(span);
 
-            ddog_set_link_trace_id(link_ptr, 10);
-            ddog_set_link_span_id(link_ptr, 20);
-            ddog_set_link_flags(link_ptr, 30);
+        ddog_set_link_trace_id(link, 10);
+        ddog_set_link_span_id(link, 20);
+        ddog_set_link_flags(link, 30);
 
-            let event_ptr = ddog_span_new_event(span_ptr);
+        let event = ddog_span_new_event(span);
 
-            ddog_set_event_time(event_ptr, 123456);
-            ddog_set_event_name(event_ptr, CharSlice::from("event_name"));
+        ddog_set_event_time(event, 123456);
+        ddog_set_event_name(event, CharSlice::from("event_name"));
 
-            ddog_set_span_service(span_ptr, CharSlice::from("service"));
-            ddog_set_span_name(span_ptr, CharSlice::from("operation"));
-            ddog_set_span_resource(span_ptr, CharSlice::from("resource"));
-            ddog_set_span_type(span_ptr, CharSlice::from("type"));
-            ddog_set_span_trace_id(span_ptr, 1);
-            ddog_set_span_id(span_ptr, 2);
-            ddog_set_span_parent_id(span_ptr, 3);
-            ddog_set_span_start(span_ptr, 4);
-            ddog_set_span_duration(span_ptr, 5);
-            ddog_set_span_error(span_ptr, 6);
-            ddog_add_span_meta(
-                span_ptr,
-                CharSlice::from("meta_key"),
-                CharSlice::from("meta_value"),
-            );
-            ddog_add_span_metrics(span_ptr, CharSlice::from("metric_key"), 1.0);
-            ddog_add_span_meta_struct(
-                span_ptr,
-                CharSlice::from("meta_struct_key"),
-                CharSlice::from("meta_struct_value"),
-            );
+        ddog_set_span_service(span, CharSlice::from("service"));
+        ddog_set_span_name(span, CharSlice::from("operation"));
+        ddog_set_span_resource(span, CharSlice::from("resource"));
+        ddog_set_span_type(span, CharSlice::from("type"));
+        ddog_set_span_trace_id(span, 1);
+        ddog_set_span_id(span, 2);
+        ddog_set_span_parent_id(span, 3);
+        ddog_set_span_start(span, 4);
+        ddog_set_span_duration(span, 5);
+        ddog_set_span_error(span, 6);
+        ddog_add_span_meta(
+            span,
+            CharSlice::from("meta_key"),
+            CharSlice::from("meta_value"),
+        );
+        ddog_add_span_metrics(span, CharSlice::from("metric_key"), 1.0);
+        ddog_add_span_meta_struct(
+            span,
+            CharSlice::from("meta_struct_key"),
+            CharSlice::from("meta_struct_value"),
+        );
 
-            let span_ref = &*span_ptr;
-            let expected_span = SpanBytes {
-                service: get_bytes_str("service"),
-                name: get_bytes_str("operation"),
-                resource: get_bytes_str("resource"),
-                r#type: get_bytes_str("type"),
-                trace_id: 1,
-                span_id: 2,
-                parent_id: 3,
-                start: 4,
-                duration: 5,
-                error: 6,
-                meta: HashMap::from([(get_bytes_str("meta_key"), get_bytes_str("meta_value"))]),
-                metrics: HashMap::from([(get_bytes_str("metric_key"), 1.0)]),
-                meta_struct: HashMap::from([(
-                    get_bytes_str("meta_struct_key"),
-                    get_bytes("meta_struct_value"),
-                )]),
-                span_links: vec![SpanLinkBytes {
-                    trace_id: 10,
-                    span_id: 20,
-                    flags: 30,
-                    ..Default::default()
-                }],
-                span_events: vec![SpanEventBytes {
-                    time_unix_nano: 123456,
-                    name: get_bytes_str("event_name"),
-                    attributes: HashMap::new(),
-                }],
-            };
+        let expected_span = SpanBytes {
+            service: get_bytes_str("service"),
+            name: get_bytes_str("operation"),
+            resource: get_bytes_str("resource"),
+            r#type: get_bytes_str("type"),
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 3,
+            start: 4,
+            duration: 5,
+            error: 6,
+            meta: HashMap::from([(get_bytes_str("meta_key"), get_bytes_str("meta_value"))]),
+            metrics: HashMap::from([(get_bytes_str("metric_key"), 1.0)]),
+            meta_struct: HashMap::from([(
+                get_bytes_str("meta_struct_key"),
+                get_bytes("meta_struct_value"),
+            )]),
+            span_links: vec![SpanLinkBytes {
+                trace_id: 10,
+                span_id: 20,
+                flags: 30,
+                ..Default::default()
+            }],
+            span_events: vec![SpanEventBytes {
+                time_unix_nano: 123456,
+                name: get_bytes_str("event_name"),
+                attributes: HashMap::new(),
+            }],
+        };
 
-            assert_eq!(*span_ref, expected_span);
+        assert_eq!(*span, expected_span);
 
-            ddog_free_traces(traces_ptr);
-        }
+        ddog_free_traces(traces);
     }
 }

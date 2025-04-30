@@ -1376,10 +1376,8 @@ version = "19.0.0"
 dependencies = [
  "build_common",
  "data-pipeline",
- "datadog-ipc",
  "datadog-trace-utils",
  "ddcommon-ffi",
- "ddtelemetry-ffi",
  "httpmock",
  "rmp-serde",
  "tinybytes",
@@ -1757,6 +1755,7 @@ dependencies = [
  "http 1.1.0",
  "libc",
  "paste",
+ "rmp-serde",
  "tempfile",
  "tracing",
 ]
