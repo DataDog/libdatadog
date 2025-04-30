@@ -4,7 +4,7 @@
 use crate::handles::{HandlesTransport, TransferHandles};
 use crate::platform::{mmap_handle, munmap_handle, OwnedFileHandle, PlatformHandle};
 use serde::{Deserialize, Serialize};
-use std::{ffi::CString, io};
+use std::{ffi::CString, io, ptr::NonNull};
 #[cfg(feature = "tiny-bytes")]
 use tinybytes::UnderlyingBytes;
 
@@ -25,9 +25,9 @@ where
     T: MemoryHandle,
 {
     #[cfg(unix)]
-    pub(crate) ptr: *mut libc::c_void,
+    pub(crate) ptr: NonNull<libc::c_void>,
     #[cfg(windows)]
-    pub(crate) ptr: *mut winapi::ctypes::c_void,
+    pub(crate) ptr: NonNull<winapi::ctypes::c_void>,
     pub(crate) mem: T,
 }
 
@@ -133,11 +133,11 @@ impl FileBackedHandle for NamedShmHandle {
 
 impl<T: MemoryHandle> MappedMem<T> {
     pub fn as_slice(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.ptr as *const u8, self.mem.get_size()) }
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr().cast(), self.mem.get_size()) }
     }
 
     pub fn as_slice_mut(&mut self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.ptr as *mut u8, self.mem.get_size()) }
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr().cast(), self.mem.get_size()) }
     }
 
     pub fn get_size(&self) -> usize {

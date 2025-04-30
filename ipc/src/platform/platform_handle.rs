@@ -63,9 +63,8 @@ impl<T> PlatformHandle<T> {
     pub(crate) fn as_owned_fd(&self) -> io::Result<&Arc<OwnedFileHandle>> {
         match &self.inner {
             Some(fd) => Ok(fd),
-            None => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "attempting to unwrap FD from invalid handle".to_string(),
+            None => Err(io::Error::other(
+                "attempting to unwrap FD from invalid handle",
             )),
         }
     }
@@ -83,19 +82,14 @@ impl<T> PlatformHandle<T> {
         let shared_handle = match self.inner {
             Some(shared_handle) => shared_handle,
             None => {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "attempting to unwrap FD from invalid handle".to_string(),
+                return Err(io::Error::other(
+                    "attempting to unwrap FD from invalid handle",
                 ))
             }
         };
 
-        Arc::try_unwrap(shared_handle).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                "attempting to unwrap FD from shared platform handle".to_string(),
-            )
-        })
+        Arc::try_unwrap(shared_handle)
+            .map_err(|_| io::Error::other("attempting to unwrap FD from shared platform handle"))
     }
 
     /// casts the associated type

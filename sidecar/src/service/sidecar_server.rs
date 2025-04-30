@@ -16,7 +16,7 @@ use datadog_ipc::tarpc;
 use datadog_ipc::tarpc::context::Context;
 use datadog_ipc::transport::Transport;
 use datadog_trace_utils::trace_utils::SendData;
-use datadog_trace_utils::tracer_payload;
+use datadog_trace_utils::tracer_payload::decode_to_trace_chunks;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
 use ddcommon::{Endpoint, MutexExt};
 use ddtelemetry::worker::{
@@ -275,20 +275,15 @@ impl SidecarServer {
             headers
         );
 
-        let mut size = 0;
-        let mut processor = tracer_payload::DefaultTraceChunkProcessor;
-        let mut payload_params = tracer_payload::TracerPayloadParams::new(
-            data,
-            &headers,
-            &mut processor,
-            target.api_key.is_some(),
-            TraceEncoding::V04,
-        );
-        payload_params.measure_size(&mut size);
-        match payload_params.try_into() {
-            Ok(payload) => {
+        match decode_to_trace_chunks(data, TraceEncoding::V04) {
+            Ok((payload, size)) => {
                 trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
-                let data = SendData::new(size, payload, headers, target);
+                let data = SendData::new(
+                    size,
+                    payload.into_tracer_payload_collection(),
+                    headers,
+                    target,
+                );
                 self.trace_flusher.enqueue(data);
             }
             Err(e) => {
@@ -556,16 +551,13 @@ impl SidecarInterface for SidecarServer {
                     .clone()
                     .unwrap_or_else(ddtelemetry::config::Config::from_env);
                 config.restartable = true;
-                Some(
-                    builder
-                        .spawn_with_config(config.clone())
-                        .map(move |result| {
-                            if result.is_ok() {
-                                info!("spawning telemetry worker {config:?}");
-                            }
-                            result
-                        }),
-                )
+                builder.config = config.clone();
+                Some(builder.spawn().map(move |result| {
+                    if result.is_ok() {
+                        info!("spawning telemetry worker {config:?}");
+                    }
+                    result
+                }))
             } else {
                 None
             };
@@ -679,11 +671,11 @@ impl SidecarInterface for SidecarServer {
             *session.remote_config_notify_function.lock().unwrap() = remote_config_notify_function;
         }
         session.modify_telemetry_config(|cfg| {
-            cfg.telemetry_hearbeat_interval = config.telemetry_heartbeat_interval;
+            cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
             let endpoint =
                 get_product_endpoint(ddtelemetry::config::PROD_INTAKE_SUBDOMAIN, &config.endpoint);
             cfg.set_endpoint(endpoint).ok();
-            cfg.telemetry_hearbeat_interval = config.telemetry_heartbeat_interval;
+            cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
         });
         session.modify_trace_config(|cfg| {
             let endpoint = get_product_endpoint(
@@ -1002,21 +994,11 @@ impl SidecarInterface for SidecarServer {
             Some(Cow::Owned(token))
         };
         debug!("Update test token of session {session_id} to {token:?}");
-        fn update_cfg<F: FnOnce(Endpoint) -> anyhow::Result<()>>(
-            endpoint: Option<Endpoint>,
-            set: F,
-            token: &Option<Cow<'static, str>>,
-        ) {
-            if let Some(mut endpoint) = endpoint {
-                endpoint.test_token.clone_from(token);
-                set(endpoint).ok();
-            }
-        }
-        session.modify_telemetry_config(|cfg| {
-            update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
+        session.modify_telemetry_config(|telemetry_cfg| {
+            telemetry_cfg.set_endpoint_test_token(token.clone());
         });
-        session.modify_trace_config(|cfg| {
-            update_cfg(cfg.endpoint.take(), |e| cfg.set_endpoint(e), &token);
+        session.modify_trace_config(|trace_cfg| {
+            trace_cfg.set_endpoint_test_token(token.clone());
         });
         // TODO(APMSP-1377): the dogstatsd-client doesn't support test_session tokens yet
         // session.configure_dogstatsd(|cfg| {

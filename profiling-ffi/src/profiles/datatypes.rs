@@ -319,13 +319,7 @@ impl<'a> TryFrom<&'a Label<'a>> for api::Label<'a> {
     fn try_from(label: &'a Label<'a>) -> Result<Self, Self::Error> {
         let key = label.key.try_to_utf8()?;
         let str = label.str.try_to_utf8()?;
-        let str = if str.is_empty() { None } else { Some(str) };
         let num_unit = label.num_unit.try_to_utf8()?;
-        let num_unit = if num_unit.is_empty() {
-            None
-        } else {
-            Some(num_unit)
-        };
 
         Ok(Self {
             key,
@@ -340,13 +334,7 @@ impl<'a> From<&'a Label<'a>> for api::StringIdLabel {
     fn from(label: &'a Label<'a>) -> Self {
         let key = label.key_id;
         let str = label.str_id;
-        let str = if str.value == 0 { None } else { Some(str) };
         let num_unit = label.num_unit_id;
-        let num_unit = if num_unit.value == 0 {
-            None
-        } else {
-            Some(num_unit)
-        };
 
         Self {
             key,
@@ -846,7 +834,6 @@ mod tests {
     #[test]
     // TODO FIX
     #[cfg_attr(miri, ignore)]
-
     fn aggregate_samples() -> anyhow::Result<()> {
         unsafe {
             let sample_type: *const ValueType = &ValueType::new("samples", "count");

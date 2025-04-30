@@ -74,18 +74,26 @@ impl StackTrace {
 #[cfg(unix)]
 impl StackTrace {
     pub fn normalize_ips(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
+        let mut errors = 0;
         for frame in &mut self.frames {
-            // TODO: Should this keep going on failure, and report at the end?
-            frame.normalize_ip(normalizer, pid)?;
+            frame.normalize_ip(normalizer, pid).unwrap_or_else(|e| {
+                frame.comments.push(e.to_string());
+                errors += 1;
+            });
         }
+        anyhow::ensure!(errors == 0);
         Ok(())
     }
 
     pub fn resolve_names(&mut self, src: &Source, symbolizer: &Symbolizer) -> anyhow::Result<()> {
+        let mut errors = 0;
         for frame in &mut self.frames {
-            // TODO: Should this keep going on failure, and report at the end?
-            frame.resolve_names(src, symbolizer)?;
+            frame.resolve_names(src, symbolizer).unwrap_or_else(|e| {
+                frame.comments.push(e.to_string());
+                errors += 1;
+            });
         }
+        anyhow::ensure!(errors == 0);
         Ok(())
     }
 }
@@ -129,6 +137,10 @@ pub struct StackFrame {
     pub function: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
+
+    // Additional Info
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<String>,
 }
 
 impl StackFrame {
@@ -242,6 +254,8 @@ impl super::test_utils::TestInstance for StackFrame {
         let file = Some(format!("banana{seed}.rs"));
         let function = Some(format!("Bar::baz{seed}"));
         let line = Some((2 * seed + 1) as u32);
+
+        let comments = vec![format!("This is a comment on frame {seed}")];
         Self {
             ip,
             module_base_address,
@@ -256,6 +270,7 @@ impl super::test_utils::TestInstance for StackFrame {
             file,
             function,
             line,
+            comments,
         }
     }
 }

@@ -13,7 +13,7 @@ use nix::unistd::ftruncate;
 use std::ffi::{CStr, CString};
 use std::io;
 use std::num::NonZeroUsize;
-use std::os::fd::OwnedFd;
+use std::os::fd::{AsFd, OwnedFd};
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 const MAPPING_MAX_SIZE: usize = 1 << 17; // 128 MiB ought to be enough for everybody?
@@ -21,7 +21,7 @@ const NOT_COMMITTED: usize = 1 << (usize::BITS - 1);
 
 pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<MappedMem<T>> {
     let shm = handle.get_shm_mut();
-    let fd = shm.handle.as_owned_fd()?;
+    let fd = shm.handle.as_owned_fd()?.as_fd();
     if shm.size & NOT_COMMITTED != 0 {
         shm.size &= !NOT_COMMITTED;
 
@@ -33,13 +33,13 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
                 page_size,
                 ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
                 MapFlags::MAP_SHARED,
-                Some(fd),
+                fd,
                 (MAPPING_MAX_SIZE - usize::from(page_size)) as off_t,
             )?;
             if shm.size == 0 {
-                shm.size = *(ptr as *mut usize);
+                shm.size = *(ptr.as_ptr().cast());
             } else {
-                *(ptr as *mut usize) = shm.size;
+                *(ptr.as_ptr().cast()) = shm.size;
             }
             _ = munmap(ptr, usize::from(page_size));
         }
@@ -53,7 +53,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
                 NonZeroUsize::new(shm.size).unwrap(),
                 ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
                 MapFlags::MAP_SHARED,
-                Some(fd),
+                fd,
                 0,
             )?
         },
@@ -159,12 +159,12 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
                 page_size,
                 ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
                 MapFlags::MAP_SHARED,
-                Some(handle.get_shm().handle.as_owned_fd().unwrap()),
+                handle.get_shm().handle.as_owned_fd().unwrap(),
                 (MAPPING_MAX_SIZE - usize::from(page_size)) as off_t,
             )
             .unwrap();
             // AtomicUsize::from_ptr() is still unstable
-            let size = &*(ptr as *const AtomicUsize);
+            let size = ptr.cast::<AtomicUsize>().as_ref();
             size.fetch_max(handle.get_size(), Ordering::SeqCst);
             _ = munmap(ptr, usize::from(page_size));
         }

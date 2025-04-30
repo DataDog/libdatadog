@@ -4,18 +4,17 @@
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::{
     map::read_map_len,
-    number::read_number_bytes,
-    string::{handle_null_marker, read_string_bytes},
+    number::read_number_slice,
+    string::{handle_null_marker, read_string_ref},
 };
-use crate::span::SpanBytes;
+use crate::span::{SpanBytes, SpanSlice};
 use std::collections::HashMap;
 
 const PAYLOAD_LEN: u32 = 2;
 const SPAN_ELEM_COUNT: u32 = 12;
 
-/// Decodes a slice of bytes into a vector of `TracerPayloadV05` objects.
-///
-///
+/// Decodes a Bytes buffer into a `Vec<Vec<SpanBytes>>` object, also represented as a vector of
+/// `TracerPayloadV05` objects.
 ///
 /// # Arguments
 ///
@@ -25,6 +24,78 @@ const SPAN_ELEM_COUNT: u32 = 12;
 /// # Returns
 ///
 /// * `Ok(Vec<TracerPayloadV05>)` - A vector of decoded `TracerPayloadV05` objects if successful.
+/// * `Err(DecodeError)` - An error if the decoding process fails.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - The array length for trace count or span count cannot be read.
+/// - Any span cannot be decoded.
+///
+/// # Examples
+///
+/// ```
+/// use datadog_trace_utils::msgpack_decoder::v05::from_bytes;
+/// use rmp_serde::to_vec;
+/// use std::collections::HashMap;
+/// use tinybytes;
+///
+/// let data = (
+///     vec!["".to_string()],
+///     vec![vec![(
+///         0,
+///         0,
+///         0,
+///         1,
+///         2,
+///         3,
+///         4,
+///         5,
+///         6,
+///         HashMap::<u32, u32>::new(),
+///         HashMap::<u32, f64>::new(),
+///         0,
+///     )]],
+/// );
+/// let encoded_data = to_vec(&data).unwrap();
+/// let encoded_data_as_tinybytes = tinybytes::Bytes::from(encoded_data);
+/// let (decoded_traces, _payload_size) =
+///     from_bytes(encoded_data_as_tinybytes).expect("Decoding failed");
+///
+/// assert_eq!(1, decoded_traces.len());
+/// assert_eq!(1, decoded_traces[0].len());
+/// let decoded_span = &decoded_traces[0][0];
+/// assert_eq!("", decoded_span.name.as_str());
+/// ```
+pub fn from_bytes(data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize), DecodeError> {
+    let mut parsed_data = data.clone();
+    let (traces_ref, size) = from_slice(unsafe { parsed_data.as_mut_slice() })?;
+
+    #[allow(clippy::unwrap_used)]
+    let traces_owned = traces_ref
+        .iter()
+        .map(|trace| {
+            trace
+                .iter()
+                // Safe to unwrap since the spans use subslices of the `data` slice
+                .map(|span| span.try_to_bytes(&data).unwrap())
+                .collect()
+        })
+        .collect();
+    Ok((traces_owned, size))
+}
+
+/// Decodes a slice of bytes into a `Vec<Vec<SpanSlice>>` object.
+/// The resulting spans have the same lifetime as the initial buffer.
+///
+/// # Arguments
+///
+/// * `data` - A slice of bytes containing the encoded data. Bytes are expected to be encoded
+///   msgpack data containing a list of a list of v05 spans.
+///
+/// # Returns
+///
+/// * `Ok(Vec<Vec<SpanSlice>>)` - A vector of decoded `Vec<SpanSlice>` objects if successful.
 /// * `Err(DecodeError)` - An error if the decoding process fails.
 ///
 /// # Errors
@@ -61,15 +132,15 @@ const SPAN_ELEM_COUNT: u32 = 12;
 /// let encoded_data = to_vec(&data).unwrap();
 /// let encoded_data_as_tinybytes = tinybytes::Bytes::from(encoded_data);
 /// let (decoded_traces, _payload_size) =
-///     from_slice(encoded_data_as_tinybytes).expect("Decoding failed");
+///     from_slice(&encoded_data_as_tinybytes).expect("Decoding failed");
 ///
 /// assert_eq!(1, decoded_traces.len());
 /// assert_eq!(1, decoded_traces[0].len());
 /// let decoded_span = &decoded_traces[0][0];
-/// assert_eq!("", decoded_span.name.as_str());
+/// assert_eq!("", decoded_span.name);
 /// ```
-pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize), DecodeError> {
-    let data_elem = rmp::decode::read_array_len(unsafe { data.as_mut_slice() })
+pub fn from_slice(mut data: &[u8]) -> Result<(Vec<Vec<SpanSlice>>, usize), DecodeError> {
+    let data_elem = rmp::decode::read_array_len(&mut data)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read payload len".to_string()))?;
 
     if data_elem != PAYLOAD_LEN {
@@ -80,16 +151,16 @@ pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, us
 
     let dict = deserialize_dict(&mut data)?;
 
-    let trace_count = rmp::decode::read_array_len(unsafe { data.as_mut_slice() })
+    let trace_count = rmp::decode::read_array_len(&mut data)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read trace len".to_string()))?;
 
-    let mut traces: Vec<Vec<SpanBytes>> = Vec::with_capacity(trace_count as usize);
+    let mut traces: Vec<Vec<SpanSlice>> = Vec::with_capacity(trace_count as usize);
     let start_len = data.len();
 
     for _ in 0..trace_count {
-        let span_count = rmp::decode::read_array_len(unsafe { data.as_mut_slice() })
+        let span_count = rmp::decode::read_array_len(&mut data)
             .map_err(|_| DecodeError::InvalidFormat("Unable to read span len".to_string()))?;
-        let mut trace: Vec<SpanBytes> = Vec::with_capacity(span_count as usize);
+        let mut trace: Vec<SpanSlice> = Vec::with_capacity(span_count as usize);
 
         for _ in 0..span_count {
             let span = deserialize_span(&mut data, &dict)?;
@@ -100,26 +171,21 @@ pub fn from_slice(mut data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, us
     Ok((traces, start_len - data.len()))
 }
 
-fn deserialize_dict(
-    data: &mut tinybytes::Bytes,
-) -> Result<Vec<tinybytes::BytesString>, DecodeError> {
-    let dict_len = rmp::decode::read_array_len(unsafe { data.as_mut_slice() })
+fn deserialize_dict<'a>(data: &mut &'a [u8]) -> Result<Vec<&'a str>, DecodeError> {
+    let dict_len = rmp::decode::read_array_len(data)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read dictionary len".to_string()))?;
 
-    let mut dict: Vec<tinybytes::BytesString> = Vec::with_capacity(dict_len as usize);
+    let mut dict: Vec<&'a str> = Vec::with_capacity(dict_len as usize);
     for _ in 0..dict_len {
-        let str = read_string_bytes(data)?;
+        let str = read_string_ref(data)?;
         dict.push(str);
     }
     Ok(dict)
 }
 
-fn deserialize_span(
-    data: &mut tinybytes::Bytes,
-    dict: &[tinybytes::BytesString],
-) -> Result<SpanBytes, DecodeError> {
-    let mut span = SpanBytes::default();
-    let span_len = rmp::decode::read_array_len(unsafe { data.as_mut_slice() })
+fn deserialize_span<'a>(data: &mut &[u8], dict: &[&'a str]) -> Result<SpanSlice<'a>, DecodeError> {
+    let mut span = SpanSlice::default();
+    let span_len = rmp::decode::read_array_len(data)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read dictionary len".to_string()))?;
 
     if span_len != SPAN_ELEM_COUNT {
@@ -131,12 +197,12 @@ fn deserialize_span(
     span.service = get_from_dict(data, dict)?;
     span.name = get_from_dict(data, dict)?;
     span.resource = get_from_dict(data, dict)?;
-    span.trace_id = read_number_bytes(data)?;
-    span.span_id = read_number_bytes(data)?;
-    span.parent_id = read_number_bytes(data)?;
-    span.start = read_number_bytes(data)?;
-    span.duration = read_number_bytes(data)?;
-    span.error = read_number_bytes(data)?;
+    span.trace_id = read_number_slice(data)?;
+    span.span_id = read_number_slice(data)?;
+    span.parent_id = read_number_slice(data)?;
+    span.start = read_number_slice(data)?;
+    span.duration = read_number_slice(data)?;
+    span.error = read_number_slice(data)?;
     span.meta = read_indexed_map_to_bytes_strings(data, dict)?;
     span.metrics = read_metrics(data, dict)?;
     span.r#type = get_from_dict(data, dict)?;
@@ -144,24 +210,21 @@ fn deserialize_span(
     Ok(span)
 }
 
-fn get_from_dict(
-    data: &mut tinybytes::Bytes,
-    dict: &[tinybytes::BytesString],
-) -> Result<tinybytes::BytesString, DecodeError> {
-    let index: u32 = read_number_bytes(data)?;
+fn get_from_dict<'a>(data: &mut &[u8], dict: &[&'a str]) -> Result<&'a str, DecodeError> {
+    let index: u32 = read_number_slice(data)?;
     match dict.get(index as usize) {
-        Some(value) => Ok(value.clone()),
+        Some(value) => Ok(value),
         None => Err(DecodeError::InvalidFormat(
             "Unable to locate string in the dictionary".to_string(),
         )),
     }
 }
 
-fn read_indexed_map_to_bytes_strings(
-    buf: &mut tinybytes::Bytes,
-    dict: &[tinybytes::BytesString],
-) -> Result<HashMap<tinybytes::BytesString, tinybytes::BytesString>, DecodeError> {
-    let len = rmp::decode::read_map_len(unsafe { buf.as_mut_slice() })
+fn read_indexed_map_to_bytes_strings<'a>(
+    buf: &mut &[u8],
+    dict: &[&'a str],
+) -> Result<HashMap<&'a str, &'a str>, DecodeError> {
+    let len = rmp::decode::read_map_len(buf)
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
 
     #[allow(clippy::expect_used)]
@@ -174,20 +237,20 @@ fn read_indexed_map_to_bytes_strings(
     Ok(map)
 }
 
-fn read_metrics(
-    buf: &mut tinybytes::Bytes,
-    dict: &[tinybytes::BytesString],
-) -> Result<HashMap<tinybytes::BytesString, f64>, DecodeError> {
-    if let Some(empty_map) = handle_null_marker(buf, HashMap::default) {
-        return Ok(empty_map);
+fn read_metrics<'a>(
+    buf: &mut &[u8],
+    dict: &[&'a str],
+) -> Result<HashMap<&'a str, f64>, DecodeError> {
+    if handle_null_marker(buf) {
+        return Ok(HashMap::default());
     }
 
-    let len = read_map_len(unsafe { buf.as_mut_slice() })?;
+    let len = read_map_len(buf)?;
 
     let mut map = HashMap::with_capacity(len);
     for _ in 0..len {
         let k = get_from_dict(buf, dict)?;
-        let v = read_number_bytes(buf)?;
+        let v = read_number_slice(buf)?;
         map.insert(k, v);
     }
     Ok(map)
@@ -233,20 +296,19 @@ mod tests {
     fn deserialize_dict_test() {
         let dict = vec!["foo", "bar", "baz"];
         let mpack = rmp_serde::to_vec(&dict).unwrap();
-        let mut payload = tinybytes::Bytes::from(mpack);
+        let mut payload = mpack.as_ref();
 
         let result = deserialize_dict(&mut payload).unwrap();
-        let result: Vec<_> = result.iter().map(|e| e.as_str()).collect();
         assert_eq!(dict, result);
     }
 
     #[test]
-    fn from_slice_invalid_size_test() {
+    fn from_bytes_invalid_size_test() {
         // 3 empty array.
         let empty_three: [u8; 3] = [0x93, 0x90, 0x90];
         let payload = unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(&empty_three) };
         let bytes = tinybytes::Bytes::from_static(payload);
-        let result = from_slice(bytes);
+        let result = from_bytes(bytes);
 
         assert!(result.is_err());
         matches!(result.err().unwrap(), DecodeError::InvalidFormat(_));
@@ -255,14 +317,14 @@ mod tests {
         let empty_one: [u8; 2] = [0x91, 0x90];
         let payload = unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(&empty_one) };
         let bytes = tinybytes::Bytes::from_static(payload);
-        let result = from_slice(bytes);
+        let result = from_bytes(bytes);
 
         assert!(result.is_err());
         matches!(result.err().unwrap(), DecodeError::InvalidFormat(_));
     }
 
     #[test]
-    fn from_slice_test() {
+    fn from_bytes_test() {
         let data: V05Payload = (
             vec![
                 "".to_string(),
@@ -293,7 +355,7 @@ mod tests {
             )]],
         );
         let msgpack = rmp_serde::to_vec(&data).unwrap();
-        let (traces, _) = from_slice(tinybytes::Bytes::from(msgpack)).unwrap();
+        let (traces, _) = from_bytes(tinybytes::Bytes::from(msgpack)).unwrap();
 
         let span = &traces[0][0];
         assert_eq!(span.service.as_str(), "my-service");
@@ -352,7 +414,7 @@ mod tests {
         );
         let payload = rmp_serde::to_vec(&data).unwrap();
         let payload = unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(&payload) };
-        let result = from_slice(tinybytes::Bytes::from_static(payload));
+        let result = from_bytes(tinybytes::Bytes::from_static(payload));
 
         assert!(result.is_err());
 
@@ -392,7 +454,7 @@ mod tests {
 
         let payload = rmp_serde::to_vec(&data).unwrap();
         let payload = unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(&payload) };
-        let result = from_slice(tinybytes::Bytes::from_static(payload));
+        let result = from_bytes(tinybytes::Bytes::from_static(payload));
 
         assert!(result.is_err());
 

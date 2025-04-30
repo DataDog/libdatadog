@@ -7,9 +7,12 @@ use nix::sys::select::FdSet;
 use nix::sys::time::{TimeVal, TimeValLike};
 use std::{
     io::{self, ErrorKind, Read, Write},
-    os::unix::{
-        net::UnixStream,
-        prelude::{AsRawFd, RawFd},
+    os::{
+        fd::AsFd,
+        unix::{
+            net::UnixStream,
+            prelude::{AsRawFd, RawFd},
+        },
     },
     time::Duration,
 };
@@ -57,7 +60,7 @@ impl Channel {
 
     pub fn probe_readable(&self) -> bool {
         #[allow(clippy::unwrap_used)]
-        let raw_fd = self.inner.as_owned_fd().unwrap();
+        let raw_fd = self.inner.as_owned_fd().unwrap().as_fd();
         let mut fds = FdSet::new();
         fds.insert(raw_fd);
         nix::sys::select::select(None, Some(&mut fds), None, None, Some(&mut TimeVal::zero()))

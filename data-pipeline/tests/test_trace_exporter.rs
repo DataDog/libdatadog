@@ -13,10 +13,9 @@ mod tracing_integration_tests {
     use std::fs::Permissions;
     #[cfg(target_os = "linux")]
     use std::os::unix::fs::PermissionsExt;
-    use tinybytes::Bytes;
     use tokio::task;
 
-    fn get_v04_trace_snapshot_test_payload(name_prefix: &str) -> Bytes {
+    fn get_v04_trace_snapshot_test_payload(name_prefix: &str) -> Vec<u8> {
         let mut span_1 = create_test_json_span(1234, 12342, 12341, 1, false);
         span_1["name"] = json!(format!("{name_prefix}_01"));
 
@@ -66,12 +65,10 @@ mod tracing_integration_tests {
         root_span["name"] = json!(format!("{name_prefix}_03"));
         root_span["type"] = json!("web".to_owned());
 
-        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap();
-
-        tinybytes::Bytes::from(encoded_data)
+        rmp_serde::to_vec_named(&vec![vec![span_1, span_2, root_span]]).unwrap()
     }
 
-    fn get_v05_trace_snapshot_test_payload() -> Bytes {
+    fn get_v05_trace_snapshot_test_payload() -> Vec<u8> {
         let mut dict = SharedDict::default();
 
         let span_1 = create_test_v05_span(
@@ -99,8 +96,8 @@ mod tracing_integration_tests {
         );
 
         let traces = (dict.dict(), vec![vec![span_1, span_2, root_span]]);
-        let encoded_data = rmp_serde::to_vec(&traces).unwrap();
-        tinybytes::Bytes::from(encoded_data)
+
+        rmp_serde::to_vec(&traces).unwrap()
     }
 
     #[cfg_attr(miri, ignore)]
@@ -126,12 +123,13 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
-                .set_query_params(format!("test_session_token={snapshot_name}").as_str());
+                .set_test_session_token(snapshot_name);
 
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
             let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_snapshot");
-            let response = trace_exporter.send(data, 1);
+
+            let response = trace_exporter.send(data.as_ref(), 1);
             let expected_response = format!("{{\"rate_by_service\": {}}}", rate_param);
 
             assert!(response.is_ok());
@@ -174,13 +172,14 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
-                .set_query_params(format!("test_session_token={}", snapshot_name).as_str())
+                .set_test_session_token(snapshot_name)
                 .set_input_format(TraceExporterInputFormat::V04)
                 .set_output_format(TraceExporterOutputFormat::V05);
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
             let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_v05_snapshot");
-            let response = trace_exporter.send(data, 1);
+
+            let response = trace_exporter.send(data.as_ref(), 1);
             let expected_response = format!("{{\"rate_by_service\": {}}}", rate_param);
 
             assert!(response.is_ok());
@@ -216,13 +215,14 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
-                .set_query_params(format!("test_session_token={}", snapshot_name).as_str())
+                .set_test_session_token(snapshot_name)
                 .set_input_format(TraceExporterInputFormat::V05)
                 .set_output_format(TraceExporterOutputFormat::V05);
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
             let data = get_v05_trace_snapshot_test_payload();
-            let response = trace_exporter.send(data, 1);
+
+            let response = trace_exporter.send(data.as_ref(), 1);
             let expected_response = format!("{{\"rate_by_service\": {}}}", rate_param);
 
             assert!(response.is_ok());
@@ -284,13 +284,14 @@ mod tracing_integration_tests {
                 .set_language_interpreter("interpreter")
                 .set_tracer_version("1.0")
                 .set_env("test_env")
-                .set_service("test")
-                .set_query_params(format!("test_session_token={snapshot_name}").as_str());
+                .set_test_session_token(snapshot_name)
+                .set_service("test");
 
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
             let data = get_v04_trace_snapshot_test_payload("test_exporter_v04_snapshot_uds");
-            let response = trace_exporter.send(data, 1);
+
+            let response = trace_exporter.send(data.as_ref(), 1);
             let expected_response = format!("{{\"rate_by_service\": {}}}", rate_param);
 
             assert!(response.is_ok());

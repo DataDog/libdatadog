@@ -21,7 +21,7 @@ mod linux {
 
     use io_lifetimes::OwnedFd;
     use nix::sys::socket::{
-        bind, connect, listen, socket, AddressFamily, SockFlag, SockType, UnixAddr,
+        bind, connect, listen, socket, AddressFamily, Backlog, SockFlag, SockType, UnixAddr,
     };
 
     fn socket_stream() -> nix::Result<OwnedFd> {
@@ -44,7 +44,11 @@ mod linux {
         let sock = socket_stream()?;
         let addr = UnixAddr::new_abstract(path.as_ref().as_os_str().as_bytes())?;
         bind(sock.as_raw_fd(), &addr)?;
-        listen(&sock, 128)?;
+        // This was previously 128, but due to this bug in 0.29.0 which has
+        // been fixed but not released, we're using 127:
+        // https://github.com/nix-rust/nix/pull/2500
+        const SOMAXCONN: i32 = 127;
+        listen(&sock, Backlog::new(SOMAXCONN)?)?;
         Ok(sock.into())
     }
 }
