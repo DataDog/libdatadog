@@ -7,7 +7,7 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-use data_pipeline_ffi::span::{serialize_traces_into_mapped_memory, TracesBytes};
+use data_pipeline_ffi::span::TracesBytes;
 #[cfg(windows)]
 use datadog_crashtracker_ffi::Metadata;
 use datadog_ipc::platform::{
@@ -32,7 +32,7 @@ use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigRea
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddcommon_ffi as ffi;
-use ddcommon_ffi::{ddog_Error_message, CharSlice, MaybeError};
+use ddcommon_ffi::{CharSlice, MaybeError};
 use ddtelemetry::{
     data::{self, Dependency, Integration},
     worker::{LifecycleAction, TelemetryActions},
@@ -43,6 +43,7 @@ use ffi::slice::AsBytes;
 use libc::c_char;
 use std::ffi::{c_void, CStr, CString};
 use std::fs::File;
+use std::io::Cursor;
 #[cfg(unix)]
 use std::os::unix::prelude::FromRawFd;
 #[cfg(windows)]
@@ -1014,7 +1015,7 @@ macro_rules! check {
 pub struct SenderParameters {
     pub tracer_headers_tags: TracerHeaderTags<'static>,
     pub transport: Box<SidecarTransport>,
-    pub instance_id: *mut InstanceId,
+    pub instance_id: Box<InstanceId>,
     pub limit: usize,
     pub n_requests: i64,
     pub buffer_size: i64,
@@ -1024,15 +1025,9 @@ pub struct SenderParameters {
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
-    traces_ptr: *mut TracesBytes,
+    traces: &mut TracesBytes,
     parameters: &mut SenderParameters,
 ) {
-    if traces_ptr.is_null() {
-        tracing::error!("Invalid traces pointer");
-        return;
-    }
-
-    let traces = &*traces_ptr;
     let size: usize = traces.iter().map(|trace| trace.len()).sum();
 
     // Check connection to the sidecar
@@ -1053,11 +1048,14 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
 
     // Write traces to the shared memory
-    let slice = mapped_shm.as_slice_mut();
-    let pointer = slice as *mut [u8] as *mut c_void;
-    let size = slice.len();
-
-    let written = serialize_traces_into_mapped_memory(traces, pointer, size);
+    let mut cursor = Cursor::new(mapped_shm.as_slice_mut());
+    let written = match rmp_serde::encode::write_named(&mut cursor, &traces) {
+        Ok(()) => cursor.position() as usize,
+        Err(_) => {
+            tracing::error!("Failed serializing the traces");
+            return;
+        }
+    };
 
     // Send traces to the sidecar via the shared memory handler
     let mut size_hint = written;
@@ -1065,52 +1063,48 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
         size_hint = size_hint.max((parameters.buffer_size / parameters.n_requests + 1) as usize);
     }
 
-    let send_error = match blocking::send_trace_v04_shm(
+    let send_error = blocking::send_trace_v04_shm(
         &mut parameters.transport,
-        &*parameters.instance_id,
+        &parameters.instance_id,
         shm,
         size_hint,
         check!(
             (&parameters.tracer_headers_tags).try_into(),
             "Failed to convert tracer headers tags"
         ),
-    ) {
-        Ok(_) => MaybeError::None,
-        Err(e) => MaybeError::Some(ddcommon_ffi::Error::from(format!("{:?}", e))),
-    };
+    );
 
     // Retry sending traces via bytes if there was an error
-    loop {
-        if send_error != MaybeError::None {
-            let mut buffer = vec![0u8; written];
-            let pointer = buffer.as_mut_ptr() as *mut c_void;
-            serialize_traces_into_mapped_memory(traces, pointer, written);
+    if send_error.is_err() {
+        let mut buffer = vec![0u8; written];
+        let mut cursor = Cursor::new(buffer.as_mut_slice());
+        rmp_serde::encode::write_named(&mut cursor, &traces).unwrap_or_else(|_| {
+            tracing::error!("Failed serializing the traces");
+        });
 
-            match blocking::send_trace_v04_bytes(
-                &mut parameters.transport,
-                &*parameters.instance_id,
-                CharSlice::from_raw_parts(pointer.cast(), written)
-                    .as_bytes()
-                    .to_vec(),
-                check!(
-                    (&parameters.tracer_headers_tags).try_into(),
-                    "Failed to convert tracer headers tags"
-                ),
-            ) {
-                Ok(_) => break,
-                Err(_) => tracing::debug!(
-                    "Failed sending traces via shm to sidecar: {}",
-                    ddog_Error_message(send_error.to_std_ref())
-                ),
-            };
-        }
-
-        tracing::info!(
-            "Flushing traces of size {} to send-queue for {}",
-            size,
-            parameters.url
-        );
+        match blocking::send_trace_v04_bytes(
+            &mut parameters.transport,
+            &parameters.instance_id,
+            buffer,
+            check!(
+                (&parameters.tracer_headers_tags).try_into(),
+                "Failed to convert tracer headers tags"
+            ),
+        ) {
+            Ok(_) => {}
+            Err(_) => tracing::debug!(
+                "Failed sending traces via shm to sidecar: {}",
+                send_error.err().unwrap_unchecked().to_string()
+            ),
+        };
     }
+
+    tracing::event!(target: "info", tracing::Level::INFO, "Flushing trace of size {} to send-queue for {}", size, parameters.url);
+    // tracing::info!(
+    //     "Flushing traces of size {} to send-queue for {}",
+    //     size,
+    //     parameters.url
+    // );
 }
 
 /// Drops the agent info reader.
