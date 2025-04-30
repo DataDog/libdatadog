@@ -2,7 +2,7 @@ unstable_features = true
 
 ignore = [
   # embedded project waiting for upstream fixes
-  "ipc/tarpc/",
+  "datadog-ipc/tarpc/",
 ]
 
 format_macro_matchers = true
