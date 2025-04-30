@@ -4,6 +4,7 @@
 use crate::Bytes;
 #[cfg(feature = "serde")]
 use serde::ser::{Serialize, Serializer};
+use std::borrow::Cow;
 use std::fmt::{Debug, Formatter};
 use std::{borrow::Borrow, hash, str::Utf8Error};
 
@@ -48,7 +49,7 @@ impl BytesString {
     }
 
     #[inline]
-    pub fn from_static(value: &'static str) -> Self {
+    pub const fn from_static(value: &'static str) -> Self {
         // SAFETY: This is safe as a str is always a valid UTF-8 slice.
         unsafe { Self::from_bytes_unchecked(Bytes::from_static(value.as_bytes())) }
     }
@@ -59,10 +60,10 @@ impl BytesString {
     }
 
     #[inline]
-    pub fn from_cow(cow: std::borrow::Cow<'static, str>) -> Self {
+    pub fn from_cow(cow: Cow<'static, str>) -> Self {
         match cow {
-            std::borrow::Cow::Borrowed(s) => Self::from_static(s),
-            std::borrow::Cow::Owned(s) => Self::from_string(s),
+            Cow::Borrowed(s) => Self::from_static(s),
+            Cow::Owned(s) => Self::from_string(s),
         }
     }
 
@@ -134,7 +135,7 @@ impl BytesString {
     ///
     /// This function is unsafe because it assumes the bytes are valid UTF-8. If the bytes are not
     /// valid UTF-8, the behavior is undefined.
-    pub unsafe fn from_bytes_unchecked(bytes: Bytes) -> Self {
+    pub const unsafe fn from_bytes_unchecked(bytes: Bytes) -> Self {
         Self { bytes }
     }
 
@@ -181,6 +182,12 @@ impl From<String> for BytesString {
 impl From<&'static str> for BytesString {
     fn from(value: &'static str) -> Self {
         Self::from_static(value)
+    }
+}
+
+impl From<Cow<'static, str>> for BytesString {
+    fn from(value: Cow<'static, str>) -> Self {
+        Self::from_cow(value)
     }
 }
 
