@@ -342,9 +342,11 @@ impl TraceExporter {
             exporter_handle: _,
         } = &**self.client_side_stats.load()
         {
+            #[allow(clippy::unwrap_used)]
             self.runtime.block_on(async {
                 cancellation_token.cancel();
             });
+
             #[allow(clippy::unwrap_used)]
             let bucket_size = stats_concentrator.lock().unwrap().get_bucket_size();
 
