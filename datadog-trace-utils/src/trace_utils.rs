@@ -23,14 +23,16 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
 
+/// The maximum payload size for a single request that can be sent to the trace agent. Payloads
+/// larger than this size will be dropped and the agent will return a 413 error if
+/// `datadog-send-real-http-status` is set.
+pub const MAX_PAYLOAD_SIZE: usize = 25 * 1024 * 1024;
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
 /// Span metric the tracer sets to denote a top level span
 const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
-
-const MAX_PAYLOAD_SIZE: usize = 50 * 1024 * 1024;
 const MAX_STRING_DICT_SIZE: u32 = 25_000_000;
 const SPAN_ELEMENT_COUNT: usize = 12;
 
