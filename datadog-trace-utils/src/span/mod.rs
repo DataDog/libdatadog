@@ -63,9 +63,21 @@ impl FromStr for SpanKey {
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.
-pub trait SpanText: Eq + Hash + Borrow<str> + Serialize + Default + Clone {}
-/// Implement the SpanText trait for any type which satisfies the sub traits.
-impl<T: Eq + Hash + Borrow<str> + Serialize + Default + Clone> SpanText for T {}
+pub trait SpanText: Eq + Hash + Borrow<str> + Serialize + Default + Clone {
+    fn from_static_str(value: &'static str) -> Self;
+}
+
+impl SpanText for &str {
+    fn from_static_str(value: &'static str) -> Self {
+        value
+    }
+}
+
+impl SpanText for BytesString {
+    fn from_static_str(value: &'static str) -> Self {
+        BytesString::from_static(value)
+    }
+}
 
 /// Checks if the `value` represents an empty string. Used to skip serializing empty strings
 /// with serde.

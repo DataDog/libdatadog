@@ -13,7 +13,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use datadog_trace_utils::msgpack_decoder::{self, decode::error::DecodeError};
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryError};
-use datadog_trace_utils::span::SpanSlice;
+use datadog_trace_utils::span::{Span, SpanText};
 use datadog_trace_utils::trace_utils::{self, TracerHeaderTags};
 use datadog_trace_utils::tracer_payload;
 use ddcommon::header::{
@@ -199,6 +199,11 @@ pub struct TraceExporter {
     telemetry: Option<TelemetryClient>,
 }
 
+enum DeserInputFormat {
+    V04,
+    V05,
+}
+
 impl TraceExporter {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {
@@ -206,7 +211,16 @@ impl TraceExporter {
     }
 
     /// Send msgpack serialized traces to the agent
-    #[allow(missing_docs)]
+    ///
+    /// # Arguments
+    ///
+    /// * data: A slice containing the serialized traces. This slice should be encoded following the
+    ///   input_format passed to the TraceExporter on creating.
+    /// * trace_count: The number of traces in the data
+    ///
+    /// # Returns
+    /// * Ok(AgentResponse): The response from the agent
+    /// * Err(TraceExporterError): An error detailling what went wrong in the process
     pub fn send(
         &self,
         data: &[u8],
@@ -214,36 +228,18 @@ impl TraceExporter {
     ) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
 
-        match self.input_format {
+        let res = match self.input_format {
             TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
-            TraceExporterInputFormat::V04 => match msgpack_decoder::v04::from_slice(data) {
-                Ok((traces, _)) => self.send_deser_ser(traces),
-                Err(e) => Err(TraceExporterError::Deserialization(e)),
-            },
-            TraceExporterInputFormat::V05 => match msgpack_decoder::v05::from_slice(data) {
-                Ok((traces, _)) => self.send_deser_ser(traces),
-                Err(e) => Err(TraceExporterError::Deserialization(e)),
-            },
+            TraceExporterInputFormat::V04 => self.send_deser(data, DeserInputFormat::V04),
+            TraceExporterInputFormat::V05 => self.send_deser(data, DeserInputFormat::V05),
+        }?;
+        if res.is_empty() {
+            return Err(TraceExporterError::Agent(
+                error::AgentErrorKind::EmptyResponse,
+            ));
         }
-        .and_then(|res| {
-            if res.is_empty() {
-                return Err(TraceExporterError::Agent(
-                    error::AgentErrorKind::EmptyResponse,
-                ));
-            }
 
-            Ok(AgentResponse::from(res))
-        })
-        .map_err(|err| {
-            if let TraceExporterError::Deserialization(ref e) = err {
-                error!("Error deserializing trace from request body: {e}");
-                self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_DESER_TRACES_ERRORS, 1),
-                    None,
-                );
-            }
-            err
-        })
+        Ok(AgentResponse::from(res))
     }
 
     /// Safely shutdown the TraceExporter and all related tasks
@@ -425,6 +421,35 @@ impl TraceExporter {
         }
     }
 
+    /// !!! This function is only for testing purposes !!!
+    ///
+    /// Waits the agent info to be ready by checking the agent_info state.
+    /// It will only return Ok after the agent info has been fetched at least once or Err if timeout
+    /// has been reached
+    ///
+    /// In production:
+    /// 1) We should not synchronously wait for this to be ready before sending traces
+    /// 2) It's not guaranteed to not block forever, since the /info endpoint might not be
+    ///    available.
+    ///
+    /// The `send`` function will check agent_info when running, which will only be available if the
+    /// fetcher had time to reach to the agent.
+    /// Since agent_info can enable CSS computation, waiting for this during testing can make
+    /// snapshots non-determinitic.
+    #[cfg(feature = "test-utils")]
+    pub fn wait_agent_info_ready(&self, timeout: Duration) -> anyhow::Result<()> {
+        let start = std::time::Instant::now();
+        loop {
+            if std::time::Instant::now().duration_since(start) > timeout {
+                anyhow::bail!("Timeout waiting for agent info to be ready",);
+            }
+            if self.agent_info.load().is_some() {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     fn send_proxy(&self, data: &[u8], trace_count: usize) -> Result<String, TraceExporterError> {
         self.send_data_to_url(
             data,
@@ -546,42 +571,79 @@ impl TraceExporter {
     /// Add all spans from the given iterator into the stats concentrator
     /// # Panic
     /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
-    fn add_spans_to_stats(&self, traces: &[Vec<SpanSlice>]) {
-        if let StatsComputationStatus::Enabled {
-            stats_concentrator,
-            cancellation_token: _,
-            exporter_handle: _,
-        } = &**self.client_side_stats.load()
-        {
-            #[allow(clippy::unwrap_used)]
-            let mut stats_concentrator = stats_concentrator.lock().unwrap();
+    fn add_spans_to_stats<T: SpanText>(
+        &self,
+        stats_concentrator: &Mutex<SpanConcentrator>,
+        traces: &[Vec<Span<T>>],
+    ) {
+        #[allow(clippy::unwrap_used)]
+        let mut stats_concentrator = stats_concentrator.lock().unwrap();
 
-            let spans = traces.iter().flat_map(|trace| trace.iter());
-            for span in spans {
-                stats_concentrator.add_span(span);
-            }
+        let spans = traces.iter().flat_map(|trace| trace.iter());
+        for span in spans {
+            stats_concentrator.add_span(span);
         }
     }
 
-    fn send_deser_ser(
+    /// Send a list of trace chunks to the agent
+    ///
+    /// # Arguments
+    /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
+    ///
+    /// # Returns
+    /// * Ok(String): The response from the agent
+    /// * Err(TraceExporterError): An error detailing what went wrong in the process
+    pub fn send_trace_chunks<T: SpanText>(
         &self,
-        mut traces: Vec<Vec<SpanSlice>>,
+        trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<String, TraceExporterError> {
+        self.check_agent_info();
+        self.send_trace_chunks_inner(trace_chunks)
+    }
+
+    /// Deserializes, processes and sends trace chunks to the agent
+    fn send_deser(
+        &self,
+        data: &[u8],
+        format: DeserInputFormat,
+    ) -> Result<String, TraceExporterError> {
+        let (traces, _) = match format {
+            DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
+            DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
+        }
+        .map_err(|e| {
+            error!("Error deserializing trace from request body: {e}");
+            self.emit_metric(
+                HealthMetric::Count(health_metrics::STAT_DESER_TRACES_ERRORS, 1),
+                None,
+            );
+            TraceExporterError::Deserialization(e)
+        })?;
         self.emit_metric(
             HealthMetric::Count(health_metrics::STAT_DESER_TRACES, traces.len() as i64),
             None,
         );
 
+        self.send_trace_chunks_inner(traces)
+    }
+
+    fn send_trace_chunks_inner<T: SpanText>(
+        &self,
+        mut traces: Vec<Vec<Span<T>>>,
+    ) -> Result<String, TraceExporterError> {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         // Stats computation
-        if let StatsComputationStatus::Enabled { .. } = &**self.client_side_stats.load() {
+        if let StatsComputationStatus::Enabled {
+            stats_concentrator, ..
+        } = &**self.client_side_stats.load()
+        {
             if !self.client_computed_top_level {
                 for chunk in traces.iter_mut() {
                     datadog_trace_utils::span::trace_utils::compute_top_level_span(chunk);
                 }
             }
-            self.add_spans_to_stats(&traces);
+            self.add_spans_to_stats(stats_concentrator, &traces);
             // Once stats have been computed we can drop all chunks that are not going to be
             // sampled by the agent
             let datadog_trace_utils::span::trace_utils::DroppedP0Stats {
@@ -597,18 +659,9 @@ impl TraceExporter {
             header_tags.dropped_p0_spans = dropped_p0_spans;
         }
 
-        let use_v05_format = match (self.input_format, self.output_format) {
-            (TraceExporterInputFormat::V04, TraceExporterOutputFormat::V04) => false,
-            (TraceExporterInputFormat::V04, TraceExporterOutputFormat::V05)
-            | (TraceExporterInputFormat::V05, TraceExporterOutputFormat::V05) => true,
-            (TraceExporterInputFormat::V05, TraceExporterOutputFormat::V04) => {
-                // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-                unreachable!("Conversion from v05 to v04 not implemented")
-            }
-            (TraceExporterInputFormat::Proxy, _) => {
-                // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-                unreachable!("Codepath invalid for proxy mode",)
-            }
+        let use_v05_format = match self.output_format {
+            TraceExporterOutputFormat::V05 => true,
+            TraceExporterOutputFormat::V04 => false,
         };
         let payload = trace_utils::collect_trace_chunks(traces, use_v05_format).map_err(|e| {
             TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
