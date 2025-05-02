@@ -24,7 +24,7 @@ build_common = { path = "../build-common" }
 [dev-dependencies]
 httpmock = "0.7.0"
 rmp-serde = "1.1.1"
-datadog-trace-utils = { path = "../trace-utils" }
+datadog-trace-utils = { path = "../datadog-trace-utils" }
 
 [dependencies]
 data-pipeline = { path = "../data-pipeline" }

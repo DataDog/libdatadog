@@ -1,8 +1,8 @@
 profiling:
 - changed-files:
   - any-glob-to-any-file: [
-      'profiling/**/*',
-      'profiling-ffi/**/*',
+      'datadog-profiling/**/*',
+      'datadog-profiling-ffi/**/*',
     ]
 
 common:
@@ -24,9 +24,9 @@ ci-build:
 mini-agent:
 - changed-files:
   - any-glob-to-any-file: [
-      'trace-normalization/**/*',
-      'trace-obfuscation/**/*',
-      'trace-utils/**/*',
+      'datadog-trace-normalization/**/*',
+      'datadog-trace-obfuscation/**/*',
+      'datadog-trace-utils/**/*',
     ]
 
 telemetry:
@@ -45,8 +45,8 @@ dogstatsd:
 sidecar:
 - changed-files:
   - any-glob-to-any-file: [
-      'sidecar/**/*',
-      'sidecar-ffi/**/*',
+      'datadog-sidecar/**/*',
+      'datadog-sidecar-ffi/**/*',
     ]
 
 data-pipeline:
@@ -59,6 +59,6 @@ data-pipeline:
 crashtracker:
 - changed-files:
   - any-glob-to-any-file: [
-    'crashtracker/**/*',
-    'crashtracker-ffi/**/*',
+    'datadog-crashtracker/**/*',
+    'datadog-crashtracker-ffi/**/*',
   ]

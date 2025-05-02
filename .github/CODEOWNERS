@@ -1,29 +1,29 @@
-*                       @Datadog/libdatadog-core
-alloc/                  @Datadog/libdatadog-profiling
-build-profiling-ffi.sh  @Datadog/libdatadog-profiling
-crashtracker/           @Datadog/libdatadog-profiling
-profiling*/             @Datadog/libdatadog-profiling
-ddtelemetry*/           @Datadog/libdatadog-telemetry
-ruby/                   @Datadog/libdatadog-ruby
-Cargo.*                 @Datadog/libdatadog
-.gitignore              @Datadog/libdatadog
-.gitlab-ci.yaml         @Datadog/libdatadog
-LICENSE*                @Datadog/libdatadog
-NOTICE                  @Datadog/libdatadog
-rustfmt.toml            @Datadog/libdatadog
-README.md               @Datadog/libdatadog
-trace-normalization     @Datadog/serverless @Datadog/libdatadog-apm
-trace-obfuscation       @Datadog/serverless @Datadog/libdatadog-apm
-trace-protobuf          @Datadog/serverless @Datadog/libdatadog-apm
-trace-utils             @Datadog/serverless @Datadog/libdatadog-apm
-dynamic-configuration   @Datadog/libdatadog-php @Datadog/libdatadog-apm
-remote-config           @Datadog/libdatadog-php @Datadog/libdatadog-apm @Datadog/remote-config
-sidecar                 @Datadog/libdatadog-php @Datadog/libdatadog-apm
-sidecar-ffi             @Datadog/libdatadog-php @Datadog/libdatadog-apm
-data-pipeline*/         @Datadog/libdatadog-apm
-ddsketch                @Datadog/libdatadog-apm @Datadog/libdatadog-telemetry
+*                           @Datadog/libdatadog-core
+datadog-alloc/              @Datadog/libdatadog-profiling
+build-profiling-ffi.sh      @Datadog/libdatadog-profiling
+datadog-crashtracking/      @Datadog/libdatadog-profiling
+datadog-profiling*/         @Datadog/libdatadog-profiling
+ddtelemetry*/               @Datadog/libdatadog-telemetry
+ruby/                       @Datadog/libdatadog-ruby
+Cargo.*                     @Datadog/libdatadog
+.gitignore                  @Datadog/libdatadog
+.gitlab-ci.yaml             @Datadog/libdatadog
+LICENSE*                    @Datadog/libdatadog
+NOTICE                      @Datadog/libdatadog
+rustfmt.toml                @Datadog/libdatadog
+README.md                   @Datadog/libdatadog
+datadog-trace-normalization @Datadog/serverless @Datadog/libdatadog-apm
+datadog-trace-obfuscation   @Datadog/serverless @Datadog/libdatadog-apm
+datadog-trace-protobuf      @Datadog/serverless @Datadog/libdatadog-apm
+datadog-trace-utils         @Datadog/serverless @Datadog/libdatadog-apm
+datadog-dynamic-configuration   @Datadog/libdatadog-php @Datadog/libdatadog-apm
+datadog-remote-config       @Datadog/libdatadog-php @Datadog/libdatadog-apm @Datadog/remote-config
+datadog-sidecar             @Datadog/libdatadog-php @Datadog/libdatadog-apm
+datadog-sidecar-ffi         @Datadog/libdatadog-php @Datadog/libdatadog-apm
+data-pipeline*/             @Datadog/libdatadog-apm
+ddsketch                    @Datadog/libdatadog-apm @Datadog/libdatadog-telemetry
 
 # Most of the bin_tests are owned by the profiling team, but some are owned by the core team
-bin_tests/              @Datadog/libdatadog-profiling
+bin_tests/                  @Datadog/libdatadog-profiling
 bin_tests/tests/test_the_tests.rs   @Datadog/libdatadog-core
 bin_tests/src/bin/test_the_tests.rs @Datadog/libdatadog-core
