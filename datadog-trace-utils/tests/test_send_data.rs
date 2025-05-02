@@ -81,7 +81,7 @@ mod tracing_integration_tests {
     async fn compare_v04_trace_snapshot_test() {
         let relative_snapshot_path = "datadog-trace-utils/tests/snapshots/";
         let snapshot_name = "compare_send_data_v04_trace_snapshot_test";
-        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
+        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
 
         let header_tags = TracerHeaderTags {
             lang: "test-lang",
@@ -123,7 +123,7 @@ mod tracing_integration_tests {
     async fn compare_v04_trace_meta_struct_snapshot_test() {
         let relative_snapshot_path = "datadog-trace-utils/tests/snapshots/";
         let snapshot_name = "compare_send_data_v04_trace_meta_struct_snapshot_test";
-        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
+        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
 
         let header_tags = TracerHeaderTags {
             lang: "test-lang",
@@ -214,7 +214,7 @@ mod tracing_integration_tests {
     #[tokio::test]
     // It is valid for some tracers to send an empty array of spans to the agent
     async fn send_empty_v04_trace_test() {
-        let test_agent = DatadogTestAgent::new(None, None).await;
+        let test_agent = DatadogTestAgent::new(None, None, &[]).await;
 
         let header_tags = TracerHeaderTags {
             lang: "test-lang",
@@ -293,6 +293,7 @@ mod tracing_integration_tests {
         let test_agent = DatadogTestAgent::new(
             Some(relative_snapshot_path),
             Some(&absolute_socket_dir_path),
+            &[],
         )
         .await;
 

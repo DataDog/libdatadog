@@ -36,13 +36,13 @@ unsafe impl Sync for Bytes {}
 impl Bytes {
     /// Creates empty `Bytes`.
     #[inline]
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self::from_static(b"")
     }
 
     /// Creates `Bytes` from a static slice.
     #[inline]
-    pub fn from_static(value: &'static [u8]) -> Self {
+    pub const fn from_static(value: &'static [u8]) -> Self {
         let slice: &[u8] = value;
         Self { slice, bytes: None }
     }
