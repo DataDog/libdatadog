@@ -20,7 +20,11 @@ pub struct ErrorData {
 impl ErrorData {
     pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
         let mut errors = 0;
-        let normalizer = blazesym::normalize::Normalizer::new();
+        let normalizer = blazesym::normalize::Normalizer::builder()
+            .enable_vma_caching(true)
+            .enable_build_ids(true)
+            .enable_build_id_caching(true)
+            .build();
         let pid = pid.into();
         self.stack
             .normalize_ips(&normalizer, pid)
