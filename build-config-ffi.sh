@@ -24,7 +24,7 @@ fi
 
 mkdir -v -p "$destdir/include/datadog" "$destdir/lib/pkgconfig" "$destdir/cmake"
 
-version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < profiling-ffi/Cargo.toml)
+version=$(awk -F\" '$1 ~ /^version/ { print $2 }' < datadog-profiling-ffi/Cargo.toml)
 target="$(rustc -vV | awk '/^host:/ { print $2 }')"
 shared_library_suffix=".so"
 static_library_suffix=".a"
@@ -73,7 +73,7 @@ esac
 cp -v LICENSE LICENSE-3rdparty.yml NOTICE "$destdir/"
 
 
-crate_dir="library-config-ffi"
+crate_dir="datadog-library-config-ffi"
 crate="datadog-library-config-ffi"
 
 
