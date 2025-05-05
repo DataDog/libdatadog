@@ -11,7 +11,7 @@ license.workspace = true
 [lib]
 # LTO is ignored if "lib" is added as crate type
 # cf. https://github.com/rust-lang/rust/issues/51009
-crate-type = ["staticlib", "cdylib"]
+crate-type = ["lib", "staticlib", "cdylib"]
 bench = false
 
 [features]
