@@ -409,14 +409,21 @@ pub async fn poll_for_mock_hit(
     expected_hits: usize,
     delete_after_hits: bool,
 ) -> bool {
-    let mut mock_hit = mock.hits_async().await == expected_hits;
+    let mut mock_hit = false;
 
     let mut mock_observations_remaining = poll_attempts;
 
     while !mock_hit {
         sleep(Duration::from_millis(sleep_interval_ms)).await;
-        mock_hit = mock.hits_async().await == expected_hits;
         mock_observations_remaining -= 1;
+        mock_hit = if expected_hits > 0 {
+            mock.hits_async().await == expected_hits
+        } else {
+            // If we are polling for 0 hits, we need to ensure we do all observations, otherwise
+            // this will always be true
+            mock.hits_async().await == 0 && mock_observations_remaining == 0
+        };
+
         if mock_observations_remaining == 0 || mock_hit {
             if delete_after_hits {
                 mock.delete();

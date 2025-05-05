@@ -13,12 +13,12 @@ const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
-fn set_top_level_span<'a, T>(span: &mut Span<T>, is_top_level: bool)
+fn set_top_level_span<T>(span: &mut Span<T>, is_top_level: bool)
 where
-    T: SpanText + From<&'a str>,
+    T: SpanText,
 {
     if is_top_level {
-        span.metrics.insert(TOP_LEVEL_KEY.into(), 1.0);
+        span.metrics.insert(T::from_static_str(TOP_LEVEL_KEY), 1.0);
     } else {
         span.metrics.remove(TOP_LEVEL_KEY);
     }
@@ -30,9 +30,9 @@ where
 ///   - OR its parent is unknown (other part of the code, distributed trace)
 ///   - OR its parent belongs to another service (in that case it's a "local root" being the highest
 ///     ancestor of other spans belonging to this service and attached to it).
-pub fn compute_top_level_span<'a, T>(trace: &mut [Span<T>])
+pub fn compute_top_level_span<T>(trace: &mut [Span<T>])
 where
-    T: SpanText + Clone + From<&'a str>,
+    T: SpanText,
 {
     let mut span_id_to_service: HashMap<u64, T> = HashMap::new();
     for span in trace.iter() {
@@ -102,7 +102,7 @@ const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 /// dropped and the latter to the spans dropped.
 pub fn drop_chunks<T>(traces: &mut Vec<Vec<Span<T>>>) -> DroppedP0Stats
 where
-    T: SpanText + Default,
+    T: SpanText,
 {
     let mut dropped_p0_traces = 0;
     let mut dropped_p0_spans = 0;
