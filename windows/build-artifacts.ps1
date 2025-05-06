@@ -33,10 +33,18 @@ $features = @(
 Write-Host "Building for features: $features" -ForegroundColor Magenta
 
 pushd datadog-profiling-ffi
-Invoke-Call -ScriptBlock { cargo build --features $features --target i686-pc-windows-msvc --release --target-dir $output_dir }
-Invoke-Call -ScriptBlock { cargo build --features $features --target i686-pc-windows-msvc --target-dir $output_dir }
-Invoke-Call -ScriptBlock { cargo build --features $features --target x86_64-pc-windows-msvc --release --target-dir $output_dir }
-Invoke-Call -ScriptBlock { cargo build --features $features --target x86_64-pc-windows-msvc --target-dir $output_dir }
+#i686 Release
+Invoke-Call -ScriptBlock { cargo rustc --features $features --target i686-pc-windows-msvc --release --target-dir $output_dir --crate-type cdylib }
+Invoke-Call -ScriptBlock { cargo rustc --features $features --target i686-pc-windows-msvc --release --target-dir $output_dir --crate-type staticlib }
+#i686 Debug
+Invoke-Call -ScriptBlock { cargo rustc --features $features --target i686-pc-windows-msvc --target-dir $output_dir --crate-type cdylib }
+Invoke-Call -ScriptBlock { cargo rustc --features $features --target i686-pc-windows-msvc --target-dir $output_dir --crate-type staticlib }
+#x86_64 Release
+Invoke-Call -ScriptBlock { cargo rustc --features $features --target x86_64-pc-windows-msvc --release --target-dir $output_dir --crate-type cdylib}
+Invoke-Call -ScriptBlock { cargo rustc --features $features --target x86_64-pc-windows-msvc --release --target-dir $output_dir --crate-type staticlib}
+#x86_64 Debug
+Invoke-Call -ScriptBlock { cargo rustc --features $features --target x86_64-pc-windows-msvc --target-dir $output_dir --crate-type cdylib}
+Invoke-Call -ScriptBlock { cargo rustc --features $features --target x86_64-pc-windows-msvc --target-dir $output_dir --crate-type staticlib}
 popd
 
 Write-Host "Building tools" -ForegroundColor Magenta
