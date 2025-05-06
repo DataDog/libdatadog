@@ -9,5 +9,5 @@ pub mod crashtracker;
 pub mod module;
 pub mod utils;
 
-// #[cfg(feature = "profiling")]
+#[cfg(feature = "profiling")]
 pub mod profiling;

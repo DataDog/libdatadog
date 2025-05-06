@@ -174,11 +174,15 @@ impl Module for Profiling {
             cargo_args.push("--release");
         }
 
+        // Parse profiling-ffi manifest in order to get the crate-type array.
         let prof_path: PathBuf = [project_root().to_str().unwrap(), CRATE_FOLDER, "Cargo.toml"]
             .iter()
             .collect();
+        // Buffer the manifest file.
         let cargo_toml = fs::read_to_string(prof_path).unwrap();
+        // Use serde to get access to the lib section.
         let parsed: CargoFile = toml::from_str(&cargo_toml).unwrap();
+        // Iterate over all the crate types in order to build the artifacts for each one.
         for crate_type in parsed.lib.crate_type.iter() {
             // Ignore lib crate-type
             if crate_type == "lib" {
