@@ -5,6 +5,7 @@ use crate::arch;
 use crate::module::Module;
 use crate::utils::{file_replace, project_root};
 use anyhow::Result;
+use serde::Deserialize;
 use std::ffi::OsStr;
 use std::fs;
 use std::ops::Add;
@@ -12,6 +13,19 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
 use tools::headers::dedup_headers;
+
+const CRATE_FOLDER: &str = "datadog-profiling-ffi";
+
+#[derive(Deserialize)]
+struct CargoFile {
+    lib: LibSection,
+}
+
+#[derive(Deserialize)]
+struct LibSection {
+    #[serde(rename = "crate-type")]
+    crate_type: Vec<String>,
+}
 
 pub struct Profiling {
     pub arch: Rc<str>,
@@ -86,6 +100,7 @@ impl Profiling {
         let to_static: PathBuf = [lib_dir.as_os_str(), OsStr::new(arch::PROF_STATIC_LIB)]
             .iter()
             .collect();
+
         fs::copy(from_static, to_static).expect("unable to copy static lib");
 
         arch::add_additional_files(&self.source_lib, lib_dir.as_os_str());
@@ -113,7 +128,7 @@ impl Profiling {
             let file_in = file.to_string() + ".in";
 
             let mut pc_origin: PathBuf = project_root();
-            pc_origin.push("datadog-profiling-ffi");
+            pc_origin.push(CRATE_FOLDER);
             pc_origin.push(file_in);
 
             let pc_target: PathBuf = [pc_dir.as_os_str(), OsStr::new(file)].iter().collect();
@@ -144,29 +159,45 @@ impl Module for Profiling {
         #[cfg(feature = "crashtracker")]
         let features = features.add(",crashtracker-collector,crashtracker-receiver,demangler");
 
+        // Using rustc instead of build in order to overcome issues with LTO optimization.
         let mut cargo_args = vec![
-            "build",
+            "rustc",
             "-p",
-            "datadog-profiling-ffi",
+            CRATE_FOLDER,
             "--features",
             &features,
             "--target",
             &self.arch,
-            "-vv",
         ];
 
         if self.profile.as_ref() == "release" {
             cargo_args.push("--release");
         }
 
-        let mut cargo = Command::new("cargo")
-            .env("RUSTFLAGS", arch::RUSTFLAGS.join(" "))
-            .current_dir(project_root())
-            .args(cargo_args)
-            .spawn()
-            .expect("failed to spawn cargo");
+        let prof_path: PathBuf = [project_root().to_str().unwrap(), CRATE_FOLDER, "Cargo.toml"]
+            .iter()
+            .collect();
+        let cargo_toml = fs::read_to_string(prof_path).unwrap();
+        let parsed: CargoFile = toml::from_str(&cargo_toml).unwrap();
+        for crate_type in parsed.lib.crate_type.iter() {
+            // Ignore lib crate-type
+            if crate_type == "lib" {
+                continue;
+            }
 
-        cargo.wait().expect("Cargo failed");
+            let mut args = cargo_args.clone();
+            args.append(&mut vec!["--crate-type", crate_type]);
+
+            let mut cargo = Command::new("cargo")
+                .env("RUSTFLAGS", arch::RUSTFLAGS.join(" "))
+                .current_dir(project_root())
+                .args(args)
+                .spawn()
+                .expect("failed to spawn cargo");
+
+            cargo.wait().expect("Cargo failed");
+        }
+
         Ok(())
     }
     fn install(&self) -> Result<()> {
