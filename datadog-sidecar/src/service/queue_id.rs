@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Default, Copy, Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct QueueId {
-    inner: u64,
+    pub(crate) inner: u64,
 }
 
 impl QueueId {
