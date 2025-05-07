@@ -43,6 +43,7 @@ pub struct RemoteConfigReader(OneWayShmReader<NamedShmHandle, CString>);
 ///
 /// # Safety
 /// Pointers should be valid and non-null.
+/// cbindgen:ignore
 #[no_mangle]
 pub unsafe extern "C" fn debug_dump_inv_tar(
     id: *const ConfigInvariants,
