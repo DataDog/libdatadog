@@ -165,7 +165,7 @@ FEATURES=$(IFS=, ; echo "${FEATURES[*]}")
 echo "Building for features: $FEATURES"
 
 # build inside the crate to use the config.toml file
-( cd datadog-profiling-ffi && DESTDIR="$destdir" cargo build --features $FEATURES --release --target "${target}" )
+( cd datadog-profiling-ffi && DESTDIR="$destdir" cargo rustc --features $FEATURES --release --target "${target}" --crate-type cdylib && DESTDIR="$destdir" cargo rustc --features $FEATURES --release --target "${target}" --crate-type staticlib)
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"

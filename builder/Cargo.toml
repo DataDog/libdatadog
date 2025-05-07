@@ -20,7 +20,6 @@ bench = false
 test = false
 doctest = false
 
-
 [dependencies]
 anyhow = { version = "1.0" }
 build_common = { path = "../build-common", features = ["cbindgen"] }
@@ -28,6 +27,8 @@ cmake = "0.1.50"
 pico-args = "0.5.0"
 tar = "0.4.41"
 tools = { path = "../tools" }
+toml = "0.8.19"
+serde = "1.0.209"
 
 [[bin]]
 name = "release"
