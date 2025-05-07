@@ -108,7 +108,7 @@ pub struct SidecarServer {
     pub self_telemetry_config:
         Arc<Mutex<Option<ManualFutureCompleter<ddtelemetry::config::Config>>>>,
     /// Keeps track of the number of submitted payloads.
-    pub submitted_payloads: Arc<AtomicU64>,
+    pub(crate) submitted_payloads: Arc<AtomicU64>,
     /// All tracked agent infos per endpoint
     pub agent_infos: AgentInfos,
     /// All remote config handling
@@ -223,7 +223,7 @@ impl SidecarServer {
         }
     }
 
-    fn get_session(&self, session_id: &String) -> SessionInfo {
+    pub(crate) fn get_session(&self, session_id: &String) -> SessionInfo {
         let mut sessions = self.sessions.lock_or_panic();
         match sessions.get(session_id) {
             Some(session) => session.clone(),
