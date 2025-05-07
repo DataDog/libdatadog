@@ -65,6 +65,7 @@ pub struct TraceExporterConfig {
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     compute_stats: bool,
+    client_computed_stats: bool,
     telemetry_cfg: Option<TelemetryConfig>,
     test_session_token: Option<String>,
 }
@@ -275,6 +276,31 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_compute_stats(
     }
 }
 
+/// Sets `Datadog-Client-Computed-Stats` header to `true`.
+/// This indicates that the upstream system has already computed the stats,
+/// and no further stats computation should be performed.
+///
+/// <div class="warning">
+/// This method must not be used when `compute_stats` is enabled, as it could
+/// result in duplicate stats computation.
+/// </div>
+///
+/// A common use case is in Application Security Monitoring (ASM) scenarios:
+/// when APM is disabled but ASM is enabled, setting this header to `true`
+/// ensures that no stats are computed at any level (exporter or agent).
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_client_computed_stats(
+    config: Option<&mut TraceExporterConfig>,
+    client_computed_stats: bool,
+) -> Option<Box<ExporterError>> {
+    if let Option::Some(config) = config {
+        config.client_computed_stats = client_computed_stats;
+        None
+    } else {
+        gen_error!(ErrorCode::InvalidArgument)
+    }
+}
+
 /// Sets the `X-Datadog-Test-Session-Token` header. Only used for testing with the test agent.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_test_session_token(
@@ -325,6 +351,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
             .set_output_format(config.output_format);
         if config.compute_stats {
             builder.enable_stats(Duration::from_secs(10));
+        } else if config.client_computed_stats {
+            builder.set_client_computed_stats();
         }
 
         if let Some(cfg) = &config.telemetry_cfg {
@@ -611,6 +639,24 @@ mod tests {
     }
 
     #[test]
+    fn config_client_computed_stats_test() {
+        unsafe {
+            let error = ddog_trace_exporter_config_set_client_computed_stats(None, true);
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+
+            ddog_trace_exporter_error_free(error);
+
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_client_computed_stats(config.as_mut(), true);
+
+            assert_eq!(error, None);
+
+            let cfg = config.unwrap();
+            assert!(cfg.client_computed_stats);
+        }
+    }
+
+    #[test]
     fn config_telemetry_test() {
         unsafe {
             let error = ddog_trace_exporter_config_enable_telemetry(
@@ -781,6 +827,7 @@ mod tests {
                 compute_stats: false,
                 telemetry_cfg: None,
                 test_session_token: None,
+                client_computed_stats: false,
             };
 
             let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
@@ -851,6 +898,7 @@ mod tests {
                 compute_stats: false,
                 telemetry_cfg: None,
                 test_session_token: None,
+                client_computed_stats: false,
             };
 
             let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
@@ -927,6 +975,7 @@ mod tests {
                     debug_enabled: true,
                 }),
                 test_session_token: None,
+                client_computed_stats: false,
             };
 
             let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
