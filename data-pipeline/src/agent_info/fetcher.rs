@@ -339,8 +339,25 @@ mod tests {
         while mock_v1.hits_async().await == 0 {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        let version_1 = info.load().as_ref().unwrap().info.version.clone().unwrap();
-        assert_eq!(version_1, "1");
+
+        let mut version_1 = String::from("0");
+
+        // This check is not 100% deterministic, but between the time the mock returns the response
+        // and we swap the atomic pointer holding the agent_info we only need to perform
+        // very few operations. We wait for a maximum of 1s before failing the test and that should
+        // give way more time than necesssary.
+        for i in 0..10 {
+            if let Some(info) = info.load().as_ref() {
+                version_1 = info.info.version.clone().unwrap();
+                assert_eq!(version_1, "1");
+                break;
+            }
+
+            if i == 9 {
+                panic!("Failed to fetch agent info")
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
 
         // Update the info endpoint
         mock_v1.delete_async().await;
@@ -359,13 +376,10 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        // This check is not 100% deterministic, but between the time the mock returns the response
-        // and we swap the atomic pointer holding the agent_info we only need to perform
-        // very few operations. We wait for a maximum of 1s before failing the test and that should
-        // give way more time than necesssary.
-        for _ in 0..10 {
+        // Wait for the agent info ArcSwap to be updated
+        for i in 0..10 {
             let version_2 = info.load().as_ref().unwrap().info.version.clone().unwrap();
-            if version_2 != version_1 {
+            if version_2 != version_1 || i == 9 {
                 assert_eq!(version_2, "2");
                 break;
             }
