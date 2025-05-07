@@ -9,6 +9,12 @@ use manual_future::ManualFuture;
 mod app_instance;
 pub mod enqueued_telemetry_data;
 pub mod enqueued_telemetry_stats;
+mod ffi;
+mod in_proc_receiver;
+
+pub(crate) use in_proc_receiver::{
+    get_telemetry_action_sender, telemetry_action_receiver_task, InternalTelemetryActions,
+};
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Default)]
