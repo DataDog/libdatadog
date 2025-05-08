@@ -1,31 +1,12 @@
 use anyhow::{Context as _, Result};
-use clap::Parser;
 use octocrab::Octocrab;
-use regex::Regex;
-use std::collections::{HashMap, HashSet};
-use std::process::Command;
+use std::collections::HashMap;
 
+mod analyzer;
 mod config;
 
+use crate::analyzer::{AnalysisResult, Analyzer};
 use crate::config::ConfigBuilder;
-use config::{Args, Config, GitHubContext};
-
-/// Represents a clippy annotation in code
-#[derive(Debug, Clone)]
-struct ClippyAnnotation {
-    file: String,
-    rule: String,
-    line_content: String,
-}
-
-/// Result of annotation analysis
-struct AnnotationAnalysis {
-    base_annotations: Vec<ClippyAnnotation>,
-    head_annotations: Vec<ClippyAnnotation>,
-    base_counts: HashMap<String, usize>,
-    head_counts: HashMap<String, usize>,
-    changed_files: HashSet<String>,
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -43,30 +24,31 @@ async fn main() -> Result<()> {
         .build()
         .context("Failed to build GitHub API client")?;
 
-    // 1. Get changed files in the PR
-    println!("Getting changed files from PR #{}", config.pr_number);
-    let changed_files = get_changed_files(&octocrab, &config.owner, &config.repo, config.pr_number)
-        .await
-        .context("Failed to get changed files from PR")?;
-
-    if changed_files.is_empty() {
-        println!("No Rust files changed in this PR");
-        return Ok(());
-    }
-
-    // 2. Analyze annotations in base and head branches
-    println!("Analyzing clippy annotations...");
-    let analysis = analyze_annotations(
-        &changed_files,
+    // Create analyzer and run analysis
+    let analyzer = Analyzer::new(
+        &octocrab,
+        &config.owner,
+        &config.repo,
+        config.pr_number,
         &config.base_branch,
         &config.head_branch,
         &config.rules,
-    )
-    .context("Failed to analyze annotations")?;
+    );
 
+    // Run the analysis
+    let analysis_result = match analyzer.run().await {
+        Ok(result) => result,
+        Err(e) => {
+            if e.to_string().contains("No Rust files changed") {
+                println!("No Rust files changed in this PR, nothing to analyze.");
+                return Ok(());
+            }
+            return Err(e);
+        }
+    };
     // 3. Generate a report
     let report = generate_report(
-        &analysis,
+        &analysis_result,
         &config.rules,
         &config.repository,
         &config.base_branch,
@@ -161,170 +143,9 @@ async fn find_existing_comment(
     Ok(None)
 }
 
-/// Get changed Rust files from the PR
-async fn get_changed_files(
-    octocrab: &Octocrab,
-    owner: &str,
-    repo: &str,
-    pr_number: u64,
-) -> Result<Vec<String>> {
-    let files = octocrab
-        .pulls(owner, repo)
-        .list_files(pr_number)
-        .await
-        .context("Failed to list PR files")?;
-
-    // Filter for Rust files only
-    let rust_files = files
-        .items
-        .into_iter()
-        .filter(|file| file.filename.ends_with(".rs"))
-        .map(|file| file.filename)
-        .collect();
-
-    Ok(rust_files)
-}
-
-/// Analyze clippy annotations in base and head branches
-fn analyze_annotations(
-    files: &[String],
-    base_branch: &str,
-    head_branch: &str,
-    rules: &[String],
-) -> Result<AnnotationAnalysis> {
-    // Create a regex for matching clippy allow annotations
-    // This will capture the rule name in the first capture group
-    let rule_pattern = rules.join("|");
-    let annotation_regex = Regex::new(&format!(
-        r"#\s*\[\s*allow\s*\(\s*clippy\s*::\s*({})\s*\)\s*\]",
-        rule_pattern
-    ))
-    .context("Failed to compile annotation regex")?;
-
-    let mut base_annotations = Vec::new();
-    let mut head_annotations = Vec::new();
-    let mut changed_files = HashSet::new();
-
-    // Process each file
-    for file in files {
-        changed_files.insert(file.clone());
-
-        // Get file content from base branch
-        let base_content = match get_file_content(file, base_branch) {
-            Ok(content) => content,
-            Err(e) => {
-                println!(
-                    "Warning: Failed to get {} content from {}: {}",
-                    file, base_branch, e
-                );
-                String::new()
-            }
-        };
-
-        // Get file content from head branch
-        let head_content = match get_file_content(file, head_branch) {
-            Ok(content) => content,
-            Err(e) => {
-                println!(
-                    "Warning: Failed to get {} content from {}: {}",
-                    file, head_branch, e
-                );
-                String::new()
-            }
-        };
-
-        // Find annotations in base branch
-        find_annotations(
-            &mut base_annotations,
-            file,
-            &base_content,
-            &annotation_regex,
-        );
-
-        // Find annotations in head branch
-        find_annotations(
-            &mut head_annotations,
-            file,
-            &head_content,
-            &annotation_regex,
-        );
-    }
-
-    // Count annotations by rule
-    let base_counts = count_annotations_by_rule(&base_annotations);
-    let head_counts = count_annotations_by_rule(&head_annotations);
-
-    Ok(AnnotationAnalysis {
-        base_annotations,
-        head_annotations,
-        base_counts,
-        head_counts,
-        changed_files,
-    })
-}
-
-/// Get file content from a specific branch
-fn get_file_content(file: &str, branch: &str) -> Result<String> {
-    println!("Getting content for {} from {}", file, branch);
-
-    let output = Command::new("git")
-        .args(["show", &format!("{}:{}", branch, file)])
-        .output()
-        .context(format!("Failed to execute git show command for {}", file))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Git show command failed: {}", stderr);
-    }
-
-    let content =
-        String::from_utf8(output.stdout).context("Failed to parse file content as UTF-8")?;
-
-    // Debug count
-    let count = content.matches("#[allow(clippy::").count();
-    println!(
-        "Found {} clippy allow annotations in {}:{}",
-        count, branch, file
-    );
-
-    Ok(content)
-}
-
-/// Find clippy annotations in file content
-fn find_annotations(
-    annotations: &mut Vec<ClippyAnnotation>,
-    file: &str,
-    content: &str,
-    regex: &Regex,
-) {
-    for (_line_number, line) in content.lines().enumerate() {
-        if let Some(captures) = regex.captures(line) {
-            if let Some(rule_match) = captures.get(1) {
-                let rule = rule_match.as_str().to_string();
-                annotations.push(ClippyAnnotation {
-                    file: file.to_string(),
-                    rule,
-                    line_content: line.trim().to_string(),
-                });
-            }
-        }
-    }
-}
-
-/// Count annotations by rule
-fn count_annotations_by_rule(annotations: &[ClippyAnnotation]) -> HashMap<String, usize> {
-    let mut counts = HashMap::new();
-
-    for annotation in annotations {
-        *counts.entry(annotation.rule.clone()).or_insert(0) += 1;
-    }
-
-    counts
-}
-
 /// Generate a detailed report for PR comment
 fn generate_report(
-    analysis: &AnnotationAnalysis,
+    analysis: &AnalysisResult,
     rules: &[String],
     repository: &str,
     base_branch: &str,
