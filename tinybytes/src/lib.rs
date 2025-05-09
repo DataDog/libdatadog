@@ -183,14 +183,14 @@ impl Bytes {
         &mut self.slice
     }
 
-    // private
-
-    fn from_underlying(value: impl UnderlyingBytes) -> Self {
+    pub fn from_underlying(value: impl UnderlyingBytes) -> Self {
         Self {
             slice: unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(value.as_ref()) },
             bytes: Some(Arc::new(value)),
         }
     }
+
+    // private
 
     #[inline]
     fn safe_slice_ref(&self, start: usize, end: usize) -> Self {
