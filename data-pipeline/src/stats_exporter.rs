@@ -134,7 +134,7 @@ impl StatsExporter {
     /// Once started, the stats exporter will flush and send stats on every `self.flush_interval`.
     /// If the `self.cancellation_token` is cancelled, the exporter will force flush all stats and
     /// return.
-    pub async fn run(&mut self) {
+    pub async fn run(&self) {
         loop {
             select! {
                 _ = self.cancellation_token.cancelled() => {

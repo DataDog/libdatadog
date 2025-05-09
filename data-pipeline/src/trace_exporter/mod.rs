@@ -3,6 +3,7 @@
 pub mod agent_response;
 pub mod error;
 use crate::agent_info::{AgentInfoArc, AgentInfoFetcher};
+use crate::stats_exporter::StatsExporter;
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient, TelemetryClientBuilder};
 use crate::trace_exporter::error::{RequestError, TraceExporterError};
 use crate::{
@@ -64,6 +65,78 @@ pub enum TraceExporterOutputFormat {
     #[default]
     V04,
     V05,
+}
+
+mod pausable_worker {
+    use tokio::{runtime::Runtime, select, task::JoinHandle};
+    use tokio_util::sync::CancellationToken;
+
+    use crate::{agent_info::AgentInfoFetcher, stats_exporter::StatsExporter};
+
+    pub trait Worker {
+        fn run(&self) -> impl std::future::Future<Output = ()> + Send;
+    }
+
+    impl Worker for StatsExporter {
+        async fn run(&self) {
+            self.run().await
+        }
+    }
+
+    impl Worker for AgentInfoFetcher {
+        async fn run(&self) {
+            self.run().await
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum PausableWorker<T: Worker + Send + Sync + 'static> {
+        Running {
+            handle: JoinHandle<T>,
+            stop_token: CancellationToken,
+        },
+        Paused {
+            worker: T,
+        },
+        InvalidState,
+    }
+
+    impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
+        pub fn new(worker: T) -> Self {
+            Self::Paused { worker }
+        }
+
+        pub fn start(&mut self, rt: &Runtime) {
+            if let Self::Paused { worker } = std::mem::replace(self, Self::InvalidState) {
+                let stop_token = CancellationToken::new();
+                let cloned_token = stop_token.clone();
+                let handle = rt.spawn(async move {
+                    select! {
+                        _ = worker.run() => {worker}
+                        _ = cloned_token.cancelled() => {worker}
+                    }
+                });
+
+                *self = PausableWorker::Running { handle, stop_token };
+            }
+        }
+
+        pub async fn stop(&mut self) {
+            if let PausableWorker::Running { handle, stop_token } = self {
+                stop_token.cancel();
+                let worker = handle.await.unwrap();
+                *self = PausableWorker::Paused { worker };
+            }
+        }
+
+        /// Wait for the run method of the worker to exit.
+        pub async fn join(&mut self) {
+            if let PausableWorker::Running { handle, stop_token } = self {
+                let worker = handle.await.unwrap();
+                *self = PausableWorker::Paused { worker };
+            }
+        }
+    }
 }
 
 impl TraceExporterOutputFormat {
@@ -158,80 +231,17 @@ enum StatsComputationStatus {
     Enabled {
         stats_concentrator: Arc<Mutex<SpanConcentrator>>,
         cancellation_token: CancellationToken,
-        exporter_handle: JoinHandle<()>,
-        metadata: TracerMetadata,
-        endpoint: Endpoint,
-    },
-    OnPause {
-        stats_concentrator: Arc<Mutex<SpanConcentrator>>,
-        metadata: TracerMetadata,
-        endpoint: Endpoint,
     },
 }
 
-trait WorkerTask {
-    fn is_running(&self) -> bool;
-    fn spawn(&mut self, runtime: &Runtime);
-    fn stop(&mut self);
+use pausable_worker::PausableWorker;
+
+#[derive(Debug)]
+struct TraceExporterWorkers {
+    pub info: PausableWorker<AgentInfoFetcher>,
+    pub stats: Option<PausableWorker<StatsExporter>>,
 }
 
-impl WorkerTask for StatsComputationStatus {
-    fn is_running(&self) -> bool {
-        match self {
-            StatsComputationStatus::Enabled { .. } => true,
-            _ => false,
-        }
-    }
-
-    fn spawn(&mut self, runtime: &Runtime) {
-        match self {
-            StatsComputationStatus::OnPause {
-                stats_concentrator,
-                metadata,
-                endpoint,
-            } => {
-                let cancellation_token = CancellationToken::new();
-                let mut stats_exporter = stats_exporter::StatsExporter::new(
-                    stats_concentrator.lock().unwrap().get_bucket_size(),
-                    stats_concentrator.clone(),
-                    metadata.clone(),
-                    endpoint.clone(),
-                    cancellation_token.clone(),
-                );
-                let exporter_handle = runtime.spawn(async move {
-                    stats_exporter.run().await;
-                });
-                *self = StatsComputationStatus::Enabled {
-                    stats_concentrator: stats_concentrator.clone(),
-                    cancellation_token,
-                    exporter_handle,
-                    metadata: metadata.clone(),
-                    endpoint: endpoint.clone(),
-                };
-            }
-            _ => {}
-        }
-    }
-
-    fn stop(&mut self) {
-        match self {
-            StatsComputationStatus::Enabled {
-                stats_concentrator,
-                cancellation_token: _,
-                exporter_handle: _,
-                metadata,
-                endpoint,
-            } => {
-                *self = StatsComputationStatus::OnPause {
-                    stats_concentrator: stats_concentrator.clone(),
-                    metadata: metadata.clone(),
-                    endpoint: endpoint.clone(),
-                };
-            }
-            _ => {}
-        }
-    }
-}
 /// The TraceExporter ingest traces from the tracers serialized as messagepack and forward them to
 /// the agent while applying some transformation.
 ///
@@ -267,7 +277,7 @@ pub struct TraceExporter {
     agent_info: AgentInfoArc,
     previous_info_state: ArcSwapOption<String>,
     telemetry: Option<TelemetryClient>,
-    shutdown_token: Arc<Mutex<CancellationToken>>,
+    workers: Arc<Mutex<TraceExporterWorkers>>,
 }
 
 impl TraceExporter {
@@ -277,35 +287,46 @@ impl TraceExporter {
     }
 
     pub fn run_worker(&self) {
-        let (runtime, token) = {
-            let mut runtime_guard = self.runtime.lock().unwrap();
-            let runtime = match runtime_guard.as_ref() {
-                Some(runtime) => runtime.clone(),
-                None => {
-                    // Create a new current thread runtime with all features enabled
-                    let runtime = Arc::new(
-                        tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                            .unwrap(),
-                    );
-                    *runtime_guard = Some(runtime.clone());
-                    runtime
-                }
-            };
-            let token = CancellationToken::new();
-            *self.shutdown_token.lock().unwrap() = token.clone();
-            (runtime, token)
+        let mut runtime_guard = self.runtime.lock().unwrap();
+        let runtime = match runtime_guard.as_ref() {
+            Some(runtime) => {
+                // Runtime already running
+                runtime
+            }
+            None => {
+                // Create a new current thread runtime with all features enabled
+                let runtime = Arc::new(
+                    tokio::runtime::Builder::new_multi_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap(),
+                );
+                *runtime_guard = Some(runtime);
+                runtime_guard.as_ref().unwrap()
+            }
         };
-        runtime.block_on(async move {
-            token.cancelled_owned().await;
-        });
+
+        // Restart workers
+        let mut workers = self.workers.lock().unwrap();
+        workers.info.start(runtime);
+        if let Some(stats_worker) = &mut workers.stats {
+            stats_worker.start(runtime);
+        }
     }
 
     pub fn stop_worker(&self) {
-        self.shutdown_token.lock().unwrap().cancel();
         let runtime = self.runtime.lock().unwrap().take();
-
+        if let Some(ref rt) = runtime {
+            // Stop workers to save their state
+            let mut workers = self.workers.lock().unwrap();
+            rt.block_on(async {
+                workers.info.stop().await;
+                if let Some(stats_worker) = &mut workers.stats {
+                    stats_worker.stop().await
+                };
+            });
+        }
+        // Drop runtime to shutdown all threads
         drop(runtime);
     }
 
@@ -352,7 +373,6 @@ impl TraceExporter {
 
     /// Safely shutdown the TraceExporter and all related tasks
     pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
-        self.stop_worker();
         if let Some(timeout) = timeout {
             match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -365,15 +385,14 @@ impl TraceExporter {
                                 self.client_side_stats.into_inner(),
                             );
                         if let Some(StatsComputationStatus::Enabled {
-                            stats_concentrator: _,
-                            cancellation_token,
-                            exporter_handle,
-                            metadata: _,
-                            endpoint: _,
+                            cancellation_token, ..
                         }) = stats_status
                         {
                             cancellation_token.cancel();
-                            let _ = exporter_handle.await;
+
+                            if let Some(stats_worker) = &mut self.workers.lock().unwrap().stats {
+                                stats_worker.join().await
+                            }
                         }
                         if let Some(telemetry) = self.telemetry {
                             telemetry.shutdown().await;
@@ -395,15 +414,13 @@ impl TraceExporter {
                             self.client_side_stats.into_inner(),
                         );
                     if let Some(StatsComputationStatus::Enabled {
-                        stats_concentrator: _,
-                        cancellation_token,
-                        exporter_handle,
-                        metadata: _,
-                        endpoint: _,
+                        cancellation_token, ..
                     }) = stats_status
                     {
                         cancellation_token.cancel();
-                        let _ = exporter_handle.await;
+                        if let Some(stats_worker) = &mut self.workers.lock().unwrap().stats {
+                            stats_worker.join().await
+                        }
                     }
                     if let Some(telemetry) = self.telemetry {
                         telemetry.shutdown().await;
@@ -433,27 +450,23 @@ impl TraceExporter {
 
             let cancellation_token = CancellationToken::new();
 
-            let mut stats_exporter = stats_exporter::StatsExporter::new(
+            let stats_exporter = stats_exporter::StatsExporter::new(
                 bucket_size,
                 stats_concentrator.clone(),
                 self.metadata.clone(),
                 Endpoint::from_url(add_path(&self.endpoint.url, STATS_ENDPOINT)),
                 cancellation_token.clone(),
             );
-
+            let mut stats_worker = PausableWorker::new(stats_exporter);
             let runtime = self.runtime.lock().unwrap().as_ref().unwrap().clone();
-            // TODO: Move this task to a WorkerTask struct to enable restarting after fork.
-            let exporter_handle = runtime.spawn(async move {
-                stats_exporter.run().await;
-            });
+            stats_worker.start(&runtime);
+
+            self.workers.lock().unwrap().stats = Some(stats_worker);
 
             self.client_side_stats
                 .store(Arc::new(StatsComputationStatus::Enabled {
                     stats_concentrator,
                     cancellation_token,
-                    exporter_handle,
-                    metadata: self.metadata.clone(),
-                    endpoint: self.endpoint.clone(),
                 }));
         };
         Ok(())
@@ -466,9 +479,6 @@ impl TraceExporter {
         if let StatsComputationStatus::Enabled {
             stats_concentrator,
             cancellation_token,
-            exporter_handle: _,
-            metadata: _,
-            endpoint: _,
         } = &**self.client_side_stats.load()
         {
             self.runtime
@@ -479,7 +489,7 @@ impl TraceExporter {
                 .block_on(async {
                     cancellation_token.cancel();
                 });
-            #[allow(clippy::unwrap_used)]
+            self.workers.lock().unwrap().stats = None;
             let bucket_size = stats_concentrator.lock().unwrap().get_bucket_size();
 
             self.client_side_stats
@@ -501,7 +511,6 @@ impl TraceExporter {
             {
                 match &**self.client_side_stats.load() {
                     StatsComputationStatus::Disabled => {}
-                    StatsComputationStatus::OnPause { .. } => {}
                     StatsComputationStatus::DisabledByAgent { .. } => {
                         if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
                             // Client-side stats is supported by the agent
@@ -524,11 +533,7 @@ impl TraceExporter {
                         }
                     }
                     StatsComputationStatus::Enabled {
-                        stats_concentrator,
-                        cancellation_token: _,
-                        exporter_handle: _,
-                        metadata: _,
-                        endpoint: _,
+                        stats_concentrator, ..
                     } => {
                         if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
                             #[allow(clippy::unwrap_used)]
@@ -690,11 +695,7 @@ impl TraceExporter {
     /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
     fn add_spans_to_stats(&self, traces: &[Vec<SpanSlice>]) {
         if let StatsComputationStatus::Enabled {
-            stats_concentrator,
-            cancellation_token: _,
-            exporter_handle: _,
-            metadata: _,
-            endpoint: _,
+            stats_concentrator, ..
         } = &**self.client_side_stats.load()
         {
             #[allow(clippy::unwrap_used)]
@@ -787,7 +788,8 @@ impl TraceExporter {
                 None => {
                     // Create a new current thread runtime with all features enabled
                     let runtime = Arc::new(
-                        tokio::runtime::Builder::new_current_thread()
+                        tokio::runtime::Builder::new_multi_thread()
+                            .worker_threads(1)
                             .enable_all()
                             .build()
                             .unwrap(),
@@ -1085,7 +1087,8 @@ impl TraceExporterBuilder {
         }
 
         let runtime = Arc::new(
-            tokio::runtime::Builder::new_current_thread()
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
                 .enable_all()
                 .build()?,
         );
@@ -1108,11 +1111,9 @@ impl TraceExporterBuilder {
             Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT)),
             Duration::from_secs(5 * 60),
         );
-
         let agent_info = info_fetcher.get_info();
-        runtime.spawn(async move {
-            info_fetcher.run().await;
-        });
+        let mut info_fetcher_worker = PausableWorker::new(info_fetcher);
+        info_fetcher_worker.start(&runtime);
 
         // Proxy mode does not support stats
         if self.input_format != TraceExporterInputFormat::Proxy {
@@ -1176,8 +1177,11 @@ impl TraceExporterBuilder {
             client_side_stats: ArcSwap::new(stats.into()),
             agent_info,
             previous_info_state: ArcSwapOption::new(None),
-            shutdown_token: Arc::new(Mutex::new(CancellationToken::new())),
             telemetry,
+            workers: Arc::new(Mutex::new(TraceExporterWorkers {
+                info: info_fetcher_worker,
+                stats: None,
+            })),
         })
     }
 
