@@ -4,108 +4,129 @@
 //! including finding existing comments and updating or creating comments.
 
 use anyhow::{Context as _, Result};
-use octocrab::models::issues::Comment;
 use octocrab::Octocrab;
 
-/// Handles GitHub comment operations
-pub struct Commenter<'a> {
-    octocrab: &'a Octocrab,
-    owner: String,
-    repo: String,
+/// Post or update a comment on a PR with the given report
+pub async fn post_or_update_comment(
+    octocrab: &Octocrab,
+    owner: &str,
+    repo: &str,
     pr_number: u64,
-    signature: String,
+    report: String,
+    signature: Option<&str>,
+) -> Result<()> {
+    // Use the provided signature or default
+    let signature = signature.unwrap_or("<!-- clippy-annotation-reporter-comment -->");
+
+    // Add the signature to the report
+    let report_with_signature = format!("{}\n\n{}", report, signature);
+
+    // Search for existing comment by the bot
+    println!("Checking for existing comment on PR #{}", pr_number);
+    let existing_comment =
+        find_existing_comment(octocrab, owner, repo, pr_number, signature).await?;
+
+    // Update existing comment or create a new one
+    if let Some(comment_id) = existing_comment {
+        println!("Updating existing comment #{}", comment_id);
+        octocrab
+            .issues(owner, repo)
+            .update_comment(comment_id.into(), report_with_signature)
+            .await
+            .context("Failed to update existing comment")?;
+        println!("Comment updated successfully!");
+    } else {
+        println!("Creating new comment on PR #{}", pr_number);
+        octocrab
+            .issues(owner, repo)
+            .create_comment(pr_number, report_with_signature)
+            .await
+            .context("Failed to post comment to PR")?;
+        println!("Comment created successfully!");
+    }
+
+    Ok(())
 }
 
-impl<'a> Commenter<'a> {
-    /// Create a new commenter instance
-    pub fn new(octocrab: &'a Octocrab, owner: &str, repo: &str, pr_number: u64) -> Self {
-        Self {
-            octocrab,
-            owner: owner.to_string(),
-            repo: repo.to_string(),
-            pr_number,
-            signature: "<!-- clippy-annotation-reporter-comment -->".to_string(),
-        }
-    }
+/// Find existing comment by the bot on a PR
+pub async fn find_existing_comment(
+    octocrab: &Octocrab,
+    owner: &str,
+    repo: &str,
+    pr_number: u64,
+    signature: &str,
+) -> Result<Option<u64>> {
+    // Get all comments on the PR
+    let mut page = octocrab
+        .issues(owner, repo)
+        .list_comments(pr_number)
+        .per_page(100)
+        .send()
+        .await
+        .context("Failed to list PR comments")?;
 
-    /// Set a custom signature for identifying the bot's comments
-    pub fn with_signature(mut self, signature: &str) -> Self {
-        self.signature = signature.to_string();
-        self
-    }
-
-    /// Post or update a comment on the PR with the given report
-    pub async fn run(&self, report: String) -> Result<()> {
-        // Add the signature to the report
-        let report_with_signature = format!("{}\n\n{}", report, self.signature);
-
-        // Search for existing comment by the bot
-        println!("Checking for existing comment on PR #{}", self.pr_number);
-        let existing_comment = self.find_existing_comment().await?;
-
-        // Update existing comment or create a new one
-        if let Some(comment_id) = existing_comment {
-            println!("Updating existing comment #{}", comment_id);
-            self.octocrab
-                .issues(&self.owner, &self.repo)
-                .update_comment(comment_id.into(), report_with_signature)
-                .await
-                .context("Failed to update existing comment")?;
-            println!("Comment updated successfully!");
-        } else {
-            println!("Creating new comment on PR #{}", self.pr_number);
-            self.octocrab
-                .issues(&self.owner, &self.repo)
-                .create_comment(self.pr_number, report_with_signature)
-                .await
-                .context("Failed to post comment to PR")?;
-            println!("Comment created successfully!");
-        }
-
-        Ok(())
-    }
-
-    /// Find existing comment by the bot on a PR
-    async fn find_existing_comment(&self) -> Result<Option<u64>> {
-        // Get all comments on the PR
-        let mut page = self
-            .octocrab
-            .issues(&self.owner, &self.repo)
-            .list_comments(self.pr_number)
-            .per_page(100)
-            .send()
-            .await
-            .context("Failed to list PR comments")?;
-
-        // Process current and subsequent pages
-        loop {
-            for comment in &page {
-                if comment
-                    .body
-                    .as_ref()
-                    .map_or(false, |body| body.contains(&self.signature))
-                {
-                    return Ok(Some(*comment.id));
-                }
-            }
-
-            // Try to get the next page if it exists
-            match self.octocrab.get_page(&page.next).await {
-                Ok(Some(next_page)) => {
-                    page = next_page;
-                }
-                Ok(None) => {
-                    // No more pages
-                    break;
-                }
-                Err(e) => {
-                    println!("Warning: Failed to fetch next page of comments: {}", e);
-                    break;
-                }
+    // Process current and subsequent pages
+    loop {
+        for comment in &page {
+            if comment
+                .body
+                .as_ref()
+                .map_or(false, |body| body.contains(signature))
+            {
+                return Ok(Some(*comment.id));
             }
         }
 
-        // No matching comment found
-        Ok(None)
+        // Try to get the next page if it exists
+        match octocrab.get_page(&page.next).await {
+            Ok(Some(next_page)) => {
+                page = next_page;
+            }
+            Ok(None) => {
+                // No more pages
+                break;
+            }
+            Err(e) => {
+                println!("Warning: Failed to fetch next page of comments: {}", e);
+                break;
+            }
+        }
     }
+
+    // No matching comment found
+    Ok(None)
+}
+
+/// Post a new comment to a PR (without checking for existing comments)
+pub async fn post_comment(
+    octocrab: &Octocrab,
+    owner: &str,
+    repo: &str,
+    pr_number: u64,
+    content: String,
+) -> Result<()> {
+    octocrab
+        .issues(owner, repo)
+        .create_comment(pr_number, content)
+        .await
+        .context("Failed to post comment to PR")?;
+
+    Ok(())
+}
+
+/// Update an existing comment
+pub async fn update_comment(
+    octocrab: &Octocrab,
+    owner: &str,
+    repo: &str,
+    comment_id: u64,
+    content: String,
+) -> Result<()> {
+    octocrab
+        .issues(owner, repo)
+        .update_comment(comment_id.into(), content)
+        .await
+        .context("Failed to update comment")?;
+
+    Ok(())
 }

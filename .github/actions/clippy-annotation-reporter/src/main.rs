@@ -57,10 +57,15 @@ async fn main() -> Result<()> {
     );
 
     // Post or update the report as a PR comment
-    let commenter =
-        commenter::Commenter::new(&octocrab, &config.owner, &config.repo, config.pr_number);
-
-    commenter.run(report).await?;
+    commenter::post_or_update_comment(
+        &octocrab,
+        &config.owner,
+        &config.repo,
+        config.pr_number,
+        report,
+        None, // Use default signature
+    )
+    .await?;
 
     println!("Process completed successfully!");
 
