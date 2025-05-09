@@ -6,7 +6,6 @@ mod commenter;
 mod config;
 mod report_generator;
 
-use crate::analyzer::Analyzer;
 use crate::config::ConfigBuilder;
 use crate::report_generator::generate_report;
 
@@ -26,8 +25,8 @@ async fn main() -> Result<()> {
         .build()
         .context("Failed to build GitHub API client")?;
 
-    // Create analyzer and run analysis
-    let analyzer = Analyzer::new(
+    // 3. Perform analysis
+    let analysis_result = match analyzer::run_analysis(
         &octocrab,
         &config.owner,
         &config.repo,
@@ -35,10 +34,9 @@ async fn main() -> Result<()> {
         &config.base_branch,
         &config.head_branch,
         &config.rules,
-    );
-
-    // Run the analysis
-    let analysis_result = match analyzer.run().await {
+    )
+    .await
+    {
         Ok(result) => result,
         Err(e) => {
             if e.to_string().contains("No Rust files changed") {
@@ -48,6 +46,7 @@ async fn main() -> Result<()> {
             return Err(e);
         }
     };
+
     // 3. Generate a report
     let report = generate_report(
         &analysis_result,
