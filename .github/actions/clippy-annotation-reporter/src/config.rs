@@ -1,3 +1,6 @@
+// Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 //! Configuration for the clippy-annotation-reporter
 //!
 //! This module handles all configuration-related logic including
