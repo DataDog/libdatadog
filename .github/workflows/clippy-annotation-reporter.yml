@@ -32,4 +32,4 @@ jobs:
         uses: ./.github/actions/clippy-annotation-reporter
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
-          allow-annotation-rules: "unwrap_used"
+          allow-annotation-rules: "expect_used, panic, todo, unimplemented, unwrap_used"
