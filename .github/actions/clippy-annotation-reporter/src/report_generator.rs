@@ -1,3 +1,6 @@
+// Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 //! Report generator module for clippy-annotation-reporter
 //!
 //! This module handles the logic for generating formatted reports
