@@ -62,7 +62,6 @@ impl Args {
 pub struct GitHubContext {
     pub repository: String,
     pub pr_number: u64,
-    pub event_name: String,
     pub base_ref: String,
     pub head_ref: String,
 }
@@ -144,7 +143,6 @@ impl GitHubContext {
         Ok(GitHubContext {
             repository,
             pr_number,
-            event_name,
             base_ref,
             head_ref,
         })
@@ -189,12 +187,10 @@ impl Config {
 
         let base_branch = if !base_branch_arg.is_empty() {
             format!("origin/{}", base_branch_arg)
+        } else if !github_ctx.base_ref.is_empty() {
+            format!("origin/{}", github_ctx.base_ref)
         } else {
-            if !github_ctx.base_ref.is_empty() {
-                format!("origin/{}", github_ctx.base_ref)
-            } else {
-                "origin/main".to_string()
-            }
+            "origin/main".to_string()
         };
 
         // Set head branch (PR's head branch)

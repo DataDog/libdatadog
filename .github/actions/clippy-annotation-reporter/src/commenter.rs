@@ -71,7 +71,7 @@ async fn find_existing_comment(
             if comment
                 .body
                 .as_ref()
-                .map_or(false, |body| body.contains(signature))
+                .is_some_and(|body| body.contains(signature))
             {
                 return Ok(Some(*comment.id));
             }

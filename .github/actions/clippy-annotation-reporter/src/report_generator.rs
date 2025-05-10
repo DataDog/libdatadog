@@ -157,7 +157,7 @@ pub fn generate_report(
             ));
         }
 
-        report.push_str("\n");
+        report.push('\n');
     }
 
     // Crate-level statistics

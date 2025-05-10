@@ -204,7 +204,7 @@ fn find_annotations(
     content: &str,
     regex: &Regex,
 ) {
-    for (_line_number, line) in content.lines().enumerate() {
+    for line in content.lines() {
         if let Some(captures) = regex.captures(line) {
             if let Some(rule_match) = captures.get(1) {
                 let rule = rule_match.as_str().to_string();
