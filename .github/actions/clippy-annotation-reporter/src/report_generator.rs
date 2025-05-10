@@ -31,7 +31,71 @@ pub fn generate_report(
     report.push_str("| Rule | Base Branch | PR Branch | Change |\n");
     report.push_str("|------|------------|-----------|--------|\n");
 
-    // ... existing rule summary code ...
+    let mut total_base = 0;
+    let mut total_head = 0;
+
+    for rule in rules {
+        let base_count = *analysis.base_counts.get(rule).unwrap_or(&0);
+        let head_count = *analysis.head_counts.get(rule).unwrap_or(&0);
+        let change = head_count as isize - base_count as isize;
+
+        total_base += base_count;
+        total_head += head_count;
+
+        // Calculate percentage change
+        let percent_change = if base_count > 0 {
+            (change as f64 / base_count as f64) * 100.0
+        } else if change > 0 {
+            f64::INFINITY
+        } else {
+            0.0
+        };
+
+        // Format the change string with percentage
+        let change_str = if change > 0 {
+            if percent_change.is_infinite() {
+                format!("⚠️ +{} (N/A)", change)
+            } else {
+                format!("⚠️ +{} (+{:.1}%)", change, percent_change)
+            }
+        } else if change < 0 {
+            format!("✅ {} ({:.1}%)", change, percent_change)
+        } else {
+            "No change (0%)".to_string()
+        };
+
+        report.push_str(&format!(
+            "| `{}` | {} | {} | {} |\n",
+            rule, base_count, head_count, change_str
+        ));
+    }
+
+    // Add total row with percentage
+    let total_change = total_head as isize - total_base as isize;
+    let total_percent_change = if total_base > 0 {
+        (total_change as f64 / total_base as f64) * 100.0
+    } else if total_change > 0 {
+        f64::INFINITY
+    } else {
+        0.0
+    };
+
+    let total_change_str = if total_change > 0 {
+        if total_percent_change.is_infinite() {
+            format!("⚠️ +{} (N/A)", total_change)
+        } else {
+            format!("⚠️ +{} (+{:.1}%)", total_change, total_percent_change)
+        }
+    } else if total_change < 0 {
+        format!("✅ {} ({:.1}%)", total_change, total_percent_change)
+    } else {
+        "No change (0%)".to_string()
+    };
+
+    report.push_str(&format!(
+        "| **Total** | **{}** | **{}** | **{}** |\n\n",
+        total_base, total_head, total_change_str
+    ));
 
     // File-level annotation counts with percentage change
     if !analysis.changed_files.is_empty() {
@@ -39,16 +103,71 @@ pub fn generate_report(
         report.push_str("| File | Base Branch | PR Branch | Change |\n");
         report.push_str("|------|------------|-----------|--------|\n");
 
-        // ... existing file-level code ...
+        // Count annotations by file in base branch
+        let mut base_file_counts = std::collections::HashMap::new();
+        for anno in &analysis.base_annotations {
+            *base_file_counts.entry(anno.file.clone()).or_insert(0) += 1;
+        }
+
+        // Count annotations by file in head branch
+        let mut head_file_counts = std::collections::HashMap::new();
+        for anno in &analysis.head_annotations {
+            *head_file_counts.entry(anno.file.clone()).or_insert(0) += 1;
+        }
+
+        // Get a sorted list of all files from the changed_files set
+        let mut all_files: Vec<String> = analysis.changed_files.iter().cloned().collect();
+        all_files.sort();
+
+        // Generate table rows
+        for file in all_files {
+            let base_count = *base_file_counts.get(&file).unwrap_or(&0);
+            let head_count = *head_file_counts.get(&file).unwrap_or(&0);
+            let change = head_count as isize - base_count as isize;
+
+            // Skip files with no changes in annotation count
+            if change == 0 && base_count == 0 && head_count == 0 {
+                continue;
+            }
+
+            // Calculate percentage change for file
+            let percent_change = if base_count > 0 {
+                (change as f64 / base_count as f64) * 100.0
+            } else if change > 0 {
+                f64::INFINITY
+            } else {
+                0.0
+            };
+
+            // Format the change string with percentage for file
+            let change_str = if change > 0 {
+                if percent_change.is_infinite() {
+                    format!("⚠️ +{} (N/A)", change)
+                } else {
+                    format!("⚠️ +{} (+{:.1}%)", change, percent_change)
+                }
+            } else if change < 0 {
+                format!("✅ {} ({:.1}%)", change, percent_change)
+            } else {
+                "No change (0%)".to_string()
+            };
+
+            report.push_str(&format!(
+                "| `{}` | {} | {} | {} |\n",
+                file, base_count, head_count, change_str
+            ));
+        }
+
+        report.push_str("\n");
     }
 
-    // NEW SECTION: Crate-level statistics
+    // Crate-level statistics
     report.push_str("### Annotation Stats by Crate\n\n");
     report.push_str("| Crate | Base Branch | PR Branch | Change |\n");
     report.push_str("|-------|------------|-----------|--------|\n");
 
     // Get all crates from both base and head
-    let mut all_crates = HashSet::new();
+    let mut all_crates = std::collections::HashSet::new();
     for crate_name in analysis.base_crate_counts.keys() {
         all_crates.insert(crate_name.clone());
     }
@@ -104,7 +223,32 @@ pub fn generate_report(
         ));
     }
 
-    report.push_str("\n");
+    // Add total row
+    let total_change = total_head as isize - total_base as isize;
+    let total_percent_change = if total_base > 0 {
+        (total_change as f64 / total_base as f64) * 100.0
+    } else if total_change > 0 {
+        f64::INFINITY
+    } else {
+        0.0
+    };
+
+    let total_change_str = if total_change > 0 {
+        if total_percent_change.is_infinite() {
+            format!("⚠️ +{} (N/A)", total_change)
+        } else {
+            format!("⚠️ +{} (+{:.1}%)", total_change, total_percent_change)
+        }
+    } else if total_change < 0 {
+        format!("✅ {} ({:.1}%)", total_change, total_percent_change)
+    } else {
+        "No change (0%)".to_string()
+    };
+
+    report.push_str(&format!(
+        "| **Total** | **{}** | **{}** | **{}** |\n\n",
+        total_base, total_head, total_change_str
+    ));
 
     // Add explanation
     report.push_str("### About This Report\n\n");
