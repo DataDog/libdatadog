@@ -196,7 +196,7 @@ fn format_change_string(change: isize, percent_change: f64) -> String {
     } else if change < 0 {
         format!("✅ {} ({:.1}%)", change, percent_change)
     } else {
-        "No change (0%)".to_string()
+        "No change (0%)".to_owned()
     }
 }
 

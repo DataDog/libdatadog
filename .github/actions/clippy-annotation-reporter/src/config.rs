@@ -55,7 +55,7 @@ impl Args {
     pub fn parse_rules(&self) -> Vec<String> {
         self.rules
             .split(',')
-            .map(|s| s.trim().to_string())
+            .map(|s| s.trim().to_owned())
             .collect()
     }
 }
@@ -104,7 +104,7 @@ impl GitHubContext {
                 let base_ref = match event_json["pull_request"]["base"]["ref"].as_str() {
                     Some(val) => {
                         println!("Successfully found base.ref in event data: {}", val);
-                        val.to_string()
+                        val.to_owned()
                     }
                     None => {
                         println!(
@@ -114,7 +114,7 @@ impl GitHubContext {
 
                         // Fallback to main if we can't extract the value
                         println!("Falling back to 'main' as base branch");
-                        "main".to_string()
+                        "main".to_owned()
                     }
                 };
 
@@ -122,7 +122,7 @@ impl GitHubContext {
                 let head_ref = match event_json["pull_request"]["head"]["ref"].as_str() {
                     Some(val) => {
                         println!("Successfully found head.ref in event data: {}", val);
-                        val.to_string()
+                        val.to_owned()
                     }
                     None => {
                         println!("Warning: Could not extract head.ref as string");
@@ -135,7 +135,7 @@ impl GitHubContext {
             }
             _ => {
                 // For other events, default values (will be overridden by args)
-                (0, "main".to_string(), "".to_string())
+                (0, "main".to_owned(), "".to_owned())
             }
         };
 
@@ -193,7 +193,7 @@ impl Config {
         } else if !github_ctx.base_ref.is_empty() {
             format!("origin/{}", github_ctx.base_ref)
         } else {
-            "origin/main".to_string()
+            "origin/main".to_owned()
         };
 
         // Set head branch (PR's head branch)
@@ -202,7 +202,7 @@ impl Config {
         } else {
             env::var("GITHUB_HEAD_REF")
                 .map(|ref_name| format!("origin/{}", ref_name))
-                .unwrap_or_else(|_| "HEAD".to_string())
+                .unwrap_or_else(|_| "HEAD".to_owned())
         };
 
         // Parse repository into owner and repo
@@ -214,8 +214,8 @@ impl Config {
             ));
         }
 
-        let owner = parts[0].to_string();
-        let repo = parts[1].to_string();
+        let owner = parts[0].to_owned();
+        let repo = parts[1].to_owned();
 
         // Parse rules list
         let rules = args.parse_rules();

@@ -210,9 +210,9 @@ fn find_annotations(
     for line in content.lines() {
         if let Some(captures) = regex.captures(line) {
             if let Some(rule_match) = captures.get(1) {
-                let rule = rule_match.as_str().to_string();
+                let rule = rule_match.as_str().to_owned();
                 annotations.push(ClippyAnnotation {
-                    file: file.to_string(),
+                    file: file.to_owned(),
                     rule,
                 });
             }
@@ -240,29 +240,29 @@ fn get_crate_for_file(file_path: &str) -> String {
     let path_parts: Vec<&str> = file_path.split('/').collect();
 
     if path_parts.is_empty() {
-        return "unknown".to_string();
+        return "unknown".to_owned();
     }
 
     // Handle common project structures
     if path_parts.len() > 1 {
         // If it's in "src" or "tests" folder, use the parent directory
         if path_parts[0] == "src" || path_parts[0] == "tests" {
-            return "root".to_string();
+            return "root".to_owned();
         }
 
         // If it's in a nested crate structure like crates/foo/src
         if path_parts[0] == "crates" && path_parts.len() > 2 {
-            return path_parts[1].to_string();
+            return path_parts[1].to_owned();
         }
 
         // If it's in a workspace pattern like foo/src
         if path_parts.len() > 1 && (path_parts[1] == "src" || path_parts[1] == "tests") {
-            return path_parts[0].to_string();
+            return path_parts[0].to_owned();
         }
     }
 
     // Default: use first directory name
-    path_parts[0].to_string()
+    path_parts[0].to_owned()
 }
 
 /// Count annotations by crate
@@ -294,7 +294,7 @@ fn get_all_rust_files() -> Result<Vec<String>> {
 
     let files = String::from_utf8(output.stdout).context("Failed to parse git ls-files output")?;
 
-    let rust_files: Vec<String> = files.lines().map(|line| line.to_string()).collect();
+    let rust_files: Vec<String> = files.lines().map(|line| line.to_owned()).collect();
 
     println!("Found {} Rust files in total", rust_files.len());
 
@@ -377,4 +377,100 @@ fn analyze_all_files_for_crates(
     let head_crate_counts = count_annotations_by_crate(&head_annotations);
 
     Ok((base_crate_counts, head_crate_counts))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Test for find_annotations
+    #[test]
+    fn test_find_annotations() {
+        let mut annotations = Vec::new();
+        let file = "src/test.rs";
+        let content = r#"
+            fn test() {
+                #[allow(clippy::unwrap_used)]
+                let x = Some(5).unwrap();
+                
+                #[allow(clippy::expect_used)]
+                let y = Some(10).expect("This should exist");
+            }
+        "#;
+
+        let regex = Regex::new(r"#\s*\[\s*allow\s*\(\s*clippy\s*::\s*(unwrap_used|expect_used)\s*\)\s*]").unwrap();
+
+        find_annotations(&mut annotations, file, content, &regex);
+
+        assert_eq!(annotations.len(), 2);
+        assert_eq!(annotations[0].rule, "unwrap_used");
+        assert_eq!(annotations[0].file, file);
+        assert_eq!(annotations[1].rule, "expect_used");
+    }
+
+    // Test for count_annotations_by_rule
+    #[test]
+    fn test_count_annotations_by_rule() {
+        let annotations = vec![
+            ClippyAnnotation {
+                file: "src/test1.rs".to_owned(),
+                rule: "unwrap_used".to_owned(),
+            },
+            ClippyAnnotation {
+                file: "src/test1.rs".to_owned(),
+                rule: "expect_used".to_owned(),
+            },
+            ClippyAnnotation {
+                file: "src/test2.rs".to_owned(),
+                rule: "unwrap_used".to_owned(),
+            },
+        ];
+
+        let counts = count_annotations_by_rule(&annotations);
+
+        assert_eq!(counts.len(), 2);
+        assert_eq!(*counts.get("unwrap_used").unwrap(), 2);
+        assert_eq!(*counts.get("expect_used").unwrap(), 1);
+    }
+
+    // Test for get_crate_for_file
+    #[test]
+    fn test_get_crate_for_file() {
+        assert_eq!(get_crate_for_file("src/main.rs"), "root");
+        assert_eq!(get_crate_for_file("tests/test_utils.rs"), "root");
+        assert_eq!(get_crate_for_file("crates/foo/src/lib.rs"), "foo");
+        assert_eq!(get_crate_for_file("foo/src/lib.rs"), "foo");
+        assert_eq!(get_crate_for_file("bar/tests/test.rs"), "bar");
+        assert_eq!(get_crate_for_file("standalone.rs"), "standalone");
+    }
+
+    // Test for count_annotations_by_crate
+    #[test]
+    fn test_count_annotations_by_crate() {
+        let annotations = vec![
+            ClippyAnnotation {
+                file: "src/main.rs".to_owned(),
+                rule: "unwrap_used".to_owned(),
+            },
+            ClippyAnnotation {
+                file: "crates/foo/src/lib.rs".to_owned(),
+                rule: "expect_used".to_owned(),
+            },
+            ClippyAnnotation {
+                file: "crates/foo/src/utils.rs".to_owned(),
+                rule: "unwrap_used".to_owned(),
+            },
+            ClippyAnnotation {
+                file: "bar/src/lib.rs".to_owned(),
+                rule: "panic".to_owned(),
+            },
+        ];
+
+        let counts = count_annotations_by_crate(&annotations);
+
+        assert_eq!(counts.len(), 3);
+        assert_eq!(*counts.get("root").unwrap(), 1);
+        assert_eq!(*counts.get("foo").unwrap(), 2);
+        assert_eq!(*counts.get("bar").unwrap(), 1);
+    }
 }
