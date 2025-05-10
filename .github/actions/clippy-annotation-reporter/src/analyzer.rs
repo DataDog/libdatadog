@@ -270,11 +270,12 @@ pub fn get_all_rust_files() -> Result<Vec<String>> {
     Ok(rust_files)
 }
 
-/// Merge analysis results
+/// Merge analysis results from PR-specific analysis and repository-wide analysis
 fn merge_analyses(
     pr_analysis: AnalysisResult,
     crate_counts: (HashMap<String, usize>, HashMap<String, usize>),
 ) -> AnalysisResult {
+    // This preserves all PR-specific information, only replacing crate counts
     AnalysisResult {
         base_annotations: pr_analysis.base_annotations,
         head_annotations: pr_analysis.head_annotations,
@@ -363,7 +364,86 @@ fn create_annotation_regex(rules: &[String]) -> Result<Regex> {
     .context("Failed to compile annotation regex")
 }
 
-/// Convenience function to run the full analysis process
+/// Analyze all files just for crate-level statistics
+fn analyze_all_files_for_crates(
+    files: &[String],
+    base_branch: &str,
+    head_branch: &str,
+    rules: &[String],
+) -> Result<(HashMap<String, usize>, HashMap<String, usize>)> {
+    println!(
+        "Analyzing all {} Rust files for crate-level statistics...",
+        files.len()
+    );
+
+    // Create regex
+    let rule_pattern = rules.join("|");
+    let annotation_regex = Regex::new(&format!(
+        r"#\s*\[\s*allow\s*\(\s*clippy\s*::\s*({})\s*\)\s*\]",
+        rule_pattern
+    ))
+    .context("Failed to compile annotation regex")?;
+
+    let mut base_annotations = Vec::new();
+    let mut head_annotations = Vec::new();
+
+    // Process each file
+    for file in files {
+        // Get file content from base branch
+        let base_content = match get_file_content(file, base_branch) {
+            Ok(content) => content,
+            Err(e) => {
+                // Skip errors for files that might not exist in one branch
+                if !e.to_string().contains("did not match any file") {
+                    println!(
+                        "Warning: Failed to get {} content from {}: {}",
+                        file, base_branch, e
+                    );
+                }
+                String::new()
+            }
+        };
+
+        // Get file content from head branch
+        let head_content = match get_file_content(file, head_branch) {
+            Ok(content) => content,
+            Err(e) => {
+                // Skip errors for files that might not exist in one branch
+                if !e.to_string().contains("did not match any file") {
+                    println!(
+                        "Warning: Failed to get {} content from {}: {}",
+                        file, head_branch, e
+                    );
+                }
+                String::new()
+            }
+        };
+
+        // Find annotations in base branch
+        find_annotations(
+            &mut base_annotations,
+            file,
+            &base_content,
+            &annotation_regex,
+        );
+
+        // Find annotations in head branch
+        find_annotations(
+            &mut head_annotations,
+            file,
+            &head_content,
+            &annotation_regex,
+        );
+    }
+
+    // Count annotations by crate
+    let base_crate_counts = count_annotations_by_crate(&base_annotations);
+    let head_crate_counts = count_annotations_by_crate(&head_annotations);
+
+    Ok((base_crate_counts, head_crate_counts))
+}
+
+/// Run the full analysis process
 pub async fn run_analysis(
     octocrab: &Octocrab,
     owner: &str,
@@ -383,18 +463,23 @@ pub async fn run_analysis(
     // Get all repository files
     let all_files = get_all_rust_files()?;
 
-    // Create regex for matching annotations
-    let annotation_regex = create_annotation_regex(rules)?;
-
-    // Analyze changed files
+    // Step 1: Analyze changed files for detailed PR info
     let pr_analysis = analyze_annotations(&changed_files, base_branch, head_branch, rules)?;
 
-    // Analyze all files for crate-level stats
-    let crate_counts =
-        analyze_crate_counts(&all_files, base_branch, head_branch, &annotation_regex)?;
+    // Step 2: Create fresh crate-level counts from all files
+    let (repo_base_crate_counts, repo_head_crate_counts) =
+        analyze_all_files_for_crates(&all_files, base_branch, head_branch, rules)?;
 
-    // Merge results
-    let result = merge_analyses(pr_analysis, crate_counts);
-
-    Ok(result)
+    // Step 3: Combine the results
+    Ok(AnalysisResult {
+        // Keep all PR-specific analysis data
+        base_annotations: pr_analysis.base_annotations,
+        head_annotations: pr_analysis.head_annotations,
+        base_counts: pr_analysis.base_counts,
+        head_counts: pr_analysis.head_counts,
+        changed_files: pr_analysis.changed_files,
+        // Use repository-wide crate counts
+        base_crate_counts: repo_base_crate_counts,
+        head_crate_counts: repo_head_crate_counts,
+    })
 }
