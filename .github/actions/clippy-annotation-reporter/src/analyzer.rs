@@ -25,8 +25,9 @@ pub struct AnalysisResult {
     pub base_counts: HashMap<String, usize>,
     pub head_counts: HashMap<String, usize>,
     pub changed_files: HashSet<String>,
+    pub base_crate_counts: HashMap<String, usize>,
+    pub head_crate_counts: HashMap<String, usize>,
 }
-
 /// Get changed Rust files from the PR
 pub async fn get_changed_files(
     octocrab: &Octocrab,
@@ -125,6 +126,10 @@ pub fn analyze_annotations(
     let base_counts = count_annotations_by_rule(&base_annotations);
     let head_counts = count_annotations_by_rule(&head_annotations);
 
+    // Count annotations by crate
+    let base_crate_counts = count_annotations_by_crate(&base_annotations);
+    let head_crate_counts = count_annotations_by_crate(&head_annotations);
+
     println!(
         "Analysis complete. Found {} annotations in base branch and {} in head branch",
         base_annotations.len(),
@@ -137,6 +142,8 @@ pub fn analyze_annotations(
         base_counts,
         head_counts,
         changed_files,
+        base_crate_counts,
+        head_crate_counts,
     })
 }
 
@@ -188,6 +195,52 @@ fn count_annotations_by_rule(annotations: &[ClippyAnnotation]) -> HashMap<String
 
     for annotation in annotations {
         *counts.entry(annotation.rule.clone()).or_insert(0) += 1;
+    }
+
+    counts
+}
+
+/// Get crate information for a given file path
+fn get_crate_for_file(file_path: &str) -> String {
+    // Simple heuristic: use the first directory as the crate name
+    // For files in src/ directory, use the parent directory
+    // For files in the root, use "root"
+
+    let path_parts: Vec<&str> = file_path.split('/').collect();
+
+    if path_parts.is_empty() {
+        return "unknown".to_string();
+    }
+
+    // Handle common project structures
+    if path_parts.len() > 1 {
+        // If it's in "src" or "tests" folder, use the parent directory
+        if path_parts[0] == "src" || path_parts[0] == "tests" {
+            return "root".to_string();
+        }
+
+        // If it's in a nested crate structure like crates/foo/src
+        if path_parts[0] == "crates" && path_parts.len() > 2 {
+            return path_parts[1].to_string();
+        }
+
+        // If it's in a workspace pattern like foo/src
+        if path_parts.len() > 1 && (path_parts[1] == "src" || path_parts[1] == "tests") {
+            return path_parts[0].to_string();
+        }
+    }
+
+    // Default: use first directory name
+    path_parts[0].to_string()
+}
+
+/// Count annotations by crate
+fn count_annotations_by_crate(annotations: &[ClippyAnnotation]) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+
+    for annotation in annotations {
+        let crate_name = get_crate_for_file(&annotation.file);
+        *counts.entry(crate_name).or_insert(0) += 1;
     }
 
     counts
