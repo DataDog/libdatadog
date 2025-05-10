@@ -13,9 +13,7 @@ use std::process::Command;
 #[derive(Debug, Clone)]
 pub struct ClippyAnnotation {
     pub file: String,
-    pub line_number: usize,
     pub rule: String,
-    pub line_content: String,
 }
 
 /// Result of annotation analysis
@@ -28,36 +26,40 @@ pub struct AnalysisResult {
     pub base_crate_counts: HashMap<String, usize>,
     pub head_crate_counts: HashMap<String, usize>,
 }
-/// Get changed Rust files from the PR
-pub async fn get_changed_files(
+
+/// Run the full analysis process
+pub async fn run_analysis(
     octocrab: &Octocrab,
     owner: &str,
     repo: &str,
     pr_number: u64,
-) -> Result<Vec<String>> {
-    println!("Getting changed files from PR #{}...", pr_number);
+    base_branch: &str,
+    head_branch: &str,
+    rules: &[String],
+) -> Result<AnalysisResult> {
+    let changed_files = get_changed_files(octocrab, owner, repo, pr_number).await?;
 
-    let files = octocrab
-        .pulls(owner, repo)
-        .list_files(pr_number)
-        .await
-        .context("Failed to list PR files")?;
+    if changed_files.is_empty() {
+        return Err(anyhow::anyhow!("No Rust files changed in this PR"));
+    }
 
-    // Filter for Rust files only
-    let rust_files: Vec<String> = files
-        .items
-        .into_iter()
-        .filter(|file| file.filename.ends_with(".rs"))
-        .map(|file| file.filename)
-        .collect();
+    let all_files = get_all_rust_files()?;
+    let pr_analysis = analyze_annotations(&changed_files, base_branch, head_branch, rules)?;
+    let (repo_base_crate_counts, repo_head_crate_counts) =
+        analyze_all_files_for_crates(&all_files, base_branch, head_branch, rules)?;
 
-    println!("Found {} changed Rust files", rust_files.len());
-
-    Ok(rust_files)
+    Ok(AnalysisResult {
+        base_annotations: pr_analysis.base_annotations,
+        head_annotations: pr_analysis.head_annotations,
+        base_counts: pr_analysis.base_counts,
+        head_counts: pr_analysis.head_counts,
+        changed_files: pr_analysis.changed_files,
+        base_crate_counts: repo_base_crate_counts,
+        head_crate_counts: repo_head_crate_counts,
+    })
 }
-
 /// Analyze clippy annotations in base and head branches
-pub fn analyze_annotations(
+fn analyze_annotations(
     files: &[String],
     base_branch: &str,
     head_branch: &str,
@@ -147,6 +149,34 @@ pub fn analyze_annotations(
     })
 }
 
+/// Get changed Rust files from the PR
+async fn get_changed_files(
+    octocrab: &Octocrab,
+    owner: &str,
+    repo: &str,
+    pr_number: u64,
+) -> Result<Vec<String>> {
+    println!("Getting changed files from PR #{}...", pr_number);
+
+    let files = octocrab
+        .pulls(owner, repo)
+        .list_files(pr_number)
+        .await
+        .context("Failed to list PR files")?;
+
+    // Filter for Rust files only
+    let rust_files: Vec<String> = files
+        .items
+        .into_iter()
+        .filter(|file| file.filename.ends_with(".rs"))
+        .map(|file| file.filename)
+        .collect();
+
+    println!("Found {} changed Rust files", rust_files.len());
+
+    Ok(rust_files)
+}
+
 /// Get file content from a specific branch
 fn get_file_content(file: &str, branch: &str) -> Result<String> {
     println!("Getting content for {} from {}", file, branch);
@@ -174,15 +204,13 @@ fn find_annotations(
     content: &str,
     regex: &Regex,
 ) {
-    for (line_number, line) in content.lines().enumerate() {
+    for (_line_number, line) in content.lines().enumerate() {
         if let Some(captures) = regex.captures(line) {
             if let Some(rule_match) = captures.get(1) {
                 let rule = rule_match.as_str().to_string();
                 annotations.push(ClippyAnnotation {
                     file: file.to_string(),
-                    line_number: line_number + 1,
                     rule,
-                    line_content: line.trim().to_string(),
                 });
             }
         }
@@ -247,7 +275,7 @@ fn count_annotations_by_crate(annotations: &[ClippyAnnotation]) -> HashMap<Strin
 }
 
 /// Get all Rust files in the repository
-pub fn get_all_rust_files() -> Result<Vec<String>> {
+fn get_all_rust_files() -> Result<Vec<String>> {
     println!("Getting all Rust files in the repository...");
 
     // Use git ls-files to get all tracked Rust files
@@ -268,100 +296,6 @@ pub fn get_all_rust_files() -> Result<Vec<String>> {
     println!("Found {} Rust files in total", rust_files.len());
 
     Ok(rust_files)
-}
-
-/// Merge analysis results from PR-specific analysis and repository-wide analysis
-fn merge_analyses(
-    pr_analysis: AnalysisResult,
-    crate_counts: (HashMap<String, usize>, HashMap<String, usize>),
-) -> AnalysisResult {
-    // This preserves all PR-specific information, only replacing crate counts
-    AnalysisResult {
-        base_annotations: pr_analysis.base_annotations,
-        head_annotations: pr_analysis.head_annotations,
-        base_counts: pr_analysis.base_counts,
-        head_counts: pr_analysis.head_counts,
-        changed_files: pr_analysis.changed_files,
-        base_crate_counts: crate_counts.0,
-        head_crate_counts: crate_counts.1,
-    }
-}
-
-/// Extract annotations from a list of files in both branches
-fn extract_annotations_from_files(
-    files: &[String],
-    base_branch: &str,
-    head_branch: &str,
-    annotation_regex: &Regex,
-) -> Result<(Vec<ClippyAnnotation>, Vec<ClippyAnnotation>)> {
-    let mut base_annotations = Vec::new();
-    let mut head_annotations = Vec::new();
-
-    // Process each file
-    for file in files {
-        // Get file content from base branch
-        let base_content = match get_file_content(file, base_branch) {
-            Ok(content) => content,
-            Err(e) => {
-                println!(
-                    "Warning: Failed to get {} content from {}: {}",
-                    file, base_branch, e
-                );
-                String::new()
-            }
-        };
-
-        // Get file content from head branch
-        let head_content = match get_file_content(file, head_branch) {
-            Ok(content) => content,
-            Err(e) => {
-                println!(
-                    "Warning: Failed to get {} content from {}: {}",
-                    file, head_branch, e
-                );
-                String::new()
-            }
-        };
-
-        // Find annotations in base branch
-        find_annotations(&mut base_annotations, file, &base_content, annotation_regex);
-
-        // Find annotations in head branch
-        find_annotations(&mut head_annotations, file, &head_content, annotation_regex);
-    }
-
-    Ok((base_annotations, head_annotations))
-}
-
-/// Analyze all repository files for crate-level statistics
-fn analyze_crate_counts(
-    files: &[String],
-    base_branch: &str,
-    head_branch: &str,
-    annotation_regex: &Regex,
-) -> Result<(HashMap<String, usize>, HashMap<String, usize>)> {
-    println!(
-        "Analyzing all {} Rust files for crate-level statistics...",
-        files.len()
-    );
-
-    let (base_annotations, head_annotations) =
-        extract_annotations_from_files(files, base_branch, head_branch, annotation_regex)?;
-
-    let base_crate_counts = count_annotations_by_crate(&base_annotations);
-    let head_crate_counts = count_annotations_by_crate(&head_annotations);
-
-    Ok((base_crate_counts, head_crate_counts))
-}
-
-/// Create regex for matching clippy allow annotations
-fn create_annotation_regex(rules: &[String]) -> Result<Regex> {
-    let rule_pattern = rules.join("|");
-    Regex::new(&format!(
-        r"#\s*\[\s*allow\s*\(\s*clippy\s*::\s*({})\s*\)\s*\]",
-        rule_pattern
-    ))
-    .context("Failed to compile annotation regex")
 }
 
 /// Analyze all files just for crate-level statistics
@@ -436,50 +370,8 @@ fn analyze_all_files_for_crates(
         );
     }
 
-    // Count annotations by crate
     let base_crate_counts = count_annotations_by_crate(&base_annotations);
     let head_crate_counts = count_annotations_by_crate(&head_annotations);
 
     Ok((base_crate_counts, head_crate_counts))
-}
-
-/// Run the full analysis process
-pub async fn run_analysis(
-    octocrab: &Octocrab,
-    owner: &str,
-    repo: &str,
-    pr_number: u64,
-    base_branch: &str,
-    head_branch: &str,
-    rules: &[String],
-) -> Result<AnalysisResult> {
-    // Get changed files
-    let changed_files = get_changed_files(octocrab, owner, repo, pr_number).await?;
-
-    if changed_files.is_empty() {
-        return Err(anyhow::anyhow!("No Rust files changed in this PR"));
-    }
-
-    // Get all repository files
-    let all_files = get_all_rust_files()?;
-
-    // Step 1: Analyze changed files for detailed PR info
-    let pr_analysis = analyze_annotations(&changed_files, base_branch, head_branch, rules)?;
-
-    // Step 2: Create fresh crate-level counts from all files
-    let (repo_base_crate_counts, repo_head_crate_counts) =
-        analyze_all_files_for_crates(&all_files, base_branch, head_branch, rules)?;
-
-    // Step 3: Combine the results
-    Ok(AnalysisResult {
-        // Keep all PR-specific analysis data
-        base_annotations: pr_analysis.base_annotations,
-        head_annotations: pr_analysis.head_annotations,
-        base_counts: pr_analysis.base_counts,
-        head_counts: pr_analysis.head_counts,
-        changed_files: pr_analysis.changed_files,
-        // Use repository-wide crate counts
-        base_crate_counts: repo_base_crate_counts,
-        head_crate_counts: repo_head_crate_counts,
-    })
 }
