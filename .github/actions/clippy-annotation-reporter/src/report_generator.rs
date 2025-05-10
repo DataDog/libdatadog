@@ -4,7 +4,6 @@
 //! based on annotation analysis results.
 
 use crate::analyzer::AnalysisResult;
-use std::collections::{HashMap, HashSet};
 
 /// Generate a detailed report for PR comment
 pub fn generate_report(

@@ -7,7 +7,7 @@ use anyhow::{Context as _, Result};
 use octocrab::Octocrab;
 
 /// Post or update a comment on a PR with the given report
-pub async fn post_or_update_comment(
+pub async fn post_comment(
     octocrab: &Octocrab,
     owner: &str,
     repo: &str,
@@ -49,7 +49,7 @@ pub async fn post_or_update_comment(
 }
 
 /// Find existing comment by the bot on a PR
-pub async fn find_existing_comment(
+async fn find_existing_comment(
     octocrab: &Octocrab,
     owner: &str,
     repo: &str,
@@ -95,38 +95,4 @@ pub async fn find_existing_comment(
 
     // No matching comment found
     Ok(None)
-}
-
-/// Post a new comment to a PR (without checking for existing comments)
-pub async fn post_comment(
-    octocrab: &Octocrab,
-    owner: &str,
-    repo: &str,
-    pr_number: u64,
-    content: String,
-) -> Result<()> {
-    octocrab
-        .issues(owner, repo)
-        .create_comment(pr_number, content)
-        .await
-        .context("Failed to post comment to PR")?;
-
-    Ok(())
-}
-
-/// Update an existing comment
-pub async fn update_comment(
-    octocrab: &Octocrab,
-    owner: &str,
-    repo: &str,
-    comment_id: u64,
-    content: String,
-) -> Result<()> {
-    octocrab
-        .issues(owner, repo)
-        .update_comment(comment_id.into(), content)
-        .await
-        .context("Failed to update comment")?;
-
-    Ok(())
 }

@@ -16,16 +16,13 @@ async fn main() -> Result<()> {
 
     println!("Clippy Annotation Reporter starting...");
 
-    // Create configuration
     let config = ConfigBuilder::new().build()?;
 
-    // Initialize GitHub API client with token
     let octocrab = Octocrab::builder()
         .personal_token(config.token.clone())
         .build()
         .context("Failed to build GitHub API client")?;
 
-    // 3. Perform analysis
     let analysis_result = match analyzer::run_analysis(
         &octocrab,
         &config.owner,
@@ -47,7 +44,6 @@ async fn main() -> Result<()> {
         }
     };
 
-    // 3. Generate a report
     let report = generate_report(
         &analysis_result,
         &config.rules,
@@ -56,14 +52,13 @@ async fn main() -> Result<()> {
         &config.head_branch,
     );
 
-    // Post or update the report as a PR comment
-    commenter::post_or_update_comment(
+    commenter::post_comment(
         &octocrab,
         &config.owner,
         &config.repo,
         config.pr_number,
         report,
-        None, // Use default signature
+        None,
     )
     .await?;
 
