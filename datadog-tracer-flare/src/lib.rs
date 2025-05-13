@@ -69,6 +69,7 @@ type StopFlareCallback = fn() -> PathBuf;
 ///
 /// * `Ok()` - If successful.
 /// * `FlareError(msg)` - If something fail.
+#[allow(clippy::too_many_arguments)]
 pub async fn remote_config_listener(
     _prep_flare: PrepFlareCallback,
     _stop_flare: StopFlareCallback,
