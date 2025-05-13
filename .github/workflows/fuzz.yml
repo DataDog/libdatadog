@@ -7,18 +7,18 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        directory: [alloc, profiling, ddcommon-ffi, trace-utils]
+        directory: [datadog-alloc, datadog-profiling, ddcommon-ffi, datadog-trace-utils]
     env:
       CARGO_TERM_COLOR: always
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
     - name: Set up Rust
       run: |
         set -e
         rustup set profile minimal
         rustup toolchain install nightly-2024-12-16
         rustup default nightly-2024-12-16
-    - uses: taiki-e/install-action@v2
+    - uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
       with:
         tool: cargo-bolero
     - run: |

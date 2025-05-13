@@ -19,22 +19,20 @@ ddcommon = { path = "../ddcommon" }
 datadog-ddsketch = { path = "../ddsketch" }
 base64 = "0.22"
 futures = { version = "0.3", default-features = false }
-http = "0.2"
-hyper = { version = "0.14", features = ["client", "backports", "deprecated"], default-features = false }
-lazy_static = "1.4"
-pin-project = "1"
+hyper = { version = "1.6", features = ["http1", "client"] }
+hyper-util = { version = "0.1", features = ["http1", "client", "client-legacy"] }
+http-body-util = "0.1"
+http = "1.0"
 
-regex = { version = "1" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0" }
 sys-info = { version = "0.9.0" }
 tokio = { version = "1.23", features = ["sync", "io-util"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 
-io-lifetimes = { version = "1.0" }
 tracing = { version = "0.1", default-features = false }
 uuid = { version = "1.3", features = ["v4"] }
-hashbrown = { version = "0.14", features = ["raw"] }
+hashbrown = "0.15"
 
 [dev-dependencies]
 tracing-subscriber = "0.3.18"

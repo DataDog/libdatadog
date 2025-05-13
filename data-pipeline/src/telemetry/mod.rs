@@ -12,7 +12,8 @@ use datadog_trace_utils::{
 };
 use ddcommon::tag::Tag;
 use ddtelemetry::worker::{
-    LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
+    LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerFlavor,
+    TelemetryWorkerHandle,
 };
 use std::{collections::HashMap, time::Duration};
 use tokio::task::JoinHandle;
@@ -65,9 +66,9 @@ impl TelemetryClientBuilder {
     }
 
     /// Sets the heartbeat notification interval in millis.
-    pub fn set_hearbeat(mut self, interval: u64) -> Self {
+    pub fn set_heartbeat(mut self, interval: u64) -> Self {
         if interval > 0 {
-            self.config.telemetry_hearbeat_interval = Duration::from_millis(interval);
+            self.config.telemetry_heartbeat_interval = Duration::from_millis(interval);
         }
         self
     }
@@ -78,21 +79,31 @@ impl TelemetryClientBuilder {
         self
     }
 
+    /// Sets the debug enabled flag for the telemetry client.
+    pub fn set_debug_enabled(mut self, debug: bool) -> Self {
+        self.config.debug_enabled = debug;
+        self
+    }
+
     /// Builds the telemetry client.
     pub async fn build(self) -> Result<TelemetryClient, TelemetryError> {
+        #[allow(clippy::unwrap_used)]
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
             self.service_name.unwrap(),
             self.language.unwrap(),
             self.language_version.unwrap(),
             self.tracer_version.unwrap(),
         );
+        builder.config = self.config;
+        // Send only metrics and logs and drop lifecycle events
+        builder.flavor = TelemetryWorkerFlavor::MetricsLogs;
 
         if let Some(id) = self.runtime_id {
             builder.runtime_id = Some(id);
         }
 
         let (worker, handle) = builder
-            .spawn_with_config(self.config)
+            .spawn()
             .await
             .map_err(|e| TelemetryError::Builder(e.to_string()))?;
 
@@ -105,6 +116,7 @@ impl TelemetryClientBuilder {
 }
 
 /// Telemetry handle used to send metrics to the agent
+#[derive(Debug)]
 pub struct TelemetryClient {
     metrics: Metrics,
     worker: TelemetryWorkerHandle,
@@ -259,6 +271,7 @@ impl TelemetryClient {
 
 #[cfg(test)]
 mod tests {
+    use ddcommon::hyper_migration;
     use httpmock::Method::POST;
     use httpmock::MockServer;
     use hyper::{Response, StatusCode};
@@ -273,7 +286,8 @@ mod tests {
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
             .set_url(url)
-            .set_hearbeat(100)
+            .set_heartbeat(100)
+            .set_debug_enabled(true)
             .build()
             .await
             .unwrap()
@@ -287,18 +301,20 @@ mod tests {
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
             .set_url("http://localhost")
-            .set_hearbeat(30);
+            .set_debug_enabled(true)
+            .set_heartbeat(30);
 
         assert_eq!(&builder.service_name.unwrap(), "test_service");
         assert_eq!(&builder.language.unwrap(), "test_language");
         assert_eq!(&builder.language_version.unwrap(), "test_language_version");
         assert_eq!(&builder.tracer_version.unwrap(), "test_tracer_version");
+        assert!(builder.config.debug_enabled);
         assert_eq!(
-            &builder.config.endpoint.unwrap().url.to_string().as_ref(),
+            <String as AsRef<str>>::as_ref(&builder.config.endpoint().unwrap().url.to_string()),
             "http://localhost/telemetry/proxy/api/v2/apmtelemetry"
         );
         assert_eq!(
-            builder.config.telemetry_hearbeat_interval,
+            builder.config.telemetry_heartbeat_interval,
             Duration::from_millis(30)
         );
     }
@@ -563,7 +579,7 @@ mod tests {
     #[tokio::test]
     async fn telemetry_from_network_error_test() {
         // Create an hyper error by calling an undefined service
-        let hyper_error = hyper::Client::new()
+        let hyper_error = hyper_migration::new_default_client()
             .get(hyper::Uri::from_static("localhost:12345"))
             .await
             .unwrap_err();
@@ -657,7 +673,7 @@ mod tests {
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
             .set_url(&server.url("/"))
-            .set_hearbeat(100)
+            .set_heartbeat(100)
             .set_runtime_id("foo")
             .build()
             .await;
@@ -665,8 +681,14 @@ mod tests {
         let client = result.unwrap();
 
         client.start().await;
+        client
+            .send(&SendPayloadTelemetry {
+                requests_count: 1,
+                ..Default::default()
+            })
+            .unwrap();
         client.shutdown().await;
-        // Check for 2 hits: app-started and app-closing.
-        telemetry_srv.assert_hits_async(2).await;
+        // One payload generate-metrics
+        telemetry_srv.assert_hits_async(1).await;
     }
 }

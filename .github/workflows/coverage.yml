@@ -13,7 +13,7 @@ jobs:
       CARGO_TERM_COLOR: always
     steps:
       - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
           tool-cache: false
           android: true
@@ -22,14 +22,11 @@ jobs:
           large-packages: false
           docker-images: true
           swap-storage: true
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: Install Rust
         run: rustup install nightly-2024-12-16 && rustup default nightly-2024-12-16
-      - name: Install Protoc Binary
-        shell: bash
-        run: chmod +x ./scripts/install-protoc.sh && ./scripts/install-protoc.sh $HOME
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
           tool: cargo-llvm-cov@0.6.13,nextest@0.9.81
       - name: Generate code coverage (including doc tests)
@@ -39,7 +36,7 @@ jobs:
           cargo llvm-cov report --doctests --lcov --output-path lcov.info
           cargo clean
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # 4.6.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info

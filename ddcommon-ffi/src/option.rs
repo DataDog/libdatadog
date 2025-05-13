@@ -30,6 +30,7 @@ impl<T> Option<T> {
 
     pub fn unwrap_none(self) {
         match self {
+            #[allow(clippy::panic)]
             Option::Some(_) => panic!("Called ffi::Option::unwrap_none but option was Some(_)"),
             Option::None => {}
         }

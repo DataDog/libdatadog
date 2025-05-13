@@ -1,0 +1,66 @@
+[
+  [
+    {
+      "service": "test-service",
+      "name": "test_exporter_v04_v05_snapshot_01",
+      "resource": "test-resource",
+      "trace_id": 1234,
+      "span_id": 12342,
+      "parent_id": 12341,
+      "start": 1,
+      "duration": 5,
+      "error": 0,
+      "meta": {
+        "env": "test-env",
+        "service": "test-service",
+        "runtime-id": "test-runtime-id-value"
+      },
+      "metrics": {
+        "_dd_metric1": 1.0,
+        "_dd_metric2": 2.0
+      },
+      "type": ""
+    },
+    {
+      "service": "test-service",
+      "name": "test_exporter_v04_v05_snapshot_02",
+      "resource": "test-resource",
+      "trace_id": 1234,
+      "span_id": 12343,
+      "parent_id": 12341,
+      "start": 1,
+      "duration": 5,
+      "error": 0,
+      "meta": {
+        "env": "test-env",
+        "runtime-id": "test-runtime-id-value",
+        "service": "test-service"
+      },
+      "metrics": {},
+      "type": ""
+    },
+    {
+      "service": "test-service",
+      "name": "test_exporter_v04_v05_snapshot_03",
+      "resource": "test-resource",
+      "trace_id": 1234,
+      "span_id": 12341,
+      "parent_id": 0,
+      "start": 0,
+      "duration": 5,
+      "error": 0,
+      "meta": {
+        "_dd.origin": "cloudfunction",
+        "env": "test-env",
+        "service": "test-service",
+        "runtime-id": "test-runtime-id-value",
+        "origin": "cloudfunction",
+        "functionname": "dummy_function_name"
+      },
+      "metrics": {
+        "_top_level": 1.0
+      },
+      "type": "web"
+    }
+  ]
+]

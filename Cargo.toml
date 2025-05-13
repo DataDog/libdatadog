@@ -3,43 +3,42 @@
 
 [workspace]
 members = [
-  "alloc",
   "builder",
-  "crashtracker",
-  "crashtracker-ffi",
-  "profiling",
-  "profiling-ffi",
-  "profiling-replayer",
+  "datadog-alloc",
+  "datadog-crashtracker",
+  "datadog-crashtracker-ffi",
+  "datadog-ipc",
+  "datadog-ipc-macros",
+  "datadog-library-config",
+  "datadog-library-config-ffi",
+  "datadog-live-debugger",
+  "datadog-live-debugger-ffi",
+  "datadog-profiling",
+  "datadog-profiling-ffi",
+  "datadog-profiling-replayer",
+  "datadog-remote-config",
+  "datadog-sidecar",
+  "datadog-sidecar-ffi",
+  "datadog-sidecar-macros",
+  "datadog-trace-normalization",
+  "datadog-trace-obfuscation",
+  "datadog-trace-protobuf",
+  "datadog-trace-utils",
   "ddcommon",
   "ddcommon-ffi",
   "ddtelemetry",
   "ddtelemetry-ffi",
-  "dogstatsd",
   "tools",
-  "ipc",
-  "ipc/macros",
-  "live-debugger",
-  "live-debugger-ffi",
-  "remote-config",
-  "sidecar",
-  "sidecar/macros",
-  "sidecar-ffi",
   "tools/cc_utils",
   "tools/sidecar_mockgen",
-  "trace-normalization",
-  "trace-obfuscation",
-  "trace-utils",
   "spawn_worker",
   "tests/spawn_from_lib",
-  "serverless",
   "bin_tests",
   "data-pipeline",
   "data-pipeline-ffi",
   "ddsketch",
   "tinybytes",
   "dogstatsd-client",
-  "library-config-ffi",
-  "library-config",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
@@ -58,7 +57,7 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.78.0"
 edition = "2021"
-version = "16.0.3"
+version = "18.0.0"
 license = "Apache-2.0"
 
 [profile.dev]
@@ -69,9 +68,6 @@ codegen-units = 1
 debug = "line-tables-only"
 lto = true
 opt-level = "s"            # optimize for size
-
-[profile.release.package.datadog-serverless-trace-mini-agent]
-strip = true
 
 [profile.bench]
 codegen-units = 1

@@ -1,6 +1,11 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 #![deny(missing_docs)]
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::todo))]
+#![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 //! dogstatsd-client implements a client to emit metrics to a dogstatsd server.
 //! This is made use of in at least the data-pipeline and sidecar crates.
@@ -190,6 +195,7 @@ where
 {
     let mut tags_iter = tags.into_iter();
     let mut tag_opt = tags_iter.next();
+    #[allow(clippy::unwrap_used)]
     while tag_opt.is_some() {
         builder = builder.with_tag_value(tag_opt.unwrap().as_ref());
         tag_opt = tags_iter.next();

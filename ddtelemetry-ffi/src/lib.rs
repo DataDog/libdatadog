@@ -1,5 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::todo))]
+#![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 pub mod builder;
 pub mod worker_handle;
@@ -18,13 +23,11 @@ macro_rules! c_setters {
         paste::paste! {
             $(
                 #[no_mangle]
-                #[allow(clippy::redundant_closure_call)]
-                #[allow(clippy::missing_safety_doc)]
                 pub unsafe extern "C" fn [<ddog_ $object_name _with_ $property_type_name_snakecase _ $path $(_ $path_rest)* >](
                     $object_name: &mut $object_ty,
                     param: $property_type,
                 ) -> ffi::MaybeError {
-                    $object_name . $path $(.  $path_rest)* = Some(crate::try_c!($convert_fn (param)));
+                    $object_name . $path $(.  $path_rest)* = crate::try_c!($convert_fn (param));
                     ffi::MaybeError::None
                 }
             )+
@@ -36,8 +39,6 @@ macro_rules! c_setters {
             }
 
             #[no_mangle]
-            #[allow(clippy::redundant_closure_call)]
-            #[allow(clippy::missing_safety_doc)]
             #[doc=concat!(
                 "\n Sets a property from it's string value.\n\n",
                 " Available properties:\n\n",
@@ -52,7 +53,7 @@ macro_rules! c_setters {
                 match property {
                     $(
                         [< $path:camel $($path_rest:camel)* >] => {
-                            $object_name . $path $(.  $path_rest)* = Some(crate::try_c!($convert_fn (param)));
+                            $object_name . $path $(.  $path_rest)* = crate::try_c!($convert_fn (param));
                         }
                     )+
                 }
@@ -60,8 +61,6 @@ macro_rules! c_setters {
             }
 
             #[no_mangle]
-            #[allow(clippy::redundant_closure_call)]
-            #[allow(clippy::missing_safety_doc)]
             #[doc=concat!(
                 "\n Sets a property from it's string value.\n\n",
                 " Available properties:\n\n",
@@ -78,7 +77,7 @@ macro_rules! c_setters {
                 match property {
                     $(
                         stringify!($path $(. $path_rest)*) => {
-                            $object_name . $path $(.  $path_rest)* = Some(crate::try_c!($convert_fn (param)));
+                            $object_name . $path $(.  $path_rest)* = crate::try_c!($convert_fn (param));
                         }
                     )+
                     // TODO this is an error

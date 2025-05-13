@@ -121,6 +121,7 @@ impl StatsExporter {
         encode_stats_payload(
             self.meta.borrow(),
             sequence,
+            #[allow(clippy::unwrap_used)]
             self.concentrator
                 .lock()
                 .unwrap()
@@ -184,7 +185,7 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<hyper::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_trace_utils::span::{trace_utils, SpanBytes};
+    use datadog_trace_utils::span::{trace_utils, SpanSlice};
     use datadog_trace_utils::test_utils::poll_for_mock_hit;
     use httpmock::prelude::*;
     use httpmock::MockServer;
@@ -226,8 +227,8 @@ mod tests {
         let mut trace = vec![];
 
         for i in 1..100 {
-            trace.push(SpanBytes {
-                service: "libdatadog-test".into(),
+            trace.push(SpanSlice {
+                service: "libdatadog-test",
                 duration: i,
                 ..Default::default()
             })
@@ -305,7 +306,7 @@ mod tests {
     async fn test_run() {
         let server = MockServer::start_async().await;
 
-        let mock = server
+        let mut mock = server
             .mock_async(|when, then| {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
@@ -331,9 +332,10 @@ mod tests {
         tokio::time::sleep(BUCKETS_DURATION + Duration::from_secs(1)).await;
         // Resume time to sleep while the stats are being sent
         tokio::time::resume();
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        mock.assert_async().await;
+        assert!(
+            poll_for_mock_hit(&mut mock, 10, 100, 1, false).await,
+            "Expected max retry attempts"
+        );
     }
 
     #[cfg_attr(miri, ignore)]
@@ -341,7 +343,7 @@ mod tests {
     async fn test_cancellation_token() {
         let server = MockServer::start_async().await;
 
-        let mock = server
+        let mut mock = server
             .mock_async(|when, then| {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
@@ -367,8 +369,10 @@ mod tests {
         });
         // Cancel token to trigger force flush
         cancellation_token.cancel();
-        tokio::time::sleep(Duration::from_millis(500)).await;
 
-        mock.assert_async().await;
+        assert!(
+            poll_for_mock_hit(&mut mock, 10, 100, 1, false).await,
+            "Expected max retry attempts"
+        );
     }
 }

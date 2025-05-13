@@ -15,24 +15,24 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: diff agent_payload.proto
-        working-directory: trace-protobuf/src/pb
+        working-directory: datadog-trace-protobuf/src/pb
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file agent_payload.proto --tag ${{ env.DATADOG_AGENT_TAG }}
       - name: diff tracer_payload.proto
         if: success() || failure()
-        working-directory: trace-protobuf/src/pb
+        working-directory: datadog-trace-protobuf/src/pb
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file tracer_payload.proto --tag ${{ env.DATADOG_AGENT_TAG }}
       - name: diff stats.proto
         if: success() || failure()
-        working-directory: trace-protobuf/src/pb
+        working-directory: datadog-trace-protobuf/src/pb
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file stats.proto --tag ${{ env.DATADOG_AGENT_TAG }}
       - name: diff span.proto
         if: success() || failure()
-        working-directory: trace-protobuf/src/pb
+        working-directory: datadog-trace-protobuf/src/pb
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file span.proto --tag ${{ env.DATADOG_AGENT_TAG }}
       - name: Cache
@@ -42,7 +42,7 @@ jobs:
       - name: Install ${{ env.rust_version }} toolchain
         run: rustup install ${{ env.rust_version }} && rustup default ${{ env.rust_version }}
       - name: diff pb.rs
-        working-directory: trace-protobuf
+        working-directory: datadog-trace-protobuf
         run: |
           cargo build --features generate-protobuf
           git diff --exit-code -- src/pb.rs

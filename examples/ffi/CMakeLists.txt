@@ -30,6 +30,10 @@ add_executable(crashinfo crashinfo.cpp)
 target_compile_features(crashinfo PRIVATE cxx_std_20)
 target_link_libraries(crashinfo PRIVATE Datadog::Profiling)
 
+add_executable(profile_intern profile_intern.cpp)
+# needed for designated initializers
+target_compile_features(profile_intern PRIVATE cxx_std_20)
+target_link_libraries(profile_intern PRIVATE Datadog::Profiling)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
   target_compile_definitions(exporter PUBLIC _CRT_SECURE_NO_WARNINGS)

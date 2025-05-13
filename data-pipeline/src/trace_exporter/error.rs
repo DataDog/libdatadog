@@ -3,6 +3,7 @@
 
 use crate::telemetry::error::TelemetryError;
 use crate::trace_exporter::msgpack_decoder::decode::error::DecodeError;
+use ddcommon::hyper_migration;
 use hyper::http::StatusCode;
 use hyper::Error as HyperError;
 use rmp_serde::encode::Error as EncodeError;
@@ -74,18 +75,28 @@ pub enum NetworkErrorKind {
 #[derive(Debug)]
 pub struct NetworkError {
     kind: NetworkErrorKind,
-    source: HyperError,
+    source: anyhow::Error,
 }
 
 impl Error for NetworkError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        Some(&self.source)
+        self.source.chain().next()
     }
 }
 
 impl NetworkError {
-    fn new(kind: NetworkErrorKind, source: HyperError) -> Self {
-        Self { kind, source }
+    fn new_hyper(kind: NetworkErrorKind, source: HyperError) -> Self {
+        Self {
+            kind,
+            source: source.into(),
+        }
+    }
+
+    fn new_hyper_util(kind: NetworkErrorKind, source: hyper_util::client::legacy::Error) -> Self {
+        Self {
+            kind,
+            source: source.into(),
+        }
     }
 
     pub fn kind(&self) -> NetworkErrorKind {
@@ -95,6 +106,7 @@ impl NetworkError {
 
 impl Display for NetworkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[allow(clippy::unwrap_used)]
         std::fmt::Display::fmt(self.source().unwrap(), f)
     }
 }
@@ -159,24 +171,73 @@ impl From<hyper::http::uri::InvalidUri> for TraceExporterError {
     }
 }
 
+impl From<hyper_migration::Error> for TraceExporterError {
+    fn from(err: hyper_migration::Error) -> Self {
+        match err {
+            hyper_migration::Error::Hyper(e) => e.into(),
+            hyper_migration::Error::Other(e) => TraceExporterError::Network(NetworkError {
+                kind: NetworkErrorKind::Unknown,
+                source: e,
+            }),
+            hyper_migration::Error::Infallible(e) => match e {},
+        }
+    }
+}
+
+impl From<hyper_util::client::legacy::Error> for TraceExporterError {
+    fn from(err: hyper_util::client::legacy::Error) -> Self {
+        if err.is_connect() {
+            return TraceExporterError::Network(NetworkError::new_hyper_util(
+                NetworkErrorKind::ConnectionClosed,
+                err,
+            ));
+        }
+        if let Some(e) = err.source().and_then(|e| e.downcast_ref::<HyperError>()) {
+            if e.is_parse() {
+                return TraceExporterError::Network(NetworkError::new_hyper_util(
+                    NetworkErrorKind::Parse,
+                    err,
+                ));
+            } else if e.is_canceled() {
+                return TraceExporterError::Network(NetworkError::new_hyper_util(
+                    NetworkErrorKind::Canceled,
+                    err,
+                ));
+            } else if e.is_incomplete_message() || e.is_body_write_aborted() {
+                return TraceExporterError::Network(NetworkError::new_hyper_util(
+                    NetworkErrorKind::Body,
+                    err,
+                ));
+            } else if e.is_parse_status() {
+                return TraceExporterError::Network(NetworkError::new_hyper_util(
+                    NetworkErrorKind::WrongStatus,
+                    err,
+                ));
+            } else if e.is_timeout() {
+                return TraceExporterError::Network(NetworkError::new_hyper_util(
+                    NetworkErrorKind::TimedOut,
+                    err,
+                ));
+            }
+        }
+        TraceExporterError::Network(NetworkError::new_hyper_util(NetworkErrorKind::Unknown, err))
+    }
+}
+
 impl From<HyperError> for TraceExporterError {
     fn from(err: HyperError) -> Self {
         if err.is_parse() {
-            TraceExporterError::Network(NetworkError::new(NetworkErrorKind::Parse, err))
+            TraceExporterError::Network(NetworkError::new_hyper(NetworkErrorKind::Parse, err))
         } else if err.is_canceled() {
-            TraceExporterError::Network(NetworkError::new(NetworkErrorKind::Canceled, err))
-        } else if err.is_connect() {
-            TraceExporterError::Network(NetworkError::new(NetworkErrorKind::ConnectionClosed, err))
-        } else if err.is_parse_too_large() {
-            TraceExporterError::Network(NetworkError::new(NetworkErrorKind::MessageTooLarge, err))
+            TraceExporterError::Network(NetworkError::new_hyper(NetworkErrorKind::Canceled, err))
         } else if err.is_incomplete_message() || err.is_body_write_aborted() {
-            TraceExporterError::Network(NetworkError::new(NetworkErrorKind::Body, err))
+            TraceExporterError::Network(NetworkError::new_hyper(NetworkErrorKind::Body, err))
         } else if err.is_parse_status() {
-            TraceExporterError::Network(NetworkError::new(NetworkErrorKind::WrongStatus, err))
+            TraceExporterError::Network(NetworkError::new_hyper(NetworkErrorKind::WrongStatus, err))
         } else if err.is_timeout() {
-            TraceExporterError::Network(NetworkError::new(NetworkErrorKind::TimedOut, err))
+            TraceExporterError::Network(NetworkError::new_hyper(NetworkErrorKind::TimedOut, err))
         } else {
-            TraceExporterError::Network(NetworkError::new(NetworkErrorKind::Unknown, err))
+            TraceExporterError::Network(NetworkError::new_hyper(NetworkErrorKind::Unknown, err))
         }
     }
 }
