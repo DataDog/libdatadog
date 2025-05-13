@@ -67,7 +67,7 @@ debug = 2 # full debug info
 codegen-units = 1
 debug = "line-tables-only"
 lto = true
-opt-level = 3
+opt-level = "s"            # optimize for size
 
 [profile.bench]
 codegen-units = 1
