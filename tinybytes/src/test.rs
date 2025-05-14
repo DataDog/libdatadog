@@ -3,6 +3,7 @@
 
 use core::str;
 use std::sync::atomic::{self, AtomicUsize};
+use std::sync::Arc;
 
 use super::*;
 use once_cell::sync::OnceCell;

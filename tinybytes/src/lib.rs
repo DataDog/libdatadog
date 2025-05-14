@@ -7,26 +7,35 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+#[cfg(feature = "serde")]
+use serde::Serialize;
 use std::{
     borrow, cmp, fmt, hash,
     ops::{self, RangeBounds},
-    sync::Arc,
+    ptr::NonNull,
+    sync::atomic::{
+        AtomicUsize,
+        Ordering::{Relaxed, Release},
+    },
 };
 
-#[cfg(feature = "serde")]
-use serde::Serialize;
-
 /// Immutable bytes type with zero copy cloning and slicing.
-#[derive(Clone)]
 pub struct Bytes {
     slice: &'static [u8],
     // The `bytes`` field is used to ensure that the underlying bytes are freed when there are no
     // more references to the `Bytes` object. For static buffers the field is `None`.
-    bytes: Option<Arc<dyn UnderlyingBytes>>,
+    bytes: Option<NonNull<dyn RefcountedUnderlyingBytes>>,
 }
 
 /// The underlying bytes that the `Bytes` object references.
-pub trait UnderlyingBytes: AsRef<[u8]> + Send + Sync + 'static {}
+pub trait UnderlyingBytes: Sized + AsRef<[u8]> + Send + Sync + 'static {}
+pub trait RefcountedUnderlyingBytes: AsRef<[u8]> + Send + Sync + 'static {
+    fn addref(&self);
+    /// # Safety
+    ///
+    /// Callers must make sure to always pair these delrefs with prior addrefs.
+    unsafe fn delref(&self);
+}
 
 /// Since the Bytes type is immutable, and UnderlyingBytes is `Send + Sync``, it is safe to share
 /// `Bytes` across threads.
@@ -188,21 +197,37 @@ impl Bytes {
     fn from_underlying(value: impl UnderlyingBytes) -> Self {
         Self {
             slice: unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(value.as_ref()) },
-            bytes: Some(Arc::new(value)),
+            bytes: Some(CustomArc::new(value)),
+        }
+    }
+
+    pub fn from_underlying_refcounted(value: NonNull<dyn RefcountedUnderlyingBytes>) -> Self {
+        Self {
+            slice: unsafe {
+                std::mem::transmute::<&'_ [u8], &'static [u8]>(value.as_ref().as_ref())
+            },
+            bytes: Some(value),
         }
     }
 
     #[inline]
     fn safe_slice_ref(&self, start: usize, end: usize) -> Self {
+        self.addref();
         Self {
             slice: &self.slice[start..end],
-            bytes: self.bytes.clone(),
+            bytes: self.bytes,
         }
     }
 
     #[inline]
     fn as_slice(&self) -> &[u8] {
         self.slice
+    }
+
+    fn addref(&self) {
+        if let Some(underlying) = self.bytes {
+            unsafe { underlying.as_ref() }.addref();
+        }
     }
 }
 
@@ -261,6 +286,24 @@ impl<T: AsRef<[u8]>> PartialOrd<T> for Bytes {
     }
 }
 
+impl Clone for Bytes {
+    fn clone(&self) -> Self {
+        self.addref();
+        Bytes {
+            slice: self.slice,
+            bytes: self.bytes,
+        }
+    }
+}
+
+impl Drop for Bytes {
+    fn drop(&mut self) {
+        if let Some(underlying) = self.bytes {
+            unsafe { underlying.as_ref().delref() };
+        }
+    }
+}
+
 impl Ord for Bytes {
     fn cmp(&self, other: &Bytes) -> cmp::Ordering {
         self.as_slice().cmp(other.as_slice())
@@ -288,6 +331,47 @@ impl Serialize for Bytes {
         S: serde::Serializer,
     {
         serializer.serialize_bytes(self.as_slice())
+    }
+}
+
+struct CustomArc<T> {
+    rc: AtomicUsize,
+    data: T,
+}
+
+impl<T> CustomArc<T> {
+    pub fn new(data: T) -> NonNull<Self> {
+        let boxed = Box::new(CustomArc {
+            rc: AtomicUsize::new(1),
+            data,
+        });
+        Box::leak(boxed).into()
+    }
+}
+
+impl<T: UnderlyingBytes> RefcountedUnderlyingBytes for CustomArc<T> {
+    fn addref(&self) {
+        self.rc.fetch_add(1, Relaxed);
+    }
+
+    unsafe fn delref(&self) {
+        if self.rc.fetch_sub(1, Release) == 1 {
+            let _ = Box::from_raw(self as *const Self as *mut Self);
+        }
+    }
+}
+
+impl<T: UnderlyingBytes> AsRef<[u8]> for CustomArc<T> {
+    fn as_ref(&self) -> &[u8] {
+        T::as_ref(self)
+    }
+}
+
+impl<T> ops::Deref for CustomArc<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.data
     }
 }
 
