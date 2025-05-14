@@ -1,3 +1,5 @@
+build v18 again
+
 # `libdatadog`
 
 `libdatadog` provides a shared library containing common code used in the implementation of Datadog's libraries,
