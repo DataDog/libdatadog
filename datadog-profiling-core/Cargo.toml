@@ -1,0 +1,28 @@
+[package]
+name = "datadog-profiling-core"
+rust-version.workspace = true
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+prost_impls = ["dep:prost"]
+std = []
+
+[dependencies]
+# allocator-api 0.2.19 exposes TryReserveError, but was yanked, hence 0.2.20.
+allocator-api2 = { version = "0.2", default-features = false, features = ["alloc", "std"] }
+datadog-alloc= { path = "../datadog-alloc", default-features = false }
+hashbrown = { version = "0.15", default-features = false, features = ["allocator-api2"] }
+#hashbrown = { path = "hashbrown", default-features = false, features = ["allocator-api2", "rustc-internal-api"] }
+#no-panic = "0.1"
+prost = { version = "0.13", optional = true }
+rustc-hash = { version = "2.1.1", default-features = false }
+thiserror = { version = "2", default-features = false }
+
+[dev-dependencies]
+datadog-alloc = { path = "../datadog-alloc", features = ["std"] }
+datadog-profiling-core = { path = ".", features = ["prost_impls", "std"] }

@@ -14,9 +14,9 @@ use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::StringTable;
 use crate::iter::{IntoLendingIterator, LendingIterator};
-use crate::pprof::sliced_proto::*;
 use crate::serializer::CompressedProtobufSerializer;
 use anyhow::Context;
+use datadog_profiling_core::protobuf::{self, StringOffset};
 use interning_api::Generation;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -337,27 +337,22 @@ impl Profile {
             })
             .as_nanos()
             .min(i64::MAX as u128) as i64;
-        let (period, period_type) = match self.period {
-            Some(tuple) => (tuple.0, Some(tuple.1.into())),
-            None => (0, None),
-        };
 
         // On 2023-08-23, we analyzed the uploaded tarball size per language.
         // These tarballs include 1 or more profiles, but for most languages
         // using libdatadog (all?) there is only 1 profile, so this is a good
         // proxy for the compressed, final size of the profiles.
         // We found that for all languages using libdatadog, the average
-        // tarball was at least 18 KiB. Since these archives are compressed,
-        // and because profiles compress well, especially ones with timeline
-        // enabled (over 9x for some analyzed timeline profiles), this initial
-        // size of 32KiB should definitely out-perform starting at zero for
-        // time consumed, allocator pressure, and allocator fragmentation.
-        const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
-        let mut encoder = CompressedProtobufSerializer::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
+        // tarball was at least 18 KiB.
+        // What we're setting here with the size is the final output buffer
+        // capacity, not the intermediate ones used during encoding and
+        // compression.
+        const INITIAL_PPROF_BUFFER_SIZE: usize = 16 * 1024;
+        let mut encoder = CompressedProtobufSerializer::with_capacity(INITIAL_PPROF_BUFFER_SIZE)?;
 
         for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
             let labels = self.enrich_sample_labels(sample, timestamp)?;
-            let location_ids: Vec<_> = self
+            let location_ids: Box<[_]> = self
                 .get_stacktrace(sample.stacktrace)?
                 .locations
                 .iter()
@@ -366,14 +361,29 @@ impl Profile {
             self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
             self.upscaling_rules.upscale_values(&mut values, &labels)?;
 
-            let labels = labels.into_iter().map(pprof::Label::from).collect();
-            let item = pprof::Sample {
-                location_ids,
-                values,
-                labels,
+            let labels: Box<[_]> = labels
+                .into_iter()
+                .map(|l| {
+                    let (str, num, num_unit) = match l.get_value() {
+                        LabelValue::Str(str) => (StringOffset::from(str), 0, StringOffset::ZERO),
+                        LabelValue::Num { num, num_unit } => {
+                            (StringOffset::ZERO, *num, StringOffset::from(num_unit))
+                        }
+                    };
+                    protobuf::Label {
+                        key: l.get_key().into(),
+                        str,
+                        num,
+                        num_unit,
+                    }
+                })
+                .collect();
+            let sample = protobuf::Sample {
+                location_ids: &location_ids,
+                values: &values,
+                labels: &labels,
             };
-
-            encoder.encode(ProfileSamplesEntry::from(item))?;
+            encoder.try_encode(2, &sample)?;
         }
 
         // `Sample`s must be emitted before `SampleTypes` since we consume
@@ -387,38 +397,70 @@ impl Profile {
         // In this case, we use `sample_types` during upscaling of `samples`,
         // so we must serialize `Sample` before `SampleType`.
         for sample_type in self.sample_types.iter() {
-            let item: pprof::ValueType = sample_type.into();
-            encoder.encode(ProfileSampleTypesEntry::from(item))?;
+            let value_type = protobuf::ValueType {
+                r#type: sample_type.r#type.into(),
+                unit: sample_type.unit.into(),
+            };
+            encoder.try_encode(1, &value_type)?;
         }
 
-        for item in into_pprof_iter(self.mappings) {
-            encoder.encode(ProfileMappingsEntry::from(item))?;
+        for (offset, item) in self.mappings.into_iter().enumerate() {
+            let mapping = protobuf::Mapping {
+                id: (offset + 1) as u64,
+                memory_start: item.memory_start,
+                memory_limit: item.memory_limit,
+                file_offset: item.file_offset,
+                filename: item.filename.into(),
+                build_id: item.build_id.into(),
+            };
+            encoder.try_encode(3, &mapping)?;
         }
 
-        for item in into_pprof_iter(self.locations) {
-            encoder.encode(ProfileLocationsEntry::from(item))?;
+        for (offset, item) in self.locations.into_iter().enumerate() {
+            let location = protobuf::Location {
+                id: (offset + 1) as u64,
+                mapping_id: item.mapping_id.map(Id::into_raw_id).unwrap_or(0),
+                address: item.address,
+                line: protobuf::Line {
+                    function_id: item.function_id.to_raw_id(),
+                    lineno: item.line,
+                },
+            };
+            encoder.try_encode(4, &location)?;
         }
 
-        for item in into_pprof_iter(self.functions) {
-            encoder.encode(ProfileFunctionsEntry::from(item))?;
+        for (offset, item) in self.functions.into_iter().enumerate() {
+            let function = protobuf::Function {
+                id: (offset + 1) as u64,
+                name: item.name.into(),
+                system_name: item.system_name.into(),
+                filename: item.filename.into(),
+            };
+            encoder.try_encode(5, &function)?;
         }
 
         let mut lender = self.strings.into_lending_iter();
         while let Some(item) = lender.next() {
-            encoder.encode_string_table_entry(item)?;
+            encoder.try_encode_str(&item)?;
         }
 
-        encoder.encode(ProfileSimpler {
-            time_nanos: self
-                .start_time
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map_or(0, |duration| {
-                    duration.as_nanos().min(i64::MAX as u128) as i64
-                }),
-            duration_nanos,
-            period_type,
-            period,
-        })?;
+        let time_nanos = self
+            .start_time
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |duration| {
+                duration.as_nanos().min(i64::MAX as u128) as i64
+            });
+        encoder.encode_varint(9, time_nanos as u64)?;
+        encoder.encode_varint(10, duration_nanos as u64)?;
+
+        if let Some((period, period_type)) = &self.period {
+            let value_type = protobuf::ValueType {
+                r#type: period_type.r#type.into(),
+                unit: period_type.unit.into(),
+            };
+            encoder.try_encode(11, &value_type)?;
+            encoder.encode_varint(12, *period as u64)?;
+        };
 
         Ok(EncodedProfile {
             start,
@@ -991,7 +1033,13 @@ mod api_tests {
         assert_eq!(profile.functions.len(), 2);
 
         for (index, mapping) in profile.mappings.iter().enumerate() {
-            assert_eq!((index + 1) as u64, mapping.id);
+            assert_eq!(
+                (index + 1) as u64,
+                mapping.id,
+                "id {id} didn't match offset {offset} for {mapping:#?}",
+                id = mapping.id,
+                offset = index + 1
+            );
         }
 
         for (index, location) in profile.locations.iter().enumerate() {
@@ -2336,8 +2384,7 @@ mod api_tests {
         };
 
         let large_span_id = u64::MAX;
-        // Safety: an u64 can fit into an i64, and we're testing that it's not mis-handled.
-        let large_num: i64 = unsafe { std::mem::transmute(large_span_id) };
+        let large_num: i64 = large_span_id as i64;
 
         let id2_label = api::Label {
             key: "local root span id",

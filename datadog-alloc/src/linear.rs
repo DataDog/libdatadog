@@ -26,7 +26,7 @@ unsafe impl<A: Allocator> Send for LinearAllocator<A> {}
 
 impl<A: Allocator> LinearAllocator<A> {
     /// Creates a new [LinearAllocator] by requesting the `layout` from the
-    /// provided `allocator`. Note that if the allocation is over-sized,
+    /// provided `allocator`. Note that if the allocation is oversized,
     /// meaning it's larger than the requested `layout.size()`, then the
     /// [LinearAllocator] will utilize this excess.
     pub fn new_in(layout: Layout, allocator: A) -> Result<Self, AllocError> {

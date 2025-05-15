@@ -2,10 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use datadog_profiling_core::protobuf;
 
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
 #[repr(C)]
 pub struct StringId(u32);
+
+impl From<StringId> for protobuf::StringOffset {
+    fn from(value: StringId) -> Self {
+        unsafe { protobuf::StringOffset::new_unchecked(value.0) }
+    }
+}
+
+impl From<&StringId> for protobuf::StringOffset {
+    fn from(value: &StringId) -> Self {
+        Self::from(*value)
+    }
+}
 
 impl StringId {
     pub const ZERO: StringId = Self::zero();

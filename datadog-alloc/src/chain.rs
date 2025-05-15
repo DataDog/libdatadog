@@ -1,18 +1,16 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::LinearAllocator;
-use crate::{AllocError, Allocator};
-use core::alloc::Layout;
+use crate::{AllocError, Allocator, Layout, LinearAllocator};
 use core::cell::UnsafeCell;
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-/// [ChainAllocator] is an arena allocator, meaning that deallocating
-/// individual allocations made by this allocator does nothing. Instead, the
-/// whole backing memory is dropped at once.  Destructors for these objects
-/// are not called automatically and must be done by the caller if it's
-/// necessary.
+/// [ChainAllocator] is an arena allocator, meaning that deallocating an
+/// allocation made by this allocator is a no-op. Instead, the whole backing
+/// memory is dropped at once when the allocator is dropped. Destructors for
+/// these objects are not called automatically and must be done by the caller
+/// if it's necessary.
 ///
 /// [ChainAllocator] creates a new [LinearAllocator] when the current one
 /// doesn't have enough space for the requested allocation, and then links the
@@ -79,7 +77,7 @@ impl<A: Allocator> ChainNode<A> {
 }
 
 impl<A: Allocator + Clone> ChainAllocator<A> {
-    /// The amount of bytes used by the [ChainAllocator] at the start of each
+    /// The number of bytes used by the [ChainAllocator] at the start of each
     /// chunk of the chain for bookkeeping.
     pub const CHAIN_NODE_OVERHEAD: usize = size_of::<ChainNode<A>>();
 
@@ -244,8 +242,8 @@ unsafe impl<A: Allocator + Clone> Allocator for ChainAllocator<A> {
                 .size()
                 .checked_add(header_overhead)
                 .ok_or(AllocError)?;
-            // The item may have an alignment requirement. `align-1` bytes are sufficient to give
-            // space for padding.
+            // The item may have an alignment requirement. `align-1` bytes are
+            // sufficient to give space for padding.
             let min_size_with_alignment =
                 min_size.checked_add(layout.align() - 1).ok_or(AllocError)?;
 
@@ -269,7 +267,7 @@ unsafe impl<A: Allocator + Clone> Allocator for ChainAllocator<A> {
     }
 
     unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {
-        // This is an arena. It does batch de-allocation when dropped.
+        // This is an arena. It does batch deallocation when dropped.
     }
 }
 
@@ -323,10 +321,11 @@ mod tests {
         let size_hint = 0..=MAX_SIZE;
         // Giving large values for align bits can lead to failed allocations
         // This would normally be OK, since the fuzz-test is resilient to this.
-        // However, the chain allocator has a debug assert that allocs don't fail, which means that
-        // running this in unit-test mode DOES spuriously fail.
-        // Clamping the size in unit-test mode avoids the problem while not losing coverage in fuzz
-        // test mode.
+        // However, the chain allocator has a debug assert that allocs don't
+        // fail, which means that running this in unit-test mode DOES
+        // spuriously fail.
+        // Clamping the size in unit-test mode avoids the problem while not
+        // losing coverage in fuzz test mode.
         let align_bits = 0..32;
         let size = 0..=MAX_SIZE;
         let idx = 0..=MAX_SIZE;
