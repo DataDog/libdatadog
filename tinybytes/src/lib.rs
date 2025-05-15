@@ -321,7 +321,8 @@ impl Serialize for Bytes {
 }
 
 pub struct RefCountedCell {
-    raw: RawRefCountedCell,
+    data: NonNull<()>,
+    vtable: &'static RefCountedCellVTable,
 }
 
 unsafe impl Send for RefCountedCell {}
@@ -341,32 +342,25 @@ impl RefCountedCell {
     ///
     /// * The value pointed to by `data` must be 'static + Send + Sync
     pub const unsafe fn from_raw(data: NonNull<()>, vtable: &'static RefCountedCellVTable) -> Self {
-        RefCountedCell {
-            raw: RawRefCountedCell { data, vtable },
-        }
+        RefCountedCell { data, vtable }
     }
 }
 
 impl Clone for RefCountedCell {
     fn clone(&self) -> Self {
-        unsafe { (self.raw.vtable.clone)(self.raw.data.as_ptr().cast_const()) }
+        unsafe { (self.vtable.clone)(self.data) }
     }
 }
 
 impl Drop for RefCountedCell {
     fn drop(&mut self) {
-        unsafe { (self.raw.vtable.drop)(self.raw.data.as_ptr().cast_const()) }
+        unsafe { (self.vtable.drop)(self.data) }
     }
 }
 
-struct RawRefCountedCell {
-    data: NonNull<()>,
-    vtable: &'static RefCountedCellVTable,
-}
-
 pub struct RefCountedCellVTable {
-    pub clone: unsafe fn(*const ()) -> RefCountedCell,
-    pub drop: unsafe fn(*const ()),
+    pub clone: unsafe fn(NonNull<()>) -> RefCountedCell,
+    pub drop: unsafe fn(NonNull<()>),
 }
 
 /// Creates a refcounted cell.
@@ -384,16 +378,13 @@ fn make_refcounted<T: Send + Sync + 'static>(data: T) -> RefCountedCell {
         data: T,
     }
 
-    unsafe fn custom_arc_clone<T>(data: *const ()) -> RefCountedCell {
-        let custom_arc = data as *const CustomArc<T>;
-        let rc = unsafe {
-            std::ptr::addr_of!((*custom_arc).rc)
-                .as_ref()
-                .unwrap_unchecked()
-        };
-        rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    unsafe fn custom_arc_clone<T>(data: NonNull<()>) -> RefCountedCell {
+        let custom_arc = data.cast::<CustomArc<T>>().as_ref();
+        custom_arc
+            .rc
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         RefCountedCell::from_raw(
-            NonNull::new_unchecked(data as *mut ()),
+            data,
             &RefCountedCellVTable {
                 clone: custom_arc_clone::<T>,
                 drop: custom_arc_drop::<T>,
@@ -401,28 +392,29 @@ fn make_refcounted<T: Send + Sync + 'static>(data: T) -> RefCountedCell {
         )
     }
 
-    unsafe fn custom_arc_drop<T>(data: *const ()) {
-        let custom_arc = data as *const CustomArc<T>;
-        let rc: &AtomicUsize = unsafe {
-            std::ptr::addr_of!((*custom_arc).rc)
-                .as_ref()
-                .unwrap_unchecked()
-        };
-        if rc.fetch_sub(1, std::sync::atomic::Ordering::Release) != 1 {
+    unsafe fn custom_arc_drop<T>(data: NonNull<()>) {
+        let custom_arc = data.cast::<CustomArc<T>>().as_ref();
+        if custom_arc
+            .rc
+            .fetch_sub(1, std::sync::atomic::Ordering::Release)
+            != 1
+        {
             return;
         }
-        {
-            let custom_arc = (custom_arc as *mut CustomArc<T>)
-                .as_mut()
-                .unwrap_unchecked();
-            std::ptr::drop_in_place(custom_arc);
-        }
+
+        // Run drop + free memory on the data manually rather than casting back to a box
+        // because otherwise miri complains
+
         // See standard library documentation for std::sync::Arc to see why this is needed.
         // https://github.com/rust-lang/rust/blob/2a5da7acd4c3eae638aa1c46f3a537940e60a0e4/library/alloc/src/sync.rs#L2647-L2675
         std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
+        {
+            let custom_arc = data.cast::<CustomArc<T>>().as_mut();
+            std::ptr::drop_in_place(custom_arc);
+        }
 
         std::alloc::dealloc(
-            data as *mut () as *mut u8,
+            data.as_ptr() as *mut u8,
             std::alloc::Layout::new::<CustomArc<T>>(),
         );
     }
@@ -432,12 +424,10 @@ fn make_refcounted<T: Send + Sync + 'static>(data: T) -> RefCountedCell {
         data,
     })) as *mut _ as *const ();
     RefCountedCell {
-        raw: RawRefCountedCell {
-            data: unsafe { NonNull::new_unchecked(rc as *mut ()) },
-            vtable: &RefCountedCellVTable {
-                clone: custom_arc_clone::<T>,
-                drop: custom_arc_drop::<T>,
-            },
+        data: unsafe { NonNull::new_unchecked(rc as *mut ()) },
+        vtable: &RefCountedCellVTable {
+            clone: custom_arc_clone::<T>,
+            drop: custom_arc_drop::<T>,
         },
     }
 }
