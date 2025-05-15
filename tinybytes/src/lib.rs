@@ -195,17 +195,21 @@ impl Bytes {
     // private
 
     fn from_underlying(value: impl UnderlyingBytes) -> Self {
-        Self {
-            slice: unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(value.as_ref()) },
-            bytes: Some(CustomArc::new(value)),
-        }
+        unsafe { Self::from_underlying_refcounted(CustomArc::new(value)) }
     }
 
-    pub fn from_underlying_refcounted(value: NonNull<dyn RefcountedUnderlyingBytes>) -> Self {
+    /// Allows passing a refcounted value.
+    ///
+    /// # Safety
+    ///
+    /// The caller must make sure that the reference counter may be decremented once the last Bytes
+    /// struct referencing this value is called.
+    /// This method does not increment the refcount by itself.
+    pub unsafe fn from_underlying_refcounted(
+        value: NonNull<dyn RefcountedUnderlyingBytes>,
+    ) -> Self {
         Self {
-            slice: unsafe {
-                std::mem::transmute::<&'_ [u8], &'static [u8]>(value.as_ref().as_ref())
-            },
+            slice: std::mem::transmute::<&'_ [u8], &'static [u8]>(value.as_ref().as_ref()),
             bytes: Some(value),
         }
     }
