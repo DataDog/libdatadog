@@ -312,7 +312,7 @@ impl Drop for RefCountedBytes {
 
 struct RawRefCountedBytes {
     data: NonNull<()>,
-    vtable: RefCountedBytesVTable,
+    vtable: &'static RefCountedBytesVTable,
 }
 
 struct RefCountedBytesVTable {
@@ -337,7 +337,7 @@ fn custom_arc_refcounted<T>(data: T) -> RefCountedBytes {
         rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         RawRefCountedBytes {
             data: NonNull::new_unchecked(data as *mut ()),
-            vtable: RefCountedBytesVTable {
+            vtable: &RefCountedBytesVTable {
                 clone: custom_arc_clone::<T>,
                 drop: custom_arc_drop::<T>,
             },
@@ -372,7 +372,7 @@ fn custom_arc_refcounted<T>(data: T) -> RefCountedBytes {
     RefCountedBytes {
         raw: RawRefCountedBytes {
             data: unsafe { NonNull::new_unchecked(rc as *mut ()) },
-            vtable: RefCountedBytesVTable {
+            vtable: &RefCountedBytesVTable {
                 clone: custom_arc_clone::<T>,
                 drop: custom_arc_drop::<T>,
             },
