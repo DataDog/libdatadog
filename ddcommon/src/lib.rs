@@ -24,7 +24,6 @@ pub mod config;
 pub mod hyper_migration;
 pub mod rate_limiter;
 pub mod tag;
-pub mod tracer_metadata;
 pub mod unix_utils;
 
 /// Extension trait for `Mutex` to provide a method that acquires a lock, panicking if the lock is

@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod tracer_metadata;
+
 use datadog_library_config::{self as lib_config, LibraryConfigSource};
 use ddcommon_ffi::{self as ffi, slice::AsBytes, CharSlice};
 
