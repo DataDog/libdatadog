@@ -1,11 +1,10 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::slice::CharSlice;
-use crate::Result;
 #[cfg(target_os = "linux")]
-use ddcommon::tracer_metadata::AnonymousFileHandle;
-use ddcommon::tracer_metadata::{self, TracerMetadata};
+use datadog_library_config::tracer_metadata::AnonymousFileHandle;
+use datadog_library_config::tracer_metadata::{self, TracerMetadata};
+use ddcommon_ffi::{CharSlice, Result};
 use std::os::raw::c_int;
 
 /// C-compatible representation of an anonymous file handle

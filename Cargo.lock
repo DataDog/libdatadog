@@ -1500,9 +1500,13 @@ dependencies = [
 
 [[package]]
 name = "datadog-library-config"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
+ "memfd",
+ "rand 0.8.5",
+ "rmp",
+ "rmp-serde",
  "serde",
  "serde_yaml",
  "tempfile",
@@ -1510,7 +1514,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-library-config-ffi"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1834,13 +1838,9 @@ dependencies = [
  "libc",
  "log",
  "maplit",
- "memfd",
  "nix",
  "pin-project",
- "rand 0.8.5",
  "regex",
- "rmp",
- "rmp-serde",
  "rustls",
  "rustls-native-certs 0.8.1",
  "serde",
