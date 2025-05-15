@@ -408,18 +408,23 @@ fn make_refcounted<T: Send + Sync + 'static>(data: T) -> RefCountedCell {
                 .as_ref()
                 .unwrap_unchecked()
         };
-        if rc.fetch_sub(1, std::sync::atomic::Ordering::Release) == 1 {
-            {
-                let custom_arc = (custom_arc as *mut CustomArc<T>)
-                    .as_mut()
-                    .unwrap_unchecked();
-                std::ptr::drop_in_place(custom_arc);
-            }
-            std::alloc::dealloc(
-                data as *mut () as *mut u8,
-                std::alloc::Layout::new::<CustomArc<T>>(),
-            );
+        if rc.fetch_sub(1, std::sync::atomic::Ordering::Release) != 1 {
+            return;
         }
+        {
+            let custom_arc = (custom_arc as *mut CustomArc<T>)
+                .as_mut()
+                .unwrap_unchecked();
+            std::ptr::drop_in_place(custom_arc);
+        }
+        // See standard library documentation for std::sync::Arc to see why this is needed.
+        // https://github.com/rust-lang/rust/blob/2a5da7acd4c3eae638aa1c46f3a537940e60a0e4/library/alloc/src/sync.rs#L2647-L2675
+        std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
+
+        std::alloc::dealloc(
+            data as *mut () as *mut u8,
+            std::alloc::Layout::new::<CustomArc<T>>(),
+        );
     }
 
     let rc = Box::leak(Box::new(CustomArc {
