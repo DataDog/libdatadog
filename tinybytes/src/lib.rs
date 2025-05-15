@@ -11,7 +11,7 @@ use std::{
     borrow, cmp, fmt, hash,
     ops::{self, RangeBounds},
     ptr::NonNull,
-    sync::Arc,
+    sync::{atomic::AtomicUsize, Arc},
 };
 
 #[cfg(feature = "serde")]
@@ -189,7 +189,7 @@ impl Bytes {
     fn from_underlying(value: impl UnderlyingBytes) -> Self {
         Self {
             slice: unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(value.as_ref()) },
-            bytes: Some(arc_refcounted_bytes(Arc::new(value))),
+            bytes: Some(custom_arc_refcounted(Arc::new(value))),
         }
     }
 
@@ -292,31 +292,6 @@ impl Serialize for Bytes {
     }
 }
 
-fn arc_refcounted_bytes<T>(data: Arc<T>) -> RefCountedBytes {
-    unsafe fn arc_clone<T>(data: *const ()) -> RawRefCountedBytes {
-        Arc::increment_strong_count(data as *const T);
-        RawRefCountedBytes {
-            data: unsafe { NonNull::new_unchecked(data as *mut ()) },
-            vtable: RefCountedBytesVTable {
-                clone: arc_clone::<T>,
-                drop: arc_drop::<T>,
-            },
-        }
-    }
-    unsafe fn arc_drop<T>(data: *const ()) {
-        Arc::from_raw(data as *const T);
-    }
-    RefCountedBytes {
-        raw: RawRefCountedBytes {
-            data: unsafe { NonNull::new_unchecked(Arc::into_raw(data) as *const () as *mut ()) },
-            vtable: RefCountedBytesVTable {
-                clone: arc_clone::<T>,
-                drop: arc_drop::<T>,
-            },
-        },
-    }
-}
-
 struct RefCountedBytes {
     raw: RawRefCountedBytes,
 }
@@ -345,6 +320,66 @@ struct RefCountedBytesVTable {
     drop: unsafe fn(*const ()),
 }
 
+struct CustomArc<T> {
+    rc: AtomicUsize,
+    #[allow(unused)]
+    data: T,
+}
+
+fn custom_arc_refcounted<T>(data: T) -> RefCountedBytes {
+    unsafe fn custom_arc_clone<T>(data: *const ()) -> RawRefCountedBytes {
+        let custom_arc = data as *const CustomArc<T>;
+        let rc = unsafe {
+            std::ptr::addr_of!((*custom_arc).rc)
+                .as_ref()
+                .unwrap_unchecked()
+        };
+        rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        RawRefCountedBytes {
+            data: NonNull::new_unchecked(data as *mut ()),
+            vtable: RefCountedBytesVTable {
+                clone: custom_arc_clone::<T>,
+                drop: custom_arc_drop::<T>,
+            },
+        }
+    }
+
+    unsafe fn custom_arc_drop<T>(data: *const ()) {
+        let custom_arc = data as *const CustomArc<T>;
+        let rc: &AtomicUsize = unsafe {
+            std::ptr::addr_of!((*custom_arc).rc)
+                .as_ref()
+                .unwrap_unchecked()
+        };
+        if rc.fetch_sub(1, std::sync::atomic::Ordering::Release) == 1 {
+            {
+                let custom_arc = (custom_arc as *mut CustomArc<T>)
+                    .as_mut()
+                    .unwrap_unchecked();
+                std::ptr::drop_in_place(custom_arc);
+            }
+            std::alloc::dealloc(
+                data as *mut () as *mut u8,
+                std::alloc::Layout::new::<CustomArc<T>>(),
+            );
+        }
+    }
+
+    let rc = Box::leak(Box::new(CustomArc {
+        rc: AtomicUsize::new(1),
+        data,
+    })) as *mut _ as *const ();
+    RefCountedBytes {
+        raw: RawRefCountedBytes {
+            data: unsafe { NonNull::new_unchecked(rc as *mut ()) },
+            vtable: RefCountedBytesVTable {
+                clone: custom_arc_clone::<T>,
+                drop: custom_arc_drop::<T>,
+            },
+        },
+    }
+}
+
 #[cfg(feature = "bytes_string")]
 mod bytes_string;
 #[cfg(feature = "bytes_string")]
@@ -355,69 +390,7 @@ mod test;
 
 #[cfg(test)]
 mod tests {
-    use std::{ptr::NonNull, sync::atomic::AtomicUsize};
-
-    use crate::{RawRefCountedBytes, RefCountedBytes, RefCountedBytesVTable};
-
-    struct CustomArc<T> {
-        rc: AtomicUsize,
-        #[allow(unused)]
-        data: T,
-    }
-
-    fn custom_arc_refcounted<T>(data: T) -> RefCountedBytes {
-        unsafe fn custom_arc_clone<T>(data: *const ()) -> RawRefCountedBytes {
-            let custom_arc = data as *const CustomArc<T>;
-            let rc = unsafe {
-                std::ptr::addr_of!((*custom_arc).rc)
-                    .as_ref()
-                    .unwrap_unchecked()
-            };
-            rc.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            RawRefCountedBytes {
-                data: NonNull::new_unchecked(data as *mut ()),
-                vtable: RefCountedBytesVTable {
-                    clone: custom_arc_clone::<T>,
-                    drop: custom_arc_drop::<T>,
-                },
-            }
-        }
-
-        unsafe fn custom_arc_drop<T>(data: *const ()) {
-            let custom_arc = data as *const CustomArc<T>;
-            let rc: &AtomicUsize = unsafe {
-                std::ptr::addr_of!((*custom_arc).rc)
-                    .as_ref()
-                    .unwrap_unchecked()
-            };
-            if rc.fetch_sub(1, std::sync::atomic::Ordering::Release) == 1 {
-                {
-                    let custom_arc = (custom_arc as *mut CustomArc<T>)
-                        .as_mut()
-                        .unwrap_unchecked();
-                    std::ptr::drop_in_place(custom_arc);
-                }
-                std::alloc::dealloc(
-                    data as *mut () as *mut u8,
-                    std::alloc::Layout::new::<CustomArc<T>>(),
-                );
-            }
-        }
-
-        let rc = Box::leak(Box::new(CustomArc {
-            rc: AtomicUsize::new(1),
-            data,
-        })) as *mut _ as *const ();
-        RefCountedBytes {
-            raw: RawRefCountedBytes {
-                data: unsafe { NonNull::new_unchecked(rc as *mut ()) },
-                vtable: RefCountedBytesVTable {
-                    clone: custom_arc_clone::<T>,
-                    drop: custom_arc_drop::<T>,
-                },
-            },
-        }
-    }
+    use crate::custom_arc_refcounted;
 
     #[test]
     /// Run with miri to check that this works
