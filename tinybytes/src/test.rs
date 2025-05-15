@@ -3,6 +3,7 @@
 
 use core::str;
 use std::sync::atomic::{self, AtomicUsize};
+use std::sync::Arc;
 
 use super::*;
 use once_cell::sync::OnceCell;
@@ -19,6 +20,16 @@ fn hello() -> Bytes {
 
 fn hello_slice(range: impl RangeBounds<usize>) -> Bytes {
     hello().slice(range)
+}
+
+#[test]
+fn test_make_refcounted() {
+    let data = vec![1, 2, 3];
+    let refcounted = make_refcounted(data);
+    let refcounted_clone = refcounted.clone();
+
+    drop(refcounted);
+    drop(refcounted_clone);
 }
 
 #[allow(clippy::reversed_empty_ranges)]

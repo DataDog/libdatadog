@@ -16,9 +16,11 @@ pub enum RemoteConfigSource {
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum RemoteConfigProduct {
+    AgentConfig,
+    AgentTask,
     ApmTracing,
-    AsmData,
     Asm,
+    AsmData,
     AsmDD,
     AsmFeatures,
     LiveDebugger,
@@ -27,12 +29,14 @@ pub enum RemoteConfigProduct {
 impl Display for RemoteConfigProduct {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let str = match self {
+            RemoteConfigProduct::AgentConfig => "AGENT_CONFIG",
+            RemoteConfigProduct::AgentTask => "AGENT_TASK",
             RemoteConfigProduct::ApmTracing => "APM_TRACING",
-            RemoteConfigProduct::LiveDebugger => "LIVE_DEBUGGING",
             RemoteConfigProduct::Asm => "ASM",
-            RemoteConfigProduct::AsmDD => "ASM_DD",
             RemoteConfigProduct::AsmData => "ASM_DATA",
+            RemoteConfigProduct::AsmDD => "ASM_DD",
             RemoteConfigProduct::AsmFeatures => "ASM_FEATURES",
+            RemoteConfigProduct::LiveDebugger => "LIVE_DEBUGGING",
         };
         write!(f, "{}", str)
     }
@@ -74,12 +78,14 @@ impl RemoteConfigPath {
                 source => anyhow::bail!("Unknown source {}", source),
             },
             product: match parts[parts.len() - 3] {
+                "AGENT_CONFIG" => RemoteConfigProduct::AgentConfig,
+                "AGENT_TASK" => RemoteConfigProduct::AgentTask,
                 "APM_TRACING" => RemoteConfigProduct::ApmTracing,
-                "LIVE_DEBUGGING" => RemoteConfigProduct::LiveDebugger,
                 "ASM" => RemoteConfigProduct::Asm,
-                "ASM_DD" => RemoteConfigProduct::AsmDD,
                 "ASM_DATA" => RemoteConfigProduct::AsmData,
+                "ASM_DD" => RemoteConfigProduct::AsmDD,
                 "ASM_FEATURES" => RemoteConfigProduct::AsmFeatures,
+                "LIVE_DEBUGGING" => RemoteConfigProduct::LiveDebugger,
                 product => anyhow::bail!("Unknown product {}", product),
             },
             config_id: parts[parts.len() - 2],
