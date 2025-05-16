@@ -441,7 +441,7 @@ impl Profile {
 
         let mut lender = self.strings.into_lending_iter();
         while let Some(item) = lender.next() {
-            encoder.try_encode_str(&item)?;
+            encoder.try_encode_str(item)?;
         }
 
         let time_nanos = self
@@ -872,6 +872,9 @@ impl Profile {
 #[cfg(test)]
 mod api_tests {
     use super::*;
+    use crate::pprof;
+    use crate::pprof::{sorted_samples, string_table_fetch};
+    use datadog_profiling_core::prost_impls;
 
     #[test]
     fn interning() {
@@ -1049,23 +1052,14 @@ mod api_tests {
         for (index, function) in profile.functions.iter().enumerate() {
             assert_eq!((index + 1) as u64, function.id);
         }
-        let samples = profile.sorted_samples();
+        let samples = sorted_samples(&profile);
 
         let sample = samples.first().expect("index 0 to exist");
         assert_eq!(sample.labels.len(), 1);
         let label = sample.labels.first().expect("index 0 to exist");
-        let key = profile
-            .string_table
-            .get(label.key as usize)
-            .expect("index to exist");
-        let str = profile
-            .string_table
-            .get(label.str as usize)
-            .expect("index to exist");
-        let num_unit = profile
-            .string_table
-            .get(label.num_unit as usize)
-            .expect("index to exist");
+        let key = string_table_fetch(&profile, label.key);
+        let str = string_table_fetch(&profile, label.str);
+        let num_unit = string_table_fetch(&profile, label.num_unit);
         assert_eq!(key, "pid");
         assert_eq!(label.num, 101);
         assert_eq!(str, "");
@@ -1074,18 +1068,9 @@ mod api_tests {
         let sample = samples.get(1).expect("index 1 to exist");
         assert_eq!(sample.labels.len(), 1);
         let label = sample.labels.first().expect("index 0 to exist");
-        let key = profile
-            .string_table
-            .get(label.key as usize)
-            .expect("index to exist");
-        let str = profile
-            .string_table
-            .get(label.str as usize)
-            .expect("index to exist");
-        let num_unit = profile
-            .string_table
-            .get(label.num_unit as usize)
-            .expect("index to exist");
+        let key = string_table_fetch(&profile, label.key);
+        let str = string_table_fetch(&profile, label.str);
+        let num_unit = string_table_fetch(&profile, label.num_unit);
         assert_eq!(key, "pid");
         assert_eq!(label.num, 101);
         assert_eq!(str, "");
@@ -1094,35 +1079,17 @@ mod api_tests {
         let sample = samples.get(2).expect("index 2 to exist");
         assert_eq!(sample.labels.len(), 2);
         let label = sample.labels.first().expect("index 0 to exist");
-        let key = profile
-            .string_table
-            .get(label.key as usize)
-            .expect("index to exist");
-        let str = profile
-            .string_table
-            .get(label.str as usize)
-            .expect("index to exist");
-        let num_unit = profile
-            .string_table
-            .get(label.num_unit as usize)
-            .expect("index to exist");
+        let key = string_table_fetch(&profile, label.key);
+        let str = string_table_fetch(&profile, label.str);
+        let num_unit = string_table_fetch(&profile, label.num_unit);
         assert_eq!(key, "pid");
         assert_eq!(label.num, 101);
         assert_eq!(str, "");
         assert_eq!(num_unit, "");
         let label = sample.labels.get(1).expect("index 1 to exist");
-        let key = profile
-            .string_table
-            .get(label.key as usize)
-            .expect("index to exist");
-        let str = profile
-            .string_table
-            .get(label.str as usize)
-            .expect("index to exist");
-        let num_unit = profile
-            .string_table
-            .get(label.num_unit as usize)
-            .expect("index to exist");
+        let key = string_table_fetch(&profile, label.key);
+        let str = string_table_fetch(&profile, label.str);
+        let num_unit = string_table_fetch(&profile, label.num_unit);
         assert_eq!(key, "end_timestamp_ns");
         assert_eq!(label.num, 42);
         assert_eq!(str, "");
@@ -1273,7 +1240,7 @@ mod api_tests {
 
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
         assert_eq!(serialized_profile.samples.len(), 2);
-        let samples = serialized_profile.sorted_samples();
+        let samples = sorted_samples(&serialized_profile);
 
         let s1 = samples.first().expect("sample");
 
@@ -1283,10 +1250,7 @@ mod api_tests {
         let l1 = s1.labels.first().expect("label");
 
         assert_eq!(
-            serialized_profile
-                .string_table
-                .get(l1.key as usize)
-                .unwrap(),
+            string_table_fetch(&serialized_profile, l1.key),
             "local root span id"
         );
         assert_eq!(l1.num, 10);
@@ -1707,7 +1671,7 @@ mod api_tests {
             .expect("Rule added");
 
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
-        let samples = serialized_profile.sorted_samples();
+        let samples = sorted_samples(&serialized_profile);
         let first = samples.first().expect("first sample");
 
         assert_eq!(first.values, vec![2, 10000, 42]);
@@ -1771,7 +1735,7 @@ mod api_tests {
             .expect("Rule added");
 
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
-        let samples = serialized_profile.sorted_samples();
+        let samples = sorted_samples(&serialized_profile);
         let first = samples.first().expect("first sample");
 
         assert_eq!(first.values, vec![2, 10000, 105]);
@@ -1922,7 +1886,7 @@ mod api_tests {
             .expect("Rule added");
 
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
-        let samples = serialized_profile.sorted_samples();
+        let samples = sorted_samples(&serialized_profile);
 
         let first = samples.first().expect("one sample");
 
@@ -2006,7 +1970,7 @@ mod api_tests {
             .expect("Rule added");
 
         let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
-        let samples = serialized_profile.sorted_samples();
+        let samples = sorted_samples(&serialized_profile);
         let first = samples.first().expect("one sample");
 
         assert_eq!(first.values, vec![2, 10000, 42]);
@@ -2437,28 +2401,35 @@ mod api_tests {
         // Set up the expected labels per sample
         let expected_labels = [
             [
-                pprof::Label {
+                prost_impls::Label {
                     key: local_root_span_id,
                     str: 0,
                     num: large_num,
                     num_unit: 0,
                 },
-                pprof::Label::str(trace_endpoint, locate_string("large endpoint")),
+                prost_impls::Label {
+                    key: trace_endpoint,
+                    str: locate_string("large endpoint"),
+                    ..Default::default()
+                },
             ],
             [
-                pprof::Label {
+                prost_impls::Label {
                     key: local_root_span_id,
                     str: 0,
                     num: 10,
                     num_unit: 0,
                 },
-                pprof::Label::str(trace_endpoint, locate_string("endpoint 10")),
+                prost_impls::Label {
+                    key: trace_endpoint,
+                    str: locate_string("endpoint 10"),
+                    ..Default::default()
+                },
             ],
         ];
 
         // Finally, match the labels.
-        for (sample, labels) in serialized_profile
-            .sorted_samples()
+        for (sample, labels) in sorted_samples(&serialized_profile)
             .iter()
             .zip(expected_labels.iter())
         {

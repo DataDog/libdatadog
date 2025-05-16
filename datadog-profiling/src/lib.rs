@@ -5,12 +5,12 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
-extern crate core;
 
 pub mod api;
 pub mod collections;
 pub mod exporter;
 pub mod internal;
 pub mod iter;
+#[cfg(test)]
 pub mod pprof;
 pub mod serializer;

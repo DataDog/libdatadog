@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::pprof;
+use datadog_profiling_core::prost_impls;
 use std::ops::{Add, Sub};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -283,14 +283,14 @@ pub struct Profile<'a> {
     pub start_time: SystemTime,
 }
 
-fn string_table_fetch(pprof: &pprof::Profile, id: i64) -> anyhow::Result<&String> {
+fn string_table_fetch(pprof: &prost_impls::Profile, id: i64) -> anyhow::Result<&String> {
     pprof
         .string_table
         .get(id as u64 as usize)
         .ok_or_else(|| anyhow::anyhow!("String {id} was not found."))
 }
 
-fn mapping_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Mapping> {
+fn mapping_fetch(pprof: &prost_impls::Profile, id: u64) -> anyhow::Result<Mapping> {
     if id == 0 {
         return Ok(Mapping::default());
     }
@@ -307,7 +307,7 @@ fn mapping_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Mapping> {
     }
 }
 
-fn function_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Function> {
+fn function_fetch(pprof: &prost_impls::Profile, id: u64) -> anyhow::Result<Function> {
     if id == 0 {
         return Ok(Function::default());
     }
@@ -322,7 +322,7 @@ fn function_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Function> {
     }
 }
 
-fn location_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Location> {
+fn location_fetch(pprof: &prost_impls::Profile, id: u64) -> anyhow::Result<Location> {
     if id == 0 {
         return Ok(Location::default());
     }
@@ -350,7 +350,7 @@ fn location_fetch(pprof: &pprof::Profile, id: u64) -> anyhow::Result<Location> {
 }
 
 fn locations_fetch<'a>(
-    pprof: &'a pprof::Profile,
+    pprof: &'a prost_impls::Profile,
     ids: &'a [u64],
 ) -> anyhow::Result<Vec<Location<'a>>> {
     let mut locations = Vec::with_capacity(ids.len());
@@ -361,10 +361,10 @@ fn locations_fetch<'a>(
     Ok(locations)
 }
 
-impl<'a> TryFrom<&'a pprof::Profile> for Profile<'a> {
+impl<'a> TryFrom<&'a prost_impls::Profile> for Profile<'a> {
     type Error = anyhow::Error;
 
-    fn try_from(pprof: &'a pprof::Profile) -> Result<Self, Self::Error> {
+    fn try_from(pprof: &'a prost_impls::Profile) -> Result<Self, Self::Error> {
         assert!(pprof.duration_nanos >= 0);
         let duration = Duration::from_nanos(pprof.duration_nanos as u64);
         let start_time = if pprof.time_nanos.is_negative() {

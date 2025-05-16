@@ -1,7 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::*;
+use super::{Id, Item, StringId};
+use datadog_profiling_core::prost_impls;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum LabelValue {
@@ -47,14 +48,14 @@ impl Label {
     }
 }
 
-impl From<Label> for pprof::Label {
+impl From<Label> for prost_impls::Label {
     fn from(l: Label) -> Self {
         Self::from(&l)
     }
 }
 
-impl From<&Label> for pprof::Label {
-    fn from(l: &Label) -> pprof::Label {
+impl From<&Label> for prost_impls::Label {
+    fn from(l: &Label) -> prost_impls::Label {
         let key = l.key.to_raw_id();
         match l.value {
             LabelValue::Str(str) => Self {

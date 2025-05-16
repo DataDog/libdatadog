@@ -15,7 +15,7 @@ pub struct Sample<'a> {
 #[must_use]
 #[inline]
 fn packed_varint_u64_len(tag: u32, items: &[u64]) -> usize {
-    if items.len() != 0 {
+    if !items.is_empty() {
         let encoded_len = items.iter().copied().map(varint_len).sum::<usize>();
         encode::key_len(tag, encode::WireType::LengthDelimited)
             + varint_len(encoded_len as u64)

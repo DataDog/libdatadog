@@ -31,6 +31,9 @@ pub struct StringOffset {
 impl StringOffset {
     pub const ZERO: Self = Self { offset: 0 };
 
+    /// # Safety
+    /// The offset should exist in the string table. If it doesn't, then it
+    /// shouldn't be looked up.
     pub const unsafe fn new_unchecked(offset: u32) -> Self {
         Self { offset }
     }

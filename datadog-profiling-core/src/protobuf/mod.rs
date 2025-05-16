@@ -41,6 +41,9 @@ mod sealed {
 
 pub trait LenEncodable: sealed::Sealed {
     fn encoded_len(&self) -> usize;
+
+    /// # Safety
+    /// The buffer should have at least [Self::encoded_len] bytes remaining.
     unsafe fn encode_raw<T: MayGrowOps<u8>>(&self, buffer: &mut Buffer<T>) -> ByteRange;
 }
 
@@ -51,6 +54,9 @@ pub fn encoded_len<L: LenEncodable>(tag: u32, l: &L) -> (usize, usize) {
     (len, needed)
 }
 
+/// # Safety
+/// The buffer must have enough space to store the encoded length-delimited
+/// message. Call [encoded_len] to find out how much is needed.
 pub unsafe fn encode_len_delimited<L: LenEncodable, T: MayGrowOps<u8>>(
     buffer: &mut Buffer<T>,
     tag: u32,
@@ -135,6 +141,9 @@ pub mod encode {
         }
     }
 
+    /// # Safety
+    /// The buffer should have enough bytes to store the varint. A 64-bit
+    /// varint never takes more than 10 bytes.
     #[inline]
     pub unsafe fn tagged_varint<T: MayGrowOps<u8>>(buf: &mut Buffer<T>, tag: u32, value: u64) {
         if value != 0 {
@@ -142,6 +151,8 @@ pub mod encode {
         }
     }
 
+    /// # Safety
+    /// The buffer should have enough bytes to store the tagged varint.
     #[inline]
     pub unsafe fn tagged_varint_without_zero_size_opt<T: MayGrowOps<u8>>(
         buf: &mut Buffer<T>,

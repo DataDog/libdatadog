@@ -1573,7 +1573,6 @@ dependencies = [
  "datadog-alloc",
  "datadog-profiling-core",
  "ddcommon",
- "derivative",
  "futures",
  "http 1.1.0",
  "http-body-util",
@@ -1634,6 +1633,7 @@ dependencies = [
  "anyhow",
  "clap",
  "datadog-profiling",
+ "datadog-profiling-core",
  "prost",
  "sysinfo",
 ]
@@ -1935,17 +1935,6 @@ checksum = "b42b6fa04a440b495c8b04d0e71b707c585f83cb9cb28cf8cd0d976c315e31b4"
 dependencies = [
  "powerfmt",
  "serde",
-]
-
-[[package]]
-name = "derivative"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcc3dd5e9e9c0b295d6e1e4d811fb6f157d5ffd784b8d202fc62eac8035a770b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]

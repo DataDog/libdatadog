@@ -1,7 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::*;
+use super::{small_non_zero_pprof_id, Id, Item, StringId};
+use std::num::NonZeroU32;
 
 /// Represents a [pprof::Function] with some space-saving changes:
 ///  - The id is not stored on the struct. It's stored in the container that holds the struct.
@@ -17,19 +18,6 @@ pub struct Function {
 
 impl Item for Function {
     type Id = FunctionId;
-}
-
-impl PprofItem for Function {
-    type PprofMessage = pprof::Function;
-
-    fn to_pprof(&self, id: Self::Id) -> Self::PprofMessage {
-        pprof::Function {
-            id: id.to_raw_id(),
-            name: self.name.to_raw_id(),
-            system_name: self.system_name.to_raw_id(),
-            filename: self.filename.to_raw_id(),
-        }
-    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
