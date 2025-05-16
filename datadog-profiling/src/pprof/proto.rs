@@ -20,7 +20,7 @@ mod test_helpers {
         profile
             .string_table
             .get(id as usize)
-            .expect(&format!("String {id} not found"))
+            .unwrap_or_else(|| panic!("String {id} not found"))
     }
 
     pub fn string_table_fetch_owned(profile: &Profile, id: i64) -> Box<str> {
