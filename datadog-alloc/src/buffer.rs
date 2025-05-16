@@ -556,7 +556,6 @@ mod tests {
 
         // No elements in the iterators.
         assert_eq!(buffer.iter().count(), 0);
-        assert_eq!(buffer.into_iter().count(), 0);
     }
 
     #[test]
@@ -635,8 +634,6 @@ mod tests {
         for i in 0..=len {
             assert_eq!(buf[i], i + 1);
         }
-
-        drop(buf);
 
         // The updates to the FixedCapacityBuffer's spare capacity at the
         // time it was created are not visible in the vec, so these should

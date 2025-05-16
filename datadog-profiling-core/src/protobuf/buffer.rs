@@ -30,7 +30,7 @@ impl<'a, T: MayGrowOps<u8>> Buffer<'a, T> {
     }
 }
 
-impl<'a, T: MayGrowOps<u8>> Deref for Buffer<'a, T> {
+impl<T: MayGrowOps<u8>> Deref for Buffer<'_, T> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
@@ -38,13 +38,13 @@ impl<'a, T: MayGrowOps<u8>> Deref for Buffer<'a, T> {
     }
 }
 
-impl<'a, T: MayGrowOps<u8>> DerefMut for Buffer<'a, T> {
+impl<T: MayGrowOps<u8>> DerefMut for Buffer<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.buf.deref_mut()
     }
 }
 
-impl<'a, T: MayGrowOps<u8>> NoGrowOps<u8> for Buffer<'a, T> {
+impl<T: MayGrowOps<u8>> NoGrowOps<u8> for Buffer<'_, T> {
     fn capacity(&self) -> usize {
         self.cap
     }
@@ -58,7 +58,7 @@ impl<'a, T: MayGrowOps<u8>> NoGrowOps<u8> for Buffer<'a, T> {
     }
 }
 
-impl<'a, T: MayGrowOps<u8>> MayGrowOps<u8> for Buffer<'a, T> {
+impl<T: MayGrowOps<u8>> MayGrowOps<u8> for Buffer<'_, T> {
     fn try_reserve(&mut self, additional: usize) -> Result<(), TryReserveError> {
         self.buf.try_reserve(additional)?;
         self.cap = self.buf.capacity().min(i32::MAX as usize);
