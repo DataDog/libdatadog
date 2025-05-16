@@ -151,6 +151,7 @@ pub struct ServiceConfiguration {
     pub sampling_snapshots_per_second: u32,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum LiveDebuggingData {
     Probe(Probe),
