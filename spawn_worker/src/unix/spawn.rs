@@ -134,21 +134,15 @@ impl Target {
         let default_method = SpawnMethod::Exec;
 
         let target_path = match self {
-            Target::Entrypoint(e) => e.get_fs_path().ok_or_else(|| {
-                std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "can't find the entrypoint's target path",
-                )
-            }),
+            Target::Entrypoint(e) => e
+                .get_fs_path()
+                .ok_or_else(|| std::io::Error::other("can't find the entrypoint's target path")),
             Target::ManualTrampoline(p, _) => Ok(std::path::PathBuf::from(p)),
             Target::Noop => return Ok(default_method),
         }?;
-        let target_filename = target_path.file_name().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "can't extract actual target filename",
-            )
-        })?;
+        let target_filename = target_path
+            .file_name()
+            .ok_or_else(|| std::io::Error::other("can't extract actual target filename"))?;
 
         // simple heuristic that should cover most cases
         // if both executable path and target's entrypoint path end up having the same filenames
