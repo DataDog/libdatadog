@@ -52,6 +52,10 @@ impl<'a, T: MayGrowOps<u8>> NoGrowOps<u8> for Buffer<'a, T> {
     unsafe fn set_len(&mut self, len: usize) {
         self.buf.set_len(len);
     }
+
+    fn as_mut_ptr(&mut self) -> *mut u8 {
+        self.buf.as_mut_ptr()
+    }
 }
 
 impl<'a, T: MayGrowOps<u8>> MayGrowOps<u8> for Buffer<'a, T> {

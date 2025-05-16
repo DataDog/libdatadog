@@ -9,10 +9,22 @@ use core::{mem, ops, ptr, slice};
 /// Note that Deref provides access to methods of `&[T]`, so you can call
 /// methods like:
 ///  - `len` and `is_empty`.
-///  - `as_ptr` and `as_mut_ptr`
 pub trait NoGrowOps<T: Copy>: ops::DerefMut<Target = [T]> {
     /// Returns the number of elements the collection can hold.
     fn capacity(&self) -> usize;
+
+    /// Sets the length of the collection.
+    ///
+    /// # Safety
+    /// The len must be less than or equal to the capacity, and the first len
+    /// elements of the collection must be properly initialized.
+    unsafe fn set_len(&mut self, len: usize);
+
+    /// Returns a mutable pointer to the collection's buffer, or a dangling
+    /// pointer. This pointer must be valid for writes into the unused
+    /// capacity, which is why it exists instead of deferring to DerefMut,
+    /// which would be tagged for writes only for the already-allocated space.
+    fn as_mut_ptr(&mut self) -> *mut T;
 
     /// Appends an element to the back of the collection without checking if
     /// there is enough capacity.
@@ -59,13 +71,6 @@ pub trait NoGrowOps<T: Copy>: ops::DerefMut<Target = [T]> {
         unsafe { self.set_len(len + additional) };
     }
 
-    /// Sets the length of the collection.
-    ///
-    /// # Safety
-    /// The len must be less than or equal to the capacity, and the first len
-    /// elements of the collection must be properly initialized.
-    unsafe fn set_len(&mut self, len: usize);
-
     /// Tries to append an element to the back of the collection.
     ///
     /// # Errors
@@ -107,7 +112,8 @@ pub trait NoGrowOps<T: Copy>: ops::DerefMut<Target = [T]> {
     /// dangling pointer if it hasn't allocated yet.
     #[inline]
     fn as_non_null(&mut self) -> ptr::NonNull<T> {
-        ptr::NonNull::from(ops::DerefMut::deref_mut(self)).cast()
+        // SAFETY: the collection should always return a non-null pointer.
+        unsafe { ptr::NonNull::new_unchecked(self.as_mut_ptr()) }
     }
 
     /// Returns the remaining spare capacity as a slice of [mem::MaybeUninit].
@@ -418,13 +424,17 @@ impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
     }
 }
 
-impl<'a, T: Copy> NoGrowOps<T> for FixedCapacityBuffer<'a, T> {
+impl<T: Copy> NoGrowOps<T> for FixedCapacityBuffer<'_, T> {
     fn capacity(&self) -> usize {
         self.capacity()
     }
 
     unsafe fn set_len(&mut self, len: usize) {
         self.set_len(len);
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut T {
+        self.ptr.as_ptr()
     }
 }
 
@@ -468,6 +478,10 @@ mod std_impls {
 
         unsafe fn set_len(&mut self, len: usize) {
             self.set_len(len);
+        }
+
+        fn as_mut_ptr(&mut self) -> *mut T {
+            self.as_mut_ptr()
         }
     }
 

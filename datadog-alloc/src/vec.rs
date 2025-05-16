@@ -308,6 +308,10 @@ impl<T: Copy> VirtualVec<T> {
         self.ptr
     }
 
+    pub fn as_mut_ptr(&mut self) -> *mut T {
+        self.ptr.as_ptr()
+    }
+
     /// Creates a [FixedCapacityBuffer], using the storage of this vec.
     pub const fn as_fixed_capacity_buffer(&mut self) -> FixedCapacityBuffer<T> {
         FixedCapacityBuffer::from_virtual_vec(self)
@@ -459,6 +463,10 @@ impl<T: Copy> NoGrowOps<T> for VirtualVec<T> {
 
     unsafe fn set_len(&mut self, len: usize) {
         self.set_len(len)
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut T {
+        self.as_mut_ptr()
     }
 }
 
