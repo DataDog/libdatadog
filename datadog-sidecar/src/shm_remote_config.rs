@@ -400,6 +400,7 @@ pub struct RemoteConfigManager {
     pub current_runtime_id: String,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum RemoteConfigUpdate {
     None,
