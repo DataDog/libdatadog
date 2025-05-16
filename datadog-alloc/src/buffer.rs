@@ -204,7 +204,8 @@ pub trait MayGrowOps<T: Copy>: NoGrowOps<T> {
 }
 
 /// A vec-like object which has a fixed capacity. It borrows the storage, which
-/// allows it to avoid allocators and provide many const functions.
+/// allows it to avoid allocators and provide many const functions (or at
+/// least will be const when MSRV is bumped to 1.83+).
 #[repr(C)]
 pub struct FixedCapacityBuffer<'a, T: Copy + 'a> {
     // This purposefully uses the same struct layout as the VirtualVec to
@@ -218,7 +219,7 @@ pub struct FixedCapacityBuffer<'a, T: Copy + 'a> {
 impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
     /// Creates a new fixed-capacity buffer.
     #[inline]
-    pub const fn new(slice: &'a mut [mem::MaybeUninit<T>]) -> Self {
+    pub fn new(slice: &'a mut [mem::MaybeUninit<T>]) -> Self {
         Self {
             // SAFETY: safe from ref, just can't use NonNull::from in const.
             ptr: unsafe { ptr::NonNull::new_unchecked(slice.as_mut_ptr()).cast() },
@@ -230,7 +231,7 @@ impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
 
     /// Creates a new fixed-capacity buffer from the virtual vec.
     #[inline]
-    pub const fn from_virtual_vec(vec: &'a mut VirtualVec<T>) -> Self {
+    pub fn from_virtual_vec(vec: &'a mut VirtualVec<T>) -> Self {
         Self {
             ptr: vec.as_non_null(),
             len: vec.len(),
@@ -265,7 +266,7 @@ impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
 
     /// Returns the used portion of the buffer as a mutable slice.
     #[inline]
-    pub const fn as_mut_slice(&mut self) -> &'a mut [T] {
+    pub fn as_mut_slice(&mut self) -> &'a mut [T] {
         unsafe { slice::from_raw_parts_mut(self.as_mut_ptr(), self.len()) }
     }
 
@@ -280,7 +281,7 @@ impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
     /// This can be used to fill data, and then call [Self::set_len]. The
     /// length of the slice is equal to [Self::remaining_capacity].
     #[inline]
-    pub const fn spare_capacity_mut(&mut self) -> &mut [mem::MaybeUninit<T>] {
+    pub fn spare_capacity_mut(&mut self) -> &mut [mem::MaybeUninit<T>] {
         let ptr = unsafe {
             self.as_mut_ptr()
                 .cast::<mem::MaybeUninit<T>>()
@@ -295,7 +296,7 @@ impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
     /// # Safety
     /// There must be available capacity for the value to be pushed.
     #[inline]
-    pub const unsafe fn push_within_capacity(&mut self, value: T) {
+    pub unsafe fn push_within_capacity(&mut self, value: T) {
         unsafe { self.as_mut_ptr().add(self.len()).write(value) };
         self.set_len(self.len() + 1);
     }
@@ -306,7 +307,7 @@ impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
     /// The caller needs to ensure there is enough capacity before calling
     /// this function.
     #[inline]
-    pub const unsafe fn extend_from_slice_within_capacity(&mut self, values: &[T]) {
+    pub unsafe fn extend_from_slice_within_capacity(&mut self, values: &[T]) {
         let additional = values.len();
         let begin = unsafe { self.as_mut_ptr().add(self.len()) };
         // SAFETY: this doesn't overlap, not even with spare_capacity_mut,
@@ -322,7 +323,7 @@ impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
     /// # Safety
     /// There must be available capacity for the value to be pushed.
     #[inline]
-    pub const fn try_push_within_capacity(&mut self, value: T) -> Result<(), NeedsCapacity> {
+    pub fn try_push_within_capacity(&mut self, value: T) -> Result<(), NeedsCapacity> {
         let available = self.remaining_capacity();
         if available != 0 {
             unsafe { self.push_within_capacity(value) }
@@ -342,7 +343,7 @@ impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
     /// If there isn't capacity for all items, an error is returned describing
     /// how much capacity there currently is, and how much is needed.
     #[inline]
-    pub const fn try_extend_from_slice_within_capacity(
+    pub fn try_extend_from_slice_within_capacity(
         &mut self,
         data: &[T],
     ) -> Result<(), NeedsCapacity> {
@@ -360,7 +361,7 @@ impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
     /// greater than or equal to the number of elements currently in the
     /// collection, then this method has no effect.
     #[inline]
-    pub const fn truncate(&mut self, len: usize) {
+    pub fn truncate(&mut self, len: usize) {
         let min_len = self.len();
         // Avoids min to be const compatible.
         // SAFETY: clamped to the current length.
@@ -373,7 +374,7 @@ impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
     ///
     /// If there isn't enough capacity, then an error is returned.
     #[inline]
-    pub const fn try_reserve(&mut self, additional: usize) -> Result<(), TryReserveError> {
+    pub fn try_reserve(&mut self, additional: usize) -> Result<(), TryReserveError> {
         if additional <= self.remaining_capacity() {
             Ok(())
         } else {
@@ -387,7 +388,7 @@ impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
     /// The len must be less than or equal to the capacity, and the first len
     /// elements of the buffer must be properly initialized.
     #[inline]
-    pub const unsafe fn set_len(&mut self, len: usize) {
+    pub unsafe fn set_len(&mut self, len: usize) {
         debug_assert!(len <= self.capacity());
         self.len = len;
     }
@@ -395,7 +396,7 @@ impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
     /// Returns a `NonNull` pointer to the underlying buffer. It may be a
     /// dangling pointer if it hasn't allocated yet.
     #[inline]
-    pub const fn as_non_null(&mut self) -> ptr::NonNull<T> {
+    pub fn as_non_null(&mut self) -> ptr::NonNull<T> {
         self.ptr
     }
 
@@ -409,7 +410,7 @@ impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
     /// Returns a raw, mutable pointer to the underlying buffer. It will not
     /// be null, but it may be dangling.
     #[inline]
-    pub const fn as_mut_ptr(&mut self) -> *mut T {
+    pub fn as_mut_ptr(&mut self) -> *mut T {
         self.ptr.as_ptr()
     }
 

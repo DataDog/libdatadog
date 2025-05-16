@@ -24,7 +24,7 @@ pub use virtual_alloc::*;
 
 // Expose certain allocator_api2 things for our users.
 pub use allocator_api2::alloc::{AllocError, Allocator, Layout, LayoutError};
-use core::{error, fmt};
+use core::fmt;
 
 /// This exists because [alloc::collections::TryReserveError] hides the
 /// necessary constructors and such for us to work with them ourselves.
@@ -49,7 +49,9 @@ impl fmt::Display for TryReserveError {
     }
 }
 
-impl error::Error for TryReserveError {}
+// todo: MSRV 1.81+ this can be core::error instead.
+#[cfg(feature = "std")]
+impl std::error::Error for TryReserveError {}
 
 #[repr(C)]
 #[derive(Debug)]
@@ -77,4 +79,6 @@ impl fmt::Display for NeedsCapacity {
     }
 }
 
-impl error::Error for NeedsCapacity {}
+// todo: MSRV 1.81+ this can be core::error instead.
+#[cfg(feature = "std")]
+impl std::error::Error for NeedsCapacity {}

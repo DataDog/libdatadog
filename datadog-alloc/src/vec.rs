@@ -40,6 +40,8 @@ impl<T: Copy + fmt::Debug> fmt::Debug for VirtualVec<T> {
 unsafe impl<T: Send + Copy> Send for VirtualVec<T> {}
 
 impl<T: Copy> VirtualVec<T> {
+    // todo: will be used when MSRV is bumped to 1.79+
+    #[allow(unused)]
     const IS_SIZED: bool = mem::size_of::<T>() != 0;
 
     /// Creates a new, empty [VirtualVec]. This does not allocate and has
@@ -48,7 +50,8 @@ impl<T: Copy> VirtualVec<T> {
     #[must_use]
     pub const fn new() -> Self {
         // We don't support zero-sized types.
-        const { assert!(Self::IS_SIZED) };
+        // todo: uncomment when MSRV is bumped to 1.79+
+        // const { assert!(Self::IS_SIZED) };
         Self {
             ptr: ptr::NonNull::dangling(),
             len: 0,
@@ -291,7 +294,7 @@ impl<T: Copy> VirtualVec<T> {
     /// Returns the remaining spare capacity as a slice of [mem::MaybeUninit].
     /// This can be used to fill data, and then call [Self::set_len].
     #[inline]
-    pub const fn spare_capacity_mut(&mut self) -> &mut [mem::MaybeUninit<T>] {
+    pub fn spare_capacity_mut(&mut self) -> &mut [mem::MaybeUninit<T>] {
         let len = self.len;
         unsafe {
             slice::from_raw_parts_mut(
@@ -304,7 +307,7 @@ impl<T: Copy> VirtualVec<T> {
     /// Returns a `NonNull` pointer to the vector's buffer. It may be a
     /// dangling pointer if the vector hasn't allocated yet.
     #[inline]
-    pub const fn as_non_null(&mut self) -> ptr::NonNull<T> {
+    pub fn as_non_null(&mut self) -> ptr::NonNull<T> {
         self.ptr
     }
 
@@ -313,7 +316,7 @@ impl<T: Copy> VirtualVec<T> {
     }
 
     /// Creates a [FixedCapacityBuffer], using the storage of this vec.
-    pub const fn as_fixed_capacity_buffer(&mut self) -> FixedCapacityBuffer<T> {
+    pub fn as_fixed_capacity_buffer(&mut self) -> FixedCapacityBuffer<T> {
         FixedCapacityBuffer::from_virtual_vec(self)
     }
 }
