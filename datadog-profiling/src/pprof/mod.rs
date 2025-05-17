@@ -2,11 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod proto;
+mod test_utils;
 
-pub mod sliced_proto;
 pub use proto::*;
-
-#[cfg(test)]
-pub mod test_utils;
-#[cfg(test)]
 pub use test_utils::*;

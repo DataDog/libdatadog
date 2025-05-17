@@ -11,5 +11,6 @@ pub mod collections;
 pub mod exporter;
 pub mod internal;
 pub mod iter;
+#[cfg(test)]
 pub mod pprof;
 pub mod serializer;

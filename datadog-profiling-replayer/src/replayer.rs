@@ -4,7 +4,7 @@
 use crate::profile_index::ProfileIndex;
 use datadog_profiling::api;
 use datadog_profiling::internal::Timestamp;
-use datadog_profiling::pprof;
+use datadog_profiling_core::prost_impls;
 use std::ops::{Add, Sub};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -41,11 +41,11 @@ impl<'pprof> Replayer<'pprof> {
         }
     }
 
-    fn start_time(pprof: &pprof::Profile) -> SystemTime {
+    fn start_time(pprof: &prost_impls::Profile) -> SystemTime {
         Self::system_time_add(UNIX_EPOCH, pprof.time_nanos)
     }
 
-    fn duration(pprof: &pprof::Profile) -> anyhow::Result<Duration> {
+    fn duration(pprof: &prost_impls::Profile) -> anyhow::Result<Duration> {
         match u64::try_from(pprof.duration_nanos) {
             Ok(nanos) => Ok(Duration::from_nanos(nanos)),
             Err(_err) => anyhow::bail!(
@@ -87,7 +87,7 @@ impl<'pprof> Replayer<'pprof> {
 
     fn sample_labels<'a>(
         profile_index: &'a ProfileIndex<'pprof>,
-        sample: &'pprof pprof::Sample,
+        sample: &'pprof prost_impls::Sample,
     ) -> anyhow::Result<LabelsAndEndpointInfo<'pprof>> {
         let labels: anyhow::Result<Vec<api::Label>> = sample
             .labels
@@ -157,7 +157,7 @@ impl<'pprof> Replayer<'pprof> {
 
     fn get_line<'a>(
         profile_index: &'a ProfileIndex<'pprof>,
-        line: &pprof::Line,
+        line: &prost_impls::Line,
     ) -> anyhow::Result<api::Line<'pprof>> {
         Ok(api::Line {
             function: Self::get_function(profile_index, line.function_id)?,
@@ -203,7 +203,7 @@ impl<'pprof> Replayer<'pprof> {
 
     fn sample_locations<'a>(
         profile_index: &'a ProfileIndex<'pprof>,
-        sample: &pprof::Sample,
+        sample: &prost_impls::Sample,
     ) -> anyhow::Result<Vec<api::Location<'pprof>>> {
         let mut locations = Vec::with_capacity(sample.location_ids.len());
         for location_id in sample.location_ids.iter() {
@@ -240,10 +240,10 @@ impl<'pprof> Replayer<'pprof> {
     }
 }
 
-impl<'pprof> TryFrom<&'pprof pprof::Profile> for Replayer<'pprof> {
+impl<'pprof> TryFrom<&'pprof prost_impls::Profile> for Replayer<'pprof> {
     type Error = anyhow::Error;
 
-    fn try_from(pprof: &'pprof pprof::Profile) -> Result<Self, Self::Error> {
+    fn try_from(pprof: &'pprof prost_impls::Profile) -> Result<Self, Self::Error> {
         let profile_index = ProfileIndex::try_from(pprof)?;
 
         let start_time = Self::start_time(pprof);
