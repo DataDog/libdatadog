@@ -14,50 +14,37 @@ pub struct CompressedProtobufSerializer {
     zipper: FrameEncoder<Vec<u8>>,
 }
 
-#[inline]
-#[cold]
-fn cold() {}
-
-#[inline]
-fn likely(b: bool) -> bool {
-    if !b {
-        cold()
-    }
-    b
-}
-
 impl CompressedProtobufSerializer {
     /// Encodes the type in its in-wire protobuf format, and compresses it.
-    ///
-    /// # Errors
-    /// If the zipper
     pub fn try_encode(&mut self, tag: u32, item: &impl LenEncodable) -> anyhow::Result<()> {
         let mut buffer = Buffer::try_from(&mut self.storage)?;
         let (len, needed) = protobuf::encoded_len(tag, item);
-        if likely(needed <= buffer.remaining_capacity()) {
-            unsafe { protobuf::encode_len_delimited(&mut buffer, tag, item, len) };
-            return Ok(());
+        if needed > buffer.remaining_capacity() {
+            buffer = self.zip_and_reserve(needed)?;
         }
 
-        self.try_zip()?;
-        let mut buffer = Buffer::try_from(&mut self.storage)?;
-        buffer.try_reserve(needed)?;
         // SAFETY: checked there is adequate capacity.
         unsafe { protobuf::encode_len_delimited(&mut buffer, tag, item, len) };
         Ok(())
     }
 
-    pub fn encode_varint(&mut self, tag: u32, value: u64) -> anyhow::Result<()> {
-        let mut buffer = Buffer::try_from(&mut self.storage)?;
-        let needed = protobuf::encode::tagged_varint_len(tag, value);
-        if likely(needed <= buffer.remaining_capacity()) {
-            unsafe { protobuf::encode::tagged_varint(&mut buffer, tag, value) };
-            return Ok(());
-        }
-
+    #[inline(never)]
+    #[cold]
+    fn zip_and_reserve(&mut self, needed: usize) -> anyhow::Result<Buffer<VirtualVec<u8>>> {
         self.try_zip()?;
         let mut buffer = Buffer::try_from(&mut self.storage)?;
         buffer.try_reserve(needed)?;
+        Ok(buffer)
+    }
+
+    #[inline]
+    pub fn encode_varint(&mut self, tag: u32, value: u64) -> anyhow::Result<()> {
+        let mut buffer = Buffer::try_from(&mut self.storage)?;
+        let needed = protobuf::encode::tagged_varint_len(tag, value);
+        if needed > buffer.remaining_capacity() {
+            buffer = self.zip_and_reserve(needed)?;
+        }
+
         unsafe { protobuf::encode::tagged_varint(&mut buffer, tag, value) };
         Ok(())
     }
