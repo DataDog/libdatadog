@@ -6,13 +6,13 @@ use anyhow::Context;
 use datadog_profiling::api;
 use datadog_profiling::api::ManagedStringId;
 use datadog_profiling::internal;
+use datadog_profiling::serializer::UploadCompression;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use ddcommon_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
 use function_name::named;
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::SystemTime;
-use datadog_profiling::serializer::UploadCompression;
 
 /// Represents a profile. Do not access its member for any reason, only use
 /// the C API functions on this struct.

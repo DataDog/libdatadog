@@ -7,6 +7,9 @@ use lz4_flex::frame::FrameEncoder;
 use prost::encoding::{encode_key, encode_varint, encoded_len_varint, key_len, WireType};
 use std::io::{self, Write};
 
+// None is not really for prod, so the fact it takes 0 space, creating a large
+// discrepancy in size between the enum variants, is irrelevant.
+#[allow(clippy::large_enum_variant)]
 enum Compressor {
     None,
     Lz4 { zipper: FrameEncoder<Vec<u8>> },

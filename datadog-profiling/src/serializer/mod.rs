@@ -6,17 +6,12 @@ mod compressed_streaming_encoder;
 pub use compressed_streaming_encoder::*;
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum UploadCompression {
     Off,
     /// On is the default, with the exact compression algorithm being
     /// unspecified, and free to change. For example, we're testing zstd.
+    #[default]
     On,
     Lz4,
-}
-
-impl Default for UploadCompression {
-    fn default() -> Self {
-        UploadCompression::On
-    }
 }
