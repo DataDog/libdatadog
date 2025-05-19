@@ -12,6 +12,7 @@ use function_name::named;
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::SystemTime;
+use datadog_profiling::serializer::UploadCompression;
 
 /// Represents a profile. Do not access its member for any reason, only use
 /// the C API functions on this struct.
@@ -743,6 +744,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     profile: *mut Profile,
     start_time: Option<&Timespec>,
     end_time: Option<&Timespec>,
+    compressor: UploadCompression,
 ) -> SerializeResult {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
@@ -753,7 +755,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
         }
 
         let end_time = end_time.map(SystemTime::from);
-        old_profile.serialize_into_compressed_pprof(end_time, None)
+        old_profile.serialize_into_compressed_pprof(end_time, None, compressor)
     })()
     .context("ddog_prof_Profile_serialize failed")
     .into()

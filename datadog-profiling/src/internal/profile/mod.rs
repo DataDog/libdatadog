@@ -15,7 +15,7 @@ use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::StringTable;
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::pprof::sliced_proto::*;
-use crate::serializer::CompressedProtobufSerializer;
+use crate::serializer::{CompressedProtobufSerializer, UploadCompression};
 use anyhow::Context;
 use interning_api::Generation;
 use std::borrow::Cow;
@@ -323,6 +323,7 @@ impl Profile {
         mut self,
         end_time: Option<SystemTime>,
         duration: Option<Duration>,
+        upload_compression: UploadCompression,
     ) -> anyhow::Result<EncodedProfile> {
         let end = end_time.unwrap_or_else(SystemTime::now);
         let start = self.start_time;
@@ -353,7 +354,10 @@ impl Profile {
         // size of 32KiB should definitely out-perform starting at zero for
         // time consumed, allocator pressure, and allocator fragmentation.
         const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
-        let mut encoder = CompressedProtobufSerializer::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
+        let mut encoder = CompressedProtobufSerializer::with_config_and_capacity(
+            upload_compression,
+            INITIAL_PPROF_BUFFER_SIZE,
+        );
 
         for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
             let labels = self.enrich_sample_labels(sample, timestamp)?;
@@ -1295,7 +1299,7 @@ mod api_tests {
         let profile: Profile = Profile::new(&sample_types, None);
 
         let encoded_profile = profile
-            .serialize_into_compressed_pprof(None, None)
+            .serialize_into_compressed_pprof(None, None, Default::default())
             .expect("Unable to encode/serialize the profile");
 
         let endpoints_stats = encoded_profile.endpoints_stats;
@@ -1319,7 +1323,7 @@ mod api_tests {
         profile.add_endpoint_count(Cow::from(second_endpoint), 1)?;
 
         let encoded_profile = profile
-            .serialize_into_compressed_pprof(None, None)
+            .serialize_into_compressed_pprof(None, None, Default::default())
             .expect("Unable to encode/serialize the profile");
 
         let endpoints_stats = encoded_profile.endpoints_stats;

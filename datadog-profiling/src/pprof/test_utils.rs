@@ -1,6 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::serializer::UploadCompression;
+
 pub fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<super::Profile> {
     use prost::Message;
     use std::io::Read;
@@ -12,7 +14,9 @@ pub fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<super::Pro
     Ok(profile)
 }
 
+// todo: allow choosing what compressor to use, because in some case we may
+//       want that, and other cases None will execute faster.
 pub fn roundtrip_to_pprof(profile: crate::internal::Profile) -> anyhow::Result<super::Profile> {
-    let encoded = profile.serialize_into_compressed_pprof(None, None)?;
+    let encoded = profile.serialize_into_compressed_pprof(None, None, UploadCompression::Lz4)?;
     deserialize_compressed_pprof(&encoded.buffer)
 }

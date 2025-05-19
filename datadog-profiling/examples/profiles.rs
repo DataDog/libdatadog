@@ -54,7 +54,7 @@ fn main() {
         Err(_) => exit(1),
     }
 
-    match profile.serialize_into_compressed_pprof(None, None) {
+    match profile.serialize_into_compressed_pprof(None, None, Default::default()) {
         Ok(encoded_profile) => {
             let buffer = &encoded_profile.buffer;
             assert!(buffer.len() > 100);
