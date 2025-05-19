@@ -6,7 +6,7 @@ mod compressed_streaming_encoder;
 pub use compressed_streaming_encoder::*;
 
 #[repr(C)]
-#[derive(Debug, Default)]
+#[derive(Copy, Clone, Debug, Default)]
 pub enum UploadCompression {
     Off,
     /// On is the default, with the exact compression algorithm being
