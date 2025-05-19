@@ -3,29 +3,36 @@
 
 use super::UploadCompression;
 use bytes::BufMut;
-use lz4_flex::frame::FrameEncoder;
+use lz4_flex::frame::FrameEncoder as Lz4FrameEncoder;
 use prost::encoding::{encode_key, encode_varint, encoded_len_varint, key_len, WireType};
 use std::io::{self, Write};
+use zstd::stream::Encoder as ZstdEncoder;
 
 // None is not really for prod, so the fact it takes 0 space, creating a large
 // discrepancy in size between the enum variants, is irrelevant.
 #[allow(clippy::large_enum_variant)]
 enum Compressor {
     None,
-    Lz4 { zipper: FrameEncoder<Vec<u8>> },
+    Lz4 {
+        encoder: Lz4FrameEncoder<Vec<u8>>,
+    },
+    Zstd {
+        encoder: ZstdEncoder<'static, Vec<u8>>,
+    },
 }
 
 impl Compressor {
     #[inline]
     fn compress(&mut self, buffer: &mut Vec<u8>) -> io::Result<()> {
-        match self {
-            Compressor::None => Ok(()),
-            Compressor::Lz4 { zipper } => {
-                zipper.write_all(buffer)?;
-                buffer.clear();
-                Ok(())
-            }
-        }
+        let writer: &mut dyn Write = match self {
+            Compressor::None => return Ok(()),
+            Compressor::Lz4 { encoder: zipper } => zipper,
+            Compressor::Zstd { encoder } => encoder,
+        };
+
+        writer.write_all(buffer)?;
+        buffer.clear();
+        Ok(())
     }
 }
 
@@ -71,28 +78,40 @@ impl CompressedProtobufSerializer {
     pub fn finish(self) -> io::Result<Vec<u8>> {
         match self.compressor {
             Compressor::None => Ok(self.buffer),
-            Compressor::Lz4 { zipper } => {
+            Compressor::Lz4 { encoder: zipper } => {
                 debug_assert!(self.buffer.is_empty());
                 Ok(zipper.finish()?)
             }
+            Compressor::Zstd { encoder } => encoder.finish(),
         }
     }
 
-    pub fn with_config_and_capacity(config: UploadCompression, capacity: usize) -> Self {
+    pub fn with_config_and_capacity(
+        config: UploadCompression,
+        capacity: usize,
+    ) -> io::Result<Self> {
+        const TEMPORARY_BUFFER_SIZE: usize = 256;
         // Final output buffer.
         let buffer = Vec::with_capacity(capacity);
-        match config {
+        Ok(match config {
             UploadCompression::Off => Self {
                 buffer,
                 compressor: Compressor::None,
             },
             UploadCompression::On | UploadCompression::Lz4 => Self {
                 // Temporary input buffer.
-                buffer: Vec::with_capacity(256),
+                buffer: Vec::with_capacity(TEMPORARY_BUFFER_SIZE),
                 compressor: Compressor::Lz4 {
-                    zipper: FrameEncoder::new(buffer),
+                    encoder: Lz4FrameEncoder::new(buffer),
                 },
             },
-        }
+            UploadCompression::Zstd => Self {
+                buffer: Vec::with_capacity(TEMPORARY_BUFFER_SIZE),
+                compressor: Compressor::Zstd {
+                    // A level of 0 uses zstd's default (currently 3).
+                    encoder: ZstdEncoder::new(buffer, 0)?,
+                },
+            },
+        })
     }
 }
