@@ -81,9 +81,8 @@ pub async fn remote_config_listener(
     app_version: String,
     runtime_id: String,
 ) -> Result<(), FlareError> {
-    let url_endpoint: String = agent_url.to_string() + "/v0.7/config";
     let remote_config_endpoint = Endpoint {
-        url: hyper::Uri::from_str(&url_endpoint).unwrap(),
+        url: hyper::Uri::from_str(&agent_url).unwrap(),
         api_key: None,
         timeout_ms: 10000, // 10sec
         test_token: None,
@@ -99,7 +98,7 @@ pub async fn remote_config_listener(
         capabilities: vec![],
     };
     let mut listener = SingleChangesFetcher::new(
-        ParsedFileStorage::default(), // TODO: Maybe use SimpleFileStorage to parse by myself
+        ParsedFileStorage::default(),
         Target {
             service,
             env,
@@ -118,6 +117,8 @@ pub async fn remote_config_listener(
                     match change {
                         Change::Add(file) => {
                             println!("Added file: {} (version: {})", file.path(), file.version());
+                            println!("Content: {:?}", file.contents().as_ref());
+                            // println!("Content: {:?}", file.data());
                         }
                         Change::Update(file, _) => {
                             println!(
