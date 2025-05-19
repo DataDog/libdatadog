@@ -357,7 +357,7 @@ impl Profile {
         let mut encoder = CompressedProtobufSerializer::with_config_and_capacity(
             upload_compression,
             INITIAL_PPROF_BUFFER_SIZE,
-        );
+        )?;
 
         for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
             let labels = self.enrich_sample_labels(sample, timestamp)?;
