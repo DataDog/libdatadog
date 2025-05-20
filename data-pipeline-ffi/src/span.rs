@@ -24,10 +24,7 @@ macro_rules! set_string_field {
 // Get the ByteString field of the given pointer.
 macro_rules! get_string_field {
     ($ref:expr) => {{
-        let string = $ref.as_str();
-        let c_string: CString = CString::new(string).unwrap_or_default();
-        let raw: *mut c_char = c_string.into_raw();
-        unsafe { CharSlice::from_raw_parts(raw as *const c_char, string.len()) }
+        unsafe { CharSlice::from_raw_parts($ref.as_str().as_ptr().cast(), $ref.as_str().len()) }
     }};
 }
 
@@ -66,9 +63,7 @@ macro_rules! get_keys_hashmap {
 
             let mut slices = Vec::with_capacity(key_strs.len());
             for key in key_strs {
-                let c_string: CString = CString::new(key).unwrap();
-                let raw: *mut c_char = c_string.into_raw();
-                slices.push(CharSlice::from_raw_parts(raw as *const c_char, key.len()));
+                slices.push(CharSlice::from_raw_parts(key.as_ptr().cast(), key.len()));
             }
 
             let slice_box = slices.into_boxed_slice();
@@ -170,8 +165,8 @@ pub extern "C" fn ddog_trace_new_span(trace: &mut TraceBytes) -> &mut SpanBytes 
 pub extern "C" fn ddog_span_debug_log(span: &SpanBytes) -> CharSlice<'static> {
     unsafe {
         let debug_str = format!("{:?}", span);
+        let len = debug_str.len();
         let cstring = CString::new(debug_str).unwrap_or_default();
-        let len = cstring.to_bytes().len();
 
         CharSlice::from_raw_parts(cstring.into_raw().cast(), len)
     }
@@ -179,13 +174,14 @@ pub extern "C" fn ddog_span_debug_log(span: &SpanBytes) -> CharSlice<'static> {
 
 #[no_mangle]
 pub extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
-    let slice_ptr = slice.as_ptr() as *mut c_char;
-    if slice_ptr.is_null() {
+    let data = slice.as_slice();
+    if data.is_empty() {
         return;
     }
 
+    let data_ptr = data.as_ptr() as *mut u8;
     unsafe {
-        let _ = CString::from_raw(slice_ptr as *mut c_char);
+        drop(Vec::from_raw_parts(data_ptr, data.len(), data.len()));
     }
 }
 
@@ -308,10 +304,7 @@ pub extern "C" fn ddog_get_span_meta(span: &mut SpanBytes, key: CharSlice) -> Ch
     let bytes_str_key = BytesString::from_slice(key.as_bytes()).unwrap_or_default();
     match span.meta.get(&bytes_str_key) {
         Some(value) => unsafe {
-            let string = value.as_str();
-            let c_string: CString = CString::new(string).unwrap_or_default();
-            let raw: *mut c_char = c_string.into_raw();
-            CharSlice::from_raw_parts(raw as *const c_char, string.len())
+            CharSlice::from_raw_parts(value.as_str().as_ptr().cast(), value.as_str().len())
         },
         None => CharSlice::empty(),
     }
@@ -415,16 +408,7 @@ pub unsafe extern "C" fn ddog_span_free_keys_ptr(keys_ptr: *mut CharSlice<'stati
         return;
     }
 
-    let slice: &[CharSlice<'static>] = std::slice::from_raw_parts(keys_ptr, count);
-
-    for cs in slice {
-        let cs_ptr = cs.as_ptr() as *mut c_char;
-        if !cs_ptr.is_null() {
-            let _ = CString::from_raw(cs_ptr);
-        }
-    }
-
-    let _ = Vec::from_raw_parts(keys_ptr, count, count);
+    Vec::from_raw_parts(keys_ptr, count, count);
 }
 
 // ------------------- SpanLinkBytes -------------------
@@ -537,11 +521,12 @@ pub extern "C" fn ddog_add_event_attributes_float(
 pub extern "C" fn ddog_serialize_trace_into_c_string(trace: &mut TraceBytes) -> CharSlice<'static> {
     match rmp_serde::encode::to_vec_named(&vec![trace]) {
         Ok(vec) => {
-            let string = vec.into_boxed_slice();
-            let len = string.len();
-            let c_string: CString = CString::new(string).unwrap_or_default();
-            let raw: *mut c_char = c_string.into_raw();
-            unsafe { CharSlice::from_raw_parts(raw as *const c_char, len) }
+            let boxed_str = vec.into_boxed_slice();
+            let boxed_len = boxed_str.len();
+
+            let leaked_ptr = Box::into_raw(boxed_str) as *const c_char;
+
+            unsafe { CharSlice::from_raw_parts(leaked_ptr, boxed_len) }
         }
         Err(_) => CharSlice::empty(),
     }
