@@ -86,7 +86,7 @@ pub fn reconfigure(
     config: CrashtrackerConfiguration,
     receiver_config: CrashtrackerReceiverConfig,
     metadata: Metadata,
-)-> anyhow::Result<()> {
+) -> anyhow::Result<()> {
     update_metadata(metadata)?;
     update_config(config.clone())?;
     Receiver::update_stored_config(receiver_config);
