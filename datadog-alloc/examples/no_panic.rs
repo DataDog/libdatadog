@@ -168,10 +168,10 @@ fn main() {
     }
     #[cfg(miri)]
     {
-        eprintln!("no_panic can't be build and run with miri")
+        eprintln!("no_panic can't be built and run with miri")
     }
     #[cfg(debug_assertions)]
     {
-        eprintln!("no_panic can't be run with miri because of debug_assertions")
+        eprintln!("no_panic can't be run because of debug_assertions")
     }
 }
