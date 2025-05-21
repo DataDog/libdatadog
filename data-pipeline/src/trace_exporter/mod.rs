@@ -3,6 +3,7 @@
 pub mod agent_response;
 pub mod error;
 use crate::agent_info::{AgentInfoArc, AgentInfoFetcher};
+use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
 use crate::telemetry::{self, SendPayloadTelemetry, TelemetryClient, TelemetryClientBuilder};
 use crate::trace_exporter::error::{RequestError, TraceExporterError};
@@ -66,91 +67,6 @@ pub enum TraceExporterOutputFormat {
     #[default]
     V04,
     V05,
-}
-
-mod pausable_worker {
-    use ddtelemetry::worker::TelemetryWorker;
-    use tokio::{runtime::Runtime, select, task::JoinHandle};
-    use tokio_util::sync::CancellationToken;
-
-    use crate::{agent_info::AgentInfoFetcher, stats_exporter::StatsExporter};
-
-    pub trait Worker {
-        fn run(&mut self) -> impl std::future::Future<Output = ()> + Send;
-        fn on_pause(&mut self);
-    }
-
-    impl Worker for StatsExporter {
-        async fn run(&mut self) {
-            Self::run(self).await
-        }
-        fn on_pause(&mut self) {}
-    }
-
-    impl Worker for AgentInfoFetcher {
-        async fn run(&mut self) {
-            Self::run(self).await
-        }
-        fn on_pause(&mut self) {}
-    }
-
-    impl Worker for TelemetryWorker {
-        async fn run(&mut self) {
-            Self::run(self).await
-        }
-        fn on_pause(&mut self) {
-            self.cleanup();
-        }
-    }
-
-    #[derive(Debug)]
-    pub enum PausableWorker<T: Worker + Send + Sync + 'static> {
-        Running {
-            handle: JoinHandle<T>,
-            stop_token: CancellationToken,
-        },
-        Paused {
-            worker: T,
-        },
-        InvalidState,
-    }
-
-    impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
-        pub fn new(worker: T) -> Self {
-            Self::Paused { worker }
-        }
-
-        pub fn start(&mut self, rt: &Runtime) {
-            if let Self::Paused { mut worker } = std::mem::replace(self, Self::InvalidState) {
-                let stop_token = CancellationToken::new();
-                let cloned_token = stop_token.clone();
-                let handle = rt.spawn(async move {
-                    select! {
-                        _ = worker.run() => {worker}
-                        _ = cloned_token.cancelled() => {worker}
-                    }
-                });
-
-                *self = PausableWorker::Running { handle, stop_token };
-            }
-        }
-
-        pub async fn stop(&mut self) {
-            if let PausableWorker::Running { handle, stop_token } = self {
-                stop_token.cancel();
-                let worker = handle.await.unwrap();
-                *self = PausableWorker::Paused { worker };
-            }
-        }
-
-        /// Wait for the run method of the worker to exit.
-        pub async fn join(&mut self) {
-            if let PausableWorker::Running { handle, stop_token } = self {
-                let worker = handle.await.unwrap();
-                *self = PausableWorker::Paused { worker };
-            }
-        }
-    }
 }
 
 impl TraceExporterOutputFormat {
@@ -247,8 +163,6 @@ enum StatsComputationStatus {
         cancellation_token: CancellationToken,
     },
 }
-
-use pausable_worker::PausableWorker;
 
 #[derive(Debug)]
 struct TraceExporterWorkers {
