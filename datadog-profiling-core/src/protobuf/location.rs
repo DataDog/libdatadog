@@ -1,9 +1,11 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{encode_len_delimited, Buffer, ByteRange};
+use super::encode_len_delimited;
 use crate::protobuf::{encode, LenEncodable};
-use datadog_alloc::buffer::MayGrowOps;
+use datadog_alloc::buffer::FixedCapacityBuffer;
+use std::io::{self, Write};
+use std::mem;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -43,12 +45,15 @@ impl LenEncodable for Line {
         self.encoded_len()
     }
 
-    unsafe fn encode_raw<T: MayGrowOps<u8>>(&self, buffer: &mut Buffer<T>) -> ByteRange {
-        let start = buffer.len_u31();
-        encode::tagged_varint(buffer, 1, self.function_id);
-        encode::tagged_varint(buffer, 2, self.lineno as u64);
-        let end = buffer.len_u31();
-        ByteRange { start, end }
+    fn encode_raw<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        let mut storage: [mem::MaybeUninit<u8>; Self::MAX_ENCODED_LEN] =
+            unsafe { mem::transmute(mem::MaybeUninit::<[u8; Self::MAX_ENCODED_LEN]>::uninit()) };
+        let mut buf = FixedCapacityBuffer::from(storage.as_mut_slice());
+        unsafe {
+            encode::tagged_varint(&mut buf, 1, self.function_id);
+            encode::tagged_varint(&mut buf, 2, self.lineno as u64);
+        }
+        writer.write_all(buf.as_slice())
     }
 }
 
@@ -87,16 +92,17 @@ impl LenEncodable for Location {
         self.encoded_len()
     }
 
-    unsafe fn encode_raw<T: MayGrowOps<u8>>(&self, buffer: &mut Buffer<T>) -> ByteRange {
-        encode::key(buffer, 1, encode::WireType::Varint);
-        encode::varint(buffer, self.id);
-
-        let start = buffer.len_u31();
-        encode::tagged_varint(buffer, 2, self.mapping_id);
-        encode::tagged_varint(buffer, 3, self.address);
-
-        _ = encode_len_delimited(buffer, 4, &self.line, self.line.encoded_len());
-        let end = buffer.len_u31();
-        ByteRange { start, end }
+    fn encode_raw<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        let mut storage: [mem::MaybeUninit<u8>; Self::MAX_ENCODED_LEN] =
+            unsafe { mem::transmute(mem::MaybeUninit::<[u8; Self::MAX_ENCODED_LEN]>::uninit()) };
+        let mut buf = FixedCapacityBuffer::from(storage.as_mut_slice());
+        unsafe {
+            encode::key(&mut buf, 1, encode::WireType::Varint);
+            encode::varint(&mut buf, self.id);
+            encode::tagged_varint(&mut buf, 2, self.mapping_id);
+            encode::tagged_varint(&mut buf, 3, self.address);
+            encode_len_delimited(&mut buf, 4, &self.line, self.line.encoded_len())?;
+        }
+        writer.write_all(buf.as_slice())
     }
 }

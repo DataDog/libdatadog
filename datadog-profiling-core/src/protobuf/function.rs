@@ -1,9 +1,11 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{Buffer, ByteRange, StringOffset};
+use super::StringOffset;
 use crate::protobuf::{encode, Identifiable, LenEncodable};
-use datadog_alloc::buffer::MayGrowOps;
+use datadog_alloc::buffer::FixedCapacityBuffer;
+use std::io::{self, Write};
+use std::mem;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -48,15 +50,18 @@ impl LenEncodable for Function {
         self.encoded_len()
     }
 
-    unsafe fn encode_raw<T: MayGrowOps<u8>>(&self, buffer: &mut Buffer<T>) -> ByteRange {
-        encode::tagged_varint_without_zero_size_opt(buffer, 1, self.id);
-
-        let start = buffer.len_u31();
-        encode::tagged_varint(buffer, 2, self.name.offset as u64);
-        encode::tagged_varint(buffer, 3, self.system_name.offset as u64);
-        encode::tagged_varint(buffer, 4, self.filename.offset as u64);
-        let end = buffer.len_u31();
-        ByteRange { start, end }
+    fn encode_raw<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        // todo: is it better to write to writer, using a BufWriter if needed?
+        let mut local_buf: [mem::MaybeUninit<u8>; Self::MAX_ENCODED_LEN] =
+            unsafe { mem::transmute(mem::MaybeUninit::<[u8; Self::MAX_ENCODED_LEN]>::uninit()) };
+        let mut buffer = FixedCapacityBuffer::from(local_buf.as_mut_slice());
+        unsafe {
+            encode::tagged_varint_without_zero_size_opt(&mut buffer, 1, self.id);
+            encode::tagged_varint(&mut buffer, 2, self.name.offset as u64);
+            encode::tagged_varint(&mut buffer, 3, self.system_name.offset as u64);
+            encode::tagged_varint(&mut buffer, 4, self.filename.offset as u64);
+        }
+        writer.write_all(buffer.as_slice())
     }
 }
 

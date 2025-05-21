@@ -16,6 +16,7 @@ use crate::collections::string_table::StringTable;
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::serializer::CompressedProtobufSerializer;
 use anyhow::Context;
+use datadog_alloc::vec::VirtualVec;
 use datadog_profiling_core::protobuf::{self, StringOffset};
 use interning_api::Generation;
 use std::borrow::Cow;
@@ -56,7 +57,7 @@ pub struct Profile {
 pub struct EncodedProfile {
     pub start: SystemTime,
     pub end: SystemTime,
-    pub buffer: Vec<u8>,
+    pub buffer: VirtualVec<u8>,
     pub endpoints_stats: ProfiledEndpointsStats,
 }
 
@@ -64,13 +65,17 @@ impl EncodedProfile {
     pub fn test_instance() -> anyhow::Result<Self> {
         use std::io::Read;
 
-        fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        fn open<P: AsRef<std::path::Path>>(
+            path: P,
+        ) -> Result<VirtualVec<u8>, Box<dyn std::error::Error>> {
             let mut file = std::fs::File::open(path)?;
             let metadata = file.metadata()?;
             let mut buffer = Vec::with_capacity(metadata.len() as usize);
             file.read_to_end(&mut buffer)?;
 
-            Ok(buffer)
+            let mut virtual_vec = VirtualVec::new();
+            virtual_vec.try_extend_from_slice(buffer.as_slice())?;
+            Ok(virtual_vec)
         }
 
         let small_pprof_name = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/profile.pprof");
@@ -347,8 +352,12 @@ impl Profile {
         // What we're setting here with the size is the final output buffer
         // capacity, not the intermediate ones used during encoding and
         // compression.
-        const INITIAL_PPROF_BUFFER_SIZE: usize = 16 * 1024;
-        let mut encoder = CompressedProtobufSerializer::with_capacity(INITIAL_PPROF_BUFFER_SIZE)?;
+        // Update 2025-05-21: we're switching to virtual memory for this. We
+        // now care about the maximum memory used. Intake rejects attachments
+        // that are above a certain size.
+        // todo: is the limit 10 MiB (Ivo), or 30 MiB (Alex)?
+        const OUTPUT_PPROF_SIZE_MAX: usize = 10 * 1024 * 1024;
+        let mut encoder = CompressedProtobufSerializer::with_capacity(OUTPUT_PPROF_SIZE_MAX)?;
 
         for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
             let labels = self.enrich_sample_labels(sample, timestamp)?;
@@ -441,7 +450,7 @@ impl Profile {
 
         let mut lender = self.strings.into_lending_iter();
         while let Some(item) = lender.next() {
-            encoder.try_encode_str(item)?;
+            encoder.try_encode(6, &item)?;
         }
 
         let time_nanos = self

@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::buffer::{FixedCapacityBuffer, MayGrowOps, NoGrowOps};
+use crate::buffer::{FixedCapacityBuffer, NoGrowOps};
 use crate::*;
 use core::{cmp, fmt, mem, ops, ptr, slice};
 
@@ -31,13 +31,14 @@ pub struct VirtualVec<T: Copy> {
     capacity: usize,
 }
 
+unsafe impl<T: Copy + Send> Send for VirtualVec<T> {}
+unsafe impl<T: Copy + Sync> Sync for VirtualVec<T> {}
+
 impl<T: Copy + fmt::Debug> fmt::Debug for VirtualVec<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&**self, f)
     }
 }
-
-unsafe impl<T: Send + Copy> Send for VirtualVec<T> {}
 
 impl<T: Copy> VirtualVec<T> {
     // todo: will be used when MSRV is bumped to 1.79+
@@ -319,6 +320,10 @@ impl<T: Copy> VirtualVec<T> {
     pub fn as_fixed_capacity_buffer(&mut self) -> FixedCapacityBuffer<T> {
         FixedCapacityBuffer::from_virtual_vec(self)
     }
+
+    pub const fn as_slice(&self) -> &[T] {
+        unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.len()) }
+    }
 }
 
 impl<T: Copy> VirtualVec<T> {
@@ -427,7 +432,7 @@ impl<T: Copy> ops::Deref for VirtualVec<T> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
-        unsafe { slice::from_raw_parts(self.ptr.as_ptr(), self.len()) }
+        self.as_slice()
     }
 }
 
@@ -473,9 +478,9 @@ impl<T: Copy> NoGrowOps<T> for VirtualVec<T> {
     }
 }
 
-impl<T: Copy> MayGrowOps<T> for VirtualVec<T> {
-    fn try_reserve(&mut self, additional: usize) -> Result<(), TryReserveError> {
-        self.try_reserve(additional)
+impl<T: Copy> AsRef<[T]> for VirtualVec<T> {
+    fn as_ref(&self) -> &[T] {
+        ops::Deref::deref(self)
     }
 }
 

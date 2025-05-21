@@ -1,9 +1,11 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::protobuf::encode::varint_len;
-use crate::protobuf::{self, encode, Buffer, ByteRange, Label, LenEncodable};
-use datadog_alloc::buffer::MayGrowOps;
+use crate::protobuf::encode::{varint_len, WireType, MAX_TAG, MAX_VARINT_LEN};
+use crate::protobuf::{self, encode, Label, LenEncodable};
+use datadog_alloc::buffer::FixedCapacityBuffer;
+use std::io::{self, Write};
+use std::mem;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Sample<'a> {
@@ -17,7 +19,7 @@ pub struct Sample<'a> {
 fn packed_varint_u64_len(tag: u32, items: &[u64]) -> usize {
     if !items.is_empty() {
         let encoded_len = items.iter().copied().map(varint_len).sum::<usize>();
-        encode::key_len(tag, encode::WireType::LengthDelimited)
+        encode::key_len(tag, WireType::LengthDelimited)
             + varint_len(encoded_len as u64)
             + encoded_len
     } else {
@@ -33,26 +35,39 @@ fn packed_varint_i64_len(tag: u32, items: &[i64]) -> usize {
     packed_varint_u64_len(tag, items)
 }
 
-unsafe fn packed_varint<T: MayGrowOps<u8>>(buffer: &mut Buffer<T>, tag: u32, items: &[u64]) {
+fn packed_varint<W: Write>(writer: &mut W, tag: u32, items: &[u64]) -> io::Result<()> {
     if items.is_empty() {
-        return;
-    }
-    unsafe {
-        encode::key(buffer, tag, encode::WireType::LengthDelimited);
+        return Ok(());
     }
 
+    const STORAGE_LEN: usize =
+        encode::key_len(MAX_TAG, WireType::LengthDelimited) + varint_len(u64::MAX);
+    let mut storage: [mem::MaybeUninit<u8>; STORAGE_LEN] =
+        unsafe { mem::transmute(mem::MaybeUninit::<[u8; STORAGE_LEN]>::uninit()) };
+    let mut buf = FixedCapacityBuffer::from(storage.as_mut_slice());
+
     let encoded_len = items.iter().copied().map(varint_len).sum::<usize>();
-    unsafe { encode::varint(buffer, encoded_len as u64) };
-    for item in items {
-        unsafe { encode::varint(buffer, *item) };
+    unsafe {
+        encode::key(&mut buf, tag, WireType::LengthDelimited);
+        encode::varint(&mut buf, encoded_len as u64);
     }
+    writer.write_all(buf.as_slice())?;
+
+    let mut storage: [mem::MaybeUninit<u8>; MAX_VARINT_LEN] =
+        unsafe { mem::transmute(mem::MaybeUninit::<[u8; MAX_VARINT_LEN]>::uninit()) };
+    for item in items {
+        let mut buf = FixedCapacityBuffer::from(storage.as_mut_slice());
+        unsafe { encode::varint(&mut buf, *item) };
+        writer.write_all(buf.as_slice())?;
+    }
+    Ok(())
 }
 
 #[inline]
-unsafe fn packed_i64<T: MayGrowOps<u8>>(buffer: &mut Buffer<T>, tag: u32, items: &[i64]) {
+fn packed_i64<W: Write>(writer: &mut W, tag: u32, items: &[i64]) -> io::Result<()> {
     // SAFETY: the pointer comes from a reference, and does a valid conversion.
     let items: &[u64] = unsafe { &*(items as *const [i64] as *const [u64]) };
-    unsafe { packed_varint(buffer, tag, items) };
+    packed_varint(writer, tag, items)
 }
 
 impl LenEncodable for Sample<'_> {
@@ -67,15 +82,13 @@ impl LenEncodable for Sample<'_> {
         locations + values + labels
     }
 
-    unsafe fn encode_raw<T: MayGrowOps<u8>>(&self, buffer: &mut Buffer<T>) -> ByteRange {
-        let start = buffer.len_u31();
-        unsafe { packed_varint(buffer, 1, self.location_ids) };
-        unsafe { packed_i64(buffer, 2, self.values) };
+    fn encode_raw<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        packed_varint(writer, 1, self.location_ids)?;
+        packed_i64(writer, 2, self.values)?;
         for label in self.labels {
-            unsafe { protobuf::encode_len_delimited(buffer, 3, label, label.encoded_len()) };
+            protobuf::encode_len_delimited(writer, 3, label, label.encoded_len())?;
         }
-        let end = buffer.len_u31();
-        ByteRange { start, end }
+        Ok(())
     }
 }
 
@@ -100,12 +113,11 @@ mod tests {
         };
 
         use prost::Message;
-        let mut storage = vec::Vec::new();
         let len = sample.encoded_len();
-        storage.reserve(len);
-        let mut buffer = Buffer::try_from(&mut storage).unwrap();
-        unsafe { sample.encode_raw(&mut buffer) };
-        let roundtrip = prost_impls::Sample::decode(&storage[..]).unwrap();
+        let mut storage = Vec::with_capacity(len);
+        let mut buffer = FixedCapacityBuffer::from(storage.spare_capacity_mut());
+        sample.encode_raw(&mut buffer).unwrap();
+        let roundtrip = prost_impls::Sample::decode(buffer.as_slice()).unwrap();
         assert_eq!(prost_sample, roundtrip);
     }
 
@@ -126,6 +138,13 @@ mod tests {
                 key: StringOffset { offset: 67 },
                 str: StringOffset::ZERO,
                 num: 0x7FFF,
+                num_unit: StringOffset::ZERO,
+            },
+            // string Label
+            Label {
+                key: StringOffset { offset: 31 },
+                str: StringOffset { offset: 32 },
+                num: 0,
                 num_unit: StringOffset::ZERO,
             },
         ];
@@ -150,12 +169,11 @@ mod tests {
         };
 
         use prost::Message;
-        let mut storage = vec::Vec::new();
         let len = sample.encoded_len();
-        storage.reserve(len);
-        let mut buffer = Buffer::try_from(&mut storage).unwrap();
-        unsafe { sample.encode_raw(&mut buffer) };
-        let roundtrip = prost_impls::Sample::decode(&storage[..]).unwrap();
+        let mut storage = Vec::with_capacity(len);
+        let mut buffer = FixedCapacityBuffer::from(storage.spare_capacity_mut());
+        sample.encode_raw(&mut buffer).unwrap();
+        let roundtrip = prost_impls::Sample::decode(buffer.as_slice()).unwrap();
         assert_eq!(prost_sample, roundtrip);
     }
 }

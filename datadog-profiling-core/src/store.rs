@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::protobuf::{try_encode, Buffer, ByteRange, Identifiable};
+use crate::protobuf::{try_encode, Buffer, Identifiable};
 use crate::TryReserveError;
 use core::hash::Hasher;
 use core::marker::PhantomData;

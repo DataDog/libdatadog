@@ -153,56 +153,6 @@ pub trait NoGrowOps<T: Copy>: ops::DerefMut<Target = [T]> {
     }
 }
 
-pub trait MayGrowOps<T: Copy>: NoGrowOps<T> {
-    /// Tries to reserve enough memory for at least `additional` elements. The
-    /// allocator will likely reserve more memory than this to speculatively
-    /// avoid frequent reallocations, as well as pad to a length in bytes that
-    /// it prefers or requires. If the capacity is large enough for the
-    /// requested number of additional elements, then this does nothing.
-    ///
-    /// # Errors
-    ///
-    /// If the capacity overflows, or the allocator reports a failure, then an
-    /// error is returned.
-    fn try_reserve(&mut self, additional: usize) -> Result<(), TryReserveError>;
-
-    /// Appends an element to the back of the vec, and tries to reserve more
-    /// memory if needed.
-    ///
-    /// # Errors
-    ///
-    /// If the capacity overflows, or the allocator reports a failure, then an
-    /// error is returned.
-    #[inline]
-    fn try_push(&mut self, value: T) -> Result<(), TryReserveError> {
-        match self.try_reserve(1) {
-            // SAFETY: reserved space above.
-            Ok(_) => unsafe {
-                self.push_within_capacity(value);
-                Ok(())
-            },
-            Err(err) => Err(err),
-        }
-    }
-
-    /// Tries to extend the collection from the elements of the slice, growing
-    /// the capacity if needed.
-    ///
-    /// # Errors
-    /// If there is an error growing the capacity, then no elements are
-    /// pushed, and an error is returned.
-    #[inline]
-    fn try_extend_from_slice(&mut self, data: &[T]) -> Result<(), TryReserveError> {
-        match self.try_reserve(data.len()) {
-            Ok(_) => unsafe {
-                self.extend_from_slice_within_capacity(data);
-                Ok(())
-            },
-            Err(err) => Err(err),
-        }
-    }
-}
-
 /// A vec-like object which has a fixed capacity. It borrows the storage, which
 /// allows it to avoid allocators and provide many const functions (or at
 /// least will be const when MSRV is bumped to 1.83+).
@@ -425,6 +375,30 @@ impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
     }
 }
 
+impl<'a, T: Copy> From<&'a mut [mem::MaybeUninit<T>]> for FixedCapacityBuffer<'a, T> {
+    fn from(value: &'a mut [mem::MaybeUninit<T>]) -> Self {
+        let cap = value.len();
+        Self {
+            ptr: ptr::NonNull::from(value).cast::<T>(),
+            len: 0,
+            cap,
+            _marker: Default::default(),
+        }
+    }
+}
+
+impl<'a, T: Copy> From<&'a mut [T]> for FixedCapacityBuffer<'a, T> {
+    fn from(value: &'a mut [T]) -> Self {
+        let cap = value.len();
+        Self {
+            ptr: ptr::NonNull::from(value).cast::<T>(),
+            len: 0,
+            cap,
+            _marker: Default::default(),
+        }
+    }
+}
+
 impl<T: Copy> NoGrowOps<T> for FixedCapacityBuffer<'_, T> {
     fn capacity(&self) -> usize {
         self.capacity()
@@ -459,18 +433,10 @@ impl<'a, T: Copy> From<&'a mut VirtualVec<T>> for FixedCapacityBuffer<'a, T> {
     }
 }
 
-/// Since the buffer is fixed-capacity, all these methods will fail if there
-/// is insufficient capacity.
-impl<T: Copy> MayGrowOps<T> for FixedCapacityBuffer<'_, T> {
-    #[inline]
-    fn try_reserve(&mut self, additional: usize) -> Result<(), TryReserveError> {
-        self.try_reserve(additional)
-    }
-}
-
 #[cfg(feature = "std")]
 mod std_impls {
     use super::*;
+    use std::io::{self, Write};
 
     impl<T: Copy> NoGrowOps<T> for std::vec::Vec<T> {
         fn capacity(&self) -> usize {
@@ -486,31 +452,16 @@ mod std_impls {
         }
     }
 
-    #[inline(never)]
-    #[cold]
-    fn failed_try_reserve(
-        len: usize,
-        additional: usize,
-        elem_size: usize,
-    ) -> Result<(), TryReserveError> {
-        match len
-            .checked_add(additional)
-            .map(|x| x.wrapping_mul(elem_size))
-        {
-            Some(value) if value <= isize::MAX as usize => Err(TryReserveError::AllocError),
-            _ => Err(TryReserveError::CapacityOverflow),
-        }
-    }
-
-    impl<T: Copy> MayGrowOps<T> for std::vec::Vec<T> {
-        fn try_reserve(&mut self, additional: usize) -> Result<(), TryReserveError> {
-            // std::collections::TryReserve has barely any stable methods,
-            // so we weirdly re-implement stuff :(
-            if self.try_reserve(additional).is_err() {
-                failed_try_reserve(self.len(), additional, mem::size_of::<T>())
-            } else {
-                Ok(())
+    impl Write for FixedCapacityBuffer<'_, u8> {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            match self.try_extend_from_slice_within_capacity(buf) {
+                Ok(_) => Ok(buf.len()),
+                Err(err) => Err(io::Error::new(io::ErrorKind::OutOfMemory, err)),
             }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
         }
     }
 }

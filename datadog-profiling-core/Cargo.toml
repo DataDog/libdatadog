@@ -11,7 +11,6 @@ bench = false
 
 [features]
 prost_impls = ["dep:prost"]
-std = []
 
 [dependencies]
 # allocator-api 0.2.19 exposes TryReserveError, but was yanked, hence 0.2.20.
@@ -26,4 +25,4 @@ thiserror = { version = "2", default-features = false }
 
 [dev-dependencies]
 datadog-alloc = { path = "../datadog-alloc", features = ["std"] }
-datadog-profiling-core = { path = ".", features = ["prost_impls", "std"] }
+datadog-profiling-core = { path = ".", features = ["prost_impls"] }

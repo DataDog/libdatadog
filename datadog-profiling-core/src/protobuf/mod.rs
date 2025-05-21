@@ -1,7 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-mod buffer;
 mod function;
 mod label;
 mod location;
@@ -10,7 +9,7 @@ mod sample;
 mod string;
 mod value_type;
 
-pub use buffer::*;
+pub use datadog_alloc::buffer::NoGrowOps;
 pub use function::*;
 pub use label::*;
 pub use location::*;
@@ -20,8 +19,9 @@ pub use string::*;
 pub use value_type::*;
 
 use crate::protobuf::encode::WireType;
-use crate::TryReserveError;
-pub use datadog_alloc::buffer::{MayGrowOps, NoGrowOps};
+use datadog_alloc::buffer::FixedCapacityBuffer;
+use std::io::{self, Write};
+use std::mem;
 
 mod sealed {
     use super::*;
@@ -42,64 +42,36 @@ mod sealed {
 pub trait LenEncodable: sealed::Sealed {
     fn encoded_len(&self) -> usize;
 
-    /// # Safety
-    /// The buffer should have at least [Self::encoded_len] bytes remaining.
-    unsafe fn encode_raw<T: MayGrowOps<u8>>(&self, buffer: &mut Buffer<T>) -> ByteRange;
+    fn encode_raw<W: Write>(&self, writer: &mut W) -> io::Result<()>;
+}
+
+#[inline]
+pub const fn tagged_len_delimited_len(tag: u32, len: u64) -> usize {
+    encode::key_len(tag, WireType::LengthDelimited) + encode::varint_len(len)
 }
 
 pub fn encoded_len<L: LenEncodable>(tag: u32, l: &L) -> (usize, usize) {
     let len = l.encoded_len();
-    let needed =
-        encode::key_len(tag, WireType::LengthDelimited) + encode::varint_len(len as u64) + len;
+    let needed = tagged_len_delimited_len(tag, len as u64) + len;
     (len, needed)
 }
 
-/// # Safety
-/// The buffer must have enough space to store the encoded length-delimited
-/// message. Call [encoded_len] to find out how much is needed.
-pub unsafe fn encode_len_delimited<L: LenEncodable, T: MayGrowOps<u8>>(
-    buffer: &mut Buffer<T>,
-    tag: u32,
-    l: &L,
-    len: usize,
-) -> ByteRange {
+pub fn encode_len_delimited<L, W>(writer: &mut W, tag: u32, l: &L, len: usize) -> io::Result<()>
+where
+    L: LenEncodable,
+    W: Write,
+{
     debug_assert_eq!(len, encoded_len(tag, l).0);
-    debug_assert!(encoded_len(tag, l).1 <= buffer.remaining_capacity());
+    const BUFFER_LEN: usize = tagged_len_delimited_len(encode::MAX_TAG, u64::MAX);
+    let mut storage: [mem::MaybeUninit<u8>; BUFFER_LEN] =
+        unsafe { mem::transmute(mem::MaybeUninit::<[u8; BUFFER_LEN]>::uninit()) };
+    let mut buf = FixedCapacityBuffer::from(storage.as_mut_slice());
     unsafe {
-        encode::key(buffer, tag, WireType::LengthDelimited);
-        encode::varint(buffer, len as u64);
-        l.encode_raw(buffer)
+        encode::key(&mut buf, tag, WireType::LengthDelimited);
+        encode::varint(&mut buf, len as u64);
     }
-}
-
-pub fn try_encode_no_zero_size_opt<L: LenEncodable, T: MayGrowOps<u8>>(
-    buffer: &mut Buffer<T>,
-    tag: u32,
-    l: &L,
-) -> Result<ByteRange, TryReserveError> {
-    let (len, needed) = encoded_len(tag, l);
-
-    buffer.try_reserve(needed)?;
-
-    // SAFETY: we've reserved space for this, proper len given.
-    Ok(unsafe {
-        encode::key(buffer, tag, WireType::LengthDelimited);
-        encode::varint(buffer, len as u64);
-        l.encode_raw(buffer)
-    })
-}
-
-pub fn try_encode<L: LenEncodable, T: MayGrowOps<u8>>(
-    buffer: &mut Buffer<T>,
-    tag: u32,
-    l: &L,
-) -> Result<ByteRange, TryReserveError> {
-    let (len, needed) = encoded_len(tag, l);
-
-    buffer.try_reserve(needed)?;
-
-    // SAFETY: we've reserved space for this, proper len given.
-    Ok(unsafe { encode_len_delimited(buffer, tag, l, len) })
+    writer.write_all(buf.as_slice())?;
+    l.encode_raw(writer)
 }
 
 pub trait Identifiable: LenEncodable {
@@ -110,6 +82,8 @@ pub mod encode {
     use super::*;
     const MIN_TAG: u32 = 1;
     pub const MAX_TAG: u32 = (1 << 29) - 1;
+
+    pub const MAX_VARINT_LEN: usize = 10;
 
     /// Represents the wire type for in-wire protobuf. There are more types than
     /// are represented here; these are just the supported ones.
@@ -124,7 +98,7 @@ pub mod encode {
     /// There must be enough bytes to encode this varint. Varints take between
     /// 1 and 10 bytes to encode.
     #[inline]
-    pub unsafe fn varint<T: MayGrowOps<u8>>(buf: &mut Buffer<T>, mut value: u64) {
+    pub unsafe fn varint<B: NoGrowOps<u8>>(buf: &mut B, mut value: u64) {
         debug_assert!(varint_len(value) <= buf.remaining_capacity());
         loop {
             let byte = if value < 0x80 {
@@ -145,7 +119,7 @@ pub mod encode {
     /// The buffer should have enough bytes to store the varint. A 64-bit
     /// varint never takes more than 10 bytes.
     #[inline]
-    pub unsafe fn tagged_varint<T: MayGrowOps<u8>>(buf: &mut Buffer<T>, tag: u32, value: u64) {
+    pub unsafe fn tagged_varint<B: NoGrowOps<u8>>(buf: &mut B, tag: u32, value: u64) {
         if value != 0 {
             tagged_varint_without_zero_size_opt(buf, tag, value);
         }
@@ -154,8 +128,8 @@ pub mod encode {
     /// # Safety
     /// The buffer should have enough bytes to store the tagged varint.
     #[inline]
-    pub unsafe fn tagged_varint_without_zero_size_opt<T: MayGrowOps<u8>>(
-        buf: &mut Buffer<T>,
+    pub unsafe fn tagged_varint_without_zero_size_opt<B: NoGrowOps<u8>>(
+        buf: &mut B,
         tag: u32,
         value: u64,
     ) {
@@ -200,9 +174,19 @@ pub mod encode {
     /// There must be enough space to encode the key.
     #[cfg_attr(debug_assertions, track_caller)]
     #[inline]
-    pub unsafe fn key<T: MayGrowOps<u8>>(buf: &mut Buffer<T>, tag: u32, wire_type: WireType) {
+    pub unsafe fn key<B: NoGrowOps<u8>>(buf: &mut B, tag: u32, wire_type: WireType) {
         debug_assert!((MIN_TAG..=MAX_TAG).contains(&tag));
         let key = (tag << 3) | wire_type as u32;
         unsafe { varint(buf, u64::from(key)) };
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn max_varint_len() {
+            assert_eq!(MAX_VARINT_LEN, 10);
+            assert_eq!(MAX_VARINT_LEN, varint_len(u64::MAX));
+        }
     }
 }
