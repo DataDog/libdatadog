@@ -72,6 +72,28 @@ pub fn init(
     Ok(())
 }
 
+/// Reconfigure the crash-tracking infrastructure.
+///
+/// PRECONDITIONS:
+///     None.
+/// SAFETY:
+///     Crash-tracking functions are not reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function is not atomic. A crash during its execution may lead to
+///     unexpected crash-handling behaviour.
+pub fn reconfigure(
+    config: CrashtrackerConfiguration,
+    receiver_config: CrashtrackerReceiverConfig,
+    metadata: Metadata,
+)-> anyhow::Result<()> {
+    update_metadata(metadata)?;
+    update_config(config.clone())?;
+    Receiver::update_stored_config(receiver_config);
+    enable();
+    Ok(())
+}
+
 // We can't run this in the main test runner because it (deliberately) crashes,
 // and would make all following tests unrunable.
 // To run this test,

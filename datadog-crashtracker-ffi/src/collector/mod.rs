@@ -112,6 +112,34 @@ pub unsafe extern "C" fn ddog_crasht_init(
 #[no_mangle]
 #[must_use]
 #[named]
+/// Reconfigure the crashtracker and re-enables it.
+/// If the crashtracker has not been initialized, this function will have no effect.
+///
+/// # Preconditions
+///   None.
+/// # Safety
+///   Crash-tracking functions are not reentrant.
+///   No other crash-handler functions should be called concurrently.
+/// # Atomicity
+///   This function is not atomic. A crash during its execution may lead to
+///   unexpected crash-handling behaviour.
+pub unsafe extern "C" fn ddog_crasht_reconfigure(
+    config: Config,
+    receiver_config: ReceiverConfig,
+    metadata: Metadata,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        datadog_crashtracker::reconfigure(
+            config.try_into()?,
+            receiver_config.try_into()?,
+            metadata.try_into()?,
+        )?;
+    })
+}
+
+#[no_mangle]
+#[must_use]
+#[named]
 /// Initialize the crash-tracking infrastructure without launching the receiver.
 ///
 /// # Preconditions
