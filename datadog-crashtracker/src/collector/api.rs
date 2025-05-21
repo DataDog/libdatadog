@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-use super::{crash_handler::enable_crashtracker, receiver_manager::Receiver};
+use super::{crash_handler::enable, receiver_manager::Receiver};
 use crate::{
     clear_spans, clear_traces, collector::signal_handler_manager::register_crash_handlers,
     crash_info::Metadata, reset_counters, shared::configuration::CrashtrackerReceiverConfig,
@@ -68,7 +68,7 @@ pub fn init(
     update_config(config.clone())?;
     Receiver::update_stored_config(receiver_config);
     register_crash_handlers(&config)?;
-    enable_crashtracker();
+    enable();
     Ok(())
 }
 

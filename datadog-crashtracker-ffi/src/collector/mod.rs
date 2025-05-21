@@ -28,13 +28,13 @@ pub use spans::*;
 /// # Atomicity
 ///   This function is atomic and idempotent.  Calling it multiple times is allowed.
 pub unsafe extern "C" fn ddog_crasht_disable() -> VoidResult {
-    datadog_crashtracker::disable_crashtracker();
+    datadog_crashtracker::disable();
     VoidResult::Ok(true)
 }
 
 #[no_mangle]
 #[must_use]
-/// Enables the crashtracker, if had been previously disabled.
+/// Enables the crashtracker, if it had been previously disabled.
 /// If crashtracking has not been initialized, this function will have no effect.
 ///
 /// # Preconditions
@@ -44,7 +44,7 @@ pub unsafe extern "C" fn ddog_crasht_disable() -> VoidResult {
 /// # Atomicity
 ///   This function is atomic and idempotent.  Calling it multiple times is allowed.
 pub unsafe extern "C" fn ddog_crasht_enable() -> VoidResult {
-    datadog_crashtracker::enable_crashtracker();
+    datadog_crashtracker::enable();
     VoidResult::Ok(true)
 }
 

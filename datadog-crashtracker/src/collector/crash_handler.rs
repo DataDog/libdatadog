@@ -100,7 +100,7 @@ pub(crate) extern "C" fn handle_posix_sigaction(
     unsafe { chain_signal_handler(signum, sig_info, ucontext) };
 }
 
-static CRASHTRACKER_ENABLED: AtomicBool = AtomicBool::new(false);
+static ENABLED: AtomicBool = AtomicBool::new(true);
 
 /// Disables the crashtracker.
 /// Note that this does not restore the old signal handlers, but rather turns crash-tracking into a
@@ -113,8 +113,8 @@ static CRASHTRACKER_ENABLED: AtomicBool = AtomicBool::new(false);
 ///   None
 /// # Atomicity
 ///   This function is atomic and idempotent.  Calling it multiple times is allowed.
-pub fn disable_crashtracker() {
-    CRASHTRACKER_ENABLED.store(false, SeqCst);
+pub fn disable() {
+    ENABLED.store(false, SeqCst);
 }
 
 /// Enables the crashtracker, if had been previously disabled.
@@ -126,15 +126,15 @@ pub fn disable_crashtracker() {
 ///   None
 /// # Atomicity
 ///   This function is atomic and idempotent.  Calling it multiple times is allowed.
-pub fn enable_crashtracker() {
-    CRASHTRACKER_ENABLED.store(true, SeqCst);
+pub fn enable() {
+    ENABLED.store(true, SeqCst);
 }
 
 fn handle_posix_signal_impl(
     sig_info: *const siginfo_t,
     ucontext: *const ucontext_t,
 ) -> anyhow::Result<()> {
-    if !CRASHTRACKER_ENABLED.load(SeqCst) {
+    if !ENABLED.load(SeqCst) {
         return Ok(());
     }
 
