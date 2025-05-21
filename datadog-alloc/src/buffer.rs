@@ -1,16 +1,15 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::vec::VirtualVec;
 pub use crate::{NeedsCapacity, TryReserveError};
 use core::marker::PhantomData;
 use core::{mem, ops, ptr, slice};
 
 /// Note that Deref provides access to methods of `&[T]`, so you can call
-/// methods like:
-///  - `len` and `is_empty`.
+/// methods like `len` and `is_empty`.
 pub trait NoGrowOps<T: Copy>: ops::DerefMut<Target = [T]> {
-    /// Returns the number of elements the collection can hold.
+    /// Returns the number of elements the collection can hold. Must be larger
+    /// than or equal to the length.
     fn capacity(&self) -> usize;
 
     /// Sets the length of the collection.
@@ -175,17 +174,6 @@ impl<'a, T: Copy + 'a> FixedCapacityBuffer<'a, T> {
             ptr: unsafe { ptr::NonNull::new_unchecked(slice.as_mut_ptr()).cast() },
             len: 0,
             cap: slice.len(),
-            _marker: PhantomData,
-        }
-    }
-
-    /// Creates a new fixed-capacity buffer from the virtual vec.
-    #[inline]
-    pub fn from_virtual_vec(vec: &'a mut VirtualVec<T>) -> Self {
-        Self {
-            ptr: vec.as_non_null(),
-            len: vec.len(),
-            cap: vec.capacity(),
             _marker: PhantomData,
         }
     }
@@ -427,12 +415,6 @@ impl<T: Copy> ops::DerefMut for FixedCapacityBuffer<'_, T> {
     }
 }
 
-impl<'a, T: Copy> From<&'a mut VirtualVec<T>> for FixedCapacityBuffer<'a, T> {
-    fn from(vec: &'a mut VirtualVec<T>) -> Self {
-        Self::from_virtual_vec(vec)
-    }
-}
-
 #[cfg(feature = "std")]
 mod std_impls {
     use super::*;
@@ -516,7 +498,7 @@ mod tests {
             unsafe { mem::transmute(mem::MaybeUninit::<[u8; 8]>::uninit()) };
 
         let underlying_pointer = storage.as_ptr();
-        let mut buffer = FixedCapacityBuffer::new(&mut storage);
+        let mut buffer = FixedCapacityBuffer::new(storage.as_mut_slice());
 
         assert_eq!(buffer.len(), 0);
         assert_eq!(buffer.capacity(), 8);
@@ -557,39 +539,5 @@ mod tests {
         assert_eq!(buffer.len(), 0);
         assert_eq!(buffer.capacity(), 8);
         assert_eq!(buffer.remaining_capacity(), 8);
-    }
-
-    #[test]
-    fn from_vec() {
-        let mut vec: VirtualVec<usize> = VirtualVec::new();
-        vec.try_extend_from_slice(&[1, 2, 3, 4, 5, 6, 7]).unwrap();
-        // We're going to add an item later in the fixed buffer, so reserve
-        // space to be sure (it should have quite a bit of spare capacity).
-        vec.try_reserve(1).unwrap();
-        let len = vec.len();
-        let cap = vec.capacity();
-        let spare_capacity = vec.spare_capacity_mut() as *mut _;
-
-        // Check that they are basically the same.
-        let mut buf = FixedCapacityBuffer::from(&mut vec);
-        assert_eq!(buf.len(), len);
-        assert_eq!(buf.capacity(), cap);
-        assert_eq!(buf.remaining_capacity(), cap.wrapping_sub(len));
-        assert!(ptr::eq(buf.spare_capacity_mut(), spare_capacity));
-
-        // Add an item to the buffer.
-        buf.try_push_within_capacity(8).unwrap();
-        assert_eq!(buf.len(), len + 1);
-        assert_eq!(buf.capacity(), cap);
-        // Using inclusive range because an element was added.
-        for i in 0..=len {
-            assert_eq!(buf[i], i + 1);
-        }
-
-        // The updates to the FixedCapacityBuffer's spare capacity at the
-        // time it was created are not visible in the vec, so these should
-        // still be the same.
-        assert_eq!(vec.len(), len);
-        assert_eq!(vec.capacity(), cap);
     }
 }

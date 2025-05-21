@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::buffer::{FixedCapacityBuffer, NoGrowOps};
+use crate::buffer::NoGrowOps;
 use crate::*;
 use core::{cmp, fmt, mem, ops, ptr, slice};
 
@@ -314,11 +314,6 @@ impl<T: Copy> VirtualVec<T> {
 
     pub fn as_mut_ptr(&mut self) -> *mut T {
         self.ptr.as_ptr()
-    }
-
-    /// Creates a [FixedCapacityBuffer], using the storage of this vec.
-    pub fn as_fixed_capacity_buffer(&mut self) -> FixedCapacityBuffer<T> {
-        FixedCapacityBuffer::from_virtual_vec(self)
     }
 
     pub const fn as_slice(&self) -> &[T] {
