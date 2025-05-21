@@ -12,11 +12,11 @@ use datadog_trace_utils::{
 };
 use ddcommon::tag::Tag;
 use ddtelemetry::worker::{
-    LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerFlavor,
-    TelemetryWorkerHandle,
+    LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
+    TelemetryWorkerFlavor, TelemetryWorkerHandle,
 };
 use std::{collections::HashMap, time::Duration};
-use tokio::task::JoinHandle;
+use tokio::runtime::Handle;
 
 /// Structure to build a Telemetry client.
 ///
@@ -86,7 +86,10 @@ impl TelemetryClientBuilder {
     }
 
     /// Builds the telemetry client.
-    pub async fn build(self) -> Result<TelemetryClient, TelemetryError> {
+    pub fn build(
+        self,
+        runtime: Handle,
+    ) -> Result<(TelemetryClient, TelemetryWorker), TelemetryError> {
         #[allow(clippy::unwrap_used)]
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
             self.service_name.unwrap(),
@@ -102,16 +105,17 @@ impl TelemetryClientBuilder {
             builder.runtime_id = Some(id);
         }
 
-        let (worker, handle) = builder
-            .spawn()
-            .await
+        let (worker_handle, worker) = builder
+            .build_worker(runtime)
             .map_err(|e| TelemetryError::Builder(e.to_string()))?;
 
-        Ok(TelemetryClient {
-            handle,
-            metrics: Metrics::new(&worker),
+        Ok((
+            TelemetryClient {
+                metrics: Metrics::new(&worker_handle),
+                worker: worker_handle,
+            },
             worker,
-        })
+        ))
     }
 }
 
@@ -120,7 +124,6 @@ impl TelemetryClientBuilder {
 pub struct TelemetryClient {
     metrics: Metrics,
     worker: TelemetryWorkerHandle,
-    handle: JoinHandle<()>,
 }
 
 /// Telemetry describing the sending of a trace payload
@@ -246,26 +249,18 @@ impl TelemetryClient {
 
     /// Starts the client
     pub async fn start(&self) {
-        if let Err(_e) = self
+        _ = self
             .worker
             .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-            .await
-        {
-            self.handle.abort();
-        }
+            .await;
     }
 
     /// Shutdowns the telemetry client.
     pub async fn shutdown(self) {
-        if let Err(_e) = self
+        _ = self
             .worker
             .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Stop))
-            .await
-        {
-            self.handle.abort();
-        }
-
-        let _ = self.handle.await;
+            .await;
     }
 }
 
@@ -276,11 +271,12 @@ mod tests {
     use httpmock::MockServer;
     use hyper::{Response, StatusCode};
     use regex::Regex;
+    use tokio::time::sleep;
 
     use super::*;
 
     async fn get_test_client(url: &str) -> TelemetryClient {
-        TelemetryClientBuilder::default()
+        let (client, mut worker) = TelemetryClientBuilder::default()
             .set_service_name("test_service")
             .set_language("test_language")
             .set_language_version("test_language_version")
@@ -288,9 +284,10 @@ mod tests {
             .set_url(url)
             .set_heartbeat(100)
             .set_debug_enabled(true)
-            .build()
-            .await
-            .unwrap()
+            .build(Handle::current())
+            .unwrap();
+        tokio::spawn(async move { worker.run().await });
+        client
     }
 
     #[test]
@@ -320,15 +317,14 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn spawn_test() {
         let client = TelemetryClientBuilder::default()
             .set_service_name("test_service")
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
-            .build()
-            .await;
+            .build(Handle::current());
 
         assert!(client.is_ok());
     }
@@ -356,6 +352,9 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
+        while telemetry_srv.hits_async().await == 0 {
+            sleep(Duration::from_millis(10)).await;
+        }
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -382,6 +381,9 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
+        while telemetry_srv.hits_async().await == 0 {
+            sleep(Duration::from_millis(10)).await;
+        }
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -408,6 +410,9 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
+        while telemetry_srv.hits_async().await == 0 {
+            sleep(Duration::from_millis(10)).await;
+        }
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -434,6 +439,9 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
+        while telemetry_srv.hits_async().await == 0 {
+            sleep(Duration::from_millis(10)).await;
+        }
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -460,6 +468,9 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
+        while telemetry_srv.hits_async().await == 0 {
+            sleep(Duration::from_millis(10)).await;
+        }
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -486,6 +497,9 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
+        while telemetry_srv.hits_async().await == 0 {
+            sleep(Duration::from_millis(10)).await;
+        }
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -512,6 +526,9 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
+        while telemetry_srv.hits_async().await == 0 {
+            sleep(Duration::from_millis(10)).await;
+        }
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -538,6 +555,9 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
+        while telemetry_srv.hits_async().await == 0 {
+            sleep(Duration::from_millis(10)).await;
+        }
         telemetry_srv.assert_hits_async(1).await;
     }
 
@@ -675,10 +695,10 @@ mod tests {
             .set_url(&server.url("/"))
             .set_heartbeat(100)
             .set_runtime_id("foo")
-            .build()
-            .await;
+            .build(Handle::current());
 
-        let client = result.unwrap();
+        let (client, mut worker) = result.unwrap();
+        tokio::spawn(async move { worker.run().await });
 
         client.start().await;
         client
@@ -688,6 +708,9 @@ mod tests {
             })
             .unwrap();
         client.shutdown().await;
+        while telemetry_srv.hits_async().await == 0 {
+            sleep(Duration::from_millis(10)).await;
+        }
         // One payload generate-metrics
         telemetry_srv.assert_hits_async(1).await;
     }

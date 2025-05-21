@@ -4,7 +4,7 @@ pub mod agent_response;
 pub mod error;
 use crate::agent_info::{AgentInfoArc, AgentInfoFetcher};
 use crate::stats_exporter::StatsExporter;
-use crate::telemetry::{SendPayloadTelemetry, TelemetryClient, TelemetryClientBuilder};
+use crate::telemetry::{self, SendPayloadTelemetry, TelemetryClient, TelemetryClientBuilder};
 use crate::trace_exporter::error::{RequestError, TraceExporterError};
 use crate::{
     health_metrics, health_metrics::HealthMetric, span_concentrator::SpanConcentrator,
@@ -22,6 +22,7 @@ use ddcommon::header::{
 };
 use ddcommon::tag::Tag;
 use ddcommon::{hyper_migration, parse_uri, tag, Endpoint};
+use ddtelemetry::worker::{self, TelemetryWorker};
 use dogstatsd_client::{new, Client, DogStatsDAction};
 use either::Either;
 use error::BuilderErrorKind;
@@ -68,24 +69,37 @@ pub enum TraceExporterOutputFormat {
 }
 
 mod pausable_worker {
+    use ddtelemetry::worker::TelemetryWorker;
     use tokio::{runtime::Runtime, select, task::JoinHandle};
     use tokio_util::sync::CancellationToken;
 
     use crate::{agent_info::AgentInfoFetcher, stats_exporter::StatsExporter};
 
     pub trait Worker {
-        fn run(&self) -> impl std::future::Future<Output = ()> + Send;
+        fn run(&mut self) -> impl std::future::Future<Output = ()> + Send;
+        fn on_pause(&mut self);
     }
 
     impl Worker for StatsExporter {
-        async fn run(&self) {
-            self.run().await
+        async fn run(&mut self) {
+            Self::run(self).await
         }
+        fn on_pause(&mut self) {}
     }
 
     impl Worker for AgentInfoFetcher {
-        async fn run(&self) {
-            self.run().await
+        async fn run(&mut self) {
+            Self::run(self).await
+        }
+        fn on_pause(&mut self) {}
+    }
+
+    impl Worker for TelemetryWorker {
+        async fn run(&mut self) {
+            Self::run(self).await
+        }
+        fn on_pause(&mut self) {
+            self.cleanup();
         }
     }
 
@@ -107,7 +121,7 @@ mod pausable_worker {
         }
 
         pub fn start(&mut self, rt: &Runtime) {
-            if let Self::Paused { worker } = std::mem::replace(self, Self::InvalidState) {
+            if let Self::Paused { mut worker } = std::mem::replace(self, Self::InvalidState) {
                 let stop_token = CancellationToken::new();
                 let cloned_token = stop_token.clone();
                 let handle = rt.spawn(async move {
@@ -240,6 +254,7 @@ use pausable_worker::PausableWorker;
 struct TraceExporterWorkers {
     pub info: PausableWorker<AgentInfoFetcher>,
     pub stats: Option<PausableWorker<StatsExporter>>,
+    pub telemetry: Option<PausableWorker<TelemetryWorker>>,
 }
 
 /// The TraceExporter ingest traces from the tracers serialized as messagepack and forward them to
@@ -312,6 +327,12 @@ impl TraceExporter {
         if let Some(stats_worker) = &mut workers.stats {
             stats_worker.start(runtime);
         }
+        if let Some(telemetry_worker) = &mut workers.telemetry {
+            telemetry_worker.start(runtime);
+            if let Some(client) = &self.telemetry {
+                runtime.block_on(client.start());
+            }
+        }
     }
 
     pub fn stop_worker(&self) {
@@ -323,6 +344,9 @@ impl TraceExporter {
                 workers.info.stop().await;
                 if let Some(stats_worker) = &mut workers.stats {
                     stats_worker.stop().await
+                };
+                if let Some(telemetry_worker) = &mut workers.telemetry {
+                    telemetry_worker.stop().await
                 };
             });
         }
@@ -1137,15 +1161,21 @@ impl TraceExporterBuilder {
                 if let Some(id) = telemetry_config.runtime_id {
                     builder = builder.set_runtime_id(&id);
                 }
-                builder.build().await
+                builder.build(runtime.handle().clone())
             })?)
         } else {
             None
         };
 
-        if let Some(client) = &telemetry {
-            runtime.block_on(client.start());
-        }
+        let (telemetry_client, telemetry_worker) = match telemetry {
+            Some((client, worker)) => {
+                let mut telemetry_worker = PausableWorker::new(worker);
+                telemetry_worker.start(&runtime);
+                runtime.block_on(client.start());
+                (Some(client), Some(telemetry_worker))
+            }
+            None => (None, None),
+        };
 
         Ok(TraceExporter {
             endpoint: Endpoint {
@@ -1177,10 +1207,11 @@ impl TraceExporterBuilder {
             client_side_stats: ArcSwap::new(stats.into()),
             agent_info,
             previous_info_state: ArcSwapOption::new(None),
-            telemetry,
+            telemetry: telemetry_client,
             workers: Arc::new(Mutex::new(TraceExporterWorkers {
                 info: info_fetcher_worker,
                 stats: None,
+                telemetry: telemetry_worker,
             })),
         })
     }
