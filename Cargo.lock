@@ -1710,7 +1710,6 @@ dependencies = [
 name = "datadog-sidecar-ffi"
 version = "0.0.1"
 dependencies = [
- "data-pipeline-ffi",
  "datadog-crashtracker-ffi",
  "datadog-ipc",
  "datadog-live-debugger",
@@ -1727,6 +1726,7 @@ dependencies = [
  "paste",
  "rmp-serde",
  "tempfile",
+ "tinybytes",
  "tracing",
 ]
 

@@ -7,7 +7,9 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-use data_pipeline_ffi::span::TracesBytes;
+pub mod span;
+
+use crate::span::TracesBytes;
 #[cfg(windows)]
 use datadog_crashtracker_ffi::Metadata;
 use datadog_ipc::platform::{
