@@ -56,12 +56,12 @@ pub fn encoded_len<L: LenEncodable>(tag: u32, l: &L) -> (usize, usize) {
     (len, needed)
 }
 
-pub fn encode_len_delimited<L, W>(writer: &mut W, tag: u32, l: &L, len: usize) -> io::Result<()>
+pub fn encode_len_delimited<L, W>(writer: &mut W, tag: u32, l: &L) -> io::Result<()>
 where
     L: LenEncodable,
     W: Write,
 {
-    debug_assert_eq!(len, encoded_len(tag, l).0);
+    let len = encoded_len(tag, l).0;
     const BUFFER_LEN: usize = tagged_len_delimited_len(encode::MAX_TAG, u64::MAX);
     let mut storage: [mem::MaybeUninit<u8>; BUFFER_LEN] =
         unsafe { mem::transmute(mem::MaybeUninit::<[u8; BUFFER_LEN]>::uninit()) };

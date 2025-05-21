@@ -86,7 +86,7 @@ impl LenEncodable for Sample<'_> {
         packed_varint(writer, 1, self.location_ids)?;
         packed_i64(writer, 2, self.values)?;
         for label in self.labels {
-            protobuf::encode_len_delimited(writer, 3, label, label.encoded_len())?;
+            protobuf::encode_len_delimited(writer, 3, label)?;
         }
         Ok(())
     }

@@ -5,7 +5,7 @@ use core::mem;
 use datadog_alloc::buffer::FixedCapacityBuffer;
 use datadog_alloc::vec::VirtualVec;
 use datadog_profiling_core::protobuf::encode::{tagged_varint, tagged_varint_len, MAX_TAG};
-use datadog_profiling_core::protobuf::{self, encode_len_delimited, LenEncodable};
+use datadog_profiling_core::protobuf::{encode_len_delimited, LenEncodable};
 use lz4_flex::frame::FrameEncoder;
 use std::io::{self, Write};
 
@@ -17,8 +17,7 @@ pub struct CompressedProtobufSerializer {
 impl CompressedProtobufSerializer {
     /// Encodes the type in its in-wire protobuf format, and compresses it.
     pub fn try_encode(&mut self, tag: u32, item: &impl LenEncodable) -> io::Result<()> {
-        let (len, _needed) = protobuf::encoded_len(tag, item);
-        encode_len_delimited(&mut self.encoder, tag, item, len)
+        encode_len_delimited(&mut self.encoder, tag, item)
     }
 
     #[inline]

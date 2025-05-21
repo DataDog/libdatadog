@@ -101,7 +101,7 @@ impl LenEncodable for Location {
             encode::varint(&mut buf, self.id);
             encode::tagged_varint(&mut buf, 2, self.mapping_id);
             encode::tagged_varint(&mut buf, 3, self.address);
-            encode_len_delimited(&mut buf, 4, &self.line, self.line.encoded_len())?;
+            encode_len_delimited(&mut buf, 4, &self.line)?;
         }
         writer.write_all(buf.as_slice())
     }
