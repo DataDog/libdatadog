@@ -211,7 +211,7 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::TelemetryCrashUploader;
-    use crate::crash_info::{test_utils::TestInstance, CrashInfo, Metadata, StackTrace};
+    use crate::crash_info::{test_utils::TestInstance, CrashInfo, Metadata};
     use ddcommon::Endpoint;
     use std::{collections::HashSet, fs};
 
