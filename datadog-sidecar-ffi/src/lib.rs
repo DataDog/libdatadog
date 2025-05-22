@@ -7,6 +7,9 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+pub mod span;
+
+use crate::span::TracesBytes;
 #[cfg(windows)]
 use datadog_crashtracker_ffi::Metadata;
 use datadog_ipc::platform::{
@@ -42,6 +45,7 @@ use ffi::slice::AsBytes;
 use libc::c_char;
 use std::ffi::{c_void, CStr, CString};
 use std::fs::File;
+use std::io::Cursor;
 #[cfg(unix)]
 use std::os::unix::prelude::FromRawFd;
 #[cfg(windows)]
@@ -997,6 +1001,116 @@ pub unsafe extern "C" fn ddog_get_agent_info_env<'a>(
         .and_then(|c| c.default_env.as_ref())
         .map(|s| ffi::CharSlice::from(s.as_str()))
         .unwrap_or(ffi::CharSlice::empty())
+}
+
+#[macro_export]
+macro_rules! check {
+    ($failable:expr, $msg:expr) => {
+        match $failable {
+            Ok(o) => o,
+            Err(e) => {
+                tracing::error!("{}: {}", $msg, e);
+                return;
+            }
+        }
+    };
+}
+
+#[repr(C)]
+#[derive()]
+pub struct SenderParameters {
+    pub tracer_headers_tags: TracerHeaderTags<'static>,
+    pub transport: Box<SidecarTransport>,
+    pub instance_id: Box<InstanceId>,
+    pub limit: usize,
+    pub n_requests: i64,
+    pub buffer_size: i64,
+    pub url: CharSlice<'static>,
+}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
+    traces: &mut TracesBytes,
+    parameters: &mut SenderParameters,
+) {
+    let size: usize = traces.iter().map(|trace| trace.len()).sum();
+
+    // Check connection to the sidecar
+    if parameters.transport.is_closed() {
+        tracing::info!(
+            "Skipping flushing traces of size {} as connection to sidecar failed",
+            size
+        );
+        return;
+    }
+
+    // Create and map shared memory
+    let shm = check!(
+        ShmHandle::new(parameters.limit),
+        "Failed to create shared memory"
+    );
+
+    let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
+
+    // Write traces to the shared memory
+    let mut cursor = Cursor::new(mapped_shm.as_slice_mut());
+    let written = match rmp_serde::encode::write_named(&mut cursor, &traces) {
+        Ok(()) => cursor.position() as usize,
+        Err(_) => {
+            tracing::error!("Failed serializing the traces");
+            return;
+        }
+    };
+
+    // Send traces to the sidecar via the shared memory handler
+    let mut size_hint = written;
+    if parameters.n_requests > 0 {
+        size_hint = size_hint.max((parameters.buffer_size / parameters.n_requests + 1) as usize);
+    }
+
+    let send_error = blocking::send_trace_v04_shm(
+        &mut parameters.transport,
+        &parameters.instance_id,
+        shm,
+        size_hint,
+        check!(
+            (&parameters.tracer_headers_tags).try_into(),
+            "Failed to convert tracer headers tags"
+        ),
+    );
+
+    // Retry sending traces via bytes if there was an error
+    if send_error.is_err() {
+        let mut buffer = vec![0u8; written];
+        let mut cursor = Cursor::new(buffer.as_mut_slice());
+        rmp_serde::encode::write_named(&mut cursor, &traces).unwrap_or_else(|_| {
+            tracing::error!("Failed serializing the traces");
+        });
+
+        match blocking::send_trace_v04_bytes(
+            &mut parameters.transport,
+            &parameters.instance_id,
+            buffer,
+            check!(
+                (&parameters.tracer_headers_tags).try_into(),
+                "Failed to convert tracer headers tags"
+            ),
+        ) {
+            Ok(_) => {}
+            Err(_) => tracing::debug!(
+                "Failed sending traces via shm to sidecar: {}",
+                send_error.err().unwrap_unchecked().to_string()
+            ),
+        };
+    }
+
+    tracing::event!(target: "info", tracing::Level::INFO, "Flushing trace of size {} to send-queue for {}", size, parameters.url);
+    // tracing::info!(
+    //     "Flushing traces of size {} to send-queue for {}",
+    //     size,
+    //     parameters.url
+    // );
 }
 
 /// Drops the agent info reader.
