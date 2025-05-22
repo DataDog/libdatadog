@@ -35,19 +35,6 @@ pub trait Item: Eq + Hash {
     type Id: Id;
 }
 
-/// Used to associate an Item with a pprof::* type. Not all Items can be
-/// converted to pprof::* types. For example, StackTrace doesn't have an
-/// associated pprof::* type.
-pub trait PprofItem: Item {
-    /// The pprof::* type associated with this Item.
-    /// For example, Function -> pprof::Function.
-    type PprofMessage: prost::Message;
-
-    // This function exists because items don't store their own id, so the
-    // items can't do a simple .into() to get a pprof message.
-    fn to_pprof(&self, id: Self::Id) -> Self::PprofMessage;
-}
-
 /// Creates a non-zero, 32-bit unsigned id from the offset. It's guaranteed to
 /// be the offset + 1, with guards to not overflow the size of u32.
 ///
@@ -95,15 +82,6 @@ impl<T: Item> Dedup<T> for FxIndexSet<T> {
 
         Ok(<T as Item>::Id::from_offset(id))
     }
-}
-
-pub fn into_pprof_iter<T: PprofItem>(
-    collection: FxIndexSet<T>,
-) -> impl Iterator<Item = T::PprofMessage> {
-    collection
-        .into_iter()
-        .enumerate()
-        .map(|(index, item)| item.to_pprof(<T as Item>::Id::from_offset(index)))
 }
 
 #[cfg(test)]

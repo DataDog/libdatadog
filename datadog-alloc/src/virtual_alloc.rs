@@ -8,10 +8,10 @@ use core::alloc::Layout;
 /// intended for large allocations only, such as working with other allocators
 /// to provide a large chunk for them.
 #[derive(Clone, Copy, Debug)]
-pub struct VirtualAllocator {}
+pub struct VirtualAllocator;
 
 #[cfg_attr(debug_assertions, track_caller)]
-#[inline]
+#[inline(always)]
 fn layout_to_page_size(layout: Layout) -> Result<usize, AllocError> {
     if layout.size() == 0 {
         return Err(AllocError);
@@ -27,7 +27,7 @@ fn layout_to_page_size(layout: Layout) -> Result<usize, AllocError> {
 }
 
 #[cfg_attr(debug_assertions, track_caller)]
-#[inline]
+#[inline(always)]
 fn pad_to_pow2(num: usize, pow2: usize) -> Option<usize> {
     debug_assert!(pow2.is_power_of_two());
 
@@ -82,10 +82,50 @@ pub mod os {
     use core::alloc::Layout;
     use core::ptr;
 
+    // This #[inline] allows no_panic.rs test to build. This is perplexing.
+    // I'd like to understand why sometime.
+    #[inline]
     pub fn page_size() -> Result<usize, AllocError> {
         // SAFETY: calling sysconf with correct arguments.
         let result = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         validate_page_size!(result)
+    }
+
+    #[cfg(target_os = "linux")]
+    impl VirtualAllocator {
+        /// Helper function for grow* and shrink.
+        #[inline(always)]
+        unsafe fn remap(
+            &self,
+            ptr: ptr::NonNull<u8>,
+            old_layout: Layout,
+            new_layout: Layout,
+        ) -> Result<ptr::NonNull<[u8]>, AllocError> {
+            // SAFETY: the old allocation would not have succeeded otherwise.
+            let old_size = unsafe { super::layout_to_page_size(old_layout).unwrap_unchecked() };
+            let new_size = super::layout_to_page_size(new_layout)?;
+
+            // SAFETY: todo
+            let result = unsafe {
+                libc::mremap(
+                    ptr.as_ptr().cast(),
+                    old_size,
+                    new_size,
+                    libc::MREMAP_MAYMOVE,
+                )
+            };
+
+            if ptr::eq(result, libc::MAP_FAILED) {
+                return Err(AllocError);
+            }
+
+            debug_assert!(!result.is_null());
+            // SAFETY: from my understanding of the docs, it's only possible
+            // to get a null mapping when MREMAP_FIXED is used. We're not
+            // using it, so this shouldn't be possible.
+            let addr = unsafe { ptr::NonNull::new_unchecked(result.cast()) };
+            Ok(ptr::NonNull::slice_from_raw_parts(addr, new_size))
+        }
     }
 
     unsafe impl Allocator for VirtualAllocator {
@@ -93,6 +133,7 @@ pub mod os {
             self.allocate_zeroed(layout)
         }
 
+        #[inline]
         fn allocate_zeroed(&self, layout: Layout) -> Result<ptr::NonNull<[u8]>, AllocError> {
             if layout.size() == 0 {
                 return Err(AllocError);
@@ -104,17 +145,22 @@ pub mod os {
             let len = size as libc::size_t;
             let prot = libc::PROT_READ | libc::PROT_WRITE;
             let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
+
             // SAFETY: these args create a new mapping (no weird behavior),
             // akin to malloc.
             let result = unsafe { libc::mmap(null, len, prot, flags, -1, 0) };
 
-            if result == libc::MAP_FAILED {
+            if ptr::eq(result, libc::MAP_FAILED) {
                 return Err(AllocError);
             }
 
-            // SAFETY: from my understanding of the spec, it's not possible to get
-            // a mapping which starts at 0 (aka null) when MAP_FIXED wasn't given
-            // and the specified address is 0.
+            debug_assert!(
+                !result.is_null(),
+                "mmap unexpectedly returned a null pointer"
+            );
+            // SAFETY: from my understanding of the docs, it's only possible
+            // to get a null mapping when MAP_FIXED is used with address=0.
+            // We're not using it, so this shouldn't be possible.
             let addr = unsafe { ptr::NonNull::new_unchecked(result.cast()) };
             Ok(ptr::NonNull::slice_from_raw_parts(addr, size))
         }
@@ -127,7 +173,51 @@ pub mod os {
 
             // SAFETY: if the caller meets the safety conditions of this function,
             // then this is safe by extension.
-            _ = libc::munmap(ptr.cast(), size);
+            let _result = libc::munmap(ptr.cast(), size);
+            debug_assert_eq!(0, _result);
+        }
+
+        #[cfg(target_os = "linux")]
+        #[inline(always)]
+        unsafe fn grow(
+            &self,
+            ptr: ptr::NonNull<u8>,
+            old_layout: Layout,
+            new_layout: Layout,
+        ) -> Result<ptr::NonNull<[u8]>, AllocError> {
+            self.grow_zeroed(ptr, old_layout, new_layout)
+        }
+
+        #[cfg(target_os = "linux")]
+        #[inline(always)]
+        unsafe fn grow_zeroed(
+            &self,
+            ptr: ptr::NonNull<u8>,
+            old_layout: Layout,
+            new_layout: Layout,
+        ) -> Result<ptr::NonNull<[u8]>, AllocError> {
+            debug_assert!(
+                new_layout.size() >= old_layout.size(),
+                "`new_layout.size()` must be greater than or equal to `old_layout.size()`"
+            );
+
+            self.remap(ptr, old_layout, new_layout)
+        }
+
+        #[cfg(target_os = "linux")]
+        #[inline]
+        unsafe fn shrink(
+            &self,
+            ptr: ptr::NonNull<u8>,
+            old_layout: Layout,
+            new_layout: Layout,
+        ) -> Result<ptr::NonNull<[u8]>, AllocError> {
+            debug_assert!(
+                new_layout.size() <= old_layout.size(),
+                "`new_layout.size()` must be smaller than or equal to `old_layout.size()`"
+            );
+
+            self.remap(ptr, old_layout, new_layout)
         }
     }
 }
@@ -141,6 +231,7 @@ pub mod os {
     use windows_sys::Win32::System::Memory;
     use windows_sys::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
 
+    #[inline]
     pub fn page_size() -> Result<usize, AllocError> {
         let mut system_info = mem::MaybeUninit::<SYSTEM_INFO>::uninit();
         // SAFETY: calling C function with correct uninit repr.
@@ -205,7 +296,7 @@ mod tests {
         bolero::check!()
             .with_generator(allocs)
             .for_each(|size_align_vec| {
-                let allocator = VirtualAllocator {};
+                let allocator = VirtualAllocator;
 
                 for (size, align_bits, idx, val) in size_align_vec {
                     fuzzer_inner_loop(&allocator, *size, *align_bits, *idx, *val, MAX_SIZE)
@@ -215,7 +306,7 @@ mod tests {
 
     #[test]
     fn test_zero_sized() {
-        let alloc = VirtualAllocator {};
+        let alloc = VirtualAllocator;
         assert_eq!(0, core::mem::size_of::<VirtualAllocator>());
         let zero_sized_layout = Layout::new::<VirtualAllocator>();
         _ = alloc.allocate(zero_sized_layout).unwrap_err();
@@ -228,14 +319,14 @@ mod tests {
         let too_large_layout = Layout::from_size_align(1, too_large)
             .unwrap()
             .pad_to_align();
-        let alloc = VirtualAllocator {};
+        let alloc = VirtualAllocator;
         _ = alloc.allocate(too_large_layout).unwrap_err();
     }
 
     #[test]
     fn test_small_cases() {
         let page_size = os::page_size().unwrap();
-        let alloc = VirtualAllocator {};
+        let alloc = VirtualAllocator;
 
         // Allocations get rounded up to page size.
         let small_cases = [1, page_size - 1];
@@ -266,7 +357,7 @@ mod tests {
     #[track_caller]
     fn realistic_size(size: usize) {
         let page_size = os::page_size().unwrap();
-        let alloc = VirtualAllocator {};
+        let alloc = VirtualAllocator;
         let layout = Layout::from_size_align(size, page_size).unwrap();
         let wide_ptr = alloc.allocate(layout).unwrap();
         let actual_size = wide_ptr.len();

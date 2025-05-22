@@ -1,0 +1,21 @@
+[package]
+name = "datadog-profiling-core"
+rust-version.workspace = true
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+bench = false
+
+[features]
+prost_impls = ["dep:prost"]
+
+[dependencies]
+datadog-alloc= { path = "../datadog-alloc", default-features = false }
+prost = { version = "0.13", optional = true }
+
+[dev-dependencies]
+datadog-alloc = { path = "../datadog-alloc", features = ["std"] }
+datadog-profiling-core = { path = ".", features = ["prost_impls"] }
