@@ -108,7 +108,6 @@ impl TelemetryCrashUploader {
 
         let message = serde_json::to_string(crash_info)?;
 
-        let stack_trace = serde_json::to_string(&crash_info.error.stack)?;
         let tags = extract_crash_info_tags(crash_info).unwrap_or_default();
 
         let tracer_time = crash_info.timestamp.parse::<DateTime<Utc>>().map_or_else(
@@ -131,7 +130,8 @@ impl TelemetryCrashUploader {
             payload: &data::Payload::Logs(vec![data::Log {
                 message,
                 level: LogLevel::Error,
-                stack_trace: Some(stack_trace),
+                // The stacktrace is already included in the `crash_info` inside `message`.
+                stack_trace: None,
                 tags,
                 is_sensitive: true,
                 count: 1,
@@ -211,7 +211,7 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::TelemetryCrashUploader;
-    use crate::crash_info::{test_utils::TestInstance, CrashInfo, Metadata, StackTrace};
+    use crate::crash_info::{test_utils::TestInstance, CrashInfo, Metadata};
     use ddcommon::Endpoint;
     use std::{collections::HashSet, fs};
 
@@ -293,9 +293,6 @@ mod tests {
         );
         assert_eq!(payload["payload"][0]["is_sensitive"], true);
         assert_eq!(payload["payload"][0]["level"], "ERROR");
-        let stack_trace: StackTrace =
-            serde_json::from_str(payload["payload"][0]["stack_trace"].as_str().unwrap())?;
-        assert_eq!(stack_trace, test_instance.error.stack);
         let body: CrashInfo =
             serde_json::from_str(payload["payload"][0]["message"].as_str().unwrap())?;
         assert_eq!(body, test_instance);
