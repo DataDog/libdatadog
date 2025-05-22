@@ -78,7 +78,8 @@ pub fn init_remote_config_listener(
         ],
         capabilities: vec![],
     };
-    let listener = SingleChangesFetcher::new(
+
+    SingleChangesFetcher::new(
         ParsedFileStorage::default(),
         Target {
             service,
@@ -88,9 +89,7 @@ pub fn init_remote_config_listener(
         },
         runtime_id,
         config_to_fetch,
-    );
-
-    listener
+    )
 }
 
 /// Function that listen to RemoteConfig on the agent
