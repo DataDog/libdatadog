@@ -5,7 +5,7 @@ on:
 
 env:
   DATADOG_AGENT_TAG: "7.55.0-rc.3"
-  rust_version: "1.78.0"
+  rust_version: "1.84.1"
 
 jobs:
   verify-proto-files:

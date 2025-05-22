@@ -49,7 +49,7 @@ WORKDIR /home/user
 RUN su - user -c "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"
 RUN su - user -c "cargo install --locked 'cargo-nextest@0.9.67'"
 RUN su - user -c "rustup install nightly-2024-12-16"
-RUN su - user -c "bash -lc 'rustup default 1.78.0'"
+RUN su - user -c "bash -lc 'rustup default 1.84.1'"
 
 # Use a different target to not interfere with the host which may be a different arch
 RUN echo 'export CARGO_TARGET_DIR=/libdatadog/docker-linux-target' >> /home/user/.bashrc
