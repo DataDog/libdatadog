@@ -293,9 +293,6 @@ mod tests {
         );
         assert_eq!(payload["payload"][0]["is_sensitive"], true);
         assert_eq!(payload["payload"][0]["level"], "ERROR");
-        let stack_trace: StackTrace =
-            serde_json::from_str(payload["payload"][0]["stack_trace"].as_str().unwrap())?;
-        assert_eq!(stack_trace, test_instance.error.stack);
         let body: CrashInfo =
             serde_json::from_str(payload["payload"][0]["message"].as_str().unwrap())?;
         assert_eq!(body, test_instance);
