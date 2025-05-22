@@ -27,6 +27,7 @@ use crate::setup::{self, IpcClient, IpcServer, Liaison};
 
 use crate::config::{self, Config};
 use crate::self_telemetry::self_telemetry;
+use crate::service::telemetry_action_receiver_task;
 use crate::tracer::get_shm_limiter;
 use crate::watchdog::Watchdog;
 use crate::{ddog_daemon_entry_point, setup_daemon_process};
@@ -91,6 +92,9 @@ where
     drop(get_shm_limiter().lock());
 
     let server = SidecarServer::default();
+
+    tokio::spawn(telemetry_action_receiver_task(server.clone()));
+
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
 
     let watchdog_handle =
