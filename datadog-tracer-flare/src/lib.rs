@@ -65,7 +65,7 @@ pub fn init_remote_config_listener(
     let remote_config_endpoint = Endpoint {
         url: hyper::Uri::from_str(&agent_url).unwrap(),
         api_key: None,
-        timeout_ms: 10000, // 10sec
+        timeout_ms: 10_000, // 10sec
         test_token: None,
     };
     let config_to_fetch = ConfigInvariants {
