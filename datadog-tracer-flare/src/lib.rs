@@ -1,16 +1,15 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{path::PathBuf, str::FromStr, time::Duration, vec};
+use std::{str::FromStr, vec};
 
 use datadog_remote_config::{
     fetch::{ConfigInvariants, SingleChangesFetcher},
     file_change_tracker::{Change, FilePath},
-    file_storage::ParsedFileStorage,
-    RemoteConfigProduct, Target,
+    file_storage::{ParsedFileStorage, RawFileStorage},
+    RemoteConfigData, RemoteConfigProduct, Target,
 };
 use ddcommon::Endpoint;
-use tokio::time::sleep;
 
 /// Represent error that can happen while using the tracer flare.
 #[derive(Debug, PartialEq)]
@@ -32,47 +31,29 @@ impl std::fmt::Display for FlareError {
 }
 
 /// Enum that hold the different log level possible
-///
-/// TODO: Need to find out which other level are available
 #[derive(Debug)]
 pub enum LogLevel {
     Debug = 0,
     Info = 1,
     Warn = 2,
-    // ...
+    // TODO: Need to find out which other level are available
 }
 
-/// Callback function type for preparing the tracer flare from language side
+/// Function that init and return a listener of RemoteConfig
 ///
 /// # Arguments
 ///
-/// * `log_level` - Maximum level of log to retrieve.
-type PrepFlareCallback = fn(log_level: LogLevel);
-
-/// Callback function type for stopping the tracer flare from language side
+/// * `agent_url` - Agent url computed from the environment.
+/// * `language` - Language of the tracer.
+/// * `tracer_version` - Version of the tracer.
+/// * `service` - Service to listen to.
+/// * `env` - Environment.
+/// * `app_version` - Version of the application.
+/// * `runtime_id` - Runtime id.
 ///
-/// # Return
-///
-/// A path to the directory where logs were put.
-type StopFlareCallback = fn() -> PathBuf;
-
-/// Function that listen to RemoteConfig on the agent
-///
-/// # Arguments
-///
-/// * `prep_flare` - Callback from language side that will be use when AGENT_CONFIG is received.
-/// * `stop_flare` - Callback from language side that will be use when AGENT_TASK is received.
-/// * `agent_url` - Agent url computed from the environment that will be use to listen to the remote
-///   config endpoint.
-///
-/// # Returns
-///
-/// * `Ok()` - If successful.
-/// * `FlareError(msg)` - If something fail.
+/// These arguments will be used to listen to the remote config endpoint.
 #[allow(clippy::too_many_arguments)]
-pub async fn remote_config_listener(
-    _prep_flare: PrepFlareCallback,
-    _stop_flare: StopFlareCallback,
+pub fn init_remote_config_listener(
     agent_url: String,
     language: String,
     tracer_version: String,
@@ -80,7 +61,7 @@ pub async fn remote_config_listener(
     env: String,
     app_version: String,
     runtime_id: String,
-) -> Result<(), FlareError> {
+) -> SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>> {
     let remote_config_endpoint = Endpoint {
         url: hyper::Uri::from_str(&agent_url).unwrap(),
         api_key: None,
@@ -97,7 +78,7 @@ pub async fn remote_config_listener(
         ],
         capabilities: vec![],
     };
-    let mut listener = SingleChangesFetcher::new(
+    let listener = SingleChangesFetcher::new(
         ParsedFileStorage::default(),
         Target {
             service,
@@ -109,54 +90,59 @@ pub async fn remote_config_listener(
         config_to_fetch,
     );
 
-    loop {
-        match listener.fetch_changes().await {
-            Ok(changes) => {
-                println!("Got {} changes.", changes.len());
-                for change in changes {
-                    match change {
-                        Change::Add(file) => {
-                            println!("Added file: {} (version: {})", file.path(), file.version());
-                            println!("Content: {:?}", file.contents().as_ref());
-                            // println!("Content: {:?}", file.data());
-                        }
-                        Change::Update(file, _) => {
-                            println!(
-                                "Got update for file: {} (version: {})",
-                                file.path(),
-                                file.version()
-                            );
-                        }
-                        Change::Remove(file) => {
-                            println!("Removing file {}", file.path());
-                        }
+    listener
+}
+
+/// Function that listen to RemoteConfig on the agent
+///
+/// # Arguments
+///
+/// * `listener` - Listener use to fetch RemoteConfig from the agent with specific config.
+///
+/// # Returns
+///
+/// * `Ok()` - If successful.
+/// * `FlareError(msg)` - If something fail.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_remote_config_listener(
+    listener: &mut SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>>,
+) -> Result<(), FlareError> {
+    match listener.fetch_changes().await {
+        Ok(changes) => {
+            println!("Got {} changes.", changes.len());
+            for change in changes {
+                match change {
+                    Change::Add(file) => {
+                        println!("Added file: {} (version: {})", file.path(), file.version());
+                        println!("Content: {:?}", file.contents().as_ref());
+                    }
+                    Change::Update(file, _) => {
+                        println!(
+                            "Got update for file: {} (version: {})",
+                            file.path(),
+                            file.version()
+                        );
+                    }
+                    Change::Remove(file) => {
+                        println!("Removing file {}", file.path());
                     }
                 }
             }
-            Err(e) => {
-                eprintln!("Fetch failed with {e}");
-            }
         }
-
-        sleep(Duration::from_secs(3)).await;
+        Err(e) => {
+            eprintln!("Fetch failed with {e}");
+        }
     }
 
-    // TODO: Add the return
-    // Err(FlareError::NotImplemented)
+    // TODO: Implement a good return code.
+    Err(FlareError::NotImplemented)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Mock callbacks
-    fn default_prep_flare(log_level: LogLevel) {
-        println!("Prepare of the flare with log level: {:?}", log_level);
-    }
-    fn default_stop_flare() -> PathBuf {
-        println!("Stopping of the flare");
-        PathBuf::from("/tmp/flare_output")
-    }
+    use std::time::Duration;
+    use tokio::time::sleep;
 
     #[ignore]
     #[cfg_attr(miri, ignore)]
@@ -171,10 +157,8 @@ mod tests {
         let app_version = "1.0.0".to_string();
         let runtime_id = "test-runtime".to_string();
 
-        // Call the function
-        let result = remote_config_listener(
-            default_prep_flare,
-            default_stop_flare,
+        // Setup the listener
+        let mut listener = init_remote_config_listener(
             agent_url,
             language,
             tracer_version,
@@ -182,10 +166,12 @@ mod tests {
             env,
             app_version,
             runtime_id,
-        )
-        .await;
+        );
 
-        // Verify the result
-        assert!(result.is_ok());
+        loop {
+            let _result = run_remote_config_listener(&mut listener).await;
+
+            sleep(Duration::from_secs(3)).await;
+        }
     }
 }
