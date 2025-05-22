@@ -1,14 +1,39 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use super::UploadCompression;
 use bytes::BufMut;
 use lz4_flex::frame::FrameEncoder;
 use prost::encoding::{encode_key, encode_varint, encoded_len_varint, key_len, WireType};
-use std::io::Write;
+use std::io::{self, Write};
+
+// None is not really for prod, so the fact it takes 0 space, creating a large
+// discrepancy in size between the enum variants, is irrelevant.
+#[allow(clippy::large_enum_variant)]
+enum Compressor {
+    None,
+    Lz4 { zipper: FrameEncoder<Vec<u8>> },
+}
+
+impl Compressor {
+    #[inline]
+    fn compress(&mut self, buffer: &mut Vec<u8>) -> io::Result<()> {
+        match self {
+            Compressor::None => Ok(()),
+            Compressor::Lz4 { zipper } => {
+                zipper.write_all(buffer)?;
+                buffer.clear();
+                Ok(())
+            }
+        }
+    }
+}
 
 pub struct CompressedProtobufSerializer {
+    /// Buffer that protobuf is encoded into. Lz4 uses this as a temporary
+    /// buffer, while None uses this as the final output buffer.
     buffer: Vec<u8>,
-    zipper: FrameEncoder<Vec<u8>>,
+    compressor: Compressor,
 }
 
 // I've opened a PR for a generic version of this upstream:
@@ -20,44 +45,54 @@ fn encode_str(tag: u32, value: &str, buf: &mut Vec<u8>) {
 }
 
 impl CompressedProtobufSerializer {
-    pub fn encode(&mut self, item: impl prost::Message) -> anyhow::Result<()> {
-        item.encode(&mut self.buffer)?;
-        self.zipper.write_all(&self.buffer)?;
-        self.buffer.clear();
-        Ok(())
+    pub fn encode(&mut self, item: impl prost::Message) -> io::Result<()> {
+        let buffer = &mut self.buffer;
+        item.encode(buffer)?;
+        self.compressor.compress(buffer)
     }
 
     /// Only meant for string table strings. This is essentially an
     /// implementation of [prost::Message::encode] but for any `AsRef<str>`,
     /// and specialized for handling the unlikely OOM conditions of writing
     /// into a `Vec<u8>`.
-    pub(crate) fn encode_string_table_entry(
-        &mut self,
-        item: impl AsRef<str>,
-    ) -> anyhow::Result<()> {
+    pub(crate) fn encode_string_table_entry(&mut self, item: impl AsRef<str>) -> io::Result<()> {
+        let buffer = &mut self.buffer;
         // In pprof, string tables are tag 6 on the Profile message.
         let tag = 6u32;
         let str = item.as_ref();
         let encoded_len = encoded_len_varint(str.len() as u64);
         let required = key_len(tag) + encoded_len + str.len();
-        if let Err(err) = self.buffer.try_reserve(required) {
-            return Err(anyhow::Error::from(err)
-                .context("failed to encode Protobuf str; insufficient buffer capacity"));
+        buffer.try_reserve(required)?;
+
+        encode_str(tag, str, buffer);
+        self.compressor.compress(buffer)
+    }
+
+    pub fn finish(self) -> io::Result<Vec<u8>> {
+        match self.compressor {
+            Compressor::None => Ok(self.buffer),
+            Compressor::Lz4 { zipper } => {
+                debug_assert!(self.buffer.is_empty());
+                Ok(zipper.finish()?)
+            }
         }
-
-        encode_str(tag, str, &mut self.buffer);
-        self.zipper.write_all(&self.buffer)?;
-        self.buffer.clear();
-        Ok(())
     }
 
-    pub fn finish(self) -> anyhow::Result<Vec<u8>> {
-        Ok(self.zipper.finish()?)
-    }
-
-    pub fn with_capacity(capacity: usize) -> Self {
+    pub fn with_config_and_capacity(config: UploadCompression, capacity: usize) -> Self {
+        // Final output buffer.
         let buffer = Vec::with_capacity(capacity);
-        let zipper = FrameEncoder::new(Vec::with_capacity(capacity));
-        Self { buffer, zipper }
+        match config {
+            UploadCompression::Off => Self {
+                buffer,
+                compressor: Compressor::None,
+            },
+            UploadCompression::On | UploadCompression::Lz4 => Self {
+                // Temporary input buffer.
+                buffer: Vec::with_capacity(256),
+                compressor: Compressor::Lz4 {
+                    zipper: FrameEncoder::new(buffer),
+                },
+            },
+        }
     }
 }
