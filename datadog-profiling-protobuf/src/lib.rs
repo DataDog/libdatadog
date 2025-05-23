@@ -30,50 +30,108 @@ pub use value_type::*;
 
 use std::io::{self, Write};
 
+/// A tag is a combination of a wire_type, stored in the least significant
+/// three bits, and the field number that is defined in the .proto file.
+#[derive(Copy, Clone)]
+pub struct Tag {
+    field: u32,
+    wire_type: WireType,
+}
+
+/// A value is stored differently depending on the wire_type.
+pub trait Value {
+    const WIRE_TYPE: WireType;
+
+    fn encoded_len(&self) -> u64;
+
+    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()>;
+
+    #[inline]
+    fn field(self, field: u32) -> Pair<Self>
+    where
+        Self: Sized,
+    {
+        Pair::new(field, self)
+    }
+}
+
+/// You can use varint to store any of the listed data types:
+/// int32 | int64 | uint32 | uint64 | bool | enum | sint32 | sint64
+#[repr(transparent)]
+#[derive(Copy, Clone)]
+pub struct Varint(pub u64);
+
+pub struct Pair<V: Value> {
+    field: u32,
+    value: V,
+}
+
+impl<V: Value> Pair<V> {
+    #[inline]
+    pub const fn new(field: u32, value: V) -> Self {
+        Pair { field, value }
+    }
+
+    pub fn encoded_len(&self) -> u64 {
+        let tag = Tag::new(self.field, V::WIRE_TYPE).encoded_len();
+        let len_prefix = if V::WIRE_TYPE == WireType::LengthDelimited {
+            self.value.encoded_len()
+        } else {
+            0
+        };
+        let value = self.value.encoded_len();
+        tag + len_prefix + value
+    }
+
+    #[inline]
+    pub fn encoded_len_small(&self) -> u64 {
+        if self.value.encoded_len() != 0 {
+            self.encoded_len()
+        } else {
+            0
+        }
+    }
+
+    pub fn encode(&self, writer: &mut impl Write) -> io::Result<()> {
+        Tag::new(self.field, V::WIRE_TYPE).encode(writer)?;
+        if V::WIRE_TYPE == WireType::LengthDelimited {
+            let len = self.value.encoded_len();
+            Varint(len).encode(writer)?;
+        }
+        self.value.encode(writer)
+    }
+
+    #[inline]
+    pub fn encode_small(&self, writer: &mut impl Write) -> io::Result<()> {
+        let len = self.value.encoded_len();
+        if len == 0 {
+            return Ok(());
+        }
+
+        Tag::new(self.field, V::WIRE_TYPE).encode(writer)?;
+        if V::WIRE_TYPE == WireType::LengthDelimited {
+            Varint(len).encode(writer)?;
+        }
+        self.value.encode(writer)
+    }
+}
+
 pub trait TagEncodable {
-    fn encode_with_tag<W: Write>(&self, w: &mut W, tag: u32) -> io::Result<()>;
+    fn encode_with_tag<W: Write>(&self, w: &mut W, field: u32) -> io::Result<()>;
 }
 
-impl TagEncodable for u64 {
-    fn encode_with_tag<W: Write>(&self, w: &mut W, tag: u32) -> io::Result<()> {
-        tagged_varint(w, tag, *self)
-    }
-}
-
-impl TagEncodable for i64 {
-    fn encode_with_tag<W: Write>(&self, w: &mut W, tag: u32) -> io::Result<()> {
-        (*self as u64).encode_with_tag(w, tag)
-    }
-}
-
-pub trait LenEncodable: sealed::Sealed + TagEncodable {
-    fn encoded_len(&self) -> usize;
-
-    fn encode_raw<W: Write>(&self, writer: &mut W) -> io::Result<()>;
-}
-
-pub trait Identifiable: LenEncodable {
+pub trait Identifiable: Value {
     fn id(&self) -> u64;
 }
 
-mod sealed {
-    use super::*;
+/// The smallest possible protobuf field number.
+const MIN_FIELD: u32 = 1;
 
-    pub trait Sealed {}
+/// The largest possible protobuf field number.
+const MAX_FIELD: u32 = (1 << 29) - 1;
 
-    impl Sealed for &str {}
-    impl Sealed for Mapping {}
-    impl Sealed for Function {}
-    impl Sealed for Label {}
-    impl Sealed for Line {}
-    impl Sealed for Location {}
-    impl Sealed for Sample<'_> {}
-    impl Sealed for ValueType {}
-}
-
-const MIN_TAG: u32 = 1;
-pub const MAX_TAG: u32 = (1 << 29) - 1;
-pub const MAX_VARINT_LEN: usize = 10;
+/// An encoded 64-bit unsigned number takes between 1 and 10 bytes, inclusive.
+pub const MAX_VARINT_LEN: u64 = 10;
 
 /// Represents the wire type for in-wire protobuf. There are more types than
 /// are represented here; these are just the supported ones.
@@ -83,105 +141,128 @@ pub enum WireType {
     Varint = 0,
     LengthDelimited = 2,
 }
+impl Varint {
+    /// Returns the number of bytes it takes to encode a varint. This is
+    /// between 1 and 10 bytes, inclusive.
+    pub const fn encoded_len(&self) -> u64 {
+        // https://github.com/google/protobuf/blob/3.3.x/src/google/protobuf/io/coded_stream.h#L1301-L1309
+        ((((self.0 | 1).leading_zeros() ^ 63) * 9 + 73) / 64) as u64
+    }
+}
+impl Value for Varint {
+    const WIRE_TYPE: WireType = WireType::Varint;
 
-#[inline]
-pub fn varint<W: Write>(writer: &mut W, mut value: u64) -> io::Result<()> {
-    loop {
-        let byte = if value < 0x80 {
-            value as u8
-        } else {
-            ((value & 0x7F) | 0x80) as u8
-        };
-        writer.write_all(&[byte])?;
-        if value < 0x80 {
-            return Ok(());
+    fn encoded_len(&self) -> u64 {
+        self.encoded_len()
+    }
+
+    /// Encodes a varint according to protobuf semantics.
+    ///
+    /// Note that it will write between 1 and 10 bytes, inclusive. You should
+    /// probably write to a buffered Write object--if you write directly to
+    /// something like a TCP stream, it's going to send one byte at a time,
+    /// which is excessively inefficient. In libdatadog, we typically write to
+    /// some sort of compressor which has its own input buffer.
+    ///
+    /// See https://protobuf.dev/programming-guides/encoding/#varints
+    #[inline]
+    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        let mut value = self.0;
+        loop {
+            let byte = if value < 0x80 {
+                value as u8
+            } else {
+                ((value & 0x7F) | 0x80) as u8
+            };
+            writer.write_all(&[byte])?;
+            if value < 0x80 {
+                return Ok(());
+            }
+            value >>= 7;
         }
-        value >>= 7;
     }
 }
 
-#[must_use]
-#[inline]
-pub const fn varint_len(value: u64) -> usize {
-    // https://github.com/google/protobuf/blob/3.3.x/src/google/protobuf/io/coded_stream.h#L1301-L1309
-    ((((value | 1).leading_zeros() ^ 63) * 9 + 73) / 64) as usize
+impl From<u64> for Varint {
+    fn from(value: u64) -> Self {
+        Varint(value)
+    }
 }
 
-#[must_use]
-#[inline]
-pub const fn key_len(tag: u32, wire_type: WireType) -> usize {
-    let key = (tag << 3) | wire_type as u32;
-    varint_len(key as u64)
+impl From<&u64> for Varint {
+    fn from(value: &u64) -> Self {
+        Varint(*value)
+    }
 }
 
-#[cfg_attr(debug_assertions, track_caller)]
-#[inline]
-pub fn key<W: Write>(writer: &mut W, tag: u32, wire_type: WireType) -> io::Result<()> {
-    debug_assert!((MIN_TAG..=MAX_TAG).contains(&tag));
-    let key = (tag << 3) | wire_type as u32;
-    varint(writer, key as u64)
+impl From<i64> for Varint {
+    fn from(value: i64) -> Self {
+        Varint(value as u64)
+    }
 }
 
-pub fn encoded_len<L: LenEncodable>(tag: u32, l: &L) -> (usize, usize) {
-    let len = l.encoded_len();
-    let needed = tagged_len_delimited_len(tag, len as u64) + len;
-    (len, needed)
+impl From<&i64> for Varint {
+    fn from(value: &i64) -> Self {
+        Varint(*value as u64)
+    }
 }
 
-pub fn encode_len_delimited<L, W>(writer: &mut W, tag: u32, l: &L) -> io::Result<()>
+impl Tag {
+    #[cfg_attr(debug_assertions, track_caller)]
+    #[inline]
+    pub const fn new(field: u32, wire_type: WireType) -> Self {
+        debug_assert!(field >= MIN_FIELD && field <= MAX_FIELD);
+        Self { field, wire_type }
+    }
+
+    #[inline]
+    pub const fn encoded_len(self) -> u64 {
+        self.into_varint().encoded_len()
+    }
+
+    #[inline]
+    pub fn encode<W: Write>(self, writer: &mut W) -> io::Result<()> {
+        self.into_varint().encode(writer)
+    }
+
+    #[inline]
+    pub const fn into_varint(self) -> Varint {
+        Varint(((self.field << 3) | self.wire_type as u32) as u64)
+    }
+}
+
+pub struct PackedVarint<'a, T: Into<Varint>> {
+    values: &'a [T],
+}
+
+impl<'a, T: Into<Varint>> PackedVarint<'a, T>
 where
-    L: LenEncodable,
-    W: Write,
+    Varint: From<&'a T>,
 {
-    let len = encoded_len(tag, l).0 as u64;
-    encode_len_delimited_prefix(writer, tag, len)?;
-    l.encode_raw(writer)
+    pub fn new(values: &'a [T]) -> Self {
+        Self { values }
+    }
 }
 
-// Non-generic over the type it's a prefix for, reduces code size.
-fn encode_len_delimited_prefix<W: Write>(writer: &mut W, tag: u32, len: u64) -> io::Result<()> {
-    key(writer, tag, WireType::LengthDelimited)?;
-    varint(writer, len)
-}
+impl<'a, T: Into<Varint>> Value for PackedVarint<'a, T>
+where
+    Varint: From<&'a T>,
+{
+    const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-#[inline]
-pub fn tagged_varint<W: Write>(writer: &mut W, tag: u32, value: u64) -> io::Result<()> {
-    if value != 0 {
-        tagged_varint_without_zero_size_opt(writer, tag, value)
-    } else {
+    fn encoded_len(&self) -> u64 {
+        self.values
+            .iter()
+            .map(|x| Varint::from(x).encoded_len())
+            .sum()
+    }
+
+    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        for value in self.values {
+            Varint::from(value).encode(writer)?;
+        }
         Ok(())
     }
-}
-
-#[inline]
-pub fn tagged_varint_without_zero_size_opt<W: Write>(
-    writer: &mut W,
-    tag: u32,
-    value: u64,
-) -> io::Result<()> {
-    key(writer, tag, WireType::Varint)?;
-    varint(writer, value)
-}
-
-#[must_use]
-#[inline]
-pub const fn tagged_varint_len(tag: u32, value: u64) -> usize {
-    if value != 0 {
-        key_len(tag, WireType::Varint) + varint_len(value)
-    } else {
-        0
-    }
-}
-
-#[must_use]
-#[inline]
-pub const fn tagged_varint_len_without_zero_size_opt(tag: u32, value: u64) -> usize {
-    key_len(tag, WireType::Varint) + varint_len(value)
-}
-
-#[inline]
-pub const fn tagged_len_delimited_len(tag: u32, len: u64) -> usize {
-    key_len(tag, WireType::LengthDelimited) + varint_len(len)
 }
 
 #[cfg(test)]
@@ -191,6 +272,6 @@ mod tests {
     #[test]
     fn max_varint_len() {
         assert_eq!(MAX_VARINT_LEN, 10);
-        assert_eq!(MAX_VARINT_LEN, varint_len(u64::MAX));
+        assert_eq!(MAX_VARINT_LEN, Varint(u64::MAX).encoded_len());
     }
 }

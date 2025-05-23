@@ -1,8 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{encode_len_delimited, StringOffset, TagEncodable};
-use crate::LenEncodable;
+use super::{StringOffset, Value, Varint, WireType};
 use std::io::{self, Write};
 
 // todo: if we don't use num_unit, then we can save 8 bytes--4 from num_unit
@@ -17,32 +16,21 @@ pub struct Label {
     pub num_unit: StringOffset, // 4
 }
 
-impl Label {
-    #[inline]
-    pub const fn encoded_len(&self) -> usize {
-        crate::tagged_varint_len(1, self.key.to_u64())
-            + crate::tagged_varint_len(2, self.str.to_u64())
-            + crate::tagged_varint_len(3, self.num as u64)
-            + crate::tagged_varint_len(4, self.num_unit.to_u64())
-    }
-}
+impl Value for Label {
+    const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-impl TagEncodable for Label {
-    fn encode_with_tag<W: Write>(&self, w: &mut W, tag: u32) -> io::Result<()> {
-        encode_len_delimited(w, tag, self)
-    }
-}
-
-impl LenEncodable for Label {
-    fn encoded_len(&self) -> usize {
-        self.encoded_len()
+    fn encoded_len(&self) -> u64 {
+        Varint::from(self.key.to_u64()).field(1).encoded_len()
+            + Varint(self.str.to_u64()).field(2).encoded_len_small()
+            + Varint(self.num as u64).field(3).encoded_len_small()
+            + Varint(self.num_unit.to_u64()).field(4).encoded_len_small()
     }
 
-    fn encode_raw<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        crate::tagged_varint(writer, 1, self.key.into())?;
-        crate::tagged_varint(writer, 2, self.str.into())?;
-        crate::tagged_varint(writer, 3, self.num as u64)?;
-        crate::tagged_varint(writer, 4, self.num_unit.into())
+    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        Varint::from(self.key.to_u64()).field(1).encode(writer)?;
+        Varint(self.str.into()).field(2).encode_small(writer)?;
+        Varint(self.num as u64).field(3).encode_small(writer)?;
+        Varint(self.num_unit.into()).field(4).encode_small(writer)
     }
 }
 
@@ -56,11 +44,14 @@ impl From<Label> for crate::prost_impls::Label {
 #[cfg(feature = "prost_impls")]
 impl From<&Label> for crate::prost_impls::Label {
     fn from(label: &Label) -> Self {
+        // If the prost file is regenerated, this may pick up new members.
+        #[allow(clippy::needless_update)]
         Self {
             key: label.key.into(),
             str: label.str.into(),
             num: label.num,
             num_unit: label.num_unit.into(),
+            ..Self::default()
         }
     }
 }
@@ -81,7 +72,7 @@ mod tests {
             assert_eq!(label.num, prost_label.num);
             assert_eq!(i64::from(label.num_unit), prost_label.num_unit);
 
-            label.encode_raw(&mut buffer).unwrap();
+            label.encode(&mut buffer).unwrap();
             let roundtrip = prost_impls::Label::decode(buffer.as_slice()).unwrap();
             assert_eq!(prost_label, roundtrip);
 

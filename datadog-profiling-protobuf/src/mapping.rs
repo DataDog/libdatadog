@@ -1,8 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{encode_len_delimited, StringOffset, TagEncodable};
-use crate::{Identifiable, LenEncodable};
+use super::{StringOffset, Value, Varint, WireType};
+use crate::Identifiable;
 use std::io::{self, Write};
 
 #[repr(C)]
@@ -17,35 +17,27 @@ pub struct Mapping {
     pub build_id: StringOffset, // 6
 }
 
-impl Mapping {
-    pub const fn encode_len(&self) -> usize {
-        crate::tagged_varint_len_without_zero_size_opt(1, self.id)
-            + crate::tagged_varint_len(2, self.memory_start)
-            + crate::tagged_varint_len(3, self.memory_limit)
-            + crate::tagged_varint_len(4, self.file_offset)
-            + crate::tagged_varint_len(5, self.filename.to_u64())
-            + crate::tagged_varint_len(6, self.build_id.to_u64())
-    }
-}
+impl Mapping {}
 
-impl TagEncodable for Mapping {
-    fn encode_with_tag<W: Write>(&self, w: &mut W, tag: u32) -> io::Result<()> {
-        encode_len_delimited(w, tag, self)
-    }
-}
+impl Value for Mapping {
+    const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-impl LenEncodable for Mapping {
-    fn encoded_len(&self) -> usize {
-        self.encode_len()
+    fn encoded_len(&self) -> u64 {
+        Varint(self.id).field(1).encoded_len()
+            + Varint(self.memory_start).field(2).encoded_len_small()
+            + Varint(self.memory_limit).field(3).encoded_len_small()
+            + Varint(self.file_offset).field(4).encoded_len_small()
+            + Varint(self.filename.to_u64()).field(5).encoded_len_small()
+            + Varint(self.build_id.to_u64()).field(6).encoded_len_small()
     }
 
-    fn encode_raw<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        crate::tagged_varint_without_zero_size_opt(writer, 1, self.id)?;
-        crate::tagged_varint(writer, 2, self.memory_start)?;
-        crate::tagged_varint(writer, 3, self.memory_limit)?;
-        crate::tagged_varint(writer, 4, self.file_offset)?;
-        crate::tagged_varint(writer, 5, self.filename.into())?;
-        crate::tagged_varint(writer, 6, self.build_id.into())
+    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        Varint(self.id).field(1).encode(writer)?;
+        Varint(self.memory_start).field(2).encode_small(writer)?;
+        Varint(self.memory_limit).field(3).encode_small(writer)?;
+        Varint(self.file_offset).field(4).encode_small(writer)?;
+        Varint(self.filename.into()).field(5).encode_small(writer)?;
+        Varint(self.build_id.into()).field(6).encode_small(writer)
     }
 }
 
@@ -65,10 +57,7 @@ impl From<&Mapping> for crate::prost_impls::Mapping {
             file_offset: mapping.file_offset,
             filename: mapping.filename.into(),
             build_id: mapping.build_id.into(),
-            has_functions: false,
-            has_filenames: false,
-            has_line_numbers: false,
-            has_inline_frames: false,
+            ..Self::default()
         }
     }
 }
@@ -96,8 +85,8 @@ mod tests {
         assert_eq!(i64::from(mapping.build_id), prost_mapping.build_id);
 
         let roundtrip = {
-            let mut buffer = Vec::with_capacity(mapping.encoded_len());
-            mapping.encode_raw(&mut buffer).unwrap();
+            let mut buffer = Vec::with_capacity(mapping.encoded_len() as usize);
+            mapping.encode(&mut buffer).unwrap();
             prost_impls::Mapping::decode(buffer.as_slice()).unwrap()
         };
         assert_eq!(roundtrip, prost_mapping);

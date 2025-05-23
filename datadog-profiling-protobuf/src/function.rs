@@ -1,8 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{encode_len_delimited, StringOffset, TagEncodable};
-use crate::{Identifiable, LenEncodable};
+use super::{StringOffset, Value, Varint, WireType};
+use crate::Identifiable;
 use std::io::{self, Write};
 
 #[repr(C)]
@@ -15,31 +15,25 @@ pub struct Function {
     pub filename: StringOffset,    // 4
 }
 
-impl Function {
-    pub const fn encoded_len(&self) -> usize {
-        crate::tagged_varint_len_without_zero_size_opt(1, self.id)
-            + crate::tagged_varint_len(2, self.name.to_u64())
-            + crate::tagged_varint_len(3, self.system_name.to_u64())
-            + crate::tagged_varint_len(4, self.filename.to_u64())
-    }
-}
+impl Value for Function {
+    const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-impl TagEncodable for Function {
-    fn encode_with_tag<W: Write>(&self, w: &mut W, tag: u32) -> io::Result<()> {
-        encode_len_delimited(w, tag, self)
-    }
-}
-
-impl LenEncodable for Function {
-    fn encoded_len(&self) -> usize {
-        self.encoded_len()
+    fn encoded_len(&self) -> u64 {
+        Varint(self.id).field(1).encoded_len()
+            + Varint(self.name.to_u64()).field(2).encoded_len_small()
+            + Varint(self.system_name.to_u64())
+                .field(3)
+                .encoded_len_small()
+            + Varint(self.filename.to_u64()).field(4).encoded_len_small()
     }
 
-    fn encode_raw<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        crate::tagged_varint_without_zero_size_opt(writer, 1, self.id)?;
-        crate::tagged_varint(writer, 2, self.name.into())?;
-        crate::tagged_varint(writer, 3, self.system_name.into())?;
-        crate::tagged_varint(writer, 4, self.filename.into())
+    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        Varint(self.id).field(1).encode(writer)?;
+        Varint(self.name.into()).field(2).encode_small(writer)?;
+        Varint(self.system_name.into())
+            .field(3)
+            .encode_small(writer)?;
+        Varint(self.filename.into()).field(4).encode_small(writer)
     }
 }
 
@@ -49,17 +43,23 @@ impl Identifiable for Function {
     }
 }
 
+#[cfg(feature = "prost_impls")]
 impl From<&Function> for crate::prost_impls::Function {
     fn from(value: &Function) -> Self {
+        // If the prost file is regenerated, this may pick up new members,
+        // such as start_line.
+        #[allow(clippy::needless_update)]
         Self {
             id: value.id,
             name: value.name.into(),
             system_name: value.system_name.into(),
             filename: value.filename.into(),
+            ..Self::default()
         }
     }
 }
 
+#[cfg(feature = "prost_impls")]
 impl From<Function> for crate::prost_impls::Function {
     fn from(value: Function) -> Self {
         Self::from(&value)
@@ -78,7 +78,7 @@ mod tests {
             let mut buffer = Vec::new();
             let prost_function = prost_impls::Function::from(function);
 
-            function.encode_raw(&mut buffer).unwrap();
+            function.encode(&mut buffer).unwrap();
             let roundtrip = prost_impls::Function::decode(buffer.as_slice()).unwrap();
             assert_eq!(prost_function, roundtrip);
 

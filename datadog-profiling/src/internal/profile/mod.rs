@@ -15,7 +15,7 @@ use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::StringTable;
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use anyhow::Context;
-use datadog_profiling_protobuf::{self as protobuf, TagEncodable};
+use datadog_profiling_protobuf::{self as protobuf, Value, Varint};
 use interning_api::Generation;
 use lz4_flex::frame::FrameEncoder;
 use std::borrow::Cow;
@@ -369,7 +369,7 @@ impl Profile {
                 labels: &labels,
             };
 
-            item.encode_with_tag(&mut compressor, 2)?;
+            item.field(2).encode(&mut compressor)?;
         }
 
         // `Sample`s must be emitted before `SampleTypes` since we consume
@@ -383,7 +383,7 @@ impl Profile {
         // In this case, we use `sample_types` during upscaling of `samples`,
         // so we must serialize `Sample` before `SampleType`.
         for sample_type in self.sample_types.iter() {
-            sample_type.encode_with_tag(&mut compressor, 1)?;
+            sample_type.field(1).encode(&mut compressor)?;
         }
 
         for (offset, item) in self.mappings.into_iter().enumerate() {
@@ -395,7 +395,7 @@ impl Profile {
                 filename: item.filename,
                 build_id: item.build_id,
             };
-            mapping.encode_with_tag(&mut compressor, 3)?;
+            mapping.field(3).encode(&mut compressor)?;
         }
 
         for (offset, item) in self.locations.into_iter().enumerate() {
@@ -408,7 +408,7 @@ impl Profile {
                     lineno: item.line,
                 },
             };
-            location.encode_with_tag(&mut compressor, 4)?;
+            location.field(4).encode(&mut compressor)?;
         }
 
         for (offset, item) in self.functions.into_iter().enumerate() {
@@ -418,12 +418,12 @@ impl Profile {
                 system_name: item.system_name,
                 filename: item.filename,
             };
-            function.encode_with_tag(&mut compressor, 5)?;
+            function.field(5).encode(&mut compressor)?;
         }
 
         let mut lender = self.strings.into_lending_iter();
         while let Some(item) = lender.next() {
-            item.encode_with_tag(&mut compressor, 6)?;
+            item.field(6).encode(&mut compressor)?;
         }
 
         let time_nanos = self
@@ -432,12 +432,15 @@ impl Profile {
             .map_or(0, |duration| {
                 duration.as_nanos().min(i64::MAX as u128) as i64
             });
-        time_nanos.encode_with_tag(&mut compressor, 9)?;
-        duration_nanos.encode_with_tag(&mut compressor, 10)?;
+
+        Varint::from(time_nanos).field(9).encode(&mut compressor)?;
+        Varint::from(duration_nanos)
+            .field(10)
+            .encode(&mut compressor)?;
 
         if let Some((period, period_type)) = self.period {
-            period_type.encode_with_tag(&mut compressor, 11)?;
-            period.encode_with_tag(&mut compressor, 12)?;
+            period_type.field(11).encode(&mut compressor)?;
+            Varint::from(period).field(12).encode(&mut compressor)?;
         };
 
         Ok(EncodedProfile {

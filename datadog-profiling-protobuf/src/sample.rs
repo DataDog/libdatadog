@@ -1,9 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    encode_len_delimited, prost_impls, varint_len, Label, LenEncodable, TagEncodable, WireType,
-};
+use crate::{prost_impls, Label, PackedVarint, Value, WireType};
 use std::io::{self, Write};
 
 #[derive(Copy, Clone, Debug)]
@@ -13,70 +11,28 @@ pub struct Sample<'a> {
     pub labels: &'a [Label],     // 3
 }
 
-#[must_use]
-#[inline]
-fn packed_varint_u64_len(tag: u32, items: &[u64]) -> usize {
-    if !items.is_empty() {
-        let encoded_len = items.iter().copied().map(varint_len).sum::<usize>();
-        crate::key_len(tag, WireType::LengthDelimited)
-            + varint_len(encoded_len as u64)
-            + encoded_len
-    } else {
-        0
-    }
-}
+impl Value for Sample<'_> {
+    const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-#[must_use]
-#[inline]
-fn packed_varint_i64_len(tag: u32, items: &[i64]) -> usize {
-    // SAFETY: the pointer comes from a reference, and does a valid conversion.
-    let items: &[u64] = unsafe { &*(items as *const [i64] as *const [u64]) };
-    packed_varint_u64_len(tag, items)
-}
-
-fn packed_varint<W: Write>(writer: &mut W, tag: u32, items: &[u64]) -> io::Result<()> {
-    if items.is_empty() {
-        return Ok(());
-    }
-
-    let encoded_len = items.iter().copied().map(varint_len).sum::<usize>();
-    crate::encode_len_delimited_prefix(writer, tag, encoded_len as u64)?;
-    for item in items {
-        crate::varint(writer, *item)?;
-    }
-    Ok(())
-}
-
-#[inline]
-fn packed_i64<W: Write>(writer: &mut W, tag: u32, items: &[i64]) -> io::Result<()> {
-    // SAFETY: the pointer comes from a reference, and does a valid conversion.
-    let items: &[u64] = unsafe { &*(items as *const [i64] as *const [u64]) };
-    packed_varint(writer, tag, items)
-}
-
-impl TagEncodable for Sample<'_> {
-    fn encode_with_tag<W: Write>(&self, w: &mut W, tag: u32) -> io::Result<()> {
-        encode_len_delimited(w, tag, self)
-    }
-}
-
-impl LenEncodable for Sample<'_> {
-    fn encoded_len(&self) -> usize {
-        let locations = packed_varint_u64_len(1, self.location_ids);
-        let values = packed_varint_i64_len(2, self.values);
+    fn encoded_len(&self) -> u64 {
+        let locations = PackedVarint::new(self.location_ids).field(1).encoded_len();
+        let values = PackedVarint::new(self.values).field(2).encoded_len();
         let labels = self
             .labels
             .iter()
-            .map(|label| crate::encoded_len(3, label).1)
-            .sum::<usize>();
+            .map(|label| label.field(3).encoded_len())
+            .sum::<u64>();
         locations + values + labels
     }
 
-    fn encode_raw<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        packed_varint(writer, 1, self.location_ids)?;
-        packed_i64(writer, 2, self.values)?;
+    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        PackedVarint::new(self.location_ids)
+            .field(1)
+            .encode(writer)?;
+        PackedVarint::new(self.values).field(2).encode(writer)?;
+
         for label in self.labels {
-            encode_len_delimited(writer, 3, label)?;
+            label.field(3).encode(writer)?;
         }
         Ok(())
     }
@@ -85,10 +41,13 @@ impl LenEncodable for Sample<'_> {
 #[cfg(feature = "prost_impls")]
 impl From<Sample<'_>> for prost_impls::Sample {
     fn from(sample: Sample) -> Self {
+        // If the prost file is regenerated, this may pick up new members.
+        #[allow(clippy::needless_update)]
         Self {
             location_ids: Vec::from_iter(sample.location_ids.iter().copied()),
             values: Vec::from_iter(sample.values.iter().copied()),
             labels: sample.labels.iter().map(prost_impls::Label::from).collect(),
+            ..Self::default()
         }
     }
 }
@@ -113,9 +72,9 @@ mod tests {
         };
 
         use prost::Message;
-        let len = sample.encoded_len();
+        let len = sample.encoded_len() as usize;
         let mut buffer = Vec::with_capacity(len);
-        sample.encode_raw(&mut buffer).unwrap();
+        sample.encode(&mut buffer).unwrap();
         let roundtrip = prost_impls::Sample::decode(buffer.as_slice()).unwrap();
         assert_eq!(prost_sample, roundtrip);
     }
@@ -137,12 +96,12 @@ mod tests {
 
                 let prost_sample = prost_impls::Sample::from(sample);
 
-                let mut buffer = Vec::with_capacity(sample.encoded_len());
-                sample.encode_raw(&mut buffer).unwrap();
+                let mut buffer = Vec::with_capacity(sample.encoded_len() as usize);
+                sample.encode(&mut buffer).unwrap();
                 let roundtrip = prost_impls::Sample::decode(buffer.as_slice()).unwrap();
                 assert_eq!(prost_sample, roundtrip);
 
-                let mut buffer2 = Vec::with_capacity(sample.encoded_len());
+                let mut buffer2 = Vec::with_capacity(sample.encoded_len() as usize);
                 prost_sample.encode(&mut buffer2).unwrap();
                 let roundtrip2 = prost_impls::Sample::decode(buffer2.as_slice()).unwrap();
                 assert_eq!(roundtrip, roundtrip2);

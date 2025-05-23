@@ -1,21 +1,17 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{encode_len_delimited, LenEncodable, TagEncodable};
+use crate::{Value, WireType};
 use std::io::{self, Write};
 
-impl TagEncodable for &str {
-    fn encode_with_tag<W: Write>(&self, w: &mut W, tag: u32) -> io::Result<()> {
-        encode_len_delimited(w, tag, self)
-    }
-}
+impl Value for &str {
+    const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-impl LenEncodable for &str {
-    fn encoded_len(&self) -> usize {
-        self.len()
+    fn encoded_len(&self) -> u64 {
+        self.len() as u64
     }
 
-    fn encode_raw<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         writer.write_all(self.as_bytes())
     }
 }

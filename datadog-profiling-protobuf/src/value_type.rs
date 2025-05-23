@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{encode_len_delimited, LenEncodable, StringOffset, TagEncodable};
+use crate::{StringOffset, Value, Varint, WireType};
 use std::io::{self, Write};
 
 #[repr(C)]
@@ -12,27 +12,17 @@ pub struct ValueType {
     pub unit: StringOffset,   // 2
 }
 
-impl ValueType {
-    pub const fn encoded_len(&self) -> usize {
-        crate::tagged_varint_len(1, self.r#type.to_u64())
-            + crate::tagged_varint_len(2, self.unit.to_u64())
-    }
-}
+impl Value for ValueType {
+    const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-impl TagEncodable for ValueType {
-    fn encode_with_tag<W: Write>(&self, w: &mut W, tag: u32) -> io::Result<()> {
-        encode_len_delimited(w, tag, self)
-    }
-}
-
-impl LenEncodable for ValueType {
-    fn encoded_len(&self) -> usize {
-        self.encoded_len()
+    fn encoded_len(&self) -> u64 {
+        Varint(self.r#type.to_u64()).field(1).encoded_len_small()
+            + Varint(self.unit.to_u64()).field(2).encoded_len_small()
     }
 
-    fn encode_raw<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        crate::tagged_varint(writer, 1, self.r#type.into())?;
-        crate::tagged_varint(writer, 2, self.unit.into())
+    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        Varint(self.r#type.into()).field(1).encode_small(writer)?;
+        Varint(self.unit.into()).field(2).encode_small(writer)
     }
 }
 
@@ -46,9 +36,12 @@ impl From<ValueType> for crate::prost_impls::ValueType {
 #[cfg(feature = "prost_impls")]
 impl From<&ValueType> for crate::prost_impls::ValueType {
     fn from(value: &ValueType) -> Self {
+        // If the prost file is regenerated, this may pick up new members.
+        #[allow(clippy::needless_update)]
         Self {
             r#type: value.r#type.into(),
             unit: value.unit.into(),
+            ..Self::default()
         }
     }
 }
@@ -64,9 +57,12 @@ mod tests {
         assert_eq!(i64::from(value_type.r#type), prost_value_type.r#type);
         assert_eq!(i64::from(value_type.unit), prost_value_type.unit);
 
-        let len = value_type.encoded_len();
+        let value = value_type.unit.to_u64();
+        let value1 = value_type.r#type.to_u64();
+        let len = (Varint(value1).field(1).encoded_len_small()
+            + Varint(value).field(2).encoded_len_small()) as usize;
         let mut buffer = Vec::with_capacity(len);
-        value_type.encode_raw(&mut buffer).unwrap();
+        value_type.encode(&mut buffer).unwrap();
         let roundtrip = prost_impls::ValueType::decode(buffer.as_slice()).unwrap();
         assert_eq!(prost_value_type, roundtrip);
 

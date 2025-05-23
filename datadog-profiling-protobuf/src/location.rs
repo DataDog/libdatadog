@@ -1,10 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    encode_len_delimited, encode_len_delimited_prefix, tagged_len_delimited_len, LenEncodable,
-    TagEncodable, WireType,
-};
+use crate::{Tag, Value, Varint, WireType};
 use std::io::{self, Write};
 
 #[repr(C)]
@@ -25,91 +22,62 @@ pub struct Line {
     pub lineno: i64,      // 2
 }
 
-impl Line {
-    pub const fn encoded_len(&self) -> usize {
-        crate::tagged_varint_len(1, self.function_id)
-            + crate::tagged_varint_len(2, self.lineno as u64)
-    }
-}
+impl Value for Line {
+    const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-impl TagEncodable for Line {
-    fn encode_with_tag<W: Write>(&self, w: &mut W, tag: u32) -> io::Result<()> {
-        encode_len_delimited(w, tag, self)
-    }
-}
-
-impl LenEncodable for Line {
-    fn encoded_len(&self) -> usize {
-        self.encoded_len()
+    fn encoded_len(&self) -> u64 {
+        Varint(self.function_id).field(1).encoded_len_small()
+            + Varint(self.lineno as u64).field(2).encoded_len_small()
     }
 
-    fn encode_raw<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        crate::tagged_varint(writer, 1, self.function_id)?;
-        crate::tagged_varint(writer, 2, self.lineno as u64)
+    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        Varint(self.function_id).field(1).encode_small(writer)?;
+        Varint(self.lineno as u64).field(2).encode_small(writer)
     }
 }
 
 #[cfg(feature = "prost_impls")]
 impl From<Line> for crate::prost_impls::Line {
     fn from(line: Line) -> Self {
+        // If the prost file is regenerated, this may pick up new members,
+        // such as column.
+        #[allow(clippy::needless_update)]
         Self {
             function_id: line.function_id,
             line: line.lineno,
+            ..Self::default()
         }
     }
 }
 
-impl Location {
-    pub const fn encoded_len(&self) -> usize {
-        let base = crate::tagged_varint_len_without_zero_size_opt(1, self.id)
-            + crate::tagged_varint_len(2, self.mapping_id)
-            + crate::tagged_varint_len(3, self.address);
+impl Value for Location {
+    const WIRE_TYPE: WireType = WireType::LengthDelimited;
+
+    fn encoded_len(&self) -> u64 {
+        let value = self.address;
+        let value1 = self.mapping_id;
+        let base = Varint(self.mapping_id).field(1).encoded_len()
+            + Varint(value1).field(2).encoded_len_small()
+            + Varint(value).field(3).encoded_len_small();
 
         let needed = {
-            let len = self.line.encoded_len();
-            len + crate::varint_len(len as u64) + crate::key_len(4, WireType::LengthDelimited)
+            let self1 = &self.line;
+            let value = self1.lineno as u64;
+            let value1 = self1.function_id;
+            let len = Varint(value1).field(1).encoded_len_small()
+                + Varint(value).field(2).encoded_len_small();
+            len + Varint(len).encoded_len() + Tag::new(4, WireType::LengthDelimited).encoded_len()
         };
         base + needed
     }
-}
 
-impl Location {
-    fn encode_all_but_line<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        crate::tagged_varint_without_zero_size_opt(writer, 1, self.id)?;
-        crate::tagged_varint(writer, 2, self.mapping_id)?;
-        crate::tagged_varint(writer, 3, self.address)
-    }
-}
-
-impl TagEncodable for Location {
-    fn encode_with_tag<W: Write>(&self, w: &mut W, tag: u32) -> io::Result<()> {
-        // The whole point here is that we don't calculate the line_len twice.
-        let (location_len, line_len) = {
-            let base = crate::tagged_varint_len_without_zero_size_opt(1, self.id)
-                + crate::tagged_varint_len(2, self.mapping_id)
-                + crate::tagged_varint_len(3, self.address);
-
-            let line_len = self.line.encoded_len();
-            let total_line_len = tagged_len_delimited_len(4, line_len as u64) + line_len;
-            let total_len = base + total_line_len;
-            (total_len, line_len)
-        };
-
-        encode_len_delimited_prefix(w, tag, location_len as u64)?;
-        self.encode_all_but_line(w)?;
-        encode_len_delimited_prefix(w, 4, line_len as u64)?;
-        self.line.encode_raw(w)
-    }
-}
-
-impl LenEncodable for Location {
-    fn encoded_len(&self) -> usize {
-        self.encoded_len()
-    }
-
-    fn encode_raw<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        self.encode_all_but_line(writer)?;
-        encode_len_delimited(writer, 4, &self.line)
+    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+        Varint(self.id).field(1).encode(writer)?;
+        let value = self.mapping_id;
+        Varint(value).field(2).encode_small(writer)?;
+        let value = self.address;
+        Varint(value).field(3).encode_small(writer)?;
+        self.line.field(4).encode(writer)
     }
 }
 
@@ -145,7 +113,7 @@ mod tests {
             let mut buffer = Vec::new();
             let prost_location = prost_impls::Location::from(location);
 
-            location.encode_raw(&mut buffer).unwrap();
+            location.encode(&mut buffer).unwrap();
             let roundtrip = prost_impls::Location::decode(buffer.as_slice()).unwrap();
             assert_eq!(prost_location, roundtrip);
 
