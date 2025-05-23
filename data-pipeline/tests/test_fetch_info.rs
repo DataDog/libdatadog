@@ -12,7 +12,7 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_fetch_info_from_test_agent() {
-        let test_agent = DatadogTestAgent::new(None, None).await;
+        let test_agent = DatadogTestAgent::new(None, None, &[]).await;
         let endpoint = Endpoint::from_url(test_agent.get_uri_for_endpoint("info", None).await);
         let info = fetch_info(&endpoint)
             .await
@@ -28,7 +28,7 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_agent_info_fetcher_with_test_agent() {
-        let test_agent = DatadogTestAgent::new(None, None).await;
+        let test_agent = DatadogTestAgent::new(None, None, &[]).await;
         let endpoint = Endpoint::from_url(test_agent.get_uri_for_endpoint("info", None).await);
         let fetcher = AgentInfoFetcher::new(endpoint, Duration::from_secs(1));
         let info_arc = fetcher.get_info();

@@ -4,10 +4,11 @@
 use crate::Bytes;
 #[cfg(feature = "serde")]
 use serde::ser::{Serialize, Serializer};
+use std::borrow::Cow;
 use std::fmt::{Debug, Formatter};
 use std::{borrow::Borrow, hash, str::Utf8Error};
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Default, Eq, PartialEq)]
 pub struct BytesString {
     bytes: Bytes,
 }
@@ -45,6 +46,25 @@ impl BytesString {
         Ok(Self {
             bytes: Bytes::copy_from_slice(slice),
         })
+    }
+
+    #[inline]
+    pub const fn from_static(value: &'static str) -> Self {
+        // SAFETY: This is safe as a str is always a valid UTF-8 slice.
+        unsafe { Self::from_bytes_unchecked(Bytes::from_static(value.as_bytes())) }
+    }
+
+    pub fn from_string(value: String) -> Self {
+        // SAFETY: This is safe as a String is always a valid UTF-8 slice.
+        unsafe { Self::from_bytes_unchecked(Bytes::from_underlying(value)) }
+    }
+
+    #[inline]
+    pub fn from_cow(cow: Cow<'static, str>) -> Self {
+        match cow {
+            Cow::Borrowed(s) => Self::from_static(s),
+            Cow::Owned(s) => Self::from_string(s),
+        }
     }
 
     /// Creates a `BytesString` from a `tinybytes::Bytes` instance.
@@ -115,7 +135,7 @@ impl BytesString {
     ///
     /// This function is unsafe because it assumes the bytes are valid UTF-8. If the bytes are not
     /// valid UTF-8, the behavior is undefined.
-    pub unsafe fn from_bytes_unchecked(bytes: Bytes) -> Self {
+    pub const unsafe fn from_bytes_unchecked(bytes: Bytes) -> Self {
         Self { bytes }
     }
 
@@ -141,14 +161,6 @@ impl BytesString {
     }
 }
 
-impl Default for BytesString {
-    fn default() -> Self {
-        Self {
-            bytes: Bytes::empty(),
-        }
-    }
-}
-
 impl Borrow<str> for BytesString {
     fn borrow(&self) -> &str {
         self.as_str()
@@ -163,15 +175,19 @@ impl AsRef<str> for BytesString {
 
 impl From<String> for BytesString {
     fn from(value: String) -> Self {
-        // SAFETY: This is safe as a String is always a valid UTF-8 slice.
-        unsafe { Self::from_bytes_unchecked(Bytes::from_underlying(value)) }
+        Self::from_string(value)
     }
 }
 
 impl From<&'static str> for BytesString {
     fn from(value: &'static str) -> Self {
-        // SAFETY: This is safe as a str is always a valid UTF-8 slice.
-        unsafe { Self::from_bytes_unchecked(Bytes::from_static(value.as_bytes())) }
+        Self::from_static(value)
+    }
+}
+
+impl From<Cow<'static, str>> for BytesString {
+    fn from(value: Cow<'static, str>) -> Self {
+        Self::from_cow(value)
     }
 }
 
@@ -271,6 +287,13 @@ mod tests {
 
     #[test]
     fn test_from_static_str() {
+        let static_str = "hello";
+        let bytes_string = BytesString::from_static(static_str);
+        assert_eq!(bytes_string.as_str(), "hello")
+    }
+
+    #[test]
+    fn test_from_static_str_impl() {
         let static_str = "hello";
         let bytes_string = BytesString::from(static_str);
         assert_eq!(bytes_string.as_str(), "hello")

@@ -68,45 +68,43 @@ RUN cargo search nothing --limit 1
 
 # create stubs to cache compilation of dependendencies
 COPY [ "Cargo.lock", "Cargo.toml", "./"]
-COPY "alloc/Cargo.toml" "alloc/"
+COPY "datadog-alloc/Cargo.toml" "datadog-alloc/"
 COPY "build-common/Cargo.toml" "build-common/"
-COPY "crashtracker/Cargo.toml" "crashtracker/"
-COPY "crashtracker-ffi/Cargo.toml" "crashtracker-ffi/"
+COPY "datadog-crashtracker/Cargo.toml" "datadog-crashtracker/"
+COPY "datadog-crashtracker-ffi/Cargo.toml" "datadog-crashtracker-ffi/"
 COPY "ddcommon/Cargo.toml" "ddcommon/"
-COPY "ddcommon-ffi/Cargo.toml" "ddcommon-ffi/" 
+COPY "ddcommon-ffi/Cargo.toml" "ddcommon-ffi/"
 COPY "ddtelemetry/Cargo.toml" "ddtelemetry/"
 COPY "ddtelemetry-ffi/Cargo.toml" "ddtelemetry-ffi/"
 COPY "ddsketch/Cargo.toml" "ddsketch/"
 COPY "dogstatsd-client/Cargo.toml" "dogstatsd-client/"
-COPY "dynamic-configuration/Cargo.toml" "dynamic-configuration/"
-COPY "library-config-ffi/Cargo.toml" "library-config-ffi/"
-COPY "library-config/Cargo.toml" "library-config/"
-COPY "live-debugger/Cargo.toml" "live-debugger/"
-COPY "live-debugger-ffi/Cargo.toml" "live-debugger-ffi/"
-COPY "profiling/Cargo.toml" "profiling/"
-COPY "profiling-ffi/Cargo.toml" "profiling-ffi/"
-COPY "profiling-replayer/Cargo.toml" "profiling-replayer/"
-COPY "remote-config/Cargo.toml" "remote-config/"
-COPY "sidecar/Cargo.toml" "sidecar/"
-COPY "sidecar/macros/Cargo.toml" "sidecar/macros/"
-COPY "sidecar-ffi/Cargo.toml" "sidecar-ffi/"
+COPY "datadog-dynamic-configuration/Cargo.toml" "datadog-dynamic-configuration/"
+COPY "datadog-library-config-ffi/Cargo.toml" "datadog-library-config-ffi/"
+COPY "datadog-library-config/Cargo.toml" "datadog-library-config/"
+COPY "datadog-live-debugger/Cargo.toml" "datadog-live-debugger/"
+COPY "datadog-live-debugger-ffi/Cargo.toml" "datadog-live-debugger-ffi/"
+COPY "datadog-profiling/Cargo.toml" "datadog-profiling/"
+COPY "datadog-profiling-ffi/Cargo.toml" "datadog-profiling-ffi/"
+COPY "datadog-profiling-replayer/Cargo.toml" "datadog-profiling-replayer/"
+COPY "datadog-remote-config/Cargo.toml" "datadog-remote-config/"
+COPY "datadog-sidecar/Cargo.toml" "datadog-sidecar/"
+COPY "datadog-sidecar-macros/Cargo.toml" "datadog-sidecar-macros/"
+COPY "datadog-sidecar-ffi/Cargo.toml" "datadog-sidecar-ffi/"
 COPY "symbolizer-ffi/Cargo.toml" "symbolizer-ffi/"
-COPY "trace-normalization/Cargo.toml" "trace-normalization/"
-COPY "trace-obfuscation/Cargo.toml" "trace-obfuscation/"
-COPY "trace-protobuf/Cargo.toml" "trace-protobuf/"
-COPY "trace-mini-agent/Cargo.toml" "trace-mini-agent/"
-COPY "trace-utils/Cargo.toml" "trace-utils/"
+COPY "datadog-trace-normalization/Cargo.toml" "datadog-trace-normalization/"
+COPY "datadog-trace-obfuscation/Cargo.toml" "datadog-trace-obfuscation/"
+COPY "datadog-trace-protobuf/Cargo.toml" "datadog-trace-protobuf/"
+COPY "datadog-trace-utils/Cargo.toml" "datadog-trace-utils/"
 COPY "tools/Cargo.toml" "tools/"
 COPY "tools/cc_utils/Cargo.toml" "tools/cc_utils/"
 COPY "tools/sidecar_mockgen/Cargo.toml" "tools/sidecar_mockgen/"
 COPY "spawn_worker/Cargo.toml" "spawn_worker/"
-COPY "serverless/Cargo.toml" "serverless/"
 COPY "tests/spawn_from_lib/Cargo.toml" "tests/spawn_from_lib/"
-COPY "ipc/Cargo.toml" "ipc/"
-COPY "ipc/macros/Cargo.toml" "ipc/macros/"
-COPY "ipc/tarpc/Cargo.toml" "ipc/tarpc/"
-COPY "ipc/tarpc/tarpc/Cargo.toml" "ipc/tarpc/tarpc/"
-COPY "ipc/tarpc/plugins/Cargo.toml" "ipc/tarpc/plugins/"
+COPY "datadog-ipc/Cargo.toml" "datadog-ipc/"
+COPY "datadog-ipc-macros/Cargo.toml" "datadog-ipc-macros/"
+COPY "datadog-ipc/tarpc/Cargo.toml" "datadog-ipc/tarpc/"
+COPY "datadog-ipc/tarpc/tarpc/Cargo.toml" "datadog-ipc/tarpc/tarpc/"
+COPY "datadog-ipc/tarpc/plugins/Cargo.toml" "datadog-ipc/tarpc/plugins/"
 COPY "data-pipeline/Cargo.toml" "data-pipeline/"
 COPY "data-pipeline-ffi/Cargo.toml" "data-pipeline-ffi/"
 COPY "bin_tests/Cargo.toml"  "bin_tests/"
@@ -120,25 +118,24 @@ RUN echo \
     bin_tests/src/bin/test_the_tests.rs \
     builder/src/bin/release.rs \
     ddtelemetry/examples/tm-worker-test.rs \
-    ipc/benches/ipc.rs \
-    ipc/tarpc/tarpc/examples/compression.rs \
-    ipc/tarpc/tarpc/examples/custom_transport.rs \
-    ipc/tarpc/tarpc/examples/pubsub.rs \
-    ipc/tarpc/tarpc/examples/readme.rs \
-    ipc/tarpc/tarpc/examples/tracing.rs \
-    ipc/tarpc/tarpc/tests/compile_fail.rs \
-    ipc/tarpc/tarpc/tests/dataservice.rs \
-    ipc/tarpc/tarpc/tests/service_functional.rs \
-    profiling-replayer/src/main.rs \
-    profiling/benches/interning_strings.rs \
-    profiling/benches/main.rs \
-    serverless/src/main.rs \
+    datadog-ipc/benches/ipc.rs \
+    datadog-ipc/tarpc/tarpc/examples/compression.rs \
+    datadog-ipc/tarpc/tarpc/examples/custom_transport.rs \
+    datadog-ipc/tarpc/tarpc/examples/pubsub.rs \
+    datadog-ipc/tarpc/tarpc/examples/readme.rs \
+    datadog-ipc/tarpc/tarpc/examples/tracing.rs \
+    datadog-ipc/tarpc/tarpc/tests/compile_fail.rs \
+    datadog-ipc/tarpc/tarpc/tests/dataservice.rs \
+    datadog-ipc/tarpc/tarpc/tests/service_functional.rs \
+    datadog-profiling-replayer/src/main.rs \
+    datadog-profiling/benches/interning_strings.rs \
+    datadog-profiling/benches/main.rs \
     tools/sidecar_mockgen/src/bin/sidecar_mockgen.rs \
     tools/src/bin/dedup_headers.rs \
-    trace-normalization/benches/normalization_utils.rs \
-    trace-obfuscation/benches/trace_obfuscation.rs \
-    trace-utils/benches/deserialization.rs \
-    trace-utils/benches/main.rs \
+    datadog-trace-normalization/benches/normalization_utils.rs \
+    datadog-trace-obfuscation/benches/trace_obfuscation.rs \
+    datadog-trace-utils/benches/deserialization.rs \
+    datadog-trace-utils/benches/main.rs \
     | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
 
 # cache dependencies

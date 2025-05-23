@@ -10,7 +10,8 @@
 use std::{
     borrow, cmp, fmt, hash,
     ops::{self, RangeBounds},
-    sync::Arc,
+    ptr::NonNull,
+    sync::atomic::AtomicUsize,
 };
 
 #[cfg(feature = "serde")]
@@ -22,7 +23,7 @@ pub struct Bytes {
     slice: &'static [u8],
     // The `bytes`` field is used to ensure that the underlying bytes are freed when there are no
     // more references to the `Bytes` object. For static buffers the field is `None`.
-    bytes: Option<Arc<dyn UnderlyingBytes>>,
+    bytes: Option<RefCountedCell>,
 }
 
 /// The underlying bytes that the `Bytes` object references.
@@ -34,15 +35,36 @@ unsafe impl Send for Bytes {}
 unsafe impl Sync for Bytes {}
 
 impl Bytes {
+    #[inline]
+    /// Creates a new `Bytes` from the given slice data and the refcount
+    ///
+    /// # Safety
+    ///
+    /// * the pointer should be valid for the given length
+    /// * the pointer should be valid for reads as long as the refcount or any of it's clone is not
+    ///   dropped
+    pub const unsafe fn from_raw_refcount(
+        ptr: NonNull<u8>,
+        len: usize,
+        refcount: RefCountedCell,
+    ) -> Self {
+        // SAFETY: The caller must ensure that the pointer is valid and that the length is correct.
+        let slice = unsafe { std::slice::from_raw_parts(ptr.as_ptr(), len) };
+        Self {
+            slice,
+            bytes: Some(refcount),
+        }
+    }
+
     /// Creates empty `Bytes`.
     #[inline]
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self::from_static(b"")
     }
 
     /// Creates `Bytes` from a static slice.
     #[inline]
-    pub fn from_static(value: &'static [u8]) -> Self {
+    pub const fn from_static(value: &'static [u8]) -> Self {
         let slice: &[u8] = value;
         Self { slice, bytes: None }
     }
@@ -186,9 +208,16 @@ impl Bytes {
     // private
 
     fn from_underlying(value: impl UnderlyingBytes) -> Self {
-        Self {
-            slice: unsafe { std::mem::transmute::<&'_ [u8], &'static [u8]>(value.as_ref()) },
-            bytes: Some(Arc::new(value)),
+        unsafe {
+            // SAFETY:
+            // * the pointer associated with a slice is non null and valid for the length of the
+            //   slice
+            // * it stays valid as long as value is not dopped
+            let (ptr, len) = {
+                let s = value.as_ref();
+                (NonNull::new_unchecked(s.as_ptr().cast_mut()), s.len())
+            };
+            Self::from_raw_refcount(ptr, len, make_refcounted(value))
         }
     }
 
@@ -288,6 +317,118 @@ impl Serialize for Bytes {
         S: serde::Serializer,
     {
         serializer.serialize_bytes(self.as_slice())
+    }
+}
+
+pub struct RefCountedCell {
+    data: NonNull<()>,
+    vtable: &'static RefCountedCellVTable,
+}
+
+unsafe impl Send for RefCountedCell {}
+unsafe impl Sync for RefCountedCell {}
+
+impl RefCountedCell {
+    #[inline]
+    /// Creates a new `RefCountedCell` from the given data and vtable.
+    ///
+    /// The data pointer can be used to store arbitrary data, that won't be dropped until the last
+    /// clone to the `RefCountedCell` is dropped.
+    /// The vtable customizes the behavior of a Waker which gets created from a RawWaker. For each
+    /// operation on the Waker, the associated function in the vtable of the underlying RawWaker
+    /// will be called.
+    ///
+    /// # Safety
+    ///
+    /// * The value pointed to by `data` must be 'static + Send + Sync
+    pub const unsafe fn from_raw(data: NonNull<()>, vtable: &'static RefCountedCellVTable) -> Self {
+        RefCountedCell { data, vtable }
+    }
+}
+
+impl Clone for RefCountedCell {
+    fn clone(&self) -> Self {
+        unsafe { (self.vtable.clone)(self.data) }
+    }
+}
+
+impl Drop for RefCountedCell {
+    fn drop(&mut self) {
+        unsafe { (self.vtable.drop)(self.data) }
+    }
+}
+
+pub struct RefCountedCellVTable {
+    pub clone: unsafe fn(NonNull<()>) -> RefCountedCell,
+    pub drop: unsafe fn(NonNull<()>),
+}
+
+/// Creates a refcounted cell.
+///
+/// The data passed to this cell will only be dopped when the last
+/// clone of the cell is dropped.
+fn make_refcounted<T: Send + Sync + 'static>(data: T) -> RefCountedCell {
+    /// A custom Arc implementation that contains only the strong count
+    ///
+    /// This struct is not exposed to the outside of this functions and is
+    /// only interacted with through the `RefCountedCell` API.
+    struct CustomArc<T> {
+        rc: AtomicUsize,
+        #[allow(unused)]
+        data: T,
+    }
+
+    unsafe fn custom_arc_clone<T>(data: NonNull<()>) -> RefCountedCell {
+        let custom_arc = data.cast::<CustomArc<T>>().as_ref();
+        custom_arc
+            .rc
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        RefCountedCell::from_raw(
+            data,
+            &RefCountedCellVTable {
+                clone: custom_arc_clone::<T>,
+                drop: custom_arc_drop::<T>,
+            },
+        )
+    }
+
+    unsafe fn custom_arc_drop<T>(data: NonNull<()>) {
+        let custom_arc = data.cast::<CustomArc<T>>().as_ref();
+        if custom_arc
+            .rc
+            .fetch_sub(1, std::sync::atomic::Ordering::Release)
+            != 1
+        {
+            return;
+        }
+
+        // Run drop + free memory on the data manually rather than casting back to a box
+        // because otherwise miri complains
+
+        // See standard library documentation for std::sync::Arc to see why this is needed.
+        // https://github.com/rust-lang/rust/blob/2a5da7acd4c3eae638aa1c46f3a537940e60a0e4/library/alloc/src/sync.rs#L2647-L2675
+        std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
+        {
+            let custom_arc = data.cast::<CustomArc<T>>().as_mut();
+            std::ptr::drop_in_place(custom_arc);
+        }
+
+        std::alloc::dealloc(
+            data.as_ptr() as *mut u8,
+            std::alloc::Layout::new::<CustomArc<T>>(),
+        );
+    }
+
+    let rc = Box::leak(Box::new(CustomArc {
+        rc: AtomicUsize::new(1),
+        data,
+    })) as *mut _ as *const ();
+    RefCountedCell {
+        data: unsafe { NonNull::new_unchecked(rc as *mut ()) },
+        vtable: &RefCountedCellVTable {
+            clone: custom_arc_clone::<T>,
+            drop: custom_arc_drop::<T>,
+        },
     }
 }
 

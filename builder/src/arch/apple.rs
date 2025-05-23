@@ -18,7 +18,7 @@ pub const RUSTFLAGS: [&str; 2] = ["-C", "relocation-model=pic"];
 
 pub fn fix_rpath(lib_path: &str) {
     if REMOVE_RPATH {
-        let lib_name = lib_path.split('/').last().unwrap();
+        let lib_name = lib_path.split('/').next_back().unwrap();
 
         let exit_status = Command::new("install_name_tool")
             .arg("-id")

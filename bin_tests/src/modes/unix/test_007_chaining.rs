@@ -111,7 +111,6 @@ fn test(output_dir: &Path) -> anyhow::Result<()> {
             anyhow::bail!("Error: OUTPUT_FILE was null");
         }
     };
-    remove_permissive(&filepath);
     file_append_msg(&filepath, "File not cleared by handler")?;
 
     Ok(())

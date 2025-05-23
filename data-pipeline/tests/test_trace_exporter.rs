@@ -9,10 +9,6 @@ mod tracing_integration_tests {
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use datadog_trace_utils::test_utils::{create_test_json_span, create_test_v05_span};
     use serde_json::json;
-    #[cfg(target_os = "linux")]
-    use std::fs::Permissions;
-    #[cfg(target_os = "linux")]
-    use std::os::unix::fs::PermissionsExt;
     use tokio::task;
 
     fn get_v04_trace_snapshot_test_payload(name_prefix: &str) -> Vec<u8> {
@@ -105,7 +101,7 @@ mod tracing_integration_tests {
     async fn compare_v04_trace_snapshot_test() {
         let relative_snapshot_path = "data-pipeline/tests/snapshots/";
         let snapshot_name = "compare_exporter_v04_trace_snapshot_test";
-        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
+        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
         let url = test_agent.get_base_uri().await;
         let rate_param = "{\"service:test,env:test_env\": 0.5, \"service:test2,env:prod\": 0.2}";
         test_agent
@@ -123,7 +119,7 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
-                .set_query_params(format!("test_session_token={snapshot_name}").as_str());
+                .set_test_session_token(snapshot_name);
 
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 
@@ -154,7 +150,7 @@ mod tracing_integration_tests {
     async fn compare_v04_to_v05_trace_snapshot_test() {
         let relative_snapshot_path = "data-pipeline/tests/snapshots/";
         let snapshot_name = "compare_exporter_v04_to_v05_trace_snapshot_test";
-        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
+        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
         let url = test_agent.get_base_uri().await;
         let rate_param = "{\"service:test,env:test_env\": 0.5, \"service:test2,env:prod\": 0.2}";
         test_agent
@@ -172,7 +168,7 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
-                .set_query_params(format!("test_session_token={}", snapshot_name).as_str())
+                .set_test_session_token(snapshot_name)
                 .set_input_format(TraceExporterInputFormat::V04)
                 .set_output_format(TraceExporterOutputFormat::V05);
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
@@ -197,7 +193,7 @@ mod tracing_integration_tests {
     async fn compare_v05_trace_snapshot_test() {
         let relative_snapshot_path = "data-pipeline/tests/snapshots/";
         let snapshot_name = "compare_exporter_v05_trace_snapshot_test";
-        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None).await;
+        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
         let url = test_agent.get_base_uri().await;
         let rate_param = "{\"service:test,env:test_env\": 0.5, \"service:test2,env:prod\": 0.2}";
         test_agent
@@ -215,7 +211,7 @@ mod tracing_integration_tests {
                 .set_tracer_version("1.0")
                 .set_env("test_env")
                 .set_service("test")
-                .set_query_params(format!("test_session_token={}", snapshot_name).as_str())
+                .set_test_session_token(snapshot_name)
                 .set_input_format(TraceExporterInputFormat::V05)
                 .set_output_format(TraceExporterOutputFormat::V05);
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
@@ -243,6 +239,9 @@ mod tracing_integration_tests {
     // assign unique names to the spans and instantiate a unique session for the test to avoid flaky
     // behavior when running on CI
     async fn uds_snapshot_test() {
+        use std::fs::Permissions;
+        use std::os::unix::fs::PermissionsExt;
+
         let relative_snapshot_path = "data-pipeline/tests/snapshots/";
         let snapshot_name = "compare_exporter_v04_trace_snapshot_uds_test";
         // Create a temporary directory for the socket to be mounted in the test agent container
@@ -266,6 +265,7 @@ mod tracing_integration_tests {
         let test_agent = DatadogTestAgent::new(
             Some(relative_snapshot_path),
             Some(&absolute_socket_dir_path),
+            &[],
         )
         .await;
 
@@ -284,8 +284,8 @@ mod tracing_integration_tests {
                 .set_language_interpreter("interpreter")
                 .set_tracer_version("1.0")
                 .set_env("test_env")
-                .set_service("test")
-                .set_query_params(format!("test_session_token={snapshot_name}").as_str());
+                .set_test_session_token(snapshot_name)
+                .set_service("test");
 
             let trace_exporter = builder.build().expect("Unable to build TraceExporter");
 

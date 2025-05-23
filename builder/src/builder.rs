@@ -89,8 +89,7 @@ impl Builder {
             features: features.into(),
             main_header: (target_dir.to_string() + "/" + HEADER_PATH + "/" + "common.h").into(),
             profile: profile.into(),
-            source_lib: (source_dir.to_string() + "/" + target_arch + "/" + profile + "/deps")
-                .into(),
+            source_lib: (source_dir.to_string() + "/" + target_arch + "/" + profile).into(),
             source_inc: (source_dir.to_string() + "/" + HEADER_PATH).into(),
             target_dir: target_dir.into(),
             target_lib: (target_dir.to_string() + "/" + "/lib").into(),
