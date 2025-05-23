@@ -15,6 +15,7 @@ members = [
   "datadog-live-debugger-ffi",
   "datadog-profiling",
   "datadog-profiling-ffi",
+  "datadog-profiling-protobuf",
   "datadog-profiling-replayer",
   "datadog-remote-config",
   "datadog-sidecar",

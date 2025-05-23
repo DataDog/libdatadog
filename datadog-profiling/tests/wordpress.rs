@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_profiling::api;
-use datadog_profiling::pprof;
+use datadog_profiling_protobuf::prost_impls;
 use lz4_flex::frame::FrameDecoder;
 use prost::Message;
 use std::fs::File;
@@ -35,7 +35,7 @@ fn wordpress() {
     let bytes_copied = copy(&mut decoder, &mut bytes).unwrap();
     assert_eq!(uncompressed_size, bytes_copied);
 
-    let pprof = pprof::Profile::decode(&mut Cursor::new(&bytes)).unwrap();
+    let pprof = prost_impls::Profile::decode(&mut Cursor::new(&bytes)).unwrap();
     let api = api::Profile::try_from(&pprof).unwrap();
 
     assert_eq!(Duration::from_nanos(67000138417_u64), api.duration);

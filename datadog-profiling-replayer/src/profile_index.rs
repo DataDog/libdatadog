@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Result;
-use datadog_profiling::pprof::{Function, Location, Mapping, Profile};
+use datadog_profiling_protobuf::prost_impls::{Function, Location, Mapping, Profile};
 use std::collections::HashMap;
 
 pub struct ProfileIndex<'pprof> {

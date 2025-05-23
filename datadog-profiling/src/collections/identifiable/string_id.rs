@@ -2,39 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use datadog_profiling_protobuf::StringOffset;
 
-#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
-#[repr(C)]
-pub struct StringId(u32);
-
-impl StringId {
-    pub const ZERO: StringId = Self::zero();
-
-    #[inline]
-    pub const fn zero() -> Self {
-        Self(0)
-    }
-
-    #[inline]
-    pub const fn is_zero(&self) -> bool {
-        self.0 == 0
-    }
-
-    #[inline]
-    pub fn to_offset(&self) -> usize {
-        self.0 as usize
-    }
-}
+pub type StringId = StringOffset;
 
 impl Id for StringId {
     type RawId = i64;
 
     fn from_offset(inner: usize) -> Self {
         #[allow(clippy::expect_used)]
-        Self(inner.try_into().expect("StringId to fit into a u32"))
+        Self::try_from(inner).expect("StringId to fit into a u32")
     }
 
     fn to_raw_id(&self) -> Self::RawId {
-        Self::RawId::from(self.0)
+        Self::RawId::from(self)
     }
 }
