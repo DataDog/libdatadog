@@ -62,7 +62,7 @@ pub struct CrashInfo {
 
 impl CrashInfo {
     pub fn current_schema_version() -> String {
-        "1.3".to_string()
+        "1.4".to_string()
     }
 
     pub fn demangle_names(&mut self) -> anyhow::Result<()> {
