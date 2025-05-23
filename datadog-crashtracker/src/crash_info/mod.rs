@@ -62,7 +62,11 @@ pub struct CrashInfo {
 
 impl CrashInfo {
     pub fn current_schema_version() -> String {
-        "1.3".to_string()
+        "1.4".to_string()
+    }
+
+    pub fn demangle_names(&mut self) -> anyhow::Result<()> {
+        self.error.demangle_names()
     }
 }
 
@@ -131,7 +135,7 @@ mod tests {
     fn test_schema_matches_rfc() {
         let rfc_schema_filename = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../docs/RFCs/artifacts/0008-crashtracker-schema.json"
+            "/../docs/RFCs/artifacts/0009-crashtracker-schema.json"
         );
         let rfc_schema_json = fs::read_to_string(rfc_schema_filename).expect("File to exist");
         let rfc_schema: RootSchema = serde_json::from_str(&rfc_schema_json).expect("Valid json");
