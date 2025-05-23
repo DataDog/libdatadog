@@ -200,7 +200,7 @@ mod tests {
             runtime_id,
         );
 
-        for _ in 0..3  {
+        for _ in 0..3 {
             let result = run_remote_config_listener(&mut listener).await;
             assert!(result.is_ok());
             sleep(Duration::from_secs(1)).await;
