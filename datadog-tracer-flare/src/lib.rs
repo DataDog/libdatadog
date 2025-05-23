@@ -1,5 +1,10 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::todo))]
+#![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 use std::{str::FromStr, vec};
 
@@ -16,16 +21,15 @@ use ddcommon::Endpoint;
 pub enum FlareError {
     /// Send the flare was asking without being prepared.
     NoFlare(String),
-    /// This was not implemented yet.
-    NotImplemented,
-    // TODO: Complete the enum
+    /// Listening to the RemoteConfig failed.
+    ListeningError(String),
 }
 
 impl std::fmt::Display for FlareError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FlareError::NoFlare(msg) => write!(f, "No flare prepared to send: {}", msg),
-            FlareError::NotImplemented => write!(f, "Not implemented"),
+            FlareError::ListeningError(msg) => write!(f, "Listening failed with: {}", msg),
         }
     }
 }
@@ -33,11 +37,44 @@ impl std::fmt::Display for FlareError {
 /// Enum that hold the different log level possible
 #[derive(Debug)]
 pub enum LogLevel {
-    Debug = 0,
-    Info = 1,
-    Warn = 2,
-    // TODO: Need to find out which other level are available
+    Trace = 0,
+    Debug = 1,
+    Info = 2,
+    Warn = 3,
+    Error = 4,
+    Critical = 5,
+    Off = 6,
 }
+
+/// Enum that hold the different returned action to do after listening
+#[derive(Debug)]
+pub enum ReturnAction {
+    None,
+    StartTrace,
+    StartDebug,
+    StartInfo,
+    StartWarn,
+    StartError,
+    StartCritical,
+    StartOff,
+    Stop,
+}
+
+impl From<LogLevel> for ReturnAction {
+    fn from(level: LogLevel) -> Self {
+        match level {
+            LogLevel::Trace => ReturnAction::StartTrace,
+            LogLevel::Debug => ReturnAction::StartDebug,
+            LogLevel::Info => ReturnAction::StartInfo,
+            LogLevel::Warn => ReturnAction::StartWarn,
+            LogLevel::Error => ReturnAction::StartError,
+            LogLevel::Critical => ReturnAction::StartCritical,
+            LogLevel::Off => ReturnAction::StartOff,
+        }
+    }
+}
+
+pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>>;
 
 /// Function that init and return a listener of RemoteConfig
 ///
@@ -52,7 +89,6 @@ pub enum LogLevel {
 /// * `runtime_id` - Runtime id.
 ///
 /// These arguments will be used to listen to the remote config endpoint.
-#[allow(clippy::too_many_arguments)]
 pub fn init_remote_config_listener(
     agent_url: String,
     language: String,
@@ -61,7 +97,7 @@ pub fn init_remote_config_listener(
     env: String,
     app_version: String,
     runtime_id: String,
-) -> SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>> {
+) -> Listener {
     let remote_config_endpoint = Endpoint {
         url: hyper::Uri::from_str(&agent_url).unwrap(),
         api_key: None,
@@ -100,12 +136,11 @@ pub fn init_remote_config_listener(
 ///
 /// # Returns
 ///
-/// * `Ok()` - If successful.
+/// * `Ok(ReturnAction)` - If successful.
 /// * `FlareError(msg)` - If something fail.
-#[allow(clippy::too_many_arguments)]
 pub async fn run_remote_config_listener(
-    listener: &mut SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>>,
-) -> Result<(), FlareError> {
+    listener: &mut Listener,
+) -> Result<ReturnAction, FlareError> {
     match listener.fetch_changes().await {
         Ok(changes) => {
             println!("Got {} changes.", changes.len());
@@ -129,12 +164,11 @@ pub async fn run_remote_config_listener(
             }
         }
         Err(e) => {
-            eprintln!("Fetch failed with {e}");
+            FlareError::ListeningError(e.to_string());
         }
     }
 
-    // TODO: Implement a good return code.
-    Err(FlareError::NotImplemented)
+    Ok(ReturnAction::None)
 }
 
 #[cfg(test)]
@@ -143,7 +177,6 @@ mod tests {
     use std::time::Duration;
     use tokio::time::sleep;
 
-    #[ignore]
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_remote_config_listener() {
@@ -167,10 +200,10 @@ mod tests {
             runtime_id,
         );
 
-        loop {
-            let _result = run_remote_config_listener(&mut listener).await;
-
-            sleep(Duration::from_secs(3)).await;
+        for _ in 0..3  {
+            let result = run_remote_config_listener(&mut listener).await;
+            assert!(result.is_ok());
+            sleep(Duration::from_secs(1)).await;
         }
     }
 }
