@@ -24,6 +24,7 @@ members = [
   "datadog-trace-obfuscation",
   "datadog-trace-protobuf",
   "datadog-trace-utils",
+  "datadog-tracer-flare",
   "ddcommon",
   "ddcommon-ffi",
   "ddtelemetry",

@@ -1814,6 +1814,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-tracer-flare"
+version = "18.0.0"
+dependencies = [
+ "anyhow",
+ "datadog-remote-config",
+ "ddcommon",
+ "hyper 1.6.0",
+ "tokio",
+]
+
+[[package]]
 name = "ddcommon"
 version = "18.0.0"
 dependencies = [
