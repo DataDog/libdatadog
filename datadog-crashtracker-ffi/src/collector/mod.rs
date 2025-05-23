@@ -16,6 +16,40 @@ pub use spans::*;
 
 #[no_mangle]
 #[must_use]
+/// Disables the crashtracker.
+/// Note that this does not restore the old signal handlers, but rather turns crash-tracking into a
+/// no-op, and then chains the old handlers.  This means that handlers registered after the
+/// crashtracker will continue to work as expected.
+///
+/// # Preconditions
+///   None
+/// # Safety
+///   None
+/// # Atomicity
+///   This function is atomic and idempotent.  Calling it multiple times is allowed.
+pub unsafe extern "C" fn ddog_crasht_disable() -> VoidResult {
+    datadog_crashtracker::disable();
+    VoidResult::Ok(true)
+}
+
+#[no_mangle]
+#[must_use]
+/// Enables the crashtracker, if it had been previously disabled.
+/// If crashtracking has not been initialized, this function will have no effect.
+///
+/// # Preconditions
+///   None
+/// # Safety
+///   None
+/// # Atomicity
+///   This function is atomic and idempotent.  Calling it multiple times is allowed.
+pub unsafe extern "C" fn ddog_crasht_enable() -> VoidResult {
+    datadog_crashtracker::enable();
+    VoidResult::Ok(true)
+}
+
+#[no_mangle]
+#[must_use]
 #[named]
 /// Reinitialize the crash-tracking infrastructure after a fork.
 /// This should be one of the first things done after a fork, to minimize the
@@ -68,6 +102,34 @@ pub unsafe extern "C" fn ddog_crasht_init(
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
         datadog_crashtracker::init(
+            config.try_into()?,
+            receiver_config.try_into()?,
+            metadata.try_into()?,
+        )?;
+    })
+}
+
+#[no_mangle]
+#[must_use]
+#[named]
+/// Reconfigure the crashtracker and re-enables it.
+/// If the crashtracker has not been initialized, this function will have no effect.
+///
+/// # Preconditions
+///   None.
+/// # Safety
+///   Crash-tracking functions are not reentrant.
+///   No other crash-handler functions should be called concurrently.
+/// # Atomicity
+///   This function is not atomic. A crash during its execution may lead to
+///   unexpected crash-handling behaviour.
+pub unsafe extern "C" fn ddog_crasht_reconfigure(
+    config: Config,
+    receiver_config: ReceiverConfig,
+    metadata: Metadata,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        datadog_crashtracker::reconfigure(
             config.try_into()?,
             receiver_config.try_into()?,
             metadata.try_into()?,
