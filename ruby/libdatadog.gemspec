@@ -31,7 +31,7 @@ Gem::Specification.new do |spec|
     `git ls-files -z`
       .split("\x0")
       .reject do |f|
-        (f == __FILE__) || f.match(%r{\A(?:(?:bin|test|spec|features)/|\.(?:git|travis|circleci)|appveyor)})
+        (f == __FILE__) || f.match(%r{\A(?:(?:bin|test|spec|features|publish)/|\.(?:git|travis|circleci)|appveyor)})
       end
       .reject do |f|
         [".rspec", ".standard.yml", "Rakefile", "docker-compose.yml", "gems.rb", "README.md"].include?(f)
