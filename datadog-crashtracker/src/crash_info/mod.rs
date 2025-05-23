@@ -132,17 +132,15 @@ mod tests {
 
     use super::*;
     #[test]
-    #[ignore]
     fn test_schema_matches_rfc() {
         let rfc_schema_filename = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../docs/RFCs/artifacts/0008-crashtracker-schema.json"
+            "/../docs/RFCs/artifacts/0009-crashtracker-schema.json"
         );
         let rfc_schema_json = fs::read_to_string(rfc_schema_filename).expect("File to exist");
         let rfc_schema: RootSchema = serde_json::from_str(&rfc_schema_json).expect("Valid json");
         let schema = schemars::schema_for!(CrashInfo);
 
-        // TODO UPDATE SCHEMA
         assert_eq!(rfc_schema, schema);
         // If it doesn't match, you can use this command to generate a new schema json
         // println!("{}", serde_json::to_string_pretty(&schema).unwrap());
