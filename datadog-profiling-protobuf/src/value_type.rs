@@ -57,11 +57,8 @@ mod tests {
         assert_eq!(i64::from(value_type.r#type), prost_value_type.r#type);
         assert_eq!(i64::from(value_type.unit), prost_value_type.unit);
 
-        let value = value_type.unit.to_u64();
-        let value1 = value_type.r#type.to_u64();
-        let len = (Varint(value1).field(1).proto_len_small()
-            + Varint(value).field(2).proto_len_small()) as usize;
-        let mut buffer = Vec::with_capacity(len);
+        let mut buffer = Vec::with_capacity(value_type.proto_len() as usize);
+        prost_value_type.encode(&mut buffer).unwrap();
         value_type.encode(&mut buffer).unwrap();
         let roundtrip = prost_impls::ValueType::decode(buffer.as_slice()).unwrap();
         assert_eq!(prost_value_type, roundtrip);

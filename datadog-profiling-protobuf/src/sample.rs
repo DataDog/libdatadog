@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{prost_impls, Label, PackedVarint, Value, WireType};
+use crate::{prost_impls, Label, Packed, Value, WireType};
 use std::io::{self, Write};
 
 #[derive(Copy, Clone, Debug)]
@@ -15,8 +15,8 @@ impl Value for Sample<'_> {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
     fn proto_len(&self) -> u64 {
-        let locations = PackedVarint::new(self.location_ids).field(1).proto_len();
-        let values = PackedVarint::new(self.values).field(2).proto_len();
+        let locations = Packed::new(self.location_ids).field(1).proto_len();
+        let values = Packed::new(self.values).field(2).proto_len();
         let labels = self
             .labels
             .iter()
@@ -26,10 +26,8 @@ impl Value for Sample<'_> {
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        PackedVarint::new(self.location_ids)
-            .field(1)
-            .encode(writer)?;
-        PackedVarint::new(self.values).field(2).encode(writer)?;
+        Packed::new(self.location_ids).field(1).encode(writer)?;
+        Packed::new(self.values).field(2).encode(writer)?;
 
         for label in self.labels {
             label.field(3).encode(writer)?;

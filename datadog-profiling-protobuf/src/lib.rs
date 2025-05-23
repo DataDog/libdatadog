@@ -74,12 +74,12 @@ impl<V: Value> Pair<V> {
 
     pub fn proto_len(&self) -> u64 {
         let tag = Tag::new(self.field, V::WIRE_TYPE).proto_len();
+        let value = self.value.proto_len();
         let len_prefix = if V::WIRE_TYPE == WireType::LengthDelimited {
-            self.value.proto_len()
+            Varint(value).proto_len()
         } else {
             0
         };
-        let value = self.value.proto_len();
         tag + len_prefix + value
     }
 
@@ -228,11 +228,11 @@ impl Tag {
     }
 }
 
-pub struct PackedVarint<'a, T: Into<Varint>> {
+pub struct Packed<'a, T: Into<Varint>> {
     values: &'a [T],
 }
 
-impl<'a, T: Into<Varint>> PackedVarint<'a, T>
+impl<'a, T: Into<Varint>> Packed<'a, T>
 where
     Varint: From<&'a T>,
 {
@@ -241,7 +241,7 @@ where
     }
 }
 
-impl<'a, T: Into<Varint>> Value for PackedVarint<'a, T>
+impl<'a, T: Into<Varint>> Value for Packed<'a, T>
 where
     Varint: From<&'a T>,
 {
