@@ -63,3 +63,19 @@ impl TargetData<'_> {
             .and_then(|v| u64::from_str(v.get()).ok())
     }
 }
+
+#[derive(Deserialize)]
+pub struct RootSigned {
+    pub version: u64,
+}
+
+#[derive(Deserialize)]
+pub struct Root {
+    pub signed: RootSigned,
+}
+
+impl Root {
+    pub fn try_parse(data: &[u8]) -> serde_json::error::Result<Self> {
+        serde_json::from_slice(data)
+    }
+}
