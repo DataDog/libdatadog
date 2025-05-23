@@ -97,9 +97,15 @@ pub fn init_remote_config_listener(
     env: String,
     app_version: String,
     runtime_id: String,
-) -> Listener {
+) -> Result<Listener, FlareError> {
+    let agent_url = match hyper::Uri::from_str(&agent_url) {
+        Ok(uri) => uri,
+        Err(_) => {
+            return Err(FlareError::ListeningError("Invalid agent url".to_string()));
+        }
+    };
     let remote_config_endpoint = Endpoint {
-        url: hyper::Uri::from_str(&agent_url).unwrap(),
+        url: agent_url,
         api_key: None,
         timeout_ms: 10_000, // 10sec
         test_token: None,
@@ -115,7 +121,7 @@ pub fn init_remote_config_listener(
         capabilities: vec![],
     };
 
-    SingleChangesFetcher::new(
+    Ok(SingleChangesFetcher::new(
         ParsedFileStorage::default(),
         Target {
             service,
@@ -125,7 +131,7 @@ pub fn init_remote_config_listener(
         },
         runtime_id,
         config_to_fetch,
-    )
+    ))
 }
 
 /// Function that listen to RemoteConfig on the agent
@@ -190,6 +196,7 @@ mod tests {
         let runtime_id = "test-runtime".to_string();
 
         // Setup the listener
+        #[allow(clippy::unwrap_used)]
         let mut listener = init_remote_config_listener(
             agent_url,
             language,
@@ -198,7 +205,7 @@ mod tests {
             env,
             app_version,
             runtime_id,
-        );
+        ).unwrap();
 
         for _ in 0..3 {
             let result = run_remote_config_listener(&mut listener).await;
