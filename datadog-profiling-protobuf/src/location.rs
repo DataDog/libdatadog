@@ -25,9 +25,9 @@ pub struct Line {
 impl Value for Line {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-    fn encoded_len(&self) -> u64 {
-        Varint(self.function_id).field(1).encoded_len_small()
-            + Varint(self.lineno as u64).field(2).encoded_len_small()
+    fn proto_len(&self) -> u64 {
+        Varint(self.function_id).field(1).proto_len_small()
+            + Varint(self.lineno as u64).field(2).proto_len_small()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
@@ -53,20 +53,20 @@ impl From<Line> for crate::prost_impls::Line {
 impl Value for Location {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-    fn encoded_len(&self) -> u64 {
+    fn proto_len(&self) -> u64 {
         let value = self.address;
         let value1 = self.mapping_id;
-        let base = Varint(self.mapping_id).field(1).encoded_len()
-            + Varint(value1).field(2).encoded_len_small()
-            + Varint(value).field(3).encoded_len_small();
+        let base = Varint(self.mapping_id).field(1).proto_len()
+            + Varint(value1).field(2).proto_len_small()
+            + Varint(value).field(3).proto_len_small();
 
         let needed = {
             let self1 = &self.line;
             let value = self1.lineno as u64;
             let value1 = self1.function_id;
-            let len = Varint(value1).field(1).encoded_len_small()
-                + Varint(value).field(2).encoded_len_small();
-            len + Varint(len).encoded_len() + Tag::new(4, WireType::LengthDelimited).encoded_len()
+            let len = Varint(value1).field(1).proto_len_small()
+                + Varint(value).field(2).proto_len_small();
+            len + Varint(len).proto_len() + Tag::new(4, WireType::LengthDelimited).proto_len()
         };
         base + needed
     }

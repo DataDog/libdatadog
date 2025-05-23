@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{StringOffset, Value, Varint, WireType};
-use crate::Identifiable;
 use std::io::{self, Write};
 
 #[repr(C)]
@@ -18,13 +17,11 @@ pub struct Function {
 impl Value for Function {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-    fn encoded_len(&self) -> u64 {
-        Varint(self.id).field(1).encoded_len()
-            + Varint(self.name.to_u64()).field(2).encoded_len_small()
-            + Varint(self.system_name.to_u64())
-                .field(3)
-                .encoded_len_small()
-            + Varint(self.filename.to_u64()).field(4).encoded_len_small()
+    fn proto_len(&self) -> u64 {
+        Varint(self.id).field(1).proto_len()
+            + Varint(self.name.to_u64()).field(2).proto_len_small()
+            + Varint(self.system_name.to_u64()).field(3).proto_len_small()
+            + Varint(self.filename.to_u64()).field(4).proto_len_small()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
@@ -34,12 +31,6 @@ impl Value for Function {
             .field(3)
             .encode_small(writer)?;
         Varint(self.filename.into()).field(4).encode_small(writer)
-    }
-}
-
-impl Identifiable for Function {
-    fn id(&self) -> u64 {
-        self.id
     }
 }
 

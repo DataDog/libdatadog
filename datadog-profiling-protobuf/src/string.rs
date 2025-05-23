@@ -7,7 +7,7 @@ use std::io::{self, Write};
 impl Value for &str {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-    fn encoded_len(&self) -> u64 {
+    fn proto_len(&self) -> u64 {
         self.len() as u64
     }
 

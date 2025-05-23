@@ -15,9 +15,9 @@ pub struct ValueType {
 impl Value for ValueType {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-    fn encoded_len(&self) -> u64 {
-        Varint(self.r#type.to_u64()).field(1).encoded_len_small()
-            + Varint(self.unit.to_u64()).field(2).encoded_len_small()
+    fn proto_len(&self) -> u64 {
+        Varint(self.r#type.to_u64()).field(1).proto_len_small()
+            + Varint(self.unit.to_u64()).field(2).proto_len_small()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
@@ -59,8 +59,8 @@ mod tests {
 
         let value = value_type.unit.to_u64();
         let value1 = value_type.r#type.to_u64();
-        let len = (Varint(value1).field(1).encoded_len_small()
-            + Varint(value).field(2).encoded_len_small()) as usize;
+        let len = (Varint(value1).field(1).proto_len_small()
+            + Varint(value).field(2).proto_len_small()) as usize;
         let mut buffer = Vec::with_capacity(len);
         value_type.encode(&mut buffer).unwrap();
         let roundtrip = prost_impls::ValueType::decode(buffer.as_slice()).unwrap();

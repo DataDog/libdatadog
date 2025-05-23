@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{StringOffset, Value, Varint, WireType};
-use crate::Identifiable;
 use std::io::{self, Write};
 
 #[repr(C)]
@@ -22,13 +21,13 @@ impl Mapping {}
 impl Value for Mapping {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-    fn encoded_len(&self) -> u64 {
-        Varint(self.id).field(1).encoded_len()
-            + Varint(self.memory_start).field(2).encoded_len_small()
-            + Varint(self.memory_limit).field(3).encoded_len_small()
-            + Varint(self.file_offset).field(4).encoded_len_small()
-            + Varint(self.filename.to_u64()).field(5).encoded_len_small()
-            + Varint(self.build_id.to_u64()).field(6).encoded_len_small()
+    fn proto_len(&self) -> u64 {
+        Varint(self.id).field(1).proto_len()
+            + Varint(self.memory_start).field(2).proto_len_small()
+            + Varint(self.memory_limit).field(3).proto_len_small()
+            + Varint(self.file_offset).field(4).proto_len_small()
+            + Varint(self.filename.to_u64()).field(5).proto_len_small()
+            + Varint(self.build_id.to_u64()).field(6).proto_len_small()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
@@ -38,12 +37,6 @@ impl Value for Mapping {
         Varint(self.file_offset).field(4).encode_small(writer)?;
         Varint(self.filename.into()).field(5).encode_small(writer)?;
         Varint(self.build_id.into()).field(6).encode_small(writer)
-    }
-}
-
-impl Identifiable for Mapping {
-    fn id(&self) -> u64 {
-        self.id
     }
 }
 
@@ -85,7 +78,7 @@ mod tests {
         assert_eq!(i64::from(mapping.build_id), prost_mapping.build_id);
 
         let roundtrip = {
-            let mut buffer = Vec::with_capacity(mapping.encoded_len() as usize);
+            let mut buffer = Vec::with_capacity(mapping.proto_len() as usize);
             mapping.encode(&mut buffer).unwrap();
             prost_impls::Mapping::decode(buffer.as_slice()).unwrap()
         };

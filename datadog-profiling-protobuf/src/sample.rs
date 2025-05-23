@@ -14,13 +14,13 @@ pub struct Sample<'a> {
 impl Value for Sample<'_> {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-    fn encoded_len(&self) -> u64 {
-        let locations = PackedVarint::new(self.location_ids).field(1).encoded_len();
-        let values = PackedVarint::new(self.values).field(2).encoded_len();
+    fn proto_len(&self) -> u64 {
+        let locations = PackedVarint::new(self.location_ids).field(1).proto_len();
+        let values = PackedVarint::new(self.values).field(2).proto_len();
         let labels = self
             .labels
             .iter()
-            .map(|label| label.field(3).encoded_len())
+            .map(|label| label.field(3).proto_len())
             .sum::<u64>();
         locations + values + labels
     }
@@ -72,7 +72,7 @@ mod tests {
         };
 
         use prost::Message;
-        let len = sample.encoded_len() as usize;
+        let len = sample.proto_len() as usize;
         let mut buffer = Vec::with_capacity(len);
         sample.encode(&mut buffer).unwrap();
         let roundtrip = prost_impls::Sample::decode(buffer.as_slice()).unwrap();
@@ -96,12 +96,12 @@ mod tests {
 
                 let prost_sample = prost_impls::Sample::from(sample);
 
-                let mut buffer = Vec::with_capacity(sample.encoded_len() as usize);
+                let mut buffer = Vec::with_capacity(sample.proto_len() as usize);
                 sample.encode(&mut buffer).unwrap();
                 let roundtrip = prost_impls::Sample::decode(buffer.as_slice()).unwrap();
                 assert_eq!(prost_sample, roundtrip);
 
-                let mut buffer2 = Vec::with_capacity(sample.encoded_len() as usize);
+                let mut buffer2 = Vec::with_capacity(sample.proto_len() as usize);
                 prost_sample.encode(&mut buffer2).unwrap();
                 let roundtrip2 = prost_impls::Sample::decode(buffer2.as_slice()).unwrap();
                 assert_eq!(roundtrip, roundtrip2);

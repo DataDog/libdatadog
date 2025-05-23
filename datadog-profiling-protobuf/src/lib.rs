@@ -42,7 +42,7 @@ pub struct Tag {
 pub trait Value {
     const WIRE_TYPE: WireType;
 
-    fn encoded_len(&self) -> u64;
+    fn proto_len(&self) -> u64;
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()>;
 
@@ -72,21 +72,21 @@ impl<V: Value> Pair<V> {
         Pair { field, value }
     }
 
-    pub fn encoded_len(&self) -> u64 {
-        let tag = Tag::new(self.field, V::WIRE_TYPE).encoded_len();
+    pub fn proto_len(&self) -> u64 {
+        let tag = Tag::new(self.field, V::WIRE_TYPE).proto_len();
         let len_prefix = if V::WIRE_TYPE == WireType::LengthDelimited {
-            self.value.encoded_len()
+            self.value.proto_len()
         } else {
             0
         };
-        let value = self.value.encoded_len();
+        let value = self.value.proto_len();
         tag + len_prefix + value
     }
 
     #[inline]
-    pub fn encoded_len_small(&self) -> u64 {
-        if self.value.encoded_len() != 0 {
-            self.encoded_len()
+    pub fn proto_len_small(&self) -> u64 {
+        if self.value.proto_len() != 0 {
+            self.proto_len()
         } else {
             0
         }
@@ -95,7 +95,7 @@ impl<V: Value> Pair<V> {
     pub fn encode(&self, writer: &mut impl Write) -> io::Result<()> {
         Tag::new(self.field, V::WIRE_TYPE).encode(writer)?;
         if V::WIRE_TYPE == WireType::LengthDelimited {
-            let len = self.value.encoded_len();
+            let len = self.value.proto_len();
             Varint(len).encode(writer)?;
         }
         self.value.encode(writer)
@@ -103,7 +103,7 @@ impl<V: Value> Pair<V> {
 
     #[inline]
     pub fn encode_small(&self, writer: &mut impl Write) -> io::Result<()> {
-        let len = self.value.encoded_len();
+        let len = self.value.proto_len();
         if len == 0 {
             return Ok(());
         }
@@ -118,10 +118,6 @@ impl<V: Value> Pair<V> {
 
 pub trait TagEncodable {
     fn encode_with_tag<W: Write>(&self, w: &mut W, field: u32) -> io::Result<()>;
-}
-
-pub trait Identifiable: Value {
-    fn id(&self) -> u64;
 }
 
 /// The smallest possible protobuf field number.
@@ -144,16 +140,17 @@ pub enum WireType {
 impl Varint {
     /// Returns the number of bytes it takes to encode a varint. This is
     /// between 1 and 10 bytes, inclusive.
-    pub const fn encoded_len(&self) -> u64 {
+    pub const fn proto_len(&self) -> u64 {
         // https://github.com/google/protobuf/blob/3.3.x/src/google/protobuf/io/coded_stream.h#L1301-L1309
         ((((self.0 | 1).leading_zeros() ^ 63) * 9 + 73) / 64) as u64
     }
 }
+
 impl Value for Varint {
     const WIRE_TYPE: WireType = WireType::Varint;
 
-    fn encoded_len(&self) -> u64 {
-        self.encoded_len()
+    fn proto_len(&self) -> u64 {
+        self.proto_len()
     }
 
     /// Encodes a varint according to protobuf semantics.
@@ -216,8 +213,8 @@ impl Tag {
     }
 
     #[inline]
-    pub const fn encoded_len(self) -> u64 {
-        self.into_varint().encoded_len()
+    pub const fn proto_len(self) -> u64 {
+        self.into_varint().proto_len()
     }
 
     #[inline]
@@ -250,10 +247,10 @@ where
 {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-    fn encoded_len(&self) -> u64 {
+    fn proto_len(&self) -> u64 {
         self.values
             .iter()
-            .map(|x| Varint::from(x).encoded_len())
+            .map(|x| Varint::from(x).proto_len())
             .sum()
     }
 
@@ -272,6 +269,6 @@ mod tests {
     #[test]
     fn max_varint_len() {
         assert_eq!(MAX_VARINT_LEN, 10);
-        assert_eq!(MAX_VARINT_LEN, Varint(u64::MAX).encoded_len());
+        assert_eq!(MAX_VARINT_LEN, Varint(u64::MAX).proto_len());
     }
 }

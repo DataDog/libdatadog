@@ -19,11 +19,11 @@ pub struct Label {
 impl Value for Label {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
-    fn encoded_len(&self) -> u64 {
-        Varint::from(self.key.to_u64()).field(1).encoded_len()
-            + Varint(self.str.to_u64()).field(2).encoded_len_small()
-            + Varint(self.num as u64).field(3).encoded_len_small()
-            + Varint(self.num_unit.to_u64()).field(4).encoded_len_small()
+    fn proto_len(&self) -> u64 {
+        Varint::from(self.key.to_u64()).field(1).proto_len()
+            + Varint(self.str.to_u64()).field(2).proto_len_small()
+            + Varint(self.num as u64).field(3).proto_len_small()
+            + Varint(self.num_unit.to_u64()).field(4).proto_len_small()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
