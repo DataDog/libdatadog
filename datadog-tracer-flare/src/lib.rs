@@ -164,7 +164,7 @@ pub async fn run_remote_config_listener(
             }
         }
         Err(e) => {
-            FlareError::ListeningError(e.to_string());
+            return Err(FlareError::ListeningError(e.to_string()));
         }
     }
 
