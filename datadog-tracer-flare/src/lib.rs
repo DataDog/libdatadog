@@ -205,7 +205,8 @@ mod tests {
             env,
             app_version,
             runtime_id,
-        ).unwrap();
+        )
+        .unwrap();
 
         for _ in 0..3 {
             let result = run_remote_config_listener(&mut listener).await;
