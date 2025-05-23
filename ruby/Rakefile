@@ -129,10 +129,9 @@ task push_to_rubygems: [
   :package,
   :"release:guard_clean"
 ] do
-  puts "TODO: DISABLED PUSHING TO RUBYGEMS"
-  # abort unless system("gem push pkg/libdatadog-#{Libdatadog::VERSION}.gem")
-  # abort unless system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-x86_64-linux.gem")
-  # abort unless system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-aarch64-linux.gem")
+  abort unless system("gem push pkg/libdatadog-#{Libdatadog::VERSION}.gem")
+  abort unless system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-x86_64-linux.gem")
+  abort unless system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-aarch64-linux.gem")
 end
 
 module Helpers
