@@ -20,6 +20,7 @@ use interning_api::Generation;
 use lz4_flex::frame::FrameEncoder;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::io;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -324,6 +325,32 @@ impl Profile {
         end_time: Option<SystemTime>,
         duration: Option<Duration>,
     ) -> anyhow::Result<EncodedProfile> {
+        // On 2023-08-23, we analyzed the uploaded tarball size per language.
+        // These tarballs include 1 or more profiles, but for most languages
+        // using libdatadog (all?) there is only 1 profile, so this is a good
+        // proxy for the compressed, final size of the profiles.
+        // We found that for all languages using libdatadog, the average
+        // tarball was at least 18 KiB. Since these archives are compressed,
+        // and because profiles compress well, especially ones with timeline
+        // enabled (over 9x for some analyzed timeline profiles), this initial
+        // size of 32KiB should definitely outperform starting at zero for
+        // time consumed, allocator pressure, and allocator fragmentation.
+        const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
+        let mut compressor = FrameEncoder::new(Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE));
+
+        let mut encoded_profile = self.encode(&mut compressor, end_time, duration)?;
+        encoded_profile.buffer = compressor.finish()?;
+        Ok(encoded_profile)
+    }
+
+    /// Encodes the profile. Note that the buffer will be empty. The caller
+    /// needs to flush/finish the writer, then fill/replace the buffer.
+    fn encode<W: io::Write>(
+        mut self,
+        writer: &mut W,
+        end_time: Option<SystemTime>,
+        duration: Option<Duration>,
+    ) -> io::Result<EncodedProfile> {
         let end = end_time.unwrap_or_else(SystemTime::now);
         let start = self.start_time;
         let endpoints_stats = std::mem::take(&mut self.endpoints.stats);
@@ -337,19 +364,6 @@ impl Profile {
             })
             .as_nanos()
             .min(i64::MAX as u128) as i64;
-
-        // On 2023-08-23, we analyzed the uploaded tarball size per language.
-        // These tarballs include 1 or more profiles, but for most languages
-        // using libdatadog (all?) there is only 1 profile, so this is a good
-        // proxy for the compressed, final size of the profiles.
-        // We found that for all languages using libdatadog, the average
-        // tarball was at least 18 KiB. Since these archives are compressed,
-        // and because profiles compress well, especially ones with timeline
-        // enabled (over 9x for some analyzed timeline profiles), this initial
-        // size of 32KiB should definitely out-perform starting at zero for
-        // time consumed, allocator pressure, and allocator fragmentation.
-        const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
-        let mut compressor = FrameEncoder::new(Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE));
 
         for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
             let labels = self.enrich_sample_labels(sample, timestamp)?;
@@ -369,7 +383,7 @@ impl Profile {
                 labels: &labels,
             };
 
-            item.field(2).encode(&mut compressor)?;
+            item.field(2).encode(writer)?;
         }
 
         // `Sample`s must be emitted before `SampleTypes` since we consume
@@ -383,7 +397,7 @@ impl Profile {
         // In this case, we use `sample_types` during upscaling of `samples`,
         // so we must serialize `Sample` before `SampleType`.
         for sample_type in self.sample_types.iter() {
-            sample_type.field(1).encode(&mut compressor)?;
+            sample_type.field(1).encode(writer)?;
         }
 
         for (offset, item) in self.mappings.into_iter().enumerate() {
@@ -395,7 +409,7 @@ impl Profile {
                 filename: item.filename,
                 build_id: item.build_id,
             };
-            mapping.field(3).encode(&mut compressor)?;
+            mapping.field(3).encode(writer)?;
         }
 
         for (offset, item) in self.locations.into_iter().enumerate() {
@@ -408,7 +422,7 @@ impl Profile {
                     lineno: item.line,
                 },
             };
-            location.field(4).encode(&mut compressor)?;
+            location.field(4).encode(writer)?;
         }
 
         for (offset, item) in self.functions.into_iter().enumerate() {
@@ -418,12 +432,12 @@ impl Profile {
                 system_name: item.system_name,
                 filename: item.filename,
             };
-            function.field(5).encode(&mut compressor)?;
+            function.field(5).encode(writer)?;
         }
 
         let mut lender = self.strings.into_lending_iter();
         while let Some(item) = lender.next() {
-            item.field(6).encode(&mut compressor)?;
+            item.field(6).encode(writer)?;
         }
 
         let time_nanos = self
@@ -433,20 +447,18 @@ impl Profile {
                 duration.as_nanos().min(i64::MAX as u128) as i64
             });
 
-        Varint::from(time_nanos).field(9).encode(&mut compressor)?;
-        Varint::from(duration_nanos)
-            .field(10)
-            .encode(&mut compressor)?;
+        Varint::from(time_nanos).field(9).encode(writer)?;
+        Varint::from(duration_nanos).field(10).encode(writer)?;
 
         if let Some((period, period_type)) = self.period {
-            period_type.field(11).encode(&mut compressor)?;
-            Varint::from(period).field(12).encode(&mut compressor)?;
+            period_type.field(11).encode(writer)?;
+            Varint::from(period).field(12).encode(writer)?;
         };
 
         Ok(EncodedProfile {
             start,
             end,
-            buffer: compressor.finish()?,
+            buffer: Vec::new(),
             endpoints_stats,
         })
     }
