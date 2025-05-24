@@ -21,6 +21,8 @@ impl Value for &str {
 /// equal to 2 GiB. By the time you encode the tag and length prefix for each
 /// string, there's no way to get this many unique-ish strings without first
 /// exceeding the protobuf 2 GiB limit.
+///
+/// A value of 0 means "no string" or "empty string" (they are synonymous).
 #[repr(C)]
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
@@ -157,10 +159,5 @@ impl StringOffset {
     #[inline]
     pub const fn is_zero(&self) -> bool {
         self.0 == 0
-    }
-
-    #[inline]
-    pub const fn to_u64(&self) -> u64 {
-        self.0 as u64
     }
 }

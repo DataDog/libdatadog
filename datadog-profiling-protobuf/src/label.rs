@@ -20,17 +20,17 @@ impl Value for Label {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
     fn proto_len(&self) -> u64 {
-        Varint::from(self.key.to_u64()).field(1).proto_len()
-            + Varint(self.str.to_u64()).field(2).proto_len_small()
-            + Varint(self.num as u64).field(3).proto_len_small()
-            + Varint(self.num_unit.to_u64()).field(4).proto_len_small()
+        Varint::from(self.key).field(1).proto_len()
+            + Varint::from(self.str).field(2).proto_len_small()
+            + Varint::from(self.num).field(3).proto_len_small()
+            + Varint::from(self.num_unit).field(4).proto_len_small()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        Varint::from(self.key.to_u64()).field(1).encode(writer)?;
-        Varint(self.str.into()).field(2).encode_small(writer)?;
-        Varint(self.num as u64).field(3).encode_small(writer)?;
-        Varint(self.num_unit.into()).field(4).encode_small(writer)
+        Varint::from(self.key).field(1).encode(writer)?;
+        Varint::from(self.str).field(2).encode_small(writer)?;
+        Varint::from(self.num).field(3).encode_small(writer)?;
+        Varint::from(self.num_unit).field(4).encode_small(writer)
     }
 }
 

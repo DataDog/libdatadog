@@ -16,13 +16,13 @@ impl Value for ValueType {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
     fn proto_len(&self) -> u64 {
-        Varint(self.r#type.to_u64()).field(1).proto_len_small()
-            + Varint(self.unit.to_u64()).field(2).proto_len_small()
+        Varint::from(self.r#type).field(1).proto_len_small()
+            + Varint::from(self.unit).field(2).proto_len_small()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        Varint(self.r#type.into()).field(1).encode_small(writer)?;
-        Varint(self.unit.into()).field(2).encode_small(writer)
+        Varint::from(self.r#type).field(1).encode_small(writer)?;
+        Varint::from(self.unit).field(2).encode_small(writer)
     }
 }
 

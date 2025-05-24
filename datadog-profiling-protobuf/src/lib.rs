@@ -13,6 +13,7 @@ mod mapping;
 mod sample;
 mod string;
 mod value_type;
+mod varint;
 
 #[cfg(feature = "prost_impls")]
 pub mod prost_impls;
@@ -24,6 +25,7 @@ pub use mapping::*;
 pub use sample::*;
 pub use string::*;
 pub use value_type::*;
+pub use varint::*;
 
 use std::io::{self, Write};
 
@@ -51,12 +53,6 @@ pub trait Value {
         Pair { field, value: self }
     }
 }
-
-/// You can use varint to store any of the listed data types:
-/// int32 | int64 | uint32 | uint64 | bool | enum | sint32 | sint64
-#[repr(transparent)]
-#[derive(Copy, Clone)]
-pub struct Varint(pub u64);
 
 /// A tag and value pair.
 ///
@@ -122,9 +118,6 @@ const MIN_FIELD: u32 = 1;
 /// The largest possible protobuf field number.
 const MAX_FIELD: u32 = (1 << 29) - 1;
 
-/// An encoded 64-bit unsigned number takes between 1 and 10 bytes, inclusive.
-pub const MAX_VARINT_LEN: u64 = 10;
-
 /// Represents the wire type for in-wire protobuf. There are more types than
 /// are represented here; these are just the supported ones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,72 +125,6 @@ pub const MAX_VARINT_LEN: u64 = 10;
 pub enum WireType {
     Varint = 0,
     LengthDelimited = 2,
-}
-impl Varint {
-    /// Returns the number of bytes it takes to encode a varint. This is
-    /// between 1 and 10 bytes, inclusive.
-    pub const fn proto_len(&self) -> u64 {
-        // https://github.com/google/protobuf/blob/3.3.x/src/google/protobuf/io/coded_stream.h#L1301-L1309
-        ((((self.0 | 1).leading_zeros() ^ 63) * 9 + 73) / 64) as u64
-    }
-}
-
-impl Value for Varint {
-    const WIRE_TYPE: WireType = WireType::Varint;
-
-    fn proto_len(&self) -> u64 {
-        self.proto_len()
-    }
-
-    /// Encodes a varint according to protobuf semantics.
-    ///
-    /// Note that it will write between 1 and 10 bytes, inclusive. You should
-    /// probably write to a buffered Write object--if you write directly to
-    /// something like a TCP stream, it's going to send one byte at a time,
-    /// which is excessively inefficient. In libdatadog, we typically write to
-    /// some sort of compressor which has its own input buffer.
-    ///
-    /// See https://protobuf.dev/programming-guides/encoding/#varints
-    #[inline]
-    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        let mut value = self.0;
-        loop {
-            let byte = if value < 0x80 {
-                value as u8
-            } else {
-                ((value & 0x7F) | 0x80) as u8
-            };
-            writer.write_all(&[byte])?;
-            if value < 0x80 {
-                return Ok(());
-            }
-            value >>= 7;
-        }
-    }
-}
-
-impl From<u64> for Varint {
-    fn from(value: u64) -> Self {
-        Varint(value)
-    }
-}
-
-impl From<&u64> for Varint {
-    fn from(value: &u64) -> Self {
-        Varint(*value)
-    }
-}
-
-impl From<i64> for Varint {
-    fn from(value: i64) -> Self {
-        Varint(value as u64)
-    }
-}
-
-impl From<&i64> for Varint {
-    fn from(value: &i64) -> Self {
-        Varint(*value as u64)
-    }
 }
 
 impl Tag {
@@ -209,7 +136,7 @@ impl Tag {
     }
 
     #[inline]
-    pub const fn proto_len(self) -> u64 {
+    pub fn proto_len(self) -> u64 {
         self.into_varint().proto_len()
     }
 
@@ -255,16 +182,5 @@ where
             Varint::from(value).encode(writer)?;
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn max_varint_len() {
-        assert_eq!(MAX_VARINT_LEN, 10);
-        assert_eq!(MAX_VARINT_LEN, Varint(u64::MAX).proto_len());
     }
 }

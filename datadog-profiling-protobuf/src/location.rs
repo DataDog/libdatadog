@@ -1,7 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{Tag, Value, Varint, WireType};
+use crate::varint::Varint;
+use crate::{Tag, Value, WireType};
 use std::io::{self, Write};
 
 #[repr(C)]
@@ -27,12 +28,12 @@ impl Value for Line {
 
     fn proto_len(&self) -> u64 {
         Varint(self.function_id).field(1).proto_len_small()
-            + Varint(self.lineno as u64).field(2).proto_len_small()
+            + Varint::from(self.lineno).field(2).proto_len_small()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         Varint(self.function_id).field(1).encode_small(writer)?;
-        Varint(self.lineno as u64).field(2).encode_small(writer)
+        Varint::from(self.lineno).field(2).encode_small(writer)
     }
 }
 

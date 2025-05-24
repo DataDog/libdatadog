@@ -26,8 +26,8 @@ impl Value for Mapping {
             + Varint(self.memory_start).field(2).proto_len_small()
             + Varint(self.memory_limit).field(3).proto_len_small()
             + Varint(self.file_offset).field(4).proto_len_small()
-            + Varint(self.filename.to_u64()).field(5).proto_len_small()
-            + Varint(self.build_id.to_u64()).field(6).proto_len_small()
+            + Varint::from(self.filename).field(5).proto_len_small()
+            + Varint::from(self.build_id).field(6).proto_len_small()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
@@ -35,8 +35,8 @@ impl Value for Mapping {
         Varint(self.memory_start).field(2).encode_small(writer)?;
         Varint(self.memory_limit).field(3).encode_small(writer)?;
         Varint(self.file_offset).field(4).encode_small(writer)?;
-        Varint(self.filename.into()).field(5).encode_small(writer)?;
-        Varint(self.build_id.into()).field(6).encode_small(writer)
+        Varint::from(self.filename).field(5).encode_small(writer)?;
+        Varint::from(self.build_id).field(6).encode_small(writer)
     }
 }
 

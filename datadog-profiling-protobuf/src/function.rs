@@ -19,18 +19,18 @@ impl Value for Function {
 
     fn proto_len(&self) -> u64 {
         Varint(self.id).field(1).proto_len()
-            + Varint(self.name.to_u64()).field(2).proto_len_small()
-            + Varint(self.system_name.to_u64()).field(3).proto_len_small()
-            + Varint(self.filename.to_u64()).field(4).proto_len_small()
+            + Varint::from(self.name).field(2).proto_len_small()
+            + Varint::from(self.system_name).field(3).proto_len_small()
+            + Varint::from(self.filename).field(4).proto_len_small()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         Varint(self.id).field(1).encode(writer)?;
-        Varint(self.name.into()).field(2).encode_small(writer)?;
-        Varint(self.system_name.into())
+        Varint::from(self.name).field(2).encode_small(writer)?;
+        Varint::from(self.system_name)
             .field(3)
             .encode_small(writer)?;
-        Varint(self.filename.into()).field(4).encode_small(writer)
+        Varint::from(self.filename).field(4).encode_small(writer)
     }
 }
 
