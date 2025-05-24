@@ -321,7 +321,7 @@ impl Profile {
     ///   may fail as system clocks can be adjusted. The programmer may also accidentally pass an
     ///   earlier time. The duration will be set to zero these cases.
     pub fn serialize_into_compressed_pprof(
-        mut self,
+        self,
         end_time: Option<SystemTime>,
         duration: Option<Duration>,
     ) -> anyhow::Result<EncodedProfile> {
@@ -350,7 +350,7 @@ impl Profile {
         writer: &mut W,
         end_time: Option<SystemTime>,
         duration: Option<Duration>,
-    ) -> io::Result<EncodedProfile> {
+    ) -> anyhow::Result<EncodedProfile> {
         let end = end_time.unwrap_or_else(SystemTime::now);
         let start = self.start_time;
         let endpoints_stats = std::mem::take(&mut self.endpoints.stats);
