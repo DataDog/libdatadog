@@ -4,15 +4,25 @@
 use super::{StringOffset, Value, Varint, WireType};
 use std::io::{self, Write};
 
-// todo: if we don't use num_unit, then we can save 8 bytes--4 from num_unit
-//       plus 4 from padding.
+/// Label includes additional context for this sample. It can include things
+/// like a thread id, allocation size, etc.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct Label {
-    pub key: StringOffset,      // 1
-    pub str: StringOffset,      // 2
-    pub num: i64,               // 3
+    /// An annotation for a sample, e.g. "allocation_size".
+    pub key: StringOffset, // 1
+    /// At most, one of the str and num should be used.
+    pub str: StringOffset, // 2
+    /// At most, one of the str and num should be used.
+    pub num: i64, // 3
+
+    // todo: if we don't use num_unit, then we can save 8 bytes--4 from
+    //       num_unit plus 4 from padding.
+    /// Should only be present when num is present.
+    /// Specifies the units of num.
+    /// Use arbitrary string (for example, "requests") as a custom count unit.
+    /// If no unit is specified, consumer may apply heuristic to deduce it.
     pub num_unit: StringOffset, // 4
 }
 
@@ -21,16 +31,19 @@ impl Value for Label {
 
     fn proto_len(&self) -> u64 {
         Varint::from(self.key).field(1).proto_len()
-            + Varint::from(self.str).field(2).proto_len_small()
-            + Varint::from(self.num).field(3).proto_len_small()
-            + Varint::from(self.num_unit).field(4).proto_len_small()
+            + Varint::from(self.str).field(2).zero_opt().proto_len()
+            + Varint::from(self.num).field(3).zero_opt().proto_len()
+            + Varint::from(self.num_unit).field(4).zero_opt().proto_len()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         Varint::from(self.key).field(1).encode(writer)?;
-        Varint::from(self.str).field(2).encode_small(writer)?;
-        Varint::from(self.num).field(3).encode_small(writer)?;
-        Varint::from(self.num_unit).field(4).encode_small(writer)
+        Varint::from(self.str).field(2).zero_opt().encode(writer)?;
+        Varint::from(self.num).field(3).zero_opt().encode(writer)?;
+        Varint::from(self.num_unit)
+            .field(4)
+            .zero_opt()
+            .encode(writer)
     }
 }
 

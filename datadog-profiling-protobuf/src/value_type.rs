@@ -4,6 +4,7 @@
 use crate::{StringOffset, Value, Varint, WireType};
 use std::io::{self, Write};
 
+/// ValueType describes the semantics and measurement units of a value.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
@@ -16,13 +17,16 @@ impl Value for ValueType {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
     fn proto_len(&self) -> u64 {
-        Varint::from(self.r#type).field(1).proto_len_small()
-            + Varint::from(self.unit).field(2).proto_len_small()
+        Varint::from(self.r#type).field(1).zero_opt().proto_len()
+            + Varint::from(self.unit).field(2).zero_opt().proto_len()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        Varint::from(self.r#type).field(1).encode_small(writer)?;
-        Varint::from(self.unit).field(2).encode_small(writer)
+        Varint::from(self.r#type)
+            .field(1)
+            .zero_opt()
+            .encode(writer)?;
+        Varint::from(self.unit).field(2).zero_opt().encode(writer)
     }
 }
 

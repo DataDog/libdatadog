@@ -88,8 +88,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn max_varint_len() {
+    fn test_varint_range() {
         assert_eq!(Varint(0).proto_len(), 1);
+        assert_eq!(Varint(0x80).proto_len(), 2);
         assert_eq!(Varint(u64::MAX).proto_len(), 10);
     }
 }

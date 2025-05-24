@@ -2,38 +2,57 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::varint::Varint;
-use crate::{Tag, Value, WireType};
+use crate::{Value, WireType};
 use std::io::{self, Write};
 
+/// Describes function and line table debug information. This only supports a
+/// single Line, whereas protobuf supports zero or more. The `is_folding`
+/// field is not omitted for size/CPU reasons.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct Location {
-    pub id: u64,         // 1
+    /// Unique nonzero id for the location. A profile could use instruction
+    /// addresses or any integer sequence as ids.
+    pub id: u64, // 1
+    /// The id of the corresponding profile.Mapping for this location.
+    /// It can be unset if the mapping is unknown or not applicable for
+    /// this profile type.
     pub mapping_id: u64, // 2
-    pub address: u64,    // 3
-    pub line: Line,      // 4
+    /// The instruction address for this location, if available. It should be
+    /// within `Mapping.memory_start..Mapping.memory_limit` for the
+    /// corresponding mapping. A non-leaf address may be in the middle of a
+    /// call instruction. It is up to display tools to find the beginning of
+    /// the instruction if necessary.
+    pub address: u64, // 3
+    pub line: Line, // 4
 }
 
+/// Represents function and line number information. Omits column.  
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct Line {
+    /// The id of the corresponding profile.Function for this line.
     pub function_id: u64, // 1
-    pub lineno: i64,      // 2
+    /// Line number in source code.
+    pub lineno: i64, // 2
 }
 
 impl Value for Line {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
     fn proto_len(&self) -> u64 {
-        Varint(self.function_id).field(1).proto_len_small()
-            + Varint::from(self.lineno).field(2).proto_len_small()
+        Varint(self.function_id).field(1).zero_opt().proto_len()
+            + Varint::from(self.lineno).field(2).zero_opt().proto_len()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        Varint(self.function_id).field(1).encode_small(writer)?;
-        Varint::from(self.lineno).field(2).encode_small(writer)
+        Varint(self.function_id)
+            .field(1)
+            .zero_opt()
+            .encode(writer)?;
+        Varint::from(self.lineno).field(2).zero_opt().encode(writer)
     }
 }
 
@@ -55,29 +74,18 @@ impl Value for Location {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
     fn proto_len(&self) -> u64 {
-        let value = self.address;
-        let value1 = self.mapping_id;
-        let base = Varint(self.mapping_id).field(1).proto_len()
-            + Varint(value1).field(2).proto_len_small()
-            + Varint(value).field(3).proto_len_small();
+        let base = Varint(self.id).field(1).proto_len()
+            + Varint(self.mapping_id).field(2).zero_opt().proto_len()
+            + Varint(self.address).field(3).zero_opt().proto_len();
 
-        let needed = {
-            let self1 = &self.line;
-            let value = self1.lineno as u64;
-            let value1 = self1.function_id;
-            let len = Varint(value1).field(1).proto_len_small()
-                + Varint(value).field(2).proto_len_small();
-            len + Varint(len).proto_len() + Tag::new(4, WireType::LengthDelimited).proto_len()
-        };
-        base + needed
+        let line_len = self.line.field(4).proto_len();
+        base + line_len
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         Varint(self.id).field(1).encode(writer)?;
-        let value = self.mapping_id;
-        Varint(value).field(2).encode_small(writer)?;
-        let value = self.address;
-        Varint(value).field(3).encode_small(writer)?;
+        Varint(self.mapping_id).field(2).zero_opt().encode(writer)?;
+        Varint(self.address).field(3).zero_opt().encode(writer)?;
         self.line.field(4).encode(writer)
     }
 }

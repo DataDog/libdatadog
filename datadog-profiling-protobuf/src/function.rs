@@ -4,14 +4,21 @@
 use super::{StringOffset, Value, Varint, WireType};
 use std::io::{self, Write};
 
+/// Represents a function in a profile. Omits the start line because it's not
+/// useful to libdatadog right now, so we save the bytes/ops.
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct Function {
-    pub id: u64,                   // 1
-    pub name: StringOffset,        // 2
+    /// Unique nonzero id for the function.
+    pub id: u64, // 1
+    /// Name of the function, in human-readable form if available.
+    pub name: StringOffset, // 2
+    /// Name of the function, as identified by the system.
+    /// For instance, it can be a C++ mangled name.
     pub system_name: StringOffset, // 3
-    pub filename: StringOffset,    // 4
+    /// Source file containing the function.
+    pub filename: StringOffset, // 4
 }
 
 impl Value for Function {
@@ -19,18 +26,25 @@ impl Value for Function {
 
     fn proto_len(&self) -> u64 {
         Varint(self.id).field(1).proto_len()
-            + Varint::from(self.name).field(2).proto_len_small()
-            + Varint::from(self.system_name).field(3).proto_len_small()
-            + Varint::from(self.filename).field(4).proto_len_small()
+            + Varint::from(self.name).field(2).zero_opt().proto_len()
+            + Varint::from(self.system_name)
+                .field(3)
+                .zero_opt()
+                .proto_len()
+            + Varint::from(self.filename).field(4).zero_opt().proto_len()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         Varint(self.id).field(1).encode(writer)?;
-        Varint::from(self.name).field(2).encode_small(writer)?;
+        Varint::from(self.name).field(2).zero_opt().encode(writer)?;
         Varint::from(self.system_name)
             .field(3)
-            .encode_small(writer)?;
-        Varint::from(self.filename).field(4).encode_small(writer)
+            .zero_opt()
+            .encode(writer)?;
+        Varint::from(self.filename)
+            .field(4)
+            .zero_opt()
+            .encode(writer)
     }
 }
 

@@ -4,11 +4,32 @@
 use crate::{prost_impls, Label, Packed, Value, WireType};
 use std::io::{self, Write};
 
+/// Each Sample records values encountered in some program context. The
+/// program context is typically a stack trace, perhaps augmented with
+/// auxiliary information like the thread-id, some indicator of a higher level
+/// request being handled, etc.
+///
+/// It borrows its data but requires it to be a slice. An iterator wouldn't
+/// work well because we have to walk over the fields twice: one to calculate
+/// the length, and one to encode it.
 #[derive(Copy, Clone, Debug)]
 pub struct Sample<'a> {
+    /// The ids recorded here correspond to a Profile.location.id.
+    /// The leaf is at location_id\[0\].
     pub location_ids: &'a [u64], // 1
-    pub values: &'a [i64],       // 2
-    pub labels: &'a [Label],     // 3
+    /// The type and unit of each value is defined by the corresponding entry
+    /// in Profile.sample_type. All samples must have the same number of
+    /// values, the same as the length of Profile.sample_type. When
+    /// aggregating multiple samples into a single sample, the result has a
+    /// list of values that is the element-wise sum of the original lists.
+    pub values: &'a [i64], // 2
+    /// NOTE: While possible, having multiple values for the same label key is
+    /// strongly discouraged and should never be used. Most tools (e.g. pprof)
+    /// do not have good (or any) support for multi-value labels. And an even
+    /// more discouraged case is having a string label and a numeric label of
+    /// the same name on a sample. Again, possible to express, but should not
+    /// be used.
+    pub labels: &'a [Label], // 3
 }
 
 impl Value for Sample<'_> {
