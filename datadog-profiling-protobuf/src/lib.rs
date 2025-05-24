@@ -32,10 +32,7 @@ use std::io::{self, Write};
 /// A tag is a combination of a wire_type, stored in the least significant
 /// three bits, and the field number that is defined in the .proto file.
 #[derive(Copy, Clone)]
-pub struct Tag {
-    field: u32,
-    wire_type: WireType,
-}
+pub struct Tag(u32);
 
 /// A value is stored differently depending on the wire_type.
 pub trait Value {
@@ -132,22 +129,17 @@ impl Tag {
     #[inline]
     pub const fn new(field: u32, wire_type: WireType) -> Self {
         debug_assert!(field >= MIN_FIELD && field <= MAX_FIELD);
-        Self { field, wire_type }
+        Self((field << 3) | wire_type as u32)
     }
 
     #[inline]
     pub fn proto_len(self) -> u64 {
-        self.into_varint().proto_len()
+        Varint(self.0 as u64).proto_len()
     }
 
     #[inline]
     pub fn encode<W: Write>(self, writer: &mut W) -> io::Result<()> {
-        self.into_varint().encode(writer)
-    }
-
-    #[inline]
-    pub const fn into_varint(self) -> Varint {
-        Varint(((self.field << 3) | self.wire_type as u32) as u64)
+        Varint(self.0 as u64).encode(writer)
     }
 }
 
