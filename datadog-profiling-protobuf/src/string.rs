@@ -16,6 +16,11 @@ impl Value for &str {
     }
 }
 
+/// Represents an offset into the Profile's string table. Note that it cannot
+/// exceed u32 because an entire protobuf message must not be larger than or
+/// equal to 2 GiB. By the time you encode the tag and length prefix for each
+/// string, there's no way to get this many unique-ish strings without first
+/// exceeding the protobuf 2 GiB limit.
 #[repr(C)]
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
