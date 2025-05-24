@@ -33,6 +33,9 @@
 //! # Ok(()) }
 //! ```
 //!
+//! Serialization often happens one byte at a time, so a buffered writer
+//! should probably be used.
+//!
 //! There is no serializer for Profile. It would require borrowing a lot of
 //! data, which becomes unwieldy. It also isn't very compatible with writing
 //! a streaming serializer to lower peak memory usage.
@@ -85,6 +88,9 @@ pub trait Value {
     fn proto_len(&self) -> u64;
 
     /// Encode the value to the in-wire protobuf format.
+    ///
+    /// Serialization often happens one byte at a time, so a buffered writer
+    /// should probably be used.
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()>;
 
     /// Create a Pair with the given field. The wire type will be added
@@ -123,6 +129,9 @@ impl<V: Value> Pair<V> {
     }
 
     /// Encodes the pair into protobuf, without the zero-size optimization.
+    ///
+    /// Serialization often happens one byte at a time, so a buffered writer
+    /// should probably be used.
     ///
     /// # Examples
     ///
@@ -185,6 +194,9 @@ impl<V: Value> WithZeroOptimization<V> {
     /// Encodes into protobuf, using the zero-size optimization. Protobuf
     /// doesn't require fields with values of zero to be present, so to save
     /// space, they can be omitted them altogether.
+    ///
+    /// Serialization often happens one byte at a time, so a buffered writer
+    /// should probably be used.
     ///
     /// # Examples
     ///
