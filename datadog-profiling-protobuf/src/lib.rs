@@ -6,9 +6,6 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-// Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
-// SPDX-License-Identifier: Apache-2.0
-
 mod function;
 mod label;
 mod location;
