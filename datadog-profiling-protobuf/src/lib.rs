@@ -51,7 +51,7 @@ pub trait Value {
     where
         Self: Sized,
     {
-        Pair::new(field, self)
+        Pair { field, value: self }
     }
 }
 
@@ -61,17 +61,17 @@ pub trait Value {
 #[derive(Copy, Clone)]
 pub struct Varint(pub u64);
 
+/// A tag and value pair.
+///
+/// The wire type isn't stored; it's provided by the Value implementation,
+/// which allows us to specialize code.
 pub struct Pair<V: Value> {
     field: u32,
     value: V,
 }
 
 impl<V: Value> Pair<V> {
-    #[inline]
-    pub const fn new(field: u32, value: V) -> Self {
-        Pair { field, value }
-    }
-
+    /// Calculate the size of pair, without using the zero-size optimization.
     pub fn proto_len(&self) -> u64 {
         let tag = Tag::new(self.field, V::WIRE_TYPE).proto_len();
         let value = self.value.proto_len();
@@ -83,6 +83,7 @@ impl<V: Value> Pair<V> {
         tag + len_prefix + value
     }
 
+    /// Calculate the size of pair, using the zero-size optimization.
     #[inline]
     pub fn proto_len_small(&self) -> u64 {
         if self.value.proto_len() != 0 {
@@ -92,6 +93,7 @@ impl<V: Value> Pair<V> {
         }
     }
 
+    /// Encodes into protobuf, without using the zero-size optimization.
     pub fn encode(&self, writer: &mut impl Write) -> io::Result<()> {
         Tag::new(self.field, V::WIRE_TYPE).encode(writer)?;
         if V::WIRE_TYPE == WireType::LengthDelimited {
@@ -101,6 +103,7 @@ impl<V: Value> Pair<V> {
         self.value.encode(writer)
     }
 
+    /// Encodes into protobuf, using the zero-size optimization.
     #[inline]
     pub fn encode_small(&self, writer: &mut impl Write) -> io::Result<()> {
         let len = self.value.proto_len();
@@ -114,10 +117,6 @@ impl<V: Value> Pair<V> {
         }
         self.value.encode(writer)
     }
-}
-
-pub trait TagEncodable {
-    fn encode_with_tag<W: Write>(&self, w: &mut W, field: u32) -> io::Result<()>;
 }
 
 /// The smallest possible protobuf field number.
