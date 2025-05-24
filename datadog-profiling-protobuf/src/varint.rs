@@ -20,15 +20,11 @@ impl Value for Varint {
         ((((self.0 | 1).leading_zeros() ^ 63) * 9 + 73) / 64) as u64
     }
 
-    /// Encodes a varint according to protobuf semantics.
+    /// Encodes a [`varint`] according to protobuf semantics.
     ///
-    /// Note that it will write between 1 and 10 bytes, inclusive. You should
-    /// probably write to a buffered Write object--if you write directly to
-    /// something like a TCP stream, it's going to send one byte at a time,
-    /// which is excessively inefficient. In libdatadog, we typically write to
-    /// some sort of compressor which has its own input buffer.
+    /// Serialization happens one byte at a time; use a buffered writer.
     ///
-    /// See https://protobuf.dev/programming-guides/encoding/#varints
+    /// [`varint`]: https://protobuf.dev/programming-guides/encoding/#varints
     #[inline]
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         let mut value = self.0;
