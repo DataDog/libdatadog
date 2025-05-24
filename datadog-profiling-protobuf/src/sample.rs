@@ -12,7 +12,7 @@ use std::io::{self, Write};
 /// It borrows its data but requires it to be a slice. An iterator wouldn't
 /// work well because we have to walk over the fields twice: one to calculate
 /// the length, and one to encode it.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct Sample<'a> {
     /// The ids recorded here correspond to a Profile.location.id.
     /// The leaf is at location_id\[0\].

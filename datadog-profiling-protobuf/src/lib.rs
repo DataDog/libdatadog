@@ -6,7 +6,8 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-//! This crate implements Protobuf serializers for [`profiles`], including:
+//! This crate implements Protobuf serializers for [`profiles`], including
+//! serializers for:
 //!
 //! - [Function]
 //! - [Label]
@@ -14,6 +15,23 @@
 //! - [Mapping]
 //! - [Sample]
 //! - [ValueType]
+//!
+//! Serialization typically begins with [Value], which is turned into a [Pair]
+//! by calling [Value::field], and then encoding it. For example, a Mapping is
+//! field `3` of a profile message:
+//!
+//! ```
+//! # use datadog_profiling_protobuf::*;
+//! # fn main() -> std::io::Result<()> {
+//! let mut writer = Vec::new(); // could be any std::io::Write
+//! let mapping: Mapping = Mapping {
+//!     id: 1,
+//!     filename: StringOffset::new(2),
+//!     ..Mapping::default()
+//! };
+//! mapping.field(3).encode(&mut writer)?;
+//! # Ok(()) }
+//! ```
 //!
 //! There is no serializer for Profile. It would require borrowing a lot of
 //! data, which becomes unwieldy. It also isn't very compatible with writing
@@ -80,10 +98,12 @@ pub trait Value {
     }
 }
 
-/// A tag and value pair.
+/// A tag and value pair. Call [Pair::proto_len] to get the number of bytes
+/// it takes to encode the Pair if you need to embed it as a submessage, and
+/// use [Pair::encode] to serialize it.
 ///
-/// The wire type isn't stored; it's provided by the Value implementation,
-/// which allows us to specialize code.
+/// The wire type isn't stored; it's implicitly provided by the Value's
+/// implementation, which allows a form of code specialization.
 pub struct Pair<V: Value> {
     field: u32,
     value: V,

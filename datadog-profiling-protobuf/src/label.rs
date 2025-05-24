@@ -7,7 +7,7 @@ use std::io::{self, Write};
 /// Label includes additional context for this sample. It can include things
 /// like a thread id, allocation size, etc.
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct Label {
     /// An annotation for a sample, e.g. "allocation_size".

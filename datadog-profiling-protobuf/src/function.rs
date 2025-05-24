@@ -7,7 +7,7 @@ use std::io::{self, Write};
 /// Represents a function in a profile. Omits the start line because it's not
 /// useful to libdatadog right now, so we save the bytes/ops.
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct Function {
     /// Unique nonzero id for the function.

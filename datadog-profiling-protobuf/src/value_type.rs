@@ -6,7 +6,7 @@ use std::io::{self, Write};
 
 /// ValueType describes the semantics and measurement units of a value.
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct ValueType {
     pub r#type: StringOffset, // 1

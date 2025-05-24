@@ -9,7 +9,7 @@ use std::io::{self, Write};
 /// single Line, whereas protobuf supports zero or more. The `is_folding`
 /// field is not omitted for size/CPU reasons.
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct Location {
     /// Unique nonzero id for the location. A profile could use instruction
@@ -30,7 +30,7 @@ pub struct Location {
 
 /// Represents function and line number information. Omits column.  
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct Line {
     /// The id of the corresponding profile.Function for this line.

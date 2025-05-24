@@ -7,7 +7,7 @@ use std::io::{self, Write};
 /// Represents a mapping in a profile. The boolean fields have been omitted to
 /// save bytes/CPU since they are unused in libdatadog.
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct Mapping {
     /// Unique nonzero id for the mapping.
