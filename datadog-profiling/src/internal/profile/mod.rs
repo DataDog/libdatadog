@@ -14,12 +14,13 @@ use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::StringTable;
 use crate::iter::{IntoLendingIterator, LendingIterator};
-use crate::pprof::sliced_proto::*;
-use crate::serializer::CompressedProtobufSerializer;
 use anyhow::Context;
+use datadog_profiling_protobuf::{self as protobuf, Value, Varint};
 use interning_api::Generation;
+use lz4_flex::frame::FrameEncoder;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::io;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -320,7 +321,33 @@ impl Profile {
     ///   may fail as system clocks can be adjusted. The programmer may also accidentally pass an
     ///   earlier time. The duration will be set to zero these cases.
     pub fn serialize_into_compressed_pprof(
+        self,
+        end_time: Option<SystemTime>,
+        duration: Option<Duration>,
+    ) -> anyhow::Result<EncodedProfile> {
+        // On 2023-08-23, we analyzed the uploaded tarball size per language.
+        // These tarballs include 1 or more profiles, but for most languages
+        // using libdatadog (all?) there is only 1 profile, so this is a good
+        // proxy for the compressed, final size of the profiles.
+        // We found that for all languages using libdatadog, the average
+        // tarball was at least 18 KiB. Since these archives are compressed,
+        // and because profiles compress well, especially ones with timeline
+        // enabled (over 9x for some analyzed timeline profiles), this initial
+        // size of 32KiB should definitely outperform starting at zero for
+        // time consumed, allocator pressure, and allocator fragmentation.
+        const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
+        let mut compressor = FrameEncoder::new(Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE));
+
+        let mut encoded_profile = self.encode(&mut compressor, end_time, duration)?;
+        encoded_profile.buffer = compressor.finish()?;
+        Ok(encoded_profile)
+    }
+
+    /// Encodes the profile. Note that the buffer will be empty. The caller
+    /// needs to flush/finish the writer, then fill/replace the buffer.
+    fn encode<W: io::Write>(
         mut self,
+        writer: &mut W,
         end_time: Option<SystemTime>,
         duration: Option<Duration>,
     ) -> anyhow::Result<EncodedProfile> {
@@ -337,23 +364,6 @@ impl Profile {
             })
             .as_nanos()
             .min(i64::MAX as u128) as i64;
-        let (period, period_type) = match self.period {
-            Some(tuple) => (tuple.0, Some(tuple.1.into())),
-            None => (0, None),
-        };
-
-        // On 2023-08-23, we analyzed the uploaded tarball size per language.
-        // These tarballs include 1 or more profiles, but for most languages
-        // using libdatadog (all?) there is only 1 profile, so this is a good
-        // proxy for the compressed, final size of the profiles.
-        // We found that for all languages using libdatadog, the average
-        // tarball was at least 18 KiB. Since these archives are compressed,
-        // and because profiles compress well, especially ones with timeline
-        // enabled (over 9x for some analyzed timeline profiles), this initial
-        // size of 32KiB should definitely out-perform starting at zero for
-        // time consumed, allocator pressure, and allocator fragmentation.
-        const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
-        let mut encoder = CompressedProtobufSerializer::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
 
         for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
             let labels = self.enrich_sample_labels(sample, timestamp)?;
@@ -366,14 +376,14 @@ impl Profile {
             self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
             self.upscaling_rules.upscale_values(&mut values, &labels)?;
 
-            let labels = labels.into_iter().map(pprof::Label::from).collect();
-            let item = pprof::Sample {
-                location_ids,
-                values,
-                labels,
+            let labels: Vec<_> = labels.into_iter().map(protobuf::Label::from).collect();
+            let item = protobuf::Sample {
+                location_ids: &location_ids,
+                values: &values,
+                labels: &labels,
             };
 
-            encoder.encode(ProfileSamplesEntry::from(item))?;
+            item.field(2).encode(writer)?;
         }
 
         // `Sample`s must be emitted before `SampleTypes` since we consume
@@ -387,43 +397,68 @@ impl Profile {
         // In this case, we use `sample_types` during upscaling of `samples`,
         // so we must serialize `Sample` before `SampleType`.
         for sample_type in self.sample_types.iter() {
-            let item: pprof::ValueType = sample_type.into();
-            encoder.encode(ProfileSampleTypesEntry::from(item))?;
+            sample_type.field(1).encode(writer)?;
         }
 
-        for item in into_pprof_iter(self.mappings) {
-            encoder.encode(ProfileMappingsEntry::from(item))?;
+        for (offset, item) in self.mappings.into_iter().enumerate() {
+            let mapping = protobuf::Mapping {
+                id: (offset + 1) as u64,
+                memory_start: item.memory_start,
+                memory_limit: item.memory_limit,
+                file_offset: item.file_offset,
+                filename: item.filename,
+                build_id: item.build_id,
+            };
+            mapping.field(3).encode(writer)?;
         }
 
-        for item in into_pprof_iter(self.locations) {
-            encoder.encode(ProfileLocationsEntry::from(item))?;
+        for (offset, item) in self.locations.into_iter().enumerate() {
+            let location = protobuf::Location {
+                id: (offset + 1) as u64,
+                mapping_id: item.mapping_id.map(MappingId::into_raw_id).unwrap_or(0),
+                address: item.address,
+                line: protobuf::Line {
+                    function_id: item.function_id.into_raw_id(),
+                    lineno: item.line,
+                },
+            };
+            location.field(4).encode(writer)?;
         }
 
-        for item in into_pprof_iter(self.functions) {
-            encoder.encode(ProfileFunctionsEntry::from(item))?;
+        for (offset, item) in self.functions.into_iter().enumerate() {
+            let function = protobuf::Function {
+                id: (offset + 1) as u64,
+                name: item.name,
+                system_name: item.system_name,
+                filename: item.filename,
+            };
+            function.field(5).encode(writer)?;
         }
 
         let mut lender = self.strings.into_lending_iter();
         while let Some(item) = lender.next() {
-            encoder.encode_string_table_entry(item)?;
+            item.field(6).encode(writer)?;
         }
 
-        encoder.encode(ProfileSimpler {
-            time_nanos: self
-                .start_time
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map_or(0, |duration| {
-                    duration.as_nanos().min(i64::MAX as u128) as i64
-                }),
-            duration_nanos,
-            period_type,
-            period,
-        })?;
+        let time_nanos = self
+            .start_time
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |duration| {
+                duration.as_nanos().min(i64::MAX as u128) as i64
+            });
+
+        Varint::from(time_nanos).field(9).encode(writer)?;
+        Varint::from(duration_nanos).field(10).encode(writer)?;
+
+        if let Some((period, period_type)) = self.period {
+            period_type.field(11).encode(writer)?;
+            Varint::from(period).field(12).encode(writer)?;
+        };
 
         Ok(EncodedProfile {
             start,
             end,
-            buffer: encoder.finish()?,
+            buffer: Vec::new(),
             endpoints_stats,
         })
     }
@@ -830,6 +865,8 @@ impl Profile {
 #[cfg(test)]
 mod api_tests {
     use super::*;
+    use crate::pprof::test_utils::{roundtrip_to_pprof, sorted_samples, string_table_fetch};
+    use datadog_profiling_protobuf::prost_impls;
 
     #[test]
     fn interning() {
@@ -983,7 +1020,7 @@ mod api_tests {
     #[test]
     fn impl_from_profile_for_pprof_profile() {
         let locations = provide_distinct_locations();
-        let profile = pprof::roundtrip_to_pprof(locations).unwrap();
+        let profile = roundtrip_to_pprof(locations).unwrap();
 
         assert_eq!(profile.samples.len(), 3);
         assert_eq!(profile.mappings.len(), 1);
@@ -991,7 +1028,13 @@ mod api_tests {
         assert_eq!(profile.functions.len(), 2);
 
         for (index, mapping) in profile.mappings.iter().enumerate() {
-            assert_eq!((index + 1) as u64, mapping.id);
+            assert_eq!(
+                (index + 1) as u64,
+                mapping.id,
+                "id {id} didn't match offset {offset} for {mapping:#?}",
+                id = mapping.id,
+                offset = index + 1
+            );
         }
 
         for (index, location) in profile.locations.iter().enumerate() {
@@ -1001,80 +1044,59 @@ mod api_tests {
         for (index, function) in profile.functions.iter().enumerate() {
             assert_eq!((index + 1) as u64, function.id);
         }
-        let samples = profile.sorted_samples();
+        let samples = sorted_samples(&profile);
 
         let sample = samples.first().expect("index 0 to exist");
         assert_eq!(sample.labels.len(), 1);
         let label = sample.labels.first().expect("index 0 to exist");
-        let key = profile
-            .string_table
-            .get(label.key as usize)
-            .expect("index to exist");
-        let str = profile
-            .string_table
-            .get(label.str as usize)
-            .expect("index to exist");
-        let num_unit = profile
-            .string_table
-            .get(label.num_unit as usize)
-            .expect("index to exist");
-        assert_eq!(key, "pid");
-        assert_eq!(label.num, 101);
-        assert_eq!(str, "");
-        assert_eq!(num_unit, "");
-
-        let sample = samples.get(1).expect("index 1 to exist");
-        assert_eq!(sample.labels.len(), 1);
-        let label = sample.labels.first().expect("index 0 to exist");
-        let key = profile
-            .string_table
-            .get(label.key as usize)
-            .expect("index to exist");
-        let str = profile
-            .string_table
-            .get(label.str as usize)
-            .expect("index to exist");
-        let num_unit = profile
-            .string_table
-            .get(label.num_unit as usize)
-            .expect("index to exist");
-        assert_eq!(key, "pid");
-        assert_eq!(label.num, 101);
-        assert_eq!(str, "");
-        assert_eq!(num_unit, "");
+        let actual = api::Label {
+            key: string_table_fetch(&profile, label.key),
+            str: string_table_fetch(&profile, label.str),
+            num: label.num,
+            num_unit: string_table_fetch(&profile, label.num_unit),
+        };
+        let expected = api::Label {
+            key: "pid",
+            str: "",
+            num: 101,
+            num_unit: "",
+        };
+        assert_eq!(expected, actual);
 
         let sample = samples.get(2).expect("index 2 to exist");
         assert_eq!(sample.labels.len(), 2);
         let label = sample.labels.first().expect("index 0 to exist");
-        let key = profile
-            .string_table
-            .get(label.key as usize)
-            .expect("index to exist");
-        let str = profile
-            .string_table
-            .get(label.str as usize)
-            .expect("index to exist");
-        let num_unit = profile
-            .string_table
-            .get(label.num_unit as usize)
-            .expect("index to exist");
-        assert_eq!(key, "pid");
-        assert_eq!(label.num, 101);
-        assert_eq!(str, "");
-        assert_eq!(num_unit, "");
+        let actual = api::Label {
+            key: string_table_fetch(&profile, label.key),
+            str: string_table_fetch(&profile, label.str),
+            num: label.num,
+            num_unit: string_table_fetch(&profile, label.num_unit),
+        };
+        let expected = api::Label {
+            key: "pid",
+            str: "",
+            num: 101,
+            num_unit: "",
+        };
+        assert_eq!(expected, actual);
+
         let label = sample.labels.get(1).expect("index 1 to exist");
-        let key = profile
-            .string_table
-            .get(label.key as usize)
-            .expect("index to exist");
-        let str = profile
-            .string_table
-            .get(label.str as usize)
-            .expect("index to exist");
-        let num_unit = profile
-            .string_table
-            .get(label.num_unit as usize)
-            .expect("index to exist");
+        let actual = api::Label {
+            key: string_table_fetch(&profile, label.key),
+            str: string_table_fetch(&profile, label.str),
+            num: label.num,
+            num_unit: string_table_fetch(&profile, label.num_unit),
+        };
+        let expected = api::Label {
+            key: "end_timestamp_ns",
+            str: "",
+            num: 42,
+            num_unit: "",
+        };
+        assert_eq!(expected, actual);
+        let key = string_table_fetch(&profile, label.key);
+        let str = string_table_fetch(&profile, label.str);
+        let num_unit = string_table_fetch(&profile, label.num_unit);
         assert_eq!(key, "end_timestamp_ns");
         assert_eq!(label.num, 42);
         assert_eq!(str, "");
@@ -1138,16 +1160,16 @@ mod api_tests {
 
         // Resolve the string values to check that they match (their string
         // table offsets may not match).
-        let mut strings = Vec::with_capacity(profile.strings.len());
+        let mut strings: Vec<Box<str>> = Vec::with_capacity(profile.strings.len());
         let mut strings_iter = profile.strings.into_lending_iter();
         while let Some(item) = strings_iter.next() {
-            strings.push(Box::from(String::from(item)));
+            strings.push(Box::from(item));
         }
 
         for (value, period_type) in [profile.period.unwrap(), prev.period.unwrap()] {
             assert_eq!(value, period.value);
-            let r#type: &str = &strings[period_type.r#type.to_offset()];
-            let unit: &str = &strings[period_type.unit.to_offset()];
+            let r#type: &str = &strings[usize::from(period_type.r#type)];
+            let unit: &str = &strings[usize::from(period_type.unit)];
             assert_eq!(r#type, period.r#type.r#type);
             assert_eq!(unit, period.r#type.unit);
         }
@@ -1223,9 +1245,9 @@ mod api_tests {
 
         profile.add_endpoint(10, Cow::from("my endpoint"))?;
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
         assert_eq!(serialized_profile.samples.len(), 2);
-        let samples = serialized_profile.sorted_samples();
+        let samples = sorted_samples(&serialized_profile);
 
         let s1 = samples.first().expect("sample");
 
@@ -1235,45 +1257,24 @@ mod api_tests {
         let l1 = s1.labels.first().expect("label");
 
         assert_eq!(
-            serialized_profile
-                .string_table
-                .get(l1.key as usize)
-                .unwrap(),
+            string_table_fetch(&serialized_profile, l1.key),
             "local root span id"
         );
         assert_eq!(l1.num, 10);
 
         let l2 = s1.labels.get(1).expect("label");
 
-        assert_eq!(
-            serialized_profile
-                .string_table
-                .get(l2.key as usize)
-                .unwrap(),
-            "other"
-        );
-        assert_eq!(
-            serialized_profile
-                .string_table
-                .get(l2.str as usize)
-                .unwrap(),
-            "test"
-        );
+        assert_eq!(string_table_fetch(&serialized_profile, l2.key), "other");
+        assert_eq!(string_table_fetch(&serialized_profile, l2.str), "test");
 
         let l3 = s1.labels.get(2).expect("label");
 
         assert_eq!(
-            serialized_profile
-                .string_table
-                .get(l3.key as usize)
-                .unwrap(),
+            string_table_fetch(&serialized_profile, l3.key),
             "trace endpoint"
         );
         assert_eq!(
-            serialized_profile
-                .string_table
-                .get(l3.str as usize)
-                .unwrap(),
+            string_table_fetch(&serialized_profile, l3.str),
             "my endpoint"
         );
 
@@ -1388,7 +1389,7 @@ mod api_tests {
 
         profile.add_sample(sample1, None).expect("add to success");
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.first().expect("one sample");
@@ -1434,7 +1435,7 @@ mod api_tests {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.first().expect("one sample");
@@ -1462,7 +1463,7 @@ mod api_tests {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.first().expect("one sample");
@@ -1494,7 +1495,7 @@ mod api_tests {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.first().expect("one sample");
@@ -1526,7 +1527,7 @@ mod api_tests {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.first().expect("one sample");
@@ -1558,7 +1559,7 @@ mod api_tests {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.first().expect("one sample");
@@ -1658,8 +1659,8 @@ mod api_tests {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
             .expect("Rule added");
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
-        let samples = serialized_profile.sorted_samples();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
+        let samples = sorted_samples(&serialized_profile);
         let first = samples.first().expect("first sample");
 
         assert_eq!(first.values, vec![2, 10000, 42]);
@@ -1722,8 +1723,8 @@ mod api_tests {
             .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info2)
             .expect("Rule added");
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
-        let samples = serialized_profile.sorted_samples();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
+        let samples = sorted_samples(&serialized_profile);
         let first = samples.first().expect("first sample");
 
         assert_eq!(first.values, vec![2, 10000, 105]);
@@ -1781,7 +1782,7 @@ mod api_tests {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.first().expect("one sample");
@@ -1816,7 +1817,7 @@ mod api_tests {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.first().expect("one sample");
@@ -1873,8 +1874,8 @@ mod api_tests {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
-        let samples = serialized_profile.sorted_samples();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
+        let samples = sorted_samples(&serialized_profile);
 
         let first = samples.first().expect("one sample");
 
@@ -1957,8 +1958,8 @@ mod api_tests {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
-        let samples = serialized_profile.sorted_samples();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
+        let samples = sorted_samples(&serialized_profile);
         let first = samples.first().expect("one sample");
 
         assert_eq!(first.values, vec![2, 10000, 42]);
@@ -1997,7 +1998,7 @@ mod api_tests {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.first().expect("one sample");
@@ -2039,7 +2040,7 @@ mod api_tests {
             )
             .expect("Rule added");
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
         assert_eq!(serialized_profile.samples.len(), 1);
         let first = serialized_profile.samples.first().expect("one sample");
@@ -2364,7 +2365,7 @@ mod api_tests {
         profile.add_endpoint(10, Cow::from("endpoint 10"))?;
         profile.add_endpoint(large_span_id, Cow::from("large endpoint"))?;
 
-        let serialized_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+        let serialized_profile = roundtrip_to_pprof(profile).unwrap();
         assert_eq!(serialized_profile.samples.len(), 2);
 
         // Find common label strings in the string table.
@@ -2390,28 +2391,33 @@ mod api_tests {
         // Set up the expected labels per sample
         let expected_labels = [
             [
-                pprof::Label {
+                prost_impls::Label {
                     key: local_root_span_id,
-                    str: 0,
                     num: large_num,
-                    num_unit: 0,
+                    ..Default::default()
                 },
-                pprof::Label::str(trace_endpoint, locate_string("large endpoint")),
+                prost_impls::Label {
+                    key: trace_endpoint,
+                    str: locate_string("large endpoint"),
+                    ..Default::default()
+                },
             ],
             [
-                pprof::Label {
+                prost_impls::Label {
                     key: local_root_span_id,
-                    str: 0,
                     num: 10,
-                    num_unit: 0,
+                    ..Default::default()
                 },
-                pprof::Label::str(trace_endpoint, locate_string("endpoint 10")),
+                prost_impls::Label {
+                    key: trace_endpoint,
+                    str: locate_string("endpoint 10"),
+                    ..Default::default()
+                },
             ],
         ];
 
         // Finally, match the labels.
-        for (sample, labels) in serialized_profile
-            .sorted_samples()
+        for (sample, labels) in sorted_samples(&serialized_profile)
             .iter()
             .zip(expected_labels.iter())
         {
@@ -2454,7 +2460,7 @@ mod api_tests {
         profile.add_string_id_sample(sample.clone(), None).unwrap();
 
         let pprof_first_profile =
-            pprof::roundtrip_to_pprof(profile.reset_and_return_previous().unwrap()).unwrap();
+            roundtrip_to_pprof(profile.reset_and_return_previous().unwrap()).unwrap();
 
         assert!(pprof_first_profile
             .string_table
@@ -2470,7 +2476,7 @@ mod api_tests {
 
         profile.add_string_id_sample(sample.clone(), None).unwrap();
         profile.add_string_id_sample(sample.clone(), None).unwrap();
-        let pprof_second_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+        let pprof_second_profile = roundtrip_to_pprof(profile).unwrap();
 
         assert!(pprof_second_profile
             .string_table

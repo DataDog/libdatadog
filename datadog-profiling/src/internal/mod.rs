@@ -30,6 +30,5 @@ pub use timestamp::*;
 pub use upscaling::*;
 pub use value_type::*;
 
-use super::pprof;
 use crate::collections::identifiable::*;
 use std::num::NonZeroU32;

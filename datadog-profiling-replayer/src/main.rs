@@ -159,7 +159,7 @@ fn main() -> anyhow::Result<()> {
         std::fs::read(input)?
     };
 
-    let pprof = datadog_profiling::pprof::Profile::decode(&mut Cursor::new(source))?;
+    let pprof = datadog_profiling_protobuf::prost_impls::Profile::decode(&mut Cursor::new(source))?;
 
     let mut replayer = Replayer::try_from(&pprof)?;
 

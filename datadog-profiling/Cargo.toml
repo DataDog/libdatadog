@@ -23,9 +23,9 @@ bitmaps = "3.2.0"
 byteorder = { version = "1.5", features = ["std"] }
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
-datadog-alloc = {path = "../datadog-alloc" }
+datadog-alloc = { path = "../datadog-alloc" }
+datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["prost_impls"] }
 ddcommon = {path = "../ddcommon" }
-derivative = "2.2.0"
 futures = { version = "0.3", default-features = false }
 http = "1.0"
 hyper = { version = "1.6", features = ["http1", "client"] }
