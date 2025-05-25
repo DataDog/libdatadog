@@ -21,4 +21,5 @@ pub enum UploadCompression {
     #[default]
     On,
     Lz4,
+    Zstd,
 }

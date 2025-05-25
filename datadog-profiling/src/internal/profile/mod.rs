@@ -360,6 +360,14 @@ impl Profile {
                     ..encoded_profile
                 }
             }
+            UploadCompression::Zstd => {
+                let mut compressor = zstd::Encoder::new(buffer, 1)?;
+                let encoded_profile = self.encode(&mut compressor, end_time, duration)?;
+                EncodedProfile {
+                    buffer: compressor.finish()?,
+                    ..encoded_profile
+                }
+            }
         })
     }
 
