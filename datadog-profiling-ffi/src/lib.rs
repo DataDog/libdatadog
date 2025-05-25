@@ -14,6 +14,8 @@ mod exporter;
 mod profiles;
 mod string_storage;
 
+pub use profiles::*;
+
 // re-export crashtracker ffi
 #[cfg(feature = "crashtracker-ffi")]
 pub use datadog_crashtracker_ffi::*;

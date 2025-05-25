@@ -12,3 +12,13 @@ pub mod exporter;
 pub mod internal;
 pub mod iter;
 pub mod pprof;
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default)]
+pub enum UploadCompression {
+    Off,
+    /// On is the default. The compression algorithm used can change over time.
+    #[default]
+    On,
+    Lz4,
+}

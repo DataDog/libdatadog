@@ -407,14 +407,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_get_generation(
 }
 
 /// This functions returns whether the given generations are equal.
-///
-/// # Safety: No safety requirements
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Profile_generations_are_equal(
-    a: Generation,
-    b: Generation,
-) -> bool {
+pub extern "C" fn ddog_prof_Profile_generations_are_equal(a: Generation, b: Generation) -> bool {
     a == b
 }
 

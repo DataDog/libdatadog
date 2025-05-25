@@ -70,6 +70,15 @@ impl From<anyhow::Result<()>> for ProfileResult {
     }
 }
 
+impl From<ProfileResult> for Result<(), Error> {
+    fn from(result: ProfileResult) -> Self {
+        match result {
+            ProfileResult::Ok(_) => Ok(()),
+            ProfileResult::Err(err) => Err(err),
+        }
+    }
+}
+
 /// Returned by [ddog_prof_Profile_new].
 #[allow(dead_code)]
 #[repr(C)]
@@ -77,6 +86,15 @@ pub enum ProfileNewResult {
     Ok(Profile),
     #[allow(dead_code)]
     Err(Error),
+}
+
+impl From<ProfileNewResult> for Result<Profile, Error> {
+    fn from(value: ProfileNewResult) -> Self {
+        match value {
+            ProfileNewResult::Ok(v) => Ok(v),
+            ProfileNewResult::Err(e) => Err(e),
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -390,7 +408,7 @@ impl<'a> From<Sample<'a>> for api::StringIdSample<'a> {
 ///   time.
 ///
 /// # Safety
-/// All slices must be have pointers that are suitably aligned for their type
+/// All slices must have pointers that are suitably aligned for their type
 /// and must have the correct number of elements for the slice.
 #[no_mangle]
 #[must_use]
@@ -401,7 +419,11 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
     profile_new(sample_types, period, None)
 }
 
-/// Same as `ddog_profile_new` but also configures a `string_storage` for the profile.
+/// Same as [ddog_prof_Profile_new] but also configures a `string_storage` for
+/// the profile.
+///
+/// # Safety
+/// Has all same safety conditions as [ddog_prof_Profile_new].
 #[no_mangle]
 #[must_use]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
@@ -444,26 +466,6 @@ pub unsafe extern "C" fn ddog_prof_Profile_drop(profile: *mut Profile) {
     // then it's okay, but it's not something that should be relied on.
     if !profile.is_null() {
         drop((*profile).take())
-    }
-}
-
-#[cfg(test)]
-impl From<ProfileResult> for Result<(), Error> {
-    fn from(result: ProfileResult) -> Self {
-        match result {
-            ProfileResult::Ok(_) => Ok(()),
-            ProfileResult::Err(err) => Err(err),
-        }
-    }
-}
-
-#[cfg(test)]
-impl From<ProfileNewResult> for Result<Profile, Error> {
-    fn from(result: ProfileNewResult) -> Self {
-        match result {
-            ProfileNewResult::Ok(p) => Ok(p),
-            ProfileNewResult::Err(err) => Err(err),
-        }
     }
 }
 
@@ -545,6 +547,58 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint(
     })()
     .context("ddog_prof_Profile_set_endpoint failed")
     .into()
+}
+
+/// Sets the profile's upload compression algorithm. Useful only for testing.
+///
+/// # Errors
+///
+/// Returns an error if either the pointer or the inner profiler ptr is null.
+///
+/// # Safety
+///
+/// The `profile` ptr must point to a valid Profile object.
+///
+/// # Examples
+///
+/// ```
+/// # use datadog_profiling_ffi::{Error, ddog_prof_Profile_set_upload_compression, ddog_prof_Profile_new, ValueType, Slice, CharSlice};
+/// # use std::ptr::addr_of_mut;
+/// # fn main() -> Result<(), Error> { unsafe {
+/// use datadog_profiling::UploadCompression;
+///
+/// let mut profile = Result::from(ddog_prof_Profile_new(
+///     Slice::from([ValueType {
+///         type_: CharSlice::from("sample"),
+///         unit: CharSlice::from("count"),
+///     }].as_slice()),
+///     None,
+/// ))?;
+///
+/// // Set compression off (only for testing).
+/// Result::from(ddog_prof_Profile_set_upload_compression(
+///     addr_of_mut!(profile),
+///     UploadCompression::Off
+/// ))?;
+/// # } Ok(()) }
+/// ```
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_prof_Profile_set_upload_compression(
+    profile: *mut Profile,
+    upload_compression: datadog_profiling::UploadCompression,
+) -> ProfileResult {
+    match profile_ptr_to_inner(profile) {
+        Ok(profile) => {
+            profile.set_upload_compression(upload_compression);
+            ProfileResult::Ok(true)
+        }
+        Err(err) => {
+            let e = err.context(concat!(function_name!(), " failed"));
+            ProfileResult::Err(e.into())
+        }
+    }
 }
 
 /// Count the number of times an endpoint has been seen.
@@ -759,6 +813,14 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     .into()
 }
 
+/// Borrows FFI Vec as an FFI Slice.
+///
+/// # Safety
+/// The input needs to be a valid reference to an FFI Vec, and the slice needs
+/// to be used in a way consistent with the lifetime and safety rules. Some
+/// things to avoid:
+///  - Do not modify the Vec at all while the Slice is alive.
+///  - Do not drop the Vec while the Slice is alive.
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &ddcommon_ffi::Vec<u8>) -> Slice<u8> {
