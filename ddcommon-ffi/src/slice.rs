@@ -130,6 +130,13 @@ impl<'a, T: 'a> Slice<'a, T> {
         }
     }
 
+    /// # Safety
+    /// Callers must ensure this is only used for read or drop purposes
+    /// that are compatible with how the memory was originally allocated.
+    pub const fn as_raw_parts(&self) -> (*const T, usize) {
+        (self.ptr, self.len)
+    }
+
     pub const fn new(slice: &[T]) -> Self {
         Self {
             ptr: slice.as_ptr(),
