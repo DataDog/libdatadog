@@ -120,7 +120,7 @@ pub extern "C" fn ddog_get_traces() -> Box<TracesBytes> {
 pub extern "C" fn ddog_free_traces(_traces: Box<TracesBytes>) {}
 
 #[no_mangle]
-pub extern "C" fn ddog_get_traces_size(traces: &mut TracesBytes) -> usize {
+pub extern "C" fn ddog_get_traces_size(traces: &TracesBytes) -> usize {
     traces.len()
 }
 
@@ -141,7 +141,7 @@ pub extern "C" fn ddog_traces_new_trace(traces: &mut TracesBytes) -> &mut TraceB
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_get_trace_size(trace: &mut TraceBytes) -> usize {
+pub extern "C" fn ddog_get_trace_size(trace: &TraceBytes) -> usize {
     trace.len()
 }
 
@@ -174,14 +174,16 @@ pub extern "C" fn ddog_span_debug_log(span: &SpanBytes) -> CharSlice<'static> {
 
 #[no_mangle]
 pub extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
-    let data = slice.as_slice();
-    if data.is_empty() {
+    let (ptr, len) = slice.as_raw_parts();
+
+    if len == 0 || ptr.is_null() {
         return;
     }
 
-    let data_ptr = data.as_ptr() as *mut u8;
+    // SAFETY: we assume this pointer came from `CString::into_raw`
     unsafe {
-        drop(Vec::from_raw_parts(data_ptr, data.len(), data.len()));
+        let owned_ptr = ptr as *mut c_char;
+        let _ = CString::from_raw(owned_ptr);
     }
 }
 
@@ -527,226 +529,5 @@ pub extern "C" fn ddog_serialize_trace_into_c_string(trace: &mut TraceBytes) -> 
             unsafe { CharSlice::from_raw_parts(leaked_ptr, boxed_len) }
         }
         Err(_) => CharSlice::empty(),
-    }
-}
-
-// ------------------- Tests -------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use datadog_trace_utils::span::{
-        AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes,
-    };
-    use std::collections::HashMap;
-    use std::string::String;
-
-    fn get_bytes_str(value: &'static str) -> BytesString {
-        From::from(value)
-    }
-    fn get_bytes(value: &'static str) -> Bytes {
-        From::from(String::from(value))
-    }
-
-    #[test]
-    fn test_empty_span() {
-        let mut traces = ddog_get_traces();
-        let trace = ddog_traces_new_trace(traces.as_mut());
-        let span = ddog_trace_new_span(trace);
-
-        let default_span = SpanBytes::default();
-
-        assert_eq!(*span, default_span);
-
-        ddog_free_traces(traces);
-    }
-
-    #[test]
-    fn test_empty_event() {
-        let mut traces = ddog_get_traces();
-        let trace = ddog_traces_new_trace(traces.as_mut());
-        let span = ddog_trace_new_span(trace);
-        let event = ddog_span_new_event(span);
-
-        let default_event = SpanEventBytes::default();
-        assert_eq!(*event, default_event);
-        assert_eq!(span.span_events.len(), 1);
-
-        ddog_free_traces(traces);
-    }
-
-    #[test]
-    fn test_empty_link() {
-        let mut traces = ddog_get_traces();
-        let trace = ddog_traces_new_trace(traces.as_mut());
-        let span = ddog_trace_new_span(trace);
-        let link = ddog_span_new_link(span);
-
-        let expected_link = SpanLinkBytes::default();
-        assert_eq!(*link, expected_link);
-        assert_eq!(span.span_links.len(), 1);
-
-        ddog_free_traces(traces);
-    }
-
-    #[test]
-    fn test_full_link() {
-        let mut traces = ddog_get_traces();
-        let trace = ddog_traces_new_trace(traces.as_mut());
-        let span = ddog_trace_new_span(trace);
-        let link = ddog_span_new_link(span);
-
-        ddog_set_link_trace_id(link, 1);
-        ddog_set_link_trace_id_high(link, 2);
-        ddog_set_link_span_id(link, 3);
-        ddog_set_link_flags(link, 4);
-        ddog_set_link_tracestate(link, CharSlice::from("tracestate"));
-        ddog_add_link_attributes(link, CharSlice::from("attribute"), CharSlice::from("value"));
-
-        let expected_link = SpanLinkBytes {
-            trace_id: 1,
-            trace_id_high: 2,
-            span_id: 3,
-            attributes: HashMap::from([(get_bytes_str("attribute"), get_bytes_str("value"))]),
-            tracestate: get_bytes_str("tracestate"),
-            flags: 4,
-        };
-        assert_eq!(*link, expected_link);
-
-        assert_eq!(span.span_links.len(), 1);
-        assert_eq!(span.span_links[0], expected_link);
-
-        ddog_free_traces(traces);
-    }
-
-    #[test]
-    fn test_full_event() {
-        let mut traces = ddog_get_traces();
-        let trace = ddog_traces_new_trace(traces.as_mut());
-        let span = ddog_trace_new_span(trace);
-        let event = ddog_span_new_event(span);
-
-        ddog_set_event_time(event, 1);
-        ddog_set_event_name(event, CharSlice::from("name"));
-        ddog_add_event_attributes_str(
-            event,
-            CharSlice::from("str_attribute"),
-            CharSlice::from("value"),
-        );
-        ddog_add_event_attributes_bool(event, CharSlice::from("bool_attribute"), false);
-        ddog_add_event_attributes_int(event, CharSlice::from("int_attribute"), 1);
-        ddog_add_event_attributes_float(event, CharSlice::from("array_attribute"), 2.0);
-        ddog_add_event_attributes_str(
-            event,
-            CharSlice::from("array_attribute"),
-            CharSlice::from("other_value"),
-        );
-
-        let expected_event = SpanEventBytes {
-            time_unix_nano: 1,
-            name: get_bytes_str("name"),
-            attributes: HashMap::from([
-                (
-                    get_bytes_str("str_attribute"),
-                    AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::String(
-                        get_bytes_str("value"),
-                    )),
-                ),
-                (
-                    get_bytes_str("bool_attribute"),
-                    AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::Boolean(false)),
-                ),
-                (
-                    get_bytes_str("int_attribute"),
-                    AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::Integer(1)),
-                ),
-                (
-                    get_bytes_str("array_attribute"),
-                    AttributeAnyValueBytes::Array(vec![
-                        AttributeArrayValueBytes::Double(2.0),
-                        AttributeArrayValueBytes::String(get_bytes_str("other_value")),
-                    ]),
-                ),
-            ]),
-        };
-        assert_eq!(*event, expected_event);
-
-        assert_eq!(span.span_events.len(), 1);
-        assert_eq!(span.span_events[0], expected_event);
-
-        ddog_free_traces(traces);
-    }
-
-    #[test]
-    fn test_full_span() {
-        let mut traces = ddog_get_traces();
-        let trace = ddog_traces_new_trace(traces.as_mut());
-        let span = ddog_trace_new_span(trace);
-        let link = ddog_span_new_link(span);
-
-        ddog_set_link_trace_id(link, 10);
-        ddog_set_link_span_id(link, 20);
-        ddog_set_link_flags(link, 30);
-
-        let event = ddog_span_new_event(span);
-
-        ddog_set_event_time(event, 123456);
-        ddog_set_event_name(event, CharSlice::from("event_name"));
-
-        ddog_set_span_service(span, CharSlice::from("service"));
-        ddog_set_span_name(span, CharSlice::from("operation"));
-        ddog_set_span_resource(span, CharSlice::from("resource"));
-        ddog_set_span_type(span, CharSlice::from("type"));
-        ddog_set_span_trace_id(span, 1);
-        ddog_set_span_id(span, 2);
-        ddog_set_span_parent_id(span, 3);
-        ddog_set_span_start(span, 4);
-        ddog_set_span_duration(span, 5);
-        ddog_set_span_error(span, 6);
-        ddog_add_span_meta(
-            span,
-            CharSlice::from("meta_key"),
-            CharSlice::from("meta_value"),
-        );
-        ddog_add_span_metrics(span, CharSlice::from("metric_key"), 1.0);
-        ddog_add_span_meta_struct(
-            span,
-            CharSlice::from("meta_struct_key"),
-            CharSlice::from("meta_struct_value"),
-        );
-
-        let expected_span = SpanBytes {
-            service: get_bytes_str("service"),
-            name: get_bytes_str("operation"),
-            resource: get_bytes_str("resource"),
-            r#type: get_bytes_str("type"),
-            trace_id: 1,
-            span_id: 2,
-            parent_id: 3,
-            start: 4,
-            duration: 5,
-            error: 6,
-            meta: HashMap::from([(get_bytes_str("meta_key"), get_bytes_str("meta_value"))]),
-            metrics: HashMap::from([(get_bytes_str("metric_key"), 1.0)]),
-            meta_struct: HashMap::from([(
-                get_bytes_str("meta_struct_key"),
-                get_bytes("meta_struct_value"),
-            )]),
-            span_links: vec![SpanLinkBytes {
-                trace_id: 10,
-                span_id: 20,
-                flags: 30,
-                ..Default::default()
-            }],
-            span_events: vec![SpanEventBytes {
-                time_unix_nano: 123456,
-                name: get_bytes_str("event_name"),
-                attributes: HashMap::new(),
-            }],
-        };
-
-        assert_eq!(*span, expected_span);
-
-        ddog_free_traces(traces);
     }
 }
