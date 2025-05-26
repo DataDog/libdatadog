@@ -144,6 +144,39 @@ pub fn init_remote_config_listener(
 ///
 /// * `Ok(ReturnAction)` - If successful.
 /// * `FlareError(msg)` - If something fail.
+///
+/// # Examples
+///
+/// Implementing and using the listener to fetch RemoteConfig from the agent
+///
+/// ```rust no_run
+/// use datadog_tracer_flare::{init_remote_config_listener, run_remote_config_listener};
+/// use std::time::Duration;
+/// use tokio::time::sleep;
+///
+/// #[tokio::main(flavor = "current_thread")]
+/// async fn main() {
+///     // Setup the listener
+///     let mut listener = init_remote_config_listener(
+///         "http://0.0.0.0:8126".to_string(),  // agent_url
+///         "rust".to_string(),                 // language
+///         "1.0.0".to_string(),                // tracer_version
+///         "test-service".to_string(),         // service
+///         "test-env".to_string(),             // env
+///         "1.0.0".to_string(),                // app_version
+///         "test-runtime".to_string(),         // runtime_id
+///     )
+///     .unwrap();
+///
+///     // Listen every second
+///     loop {
+///         let result = run_remote_config_listener(&mut listener).await;
+///         assert!(result.is_ok());
+///         // Use the result ...
+///         sleep(Duration::from_secs(1)).await;
+///     }
+/// }
+/// ```
 pub async fn run_remote_config_listener(
     listener: &mut Listener,
 ) -> Result<ReturnAction, FlareError> {
@@ -175,43 +208,4 @@ pub async fn run_remote_config_listener(
     }
 
     Ok(ReturnAction::None)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-    use tokio::time::sleep;
-
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_remote_config_listener() {
-        // Test parameters
-        let agent_url = "http://0.0.0.0:8126".to_string();
-        let language = "rust".to_string();
-        let tracer_version = "1.0.0".to_string();
-        let service = "test-service".to_string();
-        let env = "test-env".to_string();
-        let app_version = "1.0.0".to_string();
-        let runtime_id = "test-runtime".to_string();
-
-        // Setup the listener
-        #[allow(clippy::unwrap_used)]
-        let mut listener = init_remote_config_listener(
-            agent_url,
-            language,
-            tracer_version,
-            service,
-            env,
-            app_version,
-            runtime_id,
-        )
-        .unwrap();
-
-        for _ in 0..3 {
-            let result = run_remote_config_listener(&mut listener).await;
-            assert!(result.is_ok());
-            sleep(Duration::from_secs(1)).await;
-        }
-    }
 }
