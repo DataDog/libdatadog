@@ -1,13 +1,13 @@
 [package]
 name = "tarpc"
 version = "0.31.0"
-rust-version = "1.58.0"
+rust-version.workspace = true
 authors = [
     "Adam Wright <adam.austin.wright@gmail.com>",
     "Tim Kuehn <timothy.j.kuehn@gmail.com>",
 ]
-edition = "2021"
-license = "MIT"
+edition.workspace = true
+license.workspace= true
 documentation = "https://docs.rs/tarpc"
 homepage = "https://github.com/google/tarpc"
 repository = "https://github.com/google/tarpc"
