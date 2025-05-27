@@ -10,6 +10,7 @@ use crate::service::{
     RuntimeInfo, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SessionInfo,
     SidecarAction, SidecarInterface, SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
+use data_pipeline::telemetry::TelemetryClient;
 use datadog_ipc::platform::{AsyncChannel, ShmHandle};
 use datadog_ipc::tarpc;
 use datadog_ipc::tarpc::context::Context;
@@ -30,12 +31,14 @@ use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info, trace, warn};
 
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex as TokioMutex;
 use tokio::task::{JoinError, JoinHandle};
+use tokio::time::sleep;
 
 use crate::config::get_product_endpoint;
 use crate::service::agent_info::AgentInfos;
@@ -91,12 +94,19 @@ unsafe impl Send for ProcessHandle {}
 #[cfg(windows)]
 unsafe impl Sync for ProcessHandle {}
 
+struct TelemetryCachedClient {
+    client: TelemetryClient,
+    last_used: Instant,
+}
+
+type TelemetryClientKey = (String, String, String); // (service, env, version)
+
 /// The `SidecarServer` struct represents a server that handles sidecar operations.
 ///
 /// It maintains a list of active sessions and a counter for each session.
 /// It also holds a reference to a `TraceFlusher` for sending trace data,
 /// and a `Mutex` guarding an optional `ManualFutureCompleter` for telemetry configuration.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct SidecarServer {
     /// An `Arc` wrapped `TraceFlusher` used for sending trace data.
     pub(crate) trace_flusher: Arc<TraceFlusher>,
@@ -104,6 +114,8 @@ pub struct SidecarServer {
     sessions: Arc<Mutex<HashMap<String, SessionInfo>>>,
     /// A `Mutex` guarded `HashMap` that keeps a count of each session.
     session_counter: Arc<Mutex<HashMap<String, u32>>>,
+    /// A `Mutex` guarded `HashMap` that stores the active telemetry clients.
+    telemetry_clients: Arc<TokioMutex<HashMap<TelemetryClientKey, TelemetryCachedClient>>>,
     /// A `Mutex` guarded optional `ManualFutureCompleter` for telemetry configuration.
     pub self_telemetry_config:
         Arc<Mutex<Option<ManualFutureCompleter<ddtelemetry::config::Config>>>>,
@@ -118,6 +130,37 @@ pub struct SidecarServer {
     /// The ProcessHandle tied to the connection
     #[cfg(windows)]
     process_handle: Option<ProcessHandle>,
+}
+
+impl Default for SidecarServer {
+    fn default() -> Self {
+        let telemetry_clients: Arc<TokioMutex<HashMap<TelemetryClientKey, TelemetryCachedClient>>> =
+            Arc::new(Default::default());
+
+        // Persist telemetry clients for 30 minutes
+        let clients = telemetry_clients.clone();
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_secs(60)).await;
+                let mut lock = clients.lock().await;
+                lock.retain(|_, c| c.last_used.elapsed() < Duration::from_secs(1800));
+            }
+        });
+
+        Self {
+            trace_flusher: Arc::new(TraceFlusher::default()),
+            sessions: Arc::new(Default::default()),
+            session_counter: Arc::new(Default::default()),
+            telemetry_clients,
+            self_telemetry_config: Arc::new(Default::default()),
+            submitted_payloads: Arc::new(AtomicU64::new(0)),
+            agent_infos: Default::default(),
+            remote_configs: Default::default(),
+            debugger_diagnostics_bookkeeper: Arc::new(Default::default()),
+            #[cfg(windows)]
+            process_handle: None,
+        }
+    }
 }
 
 impl SidecarServer {
