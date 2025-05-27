@@ -12,7 +12,7 @@
 
 pub mod agent_info;
 mod health_metrics;
-pub mod pausable_worker;
+mod pausable_worker;
 #[allow(missing_docs)]
 pub mod span_concentrator;
 #[allow(missing_docs)]

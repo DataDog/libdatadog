@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{agent_info::AgentInfoFetcher, stats_exporter::StatsExporter};
 
+/// Trait representing a worker which can be wrapped by `PausableWorker`
 pub trait Worker {
     /// Main worker loop
     fn run(&mut self) -> impl std::future::Future<Output = ()> + Send;
