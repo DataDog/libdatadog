@@ -106,9 +106,7 @@ pub fn init_remote_config_listener(
     };
     let remote_config_endpoint = Endpoint {
         url: agent_url,
-        api_key: None,
-        timeout_ms: 10_000, // 10sec
-        test_token: None,
+        ..Default::default()
     };
     let config_to_fetch = ConfigInvariants {
         language,
