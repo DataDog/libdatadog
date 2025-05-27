@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-use super::receiver_manager::Receiver;
+use super::{crash_handler::enable, receiver_manager::Receiver};
 use crate::{
     clear_spans, clear_traces, collector::signal_handler_manager::register_crash_handlers,
     crash_info::Metadata, reset_counters, shared::configuration::CrashtrackerReceiverConfig,
@@ -68,6 +68,29 @@ pub fn init(
     update_config(config.clone())?;
     Receiver::update_stored_config(receiver_config);
     register_crash_handlers(&config)?;
+    enable();
+    Ok(())
+}
+
+/// Reconfigure the crash-tracking infrastructure.
+///
+/// PRECONDITIONS:
+///     None.
+/// SAFETY:
+///     Crash-tracking functions are not reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// ATOMICITY:
+///     This function is not atomic. A crash during its execution may lead to
+///     unexpected crash-handling behaviour.
+pub fn reconfigure(
+    config: CrashtrackerConfiguration,
+    receiver_config: CrashtrackerReceiverConfig,
+    metadata: Metadata,
+) -> anyhow::Result<()> {
+    update_metadata(metadata)?;
+    update_config(config.clone())?;
+    Receiver::update_stored_config(receiver_config);
+    enable();
     Ok(())
 }
 
