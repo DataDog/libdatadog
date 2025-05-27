@@ -129,14 +129,10 @@ task push_to_rubygems: [
   :package,
   :"release:guard_clean"
 ] do
-  puts "Please input 'libdatadog ruby release key' from 'Shared-Profiling' Datadog 1Password:"
-  input = $stdin.gets.strip
-
-  ENV["GEM_HOST_API_KEY"] = input
-
-  system("gem push pkg/libdatadog-#{Libdatadog::VERSION}.gem")
-  system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-x86_64-linux.gem")
-  system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-aarch64-linux.gem")
+  puts "TODO: DISABLED PUSHING TO RUBYGEMS"
+  # abort unless system("gem push pkg/libdatadog-#{Libdatadog::VERSION}.gem")
+  # abort unless system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-x86_64-linux.gem")
+  # abort unless system("gem push pkg/libdatadog-#{Libdatadog::VERSION}-aarch64-linux.gem")
 end
 
 module Helpers
@@ -198,3 +194,6 @@ end
 
 Rake::Task["build"].clear
 task(:build) { raise "Build task is disabled, use package instead" }
+
+Rake::Task["release"].clear
+task(:release) { Rake::Task["push_to_rubygems"].invoke }

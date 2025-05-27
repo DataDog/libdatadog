@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::targets::TargetsList;
+use crate::targets::{Root, TargetsList};
 use crate::{
     RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigPathRef, RemoteConfigPathType,
     RemoteConfigProduct, Target,
@@ -189,14 +189,27 @@ pub struct ConfigFetcher<S: FileStorage> {
     state: Arc<ConfigFetcherState<S::StoredFile>>,
 }
 
-#[derive(Default)]
 pub struct ConfigClientState {
     opaque_backend_state: Vec<u8>,
     last_configs: Vec<String>,
     // 'static because it actually depends on last_configs, and rust doesn't like self-referencing
     last_config_paths: HashSet<RemoteConfigPathRef<'static>>,
     targets_version: u64,
+    root_version: u64,
     last_error: Option<String>,
+}
+
+impl Default for ConfigClientState {
+    fn default() -> Self {
+        ConfigClientState {
+            opaque_backend_state: vec![],
+            last_configs: vec![],
+            last_config_paths: Default::default(),
+            targets_version: 0,
+            root_version: 1,
+            last_error: None,
+        }
+    }
 }
 
 impl<S: FileStorage> ConfigFetcher<S> {
@@ -265,7 +278,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
         let config_req = ClientGetConfigsRequest {
             client: Some(datadog_trace_protobuf::remoteconfig::Client {
                 state: Some(ClientState {
-                    root_version: 1,
+                    root_version: opaque_state.root_version,
                     targets_version: opaque_state.targets_version,
                     config_states,
                     has_error: opaque_state.last_error.is_some(),
@@ -350,6 +363,21 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 String::from_utf8_lossy(decoded_targets.as_slice())
             ))
         })?;
+
+        opaque_state.root_version = response.roots.iter().try_fold(
+            opaque_state.root_version,
+            |max, cur| -> anyhow::Result<_> {
+                let decoded_root =
+                    base64::engine::general_purpose::STANDARD.decode(cur.as_slice())?;
+                let root = Root::try_parse(decoded_root.as_slice()).map_err(|e| {
+                    anyhow::Error::msg(e).context(format!(
+                        "Decoded roots reply: {}",
+                        String::from_utf8_lossy(decoded_root.as_slice())
+                    ))
+                })?;
+                Ok(std::cmp::max(max, root.signed.version))
+            },
+        )?;
 
         opaque_state.opaque_backend_state = targets_list
             .signed
