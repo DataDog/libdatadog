@@ -54,7 +54,8 @@ impl Display for BuilderErrorKind {
 /// Represents different kinds of internal errors.
 #[derive(Debug, PartialEq)]
 pub enum InternalErrorKind {
-    /// Indicates that some background workers are in an invalid state. The associated `String` contains the error message.
+    /// Indicates that some background workers are in an invalid state. The associated `String`
+    /// contains the error message.
     InvalidWorkerState(String),
 }
 

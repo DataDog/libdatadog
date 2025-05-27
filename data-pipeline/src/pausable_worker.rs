@@ -1,3 +1,6 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 //! Defines a pausable worker to be able to stop background processes before forks
 use anyhow::{anyhow, Result};
 use ddtelemetry::worker::TelemetryWorker;
