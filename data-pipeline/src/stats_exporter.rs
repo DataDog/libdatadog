@@ -134,7 +134,7 @@ impl StatsExporter {
     /// Once started, the stats exporter will flush and send stats on every `self.flush_interval`.
     /// If the `self.cancellation_token` is cancelled, the exporter will force flush all stats and
     /// return.
-    pub async fn run(&mut self) {
+    pub async fn run(&self) {
         loop {
             select! {
                 _ = self.cancellation_token.cancelled() => {
@@ -316,7 +316,7 @@ mod tests {
             })
             .await;
 
-        let mut stats_exporter = StatsExporter::new(
+        let stats_exporter = StatsExporter::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
@@ -356,7 +356,7 @@ mod tests {
         let buckets_duration = Duration::from_secs(10);
         let cancellation_token = CancellationToken::new();
 
-        let mut stats_exporter = StatsExporter::new(
+        let stats_exporter = StatsExporter::new(
             buckets_duration,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
