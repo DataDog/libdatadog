@@ -122,6 +122,7 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Debug)]
 pub struct AgentInfoFetcher {
     info_endpoint: Endpoint,
     info: AgentInfoArc,
