@@ -13,6 +13,7 @@ use crate::{
 use ddcommon::Endpoint;
 use ddcommon::{hyper_migration, tag::Tag};
 
+use std::fmt::Debug;
 use std::iter::Sum;
 use std::ops::Add;
 use std::{
@@ -103,6 +104,7 @@ pub struct LogIdentifier {
 }
 
 // Holds the current state of the telemetry worker
+#[derive(Debug)]
 struct TelemetryWorkerData {
     started: bool,
     dependencies: store::Store<Dependency>,
@@ -116,6 +118,7 @@ struct TelemetryWorkerData {
 }
 
 pub struct TelemetryWorker {
+    flavor: TelemetryWorkerFlavor,
     config: Config,
     mailbox: mpsc::Receiver<TelemetryActions>,
     cancellation_token: CancellationToken,
@@ -124,6 +127,46 @@ pub struct TelemetryWorker {
     client: Box<dyn http_client::HttpClient + Sync + Send>,
     deadlines: scheduler::Scheduler<LifecycleAction>,
     data: TelemetryWorkerData,
+}
+impl Debug for TelemetryWorker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[allow(dead_code)]
+        #[derive(Debug)]
+        struct TelemetryWorker<'a> {
+            flavor: &'a TelemetryWorkerFlavor,
+            config: &'a Config,
+            mailbox: &'a mpsc::Receiver<TelemetryActions>,
+            cancellation_token: &'a CancellationToken,
+            seq_id: &'a AtomicU64,
+            runtime_id: &'a String,
+            deadlines: &'a scheduler::Scheduler<LifecycleAction>,
+            data: &'a TelemetryWorkerData,
+        }
+        let Self {
+            flavor,
+            config,
+            mailbox,
+            cancellation_token,
+            seq_id,
+            runtime_id,
+            client: _,
+            deadlines,
+            data,
+        } = self;
+        Debug::fmt(
+            &TelemetryWorker {
+                flavor,
+                config,
+                mailbox,
+                cancellation_token,
+                seq_id,
+                runtime_id,
+                deadlines,
+                data,
+            },
+            f,
+        )
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -900,7 +943,7 @@ impl TelemetryWorkerHandle {
 /// How many dependencies/integrations/configs we keep in memory at most
 pub const MAX_ITEMS: usize = 5000;
 
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub enum TelemetryWorkerFlavor {
     /// Send all telemetry messages including lifecylce events like app-started, hearbeats,
     /// dependencies and configurations
