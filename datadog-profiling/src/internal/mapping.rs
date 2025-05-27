@@ -1,7 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::*;
+use super::{small_non_zero_pprof_id, Id, Item, StringId};
+use std::num::NonZeroU32;
 
 /// Represents a [pprof::Mapping] with some space-saving changes:
 ///  - The id is not stored on the struct. It's stored in the container that holds the struct.
@@ -28,22 +29,6 @@ pub struct Mapping {
 
 impl Item for Mapping {
     type Id = MappingId;
-}
-
-impl PprofItem for Mapping {
-    type PprofMessage = pprof::Mapping;
-
-    fn to_pprof(&self, id: Self::Id) -> Self::PprofMessage {
-        pprof::Mapping {
-            id: id.to_raw_id(),
-            memory_start: self.memory_start,
-            memory_limit: self.memory_limit,
-            file_offset: self.file_offset,
-            filename: self.filename.to_raw_id(),
-            build_id: self.build_id.to_raw_id(),
-            ..pprof::Mapping::default() // todo: support detailed Mapping info
-        }
-    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]

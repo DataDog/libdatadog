@@ -3,11 +3,10 @@
 
 /// https://doc.rust-lang.org/beta/std/primitive.pointer.html#method.is_aligned_to
 /// Convenience function until the std lib standardizes this.
-/// Currently only used in test code, so doing the power of two bit mask stuff the stdlib does
-/// would be overkill.
 #[cfg(test)]
-pub(crate) fn is_aligned_to<T: ?Sized>(p: *const T, align: usize) -> bool {
-    (p as *const u8 as usize) % align == 0
+#[track_caller]
+pub(crate) fn is_aligned_to<T>(p: *const T, align: usize) -> bool {
+    p.align_offset(align) == 0
 }
 
 #[cfg(test)]
@@ -31,7 +30,7 @@ pub(crate) fn fuzzer_inner_loop<A: crate::Allocator>(
     };
 
     if let Ok(mut ptr) = allocator.allocate(layout) {
-        assert!(is_aligned_to(ptr.as_ptr(), align));
+        assert!(is_aligned_to(ptr.cast::<u8>().as_ptr(), align));
         let obj = unsafe { ptr.as_mut() };
         // The object is guaranteed to be at least size, but can be larger
         assert!(obj.len() >= size);
@@ -48,17 +47,29 @@ pub(crate) fn fuzzer_inner_loop<A: crate::Allocator>(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::utils::is_aligned_to;
+    use super::is_aligned_to;
 
     #[test]
     fn test_is_aligned_to() {
-        assert!(is_aligned_to(12 as *const u8, 1));
-        assert!(is_aligned_to(12 as *const u8, 2));
-        assert!(is_aligned_to(12 as *const u8, 3));
-        assert!(is_aligned_to(12 as *const u8, 4));
-        assert!(!is_aligned_to(12 as *const u8, 5));
-        assert!(is_aligned_to(12 as *const u8, 6));
-        assert!(!is_aligned_to(12 as *const u8, 7));
-        assert!(!is_aligned_to(12 as *const u8, 8));
+        #[repr(C, align(16))]
+        struct Wide {
+            data: [u8; 16],
+        }
+
+        static WIDE: Wide = Wide { data: [0; 16] };
+
+        let wide = core::ptr::addr_of!(WIDE);
+        assert!(is_aligned_to(wide, 1 << 0));
+        assert!(is_aligned_to(wide, 1 << 1));
+        assert!(is_aligned_to(wide, 1 << 2));
+        assert!(is_aligned_to(wide, 1 << 3));
+        assert!(is_aligned_to(wide, 1 << 4));
+
+        let twelve = core::ptr::addr_of!(WIDE.data[12]);
+        assert!(is_aligned_to(twelve, 1 << 0));
+        assert!(is_aligned_to(twelve, 1 << 1));
+        assert!(is_aligned_to(twelve, 1 << 2));
+        assert!(!is_aligned_to(twelve, 1 << 3));
+        assert!(!is_aligned_to(twelve, 1 << 4));
     }
 }
