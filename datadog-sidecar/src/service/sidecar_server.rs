@@ -36,7 +36,6 @@ use tracing::{debug, error, info, trace, warn};
 
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex as TokioMutex;
 use tokio::task::{JoinError, JoinHandle};
 use tokio::time::sleep;
 
@@ -99,7 +98,10 @@ struct TelemetryCachedClient {
     last_used: Instant,
 }
 
-type TelemetryClientKey = (String, String, String); // (service, env, version)
+type ServiceString = String;
+type EnvString = String;
+type VersionString = String;
+type TelemetryClientKey = (ServiceString, EnvString, VersionString);
 
 /// The `SidecarServer` struct represents a server that handles sidecar operations.
 ///
@@ -115,7 +117,7 @@ pub struct SidecarServer {
     /// A `Mutex` guarded `HashMap` that keeps a count of each session.
     session_counter: Arc<Mutex<HashMap<String, u32>>>,
     /// A `Mutex` guarded `HashMap` that stores the active telemetry clients.
-    telemetry_clients: Arc<TokioMutex<HashMap<TelemetryClientKey, TelemetryCachedClient>>>,
+    telemetry_clients: Arc<Mutex<HashMap<TelemetryClientKey, TelemetryCachedClient>>>,
     /// A `Mutex` guarded optional `ManualFutureCompleter` for telemetry configuration.
     pub self_telemetry_config:
         Arc<Mutex<Option<ManualFutureCompleter<ddtelemetry::config::Config>>>>,
@@ -134,7 +136,7 @@ pub struct SidecarServer {
 
 impl Default for SidecarServer {
     fn default() -> Self {
-        let telemetry_clients: Arc<TokioMutex<HashMap<TelemetryClientKey, TelemetryCachedClient>>> =
+        let telemetry_clients: Arc<Mutex<HashMap<TelemetryClientKey, TelemetryCachedClient>>> =
             Arc::new(Default::default());
 
         // Persist telemetry clients for 30 minutes
@@ -142,7 +144,7 @@ impl Default for SidecarServer {
         tokio::spawn(async move {
             loop {
                 sleep(Duration::from_secs(60)).await;
-                let mut lock = clients.lock().await;
+                let mut lock = clients.lock_or_panic();
                 lock.retain(|_, c| c.last_used.elapsed() < Duration::from_secs(1800));
             }
         });
