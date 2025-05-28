@@ -31,7 +31,7 @@ blazesym = "=0.2.0-rc.2"
 
 [dependencies]
 anyhow = "1.0"
-backtrace = "0.3.74"
+backtrace = "=0.3.74"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock", "serde"]}
 ddcommon = {path = "../ddcommon" }
 ddtelemetry = {path = "../ddtelemetry" }
