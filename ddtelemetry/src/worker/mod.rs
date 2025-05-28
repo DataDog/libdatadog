@@ -75,7 +75,7 @@ macro_rules! telemetry_worker_log {
 pub enum TelemetryActions {
     AddPoint((f64, ContextKey, Vec<Tag>)),
     AddConfig(data::Configuration),
-    AddDependecy(Dependency),
+    AddDependency(Dependency),
     AddIntegration(Integration),
     AddLog((LogIdentifier, Log)),
     Lifecycle(LifecycleAction),
@@ -286,7 +286,7 @@ impl TelemetryWorker {
                     .schedule_event(LifecycleAction::FlushData)
                     .unwrap();
             }
-            AddConfig(_) | AddDependecy(_) | AddIntegration(_) | Lifecycle(ExtendedHeartbeat) => {}
+            AddConfig(_) | AddDependency(_) | AddIntegration(_) | Lifecycle(ExtendedHeartbeat) => {}
             Lifecycle(Stop) => {
                 if !self.data.started {
                     return BREAK;
@@ -361,7 +361,7 @@ impl TelemetryWorker {
                     self.data.started = true;
                 }
             }
-            AddDependecy(dep) => self.data.dependencies.insert(dep),
+            AddDependency(dep) => self.data.dependencies.insert(dep),
             AddIntegration(integration) => self.data.integrations.insert(integration),
             AddConfig(cfg) => self.data.configurations.insert(cfg),
             AddLog((identifier, log)) => {
@@ -831,7 +831,10 @@ impl TelemetryWorkerHandle {
 
     pub fn add_dependency(&self, name: String, version: Option<String>) -> Result<()> {
         self.sender
-            .try_send(TelemetryActions::AddDependecy(Dependency { name, version }))?;
+            .try_send(TelemetryActions::AddDependency(Dependency {
+                name,
+                version,
+            }))?;
         Ok(())
     }
 
