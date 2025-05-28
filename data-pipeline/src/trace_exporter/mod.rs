@@ -1279,6 +1279,15 @@ mod tests {
 
         exporter.shutdown(None).unwrap();
 
+        // Wait for the mock server to process the stats
+        for _ in 0..10 {
+            if mock_traces.hits() > 0 && mock_stats.hits() > 0 {
+                break;
+            } else {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+
         mock_traces.assert();
         mock_stats.assert();
     }
@@ -1352,7 +1361,7 @@ mod tests {
         exporter.send(data.as_ref(), 1).unwrap();
 
         exporter
-            .shutdown(Some(Duration::from_millis(500)))
+            .shutdown(Some(Duration::from_millis(5)))
             .unwrap_err(); // The shutdown should timeout
 
         mock_traces.assert();
