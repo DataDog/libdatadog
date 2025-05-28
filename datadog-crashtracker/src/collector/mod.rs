@@ -18,5 +18,5 @@ pub use additional_tags::{
 };
 pub use api::*;
 pub use counters::{begin_op, end_op, reset_counters, OpTypes};
-pub use crash_handler::{update_config, update_metadata};
+pub use crash_handler::{disable, enable, update_config, update_metadata};
 pub use spans::{clear_spans, clear_traces, insert_span, insert_trace, remove_span, remove_trace};
