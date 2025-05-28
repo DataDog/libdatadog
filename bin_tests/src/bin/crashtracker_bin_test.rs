@@ -72,6 +72,7 @@ mod unix {
             crashtracker::default_signals(),
             TEST_COLLECTOR_TIMEOUT_MS,
             Some("".to_string()),
+            true,
         )?;
 
         let metadata = Metadata {
