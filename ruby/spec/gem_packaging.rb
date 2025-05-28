@@ -11,7 +11,7 @@ RSpec.describe "gem release process (after packaging)" do
   let(:packaged_gem_file) { "pkg/libdatadog-#{gem_version}.gem" }
   let(:executable_permissions) { ["libdatadog-crashtracking-receiver", "libdatadog_profiling.so"] }
 
-  it "sets the right permissions on the gem files" do
+  it "sets the right permissions on the .gem files" do
     gem_files = Dir.glob("pkg/*.gem")
     expect(gem_files).to include(packaged_gem_file)
 
