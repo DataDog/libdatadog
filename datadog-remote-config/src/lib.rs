@@ -7,6 +7,7 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+pub mod configs;
 pub mod fetch;
 pub mod file_change_tracker;
 pub mod file_storage;
