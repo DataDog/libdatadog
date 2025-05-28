@@ -15,7 +15,7 @@ Gem::Specification.new do |spec|
     "libdatadog is a Rust-based utility library for Datadog's ddtrace gem."
   spec.homepage = "https://docs.datadoghq.com/tracing/"
   spec.license = "Apache-2.0"
-  spec.required_ruby_version = ">= 2.1.0"
+  spec.required_ruby_version = ">= 2.5.0"
 
   spec.metadata["allowed_push_host"] = "https://rubygems.org"
 
