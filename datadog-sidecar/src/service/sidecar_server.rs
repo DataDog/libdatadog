@@ -487,22 +487,37 @@ impl SidecarInterface for SidecarServer {
         match applications.entry(queue_id) {
             Entry::Occupied(mut entry) => {
                 let value = entry.get_mut();
+
+                let to_process: Vec<SidecarAction> = actions
+                    .into_iter()
+                    .filter_map(|action| match &action {
+                        SidecarAction::Telemetry(TelemetryActions::AddIntegration(integration)) => {
+                            value.buffered_integrations.insert(integration.clone());
+                            None
+                        }
+                        SidecarAction::PhpComposerTelemetryFile(path) => {
+                            value.buffered_composer_paths.insert(path.clone());
+                            None
+                        }
+                        _ => Some(action),
+                    })
+                    .collect();
+
                 match value.app_or_actions {
                     AppOrQueue::Inactive => {
-                        if is_stop_actions(&actions) {
+                        if is_stop_actions(&to_process) {
                             entry.remove();
                         } else {
                             value.app_or_actions =
-                                AppOrQueue::Queue(EnqueuedTelemetryData::processed(actions));
+                                AppOrQueue::Queue(EnqueuedTelemetryData::processed(to_process));
                         }
                     }
                     AppOrQueue::Queue(ref mut data) => {
-                        data.process(actions);
+                        data.process(to_process);
                     }
                     AppOrQueue::App(ref service_future) => {
                         let service_future = service_future.clone();
-                        // drop on stop
-                        if actions.iter().any(|action| {
+                        if to_process.iter().any(|action| {
                             matches!(
                                 action,
                                 SidecarAction::Telemetry(TelemetryActions::Lifecycle(
@@ -521,9 +536,10 @@ impl SidecarInterface for SidecarServer {
                                 return;
                             };
                             if let Some(mut app) = app_future.await {
-                                let actions =
-                                    EnqueuedTelemetryData::process_immediately(actions, &mut app)
-                                        .await;
+                                let actions = EnqueuedTelemetryData::process_immediately(
+                                    to_process, &mut app,
+                                )
+                                .await;
                                 app.telemetry.send_msgs(actions).await.ok();
                             }
                         });
@@ -532,12 +548,29 @@ impl SidecarInterface for SidecarServer {
             }
             Entry::Vacant(entry) => {
                 if !is_stop_actions(&actions) {
-                    entry.insert(ActiveApplication {
-                        app_or_actions: AppOrQueue::Queue(EnqueuedTelemetryData::processed(
-                            actions,
-                        )),
-                        ..Default::default()
-                    });
+                    let mut new_app = ActiveApplication::default();
+
+                    // Buffer actions for new app entry
+                    let to_process: Vec<SidecarAction> = actions
+                        .into_iter()
+                        .filter_map(|action| match &action {
+                            SidecarAction::Telemetry(TelemetryActions::AddIntegration(
+                                integration,
+                            )) => {
+                                new_app.buffered_integrations.insert(integration.clone());
+                                None
+                            }
+                            SidecarAction::PhpComposerTelemetryFile(path) => {
+                                new_app.buffered_composer_paths.insert(path.clone());
+                                None
+                            }
+                            _ => Some(action),
+                        })
+                        .collect();
+
+                    new_app.app_or_actions =
+                        AppOrQueue::Queue(EnqueuedTelemetryData::processed(to_process));
+                    entry.insert(new_app);
                 }
             }
         }
@@ -604,6 +637,18 @@ impl SidecarInterface for SidecarServer {
                 None
             };
 
+            let (buffered_paths, buffered_integrations) = {
+                let mut apps = rt_info.lock_applications();
+                if let Some(app_data) = apps.get_mut(&queue_id) {
+                    (
+                        app_data.buffered_composer_paths.drain().collect::<Vec<_>>(),
+                        app_data.buffered_integrations.drain().collect::<Vec<_>>(),
+                    )
+                } else {
+                    (vec![], vec![])
+                }
+            };
+
             tokio::spawn(async move {
                 if let Some(instance_future) = instance_future {
                     let instance_option = match instance_future.await {
@@ -643,6 +688,25 @@ impl SidecarInterface for SidecarServer {
                 }
 
                 if let Some(mut app) = manual_app_future.app_future.await {
+                    let mut flush_actions: Vec<TelemetryActions> = vec![];
+
+                    for integration in buffered_integrations {
+                        flush_actions.push(TelemetryActions::AddIntegration(integration));
+                    }
+
+                    for path in buffered_paths {
+                        for dep in EnqueuedTelemetryData::extract_composer_telemetry(path)
+                            .await
+                            .iter()
+                        {
+                            flush_actions.push(TelemetryActions::AddDependency(dep.clone()));
+                        }
+                    }
+
+                    if !flush_actions.is_empty() {
+                        app.telemetry.send_msgs(flush_actions).await.ok();
+                    }
+
                     // Register metrics
                     for metric in std::mem::take(&mut enqueued_data.metrics).into_iter() {
                         app.register_metric(metric);
