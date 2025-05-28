@@ -269,3 +269,42 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     w.flush()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str;
+
+    #[test]
+    fn test_emit_backtrace_disabled() {
+        let mut buf = Vec::new();
+        unsafe {
+            emit_backtrace_by_frames(&mut buf, StacktraceCollection::Disabled)
+                .expect("to work ;-)");
+        }
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(out.contains("BEGIN_STACKTRACE"));
+        assert!(out.contains("END_STACKTRACE"));
+        assert!(out.contains("\"ip\":"));
+        assert!(!out.contains("\"column\":"), "'column' key must not be emitted");
+        assert!(!out.contains("\"file\":"), "'file' key must not be emitted");
+        assert!(!out.contains("\"function\":"), "'function' key must not be emitted");
+        assert!(!out.contains("\"line\":"), "'line' key must not be emitted");
+    }
+
+    #[test]
+    fn test_emit_backtrace_with_symbols() {
+        let mut buf = Vec::new();
+        unsafe {
+            emit_backtrace_by_frames(&mut buf, StacktraceCollection::EnabledWithInprocessSymbols)
+                .expect("to work ;-)");
+        }
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(out.contains("BEGIN_STACKTRACE"));
+        assert!(out.contains("END_STACKTRACE"));
+        assert!(out.contains("\"column\":"), "'column' key missing");
+        assert!(out.contains("\"file\":"), "'file' key missing");
+        assert!(out.contains("\"function\":"), "'function' key missing");
+        assert!(out.contains("\"line\":"), "'line' key missing");
+    }
+}
