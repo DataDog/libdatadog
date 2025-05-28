@@ -175,7 +175,7 @@ impl EnqueuedTelemetryData {
     /// # Returns
     ///
     /// * A `ManualFuture` that resolves to an `Arc<Vec<data::Dependency>>>`.
-    fn extract_composer_telemetry(path: PathBuf) -> ManualFuture<Arc<Vec<data::Dependency>>> {
+    pub fn extract_composer_telemetry(path: PathBuf) -> ManualFuture<Arc<Vec<data::Dependency>>> {
         let (deps, completer) = ManualFuture::new();
         tokio::spawn(async {
             let mut cache = COMPOSER_CACHE.lock().await;
