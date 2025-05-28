@@ -47,6 +47,13 @@ unsafe fn emit_backtrace_by_frames(
     backtrace::trace_unsynchronized(|frame| {
         if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
             backtrace::resolve_frame_unsynchronized(frame, |symbol| {
+                if let Some(function) = symbol.name() {
+                    if function.to_string().starts_with("datadog_crashtracker::")
+                        || function.to_string().starts_with("backtrace::")
+                    {
+                        return;
+                    }
+                }
                 write!(w, "{{").unwrap();
                 #[allow(clippy::unwrap_used)]
                 emit_absolute_addresses(w, frame).unwrap();
@@ -286,9 +293,15 @@ mod tests {
         assert!(out.contains("BEGIN_STACKTRACE"));
         assert!(out.contains("END_STACKTRACE"));
         assert!(out.contains("\"ip\":"));
-        assert!(!out.contains("\"column\":"), "'column' key must not be emitted");
+        assert!(
+            !out.contains("\"column\":"),
+            "'column' key must not be emitted"
+        );
         assert!(!out.contains("\"file\":"), "'file' key must not be emitted");
-        assert!(!out.contains("\"function\":"), "'function' key must not be emitted");
+        assert!(
+            !out.contains("\"function\":"),
+            "'function' key must not be emitted"
+        );
         assert!(!out.contains("\"line\":"), "'line' key must not be emitted");
     }
 
@@ -308,7 +321,13 @@ mod tests {
         assert!(out.contains("\"function\":"), "'function' key missing");
         assert!(out.contains("\"line\":"), "'line' key missing");
         // filter assertions
-        assert!(!out.contains("datadog_crashtracker::collector"), "crashtracker itself must be filtered, found 'datadog_crashtracker::collector'");
-        assert!(!out.contains("backtrace::backtrace"), "crashtracker itself must be filtered away, found 'backtrace::backtrace'");
+        assert!(
+            !out.contains("datadog_crashtracker::collector"),
+            "crashtracker itself must be filtered, found 'datadog_crashtracker::collector'"
+        );
+        assert!(
+            !out.contains("backtrace::backtrace"),
+            "crashtracker itself must be filtered away, found 'backtrace::backtrace'"
+        );
     }
 }
