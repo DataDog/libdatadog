@@ -2,7 +2,6 @@
 
 source "https://rubygems.org"
 
-# Specify your gem's dependencies in libdatadog.gemspec
 gemspec
 
 gem "rake", ">= 12.0", "< 14"
