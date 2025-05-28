@@ -30,22 +30,6 @@ impl Item for Mapping {
     type Id = MappingId;
 }
 
-impl PprofItem for Mapping {
-    type PprofMessage = pprof::Mapping;
-
-    fn to_pprof(&self, id: Self::Id) -> Self::PprofMessage {
-        pprof::Mapping {
-            id: id.to_raw_id(),
-            memory_start: self.memory_start,
-            memory_limit: self.memory_limit,
-            file_offset: self.file_offset,
-            filename: self.filename.to_raw_id(),
-            build_id: self.build_id.to_raw_id(),
-            ..pprof::Mapping::default() // todo: support detailed Mapping info
-        }
-    }
-}
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[repr(C)]
 pub struct MappingId(NonZeroU32);

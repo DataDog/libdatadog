@@ -17,19 +17,6 @@ impl Item for Function {
     type Id = FunctionId;
 }
 
-impl PprofItem for Function {
-    type PprofMessage = pprof::Function;
-
-    fn to_pprof(&self, id: Self::Id) -> Self::PprofMessage {
-        pprof::Function {
-            id: id.to_raw_id(),
-            name: self.name.to_raw_id(),
-            system_name: self.system_name.to_raw_id(),
-            filename: self.filename.to_raw_id(),
-        }
-    }
-}
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[repr(C)]
 pub struct FunctionId(NonZeroU32);

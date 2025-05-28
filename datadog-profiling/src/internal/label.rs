@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use datadog_profiling_protobuf::{prost_impls, Field, StringOffset};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum LabelValue {
@@ -47,14 +48,14 @@ impl Label {
     }
 }
 
-impl From<Label> for pprof::Label {
+impl From<Label> for prost_impls::Label {
     fn from(l: Label) -> Self {
         Self::from(&l)
     }
 }
 
-impl From<&Label> for pprof::Label {
-    fn from(l: &Label) -> pprof::Label {
+impl From<&Label> for prost_impls::Label {
+    fn from(l: &Label) -> prost_impls::Label {
         let key = l.key.to_raw_id();
         match l.value {
             LabelValue::Str(str) => Self {
@@ -69,6 +70,21 @@ impl From<&Label> for pprof::Label {
                 num,
                 num_unit: num_unit.into_raw_id(),
             },
+        }
+    }
+}
+
+impl From<Label> for datadog_profiling_protobuf::Label {
+    fn from(label: Label) -> Self {
+        let (str, num, num_unit) = match label.value {
+            LabelValue::Str(str) => (str, 0, StringOffset::ZERO),
+            LabelValue::Num { num, num_unit } => (StringOffset::ZERO, num, num_unit),
+        };
+        Self {
+            key: Field::from(label.key),
+            str: Field::from(str),
+            num: Field::from(num),
+            num_unit: Field::from(num_unit),
         }
     }
 }
