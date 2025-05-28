@@ -302,9 +302,13 @@ mod tests {
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
         assert!(out.contains("BEGIN_STACKTRACE"));
         assert!(out.contains("END_STACKTRACE"));
+        // basic structure assertions
         assert!(out.contains("\"column\":"), "'column' key missing");
         assert!(out.contains("\"file\":"), "'file' key missing");
         assert!(out.contains("\"function\":"), "'function' key missing");
         assert!(out.contains("\"line\":"), "'line' key missing");
+        // filter assertions
+        assert!(!out.contains("datadog_crashtracker::collector"), "crashtracker itself must be filtered, found 'datadog_crashtracker::collector'");
+        assert!(!out.contains("backtrace::backtrace"), "crashtracker itself must be filtered away, found 'backtrace::backtrace'");
     }
 }
