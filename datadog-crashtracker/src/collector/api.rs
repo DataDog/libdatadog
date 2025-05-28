@@ -139,6 +139,7 @@ fn test_crash() -> anyhow::Result<()> {
         default_signals(),
         timeout_ms,
         None,
+        true,
     )?;
     let metadata = Metadata::new(
         "libname".to_string(),
@@ -197,6 +198,7 @@ fn test_altstack_paradox() -> anyhow::Result<()> {
         default_signals(),
         timeout_ms,
         None,
+        true,
     );
 
     // This is slightly over-tuned to the language of the error message, but it'd require some
@@ -267,6 +269,7 @@ fn test_altstack_use_create() -> anyhow::Result<()> {
         signals,
         timeout_ms,
         None,
+        true,
     )?;
     let metadata = Metadata::new(
         "libname".to_string(),
@@ -392,6 +395,7 @@ fn test_altstack_use_nocreate() -> anyhow::Result<()> {
         signals,
         timeout_ms,
         None,
+        true,
     )?;
     let metadata = Metadata::new(
         "libname".to_string(),
@@ -521,6 +525,7 @@ fn test_altstack_nouse() -> anyhow::Result<()> {
         signals,
         timeout_ms,
         None,
+        true,
     )?;
     let metadata = Metadata::new(
         "libname".to_string(),
@@ -685,6 +690,7 @@ fn test_waitall_nohang() -> anyhow::Result<()> {
         signals,
         timeout_ms,
         None,
+        true,
     )?;
 
     let metadata = Metadata::new(
