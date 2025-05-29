@@ -1,10 +1,10 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{Value, WireType};
+use crate::{varint, Value, WireType};
 use std::io::{self, Write};
 
-impl Value for &str {
+unsafe impl Value for &str {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
     fn proto_len(&self) -> u64 {
@@ -28,15 +28,15 @@ impl Value for &str {
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct StringOffset(u32);
 
-impl Value for StringOffset {
+unsafe impl Value for StringOffset {
     const WIRE_TYPE: WireType = WireType::Varint;
 
     fn proto_len(&self) -> u64 {
-        u64::from(self).proto_len()
+        varint::proto_len(u64::from(self))
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        u64::from(self).encode(writer)
+        varint::encode(u64::from(self), writer)
     }
 }
 

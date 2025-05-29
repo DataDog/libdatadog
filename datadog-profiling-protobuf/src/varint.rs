@@ -1,68 +1,61 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{StringOffset, Value, Varint, WireType};
+use crate::{Value, WireType};
 use std::io::{self, Write};
 
-impl Value for u64 {
+/// Encodes a [`varint`] according to protobuf semantics.
+///
+/// Serialization happens one byte at a time; use a buffered writer.
+///
+/// [`varint`]: https://protobuf.dev/programming-guides/encoding/#varints
+#[inline]
+pub(crate) fn encode(mut value: u64, writer: &mut impl Write) -> io::Result<()> {
+    loop {
+        let byte = if value < 0x80 {
+            value as u8
+        } else {
+            ((value & 0x7F) | 0x80) as u8
+        };
+        writer.write_all(&[byte])?;
+        if value < 0x80 {
+            return Ok(());
+        }
+        value >>= 7;
+    }
+}
+
+/// Returns the number of bytes it takes to varint encode the number, between
+/// 1 and 10 bytes (inclusive).
+#[inline]
+pub(crate) fn proto_len(val: u64) -> u64 {
+    // https://github.com/google/protobuf/blob/3.3.x/src/google/protobuf/io/coded_stream.h#L1301-L1309
+    ((((val | 1).leading_zeros() ^ 63) * 9 + 73) / 64) as u64
+}
+
+unsafe impl Value for u64 {
     const WIRE_TYPE: WireType = WireType::Varint;
 
+    #[inline]
     fn proto_len(&self) -> u64 {
-        // https://github.com/google/protobuf/blob/3.3.x/src/google/protobuf/io/coded_stream.h#L1301-L1309
-        ((((self | 1).leading_zeros() ^ 63) * 9 + 73) / 64) as u64
+        proto_len(*self)
     }
 
-    /// Encodes a [`varint`] according to protobuf semantics.
-    ///
-    /// Serialization happens one byte at a time; use a buffered writer.
-    ///
-    /// [`varint`]: https://protobuf.dev/programming-guides/encoding/#varints
     #[inline]
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        let mut value = *self;
-        loop {
-            let byte = if value < 0x80 {
-                value as u8
-            } else {
-                ((value & 0x7F) | 0x80) as u8
-            };
-            writer.write_all(&[byte])?;
-            if value < 0x80 {
-                return Ok(());
-            }
-            value >>= 7;
-        }
+        encode(*self, writer)
     }
 }
 
-impl Value for i64 {
+unsafe impl Value for i64 {
     const WIRE_TYPE: WireType = WireType::Varint;
 
     fn proto_len(&self) -> u64 {
-        (*self as u64).proto_len()
+        proto_len(*self as u64)
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        (*self as u64).encode(writer)
-    }
-}
-
-unsafe impl Varint for u64 {}
-unsafe impl Varint for i64 {}
-unsafe impl Varint for StringOffset {}
-
-impl<T: Varint> Value for &'_ [T] {
-    const WIRE_TYPE: WireType = WireType::LengthDelimited;
-
-    fn proto_len(&self) -> u64 {
-        self.iter().map(Value::proto_len).sum()
-    }
-
-    fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-        for value in self.iter() {
-            value.encode(writer)?;
-        }
-        Ok(())
+        encode(*self as u64, writer)
     }
 }
 

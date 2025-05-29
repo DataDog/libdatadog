@@ -15,7 +15,7 @@ use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::StringTable;
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use anyhow::Context;
-use datadog_profiling_protobuf::{self as protobuf, Field, NO_OPT_ZERO, OPT_ZERO};
+use datadog_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
 use interning_api::Generation;
 use lz4_flex::frame::FrameEncoder;
 use std::borrow::Cow;
@@ -378,17 +378,17 @@ impl Profile {
 
             let labels: Vec<_> = labels.into_iter().map(protobuf::Label::from).collect();
             let item = protobuf::Sample {
-                location_ids: Field::from(location_ids.as_slice()),
-                values: Field::from(values.as_slice()),
+                location_ids: Record::from(location_ids.as_slice()),
+                values: Record::from(values.as_slice()),
                 // SAFETY: converting &[Label] to &[Field<Label,..>] which is
                 // safe, because Field is repr(transparent).
                 labels: unsafe {
                     &*(labels.as_slice() as *const [protobuf::Label]
-                        as *const [Field<protobuf::Label, 3, NO_OPT_ZERO>])
+                        as *const [Record<protobuf::Label, 3, NO_OPT_ZERO>])
                 },
             };
 
-            Field::<_, 2, NO_OPT_ZERO>::from(item).encode(writer)?;
+            Record::<_, 2, NO_OPT_ZERO>::from(item).encode(writer)?;
         }
 
         // `Sample`s must be emitted before `SampleTypes` since we consume
@@ -402,47 +402,47 @@ impl Profile {
         // In this case, we use `sample_types` during upscaling of `samples`,
         // so we must serialize `Sample` before `SampleType`.
         for sample_type in self.sample_types.iter() {
-            Field::<_, 1, NO_OPT_ZERO>::from(*sample_type).encode(writer)?;
+            Record::<_, 1, NO_OPT_ZERO>::from(*sample_type).encode(writer)?;
         }
 
         for (offset, item) in self.mappings.into_iter().enumerate() {
             let mapping = protobuf::Mapping {
-                id: Field::from((offset + 1) as u64),
-                memory_start: Field::from(item.memory_start),
-                memory_limit: Field::from(item.memory_limit),
-                file_offset: Field::from(item.file_offset),
-                filename: Field::from(item.filename),
-                build_id: Field::from(item.build_id),
+                id: Record::from((offset + 1) as u64),
+                memory_start: Record::from(item.memory_start),
+                memory_limit: Record::from(item.memory_limit),
+                file_offset: Record::from(item.file_offset),
+                filename: Record::from(item.filename),
+                build_id: Record::from(item.build_id),
             };
-            Field::<_, 3, NO_OPT_ZERO>::from(mapping).encode(writer)?;
+            Record::<_, 3, NO_OPT_ZERO>::from(mapping).encode(writer)?;
         }
 
         for (offset, item) in self.locations.into_iter().enumerate() {
             let location = protobuf::Location {
-                id: Field::from((offset + 1) as u64),
-                mapping_id: Field::from(item.mapping_id.map(MappingId::into_raw_id).unwrap_or(0)),
-                address: Field::from(item.address),
-                line: Field::from(protobuf::Line {
-                    function_id: Field::from(item.function_id.into_raw_id()),
-                    lineno: Field::from(item.line),
+                id: Record::from((offset + 1) as u64),
+                mapping_id: Record::from(item.mapping_id.map(MappingId::into_raw_id).unwrap_or(0)),
+                address: Record::from(item.address),
+                line: Record::from(protobuf::Line {
+                    function_id: Record::from(item.function_id.into_raw_id()),
+                    lineno: Record::from(item.line),
                 }),
             };
-            Field::<_, 4, NO_OPT_ZERO>::from(location).encode(writer)?;
+            Record::<_, 4, NO_OPT_ZERO>::from(location).encode(writer)?;
         }
 
         for (offset, item) in self.functions.into_iter().enumerate() {
             let function = protobuf::Function {
-                id: Field::from((offset + 1) as u64),
-                name: Field::from(item.name),
-                system_name: Field::from(item.system_name),
-                filename: Field::from(item.filename),
+                id: Record::from((offset + 1) as u64),
+                name: Record::from(item.name),
+                system_name: Record::from(item.system_name),
+                filename: Record::from(item.filename),
             };
-            Field::<_, 5, NO_OPT_ZERO>::from(function).encode(writer)?;
+            Record::<_, 5, NO_OPT_ZERO>::from(function).encode(writer)?;
         }
 
         let mut lender = self.strings.into_lending_iter();
         while let Some(item) = lender.next() {
-            Field::<_, 6, NO_OPT_ZERO>::from(item).encode(writer)?;
+            Record::<_, 6, NO_OPT_ZERO>::from(item).encode(writer)?;
         }
 
         let time_nanos = self
@@ -452,12 +452,12 @@ impl Profile {
                 duration.as_nanos().min(i64::MAX as u128) as i64
             });
 
-        Field::<_, 9, OPT_ZERO>::from(time_nanos).encode(writer)?;
-        Field::<_, 10, OPT_ZERO>::from(duration_nanos).encode(writer)?;
+        Record::<_, 9, OPT_ZERO>::from(time_nanos).encode(writer)?;
+        Record::<_, 10, OPT_ZERO>::from(duration_nanos).encode(writer)?;
 
         if let Some((period, period_type)) = self.period {
-            Field::<_, 11, OPT_ZERO>::from(period_type).encode(writer)?;
-            Field::<_, 12, OPT_ZERO>::from(period).encode(writer)?;
+            Record::<_, 11, OPT_ZERO>::from(period_type).encode(writer)?;
+            Record::<_, 12, OPT_ZERO>::from(period).encode(writer)?;
         };
 
         Ok(EncodedProfile {
@@ -753,8 +753,8 @@ impl Profile {
             Some(sample_types) => sample_types
                 .iter()
                 .map(|sample_type| ValueType {
-                    r#type: Field::from(profile.intern(&sample_type.typ)),
-                    unit: Field::from(profile.intern(&sample_type.unit)),
+                    r#type: Record::from(profile.intern(&sample_type.typ)),
+                    unit: Record::from(profile.intern(&sample_type.unit)),
                 })
                 .collect(),
         };
@@ -767,8 +767,8 @@ impl Profile {
             profile.period = Some((
                 *value,
                 ValueType {
-                    r#type: Field::from(profile.intern(&typ.typ)),
-                    unit: Field::from(profile.intern(&typ.unit)),
+                    r#type: Record::from(profile.intern(&typ.typ)),
+                    unit: Record::from(profile.intern(&typ.unit)),
                 },
             ));
         };
@@ -797,21 +797,19 @@ impl Profile {
 
         for label in sample.labels.iter() {
             if let Some(duplicate) = seen.insert(label.key, label) {
-                anyhow::bail!("Duplicate label on sample: {:?} {:?}", duplicate, label);
+                anyhow::bail!("Duplicate label on sample: {duplicate:?} {label:?}");
             }
 
             if label.key == "local root span id" {
                 anyhow::ensure!(
                     label.str.is_empty() && label.num != 0,
-                    "Invalid \"local root span id\" label: {:?}",
-                    label
+                    "Invalid \"local root span id\" label: {label:?}"
                 );
             }
 
             anyhow::ensure!(
                 label.key != "end_timestamp_ns",
-                "Timestamp should not be passed as a label {:?}",
-                label
+                "Timestamp should not be passed as a label {label:?}"
             );
         }
         Ok(())

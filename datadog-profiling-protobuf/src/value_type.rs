@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{Field, StringOffset, Value, WireType, OPT_ZERO};
+use crate::{Record, StringOffset, Value, WireType, OPT_ZERO};
 use std::io::{self, Write};
 
 /// ValueType describes the semantics and measurement units of a value.
@@ -9,11 +9,11 @@ use std::io::{self, Write};
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct ValueType {
-    pub r#type: Field<StringOffset, 1, OPT_ZERO>,
-    pub unit: Field<StringOffset, 2, OPT_ZERO>,
+    pub r#type: Record<StringOffset, 1, OPT_ZERO>,
+    pub unit: Record<StringOffset, 2, OPT_ZERO>,
 }
 
-impl Value for ValueType {
+unsafe impl Value for ValueType {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
     fn proto_len(&self) -> u64 {

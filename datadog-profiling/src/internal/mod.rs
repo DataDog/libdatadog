@@ -14,8 +14,8 @@ mod sample;
 mod stack_trace;
 mod timestamp;
 mod upscaling;
-mod value_type;
 
+pub use datadog_profiling_protobuf::ValueType;
 pub use endpoint_stats::*;
 pub use endpoints::*;
 pub use function::*;
@@ -28,7 +28,6 @@ pub use sample::*;
 pub use stack_trace::*;
 pub use timestamp::*;
 pub use upscaling::*;
-pub use value_type::*;
 
 use crate::collections::identifiable::*;
 use std::num::NonZeroU32;

@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{Field, StringOffset, Value, WireType, OPT_ZERO};
+use super::{Record, StringOffset, Value, WireType, OPT_ZERO};
 use std::io::{self, Write};
 
 /// Label includes additional context for this sample. It can include things
@@ -11,11 +11,11 @@ use std::io::{self, Write};
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct Label {
     /// An annotation for a sample, e.g. "allocation_size".
-    pub key: Field<StringOffset, 1, OPT_ZERO>,
+    pub key: Record<StringOffset, 1, OPT_ZERO>,
     /// At most, one of the str and num should be used.
-    pub str: Field<StringOffset, 2, OPT_ZERO>,
+    pub str: Record<StringOffset, 2, OPT_ZERO>,
     /// At most, one of the str and num should be used.
-    pub num: Field<i64, 3, OPT_ZERO>,
+    pub num: Record<i64, 3, OPT_ZERO>,
 
     // todo: if we don't use num_unit, then we can save 8 bytes--4 from
     //       num_unit plus 4 from padding.
@@ -23,10 +23,10 @@ pub struct Label {
     /// Specifies the units of num.
     /// Use arbitrary string (for example, "requests") as a custom count unit.
     /// If no unit is specified, consumer may apply heuristic to deduce it.
-    pub num_unit: Field<StringOffset, 4, OPT_ZERO>,
+    pub num_unit: Record<StringOffset, 4, OPT_ZERO>,
 }
 
-impl Value for Label {
+unsafe impl Value for Label {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
     fn proto_len(&self) -> u64 {

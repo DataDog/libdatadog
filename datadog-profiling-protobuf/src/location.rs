@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{Field, Value, WireType, NO_OPT_ZERO, OPT_ZERO};
+use crate::{Record, Value, WireType, NO_OPT_ZERO, OPT_ZERO};
 use std::io::{self, Write};
 
 /// Describes function and line table debug information. This only supports a
@@ -13,18 +13,18 @@ use std::io::{self, Write};
 pub struct Location {
     /// Unique nonzero id for the location. A profile could use instruction
     /// addresses or any integer sequence as ids.
-    pub id: Field<u64, 1, NO_OPT_ZERO>,
+    pub id: Record<u64, 1, NO_OPT_ZERO>,
     /// The id of the corresponding profile.Mapping for this location.
     /// It can be unset if the mapping is unknown or not applicable for
     /// this profile type.
-    pub mapping_id: Field<u64, 2, OPT_ZERO>,
+    pub mapping_id: Record<u64, 2, OPT_ZERO>,
     /// The instruction address for this location, if available. It should be
     /// within `Mapping.memory_start..Mapping.memory_limit` for the
     /// corresponding mapping. A non-leaf address may be in the middle of a
     /// call instruction. It is up to display tools to find the beginning of
     /// the instruction if necessary.
-    pub address: Field<u64, 3, OPT_ZERO>,
-    pub line: Field<Line, 4, OPT_ZERO>,
+    pub address: Record<u64, 3, OPT_ZERO>,
+    pub line: Record<Line, 4, OPT_ZERO>,
 }
 
 /// Represents function and line number information. Omits column.  
@@ -33,12 +33,12 @@ pub struct Location {
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct Line {
     /// The id of the corresponding profile.Function for this line.
-    pub function_id: Field<u64, 1, OPT_ZERO>,
+    pub function_id: Record<u64, 1, OPT_ZERO>,
     /// Line number in source code.
-    pub lineno: Field<i64, 2, OPT_ZERO>,
+    pub lineno: Record<i64, 2, OPT_ZERO>,
 }
 
-impl Value for Line {
+unsafe impl Value for Line {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
     fn proto_len(&self) -> u64 {
@@ -65,7 +65,7 @@ impl From<Line> for crate::prost_impls::Line {
     }
 }
 
-impl Value for Location {
+unsafe impl Value for Location {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
     fn proto_len(&self) -> u64 {
@@ -133,12 +133,12 @@ mod tests {
     #[test]
     fn basic() {
         let location = Location {
-            id: Field::default(),
-            mapping_id: Field::default(),
-            address: Field::default(),
-            line: Field::from(Line {
-                function_id: Field::from(1),
-                lineno: Field::default(),
+            id: Record::default(),
+            mapping_id: Record::default(),
+            address: Record::default(),
+            line: Record::from(Line {
+                function_id: Record::from(1),
+                lineno: Record::default(),
             }),
         };
         test(&location);

@@ -1,27 +1,27 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{Field, StringOffset, Value, WireType, NO_OPT_ZERO, OPT_ZERO};
+use super::{Record, StringOffset, Value, WireType, NO_OPT_ZERO, OPT_ZERO};
 use std::io::{self, Write};
 
 /// Represents a function in a profile. Omits the start line because it's not
-/// useful to libdatadog right now, so we save the bytes/ops.
+/// useful to Datadog right now, so we save the bytes/ops.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct Function {
     /// Unique nonzero id for the function.
-    pub id: Field<u64, 1, NO_OPT_ZERO>,
+    pub id: Record<u64, 1, NO_OPT_ZERO>,
     /// Name of the function, in human-readable form if available.
-    pub name: Field<StringOffset, 2, OPT_ZERO>,
+    pub name: Record<StringOffset, 2, OPT_ZERO>,
     /// Name of the function, as identified by the system.
     /// For instance, it can be a C++ mangled name.
-    pub system_name: Field<StringOffset, 3, OPT_ZERO>,
+    pub system_name: Record<StringOffset, 3, OPT_ZERO>,
     /// Source file containing the function.
-    pub filename: Field<StringOffset, 4, OPT_ZERO>,
+    pub filename: Record<StringOffset, 4, OPT_ZERO>,
 }
 
-impl Value for Function {
+unsafe impl Value for Function {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
     fn proto_len(&self) -> u64 {

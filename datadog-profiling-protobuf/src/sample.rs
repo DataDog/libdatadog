@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{prost_impls, Field, Label, Value, WireType, NO_OPT_ZERO};
+use crate::{prost_impls, Label, Record, Value, WireType, NO_OPT_ZERO};
 use std::io::{self, Write};
 
 /// Each Sample records values encountered in some program context. The
@@ -16,29 +16,29 @@ use std::io::{self, Write};
 pub struct Sample<'a> {
     /// The ids recorded here correspond to a Profile.location.id.
     /// The leaf is at location_id\[0\].
-    pub location_ids: Field<&'a [u64], 1, NO_OPT_ZERO>,
+    pub location_ids: Record<&'a [u64], 1, NO_OPT_ZERO>,
     /// The type and unit of each value is defined by the corresponding entry
     /// in Profile.sample_type. All samples must have the same number of
     /// values, the same as the length of Profile.sample_type. When
     /// aggregating multiple samples into a single sample, the result has a
     /// list of values that is the element-wise sum of the original lists.
-    pub values: Field<&'a [i64], 2, NO_OPT_ZERO>,
+    pub values: Record<&'a [i64], 2, NO_OPT_ZERO>,
     /// NOTE: While possible, having multiple values for the same label key is
     /// strongly discouraged and should never be used. Most tools (e.g. pprof)
     /// do not have good (or any) support for multi-value labels. And an even
     /// more discouraged case is having a string label and a numeric label of
     /// the same name on a sample. Again, possible to express, but should not
     /// be used.
-    pub labels: &'a [Field<Label, 3, NO_OPT_ZERO>],
+    pub labels: &'a [Record<Label, 3, NO_OPT_ZERO>],
 }
 
-impl Value for Sample<'_> {
+unsafe impl Value for Sample<'_> {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
     fn proto_len(&self) -> u64 {
         self.location_ids.proto_len()
             + self.values.proto_len()
-            + self.labels.iter().map(Field::proto_len).sum::<u64>()
+            + self.labels.iter().map(Record::proto_len).sum::<u64>()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
@@ -108,11 +108,11 @@ mod tests {
             .for_each(|(location_ids, values, labels)| {
                 let labels = labels
                     .iter()
-                    .map(|l| Field::<_, 3, NO_OPT_ZERO>::from(*l))
+                    .map(|l| Record::<_, 3, NO_OPT_ZERO>::from(*l))
                     .collect::<Vec<_>>();
                 let sample = Sample {
-                    location_ids: Field::from(location_ids.as_slice()),
-                    values: Field::from(values.as_slice()),
+                    location_ids: Record::from(location_ids.as_slice()),
+                    values: Record::from(values.as_slice()),
                     labels: labels.as_slice(),
                 };
 
