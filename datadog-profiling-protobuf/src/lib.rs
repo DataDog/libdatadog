@@ -145,13 +145,14 @@ pub unsafe trait Value: Default + Eq {
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()>;
 }
 
-/// Intended to be provided to a Field to mean that it _should_ optimize for a
-/// value of zero. See also [`NO_OPT_ZERO`].
+/// Intended to be provided to a [`Record`] to mean that it _should_ optimize
+/// for a value of zero. See also [`NO_OPT_ZERO`].
 pub const OPT_ZERO: bool = true;
 
-/// Intended to be provided to a Field to mean that it shouldn't optimize for a
-/// value of zero. Should be used on fields that should not be zero, such as
-/// Mapping.id.
+/// Intended to be provided to a [`Record`] to mean that it shouldn't optimize
+/// for a value of zero. Should be used on fields that should not be zero, such
+/// as `Mapping.id` and for Records which hold arrays, since that would cause
+/// the length of the decoded array to change, which is unexpected.
 pub const NO_OPT_ZERO: bool = false;
 
 impl<P: Value, const F: u32, const O: bool> From<P> for Record<P, F, O> {
