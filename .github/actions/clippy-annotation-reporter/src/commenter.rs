@@ -90,6 +90,7 @@ async fn find_existing_comment(
                 break;
             }
             Err(e) => {
+                // TODO: EK - Handle error more gracefully
                 println!("Warning: Failed to fetch next page of comments: {}", e);
                 break;
             }
