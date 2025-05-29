@@ -26,6 +26,8 @@ pub struct Label {
     pub num_unit: Record<StringOffset, 4, OPT_ZERO>,
 }
 
+/// # Safety
+/// The Default implementation will return all zero-representations.
 unsafe impl Value for Label {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 

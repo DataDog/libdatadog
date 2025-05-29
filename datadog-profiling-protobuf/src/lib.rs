@@ -92,6 +92,8 @@ use std::io::{self, Write};
 #[repr(transparent)]
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct Record<P: Value, const F: u32, const O: bool> {
+    /// The value of the record. This is pub because of a quirk in Rust's
+    /// orphan rules which prevent implementing `From<Record<P,...> for P`.
     pub value: P,
 }
 
@@ -158,6 +160,8 @@ impl<P: Value, const F: u32, const O: bool> From<P> for Record<P, F, O> {
     }
 }
 
+/// # Safety
+/// The Default implementation will return all zero-representations.
 unsafe impl<P: Value, const F: u32, const O: bool> Value for Record<P, F, O> {
     const WIRE_TYPE: WireType = P::WIRE_TYPE;
 
@@ -189,7 +193,7 @@ unsafe impl<P: Value, const F: u32, const O: bool> Value for Record<P, F, O> {
 
 impl<P: Debug + Value, const F: u32, const O: bool> Debug for Record<P, F, O> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Field")
+        f.debug_struct("Record")
             .field("value", &self.value)
             .field("number", &F)
             .field("optimize_for_zero", &O)
@@ -227,6 +231,8 @@ impl Tag {
     }
 }
 
+/// # Safety
+/// The Default implementation will return all zero-representations.
 unsafe impl<T: Value> Value for &'_ [T] {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 

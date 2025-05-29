@@ -30,6 +30,8 @@ pub struct Mapping {
 
 impl Mapping {}
 
+/// # Safety
+/// The Default implementation will return all zero-representations.
 unsafe impl Value for Mapping {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 

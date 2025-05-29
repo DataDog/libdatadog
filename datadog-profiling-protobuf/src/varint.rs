@@ -33,6 +33,8 @@ pub(crate) fn proto_len(val: u64) -> u64 {
     ((((val | 1).leading_zeros() ^ 63) * 9 + 73) / 64) as u64
 }
 
+/// # Safety
+/// The Default implementation will return all zero-representations.
 unsafe impl Value for u64 {
     const WIRE_TYPE: WireType = WireType::Varint;
 

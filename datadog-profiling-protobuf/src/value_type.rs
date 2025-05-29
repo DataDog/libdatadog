@@ -13,6 +13,8 @@ pub struct ValueType {
     pub unit: Record<StringOffset, 2, OPT_ZERO>,
 }
 
+/// # Safety
+/// The Default implementation will return all zero-representations.
 unsafe impl Value for ValueType {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 

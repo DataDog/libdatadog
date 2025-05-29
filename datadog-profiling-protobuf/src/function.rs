@@ -21,6 +21,8 @@ pub struct Function {
     pub filename: Record<StringOffset, 4, OPT_ZERO>,
 }
 
+/// # Safety
+/// The Default implementation will return all zero-representations.
 unsafe impl Value for Function {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 

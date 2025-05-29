@@ -38,6 +38,8 @@ pub struct Line {
     pub lineno: Record<i64, 2, OPT_ZERO>,
 }
 
+/// # Safety
+/// The Default implementation will return all zero-representations.
 unsafe impl Value for Line {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
@@ -65,6 +67,8 @@ impl From<Line> for crate::prost_impls::Line {
     }
 }
 
+/// # Safety
+/// The Default implementation will return all zero-representations.
 unsafe impl Value for Location {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 

@@ -28,6 +28,8 @@ unsafe impl Value for &str {
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
 pub struct StringOffset(u32);
 
+/// # Safety
+/// The Default implementation will return all zero-representations.
 unsafe impl Value for StringOffset {
     const WIRE_TYPE: WireType = WireType::Varint;
 

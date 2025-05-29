@@ -32,6 +32,8 @@ pub struct Sample<'a> {
     pub labels: &'a [Record<Label, 3, NO_OPT_ZERO>],
 }
 
+/// # Safety
+/// The Default implementation will return all zero-representations.
 unsafe impl Value for Sample<'_> {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
