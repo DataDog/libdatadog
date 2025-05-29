@@ -34,6 +34,7 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow = "1.0"
+crossbeam-channel = "0.5.15"
 data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
 datadog-crashtracker-ffi = { path = "../datadog-crashtracker-ffi", default-features = false, optional = true}
 datadog-library-config-ffi = {  path = "../datadog-library-config-ffi", default-features = false, optional = true }

@@ -28,6 +28,21 @@ impl Profile {
         }
     }
 
+    /// Creates a Profile from a raw pointer to an internal::Profile.
+    /// THIS IS UNSAFE, DO NOT USE IT.
+    /// IT ONLY EXISTS TO ALLOW US TO CREATE A PROFILE FROM A RAW POINTER FOR RAPID PROTOTYPING FOR
+    /// THE MANAGER.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that:
+    /// - The pointer is valid and points to a valid internal::Profile
+    /// - The pointer is properly aligned
+    /// - The memory is properly initialized
+    pub unsafe fn from_pointer(ptr: *mut internal::Profile) -> Self {
+        Profile { inner: ptr }
+    }
+
     fn take(&mut self) -> Option<Box<internal::Profile>> {
         // Leaving a null will help with double-free issues that can
         // arise in C. Of course, it's best to never get there in the
