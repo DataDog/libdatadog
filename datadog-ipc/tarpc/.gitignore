@@ -1,7 +1,0 @@
-target
-Cargo.lock
-.cargo
-*.swp
-*.bk
-tarpc.iml
-.idea
