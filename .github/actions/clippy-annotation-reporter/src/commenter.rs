@@ -138,8 +138,14 @@ mod tests {
             .with(eq("owner"), eq("repo"), eq(123))
             .returning(|_, _, _| {
                 Ok(vec![
-                    TestComment { id: 456, body: Some("Some other comment".to_string()) },
-                    TestComment { id: 789, body: Some("A comment with <!-- test-signature --> in it".to_string()) },
+                    TestComment {
+                        id: 456,
+                        body: Some("Some other comment".to_string()),
+                    },
+                    TestComment {
+                        id: 789,
+                        body: Some("A comment with <!-- test-signature --> in it".to_string()),
+                    },
                 ])
             });
 
@@ -148,7 +154,15 @@ mod tests {
             .with(eq("owner"), eq("repo"), eq(789), eq(report_with_signature))
             .returning(|_, _, _, _| Ok(()));
 
-        let result = test_post_or_update_comment(&mock, "owner", "repo", 123, report.to_owned(), Some(signature)).await;
+        let result = test_post_or_update_comment(
+            &mock,
+            "owner",
+            "repo",
+            123,
+            report.to_owned(),
+            Some(signature),
+        )
+        .await;
 
         assert!(result.is_ok());
     }
@@ -166,21 +180,29 @@ mod tests {
         mock.expect_list_comments()
             .with(eq("owner"), eq("repo"), eq(123))
             .returning(|_, _, _| {
-                Ok(vec![
-                    TestComment { id: 456, body: Some("Some other comment".to_string()) },
-                ])
+                Ok(vec![TestComment {
+                    id: 456,
+                    body: Some("Some other comment".to_string()),
+                }])
             });
 
         // Mock the function to not find the comment in the first page
-        mock.expect_get_next_page()
-            .returning(|_| Ok(None));
+        mock.expect_get_next_page().returning(|_| Ok(None));
 
         // mock the call to create a comment
         mock.expect_create_comment()
             .with(eq("owner"), eq("repo"), eq(123), eq(report_with_signature))
             .returning(|_, _, _, _| Ok(()));
 
-        let result = test_post_or_update_comment(&mock, "owner", "repo", 123, report.to_owned(), Some(signature)).await;
+        let result = test_post_or_update_comment(
+            &mock,
+            "owner",
+            "repo",
+            123,
+            report.to_owned(),
+            Some(signature),
+        )
+        .await;
 
         assert!(result.is_ok());
     }
@@ -192,7 +214,7 @@ mod tests {
         repo: &str,
         pr_number: u64,
         report: String,
-        signature: Option<&str>
+        signature: Option<&str>,
     ) -> Result<()> {
         // Use provided signature or default
         let signature = signature.unwrap_or("<!-- clippy-annotation-reporter-comment -->");
@@ -201,13 +223,18 @@ mod tests {
         let report_with_signature = format!("{}\n\n{}", report, signature);
 
         // Find existing comment with the signature
-        let existing_comment_id = test_find_existing_comment(github, owner, repo, pr_number, signature).await?;
+        let existing_comment_id =
+            test_find_existing_comment(github, owner, repo, pr_number, signature).await?;
 
         // Update existing comment or create new one
         if let Some(comment_id) = existing_comment_id {
-            github.update_comment(owner, repo, comment_id, report_with_signature).await?;
+            github
+                .update_comment(owner, repo, comment_id, report_with_signature)
+                .await?;
         } else {
-            github.create_comment(owner, repo, pr_number, report_with_signature).await?;
+            github
+                .create_comment(owner, repo, pr_number, report_with_signature)
+                .await?;
         }
 
         Ok(())
@@ -219,14 +246,18 @@ mod tests {
         owner: &str,
         repo: &str,
         pr_number: u64,
-        signature: &str
+        signature: &str,
     ) -> Result<Option<u64>> {
         // Get comments from the first page
         let comments = github.list_comments(owner, repo, pr_number).await?;
 
         // Check if any comment contains our signature
         for comment in &comments {
-            if comment.body.as_ref().map_or(false, |body| body.contains(signature)) {
+            if comment
+                .body
+                .as_ref()
+                .map_or(false, |body| body.contains(signature))
+            {
                 return Ok(Some(comment.id));
             }
         }
@@ -237,7 +268,11 @@ mod tests {
         if let Some(next_comments) = next_page {
             // Check comments in the next page
             for comment in &next_comments {
-                if comment.body.as_ref().map_or(false, |body| body.contains(signature)) {
+                if comment
+                    .body
+                    .as_ref()
+                    .map_or(false, |body| body.contains(signature))
+                {
                     return Ok(Some(comment.id));
                 }
             }

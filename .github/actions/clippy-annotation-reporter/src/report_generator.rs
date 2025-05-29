@@ -8,6 +8,7 @@
 
 use crate::analyzer::AnalysisResult;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 /// Generate a detailed report for PR comment
 pub fn generate_report(
@@ -203,7 +204,7 @@ fn format_change_string(change: isize, percent_change: f64) -> String {
 /// Count annotations by file
 fn count_annotations_by_file(
     annotations: &[crate::analyzer::ClippyAnnotation],
-) -> HashMap<String, usize> {
+) -> HashMap<Rc<String>, usize> {
     let mut counts = HashMap::new();
 
     for anno in annotations {

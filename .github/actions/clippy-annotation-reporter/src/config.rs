@@ -53,10 +53,7 @@ impl Args {
 
     /// Parse the rules list from the comma-separated string
     pub fn parse_rules(&self) -> Vec<String> {
-        self.rules
-            .split(',')
-            .map(|s| s.trim().to_owned())
-            .collect()
+        self.rules.split(',').map(|s| s.trim().to_owned()).collect()
     }
 }
 

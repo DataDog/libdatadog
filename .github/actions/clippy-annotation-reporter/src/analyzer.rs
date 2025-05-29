@@ -7,24 +7,26 @@
 //! including getting changed files, comparing branches, and producing analysis results.
 
 use anyhow::{Context as _, Result};
+use octocrab::params::pulls::MediaType::Raw;
 use octocrab::Octocrab;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
+use std::rc::Rc;
 
 /// Represents a clippy annotation in code
 #[derive(Debug, Clone)]
 pub struct ClippyAnnotation {
-    pub file: String,
-    pub rule: String,
+    pub file: Rc<String>,
+    pub rule: Rc<String>,
 }
 
 /// Result of annotation analysis
 pub struct AnalysisResult {
     pub base_annotations: Vec<ClippyAnnotation>,
     pub head_annotations: Vec<ClippyAnnotation>,
-    pub base_counts: HashMap<String, usize>,
-    pub head_counts: HashMap<String, usize>,
+    pub base_counts: HashMap<Rc<String>, usize>,
+    pub head_counts: HashMap<Rc<String>, usize>,
     pub changed_files: HashSet<String>,
     pub base_crate_counts: HashMap<String, usize>,
     pub head_crate_counts: HashMap<String, usize>,
@@ -78,9 +80,12 @@ fn analyze_annotations(
     ))
     .context("Failed to compile annotation regex")?;
 
-    let mut base_annotations = Vec::new();
-    let mut head_annotations = Vec::new();
-    let mut changed_files = HashSet::new();
+    let mut base_annotations = Vec::with_capacity(files.len() * 3);
+    let mut head_annotations = Vec::with_capacity(files.len() * 3);
+    let mut changed_files = HashSet::with_capacity(files.len());
+
+    // Cache for rule Rc instances to avoid duplicates
+    let mut rule_cache = HashMap::new();
 
     // Process each file
     for file in files {
@@ -116,6 +121,7 @@ fn analyze_annotations(
             file,
             &base_content,
             &annotation_regex,
+            &mut rule_cache,
         );
 
         // Find annotations in head branch
@@ -124,6 +130,7 @@ fn analyze_annotations(
             file,
             &head_content,
             &annotation_regex,
+            &mut rule_cache,
         );
     }
 
@@ -206,14 +213,29 @@ fn find_annotations(
     file: &str,
     content: &str,
     regex: &Regex,
+    rule_cache: &mut HashMap<String, Rc<String>>,
 ) {
+    // Use Rc for file path
+    let file_rc = Rc::new(file.to_string());
+
     for line in content.lines() {
         if let Some(captures) = regex.captures(line) {
             if let Some(rule_match) = captures.get(1) {
-                let rule = rule_match.as_str().to_owned();
+                let rule_str = rule_match.as_str().to_string();
+
+                // Get or create Rc for this rule
+                let rule_rc = match rule_cache.get(&rule_str) {
+                    Some(cached) => Rc::clone(cached),
+                    None => {
+                        let rc = Rc::new(rule_str.clone());
+                        rule_cache.insert(rule_str, Rc::clone(&rc));
+                        rc
+                    }
+                };
+
                 annotations.push(ClippyAnnotation {
-                    file: file.to_owned(),
-                    rule,
+                    file: Rc::clone(&file_rc),
+                    rule: rule_rc,
                 });
             }
         }
@@ -221,17 +243,18 @@ fn find_annotations(
 }
 
 /// Count annotations by rule
-fn count_annotations_by_rule(annotations: &[ClippyAnnotation]) -> HashMap<String, usize> {
-    let mut counts = HashMap::new();
+fn count_annotations_by_rule(annotations: &[ClippyAnnotation]) -> HashMap<Rc<String>, usize> {
+    let mut counts = HashMap::with_capacity(annotations.len().min(20));
 
     for annotation in annotations {
-        *counts.entry(annotation.rule.clone()).or_insert(0) += 1;
+        *counts.entry(Rc::clone(&annotation.rule)).or_insert(0) += 1;
     }
 
     counts
 }
 
 /// Get crate information for a given file path
+// TODO: EK - is this the right way to determine crate names?
 fn get_crate_for_file(file_path: &str) -> String {
     // Simple heuristic: use the first directory as the crate name
     // For files in src/ directory, use the parent directory
@@ -267,10 +290,23 @@ fn get_crate_for_file(file_path: &str) -> String {
 
 /// Count annotations by crate
 fn count_annotations_by_crate(annotations: &[ClippyAnnotation]) -> HashMap<String, usize> {
-    let mut counts = HashMap::new();
+    let mut counts = HashMap::with_capacity(annotations.len().min(20));
+    // TODO: EK - does this make sense?
+    let mut crate_cache: HashMap<String, String> = HashMap::new();
 
     for annotation in annotations {
-        let crate_name = get_crate_for_file(&annotation.file);
+        let file_path = annotation.file.as_str();
+
+        // Use cached crate name if we've seen this file before
+        let crate_name = match crate_cache.get(file_path) {
+            Some(name) => name.clone(),
+            None => {
+                let name = get_crate_for_file(file_path).to_owned();
+                crate_cache.insert(file_path.to_string(), name.clone());
+                name
+            }
+        };
+
         *counts.entry(crate_name).or_insert(0) += 1;
     }
 
@@ -323,7 +359,8 @@ fn analyze_all_files_for_crates(
 
     let mut base_annotations = Vec::new();
     let mut head_annotations = Vec::new();
-
+    // TODO: EK - Should this be static?
+    let mut rule_cache = HashMap::new();
     // Process each file
     for file in files {
         // Get file content from base branch
@@ -362,6 +399,7 @@ fn analyze_all_files_for_crates(
             file,
             &base_content,
             &annotation_regex,
+            &mut rule_cache,
         );
 
         // Find annotations in head branch
@@ -370,6 +408,7 @@ fn analyze_all_files_for_crates(
             file,
             &head_content,
             &annotation_regex,
+            &mut rule_cache,
         );
     }
 
@@ -382,8 +421,8 @@ fn analyze_all_files_for_crates(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::rc::Rc;
 
-    // Test for find_annotations
     #[test]
     fn test_find_annotations() {
         let mut annotations = Vec::new();
@@ -392,77 +431,81 @@ mod tests {
             fn test() {
                 #[allow(clippy::unwrap_used)]
                 let x = Some(5).unwrap();
-                
+
                 #[allow(clippy::expect_used)]
                 let y = Some(10).expect("This should exist");
             }
         "#;
 
-        let regex = Regex::new(r"#\s*\[\s*allow\s*\(\s*clippy\s*::\s*(unwrap_used|expect_used)\s*\)\s*]").unwrap();
+        let regex =
+            Regex::new(r"#\s*\[\s*allow\s*\(\s*clippy\s*::\s*(unwrap_used|expect_used)\s*\)\s*\]")
+                .unwrap();
+        let mut rule_cache = HashMap::new();
 
-        find_annotations(&mut annotations, file, content, &regex);
+        find_annotations(&mut annotations, file, content, &regex, &mut rule_cache);
 
         assert_eq!(annotations.len(), 2);
-        assert_eq!(annotations[0].rule, "unwrap_used");
-        assert_eq!(annotations[0].file, file);
-        assert_eq!(annotations[1].rule, "expect_used");
+        assert_eq!(*annotations[0].rule, "unwrap_used");
+        assert_eq!(*annotations[0].file, "src/test.rs");
+        assert_eq!(*annotations[1].rule, "expect_used");
     }
 
-    // Test for count_annotations_by_rule
     #[test]
     fn test_count_annotations_by_rule() {
+        let rule1 = Rc::new("unwrap_used".to_string());
+        let rule2 = Rc::new("expect_used".to_string());
+        let file1 = Rc::new("src/test1.rs".to_string());
+        let file2 = Rc::new("src/test2.rs".to_string());
+
         let annotations = vec![
             ClippyAnnotation {
-                file: "src/test1.rs".to_owned(),
-                rule: "unwrap_used".to_owned(),
+                file: Rc::clone(&file1),
+                rule: Rc::clone(&rule1),
             },
             ClippyAnnotation {
-                file: "src/test1.rs".to_owned(),
-                rule: "expect_used".to_owned(),
+                file: Rc::clone(&file1),
+                rule: Rc::clone(&rule2),
             },
             ClippyAnnotation {
-                file: "src/test2.rs".to_owned(),
-                rule: "unwrap_used".to_owned(),
+                file: Rc::clone(&file2),
+                rule: Rc::clone(&rule1),
             },
         ];
 
         let counts = count_annotations_by_rule(&annotations);
 
         assert_eq!(counts.len(), 2);
-        assert_eq!(*counts.get("unwrap_used").unwrap(), 2);
-        assert_eq!(*counts.get("expect_used").unwrap(), 1);
+        assert_eq!(*counts.get(&rule1).unwrap(), 2);
+        assert_eq!(*counts.get(&rule2).unwrap(), 1);
     }
 
-    // Test for get_crate_for_file
-    #[test]
-    fn test_get_crate_for_file() {
-        assert_eq!(get_crate_for_file("src/main.rs"), "root");
-        assert_eq!(get_crate_for_file("tests/test_utils.rs"), "root");
-        assert_eq!(get_crate_for_file("crates/foo/src/lib.rs"), "foo");
-        assert_eq!(get_crate_for_file("foo/src/lib.rs"), "foo");
-        assert_eq!(get_crate_for_file("bar/tests/test.rs"), "bar");
-        assert_eq!(get_crate_for_file("standalone.rs"), "standalone");
-    }
-
-    // Test for count_annotations_by_crate
     #[test]
     fn test_count_annotations_by_crate() {
+        let rule1 = Rc::new("unwrap_used".to_string());
+        let rule2 = Rc::new("expect_used".to_string());
+        let rule3 = Rc::new("panic".to_string());
+
+        let file1 = Rc::new("src/main.rs".to_string());
+        let file2 = Rc::new("crates/foo/src/lib.rs".to_string());
+        let file3 = Rc::new("crates/foo/src/utils.rs".to_string());
+        let file4 = Rc::new("bar/src/lib.rs".to_string());
+
         let annotations = vec![
             ClippyAnnotation {
-                file: "src/main.rs".to_owned(),
-                rule: "unwrap_used".to_owned(),
+                file: Rc::clone(&file1),
+                rule: Rc::clone(&rule1),
             },
             ClippyAnnotation {
-                file: "crates/foo/src/lib.rs".to_owned(),
-                rule: "expect_used".to_owned(),
+                file: Rc::clone(&file2),
+                rule: Rc::clone(&rule2),
             },
             ClippyAnnotation {
-                file: "crates/foo/src/utils.rs".to_owned(),
-                rule: "unwrap_used".to_owned(),
+                file: Rc::clone(&file3),
+                rule: Rc::clone(&rule1),
             },
             ClippyAnnotation {
-                file: "bar/src/lib.rs".to_owned(),
-                rule: "panic".to_owned(),
+                file: Rc::clone(&file4),
+                rule: Rc::clone(&rule3),
             },
         ];
 
@@ -472,5 +515,15 @@ mod tests {
         assert_eq!(*counts.get("root").unwrap(), 1);
         assert_eq!(*counts.get("foo").unwrap(), 2);
         assert_eq!(*counts.get("bar").unwrap(), 1);
+    }
+
+    #[test]
+    fn test_get_crate_for_file() {
+        assert_eq!(get_crate_for_file("src/main.rs"), "root");
+        assert_eq!(get_crate_for_file("tests/test_utils.rs"), "root");
+        assert_eq!(get_crate_for_file("crates/foo/src/lib.rs"), "foo");
+        assert_eq!(get_crate_for_file("foo/src/lib.rs"), "foo");
+        assert_eq!(get_crate_for_file("bar/tests/test.rs"), "bar");
+        assert_eq!(get_crate_for_file("standalone.rs"), "standalone.rs");
     }
 }
