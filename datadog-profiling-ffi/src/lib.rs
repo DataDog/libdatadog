@@ -11,6 +11,7 @@
 pub use symbolizer_ffi::*;
 
 mod exporter;
+mod manager;
 mod profiles;
 mod string_storage;
 
@@ -33,3 +34,5 @@ pub use datadog_library_config_ffi::*;
 // re-export tracer metadata functions
 #[cfg(feature = "ddcommon-ffi")]
 pub use ddcommon_ffi::*;
+
+pub use manager::*;
