@@ -47,6 +47,13 @@ unsafe fn emit_backtrace_by_frames(
     backtrace::trace_unsynchronized(|frame| {
         if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
             backtrace::resolve_frame_unsynchronized(frame, |symbol| {
+                if let Some(function) = symbol.name() {
+                    if function.to_string().starts_with("datadog_crashtracker::")
+                        || function.to_string().starts_with("backtrace::")
+                    {
+                        return;
+                    }
+                }
                 write!(w, "{{").unwrap();
                 #[allow(clippy::unwrap_used)]
                 emit_absolute_addresses(w, frame).unwrap();
@@ -268,4 +275,59 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     writeln!(w, "\n{DD_CRASHTRACK_END_FILE} \"{path}\"")?;
     w.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str;
+
+    #[test]
+    fn test_emit_backtrace_disabled() {
+        let mut buf = Vec::new();
+        unsafe {
+            emit_backtrace_by_frames(&mut buf, StacktraceCollection::Disabled)
+                .expect("to work ;-)");
+        }
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(out.contains("BEGIN_STACKTRACE"));
+        assert!(out.contains("END_STACKTRACE"));
+        assert!(out.contains("\"ip\":"));
+        assert!(
+            !out.contains("\"column\":"),
+            "'column' key must not be emitted"
+        );
+        assert!(!out.contains("\"file\":"), "'file' key must not be emitted");
+        assert!(
+            !out.contains("\"function\":"),
+            "'function' key must not be emitted"
+        );
+        assert!(!out.contains("\"line\":"), "'line' key must not be emitted");
+    }
+
+    #[test]
+    fn test_emit_backtrace_with_symbols() {
+        let mut buf = Vec::new();
+        unsafe {
+            emit_backtrace_by_frames(&mut buf, StacktraceCollection::EnabledWithInprocessSymbols)
+                .expect("to work ;-)");
+        }
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(out.contains("BEGIN_STACKTRACE"));
+        assert!(out.contains("END_STACKTRACE"));
+        // basic structure assertions
+        assert!(out.contains("\"column\":"), "'column' key missing");
+        assert!(out.contains("\"file\":"), "'file' key missing");
+        assert!(out.contains("\"function\":"), "'function' key missing");
+        assert!(out.contains("\"line\":"), "'line' key missing");
+        // filter assertions
+        assert!(
+            !out.contains("datadog_crashtracker::collector"),
+            "crashtracker itself must be filtered, found 'datadog_crashtracker::collector'"
+        );
+        assert!(
+            !out.contains("backtrace::backtrace"),
+            "crashtracker itself must be filtered away, found 'backtrace::backtrace'"
+        );
+    }
 }
