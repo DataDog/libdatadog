@@ -31,7 +31,7 @@ blazesym = "=0.2.0-rc.3"
 
 [dependencies]
 anyhow = "1.0"
-backtrace = "0.3.74"
+backtrace = "=0.3.74"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock", "serde"]}
 ddcommon = {path = "../ddcommon" }
 ddtelemetry = {path = "../ddtelemetry" }
@@ -47,6 +47,8 @@ rand = "0.8.5"
 schemars = "0.8.21"
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
+symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"] }
+symbolic-common = { version = "12.8.0", default-features = false }
 tokio = { version = "1.23", features = ["rt", "macros", "io-std", "io-util"] }
 uuid = { version = "1.4.1", features = ["v4", "serde"] }
 

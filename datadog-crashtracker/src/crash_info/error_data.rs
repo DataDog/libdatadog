@@ -68,6 +68,24 @@ impl ErrorData {
     }
 }
 
+impl ErrorData {
+    pub fn demangle_names(&mut self) -> anyhow::Result<()> {
+        let mut errors = 0;
+        self.stack.demangle_names().unwrap_or_else(|_| errors += 1);
+        for thread in &mut self.threads {
+            thread
+                .stack
+                .demangle_names()
+                .unwrap_or_else(|_| errors += 1);
+        }
+        anyhow::ensure!(
+            errors == 0,
+            "Failed to demangle names, see frame comments for details"
+        );
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum SourceType {
     Crashtracking,

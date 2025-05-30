@@ -269,7 +269,7 @@ mod tests {
                     // on the list.  We can't look inside the `StringTable`
                     // in a non-desctrive way, but fortunately we have the
                     // `golden_list` to compare against.
-                    assert_eq!(string, golden_list[str_id.to_offset()]);
+                    assert_eq!(string, golden_list[usize::from(str_id)]);
                 }
                 assert_eq!(st.len(), golden_list.len());
                 assert_eq!(st.len(), golden_set.len());

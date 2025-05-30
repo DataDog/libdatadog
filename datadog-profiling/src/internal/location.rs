@@ -20,23 +20,6 @@ impl Item for Location {
     type Id = LocationId;
 }
 
-impl PprofItem for Location {
-    type PprofMessage = pprof::Location;
-
-    fn to_pprof(&self, id: Self::Id) -> Self::PprofMessage {
-        pprof::Location {
-            id: id.to_raw_id(),
-            mapping_id: self.mapping_id.map(MappingId::into_raw_id).unwrap_or(0),
-            address: self.address,
-            lines: vec![pprof::Line {
-                function_id: self.function_id.to_raw_id(),
-                line: self.line,
-            }],
-            is_folded: false,
-        }
-    }
-}
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[repr(C)]
 pub struct LocationId(NonZeroU32);

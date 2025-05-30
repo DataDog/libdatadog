@@ -774,7 +774,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -783,7 +783,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1339,7 +1339,7 @@ checksum = "575f75dfd25738df5b91b8e43e14d44bda14637a58fae779fd2b064f8bf3e010"
 
 [[package]]
 name = "data-pipeline"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1372,7 +1372,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline-ffi"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "build_common",
  "data-pipeline",
@@ -1385,7 +1385,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-alloc"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "allocator-api2",
  "bolero",
@@ -1395,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -1417,6 +1417,8 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "symbolic-common",
+ "symbolic-demangle",
  "tempfile",
  "tokio",
  "uuid",
@@ -1425,7 +1427,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker-ffi"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1445,7 +1447,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ddsketch"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -1503,9 +1505,13 @@ dependencies = [
 
 [[package]]
 name = "datadog-library-config"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
+ "memfd",
+ "rand 0.8.5",
+ "rmp",
+ "rmp-serde",
  "serde",
  "serde_yaml",
  "tempfile",
@@ -1513,7 +1519,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-library-config-ffi"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1562,7 +1568,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -1572,8 +1578,8 @@ dependencies = [
  "chrono",
  "criterion",
  "datadog-alloc",
+ "datadog-profiling-protobuf",
  "ddcommon",
- "derivative",
  "futures",
  "http 1.1.0",
  "http-body-util",
@@ -1593,7 +1599,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1615,12 +1621,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-profiling-protobuf"
+version = "18.1.0"
+dependencies = [
+ "bolero",
+ "datadog-profiling-protobuf",
+ "prost",
+]
+
+[[package]]
 name = "datadog-profiling-replayer"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "datadog-profiling",
+ "datadog-profiling-protobuf",
  "prost",
  "sysinfo",
 ]
@@ -1740,7 +1756,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1751,7 +1767,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1769,7 +1785,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -1782,7 +1798,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1818,7 +1834,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-tracer-flare"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "datadog-remote-config",
@@ -1829,7 +1845,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -1848,13 +1864,9 @@ dependencies = [
  "libc",
  "log",
  "maplit",
- "memfd",
  "nix",
  "pin-project",
- "rand 0.8.5",
  "regex",
- "rmp",
- "rmp-serde",
  "rustls",
  "rustls-native-certs 0.8.1",
  "serde",
@@ -1867,7 +1879,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1881,7 +1893,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1905,7 +1917,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "build_common",
  "ddcommon",
@@ -1933,17 +1945,6 @@ checksum = "b42b6fa04a440b495c8b04d0e71b707c585f83cb9cb28cf8cd0d976c315e31b4"
 dependencies = [
  "powerfmt",
  "serde",
-]
-
-[[package]]
-name = "derivative"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcc3dd5e9e9c0b295d6e1e4d811fb6f157d5ffd784b8d202fc62eac8035a770b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -2028,7 +2029,7 @@ dependencies = [
 
 [[package]]
 name = "dogstatsd-client"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "cadence",
@@ -5132,7 +5133,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5455,7 +5456,7 @@ dependencies = [
 
 [[package]]
 name = "tinybytes"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "once_cell",
  "pretty_assertions",
@@ -5670,7 +5671,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "regex",
 ]

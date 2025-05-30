@@ -321,7 +321,7 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
 
     let base_expected_tags: std::collections::HashSet<&str> =
         std::collections::HashSet::from_iter([
-            "data_schema_version:1.3",
+            "data_schema_version:1.4",
             "incomplete:false",
             "is_crash:true",
             "profiler_collecting_sample:1",
