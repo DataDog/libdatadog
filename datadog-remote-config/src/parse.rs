@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    configs::{self, dynamic::DynamicConfigFile, flare::FlareConfigFile},
+    config::{self, dynamic::DynamicConfigFile, flare::FlareConfigFile},
     RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
 };
 use datadog_live_debugger::LiveDebuggingData;
@@ -22,10 +22,10 @@ impl RemoteConfigData {
     ) -> anyhow::Result<RemoteConfigData> {
         Ok(match product {
             RemoteConfigProduct::AgentConfig | RemoteConfigProduct::AgentTask => {
-                RemoteConfigData::TracerFlare(configs::flare::parse_json(data, product)?)
+                RemoteConfigData::TracerFlare(config::flare::parse_json(data, product)?)
             }
             RemoteConfigProduct::ApmTracing => {
-                RemoteConfigData::DynamicConfig(configs::dynamic::parse_json(data)?)
+                RemoteConfigData::DynamicConfig(config::dynamic::parse_json(data)?)
             }
             RemoteConfigProduct::LiveDebugger => {
                 let parsed = datadog_live_debugger::parse_json(&String::from_utf8_lossy(data))?;
