@@ -346,5 +346,12 @@ mod tests {
             wait_for_log_message(&log_path, "after level change at error"),
             "Error log should appear after level change"
         );
+
+        // Change writer to Noop to clean up
+        let noop_config = LoggerConfig {
+            level: LogEventLevel::Info,
+            writer: WriterConfig::Noop,
+        };
+        assert!(logger_configure(noop_config).is_ok());
     }
 }
