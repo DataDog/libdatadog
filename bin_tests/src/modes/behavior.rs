@@ -42,6 +42,20 @@ pub fn file_append_msg(filepath: &Path, contents: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn file_write_msg(filepath: &Path, contents: &str) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(filepath)
+        .with_context(|| format!("Failed to open file: {}", filepath.display()))?;
+
+    file.write_all(contents.as_bytes())
+        .with_context(|| format!("Failed to write to file: {}", filepath.display()))?;
+
+    Ok(())
+}
+
 pub fn atom_to_clone<T: Clone>(atom: &AtomicPtr<T>) -> Result<T> {
     let ptr = atom.load(Ordering::SeqCst);
     anyhow::ensure!(!ptr.is_null(), "Pointer was null");
