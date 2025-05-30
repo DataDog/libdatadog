@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-use super::crash_handler::enable;
-use super::receiver_manager::Receiver;
+use super::{crash_handler::enable, receiver_manager::Receiver};
 use crate::{
     clear_spans, clear_traces, collector::signal_handler_manager::register_crash_handlers,
     crash_info::Metadata, reset_counters, shared::configuration::CrashtrackerReceiverConfig,
