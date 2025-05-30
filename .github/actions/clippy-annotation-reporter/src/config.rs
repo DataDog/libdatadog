@@ -8,6 +8,7 @@
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
+use log::{debug, warn};
 use serde_json::Value;
 use std::env;
 use std::fs;
@@ -81,9 +82,6 @@ impl GitHubContext {
         let event_path = env::var("GITHUB_EVENT_PATH")
             .context("GITHUB_EVENT_PATH environment variable not set")?;
 
-        println!("Event name: {}", event_name);
-        println!("Event path: {}", event_path);
-
         let event_data =
             fs::read_to_string(event_path).context("Failed to read GitHub event file")?;
 
@@ -99,31 +97,22 @@ impl GitHubContext {
 
                 // Direct access to base.ref
                 let base_ref = match event_json["pull_request"]["base"]["ref"].as_str() {
-                    Some(val) => {
-                        println!("Successfully found base.ref in event data: {}", val);
-                        val.to_owned()
-                    }
+                    Some(val) => val.to_owned(),
                     None => {
-                        println!(
-                            "Warning: Could not extract base.ref as string, raw value: {:?}",
-                            event_json["pull_request"]["base"]["ref"]
+                        warn!(
+                            "Could not extract base.ref as string, Falling back to main as base branch",
                         );
 
-                        // Fallback to main if we can't extract the value
-                        println!("Falling back to 'main' as base branch");
                         "main".to_owned()
                     }
                 };
 
                 // Direct access to head.ref
                 let head_ref = match event_json["pull_request"]["head"]["ref"].as_str() {
-                    Some(val) => {
-                        println!("Successfully found head.ref in event data: {}", val);
-                        val.to_owned()
-                    }
+                    Some(val) => val.to_owned(),
                     None => {
-                        println!("Warning: Could not extract head.ref as string");
-                        // We'll use the current branch as fallback
+                        warn!("Warning: Could not extract head.ref as string");
+
                         String::new()
                     }
                 };
@@ -136,9 +125,10 @@ impl GitHubContext {
             }
         };
 
-        println!("Extracted PR number: {}", pr_number);
-        println!("Extracted base branch: {}", base_ref);
-        println!("Extracted head branch: {}", head_ref);
+        debug!(
+            "Extracted PR: {}, base: {}, head: {}",
+            pr_number, base_ref, head_ref
+        );
 
         Ok(GitHubContext {
             repository,
@@ -214,7 +204,6 @@ impl Config {
         let owner = parts[0].to_owned();
         let repo = parts[1].to_owned();
 
-        // Parse rules list
         let rules = args.parse_rules();
 
         Ok(Config {

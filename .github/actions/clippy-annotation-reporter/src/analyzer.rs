@@ -7,6 +7,7 @@
 //! including getting changed files, comparing branches, and producing analysis results.
 
 use anyhow::{Context as _, Result};
+use log::{debug, error, info};
 use octocrab::params::pulls::MediaType::Raw;
 use octocrab::Octocrab;
 use regex::Regex;
@@ -70,7 +71,7 @@ fn analyze_annotations(
     head_branch: &str,
     rules: &[String],
 ) -> Result<AnalysisResult> {
-    println!("Analyzing clippy annotations in {} files...", files.len());
+    debug!("Analyzing clippy annotations in {} files...", files.len());
 
     // Create a regex for matching clippy allow annotations
     let rule_pattern = rules.join("|");
@@ -80,14 +81,14 @@ fn analyze_annotations(
     ))
     .context("Failed to compile annotation regex")?;
 
-    let mut base_annotations = Vec::with_capacity(files.len() * 3);
-    let mut head_annotations = Vec::with_capacity(files.len() * 3);
-    let mut changed_files = HashSet::with_capacity(files.len());
+    let mut base_annotations = Vec::new();
+    let mut head_annotations = Vec::new();
+    let mut changed_files = HashSet::new();
 
     // Cache for rule Rc instances to avoid duplicates
+    // TODO: EK - why?
     let mut rule_cache = HashMap::new();
 
-    // Process each file
     for file in files {
         changed_files.insert(file.clone());
 
@@ -95,10 +96,7 @@ fn analyze_annotations(
         let base_content = match get_file_content(file, base_branch) {
             Ok(content) => content,
             Err(e) => {
-                println!(
-                    "Warning: Failed to get {} content from {}: {}",
-                    file, base_branch, e
-                );
+                error!("Failed to get {} content from {}: {}", file, base_branch, e);
                 String::new()
             }
         };
@@ -107,10 +105,7 @@ fn analyze_annotations(
         let head_content = match get_file_content(file, head_branch) {
             Ok(content) => content,
             Err(e) => {
-                println!(
-                    "Warning: Failed to get {} content from {}: {}",
-                    file, head_branch, e
-                );
+                error!("Failed to get {} content from {}: {}", file, head_branch, e);
                 String::new()
             }
         };
@@ -142,7 +137,7 @@ fn analyze_annotations(
     let base_crate_counts = count_annotations_by_crate(&base_annotations);
     let head_crate_counts = count_annotations_by_crate(&head_annotations);
 
-    println!(
+    info!(
         "Analysis complete. Found {} annotations in base branch and {} in head branch",
         base_annotations.len(),
         head_annotations.len()
@@ -166,7 +161,7 @@ async fn get_changed_files(
     repo: &str,
     pr_number: u64,
 ) -> Result<Vec<String>> {
-    println!("Getting changed files from PR #{}...", pr_number);
+    info!("Getting changed files from PR #{}...", pr_number);
 
     let files = octocrab
         .pulls(owner, repo)
@@ -182,14 +177,14 @@ async fn get_changed_files(
         .map(|file| file.filename)
         .collect();
 
-    println!("Found {} changed Rust files", rust_files.len());
+    info!("Found {} changed Rust files", rust_files.len());
 
     Ok(rust_files)
 }
 
 /// Get file content from a specific branch
 fn get_file_content(file: &str, branch: &str) -> Result<String> {
-    println!("Getting content for {} from {}", file, branch);
+    debug!("Getting content for {} from {}", file, branch);
 
     let output = Command::new("git")
         .args(["show", &format!("{}:{}", branch, file)])
@@ -316,7 +311,7 @@ fn count_annotations_by_crate(annotations: &[ClippyAnnotation]) -> HashMap<Rc<St
 
 /// Get all Rust files in the repository
 fn get_all_rust_files() -> Result<Vec<String>> {
-    println!("Getting all Rust files in the repository...");
+    info!("Getting all Rust files in the repository...");
 
     // Use git ls-files to get all tracked Rust files
     let output = Command::new("git")
@@ -333,7 +328,7 @@ fn get_all_rust_files() -> Result<Vec<String>> {
 
     let rust_files: Vec<String> = files.lines().map(|line| line.to_owned()).collect();
 
-    println!("Found {} Rust files in total", rust_files.len());
+    info!("Found {} Rust files in total", rust_files.len());
 
     Ok(rust_files)
 }
@@ -345,7 +340,7 @@ fn analyze_all_files_for_crates(
     head_branch: &str,
     rules: &[String],
 ) -> Result<(HashMap<Rc<String>, usize>, HashMap<Rc<String>, usize>)> {
-    println!(
+    info!(
         "Analyzing all {} Rust files for crate-level statistics...",
         files.len()
     );
@@ -364,35 +359,8 @@ fn analyze_all_files_for_crates(
     let mut rule_cache = HashMap::new();
     // Process each file
     for file in files {
-        // Get file content from base branch
-        let base_content = match get_file_content(file, base_branch) {
-            Ok(content) => content,
-            Err(e) => {
-                // Skip errors for files that might not exist in one branch
-                if !e.to_string().contains("did not match any file") {
-                    println!(
-                        "Warning: Failed to get {} content from {}: {}",
-                        file, base_branch, e
-                    );
-                }
-                String::new()
-            }
-        };
-
-        // Get file content from head branch
-        let head_content = match get_file_content(file, head_branch) {
-            Ok(content) => content,
-            Err(e) => {
-                // Skip errors for files that might not exist in one branch
-                if !e.to_string().contains("did not match any file") {
-                    println!(
-                        "Warning: Failed to get {} content from {}: {}",
-                        file, head_branch, e
-                    );
-                }
-                String::new()
-            }
-        };
+        let base_content = get_branch_content(file, base_branch);
+        let head_content = get_branch_content(file, head_branch);
 
         // Find annotations in base branch
         find_annotations(
@@ -417,6 +385,20 @@ fn analyze_all_files_for_crates(
     let head_crate_counts = count_annotations_by_crate(&head_annotations);
 
     Ok((base_crate_counts, head_crate_counts))
+}
+
+/// Get file content from a branch, handling common errors
+fn get_branch_content(file: &str, branch: &str) -> String {
+    match get_file_content(file, branch) {
+        Ok(content) => content,
+        Err(e) => {
+            // Skip errors for files that might not exist in one branch
+            if !e.to_string().contains("did not match any file") {
+                log::warn!("Failed to get {} content from {}: {}", file, branch, e);
+            }
+            String::new()
+        }
+    }
 }
 
 #[cfg(test)]

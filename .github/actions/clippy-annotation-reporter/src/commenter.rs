@@ -7,6 +7,7 @@
 //! including finding existing comments and updating or creating comments.
 
 use anyhow::{Context as _, Result};
+use log::{debug, error, info};
 use octocrab::Octocrab;
 
 /// Post or update a comment on a PR with the given report
@@ -25,27 +26,25 @@ pub async fn post_comment(
     let report_with_signature = format!("{}\n\n{}", report, signature);
 
     // Search for existing comment by the bot
-    println!("Checking for existing comment on PR #{}", pr_number);
+    info!("Checking for existing comment on PR #{}", pr_number);
     let existing_comment =
         find_existing_comment(octocrab, owner, repo, pr_number, signature).await?;
 
     // Update existing comment or create a new one
     if let Some(comment_id) = existing_comment {
-        println!("Updating existing comment #{}", comment_id);
+        info!("Updating existing comment #{}", comment_id);
         octocrab
             .issues(owner, repo)
             .update_comment(comment_id.into(), report_with_signature)
             .await
             .context("Failed to update existing comment")?;
-        println!("Comment updated successfully!");
     } else {
-        println!("Creating new comment on PR #{}", pr_number);
+        info!("Creating new comment on PR #{}", pr_number);
         octocrab
             .issues(owner, repo)
             .create_comment(pr_number, report_with_signature)
             .await
             .context("Failed to post comment to PR")?;
-        println!("Comment created successfully!");
     }
 
     Ok(())
@@ -91,7 +90,7 @@ async fn find_existing_comment(
             }
             Err(e) => {
                 // TODO: EK - Handle error more gracefully
-                println!("Warning: Failed to fetch next page of comments: {}", e);
+                error!("Warning: Failed to fetch next page of comments: {}", e);
                 break;
             }
         }

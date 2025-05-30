@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::{Context as _, Result};
+use log::info;
 use octocrab::Octocrab;
 
 mod analyzer;
@@ -14,14 +15,13 @@ use crate::report_generator::generate_report;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logger
-    // TODO: EK - Do we even want to use env_logger here?
     env_logger::init();
 
-    println!("Clippy Annotation Reporter starting...");
+    info!("Clippy Annotation Reporter starting...");
 
     let config = ConfigBuilder::new().build()?;
 
+    // TODO: EK - Should we use context here?
     let octocrab = Octocrab::builder()
         .personal_token(config.token.clone())
         .build()
@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
         Ok(result) => result,
         Err(e) => {
             if e.to_string().contains("No Rust files changed") {
-                println!("No Rust files changed in this PR, nothing to analyze.");
+                info!("No Rust files changed in this PR, nothing to analyze.");
                 return Ok(());
             }
             return Err(e);
@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    println!("Process completed successfully!");
+    info!("Process completed successfully!");
 
     Ok(())
 }
