@@ -15,6 +15,7 @@ use crate::report_generator::generate_report;
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logger
+    // TODO: EK - Do we even want to use env_logger here?
     env_logger::init();
 
     println!("Clippy Annotation Reporter starting...");
