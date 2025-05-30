@@ -104,6 +104,9 @@ datadog-remote-config = { path = "../datadog-remote-config", features = ["test"]
 datadog-trace-utils = { path = "../datadog-trace-utils", features = ["test-utils"] }
 datadog-dynamic-configuration = { path = "../datadog-dynamic-configuration", features = ["test"] }
 
+[build-dependencies]
+cbindgen = "0.26"
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(tokio_taskdump,windows_seh_wrapper)',

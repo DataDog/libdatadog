@@ -16,6 +16,7 @@ use std::time::Instant;
 use tokio::net::{UnixListener, UnixStream};
 use tracing::{error, info};
 
+/// cbindgen:ignore
 #[no_mangle]
 pub extern "C" fn ddog_daemon_entry_point() {
     #[cfg(feature = "tracing")]
