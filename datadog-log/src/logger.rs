@@ -289,6 +289,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_global_logger() {
         // Now test with file writer
         println!("\nTesting file writer...");
