@@ -60,7 +60,7 @@ jobs:
         run: sudo apt-get install -y licensecheck
       - name: Check licenses
         # Exclude symbolizer-ffi from the checks (mostly imported code)
-        run: '! find . \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \)  -not -path "./symbolizer-ffi/*" -not -path "*/tarpc/*" -print0 | xargs -0 licensecheck -c ".*" | grep -v "Apache License 2.0"'
+        run: '! find . \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \)  -not -path "./symbolizer-ffi/*" -not -path "./datadog-ipc/plugins/*" -not -path "./datadog-ipc/tarpc/*" -print0 | xargs -0 licensecheck -c ".*" | grep -v "Apache License 2.0"'
 
   # todo: fix upstream warnings; from the readme:
   # The most common cause of missing licenses seems to be workspaces that

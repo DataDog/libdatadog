@@ -20,7 +20,7 @@ libc = { version = "0.2" }
 tinybytes = { path = "../tinybytes", optional = true }
 
 # tarpc needed extensions to allow 1 way communication and to export some internal structs
-tarpc = { path = "tarpc/tarpc", default-features = false, features = ["serde-transport"], package = "tarpc" }
+tarpc = { path = "./tarpc", default-features = false, features = ["serde-transport"] }
 
 ddcommon = { path = "../ddcommon" }
 datadog-ipc-macros = { path = "../datadog-ipc-macros" }
