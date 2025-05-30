@@ -85,14 +85,14 @@ impl Write for DynamicWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.writer
             .lock()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
+            .map_err(|e| io::Error::other(e.to_string()))?
             .write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
         self.writer
             .lock()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
+            .map_err(|e| io::Error::other(e.to_string()))?
             .flush()
     }
 }
