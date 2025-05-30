@@ -10,6 +10,7 @@ permissions:
 jobs:
   clippy-annotation-reporter:
     runs-on: ubuntu-latest
+    continue-on-error: true
     env:
       CARGO_TERM_COLOR: always
     steps:
@@ -33,3 +34,4 @@ jobs:
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
           allow-annotation-rules: "expect_used, panic, todo, unimplemented, unwrap_used"
+          log_level: 'info'

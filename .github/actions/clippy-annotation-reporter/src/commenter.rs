@@ -7,7 +7,7 @@
 //! including finding existing comments and updating or creating comments.
 
 use anyhow::{Context as _, Result};
-use log::{debug, error, info};
+use log::{error, info};
 use octocrab::Octocrab;
 
 /// Post or update a comment on a PR with the given report

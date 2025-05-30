@@ -8,7 +8,6 @@
 
 use anyhow::{Context as _, Result};
 use log::{debug, error, info};
-use octocrab::params::pulls::MediaType::Raw;
 use octocrab::Octocrab;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};

@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::env;
 use anyhow::{Context as _, Result};
 use log::info;
 use octocrab::Octocrab;
@@ -15,6 +16,13 @@ use crate::report_generator::generate_report;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let log_level = env::var("INPUT_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+
+    // Set RUST_LOG if not already set
+    if env::var("RUST_LOG").is_err() {
+        env::set_var("RUST_LOG", &log_level);
+    }
+    
     env_logger::init();
 
     info!("Clippy Annotation Reporter starting...");

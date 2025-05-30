@@ -15,6 +15,10 @@ inputs:
     description: 'Base branch to compare against'
     required: false
     default: 'origin/main'
+  log_level:
+    description: 'Log level (error, warn, info, debug, trace)'
+    required: false
+    default: 'info'
 
 runs:
   using: 'composite'
@@ -39,14 +43,6 @@ runs:
       shell: bash
       run: |
         FILE_PATH="data-pipeline/src/trace_exporter/mod.rs"
-
-        echo "Direct branch comparison for $FILE_PATH:"
-        echo "==== BASE BRANCH ===="
-        git show "origin/main:$FILE_PATH" | grep -c "#\[allow(clippy::unwrap_used"
-
-        echo "==== HEAD BRANCH ===="
-        git show "HEAD:$FILE_PATH" | grep -c "#\[allow(clippy::unwrap_used"
-
     - name: Run annotation reporter
       shell: bash
       run: |
