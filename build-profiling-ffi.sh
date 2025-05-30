@@ -152,6 +152,7 @@ FEATURES=(
     "datadog-profiling-ffi/ddtelemetry-ffi"
     "datadog-profiling-ffi/demangler"
     "datadog-library-config-ffi"
+    "datadog-log-ffi"
 )
 if [[ "$symbolizer" -eq 1 ]]; then
     FEATURES+=("symbolizer")
@@ -236,7 +237,7 @@ echo "Generating $destdir/include/libdatadog headers..."
 rm -r $destdir/include/datadog/
 mkdir $destdir/include/datadog/
 
-CBINDGEN_HEADERS="common.h profiling.h telemetry.h crashtracker.h data-pipeline.h library-config.h"
+CBINDGEN_HEADERS="common.h profiling.h telemetry.h crashtracker.h data-pipeline.h library-config.h log.h"
 # When optional features are added, don't forget to also include the headers here
 case $ARG_FEATURES in
 esac
