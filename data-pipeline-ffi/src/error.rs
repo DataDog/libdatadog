@@ -32,6 +32,8 @@ pub enum ExporterErrorCode {
     NetworkUnknown,
     Serde,
     TimedOut,
+    #[cfg(feature = "catch_panic")]
+    Panic,
 }
 
 impl Display for ExporterErrorCode {
@@ -57,6 +59,8 @@ impl Display for ExporterErrorCode {
             Self::NetworkUnknown => write!(f, "Unknown network error"),
             Self::Serde => write!(f, "Serialization/Deserialization error"),
             Self::TimedOut => write!(f, "Operation timed out"),
+            #[cfg(feature = "catch_panic")]
+            Self::Panic => write!(f, "Operation panicked"),
         }
     }
 }
