@@ -1,10 +1,10 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::env;
 use anyhow::{Context as _, Result};
 use log::info;
 use octocrab::Octocrab;
+use std::env;
 
 mod analyzer;
 mod commenter;
@@ -22,14 +22,13 @@ async fn main() -> Result<()> {
     if env::var("RUST_LOG").is_err() {
         env::set_var("RUST_LOG", &log_level);
     }
-    
+
     env_logger::init();
 
     info!("Clippy Annotation Reporter starting...");
 
     let config = ConfigBuilder::new().build()?;
 
-    // TODO: EK - Should we use context here?
     let octocrab = Octocrab::builder()
         .personal_token(config.token.clone())
         .build()

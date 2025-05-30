@@ -157,7 +157,7 @@ impl Config {
         // Use provided values from args if available, otherwise use context
         // TODO: EK - FIX THIS CLONE
         let repository = args.clone().repo.unwrap_or(github_ctx.repository);
-
+        warn!("using args: {:?}", args);
         let pr_number = match args.pr {
             Some(pr) => pr,
             None => {
