@@ -1571,7 +1571,6 @@ dependencies = [
  "tempfile",
  "tracing",
  "tracing-appender",
- "tracing-core",
  "tracing-subscriber",
 ]
 
