@@ -17,57 +17,19 @@ use anyhow::Context;
 use crossbeam_channel::{select, tick, Receiver, Sender};
 use datadog_profiling::{api, internal};
 
-#[repr(C)]
-pub struct ManagedSample {
-    data: *mut c_void,
-    callback: extern "C" fn(*mut c_void, *mut internal::Profile),
-}
-
-// void add_sample(void *data, Profile *profile) {
-//     Sample *sample = (Sample *)data;
-//     Profile *profile = (Profile *)data;
-//     profile->add_sample(sample);
-// }
-
-impl ManagedSample {
-    /// Creates a new ManagedSample from a raw pointer and callback.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that:
-    /// - The pointer is valid and points to memory that will remain valid for the lifetime of the
-    ///   ManagedSample
-    /// - The pointer is properly aligned
-    /// - The memory is properly initialized
-    #[no_mangle]
-    pub unsafe extern "C" fn new(
-        data: *mut c_void,
-        callback: extern "C" fn(*mut c_void, *mut internal::Profile),
-    ) -> Self {
-        Self { data, callback }
-    }
-
-    /// Returns the raw pointer to the underlying data.
-    #[no_mangle]
-    pub extern "C" fn as_ptr(&self) -> *mut c_void {
-        self.data
-    }
-
-    #[allow(clippy::todo)]
-    pub fn add(self, profile: &mut internal::Profile) {
-        (self.callback)(self.data, profile);
-    }
-}
-
 pub struct ProfilerManager {
-    samples_receiver: Receiver<ManagedSample>,
-    samples_sender: Sender<ManagedSample>,
+    samples_receiver: Receiver<*mut c_void>,
+    samples_sender: Sender<*mut c_void>,
+    recycled_samples_receiver: Receiver<*mut c_void>,
+    recycled_samples_sender: Sender<*mut c_void>,
     cpu_ticker: Receiver<Instant>,
     upload_ticker: Receiver<Instant>,
     profile: internal::Profile,
     cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
-    sample_converter: extern "C" fn(ManagedSample) -> Sample<'static>,
-    reset_callback: extern "C" fn(ManagedSample) -> bool,
+    // Static is probably the wrong type here, but worry about that later.
+    sample_converter: extern "C" fn(*mut c_void) -> Sample<'static>,
+    // True if the sample should be reusused after reset, false otherwise.
+    reset_callback: extern "C" fn(*mut c_void) -> bool,
 }
 
 impl ProfilerManager {
@@ -75,10 +37,11 @@ impl ProfilerManager {
         sample_types: &[api::ValueType],
         period: Option<api::Period>,
         cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
-        sample_converter: extern "C" fn(ManagedSample) -> Sample<'static>,
-        reset_callback: extern "C" fn(ManagedSample) -> bool,
+        sample_converter: extern "C" fn(*mut c_void) -> Sample<'static>,
+        reset_callback: extern "C" fn(*mut c_void) -> bool,
     ) -> Self {
         let (samples_sender, samples_receiver) = crossbeam_channel::bounded(10);
+        let (recycled_samples_sender, recycled_samples_receiver) = crossbeam_channel::bounded(10);
         let profile = internal::Profile::new(sample_types, period);
         let cpu_ticker = tick(Duration::from_millis(100));
         let upload_ticker = tick(Duration::from_secs(1));
@@ -87,6 +50,8 @@ impl ProfilerManager {
             upload_ticker,
             samples_receiver,
             samples_sender,
+            recycled_samples_receiver,
+            recycled_samples_sender,
             profile,
             cpu_sampler_callback,
             sample_converter,
@@ -94,14 +59,18 @@ impl ProfilerManager {
         }
     }
 
-    #[allow(clippy::todo)]
     pub fn main(&mut self) -> anyhow::Result<()> {
         // This is just here to allow us to easily bail out.
         let done = tick(Duration::from_secs(5));
         loop {
             select! {
-                recv(self.samples_receiver) -> sample => {
-                    sample?.add(&mut self.profile);
+                recv(self.samples_receiver) -> raw_sample => {
+                    let data = raw_sample?;
+                    let sample = (self.sample_converter)(data);
+                    self.profile.add_sample(sample.try_into()?, None)?;
+                    if (self.reset_callback)(data) {
+                        let _ = self.recycled_samples_sender.send(data);
+                    }
                 },
                 recv(self.cpu_ticker) -> msg => {
                     (self.cpu_sampler_callback)(&mut self.profile);
@@ -155,14 +124,14 @@ mod tests {
     use super::*;
 
     extern "C" fn test_cpu_sampler_callback(_: *mut datadog_profiling::internal::Profile) {}
-    extern "C" fn test_sample_converter(_: ManagedSample) -> Sample<'static> {
+    extern "C" fn test_sample_converter(_: *mut c_void) -> Sample<'static> {
         Sample {
             locations: ddcommon_ffi::Slice::empty(),
             values: ddcommon_ffi::Slice::empty(),
             labels: ddcommon_ffi::Slice::empty(),
         }
     }
-    extern "C" fn test_reset_callback(_: ManagedSample) -> bool {
+    extern "C" fn test_reset_callback(_: *mut c_void) -> bool {
         false
     }
 
