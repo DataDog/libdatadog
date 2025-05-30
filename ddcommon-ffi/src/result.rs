@@ -46,6 +46,15 @@ pub enum Result<T> {
     Err(Error),
 }
 
+impl From<VoidResult> for std::result::Result<(), Error> {
+    fn from(result: VoidResult) -> Self {
+        match result {
+            VoidResult::Ok(_) => Ok(()),
+            VoidResult::Err(err) => Err(err),
+        }
+    }
+}
+
 impl<T> Result<T> {
     pub fn unwrap(self) -> T {
         match self {
