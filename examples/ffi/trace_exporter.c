@@ -4,8 +4,10 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <datadog/common.h>
 #include <datadog/data-pipeline.h>
+#include <datadog/log.h>
 
 enum {
     SUCCESS,
@@ -17,8 +19,59 @@ void handle_error(ddog_TraceExporterError *err) {
     ddog_trace_exporter_error_free(err);
 }
 
+void handle_log_error(ddog_Error *err) {
+    fprintf(stderr, "Operation failed with error: %s\n", (char *)err->message.ptr);
+    ddog_Error_drop(err);
+}
+
+int log_init(const char* log_path) {
+    // Create logger config with debug level
+    struct ddog_LoggerConfig config = {
+        .level = DDOG_LOG_EVENT_LEVEL_DEBUG
+    };
+
+    // Setup writer configuration based on log_path
+    struct ddog_FileConfig file_config;
+    if (log_path != NULL) {
+        // Configure file-based logging
+        file_config.path = (ddog_CharSlice){
+            .ptr = log_path,
+            .len = strlen(log_path)
+        };
+        config.writer.kind = DDOG_WRITER_KIND_FILE;
+        config.writer.file = &file_config;
+    } else {
+        // Configure stdout logging
+        config.writer.kind = DDOG_WRITER_KIND_STDOUT;
+        config.writer.file = NULL;
+    }
+
+    // Initialize the logger
+    struct ddog_Error *err = ddog_logger_configure(config);
+    if (err) {
+        handle_log_error(err);
+        return 1;
+    }
+
+    // Set the log level, just for checking the API
+    err = ddog_logger_set_log_level(DDOG_LOG_EVENT_LEVEL_TRACE);
+    if (err) {
+        handle_log_error(err);
+        return 1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
+    // Initialize logger with optional path from command line
+    const char* log_path = (argc > 1) ? argv[1] : NULL;
+    if (log_init(log_path) != 0) {
+        fprintf(stderr, "Failed to initialize logger\n");
+        return 1;
+    }
+
     int error;
 
     ddog_TraceExporter* trace_exporter;
@@ -32,7 +85,6 @@ int main(int argc, char** argv)
     ddog_CharSlice version = DDOG_CHARSLICE_C("1.0");
     ddog_CharSlice service = DDOG_CHARSLICE_C("test_app");
 
-
     ddog_TraceExporterError *ret;
     ddog_TraceExporterConfig *config;
 
@@ -40,7 +92,6 @@ int main(int argc, char** argv)
     ddog_trace_exporter_config_set_url(config, url);
     ddog_trace_exporter_config_set_tracer_version(config, tracer_version);
     ddog_trace_exporter_config_set_language(config, language);
-
 
     ret = ddog_trace_exporter_new(&trace_exporter, config);
 

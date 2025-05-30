@@ -68,6 +68,8 @@ pub fn main() {
         f.push("symbolizer".to_string());
         #[cfg(feature = "library-config")]
         f.push("datadog-library-config-ffi".to_string());
+        #[cfg(feature = "log")]
+        f.push("datadog-log-ffi".to_string());
         f
     };
 
