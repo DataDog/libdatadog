@@ -15,7 +15,8 @@ crate-type = ["lib", "staticlib", "cdylib"]
 bench = false
 
 [features]
-default = ["cbindgen"]
+default = ["cbindgen", "catch_panic"]
+catch_panic = []
 cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 
 [build-dependencies]
