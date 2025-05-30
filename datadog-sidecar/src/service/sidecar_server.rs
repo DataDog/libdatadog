@@ -11,6 +11,7 @@ use crate::service::{
     RuntimeInfo, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SessionInfo,
     SidecarAction, SidecarInterface, SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
+use data_pipeline::telemetry::TelemetryClient;
 use datadog_ipc::platform::{AsyncChannel, ShmHandle};
 use datadog_ipc::tarpc;
 use datadog_ipc::tarpc::context::Context;
@@ -31,12 +32,13 @@ use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info, trace, warn};
 
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio::task::{JoinError, JoinHandle};
+use tokio::time::sleep;
 
 use crate::config::get_product_endpoint;
 use crate::service::agent_info::AgentInfos;
@@ -92,12 +94,22 @@ unsafe impl Send for ProcessHandle {}
 #[cfg(windows)]
 unsafe impl Sync for ProcessHandle {}
 
+struct TelemetryCachedClient {
+    client: TelemetryClient,
+    last_used: Instant,
+}
+
+type ServiceString = String;
+type EnvString = String;
+type VersionString = String;
+type TelemetryClientKey = (ServiceString, EnvString, VersionString);
+
 /// The `SidecarServer` struct represents a server that handles sidecar operations.
 ///
 /// It maintains a list of active sessions and a counter for each session.
 /// It also holds a reference to a `TraceFlusher` for sending trace data,
 /// and a `Mutex` guarding an optional `ManualFutureCompleter` for telemetry configuration.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct SidecarServer {
     /// An `Arc` wrapped `TraceFlusher` used for sending trace data.
     pub(crate) trace_flusher: Arc<TraceFlusher>,
@@ -105,6 +117,8 @@ pub struct SidecarServer {
     sessions: Arc<Mutex<HashMap<String, SessionInfo>>>,
     /// A `Mutex` guarded `HashMap` that keeps a count of each session.
     session_counter: Arc<Mutex<HashMap<String, u32>>>,
+    /// A `Mutex` guarded `HashMap` that stores the active telemetry clients.
+    telemetry_clients: Arc<Mutex<HashMap<TelemetryClientKey, TelemetryCachedClient>>>,
     /// A `Mutex` guarded optional `ManualFutureCompleter` for telemetry configuration.
     pub self_telemetry_config:
         Arc<Mutex<Option<ManualFutureCompleter<ddtelemetry::config::Config>>>>,
@@ -119,6 +133,37 @@ pub struct SidecarServer {
     /// The ProcessHandle tied to the connection
     #[cfg(windows)]
     process_handle: Option<ProcessHandle>,
+}
+
+impl Default for SidecarServer {
+    fn default() -> Self {
+        let telemetry_clients: Arc<Mutex<HashMap<TelemetryClientKey, TelemetryCachedClient>>> =
+            Arc::new(Default::default());
+
+        // Persist telemetry clients for 30 minutes
+        let clients = telemetry_clients.clone();
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_secs(60)).await;
+                let mut lock = clients.lock_or_panic();
+                lock.retain(|_, c| c.last_used.elapsed() < Duration::from_secs(1800));
+            }
+        });
+
+        Self {
+            trace_flusher: Arc::new(TraceFlusher::default()),
+            sessions: Arc::new(Default::default()),
+            session_counter: Arc::new(Default::default()),
+            telemetry_clients,
+            self_telemetry_config: Arc::new(Default::default()),
+            submitted_payloads: Arc::new(AtomicU64::new(0)),
+            agent_infos: Default::default(),
+            remote_configs: Default::default(),
+            debugger_diagnostics_bookkeeper: Arc::new(Default::default()),
+            #[cfg(windows)]
+            process_handle: None,
+        }
+    }
 }
 
 impl SidecarServer {
@@ -445,22 +490,37 @@ impl SidecarInterface for SidecarServer {
         match applications.entry(queue_id) {
             Entry::Occupied(mut entry) => {
                 let value = entry.get_mut();
+
+                let to_process: Vec<SidecarAction> = actions
+                    .into_iter()
+                    .filter_map(|action| match &action {
+                        SidecarAction::Telemetry(TelemetryActions::AddIntegration(integration)) => {
+                            value.buffered_integrations.insert(integration.clone());
+                            None
+                        }
+                        SidecarAction::PhpComposerTelemetryFile(path) => {
+                            value.buffered_composer_paths.insert(path.clone());
+                            None
+                        }
+                        _ => Some(action),
+                    })
+                    .collect();
+
                 match value.app_or_actions {
                     AppOrQueue::Inactive => {
-                        if is_stop_actions(&actions) {
+                        if is_stop_actions(&to_process) {
                             entry.remove();
                         } else {
                             value.app_or_actions =
-                                AppOrQueue::Queue(EnqueuedTelemetryData::processed(actions));
+                                AppOrQueue::Queue(EnqueuedTelemetryData::processed(to_process));
                         }
                     }
                     AppOrQueue::Queue(ref mut data) => {
-                        data.process(actions);
+                        data.process(to_process);
                     }
                     AppOrQueue::App(ref service_future) => {
                         let service_future = service_future.clone();
-                        // drop on stop
-                        if actions.iter().any(|action| {
+                        if to_process.iter().any(|action| {
                             matches!(
                                 action,
                                 SidecarAction::Telemetry(TelemetryActions::Lifecycle(
@@ -479,9 +539,10 @@ impl SidecarInterface for SidecarServer {
                                 return;
                             };
                             if let Some(mut app) = app_future.await {
-                                let actions =
-                                    EnqueuedTelemetryData::process_immediately(actions, &mut app)
-                                        .await;
+                                let actions = EnqueuedTelemetryData::process_immediately(
+                                    to_process, &mut app,
+                                )
+                                .await;
                                 app.telemetry.send_msgs(actions).await.ok();
                             }
                         });
@@ -490,12 +551,29 @@ impl SidecarInterface for SidecarServer {
             }
             Entry::Vacant(entry) => {
                 if !is_stop_actions(&actions) {
-                    entry.insert(ActiveApplication {
-                        app_or_actions: AppOrQueue::Queue(EnqueuedTelemetryData::processed(
-                            actions,
-                        )),
-                        ..Default::default()
-                    });
+                    let mut new_app = ActiveApplication::default();
+
+                    // Buffer actions for new app entry
+                    let to_process: Vec<SidecarAction> = actions
+                        .into_iter()
+                        .filter_map(|action| match &action {
+                            SidecarAction::Telemetry(TelemetryActions::AddIntegration(
+                                integration,
+                            )) => {
+                                new_app.buffered_integrations.insert(integration.clone());
+                                None
+                            }
+                            SidecarAction::PhpComposerTelemetryFile(path) => {
+                                new_app.buffered_composer_paths.insert(path.clone());
+                                None
+                            }
+                            _ => Some(action),
+                        })
+                        .collect();
+
+                    new_app.app_or_actions =
+                        AppOrQueue::Queue(EnqueuedTelemetryData::processed(to_process));
+                    entry.insert(new_app);
                 }
             }
         }
@@ -562,6 +640,18 @@ impl SidecarInterface for SidecarServer {
                 None
             };
 
+            let (buffered_paths, buffered_integrations) = {
+                let mut apps = rt_info.lock_applications();
+                if let Some(app_data) = apps.get_mut(&queue_id) {
+                    (
+                        app_data.buffered_composer_paths.drain().collect::<Vec<_>>(),
+                        app_data.buffered_integrations.drain().collect::<Vec<_>>(),
+                    )
+                } else {
+                    (vec![], vec![])
+                }
+            };
+
             tokio::spawn(async move {
                 if let Some(instance_future) = instance_future {
                     let instance_option = match instance_future.await {
@@ -601,6 +691,25 @@ impl SidecarInterface for SidecarServer {
                 }
 
                 if let Some(mut app) = manual_app_future.app_future.await {
+                    let mut flush_actions: Vec<TelemetryActions> = vec![];
+
+                    for integration in buffered_integrations {
+                        flush_actions.push(TelemetryActions::AddIntegration(integration));
+                    }
+
+                    for path in buffered_paths {
+                        for dep in EnqueuedTelemetryData::extract_composer_telemetry(path)
+                            .await
+                            .iter()
+                        {
+                            flush_actions.push(TelemetryActions::AddDependency(dep.clone()));
+                        }
+                    }
+
+                    if !flush_actions.is_empty() {
+                        app.telemetry.send_msgs(flush_actions).await.ok();
+                    }
+
                     // Register metrics
                     for metric in std::mem::take(&mut enqueued_data.metrics).into_iter() {
                         app.register_metric(metric);
