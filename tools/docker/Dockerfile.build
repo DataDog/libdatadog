@@ -104,8 +104,7 @@ COPY "tests/spawn_from_lib/Cargo.toml" "tests/spawn_from_lib/"
 COPY "datadog-ipc/Cargo.toml" "datadog-ipc/"
 COPY "datadog-ipc-macros/Cargo.toml" "datadog-ipc-macros/"
 COPY "datadog-ipc/tarpc/Cargo.toml" "datadog-ipc/tarpc/"
-COPY "datadog-ipc/tarpc/tarpc/Cargo.toml" "datadog-ipc/tarpc/tarpc/"
-COPY "datadog-ipc/tarpc/plugins/Cargo.toml" "datadog-ipc/tarpc/plugins/"
+COPY "datadog-ipc/plugins/Cargo.toml" "datadog-ipc/plugins/"
 COPY "data-pipeline/Cargo.toml" "data-pipeline/"
 COPY "data-pipeline-ffi/Cargo.toml" "data-pipeline-ffi/"
 COPY "bin_tests/Cargo.toml"  "bin_tests/"
@@ -120,14 +119,14 @@ RUN echo \
     builder/src/bin/release.rs \
     ddtelemetry/examples/tm-worker-test.rs \
     datadog-ipc/benches/ipc.rs \
-    datadog-ipc/tarpc/tarpc/examples/compression.rs \
-    datadog-ipc/tarpc/tarpc/examples/custom_transport.rs \
-    datadog-ipc/tarpc/tarpc/examples/pubsub.rs \
-    datadog-ipc/tarpc/tarpc/examples/readme.rs \
-    datadog-ipc/tarpc/tarpc/examples/tracing.rs \
-    datadog-ipc/tarpc/tarpc/tests/compile_fail.rs \
-    datadog-ipc/tarpc/tarpc/tests/dataservice.rs \
-    datadog-ipc/tarpc/tarpc/tests/service_functional.rs \
+    datadog-ipc/tarpc/examples/compression.rs \
+    datadog-ipc/tarpc/examples/custom_transport.rs \
+    datadog-ipc/tarpc/examples/pubsub.rs \
+    datadog-ipc/tarpc/examples/readme.rs \
+    datadog-ipc/tarpc/examples/tracing.rs \
+    datadog-ipc/tarpc/tests/compile_fail.rs \
+    datadog-ipc/tarpc/tests/dataservice.rs \
+    datadog-ipc/tarpc/tests/service_functional.rs \
     datadog-profiling-replayer/src/main.rs \
     datadog-profiling/benches/interning_strings.rs \
     datadog-profiling/benches/main.rs \
