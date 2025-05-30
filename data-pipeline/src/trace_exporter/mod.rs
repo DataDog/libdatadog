@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 pub mod agent_response;
 pub mod error;
+use self::agent_response::AgentResponse;
 use crate::agent_info::{AgentInfoArc, AgentInfoFetcher};
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient, TelemetryClientBuilder};
 use crate::trace_exporter::error::{RequestError, TraceExporterError};
@@ -27,15 +28,13 @@ use error::BuilderErrorKind;
 use http_body_util::BodyExt;
 use hyper::http::uri::PathAndQuery;
 use hyper::{header::CONTENT_TYPE, Method, Uri};
-use log::{error, info};
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr, time};
 use tokio::{runtime::Runtime, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-
-use self::agent_response::AgentResponse;
+use tracing::{error, info};
 
 const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] = ["client", "server", "producer", "consumer"];
 const STATS_ENDPOINT: &str = "/v0.6/stats";
@@ -512,7 +511,7 @@ impl TraceExporter {
                                 // This should really never happen as response_status is a
                                 // `NonZeroU16`, but if the response status or tag requirements
                                 // ever change in the future we still don't want to panic.
-                                error!("Failed to serialize response_code to tag {}", tag_err)
+                                error!(?tag_err, "Failed to serialize response_code to tag")
                             }
                         }
                         return Err(TraceExporterError::Request(RequestError::new(
@@ -700,7 +699,7 @@ impl TraceExporter {
                     payload_len as u64,
                     chunks as u64,
                 )) {
-                    error!("Error sending telemetry: {}", e.to_string());
+                    error!(?e, "Error sending telemetry");
                 }
             }
 
@@ -711,7 +710,7 @@ impl TraceExporter {
                     let body = match response.into_body().collect().await {
                         Ok(body) => String::from_utf8_lossy(&body.to_bytes()).to_string(),
                         Err(err) => {
-                            error!("Error reading agent response body: {err}");
+                            error!(?err, "Error reading agent response body");
                             self.emit_metric(
                                 HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
                                 None,
@@ -737,7 +736,7 @@ impl TraceExporter {
                     }
                 }
                 Err(err) => {
-                    error!("Error sending traces: {err}");
+                    error!(?err, "Error sending traces");
                     self.emit_metric(
                         HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
                         None,
@@ -748,7 +747,7 @@ impl TraceExporter {
                             let body = match response.into_body().collect().await {
                                 Ok(body) => body.to_bytes(),
                                 Err(err) => {
-                                    error!("Error reading agent response body: {err}");
+                                    error!(?err, "Error reading agent response body");
                                     return Err(TraceExporterError::from(err));
                                 }
                             };
