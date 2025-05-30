@@ -102,7 +102,6 @@ tempfile = { version = "3.3" }
 httpmock = "0.7.0"
 datadog-remote-config = { path = "../datadog-remote-config", features = ["test"] }
 datadog-trace-utils = { path = "../datadog-trace-utils", features = ["test-utils"] }
-datadog-dynamic-configuration = { path = "../datadog-dynamic-configuration", features = ["test"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
