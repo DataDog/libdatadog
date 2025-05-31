@@ -101,7 +101,6 @@ async fn find_existing_comment(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use anyhow::Result;
     use mockall::predicate::*;
     use mockall::*;

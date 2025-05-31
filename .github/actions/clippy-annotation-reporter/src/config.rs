@@ -59,7 +59,8 @@ impl Args {
 }
 
 /// GitHub event context extracted from environment
-#[derive(Debug)]
+// TODO: EK - Clone should be just for tests
+#[derive(Clone, Debug)]
 pub struct GitHubContext {
     pub repository: String,
     pub pr_number: u64,
@@ -140,6 +141,7 @@ impl GitHubContext {
 }
 
 /// Configuration combining command-line arguments and GitHub context
+#[derive(Debug)]
 pub struct Config {
     pub repository: String,
     pub pr_number: u64,
@@ -153,11 +155,17 @@ pub struct Config {
 
 impl Config {
     /// Create a new configuration from command-line arguments and GitHub context
-    pub fn new(args: Args, github_ctx: GitHubContext) -> Result<Self> {
+    pub fn new(mut args: Args, github_ctx: GitHubContext) -> Result<Self> {
+        // Check for empty token and try to get from environment if needed
+        if args.token.is_empty() {
+            args.token = env::var("GITHUB_TOKEN").map_err(|_| {
+                anyhow::anyhow!("No token provided and GITHUB_TOKEN environment variable not set")
+            })?;
+        }
+
         // Use provided values from args if available, otherwise use context
-        // TODO: EK - FIX THIS CLONE
-        let repository = args.clone().repo.unwrap_or(github_ctx.repository);
-        warn!("using args: {:?}", args);
+        let repository = args.repo.as_ref().unwrap_or(&github_ctx.repository);
+
         let pr_number = match args.pr {
             Some(pr) => pr,
             None => {
@@ -171,16 +179,17 @@ impl Config {
         };
 
         // Set base branch (default to the PR's base branch or 'main')
-        // TODO: EK - FIX THIS CLONE
-        // TODO: EK - unclear if we even need command line args for this
-        let base_branch_arg = args.clone().base_branch.unwrap_or_default();
-
-        let base_branch = if !base_branch_arg.is_empty() {
-            format!("origin/{}", base_branch_arg)
-        } else if !github_ctx.base_ref.is_empty() {
-            format!("origin/{}", github_ctx.base_ref)
-        } else {
-            "origin/main".to_owned()
+        let base_branch = match args.base_branch.as_ref() {
+            Some(branch) => {
+                if !branch.is_empty() {
+                    format!("origin/{}", branch)
+                } else if !github_ctx.base_ref.is_empty() {
+                    format!("origin/{}", github_ctx.base_ref)
+                } else {
+                    "origin/main".to_owned()
+                }
+            }
+            _ => "origin/main".to_owned(),
         };
 
         // Set head branch (PR's head branch)
@@ -207,7 +216,7 @@ impl Config {
         let rules = args.parse_rules();
 
         Ok(Config {
-            repository,
+            repository: repository.to_owned(),
             pr_number,
             base_branch,
             head_branch,
@@ -234,18 +243,6 @@ impl ConfigBuilder {
         }
     }
 
-    /// Set the command-line arguments
-    pub fn with_args(mut self, args: Args) -> Self {
-        self.args = Some(args);
-        self
-    }
-
-    /// Set the GitHub context
-    pub fn with_github_context(mut self, github_ctx: GitHubContext) -> Self {
-        self.github_ctx = Some(github_ctx);
-        self
-    }
-
     /// Build the Config instance, using defaults for any unset values
     pub fn build(self) -> Result<Config> {
         // Get command line arguments if not provided
@@ -261,5 +258,213 @@ impl ConfigBuilder {
         };
 
         Config::new(args, github_ctx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use std::fs::File;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    // Helper function to create a mock GitHub event file
+    fn create_mock_event_file(content: &str) -> (tempfile::TempDir, String) {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("event.json");
+        let mut file = File::create(&file_path).unwrap();
+        write!(file, "{}", content).unwrap();
+        (dir, file_path.to_string_lossy().to_string())
+    }
+
+    // Helper to set and reset environment variables safely
+    struct EnvGuard {
+        key: String,
+        original_value: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn new(key: &str, value: &str) -> Self {
+            let original_value = env::var(key).ok();
+            env::set_var(key, value);
+            Self {
+                key: key.to_string(),
+                original_value,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.original_value {
+                Some(val) => env::set_var(&self.key, val),
+                None => env::remove_var(&self.key),
+            }
+        }
+    }
+
+    // Test that directly creates Args without the builder
+    #[test]
+    fn test_args_parse_rules() {
+        let args = Args {
+            token: "dummy_token".to_string(),
+            rules: "unwrap_used,expect_used,panic".to_string(),
+            repo: None,
+            pr: None,
+            base_branch: None,
+        };
+
+        let rules = args.parse_rules();
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0], "unwrap_used");
+        assert_eq!(rules[1], "expect_used");
+        assert_eq!(rules[2], "panic");
+    }
+
+    #[test]
+    fn test_args_parse_rules_with_spaces() {
+        let args = Args {
+            token: "dummy_token".to_string(),
+            rules: "unwrap_used, expect_used , panic".to_string(),
+            repo: None,
+            pr: None,
+            base_branch: None,
+        };
+
+        let rules = args.parse_rules();
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0], "unwrap_used");
+        assert_eq!(rules[1], "expect_used");
+        assert_eq!(rules[2], "panic");
+    }
+
+    // Test that uses environment variables for GitHub context
+    #[test]
+    fn test_github_context_from_env() {
+        // Setup mock environment and event file
+        let event_json = r#"
+        {
+            "pull_request": {
+                "number": 123,
+                "base": {
+                    "ref": "main"
+                },
+                "head": {
+                    "ref": "feature-branch"
+                }
+            }
+        }
+        "#;
+
+        let (dir, event_path) = create_mock_event_file(event_json);
+
+        // Set required environment variables
+        let _guard1 = EnvGuard::new("GITHUB_REPOSITORY", "owner/repo");
+        let _guard2 = EnvGuard::new("GITHUB_EVENT_NAME", "pull_request");
+        let _guard3 = EnvGuard::new("GITHUB_EVENT_PATH", &event_path);
+
+        let ctx = GitHubContext::from_env().unwrap();
+
+        assert_eq!(ctx.repository, "owner/repo");
+        assert_eq!(ctx.pr_number, 123);
+        assert_eq!(ctx.base_ref, "main");
+        assert_eq!(ctx.head_ref, "feature-branch");
+
+        drop(dir);
+    }
+
+    // Test that directly creates Config
+    #[test]
+    fn test_config_new() {
+        let args = Args {
+            token: "test_token".to_string(),
+            rules: "unwrap_used,expect_used".to_string(),
+            repo: Some("custom_owner/custom_repo".to_string()),
+            pr: Some(456),
+            base_branch: Some("develop".to_string()),
+        };
+
+        let github_ctx = GitHubContext {
+            repository: "default_owner/default_repo".to_string(),
+            pr_number: 123,
+            base_ref: "main".to_string(),
+            head_ref: "feature".to_string(),
+        };
+
+        let config = Config::new(args, github_ctx).unwrap();
+
+        // Check that args values are used when provided
+        assert_eq!(config.repository, "custom_owner/custom_repo");
+        assert_eq!(config.pr_number, 456);
+        assert_eq!(config.base_branch, "origin/develop");
+        assert_eq!(config.head_branch, "origin/feature");
+        assert_eq!(config.owner, "custom_owner");
+        assert_eq!(config.repo, "custom_repo");
+        assert_eq!(config.rules.len(), 2);
+        assert_eq!(config.rules[0], "unwrap_used");
+        assert_eq!(config.rules[1], "expect_used");
+        assert_eq!(config.token, "test_token");
+    }
+
+    // Test using mocked environment for token
+    #[test]
+    fn test_empty_token_uses_env_token() {
+        // Create a mock GitHub event file
+        let event_json =
+            r#"{"pull_request":{"number":123,"base":{"ref":"main"},"head":{"ref":"feature"}}}"#;
+        let (dir, event_path) = create_mock_event_file(event_json);
+
+        // Set up GitHub context environment
+        let _repo_guard = EnvGuard::new("GITHUB_REPOSITORY", "owner/repo");
+        let _event_guard = EnvGuard::new("GITHUB_EVENT_NAME", "pull_request");
+        let _path_guard = EnvGuard::new("GITHUB_EVENT_PATH", &event_path);
+
+        // Set the token environment variable
+        let _token_guard = EnvGuard::new("GITHUB_TOKEN", "env_token");
+
+        // Create args and context directly
+        let args = Args {
+            token: "".to_string(), // Empty token should trigger using env var
+            rules: "unwrap_used".to_string(),
+            repo: Some("owner/repo".to_string()),
+            pr: Some(123),
+            base_branch: None,
+        };
+
+        let github_ctx = GitHubContext::from_env().unwrap();
+
+        // Test Config::new directly
+        let config = Config::new(args, github_ctx).unwrap();
+
+        // Should use token from environment
+        assert_eq!(config.token, "env_token");
+
+        drop(dir);
+    }
+
+    #[test]
+    fn test_config_new_invalid_repo_format() {
+        let args = Args {
+            token: "test_token".to_string(),
+            rules: "unwrap_used".to_string(),
+            repo: Some("invalid-format".to_string()),
+            pr: Some(123),
+            base_branch: None,
+        };
+
+        let github_ctx = GitHubContext {
+            repository: "default_owner/default_repo".to_string(),
+            pr_number: 0,
+            base_ref: "".to_string(),
+            head_ref: "".to_string(),
+        };
+
+        let result = Config::new(args, github_ctx);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid repository format"));
     }
 }
