@@ -16,6 +16,7 @@ env_logger = "0.10"
 # Octocrab has a defined MSRV < 1.78 and depends on url 2.5.4 which also has a defined MSRV < 1.78 but url has a  dependency on `idna` has a MSRV of 1.81. Not sure what is going on here.
 url = "=2.5.2"
 tempfile = "3.20.0"
+toml = "0.8.22"
 
 [dev-dependencies]
 mockall = "0.11"

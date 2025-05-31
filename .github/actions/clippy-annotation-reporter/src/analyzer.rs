@@ -11,8 +11,11 @@ use log::{debug, info, warn};
 use octocrab::Octocrab;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
+use toml::Value;
 
 /// Represents a clippy annotation in code
 #[derive(Debug, Clone)]
@@ -247,39 +250,74 @@ fn count_annotations_by_rule(annotations: &[ClippyAnnotation]) -> HashMap<Rc<Str
     counts
 }
 
-/// Get crate information for a given file path
-// TODO: EK - is this the right way to determine crate names?
+/// Get crate information for a given file path by finding the closest Cargo.toml
 fn get_crate_for_file(file_path: &str) -> String {
-    // Simple heuristic: use the first directory as the crate name
-    // For files in src/ directory, use the parent directory
-    // For files in the root, use "root"
+    // Convert to Path for easier manipulation
+    let path = Path::new(file_path);
 
-    let path_parts: Vec<&str> = file_path.split('/').collect();
-
-    if path_parts.is_empty() {
-        return "unknown".to_owned();
-    }
-
-    // Handle common project structures
-    if path_parts.len() > 1 {
-        // If it's in "src" or "tests" folder, use the parent directory
-        if path_parts[0] == "src" || path_parts[0] == "tests" {
-            return "root".to_owned();
-        }
-
-        // If it's in a nested crate structure like crates/foo/src
-        if path_parts[0] == "crates" && path_parts.len() > 2 {
-            return path_parts[1].to_owned();
-        }
-
-        // If it's in a workspace pattern like foo/src
-        if path_parts.len() > 1 && (path_parts[1] == "src" || path_parts[1] == "tests") {
-            return path_parts[0].to_owned();
+    // Try to find the closest Cargo.toml file
+    if let Some(cargo_toml_path) = find_closest_cargo_toml(path) {
+        if let Some(crate_name) = extract_package_name(&cargo_toml_path) {
+            return crate_name;
         }
     }
 
-    // Default: use first directory name
-    path_parts[0].to_owned()
+    // Fallback to the old heuristic if Cargo.toml can't be found or parsed
+    "unknown-crate".to_owned()
+}
+
+/// Find the closest Cargo.toml file by traversing up the directory tree
+fn find_closest_cargo_toml(mut path: &Path) -> Option<PathBuf> {
+    // Start with the directory containing the file
+    if !path.is_dir() {
+        path = path.parent()?;
+    }
+
+    // Traverse up the directory tree
+    loop {
+        let cargo_path = path.join("Cargo.toml");
+        if cargo_path.exists() {
+            return Some(cargo_path);
+        }
+
+        // Check if we've reached the root
+        let parent = path.parent()?;
+        if parent == path {
+            // We've reached the root without finding Cargo.toml
+            return None;
+        }
+
+        // Move up one directory
+        path = parent;
+    }
+}
+
+/// Extract package name from Cargo.toml
+fn extract_package_name(cargo_toml_path: &Path) -> Option<String> {
+    // Read the Cargo.toml file
+    let content = match fs::read_to_string(cargo_toml_path) {
+        Ok(content) => content,
+        Err(e) => {
+            log::warn!("Failed to read {}: {}", cargo_toml_path.display(), e);
+            return None;
+        }
+    };
+
+    // Parse the TOML
+    let toml_value: Value = match content.parse() {
+        Ok(value) => value,
+        Err(e) => {
+            log::warn!("Failed to parse {}: {}", cargo_toml_path.display(), e);
+            return None;
+        }
+    };
+
+    // Extract the package name
+    toml_value
+        .get("package")?
+        .get("name")?
+        .as_str()
+        .map(|s| s.to_string())
 }
 
 /// Count annotations by crate
@@ -421,7 +459,7 @@ fn get_branch_content(file: &str, branch: &str) -> String {
 //         "#;
 //
 //         let regex =
-//             
+//
 // Regex::new(r"#\s*\[\s*allow\s*\(\s*clippy\s*::\s*(unwrap_used|expect_used)\s*\)\s*\]")
 //                 .unwrap();
 //         let mut rule_cache = HashMap::new();
