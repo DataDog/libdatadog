@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    config::{self, dynamic::DynamicConfigFile, flare::FlareConfigFile},
+    config::{self, dynamic::DynamicConfigFile, agent_config::AgentConfigFile, agent_task::AgentTaskFile},
     RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
 };
 use datadog_live_debugger::LiveDebuggingData;
@@ -11,7 +11,8 @@ use datadog_live_debugger::LiveDebuggingData;
 pub enum RemoteConfigData {
     DynamicConfig(DynamicConfigFile),
     LiveDebugger(LiveDebuggingData),
-    TracerFlare(FlareConfigFile),
+    TracerFlareConfig(AgentConfigFile),
+    TracerFlareTask(AgentTaskFile),
     Ignored(RemoteConfigProduct),
 }
 
@@ -21,8 +22,11 @@ impl RemoteConfigData {
         data: &[u8],
     ) -> anyhow::Result<RemoteConfigData> {
         Ok(match product {
-            RemoteConfigProduct::AgentConfig | RemoteConfigProduct::AgentTask => {
-                RemoteConfigData::TracerFlare(config::flare::parse_json(data, product)?)
+            RemoteConfigProduct::AgentConfig => {
+                RemoteConfigData::TracerFlareConfig(config::agent_config::parse_json(data)?)
+            }
+            RemoteConfigProduct::AgentTask => {
+                RemoteConfigData::TracerFlareTask(config::agent_task::parse_json(data)?)
             }
             RemoteConfigProduct::ApmTracing => {
                 RemoteConfigData::DynamicConfig(config::dynamic::parse_json(data)?)
@@ -39,12 +43,10 @@ impl RemoteConfigData {
 impl From<&RemoteConfigData> for RemoteConfigProduct {
     fn from(value: &RemoteConfigData) -> Self {
         match value {
-            RemoteConfigData::TracerFlare(flare_config) => match flare_config {
-                FlareConfigFile::Config(_) => RemoteConfigProduct::AgentConfig,
-                FlareConfigFile::Task(_) => RemoteConfigProduct::AgentTask,
-            },
             RemoteConfigData::DynamicConfig(_) => RemoteConfigProduct::ApmTracing,
             RemoteConfigData::LiveDebugger(_) => RemoteConfigProduct::LiveDebugger,
+            RemoteConfigData::TracerFlareConfig(_) => RemoteConfigProduct::AgentConfig,
+            RemoteConfigData::TracerFlareTask(_) => RemoteConfigProduct::AgentTask,
             RemoteConfigData::Ignored(product) => *product,
         }
     }
