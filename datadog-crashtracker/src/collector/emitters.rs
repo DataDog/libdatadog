@@ -29,6 +29,7 @@ use std::{
 unsafe fn emit_backtrace_by_frames(
     w: &mut impl Write,
     resolve_frames: StacktraceCollection,
+    fault_rsp: usize,
 ) -> anyhow::Result<()> {
     // https://docs.rs/backtrace/latest/backtrace/index.html
     writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
@@ -45,6 +46,13 @@ unsafe fn emit_backtrace_by_frames(
     }
 
     backtrace::trace_unsynchronized(|frame| {
+        // Skip all stack frames whose stack pointer is less than or equal to the determined crash
+        // stack pointer (fault_rsp). These frames belong exclusively to the crash tracker and the
+        // backtrace functionality and are therefore not relevant for troubleshooting.
+        let sp = frame.sp();
+        if !sp.is_null() && (sp as usize) <= fault_rsp {
+            return true;
+        }
         if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
             backtrace::resolve_frame_unsynchronized(frame, |symbol| {
                 write!(w, "{{").unwrap();
@@ -114,7 +122,19 @@ pub(crate) fn emit_crashreport(
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
     // Do this last, so even if it crashes, we still get the other info.
     if config.resolve_frames() != StacktraceCollection::Disabled {
-        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames())? };
+        unsafe {
+            #[cfg(all(unix, target_os = "macos", target_arch = "x86_64"))]
+            let fault_rsp = (*(*ucontext).uc_mcontext).__ss.__rsp as usize;
+            #[cfg(all(unix, target_os = "macos", target_arch = "aarch64"))]
+            let fault_rsp = (*(*ucontext).uc_mcontext).__ss.__sp as usize;
+
+            #[cfg(all(unix, target_os = "linux", target_arch = "x86_64"))]
+            let fault_rsp = (*ucontext).uc_mcontext.gregs[libc::REG_RSP as usize] as usize;
+            #[cfg(all(unix, target_os = "linux", target_arch = "aarch64"))]
+            let fault_rsp = (*ucontext).uc_mcontext.sp as usize;
+
+            emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_rsp)?
+        };
     }
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
@@ -267,4 +287,68 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     writeln!(w, "\n{DD_CRASHTRACK_END_FILE} \"{path}\"")?;
     w.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str;
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_backtrace_disabled() {
+        let mut buf = Vec::new();
+        unsafe {
+            emit_backtrace_by_frames(&mut buf, StacktraceCollection::Disabled, 0)
+                .expect("to work ;-)");
+        }
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(out.contains("BEGIN_STACKTRACE"));
+        assert!(out.contains("END_STACKTRACE"));
+        assert!(out.contains("\"ip\":"));
+        assert!(
+            !out.contains("\"column\":"),
+            "'column' key must not be emitted"
+        );
+        assert!(!out.contains("\"file\":"), "'file' key must not be emitted");
+        assert!(
+            !out.contains("\"function\":"),
+            "'function' key must not be emitted"
+        );
+        assert!(!out.contains("\"line\":"), "'line' key must not be emitted");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_backtrace_with_symbols() {
+        let dummy = 0u8;
+        // retrieve stack pointer for this function
+        let sp_of_test_fn = &dummy as *const u8 as usize;
+        let mut buf = Vec::new();
+        unsafe {
+            emit_backtrace_by_frames(
+                &mut buf,
+                StacktraceCollection::EnabledWithInprocessSymbols,
+                sp_of_test_fn,
+            )
+            .expect("to work ;-)");
+        }
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(out.contains("BEGIN_STACKTRACE"));
+        assert!(out.contains("END_STACKTRACE"));
+        // basic structure assertions
+        assert!(out.contains("\"column\":"), "'column' key missing");
+        assert!(out.contains("\"file\":"), "'file' key missing");
+        assert!(out.contains("\"function\":"), "'function' key missing");
+        assert!(out.contains("\"line\":"), "'line' key missing");
+        // filter assertions
+        assert!(
+            !out.contains("emitters::emit_backtrace_by_frames"),
+            "crashtracker itself must be filtered, found 'backtrace::backtrace::libunwind'"
+        );
+        assert!(
+            !out.contains("backtrace::backtrace"),
+            "crashtracker itself must be filtered away, found 'backtrace::backtrace'"
+        );
+    }
 }
