@@ -49,7 +49,12 @@ pub struct SendSample(*mut c_void);
 unsafe impl Send for SendSample {}
 
 impl SendSample {
-    pub fn new(ptr: *mut c_void) -> Self {
+    /// # Safety
+    /// The caller must ensure that:
+    /// 1. The sample pointer is valid and points to a properly initialized sample
+    /// 2. The sample is not being used by any other thread
+    /// 3. The caller transfers ownership of the sample to this function
+    pub unsafe fn new(ptr: *mut c_void) -> Self {
         Self(ptr)
     }
 
@@ -157,7 +162,10 @@ impl ProfilerManager {
                     let sample = (self.sample_callbacks.converter)(data);
                     self.profile.add_sample(sample.try_into()?, None)?;
                     (self.sample_callbacks.reset)(data);
-                    if self.recycled_samples_sender.send(SendSample::new(data)).is_err() {
+                    // SAFETY: The sample pointer is valid because it came from the samples channel
+                    // and was just processed by the converter and reset callbacks. We have exclusive
+                    // access to it since we're the only thread that can receive from the samples channel.
+                    if self.recycled_samples_sender.send(unsafe { SendSample::new(data) }).is_err() {
                         (self.sample_callbacks.drop)(data);
                     }
                 },
@@ -172,7 +180,13 @@ impl ProfilerManager {
                         // TODO: make sure we cleanup the profile.
                     });
                 },
-                recv(self.shutdown_receiver) -> _ => return Ok(()),
+                recv(self.shutdown_receiver) -> _ => {
+                    // Drain any remaining samples and drop them
+                    while let Ok(sample) = self.samples_receiver.try_recv() {
+                        (self.sample_callbacks.drop)(sample.as_ptr());
+                    }
+                    return Ok(());
+                },
             }
         }
     }
