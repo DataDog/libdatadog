@@ -24,7 +24,7 @@ void symbolize_and_print_abs(blaze_symbolizer* symbolizer, uintptr_t addr) {
       .pid = static_cast<uint32_t>(getpid()),
       .debug_syms = false,
       .perf_map = false,
-      .map_files = false,
+      .no_map_files = true,
       .reserved = {},
     };
     const blaze_syms* syms = blaze_symbolize_process_abs_addrs(
