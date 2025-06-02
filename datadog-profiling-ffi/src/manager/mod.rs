@@ -14,6 +14,7 @@ use crate::profiles::datatypes::{ProfileResult, Sample};
 use anyhow::Context;
 use crossbeam_channel::{select, tick, Receiver, Sender};
 use datadog_profiling::{api, internal};
+use tokio_util::sync::CancellationToken;
 
 #[repr(C)]
 pub struct ManagedSampleCallbacks {
@@ -112,8 +113,9 @@ pub struct ProfilerManager {
     shutdown_receiver: Receiver<()>,
     profile: internal::Profile,
     cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
-    upload_callback: extern "C" fn(*mut internal::Profile),
+    upload_callback: extern "C" fn(*mut internal::Profile, &mut Option<CancellationToken>),
     sample_callbacks: ManagedSampleCallbacks,
+    cancellation_token: Option<CancellationToken>,
 }
 
 impl ProfilerManager {
@@ -121,7 +123,7 @@ impl ProfilerManager {
         sample_types: &[api::ValueType],
         period: Option<api::Period>,
         cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
-        upload_callback: extern "C" fn(*mut internal::Profile),
+        upload_callback: extern "C" fn(*mut internal::Profile, &mut Option<CancellationToken>),
         sample_callbacks: ManagedSampleCallbacks,
     ) -> ProfilerHandle {
         let (channels, samples_receiver, recycled_samples_sender) = SampleChannels::new();
@@ -139,6 +141,7 @@ impl ProfilerManager {
             cpu_sampler_callback,
             upload_callback,
             sample_callbacks,
+            cancellation_token: None,
         };
 
         let handle = std::thread::spawn(move || {
@@ -175,8 +178,13 @@ impl ProfilerManager {
                 recv(self.upload_ticker) -> msg => {
                     let mut old_profile = self.profile.reset_and_return_previous()?;
                     let upload_callback = self.upload_callback;
+                    // Create a new cancellation token for this upload
+                    let token = CancellationToken::new();
+                    // Store a clone of the token in the manager
+                    self.cancellation_token = Some(token.clone());
+                    let mut cancellation_token = Some(token);
                     std::thread::spawn(move || {
-                        (upload_callback)(&mut old_profile);
+                        (upload_callback)(&mut old_profile, &mut cancellation_token);
                         // TODO: make sure we cleanup the profile.
                     });
                 },
@@ -184,6 +192,10 @@ impl ProfilerManager {
                     // Drain any remaining samples and drop them
                     while let Ok(sample) = self.samples_receiver.try_recv() {
                         (self.sample_callbacks.drop)(sample.as_ptr());
+                    }
+                    // Cancel any ongoing upload and drop the token
+                    if let Some(token) = self.cancellation_token.take() {
+                        token.cancel();
                     }
                     return Ok(());
                 },
@@ -261,7 +273,10 @@ mod tests {
     extern "C" fn test_cpu_sampler_callback(_: *mut datadog_profiling::internal::Profile) {
         println!("cpu sampler callback");
     }
-    extern "C" fn test_upload_callback(_: *mut datadog_profiling::internal::Profile) {
+    extern "C" fn test_upload_callback(
+        _: *mut datadog_profiling::internal::Profile,
+        _: &mut Option<CancellationToken>,
+    ) {
         println!("upload callback");
     }
     extern "C" fn test_sample_converter(_: *mut c_void) -> Sample<'static> {

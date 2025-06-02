@@ -1615,6 +1615,7 @@ dependencies = [
  "libc",
  "serde_json",
  "symbolizer-ffi",
+ "tokio",
  "tokio-util",
 ]
 

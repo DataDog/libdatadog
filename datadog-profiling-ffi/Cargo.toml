@@ -49,4 +49,5 @@ hyper = { version = "1.6", features = ["http1", "client"] }
 libc = "0.2"
 serde_json = { version = "1.0" }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
+tokio = { version = "1.36", features = ["sync", "rt"] }
 tokio-util = "0.7.1"
