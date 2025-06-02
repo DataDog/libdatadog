@@ -104,6 +104,7 @@ pub struct ProfilerManager {
     recycled_samples_sender: Sender<SendSample>,
     cpu_ticker: Receiver<Instant>,
     upload_ticker: Receiver<Instant>,
+    shutdown_receiver: Receiver<()>,
     profile: internal::Profile,
     cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
     upload_callback: extern "C" fn(*mut internal::Profile),
@@ -119,6 +120,7 @@ impl ProfilerManager {
         sample_callbacks: ManagedSampleCallbacks,
     ) -> ProfilerHandle {
         let (channels, samples_receiver, recycled_samples_sender) = SampleChannels::new();
+        let (shutdown_sender, shutdown_receiver) = crossbeam_channel::bounded(1);
         let profile = internal::Profile::new(sample_types, period);
         let cpu_ticker = tick(Duration::from_millis(100));
         let upload_ticker = tick(Duration::from_secs(1));
@@ -127,6 +129,7 @@ impl ProfilerManager {
             upload_ticker,
             samples_receiver,
             recycled_samples_sender,
+            shutdown_receiver,
             profile,
             cpu_sampler_callback,
             upload_callback,
@@ -139,12 +142,14 @@ impl ProfilerManager {
             }
         });
 
-        ProfilerHandle { channels, handle }
+        ProfilerHandle {
+            channels,
+            handle,
+            shutdown_sender,
+        }
     }
 
     fn main(&mut self) -> anyhow::Result<()> {
-        // This is just here to allow us to easily bail out.
-        let done = tick(Duration::from_secs(5));
         loop {
             select! {
                 recv(self.samples_receiver) -> raw_sample => {
@@ -167,7 +172,7 @@ impl ProfilerManager {
                         // TODO: make sure we cleanup the profile.
                     });
                 },
-                recv(done) -> msg => return Ok(()),
+                recv(self.shutdown_receiver) -> _ => return Ok(()),
             }
         }
     }
@@ -176,6 +181,7 @@ impl ProfilerManager {
 pub struct ProfilerHandle {
     channels: SampleChannels,
     handle: std::thread::JoinHandle<()>,
+    shutdown_sender: Sender<()>,
 }
 
 impl ProfilerHandle {
@@ -198,7 +204,8 @@ impl ProfilerHandle {
         self.channels.try_recv_recycled()
     }
 
-    pub fn join(self) -> std::thread::Result<()> {
+    pub fn shutdown(self) -> std::thread::Result<()> {
+        let _ = self.shutdown_sender.send(());
         self.handle.join()
     }
 }
@@ -275,6 +282,7 @@ mod tests {
             sample_callbacks,
         );
         println!("start");
-        handle.join().unwrap();
+        std::thread::sleep(Duration::from_secs(5));
+        handle.shutdown().unwrap();
     }
 }
