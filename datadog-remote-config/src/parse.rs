@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    config::{self, dynamic::DynamicConfigFile, agent_config::AgentConfigFile, agent_task::AgentTaskFile},
+    config::{
+        self, agent_config::AgentConfigFile, agent_task::AgentTaskFile, dynamic::DynamicConfigFile,
+    },
     RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
 };
 use datadog_live_debugger::LiveDebuggingData;

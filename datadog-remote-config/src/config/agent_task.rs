@@ -17,8 +17,6 @@ pub struct AgentTask {
     pub user_handle: String, // like a email
 }
 
-pub fn parse_json(
-    data: &[u8],
-) -> serde_json::error::Result<AgentTaskFile> {
-     serde_json::from_slice(data)
+pub fn parse_json(data: &[u8]) -> serde_json::error::Result<AgentTaskFile> {
+    serde_json::from_slice(data)
 }
