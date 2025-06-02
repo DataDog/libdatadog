@@ -12,7 +12,7 @@ use ddcommon_ffi::{
 };
 use std::{ptr::NonNull, time::Duration};
 
-#[cfg(feature = "catch_panic")]
+#[cfg(all(feature = "catch_panic", not(panic = "abort")))]
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 macro_rules! gen_error {
@@ -21,7 +21,7 @@ macro_rules! gen_error {
     };
 }
 
-#[cfg(feature = "catch_panic")]
+#[cfg(all(feature = "catch_panic", not(panic = "abort")))]
 macro_rules! catch_panic {
     ($f:expr, $err:expr) => {
         match catch_unwind(AssertUnwindSafe(|| $f)) {
@@ -31,7 +31,7 @@ macro_rules! catch_panic {
     };
 }
 
-#[cfg(not(feature = "catch_panic"))]
+#[cfg(all(not(feature = "catch_panic"), panic = "abort"))]
 macro_rules! catch_panic {
     ($f:expr, $err:expr) => {
         $f
