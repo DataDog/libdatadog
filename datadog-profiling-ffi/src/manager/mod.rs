@@ -4,8 +4,6 @@
 #![allow(dead_code)]
 #![allow(clippy::todo)]
 
-pub mod uploader;
-
 use std::{
     ffi::c_void,
     num::NonZeroI64,
@@ -79,7 +77,11 @@ impl ProfilerManager {
             profile,
             cpu_sampler_callback,
             upload_callback,
-            sample_callbacks: ManagedSampleCallbacks::new(sample_converter, reset_callback, drop_callback),
+            sample_callbacks: ManagedSampleCallbacks::new(
+                sample_converter,
+                reset_callback,
+                drop_callback,
+            ),
         }
     }
 
