@@ -157,47 +157,67 @@ impl ProfilerManager {
         }
     }
 
+    fn handle_sample(&mut self, raw_sample: Result<SendSample, crossbeam_channel::RecvError>) -> anyhow::Result<()> {
+        let data = raw_sample?.as_ptr();
+        let sample = (self.sample_callbacks.converter)(data);
+        self.profile.add_sample(sample.try_into()?, None)?;
+        (self.sample_callbacks.reset)(data);
+        // SAFETY: The sample pointer is valid because it came from the samples channel
+        // and was just processed by the converter and reset callbacks. We have exclusive
+        // access to it since we're the only thread that can receive from the samples channel.
+        if self.recycled_samples_sender.send(unsafe { SendSample::new(data) }).is_err() {
+            (self.sample_callbacks.drop)(data);
+        }
+        Ok(())
+    }
+
+    fn handle_cpu_tick(&mut self) {
+        (self.cpu_sampler_callback)(&mut self.profile);
+    }
+
+    fn handle_upload_tick(&mut self) -> anyhow::Result<()> {
+        let mut old_profile = self.profile.reset_and_return_previous()?;
+        let upload_callback = self.upload_callback;
+        // Create a new cancellation token for this upload
+        let token = CancellationToken::new();
+        // Store a clone of the token in the manager
+        self.cancellation_token = Some(token.clone());
+        let mut cancellation_token = Some(token);
+        std::thread::spawn(move || {
+            (upload_callback)(&mut old_profile, &mut cancellation_token);
+            // TODO: make sure we cleanup the profile.
+        });
+        Ok(())
+    }
+
+    fn handle_shutdown(&mut self) -> anyhow::Result<()> {
+        // Drain any remaining samples and drop them
+        while let Ok(sample) = self.samples_receiver.try_recv() {
+            (self.sample_callbacks.drop)(sample.as_ptr());
+        }
+        // Cancel any ongoing upload and drop the token
+        if let Some(token) = self.cancellation_token.take() {
+            token.cancel();
+        }
+        Ok(())
+    }
+
     fn main(&mut self) -> anyhow::Result<()> {
         loop {
             select! {
                 recv(self.samples_receiver) -> raw_sample => {
-                    let data = raw_sample?.as_ptr();
-                    let sample = (self.sample_callbacks.converter)(data);
-                    self.profile.add_sample(sample.try_into()?, None)?;
-                    (self.sample_callbacks.reset)(data);
-                    // SAFETY: The sample pointer is valid because it came from the samples channel
-                    // and was just processed by the converter and reset callbacks. We have exclusive
-                    // access to it since we're the only thread that can receive from the samples channel.
-                    if self.recycled_samples_sender.send(unsafe { SendSample::new(data) }).is_err() {
-                        (self.sample_callbacks.drop)(data);
-                    }
+                    let _ = self.handle_sample(raw_sample)
+                        .map_err(|e| eprintln!("Failed to process sample: {}", e));
                 },
                 recv(self.cpu_ticker) -> msg => {
-                    (self.cpu_sampler_callback)(&mut self.profile);
+                    self.handle_cpu_tick();
                 },
                 recv(self.upload_ticker) -> msg => {
-                    let mut old_profile = self.profile.reset_and_return_previous()?;
-                    let upload_callback = self.upload_callback;
-                    // Create a new cancellation token for this upload
-                    let token = CancellationToken::new();
-                    // Store a clone of the token in the manager
-                    self.cancellation_token = Some(token.clone());
-                    let mut cancellation_token = Some(token);
-                    std::thread::spawn(move || {
-                        (upload_callback)(&mut old_profile, &mut cancellation_token);
-                        // TODO: make sure we cleanup the profile.
-                    });
+                    let _ = self.handle_upload_tick()
+                        .map_err(|e| eprintln!("Failed to handle upload: {}", e));
                 },
                 recv(self.shutdown_receiver) -> _ => {
-                    // Drain any remaining samples and drop them
-                    while let Ok(sample) = self.samples_receiver.try_recv() {
-                        (self.sample_callbacks.drop)(sample.as_ptr());
-                    }
-                    // Cancel any ongoing upload and drop the token
-                    if let Some(token) = self.cancellation_token.take() {
-                        token.cancel();
-                    }
-                    return Ok(());
+                    return self.handle_shutdown();
                 },
             }
         }
