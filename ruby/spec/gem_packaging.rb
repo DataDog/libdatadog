@@ -45,7 +45,9 @@ RSpec.describe "gem release process (after packaging)" do
       symbols = raw_symbols.split("\n").map { |it| it.split(" ").last }.sort
       expect(symbols.size).to be > 20 # Quick sanity check
 
-      expect(symbols).to all(start_with("ddog_").or(start_with("blaze_")))
+      expect(symbols).to all(
+        start_with("ddog_").or(start_with("blaze_")).or(eq("INTERNED_EMPTY_STRING"))
+      )
     end
   end
 end

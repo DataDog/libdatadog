@@ -1,14 +1,20 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource};
-use datadog_dynamic_configuration::data::DynamicConfigFile;
+use crate::{
+    config::{
+        self, agent_config::AgentConfigFile, agent_task::AgentTaskFile, dynamic::DynamicConfigFile,
+    },
+    RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
+};
 use datadog_live_debugger::LiveDebuggingData;
 
 #[derive(Debug)]
 pub enum RemoteConfigData {
     DynamicConfig(DynamicConfigFile),
     LiveDebugger(LiveDebuggingData),
+    TracerFlareConfig(AgentConfigFile),
+    TracerFlareTask(AgentTaskFile),
     Ignored(RemoteConfigProduct),
 }
 
@@ -18,8 +24,14 @@ impl RemoteConfigData {
         data: &[u8],
     ) -> anyhow::Result<RemoteConfigData> {
         Ok(match product {
+            RemoteConfigProduct::AgentConfig => {
+                RemoteConfigData::TracerFlareConfig(config::agent_config::parse_json(data)?)
+            }
+            RemoteConfigProduct::AgentTask => {
+                RemoteConfigData::TracerFlareTask(config::agent_task::parse_json(data)?)
+            }
             RemoteConfigProduct::ApmTracing => {
-                RemoteConfigData::DynamicConfig(datadog_dynamic_configuration::parse_json(data)?)
+                RemoteConfigData::DynamicConfig(config::dynamic::parse_json(data)?)
             }
             RemoteConfigProduct::LiveDebugger => {
                 let parsed = datadog_live_debugger::parse_json(&String::from_utf8_lossy(data))?;
@@ -35,6 +47,8 @@ impl From<&RemoteConfigData> for RemoteConfigProduct {
         match value {
             RemoteConfigData::DynamicConfig(_) => RemoteConfigProduct::ApmTracing,
             RemoteConfigData::LiveDebugger(_) => RemoteConfigProduct::LiveDebugger,
+            RemoteConfigData::TracerFlareConfig(_) => RemoteConfigProduct::AgentConfig,
+            RemoteConfigData::TracerFlareTask(_) => RemoteConfigProduct::AgentTask,
             RemoteConfigData::Ignored(product) => *product,
         }
     }

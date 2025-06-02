@@ -5,7 +5,7 @@
 use blazesym::{
     helper::ElfResolver,
     normalize::Normalizer,
-    symbolize::{Input, Source, Symbolized, Symbolizer, TranslateFileOffset},
+    symbolize::{source::Source, Input, Symbolized, Symbolizer, TranslateFileOffset},
     Pid,
 };
 use schemars::JsonSchema;
