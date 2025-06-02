@@ -157,7 +157,10 @@ impl ProfilerManager {
         }
     }
 
-    fn handle_sample(&mut self, raw_sample: Result<SendSample, crossbeam_channel::RecvError>) -> anyhow::Result<()> {
+    fn handle_sample(
+        &mut self,
+        raw_sample: Result<SendSample, crossbeam_channel::RecvError>,
+    ) -> anyhow::Result<()> {
         let data = raw_sample?.as_ptr();
         let sample = (self.sample_callbacks.converter)(data);
         self.profile.add_sample(sample.try_into()?, None)?;
@@ -165,7 +168,11 @@ impl ProfilerManager {
         // SAFETY: The sample pointer is valid because it came from the samples channel
         // and was just processed by the converter and reset callbacks. We have exclusive
         // access to it since we're the only thread that can receive from the samples channel.
-        if self.recycled_samples_sender.send(unsafe { SendSample::new(data) }).is_err() {
+        if self
+            .recycled_samples_sender
+            .send(unsafe { SendSample::new(data) })
+            .is_err()
+        {
             (self.sample_callbacks.drop)(data);
         }
         Ok(())
@@ -199,6 +206,7 @@ impl ProfilerManager {
         if let Some(token) = self.cancellation_token.take() {
             token.cancel();
         }
+        // TODO: cleanup the recycled samples.
         Ok(())
     }
 
