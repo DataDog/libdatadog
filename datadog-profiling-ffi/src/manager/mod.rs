@@ -5,6 +5,7 @@
 #![allow(clippy::todo)]
 
 mod client;
+mod ffi_api;
 mod ffi_utils;
 mod profiler_manager;
 mod samples;
