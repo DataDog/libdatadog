@@ -11,7 +11,7 @@ use std::{str::FromStr, vec};
 use datadog_remote_config::{
     fetch::{ConfigInvariants, SingleChangesFetcher},
     file_change_tracker::{Change, FilePath},
-    file_storage::{ParsedFileStorage, RawFileStorage, RawFile},
+    file_storage::{ParsedFileStorage, RawFile, RawFileStorage},
     RemoteConfigData, RemoteConfigProduct, Target,
 };
 use ddcommon::Endpoint;
@@ -34,7 +34,7 @@ impl std::fmt::Display for FlareError {
     }
 }
 
-/// Enum that hold the different log level possible
+// /// Enum that hold the different log level possible
 // #[derive(Debug)]
 // pub enum LogLevel {
 //     Trace = 0,
@@ -78,7 +78,8 @@ impl From<&String> for ReturnAction {
 pub type RemoteConfigFile = std::sync::Arc<RawFile<Result<RemoteConfigData, anyhow::Error>>>;
 pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>>;
 
-/// Function that check the RemoteConfig received and return the action that need to be done by the tracer flare
+/// Function that check the RemoteConfig received and return the action that need to be done by the
+/// tracer flare
 ///
 /// # Arguments
 ///
@@ -91,10 +92,7 @@ pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData,
 ///     * `Ok(ReturnAction::Stop)` - If AGENT_TASK with the right properties.
 ///     * `Ok(ReturnAction::None)` - Else.
 /// * `FlareError(msg)` - If something fail.
-pub fn check_remote_config_file(
-    file: RemoteConfigFile,
-) -> Result<ReturnAction, FlareError>
-{
+pub fn check_remote_config_file(file: RemoteConfigFile) -> Result<ReturnAction, FlareError> {
     let config = file.contents();
     match config.as_ref() {
         Ok(data) => match data {
@@ -104,12 +102,11 @@ pub fn check_remote_config_file(
                         return Ok(log_level.into());
                     }
                 }
-            },
+            }
             RemoteConfigData::TracerFlareTask(agent_task) => {
                 if agent_task.task_type.eq("tracer_flare") {
                     return Ok(ReturnAction::Stop);
                 }
-
             }
             _ => return Ok(ReturnAction::None),
         },
