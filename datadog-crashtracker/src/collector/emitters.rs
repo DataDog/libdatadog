@@ -46,11 +46,11 @@ unsafe fn emit_backtrace_by_frames(
     }
 
     backtrace::trace_unsynchronized(|frame| {
-        // Skip all stack frames whose stack pointer is less than or equal to the determined crash
-        // stack pointer (fault_rsp). These frames belong exclusively to the crash tracker and the
+        // Skip all stack frames whose stack pointer is less than to the determined crash stack
+        // pointer (fault_rsp). These frames belong exclusively to the crash tracker and the
         // backtrace functionality and are therefore not relevant for troubleshooting.
         let sp = frame.sp();
-        if !sp.is_null() && (sp as usize) <= fault_rsp {
+        if !sp.is_null() && (sp as usize) < fault_rsp {
             return true;
         }
         if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
