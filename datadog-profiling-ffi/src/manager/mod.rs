@@ -4,234 +4,19 @@
 #![allow(dead_code)]
 #![allow(clippy::todo)]
 
-use std::{
-    ffi::c_void,
-    num::NonZeroI64,
-    time::{Duration, Instant},
-};
+use std::num::NonZeroI64;
 
 use crate::profiles::datatypes::{ProfileResult, Sample};
 use anyhow::Context;
-use crossbeam_channel::{select, tick, Receiver, Sender};
-use datadog_profiling::{api, internal};
-use tokio_util::sync::CancellationToken;
+use datadog_profiling::internal;
 
 mod client;
+mod profiler_manager;
+mod samples;
+
 pub use client::ManagedProfilerClient;
-
-#[repr(C)]
-pub struct ManagedSampleCallbacks {
-    // Static is probably the wrong type here, but worry about that later.
-    converter: extern "C" fn(*mut c_void) -> Sample<'static>,
-    // Resets the sample for reuse.
-    reset: extern "C" fn(*mut c_void),
-    // Called when a sample is dropped (not recycled)
-    drop: extern "C" fn(*mut c_void),
-}
-
-impl ManagedSampleCallbacks {
-    pub fn new(
-        converter: extern "C" fn(*mut c_void) -> Sample<'static>,
-        reset: extern "C" fn(*mut c_void),
-        drop: extern "C" fn(*mut c_void),
-    ) -> Self {
-        Self {
-            converter,
-            reset,
-            drop,
-        }
-    }
-}
-
-// TODO: this owns the memory.  It should probably be a full wrapper, with a destructor.
-#[repr(transparent)]
-pub struct SendSample(*mut c_void);
-
-// SAFETY: This type is used to transfer ownership of a sample between threads via channels.
-// The sample is only accessed by one thread at a time, and ownership is transferred along
-// with the SendSample wrapper. The sample is either processed by the manager thread or
-// recycled back to the original thread.
-unsafe impl Send for SendSample {}
-
-impl SendSample {
-    /// # Safety
-    /// The caller must ensure that:
-    /// 1. The sample pointer is valid and points to a properly initialized sample
-    /// 2. The sample is not being used by any other thread
-    /// 3. The caller transfers ownership of the sample to this function
-    pub unsafe fn new(ptr: *mut c_void) -> Self {
-        Self(ptr)
-    }
-
-    pub fn as_ptr(&self) -> *mut c_void {
-        self.0
-    }
-}
-
-pub struct SampleChannels {
-    samples_sender: Sender<SendSample>,
-    recycled_samples_receiver: Receiver<SendSample>,
-}
-
-impl SampleChannels {
-    pub fn new() -> (Self, Receiver<SendSample>, Sender<SendSample>) {
-        let (samples_sender, samples_receiver) = crossbeam_channel::bounded(10);
-        let (recycled_samples_sender, recycled_samples_receiver) = crossbeam_channel::bounded(10);
-        (
-            Self {
-                samples_sender,
-                recycled_samples_receiver,
-            },
-            samples_receiver,
-            recycled_samples_sender,
-        )
-    }
-
-    /// # Safety
-    /// The caller must ensure that:
-    /// 1. The sample pointer is valid and points to a properly initialized sample
-    /// 2. The caller transfers ownership of the sample to this function
-    ///    - The sample is not being used by any other thread
-    ///    - The sample must not be accessed by the caller after this call
-    ///    - The manager will either free the sample or recycle it back
-    /// 3. The sample will be properly cleaned up if it cannot be sent
-    pub unsafe fn send_sample(
-        &self,
-        sample: *mut c_void,
-    ) -> Result<(), crossbeam_channel::SendError<SendSample>> {
-        self.samples_sender.send(SendSample::new(sample))
-    }
-
-    pub fn try_recv_recycled(&self) -> Result<*mut c_void, crossbeam_channel::TryRecvError> {
-        self.recycled_samples_receiver
-            .try_recv()
-            .map(|s| s.as_ptr())
-    }
-}
-
-pub struct ProfilerManager {
-    samples_receiver: Receiver<SendSample>,
-    recycled_samples_sender: Sender<SendSample>,
-    cpu_ticker: Receiver<Instant>,
-    upload_ticker: Receiver<Instant>,
-    shutdown_receiver: Receiver<()>,
-    profile: internal::Profile,
-    cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
-    upload_callback: extern "C" fn(*mut internal::Profile, &mut Option<CancellationToken>),
-    sample_callbacks: ManagedSampleCallbacks,
-    cancellation_token: Option<CancellationToken>,
-}
-
-impl ProfilerManager {
-    pub fn start(
-        sample_types: &[api::ValueType],
-        period: Option<api::Period>,
-        cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
-        upload_callback: extern "C" fn(*mut internal::Profile, &mut Option<CancellationToken>),
-        sample_callbacks: ManagedSampleCallbacks,
-    ) -> ManagedProfilerClient {
-        let (channels, samples_receiver, recycled_samples_sender) = SampleChannels::new();
-        let (shutdown_sender, shutdown_receiver) = crossbeam_channel::bounded(1);
-        let profile = internal::Profile::new(sample_types, period);
-        let cpu_ticker = tick(Duration::from_millis(100));
-        let upload_ticker = tick(Duration::from_secs(1));
-        let mut manager = Self {
-            cpu_ticker,
-            upload_ticker,
-            samples_receiver,
-            recycled_samples_sender,
-            shutdown_receiver,
-            profile,
-            cpu_sampler_callback,
-            upload_callback,
-            sample_callbacks,
-            cancellation_token: None,
-        };
-
-        let handle = std::thread::spawn(move || {
-            if let Err(e) = manager.main() {
-                eprintln!("ProfilerManager error: {}", e);
-            }
-        });
-
-        ManagedProfilerClient::new(channels, handle, shutdown_sender)
-    }
-
-    fn handle_sample(
-        &mut self,
-        raw_sample: Result<SendSample, crossbeam_channel::RecvError>,
-    ) -> anyhow::Result<()> {
-        let data = raw_sample?.as_ptr();
-        let sample = (self.sample_callbacks.converter)(data);
-        self.profile.add_sample(sample.try_into()?, None)?;
-        (self.sample_callbacks.reset)(data);
-        // SAFETY: The sample pointer is valid because it came from the samples channel
-        // and was just processed by the converter and reset callbacks. We have exclusive
-        // access to it since we're the only thread that can receive from the samples channel.
-        if self
-            .recycled_samples_sender
-            .send(unsafe { SendSample::new(data) })
-            .is_err()
-        {
-            (self.sample_callbacks.drop)(data);
-        }
-        Ok(())
-    }
-
-    fn handle_cpu_tick(&mut self) {
-        (self.cpu_sampler_callback)(&mut self.profile);
-    }
-
-    fn handle_upload_tick(&mut self) -> anyhow::Result<()> {
-        let mut old_profile = self.profile.reset_and_return_previous()?;
-        let upload_callback = self.upload_callback;
-        // Create a new cancellation token for this upload
-        let token = CancellationToken::new();
-        // Store a clone of the token in the manager
-        self.cancellation_token = Some(token.clone());
-        let mut cancellation_token = Some(token);
-        std::thread::spawn(move || {
-            (upload_callback)(&mut old_profile, &mut cancellation_token);
-            // TODO: make sure we cleanup the profile.
-        });
-        Ok(())
-    }
-
-    fn handle_shutdown(&mut self) -> anyhow::Result<()> {
-        // TODO: a mechanism to force threads to wait to write to the channel.
-        // Drain any remaining samples and drop them
-        while let Ok(sample) = self.samples_receiver.try_recv() {
-            (self.sample_callbacks.drop)(sample.as_ptr());
-        }
-        // Cancel any ongoing upload and drop the token
-        if let Some(token) = self.cancellation_token.take() {
-            token.cancel();
-        }
-        // TODO: cleanup the recycled samples.
-        Ok(())
-    }
-
-    fn main(&mut self) -> anyhow::Result<()> {
-        loop {
-            select! {
-                recv(self.samples_receiver) -> raw_sample => {
-                    let _ = self.handle_sample(raw_sample)
-                        .map_err(|e| eprintln!("Failed to process sample: {}", e));
-                },
-                recv(self.cpu_ticker) -> msg => {
-                    self.handle_cpu_tick();
-                },
-                recv(self.upload_ticker) -> msg => {
-                    let _ = self.handle_upload_tick()
-                        .map_err(|e| eprintln!("Failed to handle upload: {}", e));
-                },
-                recv(self.shutdown_receiver) -> _ => {
-                    return self.handle_shutdown();
-                },
-            }
-        }
-    }
-}
+pub use profiler_manager::{ManagedSampleCallbacks, ProfilerManager};
+pub use samples::{SampleChannels, SendSample};
 
 /// # Safety
 /// The `profile` ptr must point to a valid internal::Profile object.
@@ -265,7 +50,10 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_internal(
 
 #[cfg(test)]
 mod tests {
+    use std::{ffi::c_void, time::Duration};
+
     use super::*;
+    use tokio_util::sync::CancellationToken;
 
     extern "C" fn test_cpu_sampler_callback(_: *mut datadog_profiling::internal::Profile) {
         println!("cpu sampler callback");
