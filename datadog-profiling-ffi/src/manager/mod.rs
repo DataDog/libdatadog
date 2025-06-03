@@ -16,6 +16,9 @@ use crossbeam_channel::{select, tick, Receiver, Sender};
 use datadog_profiling::{api, internal};
 use tokio_util::sync::CancellationToken;
 
+mod client;
+pub use client::ManagedProfilerClient;
+
 #[repr(C)]
 pub struct ManagedSampleCallbacks {
     // Static is probably the wrong type here, but worry about that later.
@@ -40,6 +43,7 @@ impl ManagedSampleCallbacks {
     }
 }
 
+// TODO: this owns the memory.  It should probably be a full wrapper, with a destructor.
 #[repr(transparent)]
 pub struct SendSample(*mut c_void);
 
@@ -125,7 +129,7 @@ impl ProfilerManager {
         cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
         upload_callback: extern "C" fn(*mut internal::Profile, &mut Option<CancellationToken>),
         sample_callbacks: ManagedSampleCallbacks,
-    ) -> ProfilerHandle {
+    ) -> ManagedProfilerClient {
         let (channels, samples_receiver, recycled_samples_sender) = SampleChannels::new();
         let (shutdown_sender, shutdown_receiver) = crossbeam_channel::bounded(1);
         let profile = internal::Profile::new(sample_types, period);
@@ -150,11 +154,7 @@ impl ProfilerManager {
             }
         });
 
-        ProfilerHandle {
-            channels,
-            handle,
-            shutdown_sender,
-        }
+        ManagedProfilerClient::new(channels, handle, shutdown_sender)
     }
 
     fn handle_sample(
@@ -198,6 +198,7 @@ impl ProfilerManager {
     }
 
     fn handle_shutdown(&mut self) -> anyhow::Result<()> {
+        // TODO: a mechanism to force threads to wait to write to the channel.
         // Drain any remaining samples and drop them
         while let Ok(sample) = self.samples_receiver.try_recv() {
             (self.sample_callbacks.drop)(sample.as_ptr());
@@ -229,38 +230,6 @@ impl ProfilerManager {
                 },
             }
         }
-    }
-}
-
-pub struct ProfilerHandle {
-    channels: SampleChannels,
-    handle: std::thread::JoinHandle<()>,
-    shutdown_sender: Sender<()>,
-}
-
-impl ProfilerHandle {
-    /// # Safety
-    /// The caller must ensure that:
-    /// 1. The sample pointer is valid and points to a properly initialized sample
-    /// 2. The caller transfers ownership of the sample to this function
-    ///    - The sample is not being used by any other thread
-    ///    - The sample must not be accessed by the caller after this call
-    ///    - The manager will either free the sample or recycle it back
-    /// 3. The sample will be properly cleaned up if it cannot be sent
-    pub unsafe fn send_sample(
-        &self,
-        sample: *mut c_void,
-    ) -> Result<(), crossbeam_channel::SendError<SendSample>> {
-        self.channels.send_sample(sample)
-    }
-
-    pub fn try_recv_recycled(&self) -> Result<*mut c_void, crossbeam_channel::TryRecvError> {
-        self.channels.try_recv_recycled()
-    }
-
-    pub fn shutdown(self) -> std::thread::Result<()> {
-        let _ = self.shutdown_sender.send(());
-        self.handle.join()
     }
 }
 
