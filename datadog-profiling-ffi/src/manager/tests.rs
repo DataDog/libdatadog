@@ -44,7 +44,8 @@ fn test_the_thing() {
         test_cpu_sampler_callback,
         test_upload_callback,
         sample_callbacks,
-    );
+    )
+    .expect("Failed to start profiler");
     println!("start");
     std::thread::sleep(Duration::from_secs(5));
     handle.shutdown().unwrap();

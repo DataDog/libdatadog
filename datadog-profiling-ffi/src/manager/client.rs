@@ -40,8 +40,12 @@ impl ManagedProfilerClient {
         self.channels.try_recv_recycled()
     }
 
-    pub fn shutdown(self) -> std::thread::Result<()> {
+    pub fn shutdown(self) -> anyhow::Result<()> {
+        // Todo: Should we report if there was an error sending the shutdown signal?
         let _ = self.shutdown_sender.send(());
-        self.handle.join()
+        self.handle
+            .join()
+            .map_err(|e| anyhow::anyhow!("Failed to join handle: {:?}", e))?;
+        Ok(())
     }
 }

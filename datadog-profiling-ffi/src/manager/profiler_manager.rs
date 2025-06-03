@@ -8,10 +8,12 @@ use crossbeam_channel::{select, tick, Receiver, Sender};
 use datadog_profiling::{api, internal};
 use tokio_util::sync::CancellationToken;
 
+use super::client::ManagedProfilerClient;
 use super::samples::{SampleChannels, SendSample};
 use crate::profiles::datatypes::Sample;
 
 #[repr(C)]
+#[derive(Clone)]
 pub struct ManagedSampleCallbacks {
     // Static is probably the wrong type here, but worry about that later.
     converter: extern "C" fn(*mut c_void) -> Sample<'static>,
@@ -55,7 +57,7 @@ impl ProfilerManager {
         cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
         upload_callback: extern "C" fn(*mut internal::Profile, &mut Option<CancellationToken>),
         sample_callbacks: ManagedSampleCallbacks,
-    ) -> super::client::ManagedProfilerClient {
+    ) -> Result<ManagedProfilerClient> {
         let (channels, samples_receiver, recycled_samples_sender) = SampleChannels::new();
         let (shutdown_sender, shutdown_receiver) = crossbeam_channel::bounded(1);
         let profile = internal::Profile::new(sample_types, period);
@@ -80,7 +82,11 @@ impl ProfilerManager {
             }
         });
 
-        super::client::ManagedProfilerClient::new(channels, handle, shutdown_sender)
+        Ok(ManagedProfilerClient::new(
+            channels,
+            handle,
+            shutdown_sender,
+        ))
     }
 
     fn handle_sample(
