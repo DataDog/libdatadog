@@ -10,7 +10,8 @@ use crate::service::{
     RuntimeInfo, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SessionInfo,
     SidecarAction, SidecarInterface, SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
-use data_pipeline::telemetry::TelemetryClient;
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
+use base64::Engine;
 use datadog_ipc::platform::{AsyncChannel, ShmHandle};
 use datadog_ipc::tarpc;
 use datadog_ipc::tarpc::context::Context;
@@ -20,7 +21,8 @@ use datadog_trace_utils::tracer_payload::decode_to_trace_chunks;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
 use ddcommon::{Endpoint, MutexExt};
 use ddtelemetry::worker::{
-    LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerStats,
+    LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
+    TelemetryWorkerStats,
 };
 use futures::future;
 use futures::future::{join_all, Ready};
@@ -28,11 +30,16 @@ use manual_future::{ManualFuture, ManualFutureCompleter};
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+use std::ffi::CString;
+use std::hash::{Hash, Hasher};
+use std::os::unix::ffi::OsStrExt;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, trace, warn};
+use zwohash::ZwoHasher;
 
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
@@ -94,7 +101,7 @@ unsafe impl Send for ProcessHandle {}
 unsafe impl Sync for ProcessHandle {}
 
 struct TelemetryCachedClient {
-    client: TelemetryClient,
+    client: TelemetryWorkerHandle,
     last_used: Instant,
 }
 
@@ -166,6 +173,66 @@ impl Default for SidecarServer {
 }
 
 impl SidecarServer {
+    pub fn get_or_create_telemetry_worker_handle(
+        &self,
+        service: &str,
+        env: &str,
+        version: &str,
+        instance_id: &InstanceId,
+        runtime_meta: &RuntimeMetadata,
+    ) -> Option<TelemetryWorkerHandle> {
+        let key = (service.to_string(), env.to_string(), version.to_string());
+
+        let mut clients = self.telemetry_clients.lock_or_panic();
+
+        if let Some(existing) = clients.get_mut(&key) {
+            existing.last_used = Instant::now();
+            return Some(existing.client.clone());
+        }
+
+        // Build and spawn worker
+        let mut builder = TelemetryWorkerBuilder::new_fetch_host(
+            service.to_string(),
+            runtime_meta.language_name.to_string(),
+            runtime_meta.language_version.to_string(),
+            runtime_meta.tracer_version.to_string(),
+        );
+
+        builder.runtime_id = Some(instance_id.runtime_id.clone());
+        builder.application.env = Some(env.to_string());
+
+        let session_info = self.get_session(&instance_id.session_id);
+        let config = session_info
+            .session_config
+            .lock_or_panic()
+            .clone()
+            .unwrap_or_else(ddtelemetry::config::Config::from_env);
+
+        builder.config = config.clone();
+
+        match builder.spawn().now_or_never() {
+            Some(Ok((handle, _join))) => {
+                clients.insert(
+                    key,
+                    TelemetryCachedClient {
+                        client: handle.clone(),
+                        last_used: Instant::now(),
+                    },
+                );
+                info!("spawning telemetry worker {config:?}");
+                Some(handle)
+            }
+            Some(Err(e)) => {
+                error!("failed to spawn telemetry worker: {:?}", e);
+                None
+            }
+            None => {
+                error!("failed to spawn telemetry worker: spawn did not complete immediately");
+                None
+            }
+        }
+    }
+
     /// Accepts a new connection and starts processing requests.
     ///
     /// This function creates a new `tarpc` server with the provided `async_channel` and starts
@@ -466,6 +533,22 @@ impl SidecarServer {
     }
 }
 
+pub fn path_for_telemetry(instance_id: &InstanceId) -> CString {
+    let mut hasher = ZwoHasher::default();
+    instance_id.runtime_id.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    let mut path = format!(
+        "/ddtl{}-{}",
+        primary_sidecar_identifier(),
+        BASE64_URL_SAFE_NO_PAD.encode(hash.to_ne_bytes()),
+    );
+    path.truncate(31);
+
+    #[allow(clippy::unwrap_used)]
+    CString::new(path).unwrap()
+}
+
 impl SidecarInterface for SidecarServer {
     type EnqueueActionsFut = NoResponse;
 
@@ -542,6 +625,20 @@ impl SidecarInterface for SidecarServer {
                                     to_process, &mut app,
                                 )
                                 .await;
+
+                                let path = PathBuf::from(std::ffi::OsStr::from_bytes(
+                                    path_for_telemetry(&instance_id).as_bytes(),
+                                ));
+                                if let Err(e) = std::fs::write(
+                                    &path,
+                                    simd_json::to_vec(&actions).unwrap_or_default(),
+                                ) {
+                                    error!(
+                                        "Failed to write telemetry SHM file at {:?}: {:?}",
+                                        path, e
+                                    );
+                                }
+
                                 app.telemetry.send_msgs(actions).await.ok();
                             }
                         });
@@ -612,33 +709,6 @@ impl SidecarInterface for SidecarServer {
             let rt_info = self.get_runtime(&instance_id);
             let manual_app_future = rt_info.get_app(&service_name, &env_name);
 
-            let instance_future = if manual_app_future.completer.is_some() {
-                let mut builder = TelemetryWorkerBuilder::new_fetch_host(
-                    service_name.to_owned(),
-                    runtime_meta.language_name.to_owned(),
-                    runtime_meta.language_version.to_owned(),
-                    runtime_meta.tracer_version.to_owned(),
-                );
-                builder.runtime_id = Some(instance_id.runtime_id.to_owned());
-                builder.application.env = Some(env_name.to_owned());
-                let session_info = self.get_session(&instance_id.session_id);
-                let mut config = session_info
-                    .session_config
-                    .lock_or_panic()
-                    .clone()
-                    .unwrap_or_else(ddtelemetry::config::Config::from_env);
-                config.restartable = true;
-                builder.config = config.clone();
-                Some(builder.spawn().map(move |result| {
-                    if result.is_ok() {
-                        info!("spawning telemetry worker {config:?}");
-                    }
-                    result
-                }))
-            } else {
-                None
-            };
-
             let (buffered_paths, buffered_integrations) = {
                 let mut apps = rt_info.lock_applications();
                 if let Some(app_data) = apps.get_mut(&queue_id) {
@@ -651,49 +721,32 @@ impl SidecarInterface for SidecarServer {
                 }
             };
 
+            let worker_handle = if manual_app_future.completer.is_some() {
+                self.get_or_create_telemetry_worker_handle(
+                    &service_name,
+                    &env_name,
+                    &runtime_meta.tracer_version,
+                    &instance_id,
+                    &runtime_meta,
+                )
+            } else {
+                None
+            };
+
             tokio::spawn(async move {
-                if let Some(instance_future) = instance_future {
-                    let instance_option = match instance_future.await {
-                        Ok((handle, worker_join)) => {
-                            let instance = AppInstance {
-                                telemetry: handle,
-                                telemetry_worker_shutdown: worker_join
-                                    .map(Result::ok)
-                                    .boxed()
-                                    .shared(),
-                                telemetry_metrics: Default::default(),
-                            };
-
-                            let mut actions: Vec<TelemetryActions> = vec![];
-                            enqueued_data.extract_telemetry_actions(&mut actions).await;
-                            instance.telemetry.send_msgs(actions).await.ok();
-
-                            instance
-                                .telemetry
-                                .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                                .await
-                                .ok();
-                            Some(instance)
-                        }
-                        Err(e) => {
-                            error!("could not spawn telemetry worker {:?}", e);
-                            None
-                        }
+                if let Some(worker) = worker_handle {
+                    let instance = AppInstance {
+                        telemetry: worker.clone(),
+                        telemetry_worker_shutdown: futures::future::pending().boxed().shared(),
+                        telemetry_metrics: Default::default(),
                     };
 
-                    #[allow(clippy::expect_used)]
-                    manual_app_future
-                        .completer
-                        .expect("Completed expected Some ManualFuture for application instance, but found none")
-                        .complete(instance_option)
-                        .await;
-                }
+                    let mut actions = vec![];
 
-                if let Some(mut app) = manual_app_future.app_future.await {
-                    let mut flush_actions: Vec<TelemetryActions> = vec![];
+                    enqueued_data.extract_telemetry_actions(&mut actions).await;
 
                     for integration in buffered_integrations {
-                        flush_actions.push(TelemetryActions::AddIntegration(integration));
+                        actions.push(TelemetryActions::AddIntegration(integration));
                     }
 
                     for path in buffered_paths {
@@ -701,14 +754,29 @@ impl SidecarInterface for SidecarServer {
                             .await
                             .iter()
                         {
-                            flush_actions.push(TelemetryActions::AddDependency(dep.clone()));
+                            actions.push(TelemetryActions::AddDependency(dep.clone()));
                         }
                     }
 
-                    if !flush_actions.is_empty() {
-                        app.telemetry.send_msgs(flush_actions).await.ok();
+                    if !actions.is_empty() {
+                        worker.send_msgs(actions).await.ok();
                     }
 
+                    instance
+                        .telemetry
+                        .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
+                        .await
+                        .ok();
+
+                    #[allow(clippy::expect_used)]
+                    manual_app_future
+                        .completer
+                        .expect("Expected Some completer")
+                        .complete(Some(instance))
+                        .await;
+                }
+
+                if let Some(mut app) = manual_app_future.app_future.await {
                     // Register metrics
                     for metric in std::mem::take(&mut enqueued_data.metrics).into_iter() {
                         app.register_metric(metric);
@@ -725,7 +793,6 @@ impl SidecarInterface for SidecarServer {
                     if actions.iter().any(|action| {
                         matches!(action, TelemetryActions::Lifecycle(LifecycleAction::Stop))
                     }) {
-                        // Avoid self.get_runtime(), it could create a new one.
                         if let Some(session) =
                             self.sessions.lock_or_panic().get(&instance_id.session_id)
                         {
