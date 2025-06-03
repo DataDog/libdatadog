@@ -46,7 +46,7 @@ RSpec.describe "gem release process (after packaging)" do
       expect(symbols.size).to be > 20 # Quick sanity check
 
       expect(symbols).to all(
-        start_with("ddog_").or(start_with("blaze_")).or(eq("INTERNED_EMPTY_STRING"))
+        start_with("ddog_").or(start_with("blaze_"))
       )
     end
   end
