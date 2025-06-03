@@ -11,7 +11,7 @@ use std::{str::FromStr, vec};
 use datadog_remote_config::{
     fetch::{ConfigInvariants, SingleChangesFetcher},
     file_change_tracker::{Change, FilePath},
-    file_storage::{ParsedFileStorage, RawFileStorage},
+    file_storage::{ParsedFileStorage, RawFileStorage, RawFile},
     RemoteConfigData, RemoteConfigProduct, Target,
 };
 use ddcommon::Endpoint;
@@ -35,46 +35,90 @@ impl std::fmt::Display for FlareError {
 }
 
 /// Enum that hold the different log level possible
-#[derive(Debug)]
-pub enum LogLevel {
-    Trace = 0,
-    Debug = 1,
-    Info = 2,
-    Warn = 3,
-    Error = 4,
-    Critical = 5,
-    Off = 6,
-}
+// #[derive(Debug)]
+// pub enum LogLevel {
+//     Trace = 0,
+//     Debug = 1,
+//     Info = 2,
+//     Warn = 3,
+//     Error = 4,
+//     Critical = 5,
+//     Off = 6,
+// }
 
 /// Enum that hold the different returned action to do after listening
 #[derive(Debug)]
 pub enum ReturnAction {
-    None,
-    StartTrace,
-    StartDebug,
-    StartInfo,
-    StartWarn,
-    StartError,
-    StartCritical,
-    StartOff,
+    StartTrace = 0,
+    StartDebug = 1,
+    StartInfo = 2,
+    StartWarn = 3,
+    StartError = 4,
+    StartCritical = 5,
+    StartOff = 6,
     Stop,
+    None,
 }
 
-impl From<LogLevel> for ReturnAction {
-    fn from(level: LogLevel) -> Self {
-        match level {
-            LogLevel::Trace => ReturnAction::StartTrace,
-            LogLevel::Debug => ReturnAction::StartDebug,
-            LogLevel::Info => ReturnAction::StartInfo,
-            LogLevel::Warn => ReturnAction::StartWarn,
-            LogLevel::Error => ReturnAction::StartError,
-            LogLevel::Critical => ReturnAction::StartCritical,
-            LogLevel::Off => ReturnAction::StartOff,
+impl From<&String> for ReturnAction {
+    fn from(level: &String) -> Self {
+        match level.as_str() {
+            "trace" => ReturnAction::StartTrace,
+            "debug" => ReturnAction::StartDebug,
+            "info" => ReturnAction::StartInfo,
+            "warn" => ReturnAction::StartWarn,
+            "error" => ReturnAction::StartError,
+            "critical" => ReturnAction::StartCritical,
+            "off" => ReturnAction::StartOff,
+            _ => ReturnAction::None,
         }
     }
 }
 
+pub type RemoteConfigFile = std::sync::Arc<RawFile<Result<RemoteConfigData, anyhow::Error>>>;
 pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>>;
+
+/// Function that check the RemoteConfig received and return the action that need to be done by the tracer flare
+///
+/// # Arguments
+///
+/// * `file` - RemoteConfigFile received by the Listener.
+///
+/// # Returns
+///
+/// * `Ok(ReturnAction)` - If successful.
+///     * `Ok(ReturnAction::Start<Level>)` - If AGENT_CONFIG with the right properties.
+///     * `Ok(ReturnAction::Stop)` - If AGENT_TASK with the right properties.
+///     * `Ok(ReturnAction::None)` - Else.
+/// * `FlareError(msg)` - If something fail.
+pub fn check_remote_config_file(
+    file: RemoteConfigFile,
+) -> Result<ReturnAction, FlareError>
+{
+    let config = file.contents();
+    match config.as_ref() {
+        Ok(data) => match data {
+            RemoteConfigData::TracerFlareConfig(agent_config) => {
+                if agent_config.name.starts_with("flare-log-level.") {
+                    if let Some(log_level) = &agent_config.config.log_level {
+                        return Ok(log_level.into());
+                    }
+                }
+            },
+            RemoteConfigData::TracerFlareTask(agent_task) => {
+                if agent_task.task_type.eq("tracer_flare") {
+                    return Ok(ReturnAction::Stop);
+                }
+
+            }
+            _ => return Ok(ReturnAction::None),
+        },
+        Err(_) => {
+            return Err(FlareError::ListeningError("".to_string()));
+        }
+    }
+    Ok(ReturnAction::None)
+}
 
 /// Function that init and return a listener of RemoteConfig
 ///
@@ -186,6 +230,7 @@ pub async fn run_remote_config_listener(
                     Change::Add(file) => {
                         println!("Added file: {} (version: {})", file.path(), file.version());
                         println!("Content: {:?}", file.contents().as_ref());
+                        return check_remote_config_file(file);
                     }
                     Change::Update(file, _) => {
                         println!(
