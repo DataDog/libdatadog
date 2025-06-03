@@ -122,19 +122,8 @@ pub(crate) fn emit_crashreport(
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
     // Do this last, so even if it crashes, we still get the other info.
     if config.resolve_frames() != StacktraceCollection::Disabled {
-        unsafe {
-            #[cfg(all(unix, target_os = "macos", target_arch = "x86_64"))]
-            let fault_rsp = (*(*ucontext).uc_mcontext).__ss.__rsp as usize;
-            #[cfg(all(unix, target_os = "macos", target_arch = "aarch64"))]
-            let fault_rsp = (*(*ucontext).uc_mcontext).__ss.__sp as usize;
-
-            #[cfg(all(unix, target_os = "linux", target_arch = "x86_64"))]
-            let fault_rsp = (*ucontext).uc_mcontext.gregs[libc::REG_RSP as usize] as usize;
-            #[cfg(all(unix, target_os = "linux", target_arch = "aarch64"))]
-            let fault_rsp = (*ucontext).uc_mcontext.sp as usize;
-
-            emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_rsp)?
-        };
+        let fault_rsp = extract_rsp(ucontext);
+        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_rsp)? };
     }
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
@@ -287,6 +276,20 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     writeln!(w, "\n{DD_CRASHTRACK_END_FILE} \"{path}\"")?;
     w.flush()?;
     Ok(())
+}
+
+fn extract_rsp(ucontext: *const ucontext_t) -> usize {
+    unsafe {
+        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+        return (*(*ucontext).uc_mcontext).__ss.__rsp as usize;
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        return (*(*ucontext).uc_mcontext).__ss.__sp as usize;
+
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        return (*ucontext).uc_mcontext.gregs[libc::REG_RSP as usize] as usize;
+        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+        return (*ucontext).uc_mcontext.sp as usize;
+    }
 }
 
 #[cfg(test)]
