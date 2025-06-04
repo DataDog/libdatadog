@@ -1,10 +1,10 @@
 // BSD-3-Clause License
 // Synchronized from blazesym repository
-// https://github.com/libbpf/blazesym/blob/capi-v0.1.0-rc.2/capi/include/blazesym.h
+// https://github.com/libbpf/blazesym/blob/capi-v0.1.1/capi/include/blazesym.h
 /*
  * Please refer to the documentation hosted at
  *
- *   https://docs.rs/blazesym-c/0.1.0-rc.2
+ *   https://docs.rs/blazesym-c/0.1.1
  */
 
 
@@ -22,195 +22,89 @@
  *
  * C ABI compatible version of [`blazesym::ErrorKind`].
  */
-typedef enum blaze_err {
-  /**
-   * The operation was successful.
-   */
-  BLAZE_ERR_OK = 0,
-  /**
-   * An entity was not found, often a file.
-   */
-  BLAZE_ERR_NOT_FOUND = -2,
-  /**
-   * The operation lacked the necessary privileges to complete.
-   */
-  BLAZE_ERR_PERMISSION_DENIED = -1,
-  /**
-   * An entity already exists, often a file.
-   */
-  BLAZE_ERR_ALREADY_EXISTS = -17,
-  /**
-   * The operation needs to block to complete, but the blocking
-   * operation was requested to not occur.
-   */
-  BLAZE_ERR_WOULD_BLOCK = -11,
-  /**
-   * Data not valid for the operation were encountered.
-   */
-  BLAZE_ERR_INVALID_DATA = -22,
-  /**
-   * The I/O operation's timeout expired, causing it to be canceled.
-   */
-  BLAZE_ERR_TIMED_OUT = -110,
-  /**
-   * This operation is unsupported on this platform.
-   */
-  BLAZE_ERR_UNSUPPORTED = -95,
-  /**
-   * An operation could not be completed, because it failed
-   * to allocate enough memory.
-   */
-  BLAZE_ERR_OUT_OF_MEMORY = -12,
-  /**
-   * A parameter was incorrect.
-   */
-  BLAZE_ERR_INVALID_INPUT = -256,
-  /**
-   * An error returned when an operation could not be completed
-   * because a call to [`write`] returned [`Ok(0)`].
-   */
-  BLAZE_ERR_WRITE_ZERO = -257,
-  /**
-   * An error returned when an operation could not be completed
-   * because an "end of file" was reached prematurely.
-   */
-  BLAZE_ERR_UNEXPECTED_EOF = -258,
-  /**
-   * DWARF input data was invalid.
-   */
-  BLAZE_ERR_INVALID_DWARF = -259,
-  /**
-   * A custom error that does not fall under any other I/O error
-   * kind.
-   */
-  BLAZE_ERR_OTHER = -260,
-} blaze_err;
-
+typedef int16_t blaze_err;
 /**
- * The reason why normalization failed.
- *
- * The reason is generally only meant as a hint. Reasons reported may change
- * over time and, hence, should not be relied upon for the correctness of the
- * application.
+ * The operation was successful.
  */
-enum blaze_normalize_reason
-#ifdef __cplusplus
-  : uint8_t
-#endif // __cplusplus
- {
-  /**
-   * The absolute address was not found in the corresponding process' virtual
-   * memory map.
-   */
-  BLAZE_NORMALIZE_REASON_UNMAPPED,
-  /**
-   * The `/proc/<pid>/maps` entry corresponding to the address does not have
-   * a component (file system path, object, ...) associated with it.
-   */
-  BLAZE_NORMALIZE_REASON_MISSING_COMPONENT,
-  /**
-   * The address belonged to an entity that is currently unsupported.
-   */
-  BLAZE_NORMALIZE_REASON_UNSUPPORTED,
-};
-#ifndef __cplusplus
-typedef uint8_t blaze_normalize_reason;
-#endif // __cplusplus
+#define BLAZE_ERR_OK 0
+/**
+ * An entity was not found, often a file.
+ */
+#define BLAZE_ERR_NOT_FOUND -2
+/**
+ * The operation lacked the necessary privileges to complete.
+ */
+#define BLAZE_ERR_PERMISSION_DENIED -1
+/**
+ * An entity already exists, often a file.
+ */
+#define BLAZE_ERR_ALREADY_EXISTS -17
+/**
+ * The operation needs to block to complete, but the blocking
+ * operation was requested to not occur.
+ */
+#define BLAZE_ERR_WOULD_BLOCK -11
+/**
+ * Data not valid for the operation were encountered.
+ */
+#define BLAZE_ERR_INVALID_DATA -22
+/**
+ * The I/O operation's timeout expired, causing it to be canceled.
+ */
+#define BLAZE_ERR_TIMED_OUT -110
+/**
+ * This operation is unsupported on this platform.
+ */
+#define BLAZE_ERR_UNSUPPORTED -95
+/**
+ * An operation could not be completed, because it failed
+ * to allocate enough memory.
+ */
+#define BLAZE_ERR_OUT_OF_MEMORY -12
+/**
+ * A parameter was incorrect.
+ */
+#define BLAZE_ERR_INVALID_INPUT -256
+/**
+ * An error returned when an operation could not be completed
+ * because a call to [`write`] returned [`Ok(0)`].
+ */
+#define BLAZE_ERR_WRITE_ZERO -257
+/**
+ * An error returned when an operation ould not be completed
+ * because an "end of file" was reached prematurely.
+ */
+#define BLAZE_ERR_UNEXPECTED_EOF -258
+/**
+ * DWARF input data was invalid.
+ */
+#define BLAZE_ERR_INVALID_DWARF -259
+/**
+ * A custom error that does not fall under any other I/O error
+ * kind.
+ */
+#define BLAZE_ERR_OTHER -260
 
 /**
  * The type of a symbol.
  */
-enum blaze_sym_type
-#ifdef __cplusplus
-  : uint8_t
-#endif // __cplusplus
- {
-  /**
-   * The symbol type is unspecified or unknown.
-   *
-   * In input contexts this variant can be used to encompass all
-   * other variants (functions and variables), whereas in output
-   * contexts it means that the type is not known.
-   */
-  BLAZE_SYM_UNDEF,
-  /**
-   * The symbol is a function.
-   */
-  BLAZE_SYM_FUNC,
-  /**
-   * The symbol is a variable.
-   */
-  BLAZE_SYM_VAR,
-};
-#ifndef __cplusplus
 typedef uint8_t blaze_sym_type;
-#endif // __cplusplus
-
 /**
- * The reason why symbolization failed.
+ * The symbol type is unspecified or unknown.
  *
- * The reason is generally only meant as a hint. Reasons reported may
- * change over time and, hence, should not be relied upon for the
- * correctness of the application.
+ * In input contexts this variant can be used to encompass all
+ * other variants (functions and variables), whereas in output
+ * contexts it means that the type is not known.
  */
-enum blaze_symbolize_reason
-#ifdef __cplusplus
-  : uint8_t
-#endif // __cplusplus
- {
-  /**
-   * Symbolization was successful.
-   */
-  BLAZE_SYMBOLIZE_REASON_SUCCESS = 0,
-  /**
-   * The absolute address was not found in the corresponding process'
-   * virtual memory map.
-   */
-  BLAZE_SYMBOLIZE_REASON_UNMAPPED,
-  /**
-   * The file offset does not map to a valid piece of code/data.
-   */
-  BLAZE_SYMBOLIZE_REASON_INVALID_FILE_OFFSET,
-  /**
-   * The `/proc/<pid>/maps` entry corresponding to the address does
-   * not have a component (file system path, object, ...) associated
-   * with it.
-   */
-  BLAZE_SYMBOLIZE_REASON_MISSING_COMPONENT,
-  /**
-   * The symbolization source has no or no relevant symbols.
-   */
-  BLAZE_SYMBOLIZE_REASON_MISSING_SYMS,
-  /**
-   * The address could not be found in the symbolization source.
-   */
-  BLAZE_SYMBOLIZE_REASON_UNKNOWN_ADDR,
-  /**
-   * The address belonged to an entity that is currently unsupported.
-   */
-  BLAZE_SYMBOLIZE_REASON_UNSUPPORTED,
-};
-#ifndef __cplusplus
-typedef uint8_t blaze_symbolize_reason;
-#endif // __cplusplus
-
+#define BLAZE_SYM_TYPE_UNDEF 0
 /**
- * The valid variant kind in [`blaze_user_meta`].
+ * The symbol is a function.
  */
-typedef enum blaze_user_meta_kind {
-  /**
-   * [`blaze_user_meta_variant::unknown`] is valid.
-   */
-  BLAZE_USER_META_UNKNOWN,
-  /**
-   * [`blaze_user_meta_variant::apk`] is valid.
-   */
-  BLAZE_USER_META_APK,
-  /**
-   * [`blaze_user_meta_variant::elf`] is valid.
-   */
-  BLAZE_USER_META_ELF,
-} blaze_user_meta_kind;
+#define BLAZE_SYM_TYPE_FUNC 1
+/**
+ * The symbol is a variable.
+ */
+#define BLAZE_SYM_TYPE_VAR 2
 
 /**
  * Information about a looked up symbol.
@@ -226,16 +120,21 @@ typedef struct blaze_sym_info {
   uint64_t addr;
   /**
    * See [`inspect::SymInfo::size`].
+   *
+   * If the symbol's size is not available, this member will be `-1`.
+   * Note that some symbol sources may not distinguish between
+   * "unknown" size and `0`. In that case the size will be reported
+   * as `0` here as well.
    */
-  size_t size;
+  ptrdiff_t size;
   /**
    * See [`inspect::SymInfo::file_offset`].
    */
   uint64_t file_offset;
   /**
-   * See [`inspect::SymInfo::obj_file_name`].
+   * See [`inspect::SymInfo::module`].
    */
-  const char *obj_file_name;
+  const char *module;
   /**
    * See [`inspect::SymInfo::sym_type`].
    */
@@ -243,7 +142,7 @@ typedef struct blaze_sym_info {
   /**
    * Unused member available for future expansion.
    */
-  uint8_t reserved[15];
+  uint8_t reserved[23];
 } blaze_sym_info;
 
 /**
@@ -254,7 +153,7 @@ typedef struct blaze_inspector blaze_inspector;
 /**
  * An object representing an ELF inspection source.
  *
- * C ABI compatible version of [`inspect::Elf`].
+ * C ABI compatible version of [`inspect::source::Elf`].
  */
 typedef struct blaze_inspect_elf_src {
   /**
@@ -277,7 +176,7 @@ typedef struct blaze_inspect_elf_src {
    * Unused member available for future expansion. Must be initialized
    * to zero.
    */
-  uint8_t reserved[7];
+  uint8_t reserved[23];
 } blaze_inspect_elf_src;
 
 /**
@@ -343,8 +242,48 @@ typedef struct blaze_normalizer_opts {
    * Unused member available for future expansion. Must be initialized
    * to zero.
    */
-  uint8_t reserved[4];
+  uint8_t reserved[20];
 } blaze_normalizer_opts;
+
+/**
+ * The reason why normalization failed.
+ *
+ * The reason is generally only meant as a hint. Reasons reported may change
+ * over time and, hence, should not be relied upon for the correctness of the
+ * application.
+ */
+typedef uint8_t blaze_normalize_reason;
+/**
+ * The absolute address was not found in the corresponding process' virtual
+ * memory map.
+ */
+#define BLAZE_NORMALIZE_REASON_UNMAPPED 0
+/**
+ * The `/proc/<pid>/maps` entry corresponding to the address does not have
+ * a component (file system path, object, ...) associated with it.
+ */
+#define BLAZE_NORMALIZE_REASON_MISSING_COMPONENT 1
+/**
+ * The address belonged to an entity that is currently unsupported.
+ */
+#define BLAZE_NORMALIZE_REASON_UNSUPPORTED 2
+
+/**
+ * The valid variant kind in [`blaze_user_meta`].
+ */
+typedef uint8_t blaze_user_meta_kind;
+/**
+ * [`blaze_user_meta_variant::unknown`] is valid.
+ */
+#define BLAZE_USER_META_KIND_BLAZE_USER_META_UNKNOWN 0
+/**
+ * [`blaze_user_meta_variant::apk`] is valid.
+ */
+#define BLAZE_USER_META_KIND_BLAZE_USER_META_APK 1
+/**
+ * [`blaze_user_meta_variant::elf`] is valid.
+ */
+#define BLAZE_USER_META_KIND_BLAZE_USER_META_ELF 2
 
 /**
  * C compatible version of [`Apk`].
@@ -358,7 +297,7 @@ typedef struct blaze_user_meta_apk {
   /**
    * Unused member available for future expansion.
    */
-  uint8_t reserved[8];
+  uint8_t reserved[16];
 } blaze_user_meta_apk;
 
 /**
@@ -366,7 +305,13 @@ typedef struct blaze_user_meta_apk {
  */
 typedef struct blaze_user_meta_elf {
   /**
-   * The path to the ELF file. This member is always present.
+   * Ordinarily, the canonical absolute path to the ELF file,
+   * including its name. In case of an ELF file contained inside an
+   * APK (see [`blaze_normalize_opts::apk_to_elf`]) this will be an
+   * Android style path of the form `<apk>!<elf-in-apk>`. E.g.,
+   * `/root/test.apk!/lib/libc.so`.
+   *
+   * This member is always present.
    */
   char *path;
   /**
@@ -380,7 +325,7 @@ typedef struct blaze_user_meta_elf {
   /**
    * Unused member available for future expansion.
    */
-  uint8_t reserved[8];
+  uint8_t reserved[16];
 } blaze_user_meta_elf;
 
 /**
@@ -397,7 +342,7 @@ typedef struct blaze_user_meta_unknown {
   /**
    * Unused member available for future expansion.
    */
-  uint8_t reserved[7];
+  uint8_t reserved[15];
 } blaze_user_meta_unknown;
 
 /**
@@ -425,11 +370,20 @@ typedef struct blaze_user_meta {
   /**
    * The variant kind that is present.
    */
-  enum blaze_user_meta_kind kind;
+  blaze_user_meta_kind kind;
+  /**
+   * Currently unused bytes.
+   */
+  uint8_t unused[7];
   /**
    * The actual variant with its data.
    */
   union blaze_user_meta_variant variant;
+  /**
+   * Unused member available for future expansion. Must be initialized
+   * to zero.
+   */
+  uint8_t reserved[16];
 } blaze_user_meta;
 
 /**
@@ -446,6 +400,11 @@ typedef struct blaze_normalized_output {
    * The index into the associated [`blaze_user_meta`] array.
    */
   size_t meta_idx;
+  /**
+   * Unused member available for future expansion. Must be initialized
+   * to zero.
+   */
+  uint8_t reserved[16];
 } blaze_normalized_output;
 
 /**
@@ -473,7 +432,7 @@ typedef struct blaze_normalized_user_output {
   /**
    * Unused member available for future expansion.
    */
-  uint8_t reserved[8];
+  uint8_t reserved[16];
 } blaze_normalized_user_output;
 
 /**
@@ -508,11 +467,61 @@ typedef struct blaze_normalize_opts {
    */
   bool map_files;
   /**
+   * Normalize addresses inside APKs to the contained ELF file and
+   * report a regular
+   * [`BLAZE_USER_META_ELF`][blaze_user_meta_kind::BLAZE_USER_META_ELF]
+   * meta data entry instead of an
+   * [`BLAZE_USER_META_APK`][blaze_user_meta_kind::BLAZE_USER_META_APK]
+   * one. As a result, the reported file offset will also be relative
+   * to the contained ELF file and not to the APK itself.
+   */
+  bool apk_to_elf;
+  /**
    * Unused member available for future expansion. Must be initialized
    * to zero.
    */
-  uint8_t reserved[6];
+  uint8_t reserved[21];
 } blaze_normalize_opts;
+
+/**
+ * The reason why symbolization failed.
+ *
+ * The reason is generally only meant as a hint. Reasons reported may
+ * change over time and, hence, should not be relied upon for the
+ * correctness of the application.
+ */
+typedef uint8_t blaze_symbolize_reason;
+/**
+ * Symbolization was successful.
+ */
+#define BLAZE_SYMBOLIZE_REASON_SUCCESS 0
+/**
+ * The absolute address was not found in the corresponding process'
+ * virtual memory map.
+ */
+#define BLAZE_SYMBOLIZE_REASON_UNMAPPED 1
+/**
+ * The file offset does not map to a valid piece of code/data.
+ */
+#define BLAZE_SYMBOLIZE_REASON_INVALID_FILE_OFFSET 2
+/**
+ * The `/proc/<pid>/maps` entry corresponding to the address does
+ * not have a component (file system path, object, ...) associated
+ * with it.
+ */
+#define BLAZE_SYMBOLIZE_REASON_MISSING_COMPONENT 3
+/**
+ * The symbolization source has no or no relevant symbols.
+ */
+#define BLAZE_SYMBOLIZE_REASON_MISSING_SYMS 4
+/**
+ * The address could not be found in the symbolization source.
+ */
+#define BLAZE_SYMBOLIZE_REASON_UNKNOWN_ADDR 5
+/**
+ * The address belonged to an entity that is currently unsupported.
+ */
+#define BLAZE_SYMBOLIZE_REASON_UNSUPPORTED 6
 
 /**
  * C ABI compatible version of [`blazesym::symbolize::Symbolizer`].
@@ -578,8 +587,73 @@ typedef struct blaze_symbolizer_opts {
    * Unused member available for future expansion. Must be initialized
    * to zero.
    */
-  uint8_t reserved[4];
+  uint8_t reserved[20];
 } blaze_symbolizer_opts;
+
+/**
+ * Configuration for caching of ELF symbolization data.
+ */
+typedef struct blaze_cache_src_elf {
+  /**
+   * The size of this object's type.
+   *
+   * Make sure to initialize it to `sizeof(<type>)`. This member is used to
+   * ensure compatibility in the presence of member additions.
+   */
+  size_t type_size;
+  /**
+   * The path to the ELF file.
+   */
+  const char *path;
+  /**
+   * Unused member available for future expansion. Must be initialized
+   * to zero.
+   */
+  uint8_t reserved[16];
+} blaze_cache_src_elf;
+
+/**
+ * Configuration for caching of process-level data.
+ */
+typedef struct blaze_cache_src_process {
+  /**
+   * The size of this object's type.
+   *
+   * Make sure to initialize it to `sizeof(<type>)`. This member is used to
+   * ensure compatibility in the presence of member additions.
+   */
+  size_t type_size;
+  /**
+   * The referenced process' ID.
+   */
+  uint32_t pid;
+  /**
+   * Whether to cache the process' VMAs for later use.
+   *
+   * Caching VMAs can be useful, because it conceptually enables the
+   * library to serve a symbolization request targeting a process
+   * even if said process has since exited the system.
+   *
+   * Note that once VMAs have been cached this way, the library will
+   * refrain from re-reading updated VMAs unless instructed to.
+   * Hence, if you have reason to believe that a process may have
+   * changed its memory regions (by loading a new shared object, for
+   * example), you would have to make another request to cache them
+   * yourself.
+   *
+   * Note furthermore that if you cache VMAs to later symbolize
+   * addresses after the original process has already exited, you
+   * will have to opt-out of usage of `/proc/<pid>/map_files/` as
+   * part of the symbolization request. Refer to
+   * [`blaze_symbolize_src_process::no_map_files`].
+   */
+  bool cache_vmas;
+  /**
+   * Unused member available for future expansion. Must be initialized
+   * to zero.
+   */
+  uint8_t reserved[19];
+} blaze_cache_src_process;
 
 /**
  * Source code location information for a symbol or inlined function.
@@ -642,8 +716,21 @@ typedef struct blaze_sym {
    * The symbol name is where the given address should belong to.
    *
    * If an address could not be symbolized, this member will be NULL.
+   * Check the `reason` member for additional information pertaining
+   * the failure.
    */
   const char *name;
+  /**
+   * The path to or name of the module containing the symbol.
+   *
+   * Typically this would be the path to a executable or shared
+   * object. Depending on the symbol source this member may not be
+   * present or it could also just be a file name without path. In
+   * case of an ELF file contained inside an APK, this will be an
+   * Android style path of the form `<apk>!<elf-in-apk>`. E.g.,
+   * `/root/test.apk!/lib/libc.so`.
+   */
+  const char *module;
   /**
    * The address at which the symbol is located (i.e., its "start").
    *
@@ -665,6 +752,15 @@ typedef struct blaze_sym {
    */
   size_t offset;
   /**
+   * The size of the symbol.
+   *
+   * If the symbol's size is not available, this member will be `-1`.
+   * Note that some symbol sources may not distinguish between
+   * "unknown" size and `0`. In that case the size will be reported
+   * as `0` here as well.
+   */
+  ptrdiff_t size;
+  /**
    * Source code location information for the symbol.
    */
   struct blaze_symbolize_code_info code_info;
@@ -684,7 +780,7 @@ typedef struct blaze_sym {
   /**
    * Unused member available for future expansion.
    */
-  uint8_t reserved[7];
+  uint8_t reserved[15];
 } blaze_sym;
 
 /**
@@ -722,10 +818,7 @@ typedef struct blaze_symbolize_src_process {
    */
   size_t type_size;
   /**
-   * It is the PID of a process to symbolize.
-   *
-   * blazesym will parse `/proc/<pid>/maps` and load all the object
-   * files.
+   * The referenced process' ID.
    */
   uint32_t pid;
   /**
@@ -741,25 +834,23 @@ typedef struct blaze_symbolize_src_process {
   /**
    * Whether to work with `/proc/<pid>/map_files/` entries or with
    * symbolic paths mentioned in `/proc/<pid>/maps` instead.
-   * `map_files` usage is generally strongly encouraged, as symbolic
-   * path usage is unlikely to work reliably in mount namespace
-   * contexts or when files have been deleted from the file system.
-   * However, by using symbolic paths the need for requiring the
-   * `SYS_ADMIN` capability is eliminated.
+   *
+   * `no_map_files` usage is generally discouraged, as symbolic paths
+   * are unlikely to work reliably in mount namespace contexts or
+   * when files have been deleted from the file system. However, by
+   * using symbolic paths (i.e., with `no_map_files` being `true`)
+   * the need for requiring the `SYS_ADMIN` capability is eliminated.
    */
-  bool map_files;
+  bool no_map_files;
   /**
    * Unused member available for future expansion. Must be initialized
    * to zero.
    */
-  uint8_t reserved[1];
+  uint8_t reserved[17];
 } blaze_symbolize_src_process;
 
 /**
  * The parameters to load symbols and debug information from a kernel.
- *
- * Use a kernel image and a snapshot of its kallsyms as a source of symbols and
- * debug information.
  */
 typedef struct blaze_symbolize_src_kernel {
   /**
@@ -770,33 +861,45 @@ typedef struct blaze_symbolize_src_kernel {
    */
   size_t type_size;
   /**
-   * The path of a copy of kallsyms.
+   * The path of a `kallsyms` file to use.
    *
-   * It can be `"/proc/kallsyms"` for the running kernel on the
-   * device.  However, you can make copies for later.  In that situation,
-   * you should give the path of a copy.
-   * Passing a `NULL`, by default, will result in `"/proc/kallsyms"`.
+   * When `NULL`, this will refer to `kallsyms` of the running kernel.
+   * If set to `'\0'` (`""`) usage of `kallsyms` will be disabled.
+   * Otherwise the copy at the given path will be used.
+   *
+   * If both a `vmlinux` as well as a `kallsyms` file are found,
+   * `vmlinux` will generally be given preference and `kallsyms` acts
+   * as a fallback.
    */
   const char *kallsyms;
   /**
-   * The path of a kernel image.
+   * The path of the `vmlinux` file to use.
    *
-   * The path of a kernel image should be, for instance,
-   * `"/boot/vmlinux-xxxx"`.  For a `NULL` value, it will locate the
-   * kernel image of the running kernel in `"/boot/"` or
-   * `"/usr/lib/debug/boot/"`.
+   * `vmlinux` is generally an uncompressed and unstripped object
+   * file that is typically used in debugging, profiling, and
+   * similar use cases.
+   *
+   * When `NULL`, the library will search for `vmlinux` candidates in
+   * various locations, taking into account the currently running
+   * kernel version. If set to `'\0'` (`""`) discovery and usage of a
+   * `vmlinux` will be disabled. Otherwise the copy at the given path
+   * will be used.
+   *
+   * If both a `vmlinux` as well as a `kallsyms` file are found,
+   * `vmlinux` will generally be given preference and `kallsyms` acts
+   * as a fallback.
    */
-  const char *kernel_image;
+  const char *vmlinux;
   /**
-   * Whether or not to consult debug symbols from `kernel_image`
-   * to satisfy the request (if present).
+   * Whether or not to consult debug symbols from `vmlinux` to
+   * satisfy the request (if present).
    */
   bool debug_syms;
   /**
    * Unused member available for future expansion. Must be initialized
    * to zero.
    */
-  uint8_t reserved[7];
+  uint8_t reserved[23];
 } blaze_symbolize_src_kernel;
 
 /**
@@ -831,7 +934,7 @@ typedef struct blaze_symbolize_src_elf {
    * Unused member available for future expansion. Must be initialized
    * to zero.
    */
-  uint8_t reserved[7];
+  uint8_t reserved[23];
 } blaze_symbolize_src_elf;
 
 /**
@@ -853,6 +956,11 @@ typedef struct blaze_symbolize_src_gsym_data {
    * The size of the Gsym data.
    */
   size_t data_len;
+  /**
+   * Unused member available for future expansion. Must be initialized
+   * to zero.
+   */
+  uint8_t reserved[16];
 } blaze_symbolize_src_gsym_data;
 
 /**
@@ -870,7 +978,45 @@ typedef struct blaze_symbolize_src_gsym_file {
    * The path to a gsym file.
    */
   const char *path;
+  /**
+   * Unused member available for future expansion. Must be initialized
+   * to zero.
+   */
+  uint8_t reserved[16];
 } blaze_symbolize_src_gsym_file;
+
+/**
+ * The level at which to emit traces.
+ */
+typedef uint8_t blaze_trace_lvl;
+/**
+ * Emit all trace events.
+ *
+ * This is the most verbose level and includes all others.
+ */
+#define BLAZE_TRACE_LVL_TRACE 0
+/**
+ * Emit debug traces and above.
+ *
+ * This level excludes traces emitted with "TRACE" verbosity.
+ */
+#define BLAZE_TRACE_LVL_DEBUG 1
+/**
+ * Emit info level traces and above.
+ *
+ * This level excludes traces emitted with "TRACE" or "DEBUG"
+ * verbosity.
+ */
+#define BLAZE_TRACE_LVL_INFO 2
+/**
+ * Only emit warnings.
+ */
+#define BLAZE_TRACE_LVL_WARN 3
+
+/**
+ * The signature of a callback function as passed to [`blaze_trace`].
+ */
+typedef void (*blaze_trace_cb)(const char*);
 
 #ifdef __cplusplus
 extern "C" {
@@ -879,12 +1025,12 @@ extern "C" {
 /**
  * Retrieve the error reported by the last fallible API function invoked.
  */
-enum blaze_err blaze_err_last(void);
+blaze_err blaze_err_last(void);
 
 /**
  * Retrieve a textual representation of the error code.
  */
-const char *blaze_err_str(enum blaze_err err);
+const char *blaze_err_str(blaze_err err);
 
 /**
  * Check whether the `PROCMAP_QUERY` ioctl is supported by the system.
@@ -915,7 +1061,7 @@ bool blaze_supports_procmap_query(void);
  * retrieve this error.
  *
  * Similarly, if no build ID is present `NULL` is returned and the last
- * error will be set to [`BLAZE_ERR_OK`][blaze_err::BLAZE_ERR_OK].
+ * error will be set to [`blaze_err::OK`].
  *
  * # Safety
  * - `path` needs to be a valid pointer to a NUL terminated string
@@ -1137,11 +1283,51 @@ blaze_symbolizer *blaze_symbolizer_new_opts(const struct blaze_symbolizer_opts *
  * Free an instance of blazesym a symbolizer for C API.
  *
  * # Safety
- *
  * The pointer must have been returned by [`blaze_symbolizer_new`] or
  * [`blaze_symbolizer_new_opts`].
  */
 void blaze_symbolizer_free(blaze_symbolizer *symbolizer);
+
+/**
+ * Cache an ELF symbolization source.
+ *
+ * Cache symbolization data of an ELF file.
+ *
+ * The function sets the thread's last error to either
+ * [`blaze_err::OK`] to indicate success or a different error code
+ * associated with the problem encountered. Use [`blaze_err_last`] to
+ * retrieve this error.
+ *
+ * # Safety
+ * - `symbolizer` needs to point to a valid [`blaze_symbolizer`] object
+ * - `cache` needs to point to a valid [`blaze_cache_src_process`] object
+ */
+void blaze_symbolize_cache_elf(blaze_symbolizer *symbolizer,
+                               const struct blaze_cache_src_elf *cache);
+
+/**
+ * Cache VMA meta data associated with a process.
+ *
+ * Cache VMA meta data associated with a process. This will speed up
+ * subsequent symbolization requests while also enabling symbolization
+ * of addresses belonging to processes that exited after being cache
+ * this way.
+ *
+ * If this method fails, any previously cached data is left untouched
+ * and will be used subsequently as if no failure occurred. Put
+ * differently, this method is only effectful on the happy path.
+ *
+ * The function sets the thread's last error to either
+ * [`blaze_err::OK`] to indicate success or a different error code
+ * associated with the problem encountered. Use [`blaze_err_last`] to
+ * retrieve this error.
+ *
+ * # Safety
+ * - `symbolizer` needs to point to a valid [`blaze_symbolizer`] object
+ * - `cache` needs to point to a valid [`blaze_cache_src_process`] object
+ */
+void blaze_symbolize_cache_process(blaze_symbolizer *symbolizer,
+                                   const struct blaze_cache_src_process *cache);
 
 /**
  * Symbolize a list of process absolute addresses.
@@ -1283,6 +1469,26 @@ const struct blaze_syms *blaze_symbolize_gsym_file_virt_offsets(blaze_symbolizer
  * variants.
  */
 void blaze_syms_free(const struct blaze_syms *syms);
+
+/**
+ * Enable the main library's tracing infrastructure and invoke a
+ * callback function for each emitted trace line.
+ *
+ * The provided [`blaze_trace_lvl`] determines what kind of traces are
+ * emitted.
+ *
+ * This function should be invoked at most once. Subsequent invocations
+ * will not affect tracing behavior.
+ *
+ * On error the function sets the thread's last error to indicate the
+ * problem encountered. Use [`blaze_err_last`] to retrieve this error.
+ *
+ * # Notes
+ * - the format of emitted lines is unspecified and subject to change; it is
+ *   meant for human consumption and not programmatic evaluation
+ */
+void blaze_trace(blaze_trace_lvl lvl,
+                 blaze_trace_cb cb);
 
 #ifdef __cplusplus
 }  // extern "C"
