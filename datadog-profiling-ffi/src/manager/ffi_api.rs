@@ -53,13 +53,12 @@ pub unsafe extern "C" fn ddog_prof_ProfilerManager_start(
 #[no_mangle]
 #[named]
 pub unsafe extern "C" fn ddog_prof_ProfilerManager_enqueue_sample(
-    handle: *mut Handle<ManagedProfilerClient>,
+    mut handle: *mut Handle<ManagedProfilerClient>,
     sample_ptr: *mut c_void,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
-        let handle = handle.as_mut().context("Invalid handle")?;
-        let client = handle.to_inner_mut()?;
-        client
+        handle
+            .to_inner_mut()?
             .send_sample(sample_ptr)
             .map_err(|e| anyhow::anyhow!("Failed to send sample: {:?}", e))?;
     })
@@ -80,12 +79,10 @@ pub unsafe extern "C" fn ddog_prof_ProfilerManager_enqueue_sample(
 #[no_mangle]
 #[named]
 pub unsafe extern "C" fn ddog_prof_ProfilerManager_try_recv_recycled(
-    handle: *mut Handle<ManagedProfilerClient>,
+    mut handle: *mut Handle<ManagedProfilerClient>,
 ) -> FFIResult<*mut c_void> {
     wrap_with_ffi_result!({
-        let handle = handle.as_mut().context("Invalid handle")?;
-        let client = handle.to_inner_mut()?;
-        match client.try_recv_recycled() {
+        match handle.to_inner_mut()?.try_recv_recycled() {
             Ok(sample_ptr) => anyhow::Ok(sample_ptr),
             Err(TryRecvError::Empty) => anyhow::Ok(std::ptr::null_mut()),
             Err(TryRecvError::Disconnected) => Err(anyhow::anyhow!("Channel disconnected")),
@@ -98,14 +95,11 @@ pub unsafe extern "C" fn ddog_prof_ProfilerManager_try_recv_recycled(
 #[no_mangle]
 #[named]
 pub unsafe extern "C" fn ddog_prof_ProfilerManager_shutdown(
-    handle: *mut Handle<ManagedProfilerClient>,
+    mut handle: *mut Handle<ManagedProfilerClient>,
 ) -> FFIResult<Profile> {
     wrap_with_ffi_result!({
-        let handle = handle.as_mut().context("Invalid handle")?;
-        let client = handle
-            .take()
-            .context("Failed to take ownership of client")?;
-        let profile = client
+        let profile = handle
+            .take()?
             .shutdown()
             .map_err(|e| anyhow::anyhow!("Failed to shutdown client: {:?}", e))?;
         anyhow::Ok(Profile::new(profile))
@@ -117,9 +111,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilerManager_shutdown(
 #[no_mangle]
 // TODO: Do we want drop and shutdown to be separate functions? Or should it always be shutdown?
 pub unsafe extern "C" fn ddog_prof_ProfilerManager_drop(
-    handle: *mut Handle<ManagedProfilerClient>,
+    mut handle: *mut Handle<ManagedProfilerClient>,
 ) {
-    if let Some(handle) = handle.as_mut() {
-        let _ = handle.take();
-    }
+    let _ = handle.take();
 }
