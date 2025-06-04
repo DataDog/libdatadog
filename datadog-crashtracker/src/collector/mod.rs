@@ -4,11 +4,12 @@
 mod additional_tags;
 mod api;
 mod atomic_set;
+mod collector_manager;
 mod counters;
 mod crash_handler;
 mod emitters;
+mod process_handle;
 mod receiver_manager;
-mod saguard;
 mod signal_handler_manager;
 mod spans;
 

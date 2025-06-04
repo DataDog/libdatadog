@@ -14,7 +14,7 @@
 //   to work properly.
 use crate::modes::behavior::Behavior;
 use crate::modes::behavior::{
-    atom_to_clone, file_append_msg, fileat_content_equals, remove_permissive, removeat_permissive,
+    atom_to_clone, file_write_msg, fileat_content_equals, remove_permissive, removeat_permissive,
     set_atomic,
 };
 
@@ -61,7 +61,7 @@ extern "C" fn sigchld_handler(_: libc::c_int) {
             return;
         }
     };
-    file_append_msg(&ofile, "O").ok();
+    file_write_msg(&ofile, "O").ok();
 }
 
 static OUTPUT_FILE: AtomicPtr<PathBuf> = AtomicPtr::new(std::ptr::null_mut());
