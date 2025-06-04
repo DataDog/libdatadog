@@ -127,10 +127,18 @@ impl ProfilerManager {
     }
 
     fn handle_shutdown(&mut self) -> Result<()> {
-        // TODO: a mechanism to force threads to wait to write to the channel.
-        // Drain any remaining samples and drop them
+        // Try to process any remaining samples before dropping them
         while let Ok(sample) = self.samples_receiver.try_recv() {
-            (self.sample_callbacks.drop)(sample.as_ptr());
+            let data = sample.as_ptr();
+            let sample = (self.sample_callbacks.converter)(data);
+            if let Ok(converted_sample) = sample.try_into() {
+                if let Err(e) = self.profile.add_sample(converted_sample, None) {
+                    eprintln!("Failed to add sample during shutdown: {}", e);
+                }
+            } else {
+                eprintln!("Failed to convert sample during shutdown");
+            }
+            (self.sample_callbacks.drop)(data);
         }
         // Cancel any ongoing upload and drop the token
         if let Some(token) = self.cancellation_token.take() {
