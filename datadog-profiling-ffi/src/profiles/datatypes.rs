@@ -22,7 +22,7 @@ pub struct Profile {
 }
 
 impl Profile {
-    fn new(profile: internal::Profile) -> Self {
+    pub(crate) fn new(profile: internal::Profile) -> Self {
         Profile {
             inner: Box::into_raw(Box::new(profile)),
         }

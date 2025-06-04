@@ -1,20 +1,21 @@
 use std::{ffi::c_void, thread::JoinHandle};
 
 use crossbeam_channel::{SendError, Sender, TryRecvError};
+use datadog_profiling::internal;
 
 use super::SampleChannels;
 use super::SendSample;
 
 pub struct ManagedProfilerClient {
     channels: SampleChannels,
-    handle: JoinHandle<()>,
+    handle: JoinHandle<anyhow::Result<internal::Profile>>,
     shutdown_sender: Sender<()>,
 }
 
 impl ManagedProfilerClient {
     pub(crate) fn new(
         channels: SampleChannels,
-        handle: JoinHandle<()>,
+        handle: JoinHandle<anyhow::Result<internal::Profile>>,
         shutdown_sender: Sender<()>,
     ) -> Self {
         Self {
@@ -40,12 +41,11 @@ impl ManagedProfilerClient {
         self.channels.try_recv_recycled()
     }
 
-    pub fn shutdown(self) -> anyhow::Result<()> {
+    pub fn shutdown(self) -> anyhow::Result<internal::Profile> {
         // Todo: Should we report if there was an error sending the shutdown signal?
         let _ = self.shutdown_sender.send(());
         self.handle
             .join()
-            .map_err(|e| anyhow::anyhow!("Failed to join handle: {:?}", e))?;
-        Ok(())
+            .map_err(|e| anyhow::anyhow!("Failed to join handle: {:?}", e))?
     }
 }

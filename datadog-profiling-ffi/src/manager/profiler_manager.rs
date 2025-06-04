@@ -64,7 +64,7 @@ impl ProfilerManager {
         let cpu_ticker = tick(Duration::from_millis(100));
         // one second for testing, make this 1 minute in production
         let upload_ticker = tick(Duration::from_secs(1));
-        let mut manager = Self {
+        let manager = Self {
             cpu_ticker,
             upload_ticker,
             samples_receiver,
@@ -77,11 +77,7 @@ impl ProfilerManager {
             cancellation_token: None,
         };
 
-        let handle = std::thread::spawn(move || {
-            if let Err(e) = manager.main() {
-                eprintln!("ProfilerManager error: {}", e);
-            }
-        });
+        let handle = std::thread::spawn(move || manager.main());
 
         Ok(ManagedProfilerClient::new(
             channels,
@@ -144,7 +140,10 @@ impl ProfilerManager {
         Ok(())
     }
 
-    fn main(&mut self) -> Result<()> {
+    /// # Safety
+    /// - The caller must ensure that the callbacks remain valid for the lifetime of the profiler.
+    /// - The callbacks must be thread-safe.
+    pub fn main(mut self) -> Result<internal::Profile> {
         loop {
             select! {
                 recv(self.samples_receiver) -> raw_sample => {
@@ -159,9 +158,11 @@ impl ProfilerManager {
                         .map_err(|e| eprintln!("Failed to handle upload: {}", e));
                 },
                 recv(self.shutdown_receiver) -> _ => {
-                    return self.handle_shutdown();
+                    self.handle_shutdown()?;
+                    break;
                 },
             }
         }
+        Ok(self.profile)
     }
 }

@@ -99,15 +99,16 @@ pub unsafe extern "C" fn ddog_prof_ProfilerManager_try_recv_recycled(
 #[named]
 pub unsafe extern "C" fn ddog_prof_ProfilerManager_shutdown(
     handle: *mut Handle<ManagedProfilerClient>,
-) -> VoidResult {
-    wrap_with_void_ffi_result!({
+) -> FFIResult<Profile> {
+    wrap_with_ffi_result!({
         let handle = handle.as_mut().context("Invalid handle")?;
         let client = handle
             .take()
             .context("Failed to take ownership of client")?;
-        client
+        let profile = client
             .shutdown()
             .map_err(|e| anyhow::anyhow!("Failed to shutdown client: {:?}", e))?;
+        anyhow::Ok(Profile::new(profile))
     })
 }
 
