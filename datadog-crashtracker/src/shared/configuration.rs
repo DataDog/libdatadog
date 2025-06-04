@@ -15,6 +15,10 @@ pub enum StacktraceCollection {
     /// Stacktrace collection occurs in the
     Disabled,
     WithoutSymbols,
+    /// This option uses `backtrace::resolve_frame_unsynchronized()` to gather symbol information
+    /// and also unwind inlined functions. Enabling this feature will not only provide symbolic
+    /// details, but may also yield additional or less stack frames compared to other
+    /// configurations.
     EnabledWithInprocessSymbols,
     EnabledWithSymbolsInReceiver,
 }
