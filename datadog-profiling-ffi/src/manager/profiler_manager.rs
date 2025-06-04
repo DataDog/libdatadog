@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Result;
 use crossbeam_channel::{select, tick, Receiver, Sender};
-use datadog_profiling::{api, internal};
+use datadog_profiling::internal;
 use tokio_util::sync::CancellationToken;
 
 use super::client::ManagedProfilerClient;
@@ -52,15 +52,13 @@ pub struct ProfilerManager {
 
 impl ProfilerManager {
     pub fn start(
-        sample_types: &[api::ValueType],
-        period: Option<api::Period>,
+        profile: internal::Profile,
         cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
         upload_callback: extern "C" fn(*mut internal::Profile, &mut Option<CancellationToken>),
         sample_callbacks: ManagedSampleCallbacks,
     ) -> Result<ManagedProfilerClient> {
         let (channels, samples_receiver, recycled_samples_sender) = SampleChannels::new();
         let (shutdown_sender, shutdown_receiver) = crossbeam_channel::bounded(1);
-        let profile = internal::Profile::new(sample_types, period);
         // For adaptive sampling, we need to be able to adjust this duration.  Look into how to do
         // this.
         let cpu_ticker = tick(Duration::from_millis(100));

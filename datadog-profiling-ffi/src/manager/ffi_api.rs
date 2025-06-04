@@ -5,11 +5,11 @@ use crate::manager::{
     profiler_manager::{ManagedSampleCallbacks, ProfilerManager},
     ManagedProfilerClient,
 };
-use crate::profiles::datatypes::{Period, ValueType};
+use crate::profiles::datatypes::{Profile, ProfilePtrExt};
 use crossbeam_channel::TryRecvError;
 use datadog_profiling::internal;
 use ddcommon_ffi::{
-    wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result as FFIResult, Slice, ToInner,
+    wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result as FFIResult, ToInner,
     VoidResult,
 };
 use function_name::named;
@@ -21,21 +21,19 @@ use tokio_util::sync::CancellationToken;
 ///   functions.
 /// - The sample_callbacks must remain valid for the lifetime of the profiler.
 /// - This function is not thread-safe.
+/// - This function takes ownership of the profile. The profile must not be used after this call.
 #[no_mangle]
 #[named]
 pub unsafe extern "C" fn ddog_prof_ProfilerManager_start(
-    sample_types: Slice<ValueType>,
-    period: Option<&Period>,
+    profile: *mut Profile,
     cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
     upload_callback: extern "C" fn(*mut internal::Profile, &mut Option<CancellationToken>),
     sample_callbacks: ManagedSampleCallbacks,
 ) -> FFIResult<Handle<ManagedProfilerClient>> {
     wrap_with_ffi_result!({
-        let sample_types_vec: Vec<_> = sample_types.into_slice().iter().map(Into::into).collect();
-        let period_opt = period.map(Into::into);
+        let internal_profile = *profile.take()?;
         let client: ManagedProfilerClient = ProfilerManager::start(
-            &sample_types_vec,
-            period_opt,
+            internal_profile,
             cpu_sampler_callback,
             upload_callback,
             sample_callbacks,
