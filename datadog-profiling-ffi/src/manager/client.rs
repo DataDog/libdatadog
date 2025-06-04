@@ -1,4 +1,4 @@
-use std::{ffi::c_void, thread::JoinHandle};
+use std::{ffi::c_void, sync::atomic::AtomicBool, thread::JoinHandle};
 
 use crossbeam_channel::{SendError, Sender, TryRecvError};
 use datadog_profiling::internal;
@@ -10,6 +10,7 @@ pub struct ManagedProfilerClient {
     channels: SampleChannels,
     handle: JoinHandle<anyhow::Result<internal::Profile>>,
     shutdown_sender: Sender<()>,
+    is_shutdown: AtomicBool,
 }
 
 impl ManagedProfilerClient {
@@ -22,6 +23,7 @@ impl ManagedProfilerClient {
             channels,
             handle,
             shutdown_sender,
+            is_shutdown: AtomicBool::new(false),
         }
     }
 
@@ -34,6 +36,9 @@ impl ManagedProfilerClient {
     ///    - The manager will either free the sample or recycle it back
     /// 3. The sample will be properly cleaned up if it cannot be sent
     pub unsafe fn send_sample(&self, sample: *mut c_void) -> Result<(), SendError<SendSample>> {
+        if self.is_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(SendError(unsafe { SendSample::new(sample) }));
+        }
         self.channels.send_sample(sample)
     }
 
@@ -42,6 +47,8 @@ impl ManagedProfilerClient {
     }
 
     pub fn shutdown(self) -> anyhow::Result<internal::Profile> {
+        self.is_shutdown
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         // Todo: Should we report if there was an error sending the shutdown signal?
         let _ = self.shutdown_sender.send(());
         self.handle
