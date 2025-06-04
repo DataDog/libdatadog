@@ -27,22 +27,31 @@ impl SendSample {
     }
 }
 
-pub struct SampleChannels {
+pub struct ClientSampleChannels {
     samples_sender: Sender<SendSample>,
     recycled_samples_receiver: Receiver<SendSample>,
 }
 
-impl SampleChannels {
-    pub fn new() -> (Self, Receiver<SendSample>, Sender<SendSample>) {
+pub struct ManagerSampleChannels {
+    pub samples_receiver: Receiver<SendSample>,
+    pub recycled_samples_sender: Sender<SendSample>,
+    pub recycled_samples_receiver: Receiver<SendSample>,
+}
+
+impl ClientSampleChannels {
+    pub fn new() -> (Self, ManagerSampleChannels) {
         let (samples_sender, samples_receiver) = crossbeam_channel::bounded(10);
         let (recycled_samples_sender, recycled_samples_receiver) = crossbeam_channel::bounded(10);
         (
             Self {
                 samples_sender,
+                recycled_samples_receiver: recycled_samples_receiver.clone(),
+            },
+            ManagerSampleChannels {
+                samples_receiver,
+                recycled_samples_sender,
                 recycled_samples_receiver,
             },
-            samples_receiver,
-            recycled_samples_sender,
         )
     }
 

@@ -14,4 +14,4 @@ mod tests;
 
 pub use client::ManagedProfilerClient;
 pub use profiler_manager::{ManagedSampleCallbacks, ProfilerManager};
-pub use samples::{SampleChannels, SendSample};
+pub use samples::{ClientSampleChannels, SendSample};

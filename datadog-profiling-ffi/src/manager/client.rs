@@ -1,13 +1,14 @@
 use std::{ffi::c_void, sync::atomic::AtomicBool, thread::JoinHandle};
 
+use anyhow::Result;
 use crossbeam_channel::{SendError, Sender, TryRecvError};
 use datadog_profiling::internal;
 
-use super::SampleChannels;
+use super::ClientSampleChannels;
 use super::SendSample;
 
 pub struct ManagedProfilerClient {
-    channels: SampleChannels,
+    channels: ClientSampleChannels,
     handle: JoinHandle<anyhow::Result<internal::Profile>>,
     shutdown_sender: Sender<()>,
     is_shutdown: AtomicBool,
@@ -15,7 +16,7 @@ pub struct ManagedProfilerClient {
 
 impl ManagedProfilerClient {
     pub(crate) fn new(
-        channels: SampleChannels,
+        channels: ClientSampleChannels,
         handle: JoinHandle<anyhow::Result<internal::Profile>>,
         shutdown_sender: Sender<()>,
     ) -> Self {

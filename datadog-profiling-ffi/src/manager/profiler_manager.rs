@@ -4,12 +4,12 @@ use std::{
 };
 
 use anyhow::Result;
-use crossbeam_channel::{select, tick, Receiver, Sender};
+use crossbeam_channel::{select, tick, Receiver};
 use datadog_profiling::internal;
 use tokio_util::sync::CancellationToken;
 
 use super::client::ManagedProfilerClient;
-use super::samples::{SampleChannels, SendSample};
+use super::samples::{ClientSampleChannels, ManagerSampleChannels, SendSample};
 use crate::profiles::datatypes::Sample;
 
 #[repr(C)]
@@ -38,8 +38,7 @@ impl ManagedSampleCallbacks {
 }
 
 pub struct ProfilerManager {
-    samples_receiver: Receiver<SendSample>,
-    recycled_samples_sender: Sender<SendSample>,
+    channels: ManagerSampleChannels,
     cpu_ticker: Receiver<Instant>,
     upload_ticker: Receiver<Instant>,
     shutdown_receiver: Receiver<()>,
@@ -57,18 +56,19 @@ impl ProfilerManager {
         upload_callback: extern "C" fn(*mut internal::Profile, &mut Option<CancellationToken>),
         sample_callbacks: ManagedSampleCallbacks,
     ) -> Result<ManagedProfilerClient> {
-        let (channels, samples_receiver, recycled_samples_sender) = SampleChannels::new();
+        let (client_channels, manager_channels) = ClientSampleChannels::new();
         let (shutdown_sender, shutdown_receiver) = crossbeam_channel::bounded(1);
+
         // For adaptive sampling, we need to be able to adjust this duration.  Look into how to do
         // this.
         let cpu_ticker = tick(Duration::from_millis(100));
         // one second for testing, make this 1 minute in production
         let upload_ticker = tick(Duration::from_secs(1));
+
         let manager = Self {
+            channels: manager_channels,
             cpu_ticker,
             upload_ticker,
-            samples_receiver,
-            recycled_samples_sender,
             shutdown_receiver,
             profile,
             cpu_sampler_callback,
@@ -80,7 +80,7 @@ impl ProfilerManager {
         let handle = std::thread::spawn(move || manager.main());
 
         Ok(ManagedProfilerClient::new(
-            channels,
+            client_channels,
             handle,
             shutdown_sender,
         ))
@@ -98,6 +98,7 @@ impl ProfilerManager {
         // and was just processed by the converter and reset callbacks. We have exclusive
         // access to it since we're the only thread that can receive from the samples channel.
         if self
+            .channels
             .recycled_samples_sender
             .send(unsafe { SendSample::new(data) })
             .is_err()
@@ -128,7 +129,7 @@ impl ProfilerManager {
 
     fn handle_shutdown(&mut self) -> Result<()> {
         // Try to process any remaining samples before dropping them
-        while let Ok(sample) = self.samples_receiver.try_recv() {
+        while let Ok(sample) = self.channels.samples_receiver.try_recv() {
             let data = sample.as_ptr();
             let sample = (self.sample_callbacks.converter)(data);
             if let Ok(converted_sample) = sample.try_into() {
@@ -140,11 +141,16 @@ impl ProfilerManager {
             }
             (self.sample_callbacks.drop)(data);
         }
+
+        // Drain any recycled samples
+        while let Ok(sample) = self.channels.recycled_samples_receiver.try_recv() {
+            (self.sample_callbacks.drop)(sample.as_ptr());
+        }
+
         // Cancel any ongoing upload and drop the token
         if let Some(token) = self.cancellation_token.take() {
             token.cancel();
         }
-        // TODO: cleanup the recycled samples.
         Ok(())
     }
 
@@ -154,7 +160,7 @@ impl ProfilerManager {
     pub fn main(mut self) -> Result<internal::Profile> {
         loop {
             select! {
-                recv(self.samples_receiver) -> raw_sample => {
+                recv(self.channels.samples_receiver) -> raw_sample => {
                     let _ = self.handle_sample(raw_sample)
                         .map_err(|e| eprintln!("Failed to process sample: {}", e));
                 },
