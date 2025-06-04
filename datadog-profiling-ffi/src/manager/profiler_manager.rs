@@ -61,7 +61,10 @@ impl ProfilerManager {
         let (channels, samples_receiver, recycled_samples_sender) = SampleChannels::new();
         let (shutdown_sender, shutdown_receiver) = crossbeam_channel::bounded(1);
         let profile = internal::Profile::new(sample_types, period);
+        // For adaptive sampling, we need to be able to adjust this duration.  Look into how to do
+        // this.
         let cpu_ticker = tick(Duration::from_millis(100));
+        // one second for testing, make this 1 minute in production
         let upload_ticker = tick(Duration::from_secs(1));
         let mut manager = Self {
             cpu_ticker,
