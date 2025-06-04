@@ -70,8 +70,8 @@ impl From<&String> for ReturnAction {
 pub type RemoteConfigFile = std::sync::Arc<RawFile<Result<RemoteConfigData, anyhow::Error>>>;
 pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>>;
 
-/// Function that check the RemoteConfig received and return the action that need to be done by the
-/// tracer flare
+/// Check the `RemoteConfigFile` and return the action that tracer flare needs
+/// to perform
 ///
 /// # Arguments
 ///
