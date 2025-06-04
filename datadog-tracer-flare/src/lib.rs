@@ -23,6 +23,8 @@ pub enum FlareError {
     NoFlare(String),
     /// Listening to the RemoteConfig failed.
     ListeningError(String),
+    /// Parsing of config failed.
+    ParsingError(String),
 }
 
 impl std::fmt::Display for FlareError {
@@ -30,25 +32,15 @@ impl std::fmt::Display for FlareError {
         match self {
             FlareError::NoFlare(msg) => write!(f, "No flare prepared to send: {}", msg),
             FlareError::ListeningError(msg) => write!(f, "Listening failed with: {}", msg),
+            FlareError::ParsingError(msg) => write!(f, "Parsing failed with: {}", msg),
         }
     }
 }
 
-// /// Enum that hold the different log level possible
-// #[derive(Debug)]
-// pub enum LogLevel {
-//     Trace = 0,
-//     Debug = 1,
-//     Info = 2,
-//     Warn = 3,
-//     Error = 4,
-//     Critical = 5,
-//     Off = 6,
-// }
-
 /// Enum that hold the different returned action to do after listening
 #[derive(Debug)]
 pub enum ReturnAction {
+    // The start action can be use with different level of log
     StartTrace = 0,
     StartDebug = 1,
     StartInfo = 2,
@@ -110,8 +102,8 @@ pub fn check_remote_config_file(file: RemoteConfigFile) -> Result<ReturnAction, 
             }
             _ => return Ok(ReturnAction::None),
         },
-        Err(_) => {
-            return Err(FlareError::ListeningError("".to_string()));
+        Err(e) => {
+            return Err(FlareError::ParsingError(e.to_string()));
         }
     }
     Ok(ReturnAction::None)
