@@ -23,18 +23,20 @@ pub enum MetricKind {
     ApiBytes,
     /// trace_api.responses metric
     ApiResponses,
-    /// trace_chunk_sent metric
+    /// trace_chunks_sent metric
     ChunksSent,
-    /// trace_chunk_dropped metric
+    /// trace_chunks_dropped metric
     ChunksDropped,
 }
 
+/// Constants for metric names
+/// These must match https://github.com/DataDog/dd-go/blob/prod/trace/apps/tracer-telemetry-intake/telemetry-metrics/static/common_metrics.json
 const API_REQUEST_STR: &str = "trace_api.requests";
 const API_ERRORS_STR: &str = "trace_api.errors";
 const API_BYTES_STR: &str = "trace_api.bytes";
 const API_RESPONSES_STR: &str = "trace_api.responses";
-const CHUNKS_SENT_STR: &str = "trace_chunk_sent";
-const CHUNKS_DROPPED_STR: &str = "trace_chunk_dropped";
+const CHUNKS_SENT_STR: &str = "trace_chunks_sent";
+const CHUNKS_DROPPED_STR: &str = "trace_chunks_dropped";
 
 #[derive(Debug)]
 struct Metric {
