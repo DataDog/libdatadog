@@ -250,42 +250,19 @@ pub async fn run_remote_config_listener(
     Ok(ReturnAction::None)
 }
 
-
 #[cfg(test)]
 mod tests {
     use crate::{FlareError, LogLevel};
 
-
     #[test]
     fn test_try_from_string_to_return_action() {
-        assert_eq!(
-            LogLevel::try_from("trace").unwrap(),
-            LogLevel::Trace
-        );
-        assert_eq!(
-            LogLevel::try_from("debug").unwrap(),
-            LogLevel::Debug
-        );
-        assert_eq!(
-            LogLevel::try_from("info").unwrap(),
-            LogLevel::Info
-        );
-        assert_eq!(
-            LogLevel::try_from("warn").unwrap(),
-            LogLevel::Warn
-        );
-        assert_eq!(
-            LogLevel::try_from("error").unwrap(),
-            LogLevel::Error
-        );
-        assert_eq!(
-            LogLevel::try_from("critical").unwrap(),
-            LogLevel::Critical
-        );
-        assert_eq!(
-            LogLevel::try_from("off").unwrap(),
-            LogLevel::Off
-        );
+        assert_eq!(LogLevel::try_from("trace").unwrap(), LogLevel::Trace);
+        assert_eq!(LogLevel::try_from("debug").unwrap(), LogLevel::Debug);
+        assert_eq!(LogLevel::try_from("info").unwrap(), LogLevel::Info);
+        assert_eq!(LogLevel::try_from("warn").unwrap(), LogLevel::Warn);
+        assert_eq!(LogLevel::try_from("error").unwrap(), LogLevel::Error);
+        assert_eq!(LogLevel::try_from("critical").unwrap(), LogLevel::Critical);
+        assert_eq!(LogLevel::try_from("off").unwrap(), LogLevel::Off);
         assert_eq!(
             LogLevel::try_from("anything"),
             Err(FlareError::ParsingError("Unknown level of log".to_string()))
