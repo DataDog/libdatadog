@@ -53,6 +53,9 @@ fn test_profiler_manager() {
         client.send_sample(sample_ptr).unwrap();
     }
 
+    // Give the manager thread time to process and recycle the sample
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
     // Receive a recycled sample
     let recycled = client.try_recv_recycled().unwrap();
     assert_eq!(unsafe { *(recycled as *const i32) }, 42);
