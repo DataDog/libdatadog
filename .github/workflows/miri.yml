@@ -21,7 +21,7 @@ jobs:
           rustup default nightly-2024-12-16
       - uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
-          tool: nextest@0.9.92
+          tool: nextest@0.9.96
       - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run --partition count:${{ matrix.partition }}/5
       # We need to disable isolation because
       # "unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled"

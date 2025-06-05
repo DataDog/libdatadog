@@ -44,7 +44,7 @@ jobs:
       - name: Install cargo nextest
         uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
-          tool: nextest@0.9.81
+          tool: nextest@0.9.96
       - name: "Remove nextest CI report"
         shell: bash
         run: rm -rf target/nextest/ci/junit.xml
