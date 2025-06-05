@@ -3,7 +3,7 @@
 
 In order to be able to run FFI examples, you need to build the shared library and headers with the command:
 ```bash
-cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker --release -- --out
+cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker,library-config,log --release -- --out
 ```
 
 You can then build the examples with:

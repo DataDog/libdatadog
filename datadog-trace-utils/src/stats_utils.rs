@@ -6,14 +6,13 @@ pub use mini_agent::*;
 
 #[cfg(feature = "mini_agent")]
 mod mini_agent {
+    use datadog_trace_protobuf::pb;
     use ddcommon::hyper_migration;
+    use ddcommon::Endpoint;
     use http_body_util::BodyExt;
     use hyper::{body::Buf, Method, Request, StatusCode};
-    use log::debug;
     use std::io::Write;
-
-    use datadog_trace_protobuf::pb;
-    use ddcommon::Endpoint;
+    use tracing::debug;
 
     pub async fn get_stats_from_request_body(
         body: hyper_migration::Body,
