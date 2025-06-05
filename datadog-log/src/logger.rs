@@ -3,7 +3,6 @@
 
 use crate::writers::{FileWriter, StdWriter};
 use ddcommon_ffi::Error;
-use std::path::Path;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use tracing::subscriber::DefaultGuard;
@@ -42,6 +41,13 @@ pub enum LogEventLevel {
 pub struct FileConfig {
     /// Path where log files will be written.
     pub path: String,
+    /// Maximum size in bytes for each log file.
+    /// Set to 0 to disable size-based rotation.
+    pub max_size_bytes: u64,
+    /// Maximum total number of files (current + rotated) to keep on disk.
+    /// When this limit is exceeded, the oldest rotated files are deleted.
+    /// Set to 0 to disable file cleanup.
+    pub max_files: u64,
 }
 
 /// Target for standard stream output.
@@ -134,7 +140,7 @@ impl Logger {
 
                 // Add file layer if configured
                 if let Some(file_config) = &self.file_config {
-                    if let Ok(file_layer) = file_layer(&file_config.path) {
+                    if let Ok(file_layer) = file_layer(&file_config) {
                         layers.push(file_layer);
                     }
                 }
@@ -215,13 +221,12 @@ fn std_layer(
 
 #[allow(clippy::type_complexity)]
 fn file_layer(
-    path: &str,
+    config: &FileConfig,
 ) -> Result<
     Box<dyn Layer<Layered<reload::Layer<EnvFilter, Registry>, Registry>> + Send + Sync + 'static>,
     Error,
 > {
-    let file_path = Path::new(path);
-    let writer = FileWriter::new(file_path)
+    let writer = FileWriter::new(config)
         .map_err(|e| Error::from(format!("Failed to create file writer: {}", e)))?;
 
     Ok(fmt::layer()
@@ -516,6 +521,8 @@ mod tests {
 
         let file_config = FileConfig {
             path: log_path.to_string_lossy().to_string(),
+            max_files: 0,
+            max_size_bytes: 0
         };
 
         logger
@@ -582,6 +589,8 @@ mod tests {
         let log_path = temp_dir.path().join("test.log");
         let file_config = FileConfig {
             path: log_path.to_string_lossy().to_string(),
+            max_size_bytes: 0,
+            max_files: 0
         };
         logger
             .configure_file(file_config)
