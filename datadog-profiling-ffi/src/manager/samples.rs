@@ -39,9 +39,10 @@ pub struct ManagerSampleChannels {
 }
 
 impl ClientSampleChannels {
-    pub fn new() -> (Self, ManagerSampleChannels) {
-        let (samples_sender, samples_receiver) = crossbeam_channel::bounded(10);
-        let (recycled_samples_sender, recycled_samples_receiver) = crossbeam_channel::bounded(10);
+    pub fn new(channel_depth: usize) -> (Self, ManagerSampleChannels) {
+        let (samples_sender, samples_receiver) = crossbeam_channel::bounded(channel_depth);
+        let (recycled_samples_sender, recycled_samples_receiver) =
+            crossbeam_channel::bounded(channel_depth);
         (
             Self {
                 samples_sender,

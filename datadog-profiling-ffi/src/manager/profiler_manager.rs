@@ -13,6 +13,17 @@ use super::samples::{ClientSampleChannels, ManagerSampleChannels, SendSample};
 use crate::profiles::datatypes::Sample;
 
 #[repr(C)]
+pub struct ProfilerManagerConfig {
+    pub channel_depth: usize,
+}
+
+impl Default for ProfilerManagerConfig {
+    fn default() -> Self {
+        Self { channel_depth: 10 }
+    }
+}
+
+#[repr(C)]
 #[derive(Clone)]
 pub struct ManagedSampleCallbacks {
     // Static is probably the wrong type here, but worry about that later.
@@ -55,8 +66,9 @@ impl ProfilerManager {
         cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
         upload_callback: extern "C" fn(*mut internal::Profile, &mut Option<CancellationToken>),
         sample_callbacks: ManagedSampleCallbacks,
+        config: ProfilerManagerConfig,
     ) -> Result<ManagedProfilerClient> {
-        let (client_channels, manager_channels) = ClientSampleChannels::new();
+        let (client_channels, manager_channels) = ClientSampleChannels::new(config.channel_depth);
         let (shutdown_sender, shutdown_receiver) = crossbeam_channel::bounded(1);
 
         // For adaptive sampling, we need to be able to adjust this duration.  Look into how to do
