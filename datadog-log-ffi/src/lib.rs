@@ -50,12 +50,21 @@ pub extern "C" fn ddog_logger_disable_std() -> Option<Box<Error>> {
 pub struct FileConfig<'a> {
     /// Path to the log file
     pub path: CharSlice<'a>,
+    /// Maximum total number of files (current + rotated) to keep on disk.
+    /// When this limit is exceeded, the oldest rotated files are deleted.
+    /// Set to 0 to disable file cleanup.
+    pub max_files: u64,
+    /// Maximum size in bytes for each log file.
+    /// Set to 0 to disable size-based rotation.
+    pub max_size_bytes: u64,
 }
 
 impl<'a> From<FileConfig<'a>> for logger::FileConfig {
     fn from(config: FileConfig<'a>) -> Self {
         logger::FileConfig {
             path: config.path.to_string(),
+            max_files: config.max_files,
+            max_size_bytes: config.max_size_bytes,
         }
     }
 }

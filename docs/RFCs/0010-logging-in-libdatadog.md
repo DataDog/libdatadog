@@ -102,6 +102,13 @@ pub extern "C" fn ddog_logger_configure_std(
 pub struct FileConfig<'a> {
     /// Path to the log file
     pub path: CharSlice<'a>,
+    /// Maximum size in bytes for each log file.
+    /// Set to 0 to disable size-based rotation.
+    pub max_size_bytes: u64,
+    /// Maximum total number of files (current + rotated) to keep on disk.
+    /// When this limit is exceeded, the oldest rotated files are deleted.
+    /// Set to 0 to disable file cleanup.
+    pub max_files: u64,
 }
 
 /// Disables standard stream logging.
