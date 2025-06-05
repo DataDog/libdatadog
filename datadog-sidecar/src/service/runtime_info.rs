@@ -8,14 +8,13 @@ use crate::service::{
 };
 use datadog_live_debugger::sender::{generate_tags, PayloadSender};
 use ddcommon::{tag::Tag, MutexExt};
-use ddtelemetry::data::Integration;
 use futures::{
     future::{self, join_all, Shared},
     FutureExt,
 };
 use manual_future::{ManualFuture, ManualFutureCompleter};
 use simd_json::prelude::ArrayTrait;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -57,8 +56,6 @@ pub(crate) struct ActiveApplication {
     pub live_debugger_tag_cache: Option<Arc<String>>,
     pub debugger_logs_payload_sender: Arc<tokio::sync::Mutex<Option<PayloadSender>>>,
     pub debugger_diagnostics_payload_sender: Arc<tokio::sync::Mutex<Option<PayloadSender>>>,
-    pub buffered_integrations: HashSet<Integration>,
-    pub buffered_composer_paths: HashSet<PathBuf>,
 }
 
 impl RuntimeInfo {
