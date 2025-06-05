@@ -254,16 +254,6 @@ static LOGGER: OnceLock<Mutex<Option<Logger>>> = OnceLock::new();
 ///
 /// # Arguments
 /// * `file_config` - Configuration specifying the file path
-///
-/// # Example
-/// ```rust
-/// use datadog_log::logger::{logger_configure_file, FileConfig};
-///
-/// let config = FileConfig {
-///     path: "/var/log/app.log".to_string(),
-/// };
-/// logger_configure_file(config)?;
-/// ```
 pub fn logger_configure_file(file_config: FileConfig) -> Result<(), Error> {
     let logger_mutex = LOGGER.get_or_init(|| Mutex::new(None));
     let mut logger_guard = logger_mutex
@@ -300,16 +290,6 @@ pub fn logger_disable_file() -> Result<(), Error> {
 ///
 /// # Arguments
 /// * `std_config` - Configuration specifying stdout or stderr
-///
-/// # Example
-/// ```rust
-/// use datadog_log::logger::{logger_configure_std, StdConfig, StdTarget};
-///
-/// let config = StdConfig {
-///     target: StdTarget::Out,
-/// };
-/// logger_configure_std(config)?;
-/// ```
 pub fn logger_configure_std(std_config: StdConfig) -> Result<(), Error> {
     let logger_mutex = LOGGER.get_or_init(|| Mutex::new(None));
     let mut logger_guard = logger_mutex
@@ -346,13 +326,6 @@ pub fn logger_disable_std() -> Result<(), Error> {
 ///
 /// # Arguments
 /// * `log_level` - Minimum level (Trace, Debug, Info, Warn, Error)
-///
-/// # Example
-/// ```rust
-/// use datadog_log::logger::{logger_set_log_level, LogEventLevel};
-///
-/// logger_set_log_level(LogEventLevel::Info)?;
-/// ```
 pub fn logger_set_log_level(log_level: LogEventLevel) -> Result<(), Error> {
     let logger_mutex = LOGGER.get_or_init(|| Mutex::new(None));
     let logger_guard = logger_mutex
