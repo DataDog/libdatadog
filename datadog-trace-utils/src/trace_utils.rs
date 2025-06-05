@@ -15,13 +15,13 @@ use datadog_trace_protobuf::pb;
 use ddcommon::{azure_app_services, hyper_migration};
 use http_body_util::BodyExt;
 use hyper::body::Buf;
-use log::error;
 use rmp::decode::read_array_len;
 use rmpv::decode::read_value;
 use rmpv::{Integer, Value};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
+use tracing::error;
 
 /// The maximum payload size for a single request that can be sent to the trace agent. Payloads
 /// larger than this size will be dropped and the agent will return a 413 error if
@@ -365,8 +365,8 @@ pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
         if !span_ids.contains(&span.parent_id) {
             if root_span_id.is_some() {
                 error!(
-                    "trace has multiple root spans trace_id: {}",
-                    &trace[0].trace_id
+                    trace_id = &trace[0].trace_id,
+                    "trace has multiple root spans"
                 );
             }
             root_span_id = Some(i);
@@ -376,8 +376,8 @@ pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
         Some(i) => i,
         None => {
             error!(
-                "Could not find the root span for trace with trace_id: {}",
-                &trace[0].trace_id,
+                trace_id = &trace[0].trace_id,
+                "Could not find the root span for trace"
             );
             trace.len() - 1
         }

@@ -98,7 +98,7 @@ impl Client {
         let client_opt = match self.get_or_init_client() {
             Ok(client) => client,
             Err(e) => {
-                error!("Failed to get client: {}", e);
+                error!(?e, "Failed to get client");
                 return;
             }
         };
@@ -122,7 +122,7 @@ impl Client {
                         do_send(client.set_with_tags(metric.as_ref(), value), &tags)
                     }
                 } {
-                    error!("Error while sending metric: {}", err);
+                    error!(?err, "Error while sending metric");
                 }
             }
         }
@@ -137,7 +137,7 @@ impl Client {
         let client_opt = match self.get_or_init_client() {
             Ok(client) => client,
             Err(e) => {
-                error!("Failed to get client: {}", e);
+                error!(?e, "Failed to get client");
                 return;
             }
         };
@@ -161,7 +161,7 @@ impl Client {
                         do_send(client.set_with_tags(metric.as_ref(), value), tags)
                     }
                 } {
-                    error!("Error while sending metric: {}", err);
+                    error!(?err, "Error while sending metric");
                 }
             }
         }
