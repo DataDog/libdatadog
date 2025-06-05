@@ -522,7 +522,7 @@ mod tests {
         let file_config = FileConfig {
             path: log_path.to_string_lossy().to_string(),
             max_files: 0,
-            max_size_bytes: 0
+            max_size_bytes: 0,
         };
 
         logger
@@ -590,7 +590,7 @@ mod tests {
         let file_config = FileConfig {
             path: log_path.to_string_lossy().to_string(),
             max_size_bytes: 0,
-            max_files: 0
+            max_files: 0,
         };
         logger
             .configure_file(file_config)
