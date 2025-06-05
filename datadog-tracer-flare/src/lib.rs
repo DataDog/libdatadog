@@ -37,32 +37,42 @@ impl std::fmt::Display for FlareError {
     }
 }
 
+/// Enum that hold the different log level possible
+#[derive(Debug, PartialEq)]
+pub enum LogLevel {
+    Trace = 0,
+    Debug = 1,
+    Info = 2,
+    Warn = 3,
+    Error = 4,
+    Critical = 5,
+    Off = 6,
+}
+
 /// Enum that hold the different returned action to do after listening
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ReturnAction {
-    // The start action can be use with different level of log
-    StartTrace = 0,
-    StartDebug = 1,
-    StartInfo = 2,
-    StartWarn = 3,
-    StartError = 4,
-    StartCritical = 5,
-    StartOff = 6,
+    /// If AGENT_CONFIG received with the right properties.
+    Start(LogLevel),
+    /// If AGENT_TASK received with the right properties.
     Stop,
+    /// If anything else received.
     None,
 }
 
-impl From<&String> for ReturnAction {
-    fn from(level: &String) -> Self {
-        match level.as_str() {
-            "trace" => ReturnAction::StartTrace,
-            "debug" => ReturnAction::StartDebug,
-            "info" => ReturnAction::StartInfo,
-            "warn" => ReturnAction::StartWarn,
-            "error" => ReturnAction::StartError,
-            "critical" => ReturnAction::StartCritical,
-            "off" => ReturnAction::StartOff,
-            _ => ReturnAction::None,
+impl TryFrom<&str> for LogLevel {
+    type Error = FlareError;
+
+    fn try_from(level: &str) -> Result<Self, FlareError> {
+        match level {
+            "trace" => Ok(LogLevel::Trace),
+            "debug" => Ok(LogLevel::Debug),
+            "info" => Ok(LogLevel::Info),
+            "warn" => Ok(LogLevel::Warn),
+            "error" => Ok(LogLevel::Error),
+            "critical" => Ok(LogLevel::Critical),
+            "off" => Ok(LogLevel::Off),
+            _ => Err(FlareError::ParsingError("Unknown level of log".to_string())),
         }
     }
 }
@@ -80,9 +90,6 @@ pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData,
 /// # Returns
 ///
 /// * `Ok(ReturnAction)` - If successful.
-///     * `Ok(ReturnAction::Start<Level>)` - If AGENT_CONFIG with the right properties.
-///     * `Ok(ReturnAction::Stop)` - If AGENT_TASK with the right properties.
-///     * `Ok(ReturnAction::None)` - Else.
 /// * `FlareError(msg)` - If something fail.
 pub fn check_remote_config_file(file: RemoteConfigFile) -> Result<ReturnAction, FlareError> {
     let config = file.contents();
@@ -91,7 +98,8 @@ pub fn check_remote_config_file(file: RemoteConfigFile) -> Result<ReturnAction, 
             RemoteConfigData::TracerFlareConfig(agent_config) => {
                 if agent_config.name.starts_with("flare-log-level.") {
                     if let Some(log_level) = &agent_config.config.log_level {
-                        return Ok(log_level.into());
+                        let log_level = log_level.as_str().try_into()?;
+                        return Ok(ReturnAction::Start(log_level));
                     }
                 }
             }
@@ -240,4 +248,47 @@ pub async fn run_remote_config_listener(
     }
 
     Ok(ReturnAction::None)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use crate::{FlareError, LogLevel};
+
+
+    #[test]
+    fn test_try_from_string_to_return_action() {
+        assert_eq!(
+            LogLevel::try_from("trace").unwrap(),
+            LogLevel::Trace
+        );
+        assert_eq!(
+            LogLevel::try_from("debug").unwrap(),
+            LogLevel::Debug
+        );
+        assert_eq!(
+            LogLevel::try_from("info").unwrap(),
+            LogLevel::Info
+        );
+        assert_eq!(
+            LogLevel::try_from("warn").unwrap(),
+            LogLevel::Warn
+        );
+        assert_eq!(
+            LogLevel::try_from("error").unwrap(),
+            LogLevel::Error
+        );
+        assert_eq!(
+            LogLevel::try_from("critical").unwrap(),
+            LogLevel::Critical
+        );
+        assert_eq!(
+            LogLevel::try_from("off").unwrap(),
+            LogLevel::Off
+        );
+        assert_eq!(
+            LogLevel::try_from("anything"),
+            Err(FlareError::ParsingError("Unknown level of log".to_string()))
+        );
+    }
 }
