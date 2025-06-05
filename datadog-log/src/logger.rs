@@ -134,7 +134,7 @@ impl Logger {
 
                 // Add file layer if configured
                 if let Some(file_config) = &self.file_config {
-                    if let Ok(file_layer) = file_layer(&*file_config.path) {
+                    if let Ok(file_layer) = file_layer(&file_config.path) {
                         layers.push(file_layer);
                     }
                 }
@@ -193,6 +193,7 @@ fn env_filter() -> EnvFilter {
 }
 
 /// Create standard output layer.
+#[allow(clippy::type_complexity)]
 fn std_layer(
     config: &StdConfig,
 ) -> Result<
@@ -212,6 +213,7 @@ fn std_layer(
         .boxed())
 }
 
+#[allow(clippy::type_complexity)]
 fn file_layer(
     path: &str,
 ) -> Result<
