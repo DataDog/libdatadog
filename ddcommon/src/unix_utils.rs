@@ -4,10 +4,13 @@
 #![cfg(unix)]
 
 use anyhow::Context;
-use libc::{_exit, execve, nfds_t, pid_t, poll, pollfd, EXIT_FAILURE, POLLHUP};
+#[cfg(target_os = "linux")]
+use libc::pid_t;
+use libc::{_exit, execve, nfds_t, poll, pollfd, EXIT_FAILURE, POLLHUP};
 use nix::errno::Errno;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
+#[cfg(target_os = "linux")]
 use std::io::{self, BufRead, BufReader};
 use std::os::fd::IntoRawFd;
 use std::time::{Duration, Instant};

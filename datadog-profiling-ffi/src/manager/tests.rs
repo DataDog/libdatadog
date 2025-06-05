@@ -1,60 +1,62 @@
-use std::{ffi::c_void, time::Duration};
+use std::ffi::c_void;
 
 use crate::profiles::datatypes::Sample;
-use datadog_profiling::internal;
+use datadog_profiling::internal::Profile;
 use tokio_util::sync::CancellationToken;
 
 use super::{ManagedSampleCallbacks, ProfilerManager};
 use crate::manager::profiler_manager::ProfilerManagerConfig;
+use crate::manager::samples::SendSample;
+use ddcommon_ffi::Slice;
 
-extern "C" fn test_cpu_sampler_callback(_: *mut datadog_profiling::internal::Profile) {
-    println!("cpu sampler callback");
+extern "C" fn test_cpu_sampler_callback(_profile: *mut Profile) {}
+
+extern "C" fn test_upload_callback(_profile: *mut Profile, _token: &mut Option<CancellationToken>) {
 }
-extern "C" fn test_upload_callback(
-    _: *mut datadog_profiling::internal::Profile,
-    _: &mut Option<CancellationToken>,
-) {
-    println!("upload callback");
-}
-extern "C" fn test_sample_converter(_: *mut c_void) -> Sample<'static> {
-    println!("sample converter");
+
+extern "C" fn test_converter(sample: &SendSample) -> Sample<'static> {
+    static VALUES: [i64; 1] = [42];
     Sample {
-        locations: ddcommon_ffi::Slice::empty(),
-        values: ddcommon_ffi::Slice::empty(),
-        labels: ddcommon_ffi::Slice::empty(),
+        locations: Slice::empty(),
+        values: Slice::from(&VALUES[..]),
+        labels: Slice::empty(),
     }
 }
-extern "C" fn test_reset_callback(_: *mut c_void) {
-    println!("reset callback");
-}
-extern "C" fn test_drop_callback(_: *mut c_void) {
-    println!("drop callback");
-}
+
+extern "C" fn test_reset(_sample: &mut SendSample) {}
+
+extern "C" fn test_drop(_sample: SendSample) {}
 
 #[test]
-fn test_the_thing() {
-    let sample_types = [];
-    let period = None;
-    let profile = internal::Profile::new(&sample_types, period);
-    let sample_callbacks = ManagedSampleCallbacks::new(
-        test_sample_converter,
-        test_reset_callback,
-        test_drop_callback,
-    );
+fn test_profiler_manager() {
     let config = ProfilerManagerConfig {
-        channel_depth: 10,
-        cpu_sampling_interval_ms: 100, // 100ms for testing
-        upload_interval_ms: 1000, // 1 second for testing
+        channel_depth: 1,
+        cpu_sampling_interval_ms: 100, // 100ms for faster testing
+        upload_interval_ms: 500,       // 500ms for faster testing
     };
-    let handle = ProfilerManager::start(
+
+    let sample_callbacks = ManagedSampleCallbacks::new(test_converter, test_reset, test_drop);
+
+    let profile = Profile::new(&[], None);
+    let client = ProfilerManager::start(
         profile,
         test_cpu_sampler_callback,
         test_upload_callback,
         sample_callbacks,
         config,
     )
-    .expect("Failed to start profiler");
-    println!("start");
-    std::thread::sleep(Duration::from_secs(5));
-    handle.shutdown().unwrap();
+    .unwrap();
+
+    // Send a sample
+    let sample_ptr = Box::into_raw(Box::new(42)) as *mut c_void;
+    unsafe {
+        client.send_sample(sample_ptr).unwrap();
+    }
+
+    // Receive a recycled sample
+    let recycled = client.try_recv_recycled().unwrap();
+    assert_eq!(unsafe { *(recycled as *const i32) }, 42);
+
+    // Shutdown
+    let _profile = client.shutdown().unwrap();
 }

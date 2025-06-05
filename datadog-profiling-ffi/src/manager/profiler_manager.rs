@@ -1,7 +1,4 @@
-use std::{
-    ffi::c_void,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossbeam_channel::{select, tick, Receiver};
@@ -23,8 +20,8 @@ impl Default for ProfilerManagerConfig {
     fn default() -> Self {
         Self {
             channel_depth: 10,
-            cpu_sampling_interval_ms: 1000, // 1 second
-            upload_interval_ms: 10000, // 10 seconds
+            cpu_sampling_interval_ms: 100, // 100ms
+            upload_interval_ms: 60000,     // 1 minute
         }
     }
 }
@@ -33,18 +30,18 @@ impl Default for ProfilerManagerConfig {
 #[derive(Clone)]
 pub struct ManagedSampleCallbacks {
     // Static is probably the wrong type here, but worry about that later.
-    converter: extern "C" fn(*mut c_void) -> Sample<'static>,
+    converter: extern "C" fn(&SendSample) -> Sample,
     // Resets the sample for reuse.
-    reset: extern "C" fn(*mut c_void),
+    reset: extern "C" fn(&mut SendSample),
     // Called when a sample is dropped (not recycled)
-    drop: extern "C" fn(*mut c_void),
+    drop: extern "C" fn(SendSample),
 }
 
 impl ManagedSampleCallbacks {
     pub fn new(
-        converter: extern "C" fn(*mut c_void) -> Sample<'static>,
-        reset: extern "C" fn(*mut c_void),
-        drop: extern "C" fn(*mut c_void),
+        converter: extern "C" fn(&SendSample) -> Sample,
+        reset: extern "C" fn(&mut SendSample),
+        drop: extern "C" fn(SendSample),
     ) -> Self {
         Self {
             converter,
@@ -105,22 +102,15 @@ impl ProfilerManager {
         &mut self,
         raw_sample: Result<SendSample, crossbeam_channel::RecvError>,
     ) -> Result<()> {
-        let data = raw_sample?.as_ptr();
-        let sample = (self.sample_callbacks.converter)(data);
-        self.profile.add_sample(sample.try_into()?, None)?;
-        (self.sample_callbacks.reset)(data);
-        // SAFETY: The sample pointer is valid because it came from the samples channel
-        // and was just processed by the converter and reset callbacks. We have exclusive
-        // access to it since we're the only thread that can receive from the samples channel.
-        if self
-            .channels
+        let mut sample = raw_sample?;
+        let converted_sample = (self.sample_callbacks.converter)(&sample);
+        let add_result = self.profile.add_sample(converted_sample.try_into()?, None);
+        (self.sample_callbacks.reset)(&mut sample);
+        self.channels
             .recycled_samples_sender
-            .send(unsafe { SendSample::new(data) })
-            .is_err()
-        {
-            (self.sample_callbacks.drop)(data);
-        }
-        Ok(())
+            .send(sample)
+            .map_or_else(|e| (self.sample_callbacks.drop)(e.0), |_| ());
+        add_result
     }
 
     fn handle_cpu_tick(&mut self) {
@@ -145,21 +135,20 @@ impl ProfilerManager {
     fn handle_shutdown(&mut self) -> Result<()> {
         // Try to process any remaining samples before dropping them
         while let Ok(sample) = self.channels.samples_receiver.try_recv() {
-            let data = sample.as_ptr();
-            let sample = (self.sample_callbacks.converter)(data);
-            if let Ok(converted_sample) = sample.try_into() {
+            let converted_sample = (self.sample_callbacks.converter)(&sample);
+            if let Ok(converted_sample) = converted_sample.try_into() {
                 if let Err(e) = self.profile.add_sample(converted_sample, None) {
                     eprintln!("Failed to add sample during shutdown: {}", e);
                 }
             } else {
                 eprintln!("Failed to convert sample during shutdown");
             }
-            (self.sample_callbacks.drop)(data);
+            (self.sample_callbacks.drop)(sample);
         }
 
         // Drain any recycled samples
         while let Ok(sample) = self.channels.recycled_samples_receiver.try_recv() {
-            (self.sample_callbacks.drop)(sample.as_ptr());
+            (self.sample_callbacks.drop)(sample);
         }
 
         // Cancel any ongoing upload and drop the token
