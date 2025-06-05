@@ -20,6 +20,7 @@ use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::tracer_payload::decode_to_trace_chunks;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
 use ddcommon::{Endpoint, MutexExt};
+use ddtelemetry::data::Integration;
 use ddtelemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
     TelemetryWorkerStats,
@@ -103,19 +104,64 @@ unsafe impl Sync for ProcessHandle {}
 struct TelemetryCachedClient {
     client: TelemetryWorkerHandle,
     last_used: Instant,
+    buffered_integrations: HashSet<Integration>,
+    buffered_composer_paths: HashSet<PathBuf>,
 }
 
 type ServiceString = String;
 type EnvString = String;
 type VersionString = String;
-type TelemetryClientKey = (ServiceString, EnvString, VersionString);
+type TelemetryCachedClientKey = (ServiceString, EnvString, VersionString);
+
+pub struct TelemetryCachedClientSet {
+    inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedClient>>>,
+    cleanup_handle: Option<JoinHandle<()>>,
+}
+
+impl Default for TelemetryCachedClientSet {
+    fn default() -> Self {
+        let inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedClient>>> =
+            Arc::new(Default::default());
+        let clients = inner.clone();
+
+        let handle = tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_secs(60)).await;
+                let mut lock = clients.lock_or_panic();
+                lock.retain(|_, c| c.last_used.elapsed() < Duration::from_secs(1800));
+            }
+        });
+
+        Self {
+            inner,
+            cleanup_handle: Some(handle),
+        }
+    }
+}
+
+impl Drop for TelemetryCachedClientSet {
+    fn drop(&mut self) {
+        if let Some(handle) = self.cleanup_handle.take() {
+            handle.abort();
+        }
+    }
+}
+
+impl Clone for TelemetryCachedClientSet {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+            cleanup_handle: None,
+        }
+    }
+}
 
 /// The `SidecarServer` struct represents a server that handles sidecar operations.
 ///
 /// It maintains a list of active sessions and a counter for each session.
 /// It also holds a reference to a `TraceFlusher` for sending trace data,
 /// and a `Mutex` guarding an optional `ManualFutureCompleter` for telemetry configuration.
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub struct SidecarServer {
     /// An `Arc` wrapped `TraceFlusher` used for sending trace data.
     pub(crate) trace_flusher: Arc<TraceFlusher>,
@@ -124,7 +170,7 @@ pub struct SidecarServer {
     /// A `Mutex` guarded `HashMap` that keeps a count of each session.
     session_counter: Arc<Mutex<HashMap<String, u32>>>,
     /// A `Mutex` guarded `HashMap` that stores the active telemetry clients.
-    telemetry_clients: Arc<Mutex<HashMap<TelemetryClientKey, TelemetryCachedClient>>>,
+    telemetry_clients: TelemetryCachedClientSet,
     /// A `Mutex` guarded optional `ManualFutureCompleter` for telemetry configuration.
     pub self_telemetry_config:
         Arc<Mutex<Option<ManualFutureCompleter<ddtelemetry::config::Config>>>>,
@@ -141,37 +187,6 @@ pub struct SidecarServer {
     process_handle: Option<ProcessHandle>,
 }
 
-impl Default for SidecarServer {
-    fn default() -> Self {
-        let telemetry_clients: Arc<Mutex<HashMap<TelemetryClientKey, TelemetryCachedClient>>> =
-            Arc::new(Default::default());
-
-        // Persist telemetry clients for 30 minutes
-        let clients = telemetry_clients.clone();
-        tokio::spawn(async move {
-            loop {
-                sleep(Duration::from_secs(60)).await;
-                let mut lock = clients.lock_or_panic();
-                lock.retain(|_, c| c.last_used.elapsed() < Duration::from_secs(1800));
-            }
-        });
-
-        Self {
-            trace_flusher: Arc::new(TraceFlusher::default()),
-            sessions: Arc::new(Default::default()),
-            session_counter: Arc::new(Default::default()),
-            telemetry_clients,
-            self_telemetry_config: Arc::new(Default::default()),
-            submitted_payloads: Arc::new(AtomicU64::new(0)),
-            agent_infos: Default::default(),
-            remote_configs: Default::default(),
-            debugger_diagnostics_bookkeeper: Arc::new(Default::default()),
-            #[cfg(windows)]
-            process_handle: None,
-        }
-    }
-}
-
 impl SidecarServer {
     pub fn get_or_create_telemetry_worker_handle(
         &self,
@@ -183,7 +198,7 @@ impl SidecarServer {
     ) -> Option<TelemetryWorkerHandle> {
         let key = (service.to_string(), env.to_string(), version.to_string());
 
-        let mut clients = self.telemetry_clients.lock_or_panic();
+        let mut clients = self.telemetry_clients.inner.lock_or_panic();
 
         if let Some(existing) = clients.get_mut(&key) {
             existing.last_used = Instant::now();
@@ -217,6 +232,8 @@ impl SidecarServer {
                     TelemetryCachedClient {
                         client: handle.clone(),
                         last_used: Instant::now(),
+                        buffered_integrations: HashSet::new(),
+                        buffered_composer_paths: HashSet::new(),
                     },
                 );
                 info!("spawning telemetry worker {config:?}");
@@ -533,9 +550,11 @@ impl SidecarServer {
     }
 }
 
-pub fn path_for_telemetry(instance_id: &InstanceId) -> CString {
+pub fn path_for_telemetry(service: &str, env: &str, version: &str) -> CString {
     let mut hasher = ZwoHasher::default();
-    instance_id.runtime_id.hash(&mut hasher);
+    service.hash(&mut hasher);
+    env.hash(&mut hasher);
+    version.hash(&mut hasher);
     let hash = hasher.finish();
 
     let mut path = format!(
@@ -572,6 +591,8 @@ impl SidecarInterface for SidecarServer {
         match applications.entry(queue_id) {
             Entry::Occupied(mut entry) => {
                 let value = entry.get_mut();
+                let env = value.env.clone();
+                let version = value.app_version.clone();
 
                 let to_process: Vec<SidecarAction> = actions
                     .into_iter()
@@ -626,17 +647,24 @@ impl SidecarInterface for SidecarServer {
                                 )
                                 .await;
 
-                                let path = PathBuf::from(std::ffi::OsStr::from_bytes(
-                                    path_for_telemetry(&instance_id).as_bytes(),
-                                ));
-                                if let Err(e) = std::fs::write(
-                                    &path,
-                                    simd_json::to_vec(&actions).unwrap_or_default(),
-                                ) {
-                                    error!(
-                                        "Failed to write telemetry SHM file at {:?}: {:?}",
-                                        path, e
-                                    );
+                                unsafe {
+                                    let path = PathBuf::from(std::ffi::OsStr::from_bytes(
+                                        path_for_telemetry(
+                                            &service.0,
+                                            &env.unwrap_unchecked(),
+                                            &version.unwrap_unchecked(),
+                                        )
+                                        .as_bytes(),
+                                    ));
+                                    if let Err(e) = std::fs::write(
+                                        &path,
+                                        simd_json::to_vec(&actions).unwrap_or_default(),
+                                    ) {
+                                        error!(
+                                            "Failed to write telemetry SHM file at {:?}: {:?}",
+                                            path, e
+                                        );
+                                    }
                                 }
 
                                 app.telemetry.send_msgs(actions).await.ok();
