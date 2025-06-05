@@ -22,7 +22,7 @@ pub struct SendDataResult {
     pub errors_status_code: u64,
     /// Count metric for 'trace_api.bytes'
     pub bytes_sent: u64,
-    /// Count metric for 'trace_chunk_sent'
+    /// Count metric for 'trace_chunks_sent'
     pub chunks_sent: u64,
     /// Count metric for 'trace_chunks_dropped'
     pub chunks_dropped: u64,
