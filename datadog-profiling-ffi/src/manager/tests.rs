@@ -41,7 +41,11 @@ fn test_the_thing() {
         test_reset_callback,
         test_drop_callback,
     );
-    let config = ProfilerManagerConfig::default();
+    let config = ProfilerManagerConfig {
+        channel_depth: 10,
+        cpu_sampling_interval_ms: 100, // 100ms for testing
+        upload_interval_ms: 1000, // 1 second for testing
+    };
     let handle = ProfilerManager::start(
         profile,
         test_cpu_sampler_callback,

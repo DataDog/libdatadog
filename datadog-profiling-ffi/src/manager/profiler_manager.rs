@@ -15,11 +15,17 @@ use crate::profiles::datatypes::Sample;
 #[repr(C)]
 pub struct ProfilerManagerConfig {
     pub channel_depth: usize,
+    pub cpu_sampling_interval_ms: u64,
+    pub upload_interval_ms: u64,
 }
 
 impl Default for ProfilerManagerConfig {
     fn default() -> Self {
-        Self { channel_depth: 10 }
+        Self {
+            channel_depth: 10,
+            cpu_sampling_interval_ms: 1000, // 1 second
+            upload_interval_ms: 10000, // 10 seconds
+        }
     }
 }
 
@@ -71,11 +77,8 @@ impl ProfilerManager {
         let (client_channels, manager_channels) = ClientSampleChannels::new(config.channel_depth);
         let (shutdown_sender, shutdown_receiver) = crossbeam_channel::bounded(1);
 
-        // For adaptive sampling, we need to be able to adjust this duration.  Look into how to do
-        // this.
-        let cpu_ticker = tick(Duration::from_millis(100));
-        // one second for testing, make this 1 minute in production
-        let upload_ticker = tick(Duration::from_secs(1));
+        let cpu_ticker = tick(Duration::from_millis(config.cpu_sampling_interval_ms));
+        let upload_ticker = tick(Duration::from_millis(config.upload_interval_ms));
 
         let manager = Self {
             channels: manager_channels,
