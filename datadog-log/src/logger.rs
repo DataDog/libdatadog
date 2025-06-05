@@ -140,7 +140,7 @@ impl Logger {
 
                 // Add file layer if configured
                 if let Some(file_config) = &self.file_config {
-                    if let Ok(file_layer) = file_layer(&file_config) {
+                    if let Ok(file_layer) = file_layer(file_config) {
                         layers.push(file_layer);
                     }
                 }
