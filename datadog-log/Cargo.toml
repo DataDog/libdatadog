@@ -1,0 +1,19 @@
+[package]
+name = "datadog-log"
+description = "A bridge from Rust to {language} logging"
+rust-version.workspace = true
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+bench = false
+
+[dependencies]
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+tracing = { version = "0.1", default-features = false }
+tracing-subscriber = { version = "0.3.18", default-features = false, features = ["json", "env-filter"] }
+tracing-appender = "0.2.3"
+
+[dev-dependencies]
+tempfile = "3.10"
