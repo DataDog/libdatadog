@@ -21,8 +21,8 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: Cache
         uses: ./.github/actions/cache
-      - name: Install nightly-2024-12-16 toolchain and rustfmt
-        run: rustup install nightly-2024-12-16 && rustup default nightly-2024-12-16 && rustup component add rustfmt
+      - name: Install nightly-2025-04-27 toolchain and rustfmt
+        run: rustup install nightly-2025-04-27 && rustup default nightly-2025-04-27 && rustup component add rustfmt
       - run: cargo fmt --all -- --check
   clippy:
     name: "clippy #${{ matrix.platform }} ${{ matrix.rust_version }}"
@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust_version: ["1.84.1", "stable", "nightly-2024-12-16"]
+        rust_version: ["1.84.1", "stable", "nightly-2025-04-27"]
         platform: [windows-latest, ubuntu-latest]
     steps:
       - name: Checkout sources
