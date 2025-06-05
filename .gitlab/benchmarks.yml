@@ -1,5 +1,5 @@
 variables:
-  BASE_CI_IMAGE: 486234852809.dkr.ecr.us-east-1.amazonaws.com/ci/benchmarking-platform:libdatadog-benchmarks
+  BASE_CI_IMAGE: registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks
   # The Dockerfile to this image is located at:
   # https://github.com/DataDog/benchmarking-platform/tree/libdatadog/benchmarks
 

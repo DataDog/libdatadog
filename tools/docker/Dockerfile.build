@@ -1,4 +1,4 @@
-ARG ALPINE_BASE_IMAGE="alpine:3.20.3"
+ARG ALPINE_BASE_IMAGE="alpine:3.22.0"
 ARG CARGO_BUILD_INCREMENTAL="true"
 ARG CARGO_NET_RETRY="2"
 ARG BUILDER_IMAGE=debian_builder
@@ -7,7 +7,7 @@ ARG BUILDER_IMAGE=debian_builder
 FROM rust:1-slim-buster AS debian_builder
 ENV CARGO_HOME="/root/.cargo"
 WORKDIR /build
-RUN cargo install cbindgen; mv /root/.cargo/bin/cbindgen /usr/bin/; rm -rf /root/.cargo
+RUN cargo install cbindgen && mv /root/.cargo/bin/cbindgen /usr/bin/ && rm -rf /root/.cargo
 
 ### Debian buildplatform builder
 FROM --platform=$BUILDPLATFORM rust:1-slim-buster AS debian_builder_platform_native
