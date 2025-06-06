@@ -1,7 +1,8 @@
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossbeam_channel::{select, tick, Receiver};
+use crossbeam_channel::{select, tick, Receiver, Sender};
 use datadog_profiling::internal;
 use ddcommon_ffi::Handle;
 use tokio_util::sync::CancellationToken;
@@ -61,7 +62,9 @@ pub struct ProfilerManager {
     cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
     upload_callback: extern "C" fn(*mut Handle<internal::Profile>, &mut Option<CancellationToken>),
     sample_callbacks: ManagedSampleCallbacks,
-    cancellation_token: Option<CancellationToken>,
+    cancellation_token: CancellationToken,
+    upload_sender: Sender<internal::Profile>,
+    upload_thread: JoinHandle<()>,
 }
 
 impl ProfilerManager {
@@ -77,9 +80,22 @@ impl ProfilerManager {
     ) -> Result<ManagedProfilerClient> {
         let (client_channels, manager_channels) = ClientSampleChannels::new(config.channel_depth);
         let (shutdown_sender, shutdown_receiver) = crossbeam_channel::bounded(1);
+        let (upload_sender, upload_receiver) = crossbeam_channel::bounded(2);
 
         let cpu_ticker = tick(Duration::from_millis(config.cpu_sampling_interval_ms));
         let upload_ticker = tick(Duration::from_millis(config.upload_interval_ms));
+
+        // Create a single cancellation token for all uploads
+        let cancellation_token = CancellationToken::new();
+
+        // Spawn the upload thread
+        let mut token = Some(cancellation_token.clone());
+        let upload_thread = std::thread::spawn(move || {
+            while let Ok(profile) = upload_receiver.recv() {
+                let mut handle = Handle::from(profile);
+                (upload_callback)(&mut handle, &mut token);
+            }
+        });
 
         let manager = Self {
             channels: manager_channels,
@@ -90,7 +106,9 @@ impl ProfilerManager {
             cpu_sampler_callback,
             upload_callback,
             sample_callbacks,
-            cancellation_token: None,
+            cancellation_token,
+            upload_sender,
+            upload_thread,
         };
 
         let handle = std::thread::spawn(move || manager.main());
@@ -123,16 +141,9 @@ impl ProfilerManager {
 
     fn handle_upload_tick(&mut self) -> Result<()> {
         let old_profile = self.profile.reset_and_return_previous()?;
-        let upload_callback = self.upload_callback;
-        // Create a new cancellation token for this upload
-        let token = CancellationToken::new();
-        // Store a clone of the token in the manager
-        self.cancellation_token = Some(token.clone());
-        let mut cancellation_token = Some(token);
-        std::thread::spawn(move || {
-            let mut handle = Handle::from(old_profile);
-            (upload_callback)(&mut handle, &mut cancellation_token);
-        });
+        self.upload_sender
+            .send(old_profile)
+            .map_err(|e| anyhow::anyhow!("Failed to send profile for upload: {}", e))?;
         Ok(())
     }
 
@@ -155,11 +166,18 @@ impl ProfilerManager {
             (self.sample_callbacks.drop)(sample);
         }
 
-        // Cancel any ongoing upload and drop the token
-        if let Some(token) = self.cancellation_token.take() {
-            token.cancel();
+        // Cancel any ongoing upload
+        self.cancellation_token.cancel();
+
+        // Take ownership of the upload thread and sender
+        let upload_thread = std::mem::replace(&mut self.upload_thread, std::thread::spawn(|| {}));
+        let _ = std::mem::replace(&mut self.upload_sender, crossbeam_channel::bounded(1).0);
+
+        // Wait for the upload thread to finish
+        if let Err(e) = upload_thread.join() {
+            eprintln!("Error joining upload thread: {:?}", e);
         }
-        //
+
         Ok(())
     }
 
