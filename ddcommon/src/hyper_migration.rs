@@ -50,9 +50,9 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Hyper(e) => write!(f, "hyper error: {}", e),
+            Error::Hyper(e) => write!(f, "hyper error: {e}"),
             Error::Infallible(e) => match *e {},
-            Error::Other(e) => write!(f, "other error: {}", e),
+            Error::Other(e) => write!(f, "other error: {e}"),
         }
     }
 }
