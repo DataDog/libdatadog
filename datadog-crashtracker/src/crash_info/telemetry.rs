@@ -135,6 +135,7 @@ impl TelemetryCrashUploader {
                 tags,
                 is_sensitive: true,
                 count: 1,
+                is_crash: true,
             }]),
             origin: Some("Crashtracker"),
         };
@@ -268,6 +269,7 @@ mod tests {
         assert_eq!(payload["application"]["service_version"], "bar");
         assert_eq!(payload["request_type"], "logs");
         assert_eq!(payload["tracer_time"], 1568898000);
+        assert_eq!(payload["origin"], "Crashtracker");
 
         assert_eq!(payload["payload"].as_array().unwrap().len(), 1);
         let tags = payload["payload"][0]["tags"]
@@ -296,6 +298,7 @@ mod tests {
         let body: CrashInfo =
             serde_json::from_str(payload["payload"][0]["message"].as_str().unwrap())?;
         assert_eq!(body, test_instance);
+        assert_eq!(payload["payload"][0]["is_crash"], true);
         Ok(())
     }
 }
