@@ -16,6 +16,7 @@ use manual_future::{ManualFuture, ManualFutureCompleter};
 use simd_json::prelude::ArrayTrait;
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::{debug, info};
 

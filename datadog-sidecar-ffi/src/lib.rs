@@ -420,7 +420,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
     let version =
         (!dependency_version.is_empty()).then(|| dependency_version.to_utf8_lossy().into_owned());
 
-    let dependency = TelemetryActions::AddDependecy(Dependency {
+    let dependency = TelemetryActions::AddDependency(Dependency {
         name: dependency_name.to_utf8_lossy().into_owned(),
         version,
     });
