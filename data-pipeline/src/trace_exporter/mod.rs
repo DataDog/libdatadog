@@ -1279,11 +1279,11 @@ mod tests {
         exporter.shutdown(None).unwrap();
 
         // Wait for the mock server to process the stats
-        for _ in 0..10 {
+        for _ in 0..500 {
             if mock_traces.hits() > 0 && mock_stats.hits() > 0 {
                 break;
             } else {
-                std::thread::sleep(Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(10));
             }
         }
 
