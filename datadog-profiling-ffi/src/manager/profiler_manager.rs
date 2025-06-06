@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use crossbeam_channel::{select, tick, Receiver};
 use datadog_profiling::internal;
+use ddcommon_ffi::Handle;
 use tokio_util::sync::CancellationToken;
 
 use super::client::ManagedProfilerClient;
@@ -58,7 +59,7 @@ pub struct ProfilerManager {
     shutdown_receiver: Receiver<()>,
     profile: internal::Profile,
     cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
-    upload_callback: extern "C" fn(*mut internal::Profile, &mut Option<CancellationToken>),
+    upload_callback: extern "C" fn(*mut Handle<internal::Profile>, &mut Option<CancellationToken>),
     sample_callbacks: ManagedSampleCallbacks,
     cancellation_token: Option<CancellationToken>,
 }
@@ -67,7 +68,10 @@ impl ProfilerManager {
     pub fn start(
         profile: internal::Profile,
         cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
-        upload_callback: extern "C" fn(*mut internal::Profile, &mut Option<CancellationToken>),
+        upload_callback: extern "C" fn(
+            *mut Handle<internal::Profile>,
+            &mut Option<CancellationToken>,
+        ),
         sample_callbacks: ManagedSampleCallbacks,
         config: ProfilerManagerConfig,
     ) -> Result<ManagedProfilerClient> {
@@ -126,10 +130,8 @@ impl ProfilerManager {
         self.cancellation_token = Some(token.clone());
         let mut cancellation_token = Some(token);
         std::thread::spawn(move || {
-            let mut profile = old_profile;
-            (upload_callback)(&mut profile, &mut cancellation_token);
-            // The profile is consumed by the callback, so we don't drop it here
-            std::mem::forget(profile);
+            let mut handle = Handle::from(old_profile);
+            (upload_callback)(&mut handle, &mut cancellation_token);
         });
         Ok(())
     }

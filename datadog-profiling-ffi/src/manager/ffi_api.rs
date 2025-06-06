@@ -27,7 +27,7 @@ use tokio_util::sync::CancellationToken;
 pub unsafe extern "C" fn ddog_prof_ProfilerManager_start(
     profile: *mut Profile,
     cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
-    upload_callback: extern "C" fn(*mut internal::Profile, &mut Option<CancellationToken>),
+    upload_callback: extern "C" fn(*mut Handle<internal::Profile>, &mut Option<CancellationToken>),
     sample_callbacks: ManagedSampleCallbacks,
     config: ProfilerManagerConfig,
 ) -> FFIResult<Handle<ManagedProfilerClient>> {

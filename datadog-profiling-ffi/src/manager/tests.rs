@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::profiles::datatypes::Sample;
 use datadog_profiling::api::ValueType;
 use datadog_profiling::internal::Profile;
+use ddcommon_ffi::{Handle, ToInner};
 use tokio_util::sync::CancellationToken;
 
 use super::{ManagedSampleCallbacks, ProfilerManager};
@@ -17,13 +18,15 @@ extern "C" fn test_cpu_sampler_callback(_profile: *mut Profile) {}
 
 static UPLOAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-extern "C" fn test_upload_callback(profile: *mut Profile, _token: &mut Option<CancellationToken>) {
-    let profile = unsafe { &*profile };
+extern "C" fn test_upload_callback(
+    profile: *mut Handle<Profile>,
+    _token: &mut Option<CancellationToken>,
+) {
     let upload_count = UPLOAD_COUNT.fetch_add(1, Ordering::SeqCst);
 
     // On the first upload (when upload_count is 0), verify the samples
     if upload_count == 0 {
-        let profile = unsafe { std::ptr::read(profile) };
+        let profile = unsafe { *(*profile).take().unwrap() };
         verify_samples(profile);
     }
 }
