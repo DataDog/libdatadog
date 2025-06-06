@@ -130,15 +130,11 @@ impl Bytes {
 
         assert!(
             start <= end,
-            "range start must not be greater than end: {:?} > {:?}",
-            start,
-            end,
+            "range start must not be greater than end: {start:?} > {end:?}"
         );
         assert!(
             end <= len,
-            "range end must not be greater than length: {:?} > {:?}",
-            end,
-            len,
+            "range end must not be greater than length: {end:?} > {len:?}"
         );
 
         if end == start {

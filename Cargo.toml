@@ -45,7 +45,7 @@ members = [
   "datadog-log-ffi"
 ]
 
-# https://doc.rust-lang.org/cargo/reference/resolver.html#feature-resolver-version-2
+# https://doc.rust-lang.org/cargo/reference/resolver.html
 resolver = "2"
 
 # These are used by many packages, but not all. For instance, the sidecar and
@@ -59,7 +59,7 @@ resolver = "2"
 # The RHEL restrictions are for the dd-trace-php repository. Someone in the
 # community, Remi Collet, packages the extension for these systems.
 [workspace.package]
-rust-version = "1.78.0"
+rust-version = "1.84.1"
 edition = "2021"
 version = "18.1.0"
 license = "Apache-2.0"

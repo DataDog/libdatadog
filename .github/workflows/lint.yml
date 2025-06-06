@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust_version: ["1.78.0", "stable", "nightly-2024-12-16"]
+        rust_version: ["1.84.1", "stable", "nightly-2024-12-16"]
         platform: [windows-latest, ubuntu-latest]
     steps:
       - name: Checkout sources
@@ -48,7 +48,7 @@ jobs:
             export AWS_LC_FIPS_SYS_NO_ASM=1
           fi
           # shellcheck disable=SC2046
-          cargo clippy --workspace --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.78.0 ] || [ ${{ matrix.rust_version }} = stable ] && echo -Aunknown-lints -Ainvalid_reference_casting -Aclippy::redundant-closure-call)
+          cargo clippy --workspace --all-targets --all-features -- -D warnings 
 
   licensecheck:
     runs-on: ubuntu-latest
