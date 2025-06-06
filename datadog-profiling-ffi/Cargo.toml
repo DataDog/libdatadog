@@ -53,3 +53,8 @@ serde_json = { version = "1.0" }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
 tokio = { version = "1.36", features = ["sync", "rt"] }
 tokio-util = "0.7.1"
+
+[dev-dependencies]
+lz4_flex = "0.11.3"
+prost = "0.13.5"
+datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf" }

@@ -118,7 +118,7 @@ impl ProfilerManager {
     }
 
     fn handle_upload_tick(&mut self) -> Result<()> {
-        let mut old_profile = self.profile.reset_and_return_previous()?;
+        let old_profile = self.profile.reset_and_return_previous()?;
         let upload_callback = self.upload_callback;
         // Create a new cancellation token for this upload
         let token = CancellationToken::new();
@@ -126,8 +126,10 @@ impl ProfilerManager {
         self.cancellation_token = Some(token.clone());
         let mut cancellation_token = Some(token);
         std::thread::spawn(move || {
-            (upload_callback)(&mut old_profile, &mut cancellation_token);
-            // TODO: make sure we cleanup the profile.
+            let mut profile = old_profile;
+            (upload_callback)(&mut profile, &mut cancellation_token);
+            // The profile is consumed by the callback, so we don't drop it here
+            std::mem::forget(profile);
         });
         Ok(())
     }
@@ -155,6 +157,7 @@ impl ProfilerManager {
         if let Some(token) = self.cancellation_token.take() {
             token.cancel();
         }
+        //
         Ok(())
     }
 
