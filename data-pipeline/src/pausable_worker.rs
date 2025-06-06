@@ -24,7 +24,8 @@ use tokio_util::sync::CancellationToken;
 /// # Cancellation safety
 /// The main loop can be interrupted at any yield point (`.await`ed call). The state of the worker
 /// at this point will be saved and used to restart the worker. To be able to safely restart, the
-/// worker must be in a valid state on every call to `.await`. See [`tokio::select#cancellation-safety`] for more details.
+/// worker must be in a valid state on every call to `.await`.
+/// See [`tokio::select#cancellation-safety`] for more details.
 #[derive(Debug)]
 pub enum PausableWorker<T: Worker + Send + Sync + 'static> {
     Running {
