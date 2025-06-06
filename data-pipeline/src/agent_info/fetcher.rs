@@ -95,12 +95,13 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 /// # Example
 /// ```no_run
 /// # use anyhow::Result;
+/// # use ddcommon::worker::Worker;
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
 /// let endpoint = ddcommon::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Create the fetcher
-/// let fetcher = data_pipeline::agent_info::AgentInfoFetcher::new(
+/// let mut fetcher = data_pipeline::agent_info::AgentInfoFetcher::new(
 ///     endpoint,
 ///     std::time::Duration::from_secs(5 * 60),
 /// );
