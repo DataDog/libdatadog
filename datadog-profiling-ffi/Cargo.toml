@@ -18,6 +18,7 @@ bench = false
 default = ["ddcommon-ffi"]
 cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 ddtelemetry-ffi = ["dep:ddtelemetry-ffi"]
+datadog-log-ffi = ["dep:datadog-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
 data-pipeline-ffi = ["dep:data-pipeline-ffi"]
 crashtracker-ffi = ["dep:datadog-crashtracker-ffi"]
@@ -41,6 +42,7 @@ datadog-profiling = { path = "../datadog-profiling" }
 ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false, optional = true }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
+datadog-log-ffi = { path = "../datadog-log-ffi", default-features = false, optional = true }
 function_name = "0.3.0"
 futures = { version = "0.3", default-features = false }
 http-body-util = "0.1"

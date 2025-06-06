@@ -4,11 +4,10 @@
 #![cfg(unix)]
 
 use anyhow::Context;
-use libc::{_exit, execve, nfds_t, pid_t, poll, pollfd, EXIT_FAILURE, POLLHUP};
+use libc::{_exit, execve, nfds_t, poll, pollfd, EXIT_FAILURE, POLLHUP};
 use nix::errno::Errno;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
-use std::io::{self, BufRead, BufReader};
 use std::os::fd::IntoRawFd;
 use std::time::{Duration, Instant};
 use std::{
@@ -16,6 +15,9 @@ use std::{
     fs::{File, OpenOptions},
     os::fd::RawFd,
 };
+
+#[cfg(target_os = "linux")]
+use std::io::{self, BufRead, BufReader};
 
 // The args_cstrings and env_vars_strings fields are just storage.  Even though they're
 // unreferenced, they're a necessary part of the struct.
@@ -201,9 +203,9 @@ fn is_being_traced() -> io::Result<bool> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn alt_fork() -> pid_t {
+pub fn alt_fork() -> libc::pid_t {
     use libc::{
-        c_ulong, c_void, syscall, SYS_clone, CLONE_CHILD_CLEARTID, CLONE_CHILD_SETTID,
+        c_ulong, c_void, pid_t, syscall, SYS_clone, CLONE_CHILD_CLEARTID, CLONE_CHILD_SETTID,
         CLONE_PTRACE, SIGCHLD,
     };
 

@@ -1357,7 +1357,6 @@ dependencies = [
  "httpmock",
  "hyper 1.6.0",
  "hyper-util",
- "log",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1367,6 +1366,7 @@ dependencies = [
  "tinybytes",
  "tokio",
  "tokio-util",
+ "tracing",
  "uuid",
 ]
 
@@ -1436,7 +1436,6 @@ dependencies = [
  "ddcommon-ffi",
  "function_name",
  "libc",
- "log",
  "serde",
  "serde_json",
  "symbolic-common",
@@ -1559,6 +1558,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-log"
+version = "18.1.0"
+dependencies = [
+ "ddcommon-ffi",
+ "tempfile",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "datadog-log-ffi"
+version = "18.1.0"
+dependencies = [
+ "build_common",
+ "datadog-log",
+ "ddcommon-ffi",
+]
+
+[[package]]
 name = "datadog-profiling"
 version = "18.1.0"
 dependencies = [
@@ -1598,6 +1617,7 @@ dependencies = [
  "data-pipeline-ffi",
  "datadog-crashtracker-ffi",
  "datadog-library-config-ffi",
+ "datadog-log-ffi",
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
@@ -1806,7 +1826,6 @@ dependencies = [
  "httpmock",
  "hyper 1.6.0",
  "hyper-http-proxy",
- "log",
  "prost",
  "rand 0.8.5",
  "rmp",
@@ -1818,6 +1837,7 @@ dependencies = [
  "testcontainers",
  "tinybytes",
  "tokio",
+ "tracing",
  "urlencoding",
  "zstd",
 ]
@@ -1852,7 +1872,6 @@ dependencies = [
  "hyper-util",
  "indexmap 2.6.0",
  "libc",
- "log",
  "maplit",
  "nix",
  "pin-project",
@@ -5714,9 +5733,9 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
 name = "tracing"
-version = "0.1.40"
+version = "0.1.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3523ab5a71916ccf420eebdf5521fcef02141234bbc0b8a49f2fdc4544364ef"
+checksum = "784e0ac535deb450455cbfa28a6f0df145ea1bb7ae51b821cf5e7927fdcfbdd0"
 dependencies = [
  "log",
  "pin-project-lite",
@@ -5725,10 +5744,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-attributes"
-version = "0.1.27"
+name = "tracing-appender"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34704c8d6ebcbc939824180af020566b01a7c01f80641264eba0999f6c2b6be7"
+checksum = "3566e8ce28cc0a3fe42519fc80e6b4c943cc4c8cef275620eb8dac2d3d4e06cf"
+dependencies = [
+ "crossbeam-channel",
+ "thiserror",
+ "time",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "tracing-attributes"
+version = "0.1.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "395ae124c09f9e6918a2310af6038fba074bcf474ac352496d5910dd59a2226d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5737,9 +5768,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-core"
-version = "0.1.32"
+version = "0.1.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c06d3da6113f116aaee68e4d601191614c9053067f9ab7f6edbcb161237daa54"
+checksum = "e672c95779cf947c5311f83787af4fa8fffd12fb27e4993211a84bdfd9610f9c"
 dependencies = [
  "once_cell",
  "valuable",
@@ -5770,21 +5801,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-subscriber"
-version = "0.3.18"
+name = "tracing-serde"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad0f048c97dbd9faa9b7df56362b8ebcaa52adb06b498c050d2f4e32f90a7a8b"
+checksum = "704b1aeb7be0d0a84fc9828cae51dab5970fee5088f83d1dd7ee6f6246fc6ff1"
+dependencies = [
+ "serde",
+ "tracing-core",
+]
+
+[[package]]
+name = "tracing-subscriber"
+version = "0.3.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8189decb5ac0fa7bc8b96b7cb9b2701d60d48805aca84a238004d665fcc4008"
 dependencies = [
  "matchers",
  "nu-ansi-term",
  "once_cell",
  "regex",
+ "serde",
+ "serde_json",
  "sharded-slab",
  "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
  "tracing-log",
+ "tracing-serde",
 ]
 
 [[package]]

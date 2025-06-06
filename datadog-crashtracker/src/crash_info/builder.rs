@@ -76,6 +76,12 @@ impl ErrorDataBuilder {
         if let Some(stack) = &mut self.stack {
             stack.set_complete()?;
         } else {
+            // With https://github.com/DataDog/libdatadog/pull/1076 it happens that stack trace are
+            // empty on musl based Linux (Alpine) because stack unwinding may not be able to unwind
+            // passed the signal handler. This by-passing for musl is temporary and needs a fix.
+            #[cfg(target_env = "musl")]
+            return Ok(self);
+            #[cfg(not(target_env = "musl"))]
             anyhow::bail!("Can't set non-existant stack complete");
         }
         Ok(self)
