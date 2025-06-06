@@ -95,6 +95,7 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 /// # Example
 /// ```no_run
 /// # use anyhow::Result;
+/// # use ddcommon::worker::Worker;
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
