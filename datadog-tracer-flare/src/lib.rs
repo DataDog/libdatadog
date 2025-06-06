@@ -11,7 +11,7 @@ use std::{str::FromStr, vec};
 use datadog_remote_config::{
     fetch::{ConfigInvariants, SingleChangesFetcher},
     file_change_tracker::{Change, FilePath},
-    file_storage::{ParsedFileStorage, RawFileStorage},
+    file_storage::{ParsedFileStorage, RawFile, RawFileStorage},
     RemoteConfigData, RemoteConfigProduct, Target,
 };
 use ddcommon::Endpoint;
@@ -23,6 +23,8 @@ pub enum FlareError {
     NoFlare(String),
     /// Listening to the RemoteConfig failed.
     ListeningError(String),
+    /// Parsing of config failed.
+    ParsingError(String),
 }
 
 impl std::fmt::Display for FlareError {
@@ -30,12 +32,13 @@ impl std::fmt::Display for FlareError {
         match self {
             FlareError::NoFlare(msg) => write!(f, "No flare prepared to send: {}", msg),
             FlareError::ListeningError(msg) => write!(f, "Listening failed with: {}", msg),
+            FlareError::ParsingError(msg) => write!(f, "Parsing failed with: {}", msg),
         }
     }
 }
 
 /// Enum that hold the different log level possible
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum LogLevel {
     Trace = 0,
     Debug = 1,
@@ -47,34 +50,72 @@ pub enum LogLevel {
 }
 
 /// Enum that hold the different returned action to do after listening
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ReturnAction {
-    None,
-    StartTrace,
-    StartDebug,
-    StartInfo,
-    StartWarn,
-    StartError,
-    StartCritical,
-    StartOff,
+    /// If AGENT_CONFIG received with the right properties.
+    Start(LogLevel),
+    /// If AGENT_TASK received with the right properties.
     Stop,
+    /// If anything else received.
+    None,
 }
 
-impl From<LogLevel> for ReturnAction {
-    fn from(level: LogLevel) -> Self {
+impl TryFrom<&str> for LogLevel {
+    type Error = FlareError;
+
+    fn try_from(level: &str) -> Result<Self, FlareError> {
         match level {
-            LogLevel::Trace => ReturnAction::StartTrace,
-            LogLevel::Debug => ReturnAction::StartDebug,
-            LogLevel::Info => ReturnAction::StartInfo,
-            LogLevel::Warn => ReturnAction::StartWarn,
-            LogLevel::Error => ReturnAction::StartError,
-            LogLevel::Critical => ReturnAction::StartCritical,
-            LogLevel::Off => ReturnAction::StartOff,
+            "trace" => Ok(LogLevel::Trace),
+            "debug" => Ok(LogLevel::Debug),
+            "info" => Ok(LogLevel::Info),
+            "warn" => Ok(LogLevel::Warn),
+            "error" => Ok(LogLevel::Error),
+            "critical" => Ok(LogLevel::Critical),
+            "off" => Ok(LogLevel::Off),
+            _ => Err(FlareError::ParsingError("Unknown level of log".to_string())),
         }
     }
 }
 
+pub type RemoteConfigFile = std::sync::Arc<RawFile<Result<RemoteConfigData, anyhow::Error>>>;
 pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>>;
+
+/// Check the `RemoteConfigFile` and return the action that tracer flare needs
+/// to perform
+///
+/// # Arguments
+///
+/// * `file` - RemoteConfigFile received by the Listener.
+///
+/// # Returns
+///
+/// * `Ok(ReturnAction)` - If successful.
+/// * `FlareError(msg)` - If something fail.
+pub fn check_remote_config_file(file: RemoteConfigFile) -> Result<ReturnAction, FlareError> {
+    let config = file.contents();
+    match config.as_ref() {
+        Ok(data) => match data {
+            RemoteConfigData::TracerFlareConfig(agent_config) => {
+                if agent_config.name.starts_with("flare-log-level.") {
+                    if let Some(log_level) = &agent_config.config.log_level {
+                        let log_level = log_level.as_str().try_into()?;
+                        return Ok(ReturnAction::Start(log_level));
+                    }
+                }
+            }
+            RemoteConfigData::TracerFlareTask(agent_task) => {
+                if agent_task.task_type.eq("tracer_flare") {
+                    return Ok(ReturnAction::Stop);
+                }
+            }
+            _ => return Ok(ReturnAction::None),
+        },
+        Err(e) => {
+            return Err(FlareError::ParsingError(e.to_string()));
+        }
+    }
+    Ok(ReturnAction::None)
+}
 
 /// Function that init and return a listener of RemoteConfig
 ///
@@ -186,6 +227,7 @@ pub async fn run_remote_config_listener(
                     Change::Add(file) => {
                         println!("Added file: {} (version: {})", file.path(), file.version());
                         println!("Content: {:?}", file.contents().as_ref());
+                        return check_remote_config_file(file);
                     }
                     Change::Update(file, _) => {
                         println!(
@@ -206,4 +248,24 @@ pub async fn run_remote_config_listener(
     }
 
     Ok(ReturnAction::None)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{FlareError, LogLevel};
+
+    #[test]
+    fn test_try_from_string_to_return_action() {
+        assert_eq!(LogLevel::try_from("trace").unwrap(), LogLevel::Trace);
+        assert_eq!(LogLevel::try_from("debug").unwrap(), LogLevel::Debug);
+        assert_eq!(LogLevel::try_from("info").unwrap(), LogLevel::Info);
+        assert_eq!(LogLevel::try_from("warn").unwrap(), LogLevel::Warn);
+        assert_eq!(LogLevel::try_from("error").unwrap(), LogLevel::Error);
+        assert_eq!(LogLevel::try_from("critical").unwrap(), LogLevel::Critical);
+        assert_eq!(LogLevel::try_from("off").unwrap(), LogLevel::Off);
+        assert_eq!(
+            LogLevel::try_from("anything"),
+            Err(FlareError::ParsingError("Unknown level of log".to_string()))
+        );
+    }
 }
