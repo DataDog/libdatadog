@@ -41,7 +41,9 @@ int log_init(const char* log_path) {
             .path = (ddog_CharSlice){
                 .ptr = log_path,
                 .len = strlen(log_path)
-            }
+            },
+            .max_size_bytes = 0,
+            .max_files = 0
         };
         err = ddog_logger_configure_file(file_config);
         if (err) {
