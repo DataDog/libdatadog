@@ -1614,6 +1614,7 @@ version = "18.1.0"
 dependencies = [
  "anyhow",
  "build_common",
+ "crossbeam-channel",
  "data-pipeline-ffi",
  "datadog-crashtracker-ffi",
  "datadog-library-config-ffi",
@@ -1629,6 +1630,7 @@ dependencies = [
  "libc",
  "serde_json",
  "symbolizer-ffi",
+ "tokio",
  "tokio-util",
 ]
 
