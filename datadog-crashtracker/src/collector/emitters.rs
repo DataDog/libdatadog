@@ -29,6 +29,7 @@ use std::{
 unsafe fn emit_backtrace_by_frames(
     w: &mut impl Write,
     resolve_frames: StacktraceCollection,
+    fault_rsp: usize,
 ) -> anyhow::Result<()> {
     // https://docs.rs/backtrace/latest/backtrace/index.html
     writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
@@ -45,6 +46,13 @@ unsafe fn emit_backtrace_by_frames(
     }
 
     backtrace::trace_unsynchronized(|frame| {
+        // Skip all stack frames whose stack pointer is less than to the determined crash stack
+        // pointer (fault_rsp). These frames belong exclusively to the crash tracker and the
+        // backtrace functionality and are therefore not relevant for troubleshooting.
+        let sp = frame.sp();
+        if !sp.is_null() && (sp as usize) < fault_rsp {
+            return true;
+        }
         if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
             backtrace::resolve_frame_unsynchronized(frame, |symbol| {
                 write!(w, "{{").unwrap();
@@ -92,12 +100,13 @@ pub(crate) fn emit_crashreport(
     metadata_string: &str,
     sig_info: *const siginfo_t,
     ucontext: *const ucontext_t,
+    ppid: i32,
 ) -> anyhow::Result<()> {
     emit_metadata(pipe, metadata_string)?;
     emit_config(pipe, config_str)?;
     emit_siginfo(pipe, sig_info)?;
     emit_ucontext(pipe, ucontext)?;
-    emit_procinfo(pipe)?;
+    emit_procinfo(pipe, ppid)?;
     emit_counters(pipe)?;
     emit_spans(pipe)?;
     consume_and_emit_additional_tags(pipe)?;
@@ -113,7 +122,8 @@ pub(crate) fn emit_crashreport(
     // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
     // Do this last, so even if it crashes, we still get the other info.
     if config.resolve_frames() != StacktraceCollection::Disabled {
-        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames())? };
+        let fault_rsp = extract_rsp(ucontext);
+        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_rsp)? };
     }
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
@@ -137,9 +147,8 @@ fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn emit_procinfo(w: &mut impl Write) -> anyhow::Result<()> {
+fn emit_procinfo(w: &mut impl Write, pid: i32) -> anyhow::Result<()> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
-    let pid = nix::unistd::getpid();
     writeln!(w, "{{\"pid\": {pid} }}")?;
     writeln!(w, "{DD_CRASHTRACK_END_PROCINFO}")?;
     w.flush()?;
@@ -147,9 +156,8 @@ fn emit_procinfo(w: &mut impl Write) -> anyhow::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-/// `/proc/self/maps` is very useful for debugging, and difficult to get from
-/// the child process (permissions issues on Linux).  Emit it directly onto the
-/// pipe to get around this.
+/// Assumes that the memory layout of the current process (child) is identical to
+/// the layout of the target process (parent), which should always be true.
 fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
     emit_text_file(w, "/proc/self/maps")?;
     Ok(())
@@ -268,4 +276,82 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
     writeln!(w, "\n{DD_CRASHTRACK_END_FILE} \"{path}\"")?;
     w.flush()?;
     Ok(())
+}
+
+fn extract_rsp(ucontext: *const ucontext_t) -> usize {
+    unsafe {
+        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+        return (*(*ucontext).uc_mcontext).__ss.__rsp as usize;
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        return (*(*ucontext).uc_mcontext).__ss.__sp as usize;
+
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        return (*ucontext).uc_mcontext.gregs[libc::REG_RSP as usize] as usize;
+        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+        return (*ucontext).uc_mcontext.sp as usize;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str;
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_backtrace_disabled() {
+        let mut buf = Vec::new();
+        unsafe {
+            emit_backtrace_by_frames(&mut buf, StacktraceCollection::Disabled, 0)
+                .expect("to work ;-)");
+        }
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(out.contains("BEGIN_STACKTRACE"));
+        assert!(out.contains("END_STACKTRACE"));
+        assert!(out.contains("\"ip\":"));
+        assert!(
+            !out.contains("\"column\":"),
+            "'column' key must not be emitted"
+        );
+        assert!(!out.contains("\"file\":"), "'file' key must not be emitted");
+        assert!(
+            !out.contains("\"function\":"),
+            "'function' key must not be emitted"
+        );
+        assert!(!out.contains("\"line\":"), "'line' key must not be emitted");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_backtrace_with_symbols() {
+        let dummy = 0u8;
+        // retrieve stack pointer for this function
+        let sp_of_test_fn = &dummy as *const u8 as usize;
+        let mut buf = Vec::new();
+        unsafe {
+            emit_backtrace_by_frames(
+                &mut buf,
+                StacktraceCollection::EnabledWithInprocessSymbols,
+                sp_of_test_fn,
+            )
+            .expect("to work ;-)");
+        }
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(out.contains("BEGIN_STACKTRACE"));
+        assert!(out.contains("END_STACKTRACE"));
+        // basic structure assertions
+        assert!(out.contains("\"column\":"), "'column' key missing");
+        assert!(out.contains("\"file\":"), "'file' key missing");
+        assert!(out.contains("\"function\":"), "'function' key missing");
+        assert!(out.contains("\"line\":"), "'line' key missing");
+        // filter assertions
+        assert!(
+            !out.contains("emitters::emit_backtrace_by_frames"),
+            "crashtracker itself must be filtered, found 'backtrace::backtrace::libunwind'"
+        );
+        assert!(
+            !out.contains("backtrace::backtrace"),
+            "crashtracker itself must be filtered away, found 'backtrace::backtrace'"
+        );
+    }
 }

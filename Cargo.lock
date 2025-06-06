@@ -537,7 +537,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "lazy_static",
  "lazycell",
  "log",
@@ -580,9 +580,9 @@ checksum = "a1d084b0137aaa901caf9f1e8b21daa6aa24d41cd806e111335541eff9683bd6"
 
 [[package]]
 name = "blazesym"
-version = "0.2.0-rc.2"
+version = "0.2.0-rc.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "deb42921128af76c2ced7c723edfb0411695a96d2bfcdda21c3a6543f98b715a"
+checksum = "86d5caf72227115ce486e764e9199d6eab3437c51dacd78c3fae78ca1340c27d"
 dependencies = [
  "cpp_demangle",
  "gimli",
@@ -590,17 +590,20 @@ dependencies = [
  "memmap2",
  "miniz_oxide",
  "rustc-demangle",
+ "tracing",
 ]
 
 [[package]]
 name = "blazesym-c"
-version = "0.1.0-rc.2"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c68a8b3d91dd30fdb7cba477e081fa4a043981ae812defd1957296804ad507ca"
+checksum = "573362c87f4ee3bf6c4801728533a625b409a59981f6a05005610c89f84a17ae"
 dependencies = [
  "blazesym",
  "libc",
  "memoffset",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -771,7 +774,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -780,7 +783,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1336,7 +1339,7 @@ checksum = "575f75dfd25738df5b91b8e43e14d44bda14637a58fae779fd2b064f8bf3e010"
 
 [[package]]
 name = "data-pipeline"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1354,7 +1357,6 @@ dependencies = [
  "httpmock",
  "hyper 1.6.0",
  "hyper-util",
- "log",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1364,12 +1366,13 @@ dependencies = [
  "tinybytes",
  "tokio",
  "tokio-util",
+ "tracing",
  "uuid",
 ]
 
 [[package]]
 name = "data-pipeline-ffi"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "build_common",
  "data-pipeline",
@@ -1382,7 +1385,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-alloc"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "allocator-api2",
  "bolero",
@@ -1392,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -1414,6 +1417,8 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "symbolic-common",
+ "symbolic-demangle",
  "tempfile",
  "tokio",
  "uuid",
@@ -1422,7 +1427,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker-ffi"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1431,7 +1436,6 @@ dependencies = [
  "ddcommon-ffi",
  "function_name",
  "libc",
- "log",
  "serde",
  "serde_json",
  "symbolic-common",
@@ -1442,19 +1446,11 @@ dependencies = [
 
 [[package]]
 name = "datadog-ddsketch"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "prost",
  "prost-build",
  "protoc-bin-vendored",
-]
-
-[[package]]
-name = "datadog-dynamic-configuration"
-version = "0.0.1"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -1500,9 +1496,13 @@ dependencies = [
 
 [[package]]
 name = "datadog-library-config"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
+ "memfd",
+ "rand 0.8.5",
+ "rmp",
+ "rmp-serde",
  "serde",
  "serde_yaml",
  "tempfile",
@@ -1510,7 +1510,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-library-config-ffi"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1558,8 +1558,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-log"
+version = "18.1.0"
+dependencies = [
+ "ddcommon-ffi",
+ "tempfile",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "datadog-log-ffi"
+version = "18.1.0"
+dependencies = [
+ "build_common",
+ "datadog-log",
+ "ddcommon-ffi",
+]
+
+[[package]]
 name = "datadog-profiling"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -1569,8 +1589,8 @@ dependencies = [
  "chrono",
  "criterion",
  "datadog-alloc",
+ "datadog-profiling-protobuf",
  "ddcommon",
- "derivative",
  "futures",
  "http 1.1.0",
  "http-body-util",
@@ -1590,13 +1610,14 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "build_common",
  "data-pipeline-ffi",
  "datadog-crashtracker-ffi",
  "datadog-library-config-ffi",
+ "datadog-log-ffi",
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
@@ -1612,12 +1633,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-profiling-protobuf"
+version = "18.1.0"
+dependencies = [
+ "bolero",
+ "datadog-profiling-protobuf",
+ "prost",
+]
+
+[[package]]
 name = "datadog-profiling-replayer"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "datadog-profiling",
+ "datadog-profiling-protobuf",
  "prost",
  "sysinfo",
 ]
@@ -1628,7 +1659,6 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "datadog-dynamic-configuration",
  "datadog-live-debugger",
  "datadog-trace-protobuf",
  "ddcommon",
@@ -1662,7 +1692,6 @@ dependencies = [
  "data-pipeline",
  "datadog-crashtracker",
  "datadog-crashtracker-ffi",
- "datadog-dynamic-configuration",
  "datadog-ipc",
  "datadog-ipc-macros",
  "datadog-live-debugger",
@@ -1737,7 +1766,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1748,7 +1777,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1766,7 +1795,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -1779,7 +1808,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1797,7 +1826,6 @@ dependencies = [
  "httpmock",
  "hyper 1.6.0",
  "hyper-http-proxy",
- "log",
  "prost",
  "rand 0.8.5",
  "rmp",
@@ -1809,13 +1837,14 @@ dependencies = [
  "testcontainers",
  "tinybytes",
  "tokio",
+ "tracing",
  "urlencoding",
  "zstd",
 ]
 
 [[package]]
 name = "datadog-tracer-flare"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "datadog-remote-config",
@@ -1826,7 +1855,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -1843,15 +1872,10 @@ dependencies = [
  "hyper-util",
  "indexmap 2.6.0",
  "libc",
- "log",
  "maplit",
- "memfd",
  "nix",
  "pin-project",
- "rand 0.8.5",
  "regex",
- "rmp",
- "rmp-serde",
  "rustls",
  "rustls-native-certs 0.8.1",
  "serde",
@@ -1864,7 +1888,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1878,7 +1902,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1902,7 +1926,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "build_common",
  "ddcommon",
@@ -1930,17 +1954,6 @@ checksum = "b42b6fa04a440b495c8b04d0e71b707c585f83cb9cb28cf8cd0d976c315e31b4"
 dependencies = [
  "powerfmt",
  "serde",
-]
-
-[[package]]
-name = "derivative"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcc3dd5e9e9c0b295d6e1e4d811fb6f157d5ffd784b8d202fc62eac8035a770b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -2025,7 +2038,7 @@ dependencies = [
 
 [[package]]
 name = "dogstatsd-client"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "anyhow",
  "cadence",
@@ -3278,7 +3291,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -4058,7 +4071,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
  "heck 0.5.0",
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "log",
  "multimap",
  "once_cell",
@@ -4078,7 +4091,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "syn 2.0.87",
@@ -5129,7 +5142,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5452,7 +5465,7 @@ dependencies = [
 
 [[package]]
 name = "tinybytes"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "once_cell",
  "pretty_assertions",
@@ -5667,7 +5680,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "18.0.0"
+version = "18.1.0"
 dependencies = [
  "regex",
 ]
@@ -5720,9 +5733,9 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
 name = "tracing"
-version = "0.1.40"
+version = "0.1.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3523ab5a71916ccf420eebdf5521fcef02141234bbc0b8a49f2fdc4544364ef"
+checksum = "784e0ac535deb450455cbfa28a6f0df145ea1bb7ae51b821cf5e7927fdcfbdd0"
 dependencies = [
  "log",
  "pin-project-lite",
@@ -5731,10 +5744,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-attributes"
-version = "0.1.27"
+name = "tracing-appender"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34704c8d6ebcbc939824180af020566b01a7c01f80641264eba0999f6c2b6be7"
+checksum = "3566e8ce28cc0a3fe42519fc80e6b4c943cc4c8cef275620eb8dac2d3d4e06cf"
+dependencies = [
+ "crossbeam-channel",
+ "thiserror",
+ "time",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "tracing-attributes"
+version = "0.1.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "395ae124c09f9e6918a2310af6038fba074bcf474ac352496d5910dd59a2226d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5743,9 +5768,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-core"
-version = "0.1.32"
+version = "0.1.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c06d3da6113f116aaee68e4d601191614c9053067f9ab7f6edbcb161237daa54"
+checksum = "e672c95779cf947c5311f83787af4fa8fffd12fb27e4993211a84bdfd9610f9c"
 dependencies = [
  "once_cell",
  "valuable",
@@ -5776,21 +5801,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-subscriber"
-version = "0.3.18"
+name = "tracing-serde"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad0f048c97dbd9faa9b7df56362b8ebcaa52adb06b498c050d2f4e32f90a7a8b"
+checksum = "704b1aeb7be0d0a84fc9828cae51dab5970fee5088f83d1dd7ee6f6246fc6ff1"
+dependencies = [
+ "serde",
+ "tracing-core",
+]
+
+[[package]]
+name = "tracing-subscriber"
+version = "0.3.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8189decb5ac0fa7bc8b96b7cb9b2701d60d48805aca84a238004d665fcc4008"
 dependencies = [
  "matchers",
  "nu-ansi-term",
  "once_cell",
  "regex",
+ "serde",
+ "serde_json",
  "sharded-slab",
  "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
  "tracing-log",
+ "tracing-serde",
 ]
 
 [[package]]

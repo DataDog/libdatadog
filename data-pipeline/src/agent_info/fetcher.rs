@@ -9,10 +9,10 @@ use arc_swap::ArcSwapOption;
 use ddcommon::{hyper_migration, worker::Worker, Endpoint};
 use http_body_util::BodyExt;
 use hyper::{self, body::Buf, header::HeaderName};
-use log::{error, info};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
+use tracing::{error, info};
 
 #[allow(clippy::declare_interior_mutable_const)]
 const DATADOG_AGENT_STATE: HeaderName = HeaderName::from_static("datadog-agent-state");
@@ -166,7 +166,7 @@ impl Worker for AgentInfoFetcher {
                     info!("Agent info is up-to-date")
                 }
                 Err(err) => {
-                    error!("Error while fetching /info: {}", err);
+                    error!(?err, "Error while fetching /info");
                 }
             }
             sleep(self.refresh_interval).await;

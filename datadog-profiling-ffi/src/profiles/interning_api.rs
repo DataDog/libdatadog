@@ -24,7 +24,8 @@ type CbindgenIsDumbStringId = GenerationalId<StringId>;
 
 #[no_mangle]
 #[used]
-pub static INTERNED_EMPTY_STRING: CbindgenIsDumbStringId = internal::Profile::INTERNED_EMPTY_STRING;
+pub static ddog_INTERNED_EMPTY_STRING: CbindgenIsDumbStringId =
+    internal::Profile::INTERNED_EMPTY_STRING;
 
 /// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.

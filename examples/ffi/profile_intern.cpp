@@ -90,9 +90,9 @@ int main(void) {
   auto root_file_name = extract_result(
       ddog_prof_Profile_intern_string(profile, to_slice_c_char("/srv/example/index.php")));
   auto root_mapping = extract_result(
-      ddog_prof_Profile_intern_mapping(profile, 0, 0, 0, root_file_name, INTERNED_EMPTY_STRING));
+      ddog_prof_Profile_intern_mapping(profile, 0, 0, 0, root_file_name, ddog_INTERNED_EMPTY_STRING));
   auto root_function = extract_result(ddog_prof_Profile_intern_function(
-      profile, root_function_name, INTERNED_EMPTY_STRING, root_file_name));
+      profile, root_function_name, ddog_INTERNED_EMPTY_STRING, root_file_name));
   auto root_location = extract_result(ddog_prof_Profile_intern_location_with_mapping_id(
       profile, root_mapping, root_function, 0, 0));
   ddog_prof_Slice_LocationId locations = {.ptr = &root_location, .len = 1};

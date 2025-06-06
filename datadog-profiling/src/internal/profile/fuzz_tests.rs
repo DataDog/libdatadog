@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use crate::pprof::test_utils::{self, string_table_fetch, string_table_fetch_owned};
 use bolero::generator::TypeGenerator;
 use core::cmp::Ordering;
 use core::hash::Hasher;
 use core::ops::Deref;
+use datadog_profiling_protobuf::prost_impls as pprof;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, TypeGenerator)]
 struct Function {
@@ -303,8 +305,11 @@ fn assert_sample_types_eq(
         .iter()
         .zip(expected_sample_types.iter())
     {
-        assert_eq!(*profile.string_table_fetch(typ.r#type), *expected_typ.r#typ);
-        assert_eq!(*profile.string_table_fetch(typ.unit), *expected_typ.unit);
+        assert_eq!(
+            *string_table_fetch(profile, typ.r#type),
+            *expected_typ.r#typ
+        );
+        assert_eq!(*string_table_fetch(profile, typ.unit), *expected_typ.unit);
     }
 }
 
@@ -351,16 +356,13 @@ fn assert_samples_eq(
                 mapping.memory_start,
                 mapping.memory_limit,
                 mapping.file_offset,
-                profile.string_table_fetch_owned(mapping.filename),
-                profile.string_table_fetch_owned(mapping.build_id),
+                string_table_fetch_owned(profile, mapping.filename),
+                string_table_fetch_owned(profile, mapping.build_id),
             );
             let owned_function = Function::new(
-                profile
-                    .string_table_fetch(function.name)
-                    .clone()
-                    .into_boxed_str(),
-                profile.string_table_fetch_owned(function.system_name),
-                profile.string_table_fetch_owned(function.filename),
+                string_table_fetch_owned(profile, function.name),
+                string_table_fetch_owned(profile, function.system_name),
+                string_table_fetch_owned(profile, function.filename),
             );
             let owned_location =
                 Location::new(owned_mapping, owned_function, location.address, line.line);
@@ -371,13 +373,13 @@ fn assert_samples_eq(
         // Recreate owned_labels from vector of pprof::Label
         let mut owned_labels = Vec::new();
         for label in sample.labels.iter() {
-            let key = profile.string_table_fetch_owned(label.key);
+            let key = string_table_fetch_owned(profile, label.key);
 
             if *key == *"end_timestamp_ns" {
                 // TODO: Check end timestamp label
                 continue;
             } else if *key == *"trace endpoint" {
-                let actual_str = profile.string_table_fetch(label.str);
+                let actual_str = string_table_fetch(profile, label.str);
                 let prev_label: &Label = owned_labels
                     .last()
                     .expect("Previous label to exist for endpoint label");
@@ -396,14 +398,14 @@ fn assert_samples_eq(
             }
 
             if label.str != 0 {
-                let str = Box::from(profile.string_table_fetch(label.str).as_str());
+                let str = Box::from(string_table_fetch(profile, label.str).as_str());
                 owned_labels.push(Label {
                     key,
                     value: LabelValue::Str(str),
                 });
             } else {
                 let num = label.num;
-                let num_unit = profile.string_table_fetch_owned(label.num_unit);
+                let num_unit = string_table_fetch_owned(profile, label.num_unit);
                 owned_labels.push(Label {
                     key,
                     value: LabelValue::Num { num, num_unit },
@@ -491,7 +493,7 @@ fn fuzz_failure_001() {
         &mut samples_without_timestamps,
     );
 
-    let profile = pprof::roundtrip_to_pprof(expected_profile).unwrap();
+    let profile = test_utils::roundtrip_to_pprof(expected_profile).unwrap();
     assert_sample_types_eq(&profile, expected_sample_types);
     assert_samples_eq(
         &original_samples,
@@ -535,7 +537,7 @@ fn test_fuzz_add_sample() {
                     &mut samples_without_timestamps,
                 );
             }
-            let profile = pprof::roundtrip_to_pprof(expected_profile).unwrap();
+            let profile = test_utils::roundtrip_to_pprof(expected_profile).unwrap();
             assert_sample_types_eq(&profile, expected_sample_types);
             assert_samples_eq(
                 &samples,
@@ -608,7 +610,7 @@ fn fuzz_add_sample_with_fixed_sample_length() {
                 );
             }
             let serialized_profile =
-                pprof::roundtrip_to_pprof(profile).expect("Failed to roundtrip to pprof");
+                test_utils::roundtrip_to_pprof(profile).expect("Failed to roundtrip to pprof");
 
             assert_sample_types_eq(&serialized_profile, sample_types);
             assert_samples_eq(
@@ -632,7 +634,7 @@ fn fuzz_add_endpoint() {
                     .add_endpoint(*local_root_span_id, endpoint.into())
                     .expect("add_endpoint to succeed");
             }
-            pprof::roundtrip_to_pprof(profile).expect("roundtrip_to_pprof to succeed");
+            test_utils::roundtrip_to_pprof(profile).expect("roundtrip_to_pprof to succeed");
         });
 }
 
@@ -647,7 +649,7 @@ fn fuzz_add_endpoint_count() {
                     .add_endpoint_count(endpoint.into(), *count)
                     .expect("add_endpoint_count to succeed");
             }
-            pprof::roundtrip_to_pprof(profile).expect("roundtrip_to_pprof to succeed");
+            test_utils::roundtrip_to_pprof(profile).expect("roundtrip_to_pprof to succeed");
         });
 }
 
@@ -733,7 +735,7 @@ fn fuzz_api_function_calls() {
                 }
             }
 
-            let pprof_profile = pprof::roundtrip_to_pprof(profile).unwrap();
+            let pprof_profile = test_utils::roundtrip_to_pprof(profile).unwrap();
             assert_sample_types_eq(&pprof_profile, sample_types);
             assert_samples_eq(
                 &original_samples,

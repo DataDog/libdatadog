@@ -11,15 +11,14 @@ use std::{
     time,
 };
 
+use crate::{span_concentrator::SpanConcentrator, trace_exporter::TracerMetadata};
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
 use ddcommon::{worker::Worker, Endpoint};
 use hyper;
-use log::error;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
-
-use crate::{span_concentrator::SpanConcentrator, trace_exporter::TracerMetadata};
+use tracing::error;
 
 const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
 
@@ -101,7 +100,7 @@ impl StatsExporter {
         match result {
             Ok(_) => Ok(()),
             Err(err) => {
-                error!("Error with the StateExporter when sending: {err}");
+                error!(?err, "Error with the StateExporter when sending stats");
                 anyhow::bail!("Failed to send stats: {err}");
             }
         }

@@ -105,6 +105,13 @@ async fn receiver_entry_point(
                 .log_messages
                 .push(format!("Error resolving frames: {e}"));
         }
+        if config.demangle_names() {
+            if let Err(e) = crash_info.demangle_names() {
+                crash_info
+                    .log_messages
+                    .push(format!("Error demangling names: {e}"));
+            }
+        }
         crash_info
             .async_upload_to_endpoint(config.endpoint())
             .await?;

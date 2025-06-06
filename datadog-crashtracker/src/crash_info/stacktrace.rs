@@ -5,11 +5,13 @@
 use blazesym::{
     helper::ElfResolver,
     normalize::Normalizer,
-    symbolize::{Input, Source, Symbolized, Symbolizer, TranslateFileOffset},
+    symbolize::{source::Source, Input, Symbolized, Symbolizer, TranslateFileOffset},
     Pid,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use symbolic_common::Name;
+use symbolic_demangle::{Demangle, DemangleOptions};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StackTrace {
@@ -67,6 +69,18 @@ impl StackTrace {
         );
         self.frames.push(frame);
         self.incomplete = incomplete;
+        Ok(())
+    }
+
+    pub fn demangle_names(&mut self) -> anyhow::Result<()> {
+        let mut errors = 0;
+        for frame in &mut self.frames {
+            frame.demangle_name().unwrap_or_else(|e| {
+                frame.comments.push(e.to_string());
+                errors += 1;
+            });
+        }
+        anyhow::ensure!(errors == 0);
         Ok(())
     }
 }
@@ -137,6 +151,8 @@ pub struct StackFrame {
     pub function: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mangled_name: Option<String>,
 
     // Additional Info
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -191,6 +207,23 @@ impl StackFrame {
                 }
                 Symbolized::Unknown(reason) => {
                     anyhow::bail!("Couldn't symbolize {ip}: {reason}");
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl StackFrame {
+    pub fn demangle_name(&mut self) -> anyhow::Result<()> {
+        if let Some(name) = self.function.take() {
+            match Name::from(&name).demangle(DemangleOptions::name_only()) {
+                Some(demangled) if demangled != name => {
+                    self.mangled_name = Some(name);
+                    self.function = Some(demangled.to_string());
+                }
+                _ => {
+                    self.function = Some(name);
                 }
             }
         }
@@ -253,6 +286,7 @@ impl super::test_utils::TestInstance for StackFrame {
         let column = Some(2 * seed as u32);
         let file = Some(format!("banana{seed}.rs"));
         let function = Some(format!("Bar::baz{seed}"));
+        let mangled_name = Some(format!("_ZN3Bar3baz{seed}E"));
         let line = Some((2 * seed + 1) as u32);
 
         let comments = vec![format!("This is a comment on frame {seed}")];
@@ -269,8 +303,70 @@ impl super::test_utils::TestInstance for StackFrame {
             column,
             file,
             function,
+            mangled_name,
             line,
             comments,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_demangle_rust() {
+        let mut frame = StackFrame::new();
+        frame.function = Some("_ZN3std2rt10lang_start17h7a87e81ecc4a9d6cE".to_string());
+        frame.demangle_name().unwrap();
+        assert_eq!(frame.function, Some("std::rt::lang_start".to_string()));
+        assert_eq!(
+            frame.mangled_name,
+            Some("_ZN3std2rt10lang_start17h7a87e81ecc4a9d6cE".to_string())
+        );
+    }
+
+    #[test]
+    fn test_demangle_cpp() {
+        let mut frame = StackFrame::new();
+        frame.function = Some("_ZN3Foo3barEv".to_string());
+        frame.demangle_name().unwrap();
+        assert_eq!(frame.function, Some("Foo::bar".to_string()));
+        assert_eq!(frame.mangled_name, Some("_ZN3Foo3barEv".to_string()));
+    }
+
+    #[test]
+    fn test_demangle_msvc() {
+        let mut frame = StackFrame::new();
+        frame.function = Some("?bar@Foo@@QEAAXXZ".to_string());
+        frame.demangle_name().unwrap();
+        assert_eq!(frame.function, Some("Foo::bar".to_string()));
+        assert_eq!(frame.mangled_name, Some("?bar@Foo@@QEAAXXZ".to_string()));
+    }
+
+    #[test]
+    fn test_demangle_unmangled() {
+        let mut frame = StackFrame::new();
+        frame.function = Some("main".to_string());
+        frame.demangle_name().unwrap();
+        assert_eq!(frame.function, Some("main".to_string()));
+        assert_eq!(frame.mangled_name, None);
+    }
+
+    #[test]
+    fn test_demangle_empty() {
+        let mut frame = StackFrame::new();
+        frame.demangle_name().unwrap();
+        assert_eq!(frame.function, None);
+        assert_eq!(frame.mangled_name, None);
+    }
+
+    #[test]
+    fn test_demangle_invalid() {
+        let mut frame = StackFrame::new();
+        frame.function = Some("invalid_mangled_name".to_string());
+        frame.demangle_name().unwrap();
+        assert_eq!(frame.function, Some("invalid_mangled_name".to_string()));
+        assert_eq!(frame.mangled_name, None);
     }
 }

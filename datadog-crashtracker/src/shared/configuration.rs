@@ -15,6 +15,10 @@ pub enum StacktraceCollection {
     /// Stacktrace collection occurs in the
     Disabled,
     WithoutSymbols,
+    /// This option uses `backtrace::resolve_frame_unsynchronized()` to gather symbol information
+    /// and also unwind inlined functions. Enabling this feature will not only provide symbolic
+    /// details, but may also yield additional or less stack frames compared to other
+    /// configurations.
     EnabledWithInprocessSymbols,
     EnabledWithSymbolsInReceiver,
 }
@@ -24,12 +28,14 @@ pub struct CrashtrackerConfiguration {
     // Paths to any additional files to track, if any
     additional_files: Vec<String>,
     create_alt_stack: bool,
-    use_alt_stack: bool,
+    // Whether to demangle symbol names in stack traces
+    demangle_names: bool,
     endpoint: Option<Endpoint>,
     resolve_frames: StacktraceCollection,
     signals: Vec<i32>,
     timeout_ms: u32,
     unix_socket_path: Option<String>,
+    use_alt_stack: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -77,6 +83,7 @@ impl CrashtrackerConfiguration {
         mut signals: Vec<i32>,
         timeout_ms: u32,
         unix_socket_path: Option<String>,
+        demangle_names: bool,
     ) -> anyhow::Result<Self> {
         // Requesting to create, but not use, the altstack is considered paradoxical.
         anyhow::ensure!(
@@ -118,6 +125,7 @@ impl CrashtrackerConfiguration {
             signals,
             timeout_ms,
             unix_socket_path,
+            demangle_names,
         })
     }
 
@@ -151,6 +159,10 @@ impl CrashtrackerConfiguration {
 
     pub fn unix_socket_path(&self) -> &Option<String> {
         &self.unix_socket_path
+    }
+
+    pub fn demangle_names(&self) -> bool {
+        self.demangle_names
     }
 
     pub fn set_create_alt_stack(&mut self, create_alt_stack: bool) -> anyhow::Result<()> {

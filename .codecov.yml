@@ -1,6 +1,6 @@
 comment:
   layout: "condensed_header, diff, flags, components"
-  
+
 component_management:
   individual_components:
     - component_id: crashtracker  # this is an identifier that should not be changed
@@ -87,3 +87,7 @@ component_management:
       name: datadog-trace-utils  # this is a display name, and can be changed freely
       paths:
         - datadog-trace-utils
+    - component_id: datadog-log
+      name: datadog-log
+      paths:
+        - datadog-log

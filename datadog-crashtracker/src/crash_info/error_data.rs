@@ -45,10 +45,10 @@ impl ErrorData {
 
     pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {
         let mut errors = 0;
-        let mut process = blazesym::symbolize::Process::new(pid.into());
+        let mut process = blazesym::symbolize::source::Process::new(pid.into());
         // https://github.com/libbpf/blazesym/issues/518
         process.map_files = false;
-        let src = blazesym::symbolize::Source::Process(process);
+        let src = blazesym::symbolize::source::Source::Process(process);
         let symbolizer = blazesym::symbolize::Symbolizer::new();
         self.stack
             .resolve_names(&src, &symbolizer)
@@ -63,6 +63,24 @@ impl ErrorData {
         anyhow::ensure!(
             errors == 0,
             "Failed to resolve names, see frame comments for details"
+        );
+        Ok(())
+    }
+}
+
+impl ErrorData {
+    pub fn demangle_names(&mut self) -> anyhow::Result<()> {
+        let mut errors = 0;
+        self.stack.demangle_names().unwrap_or_else(|_| errors += 1);
+        for thread in &mut self.threads {
+            thread
+                .stack
+                .demangle_names()
+                .unwrap_or_else(|_| errors += 1);
+        }
+        anyhow::ensure!(
+            errors == 0,
+            "Failed to demangle names, see frame comments for details"
         );
         Ok(())
     }
