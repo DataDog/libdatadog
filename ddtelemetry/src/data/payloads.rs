@@ -83,6 +83,8 @@ pub struct Log {
     pub tags: String,
     #[serde(default)]
     pub is_sensitive: bool,
+    #[serde(default)]
+    pub is_crash: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]

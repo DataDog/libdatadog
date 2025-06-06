@@ -883,6 +883,7 @@ impl TelemetryWorkerHandle {
                 count: 1,
                 tags: String::new(),
                 is_sensitive: false,
+                is_crash: false,
             },
         )))?;
         Ok(())
