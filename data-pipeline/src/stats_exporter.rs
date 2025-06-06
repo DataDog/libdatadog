@@ -13,7 +13,7 @@ use std::{
 
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
-use ddcommon::Endpoint;
+use ddcommon::{worker::Worker, Endpoint};
 use hyper;
 use log::error;
 use tokio::select;
@@ -128,13 +128,15 @@ impl StatsExporter {
                 .flush(time::SystemTime::now(), force_flush),
         )
     }
+}
 
+impl Worker for StatsExporter {
     /// Run loop of the stats exporter
     ///
     /// Once started, the stats exporter will flush and send stats on every `self.flush_interval`.
     /// If the `self.cancellation_token` is cancelled, the exporter will force flush all stats and
     /// return.
-    pub async fn run(&self) {
+    async fn run(&mut self) {
         loop {
             select! {
                 _ = self.cancellation_token.cancelled() => {
@@ -316,7 +318,7 @@ mod tests {
             })
             .await;
 
-        let stats_exporter = StatsExporter::new(
+        let mut stats_exporter = StatsExporter::new(
             BUCKETS_DURATION,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),
@@ -356,7 +358,7 @@ mod tests {
         let buckets_duration = Duration::from_secs(10);
         let cancellation_token = CancellationToken::new();
 
-        let stats_exporter = StatsExporter::new(
+        let mut stats_exporter = StatsExporter::new(
             buckets_duration,
             Arc::new(Mutex::new(get_test_concentrator())),
             get_test_metadata(),

@@ -395,7 +395,9 @@ impl TraceExporter {
             );
             let mut stats_worker = PausableWorker::new(stats_exporter);
             let runtime = self.runtime()?;
-            stats_worker.start(&runtime)?;
+            stats_worker.start(&runtime).map_err(|e| {
+                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
+            })?;
 
             self.workers.lock_or_panic().stats = Some(stats_worker);
 

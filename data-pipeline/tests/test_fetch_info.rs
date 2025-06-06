@@ -6,7 +6,7 @@ mod tracing_integration_tests {
     use arc_swap::access::Access;
     use data_pipeline::agent_info::{fetch_info, AgentInfoFetcher};
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
-    use ddcommon::Endpoint;
+    use ddcommon::{worker::Worker, Endpoint};
     use std::time::Duration;
 
     #[cfg_attr(miri, ignore)]
@@ -30,7 +30,7 @@ mod tracing_integration_tests {
     async fn test_agent_info_fetcher_with_test_agent() {
         let test_agent = DatadogTestAgent::new(None, None, &[]).await;
         let endpoint = Endpoint::from_url(test_agent.get_uri_for_endpoint("info", None).await);
-        let fetcher = AgentInfoFetcher::new(endpoint, Duration::from_secs(1));
+        let mut fetcher = AgentInfoFetcher::new(endpoint, Duration::from_secs(1));
         let info_arc = fetcher.get_info();
         tokio::spawn(async move { fetcher.run().await });
         let info_received = async {

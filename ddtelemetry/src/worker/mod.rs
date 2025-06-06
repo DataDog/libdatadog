@@ -11,7 +11,7 @@ use crate::{
     metrics::{ContextKey, MetricBuckets, MetricContexts},
 };
 use ddcommon::Endpoint;
-use ddcommon::{hyper_migration, tag::Tag};
+use ddcommon::{hyper_migration, tag::Tag, worker::Worker};
 
 use std::fmt::Debug;
 use std::iter::Sum;
@@ -130,42 +130,46 @@ pub struct TelemetryWorker {
 }
 impl Debug for TelemetryWorker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        #[allow(dead_code)]
-        #[derive(Debug)]
-        struct TelemetryWorker<'a> {
-            flavor: &'a TelemetryWorkerFlavor,
-            config: &'a Config,
-            mailbox: &'a mpsc::Receiver<TelemetryActions>,
-            cancellation_token: &'a CancellationToken,
-            seq_id: &'a AtomicU64,
-            runtime_id: &'a String,
-            deadlines: &'a scheduler::Scheduler<LifecycleAction>,
-            data: &'a TelemetryWorkerData,
+        f.debug_struct("TelemetryWorker")
+            .field("flavor", &self.flavor)
+            .field("config", &self.config)
+            .field("mailbox", &self.mailbox)
+            .field("cancellation_token", &self.cancellation_token)
+            .field("seq_id", &self.seq_id)
+            .field("runtime_id", &self.runtime_id)
+            .field("deadlines", &self.deadlines)
+            .field("data", &self.data)
+            .finish()
+    }
+}
+
+impl Worker for TelemetryWorker {
+    // Runs a state machine that waits for actions, either from the worker's
+    // mailbox, or scheduled actions from the worker's deadline object.
+    async fn run(&mut self) {
+        loop {
+            if self.cancellation_token.is_cancelled() {
+                return;
+            }
+
+            let action = self.recv_next_action().await;
+
+            let action_result = match self.flavor {
+                TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
+                TelemetryWorkerFlavor::MetricsLogs => {
+                    self.dispatch_metrics_logs_action(action).await
+                }
+            };
+
+            match action_result {
+                ControlFlow::Continue(()) => {}
+                ControlFlow::Break(()) => {
+                    if !self.config.restartable {
+                        break;
+                    }
+                }
+            };
         }
-        let Self {
-            flavor,
-            config,
-            mailbox,
-            cancellation_token,
-            seq_id,
-            runtime_id,
-            client: _,
-            deadlines,
-            data,
-        } = self;
-        Debug::fmt(
-            &TelemetryWorker {
-                flavor,
-                config,
-                mailbox,
-                cancellation_token,
-                seq_id,
-                runtime_id,
-                deadlines,
-                data,
-            },
-            f,
-        )
     }
 }
 
@@ -336,34 +340,6 @@ impl TelemetryWorker {
             }
         };
         CONTINUE
-    }
-
-    // Runs a state machine that waits for actions, either from the worker's
-    // mailbox, or scheduled actions from the worker's deadline object.
-    pub async fn run(&mut self) {
-        loop {
-            if self.cancellation_token.is_cancelled() {
-                return;
-            }
-
-            let action = self.recv_next_action().await;
-
-            let action_result = match self.flavor {
-                TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
-                TelemetryWorkerFlavor::MetricsLogs => {
-                    self.dispatch_metrics_logs_action(action).await
-                }
-            };
-
-            match action_result {
-                ControlFlow::Continue(()) => {}
-                ControlFlow::Break(()) => {
-                    if !self.config.restartable {
-                        break;
-                    }
-                }
-            };
-        }
     }
 
     async fn dispatch_action(&mut self, action: TelemetryActions) -> ControlFlow<()> {

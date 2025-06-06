@@ -6,8 +6,7 @@
 use super::{schema::AgentInfo, AgentInfoArc};
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwapOption;
-use ddcommon::hyper_migration;
-use ddcommon::Endpoint;
+use ddcommon::{hyper_migration, worker::Worker, Endpoint};
 use http_body_util::BodyExt;
 use hyper::{self, body::Buf, header::HeaderName};
 use log::{error, info};
@@ -140,11 +139,20 @@ impl AgentInfoFetcher {
         }
     }
 
+    /// Return an AgentInfoArc storing the info received by the agent.
+    ///
+    /// When the fetcher is running it updates the AgentInfoArc when the agent's info changes.
+    pub fn get_info(&self) -> AgentInfoArc {
+        self.info.clone()
+    }
+}
+
+impl Worker for AgentInfoFetcher {
     /// Start fetching the info endpoint with the given interval.
     ///
     /// # Warning
     /// This method does not return and should be called within a dedicated task.
-    pub async fn run(&self) {
+    async fn run(&mut self) {
         loop {
             let current_info = self.info.load();
             let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
@@ -163,13 +171,6 @@ impl AgentInfoFetcher {
             }
             sleep(self.refresh_interval).await;
         }
-    }
-
-    /// Return an AgentInfoArc storing the info received by the agent.
-    ///
-    /// When the fetcher is running it updates the AgentInfoArc when the agent's info changes.
-    pub fn get_info(&self) -> AgentInfoArc {
-        self.info.clone()
     }
 }
 
@@ -329,7 +330,7 @@ mod tests {
             })
             .await;
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
-        let fetcher = AgentInfoFetcher::new(endpoint.clone(), Duration::from_millis(100));
+        let mut fetcher = AgentInfoFetcher::new(endpoint.clone(), Duration::from_millis(100));
         let info = fetcher.get_info();
         assert!(info.load().is_none());
         tokio::spawn(async move {

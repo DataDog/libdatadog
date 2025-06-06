@@ -266,7 +266,7 @@ impl TelemetryClient {
 
 #[cfg(test)]
 mod tests {
-    use ddcommon::hyper_migration;
+    use ddcommon::{hyper_migration, worker::Worker};
     use httpmock::Method::POST;
     use httpmock::MockServer;
     use hyper::{Response, StatusCode};

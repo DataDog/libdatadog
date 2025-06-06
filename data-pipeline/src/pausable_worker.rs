@@ -2,42 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Defines a pausable worker to be able to stop background processes before forks
-use anyhow::{anyhow, Result};
-use ddtelemetry::worker::TelemetryWorker;
-use tokio::{runtime::Runtime, select, task::JoinHandle};
+
+use ddcommon::worker::Worker;
+use std::fmt::Display;
+use tokio::{
+    runtime::Runtime,
+    select,
+    task::{JoinError, JoinHandle},
+};
 use tokio_util::sync::CancellationToken;
 
-use crate::{agent_info::AgentInfoFetcher, stats_exporter::StatsExporter};
-
-/// Trait representing a worker which can be wrapped by `PausableWorker`
-pub trait Worker {
-    /// Main worker loop
-    fn run(&mut self) -> impl std::future::Future<Output = ()> + Send;
-}
-
-impl Worker for StatsExporter {
-    async fn run(&mut self) {
-        Self::run(self).await
-    }
-}
-
-impl Worker for AgentInfoFetcher {
-    async fn run(&mut self) {
-        Self::run(self).await
-    }
-}
-
-impl Worker for TelemetryWorker {
-    async fn run(&mut self) {
-        Self::run(self).await
-    }
-}
-
-/// A pausable worker which can be paused and restarded on forks.
+/// A pausable worker which can be paused and restarted on forks.
 ///
-/// # Requirements
-/// When paused the worker will exit on the next awaited call. To be able to safely restart the
-/// worker must be in a valid state on every call to `.await`.
+/// Used to allow a [`ddcommon::worker::Worker`] to be paused while saving its state when dropping
+/// a tokio runtime to be able to restart with the same state on a new runtime. This is used to
+/// stop all threads before a fork to avoid deadlocks in child.
+///
+/// # Time-to-pause
+/// This loop should yield regularly to reduce time-to-pause. See [`tokio::task::yield_now`].
+///
+/// # Cancellation safety
+/// The main loop can be interrupted at any yield point (`.await`ed call). The state of the worker
+/// at this point will be saved and used to restart the worker. To be able to safely restart, the
+/// worker must be in a valid state on every call to `.await`. See [`tokio::select#cancellation-safety`] for more details.
 #[derive(Debug)]
 pub enum PausableWorker<T: Worker + Send + Sync + 'static> {
     Running {
@@ -50,6 +37,25 @@ pub enum PausableWorker<T: Worker + Send + Sync + 'static> {
     InvalidState,
 }
 
+#[derive(Debug)]
+pub enum PausableWorkerError {
+    InvalidState,
+    TaskAborted,
+}
+
+impl Display for PausableWorkerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PausableWorkerError::InvalidState => {
+                write!(f, "Worker is in an invalid state and must be recreated.")
+            }
+            PausableWorkerError::TaskAborted => {
+                write!(f, "Worker task has been aborted and state has been lost.")
+            }
+        }
+    }
+}
+
 impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     /// Create a new pausable worker from the given worker.
     pub fn new(worker: T) -> Self {
@@ -58,13 +64,15 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
 
     /// Start the worker on the given runtime.
     ///
+    /// The worker's main loop will be run on the runtime.
+    ///
     /// # Errors
     /// Fails if the worker is in an invalid state.
-    pub fn start(&mut self, rt: &Runtime) -> Result<()> {
+    pub fn start(&mut self, rt: &Runtime) -> Result<(), PausableWorkerError> {
         if let Self::Running { .. } = self {
             Ok(())
         } else if let Self::Paused { mut worker } = std::mem::replace(self, Self::InvalidState) {
-            // Worker is temporarly in an invalid state, but since this block is failsafe it will
+            // Worker is temporarily in an invalid state, but since this block is failsafe it will
             // be replaced by a valid state.
             let stop_token = CancellationToken::new();
             let cloned_token = stop_token.clone();
@@ -78,7 +86,7 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
             *self = PausableWorker::Running { handle, stop_token };
             Ok(())
         } else {
-            Err(anyhow!("Failed to start service"))
+            Err(PausableWorkerError::InvalidState)
         }
     }
 
@@ -86,7 +94,7 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     ///
     /// # Errors
     /// Fails if the worker handle has been aborted preventing the worker from being retrieved.
-    pub async fn pause(&mut self) -> Result<()> {
+    pub async fn pause(&mut self) -> Result<(), PausableWorkerError> {
         match self {
             PausableWorker::Running { handle, stop_token } => {
                 stop_token.cancel();
@@ -94,18 +102,18 @@ impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
                     *self = PausableWorker::Paused { worker };
                     Ok(())
                 } else {
-                    // Worker isn't retrieved and can't be restarted.
+                    // The task has been aborted and the worker can't be retrieved.
                     *self = PausableWorker::InvalidState;
-                    Err(anyhow!("Failed to stop worker. Worker must be recreated"))
+                    Err(PausableWorkerError::TaskAborted)
                 }
             }
             PausableWorker::Paused { .. } => Ok(()),
-            PausableWorker::InvalidState => Err(anyhow!("Worker is in invalid state")),
+            PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
         }
     }
 
     /// Wait for the run method of the worker to exit.
-    pub async fn join(self) -> Result<()> {
+    pub async fn join(self) -> Result<(), JoinError> {
         if let PausableWorker::Running { handle, .. } = self {
             handle.await?;
         }
