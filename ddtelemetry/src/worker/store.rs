@@ -10,6 +10,7 @@ mod queuehashmap {
         hash::{BuildHasher, Hash},
     };
 
+    #[derive(Debug)]
     pub struct QueueHashMap<K, V> {
         table: HashTable<usize>,
         hash_builder: DefaultHashBuilder,
@@ -135,7 +136,7 @@ mod queuehashmap {
 
 pub use queuehashmap::QueueHashMap;
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 /// Stores telemetry data item, like dependencies and integrations
 ///
 /// * Bounds the length of the collection it uses to prevent memory leaks

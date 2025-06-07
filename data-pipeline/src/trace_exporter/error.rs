@@ -50,6 +50,25 @@ impl Display for BuilderErrorKind {
         }
     }
 }
+
+/// Represents different kinds of internal errors.
+#[derive(Debug, PartialEq)]
+pub enum InternalErrorKind {
+    /// Indicates that some background workers are in an invalid state. The associated `String`
+    /// contains the error message.
+    InvalidWorkerState(String),
+}
+
+impl Display for InternalErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InternalErrorKind::InvalidWorkerState(msg) => {
+                write!(f, "Invalid worker state: {}", msg)
+            }
+        }
+    }
+}
+
 /// Represents different kinds of network errors.
 #[derive(Copy, Clone, Debug)]
 pub enum NetworkErrorKind {
@@ -147,6 +166,8 @@ pub enum TraceExporterError {
     Agent(AgentErrorKind),
     /// Invalid builder input.
     Builder(BuilderErrorKind),
+    /// Error internal to the trace exporter.
+    Internal(InternalErrorKind),
     /// Error in deserialization of incoming trace payload.
     Deserialization(DecodeError),
     /// Generic IO error.
@@ -272,6 +293,7 @@ impl Display for TraceExporterError {
         match self {
             TraceExporterError::Agent(e) => std::fmt::Display::fmt(e, f),
             TraceExporterError::Builder(e) => std::fmt::Display::fmt(e, f),
+            TraceExporterError::Internal(e) => std::fmt::Display::fmt(e, f),
             TraceExporterError::Deserialization(e) => std::fmt::Display::fmt(e, f),
             TraceExporterError::Io(e) => std::fmt::Display::fmt(e, f),
             TraceExporterError::Network(e) => std::fmt::Display::fmt(e, f),
