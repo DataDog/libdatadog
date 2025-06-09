@@ -368,21 +368,16 @@ pub mod tests {
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::Target;
     use futures::future::join_all;
-    use std::sync::{Arc, OnceLock};
+    use std::sync::{Arc, LazyLock};
 
-    // TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
-    static OTHER_TARGET: OnceLock<Arc<Target>> = OnceLock::new();
-
-    pub(crate) fn get_other_target() -> &'static Arc<Target> {
-        OTHER_TARGET.get_or_init(|| {
-            Arc::new(Target {
-                service: "other".to_string(),
-                env: "env".to_string(),
-                app_version: "7.8.9".to_string(),
-                tags: vec![],
-            })
+    pub(crate) static OTHER_TARGET: LazyLock<Arc<Target>> = LazyLock::new(|| {
+        Arc::new(Target {
+            service: "other".to_string(),
+            env: "env".to_string(),
+            app_version: "7.8.9".to_string(),
+            tags: vec![],
         })
-    }
+    });
 
     pub struct RcPathStore {
         pub store: Arc<PathStore>,
@@ -434,12 +429,12 @@ pub mod tests {
         );
 
         server.files.lock().unwrap().insert(
-            get_path_first().clone(),
-            (vec![get_dummy_target().clone()], 1, "v1".to_string()),
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
         );
 
         let fetcher = SharedFetcher::new(
-            get_dummy_target().clone(),
+            DUMMY_TARGET.clone(),
             "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
         );
         let iteration = AtomicU32::new(0);
@@ -455,14 +450,14 @@ pub mod tests {
                             assert_eq!(fetched[0].store.data.lock().unwrap().contents, "v1");
 
                             server.files.lock().unwrap().insert(
-                                get_path_second().clone(),
-                                (vec![get_dummy_target().clone()], 1, "X".to_string()),
+                                PATH_SECOND.clone(),
+                                (vec![DUMMY_TARGET.clone()], 1, "X".to_string()),
                             );
                         }
                         1 => {
                             assert_eq!(fetched.len(), 2);
 
-                            server.files.lock().unwrap().remove(get_path_second());
+                            server.files.lock().unwrap().remove(&*PATH_SECOND);
                         }
                         2 => {
                             assert_eq!(fetched.len(), 1);
@@ -495,16 +490,16 @@ pub mod tests {
         );
 
         server.files.lock().unwrap().insert(
-            get_path_first().clone(),
+            PATH_FIRST.clone(),
             (
-                vec![get_dummy_target().clone(), get_other_target().clone()],
+                vec![DUMMY_TARGET.clone(), OTHER_TARGET.clone()],
                 1,
                 "v1".to_string(),
             ),
         );
         server.files.lock().unwrap().insert(
-            get_path_second().clone(),
-            (vec![get_dummy_target().clone()], 1, "X".to_string()),
+            PATH_SECOND.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "X".to_string()),
         );
 
         let server_1 = server.clone();
@@ -512,13 +507,13 @@ pub mod tests {
         let server_first_1 = move || {
             assert_eq!(server_1_storage.0.files.lock().unwrap().len(), 2);
             server_1.files.lock().unwrap().insert(
-                get_path_first().clone(),
-                (vec![get_other_target().clone()], 1, "v1".to_string()),
+                PATH_FIRST.clone(),
+                (vec![OTHER_TARGET.clone()], 1, "v1".to_string()),
             );
             server_1.files.lock().unwrap().insert(
-                get_path_second().clone(),
+                PATH_SECOND.clone(),
                 (
-                    vec![get_dummy_target().clone(), get_other_target().clone()],
+                    vec![DUMMY_TARGET.clone(), OTHER_TARGET.clone()],
                     1,
                     "X".to_string(),
                 ),
@@ -531,10 +526,10 @@ pub mod tests {
         let server_second_1 = move || {
             assert_eq!(server_2_storage.0.files.lock().unwrap().len(), 2);
             server_2.files.lock().unwrap().insert(
-                get_path_first().clone(),
-                (vec![get_dummy_target().clone()], 2, "v2".to_string()),
+                PATH_FIRST.clone(),
+                (vec![DUMMY_TARGET.clone()], 2, "v2".to_string()),
             );
-            server_2.files.lock().unwrap().remove(get_path_second());
+            server_2.files.lock().unwrap().remove(&*PATH_SECOND);
         };
         let server_second_2 = server_second_1.clone();
 
@@ -563,11 +558,11 @@ pub mod tests {
         let server_third_2 = server_third_1.clone();
 
         let fetcher_1 = SharedFetcher::new(
-            get_dummy_target().clone(),
+            DUMMY_TARGET.clone(),
             "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
         );
         let fetcher_2 = SharedFetcher::new(
-            get_other_target().clone(),
+            OTHER_TARGET.clone(),
             "ae588386-8464-43ba-bd3a-3e2d36b2c22c".to_string(),
         );
         let iteration = Arc::new(AtomicU32::new(0));
