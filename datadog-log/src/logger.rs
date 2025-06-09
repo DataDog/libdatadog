@@ -3,8 +3,7 @@
 
 use crate::writers::{FileWriter, StdWriter};
 use ddcommon_ffi::Error;
-use std::sync::Mutex;
-use std::sync::OnceLock;
+use std::sync::{LazyLock, Mutex};
 use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::{Layered, SubscriberExt};
@@ -253,14 +252,14 @@ impl From<LogEventLevel> for LevelFilter {
     }
 }
 
-static LOGGER: OnceLock<Mutex<Option<Logger>>> = OnceLock::new();
+static LOGGER: LazyLock<Mutex<Option<Logger>>> = LazyLock::new(|| Mutex::new(None));
 
 /// Configures the global logger to write to a file in JSON format.
 ///
 /// # Arguments
 /// * `file_config` - Configuration specifying the file path
 pub fn logger_configure_file(file_config: FileConfig) -> Result<(), Error> {
-    let logger_mutex = LOGGER.get_or_init(|| Mutex::new(None));
+    let logger_mutex = &LOGGER;
     let mut logger_guard = logger_mutex
         .lock()
         .map_err(|e| Error::from(format!("Failed to acquire logger lock: {}", e)))?;
@@ -279,7 +278,7 @@ pub fn logger_configure_file(file_config: FileConfig) -> Result<(), Error> {
 ///
 /// Removes file logging configuration while keeping other outputs (like std streams) active.
 pub fn logger_disable_file() -> Result<(), Error> {
-    let logger_mutex = LOGGER.get_or_init(|| Mutex::new(None));
+    let logger_mutex = &LOGGER;
     let mut logger_guard = logger_mutex
         .lock()
         .map_err(|e| Error::from(format!("Failed to acquire logger lock: {}", e)))?;
@@ -296,7 +295,7 @@ pub fn logger_disable_file() -> Result<(), Error> {
 /// # Arguments
 /// * `std_config` - Configuration specifying stdout or stderr
 pub fn logger_configure_std(std_config: StdConfig) -> Result<(), Error> {
-    let logger_mutex = LOGGER.get_or_init(|| Mutex::new(None));
+    let logger_mutex = &LOGGER;
     let mut logger_guard = logger_mutex
         .lock()
         .map_err(|e| Error::from(format!("Failed to acquire logger lock: {}", e)))?;
@@ -315,7 +314,7 @@ pub fn logger_configure_std(std_config: StdConfig) -> Result<(), Error> {
 ///
 /// Removes std stream logging configuration while keeping other outputs (like file) active.
 pub fn logger_disable_std() -> Result<(), Error> {
-    let logger_mutex = LOGGER.get_or_init(|| Mutex::new(None));
+    let logger_mutex = &LOGGER;
     let mut logger_guard = logger_mutex
         .lock()
         .map_err(|e| Error::from(format!("Failed to acquire logger lock: {}", e)))?;
@@ -332,7 +331,7 @@ pub fn logger_disable_std() -> Result<(), Error> {
 /// # Arguments
 /// * `log_level` - Minimum level (Trace, Debug, Info, Warn, Error)
 pub fn logger_set_log_level(log_level: LogEventLevel) -> Result<(), Error> {
-    let logger_mutex = LOGGER.get_or_init(|| Mutex::new(None));
+    let logger_mutex = &LOGGER;
     let logger_guard = logger_mutex
         .lock()
         .map_err(|e| Error::from(format!("Failed to acquire logger lock: {}", e)))?;
