@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use regex::Regex;
-use std::{borrow::Cow, collections::HashSet, net::Ipv6Addr, sync::OnceLock};
+use std::{borrow::Cow, collections::HashSet, net::Ipv6Addr, sync::LazyLock};
 
 const ALLOWED_IP_ADDRESSES: [&str; 4] = [
     // localhost
@@ -13,8 +13,11 @@ const ALLOWED_IP_ADDRESSES: [&str; 4] = [
     "fd00:ec2::254",
 ];
 
-const PREFIX_REGEX_LITTERAL: &str = r"^((?:dnspoll|ftp|file|http|https):/{2,3})";
-static PREFIX_REGEX: OnceLock<Regex> = OnceLock::new();
+const PREFIX_REGEX_LITERAL: &str = r"^((?:dnspoll|ftp|file|http|https):/{2,3})";
+static PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    #[allow(clippy::unwrap_used)]
+    Regex::new(PREFIX_REGEX_LITERAL).unwrap()
+});
 
 /// Quantizes a comma separated list of hosts.
 ///
@@ -85,10 +88,7 @@ fn split_prefix(s: &str) -> (&str, &str) {
     #[allow(clippy::unwrap_used)]
     if let Some(tail) = s.strip_prefix("ip-") {
         ("ip-", tail)
-    } else if let Some(protocol) = PREFIX_REGEX
-        .get_or_init(|| Regex::new(PREFIX_REGEX_LITTERAL).unwrap())
-        .find(s)
-    {
+    } else if let Some(protocol) = PREFIX_REGEX.find(s) {
         s.split_at(protocol.end())
     } else {
         ("", s)
