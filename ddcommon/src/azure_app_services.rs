@@ -3,7 +3,7 @@
 
 use regex::Regex;
 use std::env;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 const WEBSITE_ONWER_NAME: &str = "WEBSITE_OWNER_NAME";
 const WEBSITE_SITE_NAME: &str = "WEBSITE_SITE_NAME";
@@ -251,18 +251,11 @@ impl AzureMetadata {
     }
 }
 
-// TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
-static AAS_METADATA: OnceLock<Option<AzureMetadata>> = OnceLock::new();
+pub static AAS_METADATA: LazyLock<Option<AzureMetadata>> =
+    LazyLock::new(|| AzureMetadata::new(RealEnv {}));
 
-pub fn get_metadata() -> &'static Option<AzureMetadata> {
-    AAS_METADATA.get_or_init(|| AzureMetadata::new(RealEnv {}))
-}
-
-// TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
-static AAS_METADATA_FUNCTION: OnceLock<Option<AzureMetadata>> = OnceLock::new();
-pub fn get_function_metadata() -> &'static Option<AzureMetadata> {
-    AAS_METADATA_FUNCTION.get_or_init(|| AzureMetadata::new_function(RealEnv {}))
-}
+pub static AAS_METADATA_FUNCTION: LazyLock<Option<AzureMetadata>> =
+    LazyLock::new(|| AzureMetadata::new_function(RealEnv {}));
 
 #[cfg(test)]
 mod tests {

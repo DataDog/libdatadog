@@ -199,7 +199,7 @@ impl ProfileExporter {
             tags_profiler.push(',');
         }
 
-        if let Some(aas_metadata) = azure_app_services::get_metadata() {
+        if let Some(aas_metadata) = &*azure_app_services::AAS_METADATA {
             let aas_tags = [
                 ("aas.resource.id", aas_metadata.get_resource_id()),
                 (

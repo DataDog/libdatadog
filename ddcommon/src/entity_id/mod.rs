@@ -52,7 +52,7 @@
 //! ```
 
 use crate::config::parse_env;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 const EXTERNAL_ENV_ENVIRONMENT_VARIABLE: &str = "DD_EXTERNAL_ENV";
 
@@ -73,7 +73,7 @@ pub fn set_cgroup_file(_file: String) {
 pub fn get_container_id() -> Option<&'static str> {
     #[cfg(unix)]
     {
-        unix::get_container_id()
+        *unix::CONTAINER_ID
     }
     #[cfg(not(unix))]
     {
@@ -85,7 +85,7 @@ pub fn get_container_id() -> Option<&'static str> {
 pub fn get_entity_id() -> Option<&'static str> {
     #[cfg(unix)]
     {
-        unix::get_entity_id()
+        *unix::ENTITY_ID
     }
     #[cfg(not(unix))]
     {
@@ -93,12 +93,9 @@ pub fn get_entity_id() -> Option<&'static str> {
     }
 }
 
-// TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
-static DD_EXTERNAL_ENV: OnceLock<Option<String>> = OnceLock::new();
+pub static DD_EXTERNAL_ENV: LazyLock<Option<&'static str>> = LazyLock::new(|| {
+    let leaked: Option<&'static str> = parse_env::str_not_empty(EXTERNAL_ENV_ENVIRONMENT_VARIABLE)
+        .map(|s| &*Box::leak(s.into_boxed_str()));
 
-/// Returns the `DD_EXTERNAL_ENV` if available as an env variable
-pub fn get_external_env() -> Option<&'static str> {
-    DD_EXTERNAL_ENV
-        .get_or_init(|| parse_env::str_not_empty(EXTERNAL_ENV_ENVIRONMENT_VARIABLE))
-        .as_deref()
-}
+    leaked
+});
