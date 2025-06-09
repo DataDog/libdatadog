@@ -40,8 +40,15 @@ impl CustomFileAppender {
         })
     }
 
+    /// Get the current timestamp as a string in the format YYYY-MM-DD_HH-MM-SS-MS
     fn get_timestamp_string() -> String {
-        chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string()
+        let now = chrono::Local::now();
+        let formatted = format!(
+            "{}-{:03}",
+            now.format("%Y-%m-%d_%H-%M-%S"),
+            now.timestamp_subsec_millis()
+        );
+        formatted
     }
 
     /// Build the rotated file path.
