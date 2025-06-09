@@ -1,8 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(feature = "logging")]
-use log::{debug, warn};
 use std::sync::LazyLock;
 use std::{
     env, fs, io,
@@ -12,12 +10,15 @@ use std::{
     },
     path::{Path, PathBuf},
 };
-#[cfg(not(feature = "logging"))]
-use tracing::{debug, warn};
 
 use crate::primary_sidecar_identifier;
 use crate::setup::Liaison;
 use datadog_ipc::platform::{self, locks::FLock, Channel};
+
+#[cfg(feature = "logging")]
+use log::{debug, warn};
+#[cfg(not(feature = "logging"))]
+use tracing::{debug, warn};
 
 pub type IpcClient = tokio::net::UnixStream;
 pub type IpcServer = UnixListener;
