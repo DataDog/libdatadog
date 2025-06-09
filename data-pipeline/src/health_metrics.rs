@@ -10,6 +10,7 @@ pub(crate) const STAT_DESER_TRACES_ERRORS: &str = "datadog.libdatadog.deser_trac
 #[allow(dead_code)] // TODO (APMSP-1584) Add support for health metrics when using trace utils
 pub(crate) const STAT_SER_TRACES_ERRORS: &str = "datadog.libdatadog.ser_traces.errors";
 
+#[derive(Debug)]
 pub(crate) enum HealthMetric {
     Count(&'static str, i64),
 }

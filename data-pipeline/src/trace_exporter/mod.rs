@@ -34,7 +34,7 @@ use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr, time};
 use tokio::{runtime::Runtime, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 
 const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] = ["client", "server", "producer", "consumer"];
 const STATS_ENDPOINT: &str = "/v0.6/stats";
@@ -502,6 +502,10 @@ impl TraceExporter {
                         let resp_tag_res = &Tag::new("response_code", response_status.as_str());
                         match resp_tag_res {
                             Ok(resp_tag) => {
+                                warn!(
+                                    response_code = response_status.as_u16(),
+                                    "HTTP error response received from agent"
+                                );
                                 self.emit_metric(
                                     HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
                                     Some(vec![&resp_tag]),
@@ -522,6 +526,10 @@ impl TraceExporter {
                     }
                     match response.into_body().collect().await {
                         Ok(body) => {
+                            info!(
+                                trace_count = trace_count,
+                                "Traces sent successfully to agent"
+                            );
                             self.emit_metric(
                                 HealthMetric::Count(
                                     health_metrics::STAT_SEND_TRACES,
@@ -532,6 +540,10 @@ impl TraceExporter {
                             Ok(String::from_utf8_lossy(&body.to_bytes()).to_string())
                         }
                         Err(err) => {
+                            error!(
+                                error = %err,
+                                "Failed to read agent response body"
+                            );
                             self.emit_metric(
                                 HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
                                 None,
@@ -542,6 +554,10 @@ impl TraceExporter {
                     }
                 }
                 Err(err) => {
+                    error!(
+                        error = %err,
+                        "Request to agent failed"
+                    );
                     self.emit_metric(
                         HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
                         None,
@@ -554,6 +570,7 @@ impl TraceExporter {
 
     /// Emit a health metric to dogstatsd
     fn emit_metric(&self, metric: HealthMetric, custom_tags: Option<Vec<&Tag>>) {
+        let has_custom_tags = custom_tags.is_some();
         if let Some(flusher) = &self.dogstatsd {
             let tags = match custom_tags {
                 None => Either::Left(&self.common_stats_tags),
@@ -561,9 +578,20 @@ impl TraceExporter {
             };
             match metric {
                 HealthMetric::Count(name, c) => {
+                    debug!(
+                        metric_name = name,
+                        count = c,
+                        has_custom_tags = has_custom_tags,
+                        "Emitting health metric to dogstatsd"
+                    );
                     flusher.send(vec![DogStatsDAction::Count(name, c, tags.into_iter())])
                 }
             }
+        } else {
+            debug!(
+                metric = ?metric,
+                "Skipping metric emission - dogstatsd client not configured"
+            );
         }
     }
 
@@ -618,6 +646,10 @@ impl TraceExporter {
             );
             TraceExporterError::Deserialization(e)
         })?;
+        info!(
+            trace_count = traces.len(),
+            "Trace deserialization completed successfully"
+        );
         self.emit_metric(
             HealthMetric::Count(health_metrics::STAT_DESER_TRACES, traces.len() as i64),
             None,
@@ -720,12 +752,21 @@ impl TraceExporter {
                     };
 
                     if status.is_success() {
+                        info!(
+                            chunks = chunks,
+                            status = %status,
+                            "Trace chunks sent successfully to agent"
+                        );
                         self.emit_metric(
                             HealthMetric::Count(health_metrics::STAT_SEND_TRACES, chunks as i64),
                             None,
                         );
                         Ok(body)
                     } else {
+                        warn!(
+                            status = %status,
+                            "Agent returned non-success status for trace send"
+                        );
                         self.emit_metric(
                             HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
                             None,
