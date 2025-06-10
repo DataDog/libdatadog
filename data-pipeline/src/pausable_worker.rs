@@ -163,12 +163,8 @@ mod tests {
         runtime.block_on(async { pausable_worker.pause().await.unwrap() });
         // Empty the message queue and get the last message
         let mut next_message = 1;
-        loop {
-            if let Ok(message) = receiver.try_recv() {
-                next_message = message + 1;
-            } else {
-                break;
-            }
+        for message in receiver.try_iter() {
+            next_message = message + 1;
         }
         pausable_worker.start(&runtime).unwrap();
         assert_eq!(receiver.recv().unwrap(), next_message);
