@@ -144,7 +144,10 @@ pub fn init_remote_config_listener(
     let agent_url = match hyper::Uri::from_str(&agent_url) {
         Ok(uri) => uri,
         Err(_) => {
-            return Err(FlareError::ListeningError(format!("Invalid agent url: {}", agent_url)));
+            return Err(FlareError::ListeningError(format!(
+                "Invalid agent url: {}",
+                agent_url
+            )));
         }
     };
     let remote_config_endpoint = Endpoint {
