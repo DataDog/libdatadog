@@ -11,6 +11,7 @@ use bytes::Bytes;
 use ddcommon::{hyper_migration, Endpoint, HttpRequestBuilder};
 use hyper::Method;
 use std::{collections::HashMap, time::Duration};
+use tracing::{debug, error, info, warn};
 
 pub type Attempts = u32;
 
@@ -121,8 +122,22 @@ pub async fn send_with_retry(
     // Wrap the payload in Bytes to avoid expensive clone between retries
     let payload = Bytes::from(payload);
 
+    debug!(
+        url = %target.url,
+        payload_size = payload.len(),
+        max_retries = retry_strategy.max_retries(),
+        "Sending with retry"
+    );
+
     loop {
         request_attempt += 1;
+
+        debug!(
+            attempt = request_attempt,
+            max_retries = retry_strategy.max_retries(),
+            "Attempting request"
+        );
+
         let mut req = target
             .to_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))
             .or(Err(SendWithRetryError::Build(request_attempt)))?
@@ -142,22 +157,64 @@ pub async fn send_with_retry(
             // An Ok response doesn't necessarily mean the request was successful, we need to
             // check the status code and if it's not a 2xx or 3xx we treat it as an error
             Ok(response) => {
-                if response.status().is_client_error() || response.status().is_server_error() {
+                let status = response.status();
+                debug!(status = %status, attempt = request_attempt, "Received response");
+
+                if status.is_client_error() || status.is_server_error() {
+                    warn!(
+                        status = %status,
+                        attempt = request_attempt,
+                        max_retries = retry_strategy.max_retries(),
+                        "Received error status code"
+                    );
+
                     if request_attempt < retry_strategy.max_retries() {
+                        info!(
+                            attempt = request_attempt,
+                            remaining_retries = retry_strategy.max_retries() - request_attempt,
+                            "Retrying after error status code"
+                        );
                         retry_strategy.delay(request_attempt).await;
                         continue;
                     } else {
+                        error!(
+                            status = %status,
+                            attempts = request_attempt,
+                            "Max retries exceeded, returning HTTP error"
+                        );
                         return Err(SendWithRetryError::Http(response, request_attempt));
                     }
                 } else {
+                    info!(
+                        status = %status,
+                        attempts = request_attempt,
+                        "Request succeeded"
+                    );
                     return Ok((response, request_attempt));
                 }
             }
             Err(e) => {
+                warn!(
+                    error = %e,
+                    attempt = request_attempt,
+                    max_retries = retry_strategy.max_retries(),
+                    "Request failed with error"
+                );
+
                 if request_attempt < retry_strategy.max_retries() {
+                    info!(
+                        attempt = request_attempt,
+                        remaining_retries = retry_strategy.max_retries() - request_attempt,
+                        "Retrying after request error"
+                    );
                     retry_strategy.delay(request_attempt).await;
                     continue;
                 } else {
+                    error!(
+                        error = %e,
+                        attempts = request_attempt,
+                        "Max retries exceeded, returning request error"
+                    );
                     return Err(SendWithRetryError::from_request_error(e, request_attempt));
                 }
             }
