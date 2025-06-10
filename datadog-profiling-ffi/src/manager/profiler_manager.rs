@@ -147,7 +147,7 @@ impl ProfilerManager {
         Ok(())
     }
 
-    fn handle_shutdown(&mut self) -> Result<()> {
+    fn handle_shutdown(mut self) -> Result<internal::Profile> {
         // Try to process any remaining samples before dropping them
         while let Ok(sample) = self.channels.samples_receiver.try_recv() {
             let converted_sample = (self.sample_callbacks.converter)(&sample);
@@ -170,15 +170,15 @@ impl ProfilerManager {
         self.cancellation_token.cancel();
 
         // Take ownership of the upload thread and sender
-        let upload_thread = std::mem::replace(&mut self.upload_thread, std::thread::spawn(|| {}));
-        let _ = std::mem::replace(&mut self.upload_sender, crossbeam_channel::bounded(1).0);
+        let upload_thread = self.upload_thread;
+        drop(self.upload_sender);
 
         // Wait for the upload thread to finish
         if let Err(e) = upload_thread.join() {
             eprintln!("Error joining upload thread: {:?}", e);
         }
 
-        Ok(())
+        Ok(self.profile)
     }
 
     /// # Safety
@@ -199,11 +199,9 @@ impl ProfilerManager {
                         .map_err(|e| eprintln!("Failed to handle upload: {}", e));
                 },
                 recv(self.shutdown_receiver) -> _ => {
-                    self.handle_shutdown()?;
-                    break;
+                    return self.handle_shutdown();
                 },
             }
         }
-        Ok(self.profile)
     }
 }
