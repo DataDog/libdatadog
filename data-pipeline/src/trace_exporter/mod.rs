@@ -527,7 +527,7 @@ impl TraceExporter {
                     match response.into_body().collect().await {
                         Ok(body) => {
                             info!(
-                                trace_count = trace_count,
+                                trace_count,
                                 "Traces sent successfully to agent"
                             );
                             self.emit_metric(
