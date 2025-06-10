@@ -87,6 +87,10 @@ component_management:
       name: datadog-trace-utils  # this is a display name, and can be changed freely
       paths:
         - datadog-trace-utils
+    - component_id: tracer-flare  # this is an identifier that should not be changed
+      name: datadog-tracer-flare  # this is a display name, and can be changed freely
+      paths:
+        - datadog-tracer-flare
     - component_id: datadog-log
       name: datadog-log
       paths:

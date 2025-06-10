@@ -6,7 +6,7 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-use std::{str::FromStr, vec};
+use std::{error::Error, str::FromStr, vec};
 
 use datadog_remote_config::{
     fetch::{ConfigInvariants, SingleChangesFetcher},
@@ -37,16 +37,18 @@ impl std::fmt::Display for FlareError {
     }
 }
 
+impl Error for FlareError {}
+
 /// Enum that hold the different log level possible
 #[derive(Debug, PartialEq)]
 pub enum LogLevel {
-    Trace = 0,
-    Debug = 1,
-    Info = 2,
-    Warn = 3,
-    Error = 4,
-    Critical = 5,
-    Off = 6,
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Critical,
+    Off,
 }
 
 /// Enum that hold the different returned action to do after listening
@@ -142,7 +144,7 @@ pub fn init_remote_config_listener(
     let agent_url = match hyper::Uri::from_str(&agent_url) {
         Ok(uri) => uri,
         Err(_) => {
-            return Err(FlareError::ListeningError("Invalid agent url".to_string()));
+            return Err(FlareError::ListeningError(format!("Invalid agent url: {}", agent_url)));
         }
     };
     let remote_config_endpoint = Endpoint {
@@ -225,6 +227,7 @@ pub async fn run_remote_config_listener(
             for change in changes {
                 match change {
                     Change::Add(file) => {
+                        // TODO: remove println
                         println!("Added file: {} (version: {})", file.path(), file.version());
                         println!("Content: {:?}", file.contents().as_ref());
                         return check_remote_config_file(file);
