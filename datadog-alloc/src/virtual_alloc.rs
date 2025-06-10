@@ -108,7 +108,7 @@ pub mod os {
             // akin to malloc.
             let result = unsafe { libc::mmap(null, len, prot, flags, -1, 0) };
 
-            if result == libc::MAP_FAILED {
+            if ptr::eq(result, libc::MAP_FAILED) {
                 return Err(AllocError);
             }
 

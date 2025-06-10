@@ -338,12 +338,14 @@ mod tests {
             fetcher.run().await;
         });
 
-        // Wait for first fetch
-        while mock_v1.hits_async().await == 0 {
+        // Wait until the info is fetched
+        while info.load().is_none() {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+
         let version_1 = info.load().as_ref().unwrap().info.version.clone().unwrap();
         assert_eq!(version_1, "1");
+        mock_v1.assert_async().await;
 
         // Update the info endpoint
         mock_v1.delete_async().await;
