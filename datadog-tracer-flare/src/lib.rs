@@ -10,7 +10,7 @@ use std::{error::Error, str::FromStr, vec};
 
 use datadog_remote_config::{
     fetch::{ConfigInvariants, SingleChangesFetcher},
-    file_change_tracker::{Change, FilePath},
+    file_change_tracker::Change,
     file_storage::{ParsedFileStorage, RawFile, RawFileStorage},
     RemoteConfigData, RemoteConfigProduct, Target,
 };
@@ -230,21 +230,12 @@ pub async fn run_remote_config_listener(
             for change in changes {
                 match change {
                     Change::Add(file) => {
-                        // TODO: remove println
-                        println!("Added file: {} (version: {})", file.path(), file.version());
-                        println!("Content: {:?}", file.contents().as_ref());
-                        return check_remote_config_file(file);
+                        let action = check_remote_config_file(file);
+                        if action != Ok(ReturnAction::None) {
+                            return action;
+                        }
                     }
-                    Change::Update(file, _) => {
-                        println!(
-                            "Got update for file: {} (version: {})",
-                            file.path(),
-                            file.version()
-                        );
-                    }
-                    Change::Remove(file) => {
-                        println!("Removing file {}", file.path());
-                    }
+                    _ => (),
                 }
             }
         }
@@ -258,7 +249,18 @@ pub async fn run_remote_config_listener(
 
 #[cfg(test)]
 mod tests {
-    use crate::{FlareError, LogLevel};
+    use crate::{check_remote_config_file, FlareError, LogLevel, ReturnAction};
+    use datadog_remote_config::{
+        config::{
+            agent_config::{AgentConfig, AgentConfigFile},
+            agent_task::{AgentTask, AgentTaskFile},
+        },
+        fetch::FileStorage,
+        file_storage::ParsedFileStorage,
+        RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
+    };
+    use serde_json;
+    use std::sync::Arc;
 
     #[test]
     fn test_try_from_string_to_return_action() {
@@ -273,5 +275,100 @@ mod tests {
             LogLevel::try_from("anything"),
             Err(FlareError::ParsingError("Unknown level of log".to_string()))
         );
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_check_remote_config_file_with_valid_log_level() {
+        let storage = ParsedFileStorage::default();
+        let path = Arc::new(RemoteConfigPath {
+            product: RemoteConfigProduct::AgentConfig,
+            config_id: "test".to_string(),
+            name: "flare-log-level.test".to_string(),
+            source: RemoteConfigSource::Datadog(1),
+        });
+
+        let config = AgentConfigFile {
+            name: "flare-log-level.test".to_string(),
+            config: AgentConfig {
+                log_level: Some("info".to_string()),
+            },
+        };
+
+        let file = storage
+            .store(1, path.clone(), serde_json::to_vec(&config).unwrap())
+            .unwrap();
+        let result = check_remote_config_file(file);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ReturnAction::Start(LogLevel::Info));
+    }
+
+    #[test]
+    fn test_check_remote_config_file_with_stop_task() {
+        let storage = ParsedFileStorage::default();
+        let path = Arc::new(RemoteConfigPath {
+            product: RemoteConfigProduct::AgentTask,
+            config_id: "test".to_string(),
+            name: "tracer_flare".to_string(),
+            source: RemoteConfigSource::Datadog(1),
+        });
+
+        let task = AgentTaskFile {
+            args: AgentTask {
+                case_id: "123".to_string(),
+                hostname: Some("test-host".to_string()),
+                user_handle: "test@example.com".to_string(),
+            },
+            task_type: "tracer_flare".to_string(),
+            uuid: "test-uuid".to_string(),
+        };
+
+        let file = storage
+            .store(1, path.clone(), serde_json::to_vec(&task).unwrap())
+            .unwrap();
+        let result = check_remote_config_file(file);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ReturnAction::Stop);
+    }
+
+    #[test]
+    fn test_check_remote_config_file_with_invalid_config() {
+        let storage = ParsedFileStorage::default();
+        let path = Arc::new(RemoteConfigPath {
+            product: RemoteConfigProduct::AgentConfig,
+            config_id: "test".to_string(),
+            name: "invalid-config".to_string(),
+            source: RemoteConfigSource::Datadog(1),
+        });
+
+        let config = AgentConfigFile {
+            name: "invalid-config".to_string(),
+            config: AgentConfig { log_level: None },
+        };
+
+        let file = storage
+            .store(1, path.clone(), serde_json::to_vec(&config).unwrap())
+            .unwrap();
+        let result = check_remote_config_file(file);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ReturnAction::None);
+    }
+
+    #[test]
+    fn test_check_remote_config_file_with_parsing_error() {
+        let storage = ParsedFileStorage::default();
+        let path = Arc::new(RemoteConfigPath {
+            product: RemoteConfigProduct::AgentConfig,
+            config_id: "test".to_string(),
+            name: "invalid-json".to_string(),
+            source: RemoteConfigSource::Datadog(1),
+        });
+
+        let file = storage
+            .store(1, path.clone(), b"invalid json".to_vec())
+            .unwrap();
+        let result = check_remote_config_file(file);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), FlareError::ParsingError(_)));
     }
 }
