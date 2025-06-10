@@ -526,10 +526,7 @@ impl TraceExporter {
                     }
                     match response.into_body().collect().await {
                         Ok(body) => {
-                            info!(
-                                trace_count,
-                                "Traces sent successfully to agent"
-                            );
+                            info!(trace_count, "Traces sent successfully to agent");
                             self.emit_metric(
                                 HealthMetric::Count(
                                     health_metrics::STAT_SEND_TRACES,
