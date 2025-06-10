@@ -25,6 +25,7 @@ pub mod hyper_migration;
 pub mod rate_limiter;
 pub mod tag;
 pub mod unix_utils;
+pub mod worker;
 
 /// Extension trait for `Mutex` to provide a method that acquires a lock, panicking if the lock is
 /// poisoned.

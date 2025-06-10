@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use data_pipeline::trace_exporter::error::{
-    AgentErrorKind, BuilderErrorKind, NetworkErrorKind, TraceExporterError,
+    AgentErrorKind, BuilderErrorKind, InternalErrorKind, NetworkErrorKind, TraceExporterError,
 };
 use std::ffi::{c_char, CString};
 use std::fmt::Display;
@@ -32,6 +32,7 @@ pub enum ExporterErrorCode {
     NetworkUnknown,
     Serde,
     TimedOut,
+    Internal,
 }
 
 impl Display for ExporterErrorCode {
@@ -57,6 +58,7 @@ impl Display for ExporterErrorCode {
             Self::NetworkUnknown => write!(f, "Unknown network error"),
             Self::Serde => write!(f, "Serialization/Deserialization error"),
             Self::TimedOut => write!(f, "Operation timed out"),
+            Self::Internal => write!(f, "Internal error"),
         }
     }
 }
@@ -88,6 +90,9 @@ impl From<TraceExporterError> for ExporterError {
                 BuilderErrorKind::InvalidUri(_) => ExporterErrorCode::InvalidUrl,
                 BuilderErrorKind::InvalidTelemetryConfig => ExporterErrorCode::InvalidArgument,
                 BuilderErrorKind::InvalidConfiguration(_) => ExporterErrorCode::InvalidArgument,
+            },
+            TraceExporterError::Internal(e) => match e {
+                InternalErrorKind::InvalidWorkerState(_) => ExporterErrorCode::Internal,
             },
             TraceExporterError::Deserialization(_) => ExporterErrorCode::Serde,
             TraceExporterError::Io(e) => match e.kind() {

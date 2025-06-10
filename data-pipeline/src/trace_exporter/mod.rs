@@ -4,8 +4,10 @@ pub mod agent_response;
 pub mod error;
 use self::agent_response::AgentResponse;
 use crate::agent_info::{AgentInfoArc, AgentInfoFetcher};
+use crate::pausable_worker::PausableWorker;
+use crate::stats_exporter::StatsExporter;
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient, TelemetryClientBuilder};
-use crate::trace_exporter::error::{RequestError, TraceExporterError};
+use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use crate::{
     health_metrics, health_metrics::HealthMetric, span_concentrator::SpanConcentrator,
     stats_exporter,
@@ -21,7 +23,9 @@ use ddcommon::header::{
     APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
 };
 use ddcommon::tag::Tag;
+use ddcommon::MutexExt;
 use ddcommon::{hyper_migration, parse_uri, tag, Endpoint};
+use ddtelemetry::worker::TelemetryWorker;
 use dogstatsd_client::{new, Client, DogStatsDAction};
 use either::Either;
 use error::BuilderErrorKind;
@@ -32,7 +36,7 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr, time};
-use tokio::{runtime::Runtime, task::JoinHandle};
+use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -157,8 +161,14 @@ enum StatsComputationStatus {
     Enabled {
         stats_concentrator: Arc<Mutex<SpanConcentrator>>,
         cancellation_token: CancellationToken,
-        exporter_handle: JoinHandle<()>,
     },
+}
+
+#[derive(Debug)]
+struct TraceExporterWorkers {
+    pub info: PausableWorker<AgentInfoFetcher>,
+    pub stats: Option<PausableWorker<StatsExporter>>,
+    pub telemetry: Option<PausableWorker<TelemetryWorker>>,
 }
 
 /// The TraceExporter ingest traces from the tracers serialized as messagepack and forward them to
@@ -187,7 +197,7 @@ pub struct TraceExporter {
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
-    runtime: Runtime,
+    runtime: Arc<Mutex<Option<Arc<Runtime>>>>,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
@@ -196,6 +206,7 @@ pub struct TraceExporter {
     agent_info: AgentInfoArc,
     previous_info_state: ArcSwapOption<String>,
     telemetry: Option<TelemetryClient>,
+    workers: Arc<Mutex<TraceExporterWorkers>>,
 }
 
 enum DeserInputFormat {
@@ -207,6 +218,72 @@ impl TraceExporter {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
+    }
+
+    fn runtime(&self) -> Result<Arc<Runtime>, TraceExporterError> {
+        match self.runtime.lock_or_panic().as_ref() {
+            Some(runtime) => Ok(runtime.clone()),
+            None => self.run_worker(),
+        }
+    }
+
+    pub fn run_worker(&self) -> Result<Arc<Runtime>, TraceExporterError> {
+        let mut runtime_guard = self.runtime.lock_or_panic();
+        let runtime = match runtime_guard.as_ref() {
+            Some(runtime) => {
+                // Runtime already running
+                runtime.clone()
+            }
+            None => {
+                // Create a new current thread runtime with all features enabled
+                let runtime = Arc::new(
+                    tokio::runtime::Builder::new_multi_thread()
+                        .enable_all()
+                        .build()?,
+                );
+                *runtime_guard = Some(runtime.clone());
+                runtime
+            }
+        };
+
+        // Restart workers
+        let mut workers = self.workers.lock_or_panic();
+        workers.info.start(&runtime).map_err(|e| {
+            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
+        })?;
+        if let Some(stats_worker) = &mut workers.stats {
+            stats_worker.start(&runtime).map_err(|e| {
+                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
+            })?;
+        }
+        if let Some(telemetry_worker) = &mut workers.telemetry {
+            telemetry_worker.start(&runtime).map_err(|e| {
+                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
+            })?;
+            if let Some(client) = &self.telemetry {
+                runtime.block_on(client.start());
+            }
+        };
+        Ok(runtime)
+    }
+
+    pub fn stop_worker(&self) {
+        let runtime = self.runtime.lock_or_panic().take();
+        if let Some(ref rt) = runtime {
+            // Stop workers to save their state
+            let mut workers = self.workers.lock_or_panic();
+            rt.block_on(async {
+                let _ = workers.info.pause().await;
+                if let Some(stats_worker) = &mut workers.stats {
+                    let _ = stats_worker.pause().await;
+                };
+                if let Some(telemetry_worker) = &mut workers.telemetry {
+                    let _ = telemetry_worker.pause().await;
+                };
+            });
+        }
+        // Drop runtime to shutdown all threads
+        drop(runtime);
     }
 
     /// Send msgpack serialized traces to the agent
@@ -242,50 +319,49 @@ impl TraceExporter {
     }
 
     /// Safely shutdown the TraceExporter and all related tasks
-    pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
+    pub fn shutdown(mut self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
         if let Some(timeout) = timeout {
-            match self.runtime.block_on(async {
-                tokio::time::timeout(timeout, async {
-                    let stats_status: Option<StatsComputationStatus> =
-                        Arc::<StatsComputationStatus>::into_inner(
-                            self.client_side_stats.into_inner(),
-                        );
-                    if let Some(StatsComputationStatus::Enabled {
-                        stats_concentrator: _,
-                        cancellation_token,
-                        exporter_handle,
-                    }) = stats_status
-                    {
-                        cancellation_token.cancel();
-                        let _ = exporter_handle.await;
-                    }
-                    if let Some(telemetry) = self.telemetry {
-                        telemetry.shutdown().await;
-                    }
-                })
-                .await
-            }) {
+            match runtime
+                .block_on(async { tokio::time::timeout(timeout, self.shutdown_async()).await })
+            {
                 Ok(()) => Ok(()),
                 Err(e) => Err(TraceExporterError::Io(e.into())),
             }
         } else {
-            self.runtime.block_on(async {
-                let stats_status: Option<StatsComputationStatus> =
-                    Arc::<StatsComputationStatus>::into_inner(self.client_side_stats.into_inner());
-                if let Some(StatsComputationStatus::Enabled {
-                    stats_concentrator: _,
-                    cancellation_token,
-                    exporter_handle,
-                }) = stats_status
-                {
-                    cancellation_token.cancel();
-                    let _ = exporter_handle.await;
-                }
-                if let Some(telemetry) = self.telemetry {
-                    telemetry.shutdown().await;
-                }
-            });
+            runtime.block_on(self.shutdown_async());
             Ok(())
+        }
+    }
+
+    /// Future used inside `Self::shutdown`.
+    ///
+    /// This function should not take ownership of the trace exporter as it will cause the runtime
+    /// stored in the trace exporter to be dropped in a non-blocking context causing a panic.
+    async fn shutdown_async(&mut self) {
+        let stats_status = self.client_side_stats.load();
+        if let StatsComputationStatus::Enabled {
+            cancellation_token, ..
+        } = stats_status.as_ref()
+        {
+            cancellation_token.cancel();
+
+            let stats_worker = self.workers.lock_or_panic().stats.take();
+
+            if let Some(stats_worker) = stats_worker {
+                let _ = stats_worker.join().await;
+            }
+        }
+        if let Some(telemetry) = self.telemetry.take() {
+            telemetry.shutdown().await;
+            let telemetry_worker = self.workers.lock_or_panic().telemetry.take();
+
+            if let Some(telemetry_worker) = telemetry_worker {
+                let _ = telemetry_worker.join().await;
+            }
         }
     }
 
@@ -309,23 +385,25 @@ impl TraceExporter {
 
             let cancellation_token = CancellationToken::new();
 
-            let mut stats_exporter = stats_exporter::StatsExporter::new(
+            let stats_exporter = stats_exporter::StatsExporter::new(
                 bucket_size,
                 stats_concentrator.clone(),
                 self.metadata.clone(),
                 Endpoint::from_url(add_path(&self.endpoint.url, STATS_ENDPOINT)),
                 cancellation_token.clone(),
             );
+            let mut stats_worker = PausableWorker::new(stats_exporter);
+            let runtime = self.runtime()?;
+            stats_worker.start(&runtime).map_err(|e| {
+                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
+            })?;
 
-            let exporter_handle = self.runtime.spawn(async move {
-                stats_exporter.run().await;
-            });
+            self.workers.lock_or_panic().stats = Some(stats_worker);
 
             self.client_side_stats
                 .store(Arc::new(StatsComputationStatus::Enabled {
                     stats_concentrator,
                     cancellation_token,
-                    exporter_handle,
                 }));
         };
         Ok(())
@@ -338,19 +416,20 @@ impl TraceExporter {
         if let StatsComputationStatus::Enabled {
             stats_concentrator,
             cancellation_token,
-            exporter_handle: _,
         } = &**self.client_side_stats.load()
         {
-            self.runtime.block_on(async {
-                cancellation_token.cancel();
-            });
-            #[allow(clippy::unwrap_used)]
-            let bucket_size = stats_concentrator.lock().unwrap().get_bucket_size();
+            if let Ok(runtime) = self.runtime() {
+                runtime.block_on(async {
+                    cancellation_token.cancel();
+                });
+                self.workers.lock_or_panic().stats = None;
+                let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
 
-            self.client_side_stats
-                .store(Arc::new(StatsComputationStatus::DisabledByAgent {
-                    bucket_size,
-                }));
+                self.client_side_stats
+                    .store(Arc::new(StatsComputationStatus::DisabledByAgent {
+                        bucket_size,
+                    }));
+            }
         }
     }
 
@@ -388,13 +467,10 @@ impl TraceExporter {
                         }
                     }
                     StatsComputationStatus::Enabled {
-                        stats_concentrator,
-                        cancellation_token: _,
-                        exporter_handle: _,
+                        stats_concentrator, ..
                     } => {
                         if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
-                            #[allow(clippy::unwrap_used)]
-                            let mut concentrator = stats_concentrator.lock().unwrap();
+                            let mut concentrator = stats_concentrator.lock_or_panic();
 
                             concentrator.set_span_kinds(
                                 agent_info
@@ -463,7 +539,7 @@ impl TraceExporter {
         trace_count: usize,
         uri: Uri,
     ) -> Result<String, TraceExporterError> {
-        self.runtime.block_on(async {
+        self.runtime()?.block_on(async {
             let mut req_builder = hyper::Request::builder()
                 .uri(uri)
                 .header(
@@ -717,7 +793,26 @@ impl TraceExporter {
 
         let payload_len = mp_payload.len();
 
-        self.runtime.block_on(async {
+        let runtime = {
+            let mut runtime_guard = self.runtime.lock_or_panic();
+            let runtime = match runtime_guard.as_ref() {
+                Some(runtime) => runtime.clone(),
+                None => {
+                    // Create a new current thread runtime with all features enabled
+                    let runtime = Arc::new(
+                        tokio::runtime::Builder::new_multi_thread()
+                            .worker_threads(1)
+                            .enable_all()
+                            .build()?,
+                    );
+                    *runtime_guard = Some(runtime.clone());
+                    runtime
+                }
+            };
+            runtime
+        };
+
+        runtime.block_on(async {
             // Send traces to the agent
             let result = send_with_retry(&endpoint, mp_payload, &headers, &strategy, None).await;
 
@@ -1011,10 +1106,12 @@ impl TraceExporterBuilder {
             ));
         }
 
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()?;
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()?,
+        );
 
         let dogstatsd = self.dogstatsd_url.and_then(|u| {
             new(Endpoint::from_slice(&u)).ok() // If we couldn't set the endpoint return
@@ -1034,11 +1131,11 @@ impl TraceExporterBuilder {
             Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT)),
             Duration::from_secs(5 * 60),
         );
-
         let agent_info = info_fetcher.get_info();
-        runtime.spawn(async move {
-            info_fetcher.run().await;
-        });
+        let mut info_fetcher_worker = PausableWorker::new(info_fetcher);
+        info_fetcher_worker.start(&runtime).map_err(|e| {
+            TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
+        })?;
 
         // Proxy mode does not support stats
         if self.input_format != TraceExporterInputFormat::Proxy {
@@ -1062,15 +1159,25 @@ impl TraceExporterBuilder {
                 if let Some(id) = telemetry_config.runtime_id {
                     builder = builder.set_runtime_id(&id);
                 }
-                builder.build().await
+                builder.build(runtime.handle().clone())
             })?)
         } else {
             None
         };
 
-        if let Some(client) = &telemetry {
-            runtime.block_on(client.start());
-        }
+        let (telemetry_client, telemetry_worker) = match telemetry {
+            Some((client, worker)) => {
+                let mut telemetry_worker = PausableWorker::new(worker);
+                telemetry_worker.start(&runtime).map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        e.to_string(),
+                    ))
+                })?;
+                runtime.block_on(client.start());
+                (Some(client), Some(telemetry_worker))
+            }
+            None => (None, None),
+        };
 
         Ok(TraceExporter {
             endpoint: Endpoint {
@@ -1096,13 +1203,18 @@ impl TraceExporterBuilder {
             input_format: self.input_format,
             output_format: self.output_format,
             client_computed_top_level: self.client_computed_top_level,
-            runtime,
+            runtime: Arc::new(Mutex::new(Some(runtime))),
             dogstatsd,
             common_stats_tags: vec![libdatadog_version],
             client_side_stats: ArcSwap::new(stats.into()),
             agent_info,
             previous_info_state: ArcSwapOption::new(None),
-            telemetry,
+            telemetry: telemetry_client,
+            workers: Arc::new(Mutex::new(TraceExporterWorkers {
+                info: info_fetcher_worker,
+                stats: None,
+                telemetry: telemetry_worker,
+            })),
         })
     }
 
@@ -1305,9 +1417,15 @@ mod tests {
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {
-            exporter.runtime.block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            exporter
+                .runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_on(async {
+                    sleep(Duration::from_millis(100)).await;
+                })
         }
 
         let result = exporter.send(data.as_ref(), 1);
@@ -1390,9 +1508,15 @@ mod tests {
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {
-            exporter.runtime.block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            exporter
+                .runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_on(async {
+                    sleep(Duration::from_millis(100)).await;
+                })
         }
 
         exporter.send(data.as_ref(), 1).unwrap();
@@ -1773,9 +1897,15 @@ mod tests {
 
         traces_endpoint.assert_hits(1);
         while metrics_endpoint.hits() == 0 {
-            exporter.runtime.block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            exporter
+                .runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_on(async {
+                    sleep(Duration::from_millis(100)).await;
+                })
         }
         metrics_endpoint.assert_hits(1);
     }
@@ -1821,9 +1951,15 @@ mod tests {
 
         traces_endpoint.assert_hits(1);
         while metrics_endpoint.hits() == 0 {
-            exporter.runtime.block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            exporter
+                .runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_on(async {
+                    sleep(Duration::from_millis(100)).await;
+                })
         }
         metrics_endpoint.assert_hits(1);
     }
@@ -1881,9 +2017,15 @@ mod tests {
 
         traces_endpoint.assert_hits(1);
         while metrics_endpoint.hits() == 0 {
-            exporter.runtime.block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            exporter
+                .runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_on(async {
+                    sleep(Duration::from_millis(100)).await;
+                })
         }
         metrics_endpoint.assert_hits(1);
     }
@@ -1964,9 +2106,15 @@ mod tests {
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {
-            exporter.runtime.block_on(async {
-                sleep(Duration::from_millis(100)).await;
-            })
+            exporter
+                .runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_on(async {
+                    sleep(Duration::from_millis(100)).await;
+                })
         }
 
         let _ = exporter.send(data.as_ref(), 1).unwrap();
