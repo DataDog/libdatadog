@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::{DerefMut, Sub};
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock, RwLock};
+use std::sync::{LazyLock, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 use std::{env, io};
 use tracing::level_filters::LevelFilter;
@@ -382,16 +382,9 @@ impl<'writer> MakeWriter<'writer> for &MultiWriter {
     }
 }
 
-static MULTI_LOG_FILTER: OnceLock<MultiEnvFilter> = OnceLock::new();
-static MULTI_LOG_WRITER: OnceLock<MultiWriter> = OnceLock::new();
-
-pub(crate) fn get_multi_log_filter() -> &'static MultiEnvFilter {
-    MULTI_LOG_FILTER.get_or_init(MultiEnvFilter::default)
-}
-
-pub(crate) fn get_multi_log_writer() -> &'static MultiWriter {
-    MULTI_LOG_WRITER.get_or_init(MultiWriter::default)
-}
+pub(crate) static MULTI_LOG_FILTER: LazyLock<MultiEnvFilter> =
+    LazyLock::new(MultiEnvFilter::default);
+pub(crate) static MULTI_LOG_WRITER: LazyLock<MultiWriter> = LazyLock::new(MultiWriter::default);
 
 static PERMANENT_MIN_LOG_LEVEL: OnceLock<TemporarilyRetainedMapGuard<String, EnvFilter>> =
     OnceLock::new();
@@ -401,23 +394,23 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
         .with(
             tracing_subscriber::fmt::Layer::new()
                 .event_format(LogFormatter::default())
-                .with_writer(get_multi_log_writer())
-                .with_filter(get_multi_log_filter()),
+                .with_writer(&*MULTI_LOG_WRITER)
+                .with_filter(&*MULTI_LOG_FILTER),
         )
         .init();
 
     // Set initial log level if provided
     if let Ok(env) = env::var("DD_TRACE_LOG_LEVEL") {
-        get_multi_log_filter().add(env); // this also immediately drops it, but will retain it for
-                                         // few
-                                         // seconds during startup
+        MULTI_LOG_FILTER.add(env); // this also immediately drops it, but will retain it for
+                                   // few
+                                   // seconds during startup
     }
     let config = config::Config::get();
     if !config.log_level.is_empty() {
-        let filter = get_multi_log_filter().add(config.log_level.clone());
+        let filter = MULTI_LOG_FILTER.add(config.log_level.clone());
         _ = PERMANENT_MIN_LOG_LEVEL.set(filter);
     }
-    get_multi_log_writer().add(config.log_method); // same than MULTI_LOG_FILTER
+    MULTI_LOG_WRITER.add(config.log_method); // same than MULTI_LOG_FILTER
 
     LogTracer::init()?;
 
@@ -427,26 +420,18 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        enable_logging, get_multi_log_filter, TemporarilyRetainedKeyParser, TemporarilyRetainedMap,
+        enable_logging, TemporarilyRetainedKeyParser, TemporarilyRetainedMap, MULTI_LOG_FILTER,
     };
     use crate::log::MultiEnvFilter;
     use std::sync::atomic::{AtomicI32, Ordering};
-    use std::sync::OnceLock;
+    use std::sync::LazyLock;
     use std::time::Duration;
     use tracing::subscriber::NoSubscriber;
     use tracing::{debug, error, warn, Level};
     use tracing_subscriber::layer::Filter;
 
-    static ENABLED: OnceLock<AtomicI32> = OnceLock::new();
-    static DISABLED: OnceLock<AtomicI32> = OnceLock::new();
-
-    fn get_enabled() -> &'static AtomicI32 {
-        ENABLED.get_or_init(AtomicI32::default)
-    }
-
-    fn get_disabled() -> &'static AtomicI32 {
-        DISABLED.get_or_init(AtomicI32::default)
-    }
+    static ENABLED: LazyLock<AtomicI32> = LazyLock::new(AtomicI32::default);
+    static DISABLED: LazyLock<AtomicI32> = LazyLock::new(AtomicI32::default);
 
     impl TemporarilyRetainedKeyParser<i32> for String {
         fn parse(&self) -> i32 {
@@ -454,11 +439,11 @@ mod tests {
         }
 
         fn enable() {
-            get_enabled().fetch_add(1, Ordering::SeqCst);
+            ENABLED.fetch_add(1, Ordering::SeqCst);
         }
 
         fn disable() {
-            get_disabled().fetch_add(1, Ordering::SeqCst);
+            DISABLED.fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -470,7 +455,7 @@ mod tests {
         };
         let guard1 = map.add("1".to_string());
         assert_eq!(1, *map.maps.read().unwrap().get("1").unwrap());
-        assert_eq!(1, get_enabled().load(Ordering::SeqCst));
+        assert_eq!(1, ENABLED.load(Ordering::SeqCst));
 
         drop(map.add("1".to_string()));
 
@@ -491,8 +476,8 @@ mod tests {
         // actually dropped
         assert_eq!(None, map.maps.read().unwrap().get("1"));
 
-        assert_eq!(1, get_disabled().load(Ordering::SeqCst));
-        assert_eq!(2, get_enabled().load(Ordering::SeqCst));
+        assert_eq!(1, DISABLED.load(Ordering::SeqCst));
+        assert_eq!(2, ENABLED.load(Ordering::SeqCst));
     }
 
     #[test]
@@ -500,19 +485,19 @@ mod tests {
     fn test_logs_created_counter() {
         enable_logging().ok();
 
-        get_multi_log_filter().add("warn".to_string());
+        MULTI_LOG_FILTER.add("warn".to_string());
         debug!("hi");
         warn!("Bim");
         warn!("Bam");
         error!("Boom");
-        let map = get_multi_log_filter().collect_logs_created_count();
+        let map = MULTI_LOG_FILTER.collect_logs_created_count();
         assert_eq!(2, map.len());
         assert_eq!(map[&Level::WARN], 2);
         assert_eq!(map[&Level::ERROR], 1);
 
         debug!("hi");
         warn!("Bim");
-        let map = get_multi_log_filter().collect_logs_created_count();
+        let map = MULTI_LOG_FILTER.collect_logs_created_count();
         assert_eq!(1, map.len());
         assert_eq!(map[&Level::WARN], 1);
     }

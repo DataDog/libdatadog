@@ -1,8 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::log;
-use crate::log::{get_multi_log_filter, get_multi_log_writer, TemporarilyRetainedMapStats};
+use crate::log::{TemporarilyRetainedMapStats, MULTI_LOG_FILTER, MULTI_LOG_WRITER};
 use crate::service::{
     sidecar_interface::ServeSidecarInterface,
     telemetry::{AppInstance, AppOrQueue},
@@ -43,7 +42,7 @@ use crate::service::agent_info::AgentInfos;
 use crate::service::debugger_diagnostics_bookkeeper::{
     DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
 };
-use crate::service::exception_hash_rate_limiter::get_exception_hash_limiter;
+use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::runtime_info::ActiveApplication;
 use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
@@ -412,8 +411,8 @@ impl SidecarServer {
             telemetry_worker_errors: telemetry_stats_errors
                 + telemetry_stats.iter().filter(|v| v.is_err()).count() as u32,
             telemetry_worker: telemetry_stats.into_iter().filter_map(|v| v.ok()).sum(),
-            log_filter: get_multi_log_filter().stats(),
-            log_writer: get_multi_log_writer().stats(),
+            log_filter: MULTI_LOG_FILTER.stats(),
+            log_writer: MULTI_LOG_WRITER.stats(),
         }
     }
 
@@ -723,8 +722,8 @@ impl SidecarInterface for SidecarServer {
             .store(config.force_drop_size as u32, Ordering::Relaxed);
 
         session.log_guard.lock_or_panic().replace((
-            log::get_multi_log_filter().add(config.log_level),
-            log::get_multi_log_writer().add(config.log_file),
+            MULTI_LOG_FILTER.add(config.log_level),
+            MULTI_LOG_WRITER.add(config.log_file),
         ));
 
         if let Some(completer) = self.self_telemetry_config.lock_or_panic().take() {
@@ -889,7 +888,7 @@ impl SidecarInterface for SidecarServer {
         exception_hash: u64,
         granularity: Duration,
     ) -> Self::AcquireExceptionHashRateLimiterFut {
-        get_exception_hash_limiter()
+        EXCEPTION_HASH_LIMITER
             .lock_or_panic()
             .add(exception_hash, granularity);
 
