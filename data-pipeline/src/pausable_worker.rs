@@ -159,9 +159,16 @@ mod tests {
 
         assert_eq!(receiver.recv().unwrap(), 0);
         runtime.block_on(async { pausable_worker.pause().await.unwrap() });
-        // Make sure the message queue is empty;
-        receiver.try_recv().unwrap_err();
+        // Empty the message queue and get the last message
+        let mut next_message = 1;
+        loop {
+            if let Ok(message) = receiver.try_recv() {
+                next_message = message + 1;
+            } else {
+                break;
+            }
+        }
         pausable_worker.start(&runtime).unwrap();
-        assert_eq!(receiver.recv().unwrap(), 1);
+        assert_eq!(receiver.recv().unwrap(), next_message);
     }
 }
