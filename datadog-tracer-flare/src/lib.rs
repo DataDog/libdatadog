@@ -228,14 +228,11 @@ pub async fn run_remote_config_listener(
         Ok(changes) => {
             println!("Got {} changes.", changes.len());
             for change in changes {
-                match change {
-                    Change::Add(file) => {
-                        let action = check_remote_config_file(file);
-                        if action != Ok(ReturnAction::None) {
-                            return action;
-                        }
+                if let Change::Add(file) = change {
+                    let action = check_remote_config_file(file);
+                    if action != Ok(ReturnAction::None) {
+                        return action;
                     }
-                    _ => (),
                 }
             }
         }
@@ -259,7 +256,6 @@ mod tests {
         file_storage::ParsedFileStorage,
         RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
     };
-    use serde_json;
     use std::sync::Arc;
 
     #[test]
