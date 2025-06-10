@@ -57,6 +57,8 @@ impl Display for PausableWorkerError {
     }
 }
 
+impl core::error::Error for PausableWorkerError {}
+
 impl<T: Worker + Send + Sync + 'static> PausableWorker<T> {
     /// Create a new pausable worker from the given worker.
     pub fn new(worker: T) -> Self {
