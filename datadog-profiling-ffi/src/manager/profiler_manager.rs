@@ -148,20 +148,16 @@ impl ProfilerManager {
     }
 
     fn handle_shutdown(mut self) -> Result<internal::Profile> {
-        // Try to process any remaining samples before dropping them
+        // Process any remaining samples
         while let Ok(sample) = self.channels.samples_receiver.try_recv() {
             let converted_sample = (self.sample_callbacks.converter)(&sample);
-            if let Ok(converted_sample) = converted_sample.try_into() {
-                if let Err(e) = self.profile.add_sample(converted_sample, None) {
-                    eprintln!("Failed to add sample during shutdown: {}", e);
-                }
-            } else {
-                eprintln!("Failed to convert sample during shutdown");
+            if let Ok(s) = converted_sample.try_into() {
+                let _ = self.profile.add_sample(s, None);
             }
             (self.sample_callbacks.drop)(sample);
         }
 
-        // Drain any recycled samples
+        // Drain recycled samples
         while let Ok(sample) = self.channels.recycled_samples_receiver.try_recv() {
             (self.sample_callbacks.drop)(sample);
         }
@@ -169,12 +165,12 @@ impl ProfilerManager {
         // Cancel any ongoing upload
         self.cancellation_token.cancel();
 
-        // Take ownership of the upload thread and sender
-        let upload_thread = self.upload_thread;
+        // Drop the sender to signal the upload thread that no more messages will be sent
+        // This is necessary to allow the upload thread to exit its message processing loop
         drop(self.upload_sender);
 
         // Wait for the upload thread to finish
-        if let Err(e) = upload_thread.join() {
+        if let Err(e) = self.upload_thread.join() {
             eprintln!("Error joining upload thread: {:?}", e);
         }
 
