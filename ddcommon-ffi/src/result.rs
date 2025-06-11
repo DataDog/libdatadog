@@ -7,23 +7,19 @@ use crate::Error;
 /// but there's nothing to return in the case of success.
 #[repr(C)]
 pub enum VoidResult {
-    Ok(
-        /// Do not use the value of Ok. This value only exists to overcome
-        /// Rust -> C code generation.
-        bool,
-    ),
+    Ok,
     Err(Error),
 }
 
 impl VoidResult {
     pub fn unwrap(self) {
-        assert!(matches!(self, Self::Ok(_)));
+        assert!(matches!(self, Self::Ok));
     }
 
     pub fn unwrap_err(self) -> Error {
         match self {
             #[allow(clippy::panic)]
-            Self::Ok(_) => panic!("Expected error, got value"),
+            Self::Ok => panic!("Expected error, got value"),
             Self::Err(err) => err,
         }
     }
@@ -32,7 +28,7 @@ impl VoidResult {
 impl From<anyhow::Result<()>> for VoidResult {
     fn from(value: anyhow::Result<()>) -> Self {
         match value {
-            Ok(_) => Self::Ok(true),
+            Ok(_) => Self::Ok,
             Err(err) => Self::Err(err.into()),
         }
     }

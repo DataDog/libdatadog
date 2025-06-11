@@ -50,7 +50,7 @@ bash build-profiling-ffi.sh /opt/libdatadog
 #### Build dependencies
 
 - Rust 1.84.1 or newer with cargo. See the Cargo.toml for information about bumping this version.
-- `cbindgen` 0.26
+- `cbindgen` 0.29
 - `cmake` and `protoc`
 
 ### Running tests
