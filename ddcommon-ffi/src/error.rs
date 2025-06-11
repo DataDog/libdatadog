@@ -73,25 +73,21 @@ impl From<Box<&dyn std::error::Error>> for Error {
     }
 }
 
-impl Drop for Error {
-    fn drop(&mut self) {
-        // Leave an empty Vec, as it can help with use-after-free and double-free from C.
-        let mut vec = Vec::default();
-        std::mem::swap(&mut vec, &mut self.message);
-        drop(vec);
-    }
-}
-
+/// Drops the error. It should not be used after this, though the
+/// implementation tries to limit the damage in the case of use-after-free and
+/// double-free scenarios.
+///
 /// # Safety
-/// Only pass null or a valid reference to a `ddog_Error`.
+///
+/// Only pass null or a pointer to a valid, mutable `ddog_Error`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
     if let Some(err) = error {
-        // Safety: many other _drop functions need to re-box first, but Error
-        // is repr(C) and not boxed, so it can be dropped in place. Of course,
-        // C users must respect the Error requirements (treat as opaque, don't
-        // reach in).
-        std::ptr::drop_in_place(err as *mut _)
+        // Replacing the contents will drop the old message, freeing its
+        // resources. The new one requires no allocations, so there's nothing
+        // that needs dropped, but it's safe to be dropped.
+        let message = Vec::new();
+        *err = Error { message };
     }
 }
 

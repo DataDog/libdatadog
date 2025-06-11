@@ -41,32 +41,29 @@ impl From<&str> for StringWrapper {
     }
 }
 
-impl Drop for StringWrapper {
-    fn drop(&mut self) {
-        // Leave an empty Vec, as it can help with use-after-free and double-free from C.
-        let mut vec = Vec::default();
-        std::mem::swap(&mut vec, &mut self.message);
-        drop(vec);
-    }
-}
-
+/// Drops a `ddog_StringWrapper`. It should not be used after this, though the
+/// implementation tries to limit the damage in the case of use-after-free and
+/// double-free scenarios.
+///
 /// # Safety
-/// Only pass null or a valid reference to a `ddog_StringWrapper`.
+///
+/// Only pass null or a pointer to a valid, mutable `ddog_StringWrapper`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_StringWrapper_drop(s: Option<&mut StringWrapper>) {
     if let Some(s) = s {
-        // Safety: many other _drop functions need to re-box first, but StringWrapper
-        // is repr(C) and not boxed, so it can be dropped in place. Of course,
-        // C users must respect the StringWrapper requirements (treat as opaque, don't
-        // reach in).
-        std::ptr::drop_in_place(s as *mut _)
+        // Replacing the contents will drop the old string, freeing its
+        // resources. The new one requires no allocations, so there's nothing
+        // that needs dropped, but it's safe to be dropped.
+        s.message = Default::default();
     }
 }
 
-/// Returns a CharSlice of the message that is valid until the StringWrapper
-/// is dropped.
+/// Returns a CharSlice of the message.
+///
 /// # Safety
+///
 /// Only pass null or a valid reference to a `ddog_StringWrapper`.
+/// The string should not be mutated nor dropped while the CharSlice is alive.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_StringWrapper_message(s: Option<&StringWrapper>) -> CharSlice {
     match s {
