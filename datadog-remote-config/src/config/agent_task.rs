@@ -1,7 +1,9 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+#[cfg(feature = "test")]
+use serde::Serialize;
 
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "test", derive(Serialize))]
