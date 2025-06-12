@@ -2,33 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::service::{
-    remote_configs::RemoteConfigsGuard,
-    telemetry::{AppInstance, AppOrQueue},
-    InstanceId, QueueId,
+    remote_configs::RemoteConfigsGuard, telemetry::AppInstance, InstanceId, QueueId,
 };
 use datadog_live_debugger::sender::{generate_tags, PayloadSender};
 use ddcommon::{tag::Tag, MutexExt};
-use futures::{
-    future::{self, join_all, Shared},
-    FutureExt,
-};
-use manual_future::{ManualFuture, ManualFutureCompleter};
+use futures::future::{self, join_all, Shared};
+use manual_future::ManualFuture;
 use simd_json::prelude::ArrayTrait;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::{debug, info};
 
 type AppMap = HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>;
-
-/// `SharedAppManualFut` is a struct that contains a shared future of an `AppInstance` and its
-/// completer. The `app_future` is a shared future that may contain an `Option<AppInstance>`.
-/// The `completer` is used to complete the `app_future`.
-pub(crate) struct SharedAppManualFut {
-    pub(crate) app_future: Shared<ManualFuture<Option<AppInstance>>>,
-    pub(crate) completer: Option<ManualFutureCompleter<Option<AppInstance>>>,
-}
 
 /// `RuntimeInfo` is a struct that contains information about a runtime.
 /// It contains a map of apps and a map of app or actions.
@@ -48,10 +34,10 @@ pub(crate) struct RuntimeInfo {
 /// Similarly, each application has its own global tags.
 #[derive(Default)]
 pub(crate) struct ActiveApplication {
-    pub app_or_actions: AppOrQueue,
     pub remote_config_guard: Option<RemoteConfigsGuard>,
     pub env: Option<String>,
     pub app_version: Option<String>,
+    pub service_name: Option<String>,
     pub global_tags: Vec<Tag>,
     pub live_debugger_tag_cache: Option<Arc<String>>,
     pub debugger_logs_payload_sender: Arc<tokio::sync::Mutex<Option<PayloadSender>>>,
@@ -59,35 +45,6 @@ pub(crate) struct ActiveApplication {
 }
 
 impl RuntimeInfo {
-    /// Retrieves the `AppInstance` for a given service name and environment name.
-    ///
-    /// # Arguments
-    ///
-    /// * `service_name` - A string slice that holds the name of the service.
-    /// * `env_name` - A string slice that holds the name of the environment.
-    ///
-    /// # Returns
-    ///
-    /// * `SharedAppManualFut` - A struct that contains the shared future of the `AppInstance` and
-    ///   its completer.
-    pub(crate) fn get_app(&self, service_name: &str, env_name: &str) -> SharedAppManualFut {
-        let mut apps = self.lock_apps();
-        let key = (service_name.to_owned(), env_name.to_owned());
-        if let Some(found) = apps.get(&key) {
-            SharedAppManualFut {
-                app_future: found.clone(),
-                completer: None,
-            }
-        } else {
-            let (future, completer) = ManualFuture::new();
-            let shared = future.shared();
-            apps.insert(key, shared.clone());
-            SharedAppManualFut {
-                app_future: shared,
-                completer: Some(completer),
-            }
-        }
-    }
     /// Shuts down the runtime.
     /// This involves shutting down all the instances in the runtime.
     pub(crate) async fn shutdown(self) {
@@ -151,9 +108,16 @@ impl ActiveApplication {
     /// * `env` - The environment of the current application.
     /// * `app_version` - The version of the current application.
     /// * `global_tags` - The global tags of the current application.
-    pub fn set_metadata(&mut self, env: String, app_version: String, global_tags: Vec<Tag>) {
+    pub fn set_metadata(
+        &mut self,
+        env: String,
+        app_version: String,
+        service_name: String,
+        global_tags: Vec<Tag>,
+    ) {
         self.env = Some(env);
         self.app_version = Some(app_version);
+        self.service_name = Some(service_name);
         self.global_tags = global_tags;
         self.live_debugger_tag_cache = None;
     }
