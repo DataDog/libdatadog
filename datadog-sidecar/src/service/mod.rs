@@ -3,7 +3,6 @@
 
 // imports for structs defined in this file
 use crate::config;
-use crate::service::telemetry::enqueued_telemetry_data::EnqueuedTelemetryData;
 use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
@@ -52,6 +51,7 @@ pub struct SessionConfig {
     pub endpoint: Endpoint,
     pub dogstatsd_endpoint: Endpoint,
     pub language: String,
+    pub language_version: String,
     pub tracer_version: String,
     pub flush_interval: Duration,
     pub remote_config_poll_interval: Duration,
