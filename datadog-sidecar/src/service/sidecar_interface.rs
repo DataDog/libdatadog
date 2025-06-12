@@ -4,7 +4,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::service::{
-    InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeMetadata,
+    InstanceId, QueueId, RequestIdentification, RequestIdentifier,
     SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
 use anyhow::Result;
@@ -42,23 +42,6 @@ pub trait SidecarInterface {
         instance_id: InstanceId,
         queue_id: QueueId,
         actions: Vec<SidecarAction>,
-    );
-
-    /// Registers a service and flushes any queued actions.
-    ///
-    /// # Arguments
-    ///
-    /// * `instance_id` - The ID of the instance.
-    /// * `queue_id` - The unique identifier for the action in the queue.
-    /// * `meta` - The metadata of the runtime.
-    /// * `service_name` - The name of the service.
-    /// * `env_name` - The name of the environment.
-    async fn register_service_and_flush_queued_actions(
-        instance_id: InstanceId,
-        queue_id: QueueId,
-        meta: RuntimeMetadata,
-        service_name: String,
-        env_name: String,
     );
 
     /// Sets the configuration for a session.

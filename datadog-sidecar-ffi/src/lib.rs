@@ -470,29 +470,6 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
     MaybeError::None
 }
 
-/// Registers a service and flushes any queued actions.
-#[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
-    transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
-    runtime_meta: &RuntimeMetadata,
-    service_name: ffi::CharSlice,
-    env_name: ffi::CharSlice,
-) -> MaybeError {
-    try_c!(blocking::register_service_and_flush_queued_actions(
-        transport,
-        instance_id,
-        queue_id,
-        runtime_meta,
-        service_name.to_utf8_lossy(),
-        env_name.to_utf8_lossy(),
-    ));
-
-    MaybeError::None
-}
-
 /// Enqueues a list of actions to be performed.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
@@ -551,6 +528,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     agent_endpoint: &Endpoint,
     dogstatsd_endpoint: &Endpoint,
     language: ffi::CharSlice,
+    language_version: ffi::CharSlice,
     tracer_version: ffi::CharSlice,
     flush_interval_milliseconds: u32,
     remote_config_poll_interval_millis: u32,
@@ -579,6 +557,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             endpoint: agent_endpoint.clone(),
             dogstatsd_endpoint: dogstatsd_endpoint.clone(),
             language: language.to_utf8_lossy().into(),
+            language_version: language_version.to_utf8_lossy().into(),
             tracer_version: tracer_version.to_utf8_lossy().into(),
             flush_interval: Duration::from_millis(flush_interval_milliseconds as u64),
             remote_config_poll_interval: Duration::from_millis(
