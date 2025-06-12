@@ -8,8 +8,6 @@ use std::{
 };
 use walkdir::WalkDir;
 use zip::{write::FileOptions, ZipWriter};
-#[cfg(feature = "test")]
-use serde::Serialize;
 
 use crate::error::FlareError;
 
@@ -35,9 +33,8 @@ pub fn zip_and_send(files: Vec<String>) -> Result<(), FlareError> {
 
     // Create a temporary file for the zip
     let zip_path = PathBuf::from("flare.zip");
-    let file = File::create(&zip_path).map_err(|e| {
-        FlareError::ZipError(format!("Failed to create zip file: {}", e))
-    })?;
+    let file = File::create(&zip_path)
+        .map_err(|e| FlareError::ZipError(format!("Failed to create zip file: {}", e)))?;
 
     let mut zip = ZipWriter::new(file);
     let options = FileOptions::default()
@@ -62,14 +59,16 @@ pub fn zip_and_send(files: Vec<String>) -> Result<(), FlareError> {
             // If it's a file, add it directly
             add_file_to_zip(&mut zip, &path, &options)?;
         } else {
-            return Err(FlareError::ZipError(format!("Invalid or inexisting file: {}", path.to_string_lossy())));
+            return Err(FlareError::ZipError(format!(
+                "Invalid or inexisting file: {}",
+                path.to_string_lossy()
+            )));
         }
     }
 
     // Finalize the zip
-    zip.finish().map_err(|e| {
-        FlareError::ZipError(format!("Failed to finalize zip file: {}", e))
-    })?;
+    zip.finish()
+        .map_err(|e| FlareError::ZipError(format!("Failed to finalize zip file: {}", e)))?;
 
     // TODO: Implement obfuscation of sensitive data
     // TODO: Implement sending the zip file to the agent
@@ -77,7 +76,7 @@ pub fn zip_and_send(files: Vec<String>) -> Result<(), FlareError> {
     Ok(())
 }
 
-fn add_file_to_zip<>(
+fn add_file_to_zip(
     zip: &mut ZipWriter<File>,
     file_path: &Path,
     options: &FileOptions<()>,
@@ -86,18 +85,14 @@ fn add_file_to_zip<>(
         FlareError::ZipError(format!("Invalid file name for path: {:?}", file_path))
     })?;
 
-    let mut file = File::open(file_path).map_err(|e| {
-        FlareError::ZipError(format!("Failed to open file {:?}: {}", file_path, e))
-    })?;
+    let mut file = File::open(file_path)
+        .map_err(|e| FlareError::ZipError(format!("Failed to open file {:?}: {}", file_path, e)))?;
 
     zip.start_file(file_name.to_string_lossy().as_ref(), *options)
-        .map_err(|e| {
-            FlareError::ZipError(format!("Failed to add file to zip: {}", e))
-        })?;
+        .map_err(|e| FlareError::ZipError(format!("Failed to add file to zip: {}", e)))?;
 
-    io::copy(&mut file, zip).map_err(|e| {
-        FlareError::ZipError(format!("Failed to write file to zip: {}", e))
-    })?;
+    io::copy(&mut file, zip)
+        .map_err(|e| FlareError::ZipError(format!("Failed to write file to zip: {}", e)))?;
 
     Ok(())
 }
@@ -150,11 +145,19 @@ mod tests {
 
         // Verify file contents
         let mut content = String::new();
-        archive.by_name("test.txt").unwrap().read_to_string(&mut content).unwrap();
+        archive
+            .by_name("test.txt")
+            .unwrap()
+            .read_to_string(&mut content)
+            .unwrap();
         assert_eq!(content, "test content");
 
         content.clear();
-        archive.by_name("subfile.txt").unwrap().read_to_string(&mut content).unwrap();
+        archive
+            .by_name("subfile.txt")
+            .unwrap()
+            .read_to_string(&mut content)
+            .unwrap();
         assert_eq!(content, "subdir content");
 
         // Cleanup
