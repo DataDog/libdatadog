@@ -1,3 +1,5 @@
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -71,6 +73,7 @@ pub struct ProfilerManager {
     cancellation_token: CancellationToken,
     upload_sender: Sender<internal::Profile>,
     upload_thread: JoinHandle<()>,
+    is_shutdown: Arc<AtomicBool>,
 }
 
 impl ProfilerManager {
@@ -88,6 +91,9 @@ impl ProfilerManager {
 
         // Create a single cancellation token for all uploads
         let cancellation_token = CancellationToken::new();
+
+        // Create shared shutdown state
+        let is_shutdown = Arc::new(AtomicBool::new(false));
 
         // Spawn the upload thread
         let mut token = Some(cancellation_token.clone());
@@ -108,6 +114,7 @@ impl ProfilerManager {
             cancellation_token,
             upload_sender,
             upload_thread,
+            is_shutdown: is_shutdown.clone(),
         };
 
         let handle = std::thread::spawn(move || manager.main());
@@ -116,6 +123,7 @@ impl ProfilerManager {
             client_channels,
             handle,
             shutdown_sender,
+            is_shutdown,
         ))
     }
 
@@ -150,6 +158,10 @@ impl ProfilerManager {
     /// - The caller must ensure that the callbacks remain valid for the lifetime of the profiler.
     /// - The callbacks must be thread-safe.
     pub fn handle_shutdown(mut self) -> Result<internal::Profile> {
+        // Mark as shutdown
+        self.is_shutdown
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
         // Process any remaining samples
         while let Ok(sample) = self.channels.samples_receiver.try_recv() {
             let converted_sample = (self.callbacks.sample_callbacks.converter)(&sample);

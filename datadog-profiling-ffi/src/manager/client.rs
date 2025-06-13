@@ -1,7 +1,8 @@
+use std::sync::Arc;
 use std::{ffi::c_void, sync::atomic::AtomicBool, thread::JoinHandle};
 
-use anyhow::Result;
-use crossbeam_channel::{SendError, Sender, TryRecvError};
+use anyhow::{ensure, Result};
+use crossbeam_channel::{SendError, Sender};
 use datadog_profiling::internal;
 
 use super::ClientSampleChannels;
@@ -9,22 +10,23 @@ use super::SendSample;
 
 pub struct ManagedProfilerClient {
     channels: ClientSampleChannels,
-    handle: JoinHandle<anyhow::Result<internal::Profile>>,
+    handle: JoinHandle<Result<internal::Profile>>,
     shutdown_sender: Sender<()>,
-    is_shutdown: AtomicBool,
+    is_shutdown: Arc<AtomicBool>,
 }
 
 impl ManagedProfilerClient {
-    pub(crate) fn new(
+    pub fn new(
         channels: ClientSampleChannels,
-        handle: JoinHandle<anyhow::Result<internal::Profile>>,
+        handle: JoinHandle<Result<internal::Profile>>,
         shutdown_sender: Sender<()>,
+        is_shutdown: Arc<AtomicBool>,
     ) -> Self {
         Self {
             channels,
             handle,
             shutdown_sender,
-            is_shutdown: AtomicBool::new(false),
+            is_shutdown,
         }
     }
 
@@ -43,17 +45,23 @@ impl ManagedProfilerClient {
         self.channels.send_sample(sample)
     }
 
-    pub fn try_recv_recycled(&self) -> Result<*mut c_void, TryRecvError> {
+    pub fn try_recv_recycled(
+        &self,
+    ) -> Result<*mut std::ffi::c_void, crossbeam_channel::TryRecvError> {
+        if self.is_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(crossbeam_channel::TryRecvError::Disconnected);
+        }
         self.channels.try_recv_recycled()
     }
 
-    pub fn shutdown(self) -> anyhow::Result<internal::Profile> {
-        self.is_shutdown
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        // Todo: Should we report if there was an error sending the shutdown signal?
-        let _ = self.shutdown_sender.send(());
+    pub fn shutdown(self) -> Result<internal::Profile> {
+        ensure!(
+            !self.is_shutdown.load(std::sync::atomic::Ordering::SeqCst),
+            "Profiler manager is already shutdown"
+        );
+        self.shutdown_sender.send(())?;
         self.handle
             .join()
-            .map_err(|e| anyhow::anyhow!("Failed to join handle: {:?}", e))?
+            .map_err(|e| anyhow::anyhow!("Failed to join manager thread: {:?}", e))?
     }
 }
