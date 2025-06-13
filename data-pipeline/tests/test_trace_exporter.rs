@@ -305,7 +305,10 @@ mod tracing_integration_tests {
             let expected_response = format!("{{\"rate_by_service\": {}}}", rate_param);
 
             assert!(response.is_ok());
-            assert_eq!(response.unwrap().body, expected_response)
+            let AgentResponse::Changed { body } = response.unwrap() else {
+                panic!("Expected a changed response");
+            };
+            assert_eq!(body, expected_response);
         })
         .await;
 
