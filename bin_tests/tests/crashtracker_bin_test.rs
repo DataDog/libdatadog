@@ -7,7 +7,11 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process;
-use std::{fs, path::PathBuf, time::{Duration, Instant}};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context;
 use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
@@ -23,7 +27,7 @@ fn check_file_existence(path: &Path, timeout: Duration) -> bool {
             true => return true,
             false => {
                 if start.elapsed() > timeout {
-                    return false
+                    return false;
                 } else {
                     std::thread::sleep(Duration::from_millis(100));
                 }
@@ -203,7 +207,10 @@ fn test_crash_tracking_bin(
     );
     assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
 
-    assert!(check_file_existence(fixtures.crash_profile_path.as_path(), Duration::from_secs(CHECK_TIMEOUT_MS)));
+    assert!(check_file_existence(
+        fixtures.crash_profile_path.as_path(),
+        Duration::from_secs(CHECK_TIMEOUT_MS)
+    ));
 
     // Check the crash data
     let crash_profile = fs::read(fixtures.crash_profile_path)
