@@ -20,12 +20,11 @@ mod unix {
     use std::env;
     use std::path::Path;
 
+    use bin_tests::TEST_COLLECTOR_TIMEOUT_MS;
     use datadog_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata,
     };
     use ddcommon::{tag, Endpoint};
-
-    const TEST_COLLECTOR_TIMEOUT_MS: u32 = 10_000;
 
     #[inline(never)]
     pub unsafe fn cause_segfault() -> anyhow::Result<()> {

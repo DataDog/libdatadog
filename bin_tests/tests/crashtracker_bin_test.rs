@@ -17,7 +17,7 @@ use anyhow::Context;
 use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
 use serde_json::Value;
 
-const CHECK_TIMEOUT_MS: u64 = 20_000;
+use bin_tests::TEST_COLLECTOR_TIMEOUT_MS;
 
 fn check_file_existence(path: &Path, timeout: Duration) -> bool {
     let start = Instant::now();
@@ -209,7 +209,7 @@ fn test_crash_tracking_bin(
 
     assert!(check_file_existence(
         fixtures.crash_profile_path.as_path(),
-        Duration::from_secs(CHECK_TIMEOUT_MS)
+        Duration::from_secs(TEST_COLLECTOR_TIMEOUT_MS as u64)
     ));
 
     // Check the crash data
