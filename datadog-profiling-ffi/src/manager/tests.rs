@@ -7,8 +7,9 @@ use datadog_profiling::internal::Profile;
 use ddcommon_ffi::{Handle, ToInner};
 use tokio_util::sync::CancellationToken;
 
-use super::{ManagedSampleCallbacks, ProfilerManager};
-use crate::manager::profiler_manager::ProfilerManagerConfig;
+use super::profiler_manager::{
+    ManagedSampleCallbacks, ManagerCallbacks, ProfilerManager, ProfilerManagerConfig,
+};
 use crate::manager::samples::SendSample;
 use datadog_profiling_protobuf::prost_impls::Profile as ProstProfile;
 use ddcommon_ffi::Slice;
@@ -183,9 +184,11 @@ fn test_profiler_manager() {
     let profile = Profile::new(&sample_types, None);
     let client = ProfilerManager::start(
         profile,
-        test_cpu_sampler_callback,
-        test_upload_callback,
-        sample_callbacks,
+        ManagerCallbacks {
+            cpu_sampler_callback: test_cpu_sampler_callback,
+            upload_callback: test_upload_callback,
+            sample_callbacks,
+        },
         config,
     )
     .unwrap();

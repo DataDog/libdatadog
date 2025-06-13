@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::manager::{
-    profiler_manager::{ManagedSampleCallbacks, ProfilerManager, ProfilerManagerConfig},
+    profiler_manager::{
+        ManagedSampleCallbacks, ManagerCallbacks, ProfilerManager, ProfilerManagerConfig,
+    },
     ManagedProfilerClient,
 };
 use crate::profiles::datatypes::{Profile, ProfilePtrExt};
@@ -35,9 +37,11 @@ pub unsafe extern "C" fn ddog_prof_ProfilerManager_start(
         let internal_profile = *profile.take()?;
         let client: ManagedProfilerClient = ProfilerManager::start(
             internal_profile,
-            cpu_sampler_callback,
-            upload_callback,
-            sample_callbacks,
+            ManagerCallbacks {
+                cpu_sampler_callback,
+                upload_callback,
+                sample_callbacks,
+            },
             config,
         )?;
         anyhow::Ok(Handle::from(client))

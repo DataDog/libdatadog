@@ -7,6 +7,7 @@
 mod client;
 mod ffi_api;
 mod ffi_utils;
+mod fork_handler;
 mod profiler_manager;
 mod samples;
 #[cfg(test)]

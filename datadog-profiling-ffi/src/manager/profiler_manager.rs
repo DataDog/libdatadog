@@ -11,6 +11,14 @@ use super::client::ManagedProfilerClient;
 use super::samples::{ClientSampleChannels, ManagerSampleChannels, SendSample};
 use crate::profiles::datatypes::Sample;
 
+/// Holds the callbacks needed to restart the profile manager
+pub struct ManagerCallbacks {
+    pub cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
+    pub upload_callback:
+        extern "C" fn(*mut Handle<internal::Profile>, &mut Option<CancellationToken>),
+    pub sample_callbacks: ManagedSampleCallbacks,
+}
+
 #[repr(C)]
 pub struct ProfilerManagerConfig {
     pub channel_depth: usize,
@@ -59,9 +67,7 @@ pub struct ProfilerManager {
     upload_ticker: Receiver<Instant>,
     shutdown_receiver: Receiver<()>,
     profile: internal::Profile,
-    cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
-    upload_callback: extern "C" fn(*mut Handle<internal::Profile>, &mut Option<CancellationToken>),
-    sample_callbacks: ManagedSampleCallbacks,
+    callbacks: ManagerCallbacks,
     cancellation_token: CancellationToken,
     upload_sender: Sender<internal::Profile>,
     upload_thread: JoinHandle<()>,
@@ -70,12 +76,7 @@ pub struct ProfilerManager {
 impl ProfilerManager {
     pub fn start(
         profile: internal::Profile,
-        cpu_sampler_callback: extern "C" fn(*mut internal::Profile),
-        upload_callback: extern "C" fn(
-            *mut Handle<internal::Profile>,
-            &mut Option<CancellationToken>,
-        ),
-        sample_callbacks: ManagedSampleCallbacks,
+        callbacks: ManagerCallbacks,
         config: ProfilerManagerConfig,
     ) -> Result<ManagedProfilerClient> {
         let (client_channels, manager_channels) = ClientSampleChannels::new(config.channel_depth);
@@ -93,7 +94,7 @@ impl ProfilerManager {
         let upload_thread = std::thread::spawn(move || {
             while let Ok(profile) = upload_receiver.recv() {
                 let mut handle = Handle::from(profile);
-                (upload_callback)(&mut handle, &mut token);
+                (callbacks.upload_callback)(&mut handle, &mut token);
             }
         });
 
@@ -103,9 +104,7 @@ impl ProfilerManager {
             upload_ticker,
             shutdown_receiver,
             profile,
-            cpu_sampler_callback,
-            upload_callback,
-            sample_callbacks,
+            callbacks,
             cancellation_token,
             upload_sender,
             upload_thread,
@@ -125,18 +124,18 @@ impl ProfilerManager {
         raw_sample: Result<SendSample, crossbeam_channel::RecvError>,
     ) -> Result<()> {
         let mut sample = raw_sample?;
-        let converted_sample = (self.sample_callbacks.converter)(&sample);
+        let converted_sample = (self.callbacks.sample_callbacks.converter)(&sample);
         let add_result = self.profile.add_sample(converted_sample.try_into()?, None);
-        (self.sample_callbacks.reset)(&mut sample);
+        (self.callbacks.sample_callbacks.reset)(&mut sample);
         self.channels
             .recycled_samples_sender
             .send(sample)
-            .map_or_else(|e| (self.sample_callbacks.drop)(e.0), |_| ());
+            .map_or_else(|e| (self.callbacks.sample_callbacks.drop)(e.0), |_| ());
         add_result
     }
 
     fn handle_cpu_tick(&mut self) {
-        (self.cpu_sampler_callback)(&mut self.profile);
+        (self.callbacks.cpu_sampler_callback)(&mut self.profile);
     }
 
     fn handle_upload_tick(&mut self) -> Result<()> {
@@ -147,19 +146,22 @@ impl ProfilerManager {
         Ok(())
     }
 
-    fn handle_shutdown(mut self) -> Result<internal::Profile> {
+    /// # Safety
+    /// - The caller must ensure that the callbacks remain valid for the lifetime of the profiler.
+    /// - The callbacks must be thread-safe.
+    pub fn handle_shutdown(mut self) -> Result<internal::Profile> {
         // Process any remaining samples
         while let Ok(sample) = self.channels.samples_receiver.try_recv() {
-            let converted_sample = (self.sample_callbacks.converter)(&sample);
+            let converted_sample = (self.callbacks.sample_callbacks.converter)(&sample);
             if let Ok(s) = converted_sample.try_into() {
                 let _ = self.profile.add_sample(s, None);
             }
-            (self.sample_callbacks.drop)(sample);
+            (self.callbacks.sample_callbacks.drop)(sample);
         }
 
         // Drain recycled samples
         while let Ok(sample) = self.channels.recycled_samples_receiver.try_recv() {
-            (self.sample_callbacks.drop)(sample);
+            (self.callbacks.sample_callbacks.drop)(sample);
         }
 
         // Cancel any ongoing upload
