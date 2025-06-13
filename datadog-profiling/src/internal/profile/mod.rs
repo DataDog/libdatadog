@@ -6,18 +6,16 @@ mod fuzz_tests;
 
 pub mod interning_api;
 
-use self::api::UpscalingInfo;
 use super::*;
-use crate::api;
-use crate::api::ManagedStringId;
+use crate::api::{self, ManagedStringId, UpscalingInfo};
 use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::StringTable;
 use crate::iter::{IntoLendingIterator, LendingIterator};
+use crate::UploadCompression;
 use anyhow::Context;
 use datadog_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
 use interning_api::Generation;
-use lz4_flex::frame::FrameEncoder;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io;
@@ -51,6 +49,7 @@ pub struct Profile {
     string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
     string_storage_cached_profile_id: Option<CachedProfileId>,
     timestamp_key: StringId,
+    upload_compression: UploadCompression,
     upscaling_rules: UpscalingRules,
 }
 
@@ -313,6 +312,13 @@ impl Profile {
         Ok(profile)
     }
 
+    /// Sets the upload compression algorithm. The default level is
+    /// [UploadCompression::On]. The exact algorithm that on uses may change
+    /// over time.
+    pub fn set_upload_compression(&mut self, compression: UploadCompression) {
+        self.upload_compression = compression;
+    }
+
     /// Serialize the aggregated profile, adding the end time and duration.
     /// # Arguments
     /// * `end_time` - Optional end time of the profile. Passing None will use the current time.
@@ -336,11 +342,25 @@ impl Profile {
         // size of 32KiB should definitely outperform starting at zero for
         // time consumed, allocator pressure, and allocator fragmentation.
         const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
-        let mut compressor = FrameEncoder::new(Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE));
+        let mut buffer = Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE);
 
-        let mut encoded_profile = self.encode(&mut compressor, end_time, duration)?;
-        encoded_profile.buffer = compressor.finish()?;
-        Ok(encoded_profile)
+        Ok(match self.upload_compression {
+            UploadCompression::Off => {
+                let encoded_profile = self.encode(&mut buffer, end_time, duration)?;
+                EncodedProfile {
+                    buffer,
+                    ..encoded_profile
+                }
+            }
+            UploadCompression::On | UploadCompression::Lz4 => {
+                let mut compressor = lz4_flex::frame::FrameEncoder::new(buffer);
+                let encoded_profile = self.encode(&mut compressor, end_time, duration)?;
+                EncodedProfile {
+                    buffer: compressor.finish()?,
+                    ..encoded_profile
+                }
+            }
+        })
     }
 
     /// Encodes the profile. Note that the buffer will be empty. The caller
@@ -735,6 +755,7 @@ impl Profile {
             string_storage_cached_profile_id: None, /* Never reuse an id! See comments on
                                                      * CachedProfileId for why. */
             timestamp_key: Default::default(),
+            upload_compression: Default::default(),
             upscaling_rules: Default::default(),
         };
 
