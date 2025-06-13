@@ -2100,6 +2100,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     /// Tests that if agent_response_payload_version is not enabled
     /// the exporter always returns the response body
     fn test_agent_response_payload_version_disabled() {
@@ -2133,6 +2134,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     /// Tests that if agent_response_payload_version is enabled
     /// the exporter returns the response body only once
     /// and then returns Unchanged response until the payload version header changes
