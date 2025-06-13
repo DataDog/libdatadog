@@ -184,6 +184,10 @@ fn test_crash_tracking_bin(
     );
     assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
 
+    while !fixtures.crash_profile_path.as_path().exists() {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
     // Check the crash data
     let crash_profile = fs::read(fixtures.crash_profile_path)
         .context("reading crashtracker profiling payload")
