@@ -7,6 +7,9 @@ use crate::agent_info::{AgentInfoArc, AgentInfoFetcher};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient, TelemetryClientBuilder};
+use crate::trace_exporter::agent_response::{
+    AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
+};
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use crate::{
     health_metrics, health_metrics::HealthMetric, span_concentrator::SpanConcentrator,
@@ -207,6 +210,7 @@ pub struct TraceExporter {
     previous_info_state: ArcSwapOption<String>,
     telemetry: Option<TelemetryClient>,
     workers: Arc<Mutex<TraceExporterWorkers>>,
+    agent_payload_response_version: Option<AgentResponsePayloadVersion>,
 }
 
 enum DeserInputFormat {
@@ -309,13 +313,13 @@ impl TraceExporter {
             TraceExporterInputFormat::V04 => self.send_deser(data, DeserInputFormat::V04),
             TraceExporterInputFormat::V05 => self.send_deser(data, DeserInputFormat::V05),
         }?;
-        if res.is_empty() {
+        if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
             return Err(TraceExporterError::Agent(
                 error::AgentErrorKind::EmptyResponse,
             ));
         }
 
-        Ok(AgentResponse::from(res))
+        Ok(res)
     }
 
     /// Safely shutdown the TraceExporter and all related tasks
@@ -525,7 +529,11 @@ impl TraceExporter {
         }
     }
 
-    fn send_proxy(&self, data: &[u8], trace_count: usize) -> Result<String, TraceExporterError> {
+    fn send_proxy(
+        &self,
+        data: &[u8],
+        trace_count: usize,
+    ) -> Result<AgentResponse, TraceExporterError> {
         self.send_data_to_url(
             data,
             trace_count,
@@ -538,7 +546,7 @@ impl TraceExporter {
         data: &[u8],
         trace_count: usize,
         uri: Uri,
-    ) -> Result<String, TraceExporterError> {
+    ) -> Result<AgentResponse, TraceExporterError> {
         self.runtime()?.block_on(async {
             let mut req_builder = hyper::Request::builder()
                 .uri(uri)
@@ -610,7 +618,9 @@ impl TraceExporter {
                                 ),
                                 None,
                             );
-                            Ok(String::from_utf8_lossy(&body.to_bytes()).to_string())
+                            Ok(AgentResponse::Changed {
+                                body: String::from_utf8_lossy(&body.to_bytes()).to_string(),
+                            })
                         }
                         Err(err) => {
                             error!(
@@ -696,7 +706,7 @@ impl TraceExporter {
     pub fn send_trace_chunks<T: SpanText>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
-    ) -> Result<String, TraceExporterError> {
+    ) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
         self.send_trace_chunks_inner(trace_chunks)
     }
@@ -706,7 +716,7 @@ impl TraceExporter {
         &self,
         data: &[u8],
         format: DeserInputFormat,
-    ) -> Result<String, TraceExporterError> {
+    ) -> Result<AgentResponse, TraceExporterError> {
         let (traces, _) = match format {
             DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
             DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
@@ -734,7 +744,7 @@ impl TraceExporter {
     fn send_trace_chunks_inner<T: SpanText>(
         &self,
         mut traces: Vec<Vec<Span<T>>>,
-    ) -> Result<String, TraceExporterError> {
+    ) -> Result<AgentResponse, TraceExporterError> {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         // Stats computation
@@ -780,6 +790,12 @@ impl TraceExporter {
         headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
         headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
         headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
+        if let Some(agent_payload_response_version) = &self.agent_payload_response_version {
+            headers.insert(
+                DATADOG_RATES_PAYLOAD_VERSION_HEADER,
+                agent_payload_response_version.header_value(),
+            );
+        }
 
         let strategy = RetryStrategy::default();
         let mp_payload = match &payload {
@@ -829,45 +845,7 @@ impl TraceExporter {
 
             // Handle the result
             match result {
-                Ok((response, _)) => {
-                    let status = response.status();
-                    let body = match response.into_body().collect().await {
-                        Ok(body) => String::from_utf8_lossy(&body.to_bytes()).to_string(),
-                        Err(err) => {
-                            error!(?err, "Error reading agent response body");
-                            self.emit_metric(
-                                HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                                None,
-                            );
-                            return Err(TraceExporterError::from(err));
-                        }
-                    };
-
-                    if status.is_success() {
-                        info!(
-                            chunks = chunks,
-                            status = %status,
-                            "Trace chunks sent successfully to agent"
-                        );
-                        self.emit_metric(
-                            HealthMetric::Count(health_metrics::STAT_SEND_TRACES, chunks as i64),
-                            None,
-                        );
-                        Ok(body)
-                    } else {
-                        warn!(
-                            status = %status,
-                            "Agent returned non-success status for trace send"
-                        );
-                        self.emit_metric(
-                            HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                            None,
-                        );
-                        Err(TraceExporterError::Request(RequestError::new(
-                            status, &body,
-                        )))
-                    }
-                }
+                Ok((response, _)) => self.handle_agent_response(chunks, response).await,
                 Err(err) => {
                     error!(?err, "Error sending traces");
                     self.emit_metric(
@@ -899,6 +877,76 @@ impl TraceExporter {
                     }
                 }
             }
+        })
+    }
+
+    async fn handle_agent_response(
+        &self,
+        chunks: usize,
+        response: hyper::Response<hyper_migration::Body>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let status = response.status();
+        let payload_version_changed = match (
+            status.is_success(),
+            self.agent_payload_response_version.as_ref(),
+            response.headers().get(DATADOG_RATES_PAYLOAD_VERSION_HEADER),
+        ) {
+            (false, _, _) => {
+                // If the status is not success, the rates are considered unchanged
+                false
+            }
+            (true, None, _) => {
+                // if the agent_payload_response_version fingerprint is not enabled we always
+                // return the new rates
+                true
+            }
+            (true, Some(agent_payload_response_version), Some(new_payload_version)) => {
+                if let Ok(new_payload_version_str) = new_payload_version.to_str() {
+                    agent_payload_response_version.check_and_update(new_payload_version_str)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
+
+        let body = match response.into_body().collect().await {
+            Ok(body) => String::from_utf8_lossy(&body.to_bytes()).to_string(),
+            Err(err) => {
+                error!(?err, "Error reading agent response body");
+                self.emit_metric(
+                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                    None,
+                );
+                return Err(TraceExporterError::from(err));
+            }
+        };
+        if !status.is_success() {
+            warn!(
+                status = %status,
+                "Agent returned non-success status for trace send"
+            );
+            self.emit_metric(
+                HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                None,
+            );
+            return Err(TraceExporterError::Request(RequestError::new(
+                status, &body,
+            )));
+        }
+        info!(
+            chunks = chunks,
+            status = %status,
+            "Trace chunks sent successfully to agent"
+        );
+        self.emit_metric(
+            HealthMetric::Count(health_metrics::STAT_SEND_TRACES, chunks as i64),
+            None,
+        );
+        Ok(if payload_version_changed {
+            AgentResponse::Changed { body }
+        } else {
+            AgentResponse::Unchanged
         })
     }
 
@@ -943,6 +991,8 @@ pub struct TraceExporterBuilder {
     peer_tags: Vec<String>,
     telemetry: Option<TelemetryConfig>,
     test_session_token: Option<String>,
+
+    agent_rates_payload_version_enabled: bool,
 }
 
 impl TraceExporterBuilder {
@@ -1096,6 +1146,12 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Enables storing and checking the agent payload
+    pub fn enable_agent_rates_payload_version_enabled(&mut self) -> &mut Self {
+        self.agent_rates_payload_version_enabled = true;
+        self
+    }
+
     #[allow(missing_docs)]
     pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
@@ -1215,6 +1271,10 @@ impl TraceExporterBuilder {
                 stats: None,
                 telemetry: telemetry_worker,
             })),
+
+            agent_payload_response_version: self
+                .agent_rates_payload_version_enabled
+                .then(AgentResponsePayloadVersion::new),
         })
     }
 
@@ -1737,15 +1797,15 @@ mod tests {
 
         assert_eq!(
             result,
-            AgentResponse::from(
-                r#"{
+            AgentResponse::Changed {
+                body: r#"{
                     "rate_by_service": {
                         "service:foo,env:staging": 1.0,
                         "service:,env:": 0.8
                     }
                 }"#
                 .to_string()
-            )
+            }
         );
     }
 
@@ -1893,7 +1953,10 @@ mod tests {
 
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref(), 1).unwrap();
-        assert_eq!(result.body, response_body);
+        let AgentResponse::Changed { body } = result else {
+            panic!("Expected Changed response");
+        };
+        assert_eq!(body, response_body);
 
         traces_endpoint.assert_hits(1);
         while metrics_endpoint.hits() == 0 {
@@ -1947,7 +2010,10 @@ mod tests {
         let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (vec![], vec![]);
         let traces = rmp_serde::to_vec(&v5).unwrap();
         let result = exporter.send(traces.as_ref(), 1).unwrap();
-        assert_eq!(result.body, response_body);
+        let AgentResponse::Changed { body } = result else {
+            panic!("Expected Changed response");
+        };
+        assert_eq!(body, response_body);
 
         traces_endpoint.assert_hits(1);
         while metrics_endpoint.hits() == 0 {
@@ -2013,7 +2079,10 @@ mod tests {
 
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref(), 1).unwrap();
-        assert_eq!(result.body, response_body);
+        let AgentResponse::Changed { body } = result else {
+            panic!("Expected Changed response");
+        };
+        assert_eq!(body, response_body);
 
         traces_endpoint.assert_hits(1);
         while metrics_endpoint.hits() == 0 {
@@ -2028,6 +2097,98 @@ mod tests {
                 })
         }
         metrics_endpoint.assert_hits(1);
+    }
+
+    #[test]
+    /// Tests that if agent_response_payload_version is not enabled
+    /// the exporter always returns the response body
+    fn test_agent_response_payload_version_disabled() {
+        let server = MockServer::start();
+        let response_body = r#"{
+                        "rate_by_service": {
+                            "service:foo,env:staging": 1.0,
+                            "service:,env:": 0.8
+                        }
+                    }"#;
+        let traces_endpoint = server.mock(|when, then| {
+            when.method(POST).path("/v0.4/traces");
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-rates-payload-version", "abc")
+                .body(response_body);
+        });
+
+        let mut builder = TraceExporterBuilder::default();
+        builder.set_url(&server.url("/"));
+        let exporter = builder.build().unwrap();
+        let traces = vec![0x90];
+        for _ in 0..2 {
+            let result = exporter.send(traces.as_ref(), 1).unwrap();
+            let AgentResponse::Changed { body } = result else {
+                panic!("Expected Changed response");
+            };
+            assert_eq!(body, response_body);
+        }
+        traces_endpoint.assert_hits(2);
+    }
+
+    #[test]
+    /// Tests that if agent_response_payload_version is enabled
+    /// the exporter returns the response body only once
+    /// and then returns Unchanged response until the payload version header changes
+    fn test_agent_response_payload_version() {
+        let server = MockServer::start();
+        let response_body = r#"{
+                        "rate_by_service": {
+                            "service:foo,env:staging": 1.0,
+                            "service:,env:": 0.8
+                        }
+                    }"#;
+        let mut traces_endpoint = server.mock(|when, then| {
+            when.method(POST).path("/v0.4/traces");
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-rates-payload-version", "abc")
+                .body(response_body);
+        });
+
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_url(&server.url("/"))
+            .enable_agent_rates_payload_version_enabled();
+        let exporter = builder.build().unwrap();
+        let traces = vec![0x90];
+        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let AgentResponse::Changed { body } = result else {
+            panic!("Expected Changed response");
+        };
+        assert_eq!(body, response_body);
+
+        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let AgentResponse::Unchanged = result else {
+            panic!("Expected Unchanged response");
+        };
+        traces_endpoint.assert_hits(2);
+        traces_endpoint.delete();
+
+        let traces_endpoint = server.mock(|when, then| {
+            when.method(POST).path("/v0.4/traces");
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-rates-payload-version", "def")
+                .body(response_body);
+        });
+        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let AgentResponse::Changed { body } = result else {
+            panic!("Expected Changed response");
+        };
+        assert_eq!(body, response_body);
+
+        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let AgentResponse::Unchanged = result else {
+            panic!("Expected Unchanged response");
+        };
+        traces_endpoint.assert_hits(2);
     }
 
     #[test]
