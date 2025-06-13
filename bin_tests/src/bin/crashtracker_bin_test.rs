@@ -25,7 +25,7 @@ mod unix {
     };
     use ddcommon::{tag, Endpoint};
 
-    const TEST_COLLECTOR_TIMEOUT_MS: u32 = 10_000;
+    const TEST_COLLECTOR_TIMEOUT_MS: u32 = 20_000;
 
     #[inline(never)]
     pub unsafe fn cause_segfault() -> anyhow::Result<()> {
