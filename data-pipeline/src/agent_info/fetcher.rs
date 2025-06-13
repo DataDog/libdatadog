@@ -3,9 +3,8 @@
 //! Provides utilities to fetch the agent /info endpoint and an automatic fetcher to keep info
 //! up-to-date
 
-use super::{schema::AgentInfo, AgentInfoArc};
+use super::{schema::AgentInfo, AGENT_INFO_CACHE};
 use anyhow::{anyhow, Result};
-use arc_swap::ArcSwapOption;
 use ddcommon::{hyper_migration, worker::Worker, Endpoint};
 use http_body_util::BodyExt;
 use hyper::{self, body::Buf, header::HeaderName};
@@ -99,21 +98,23 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
+/// use data_pipeline::agent_info;
 /// let endpoint = ddcommon::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Create the fetcher
 /// let mut fetcher = data_pipeline::agent_info::AgentInfoFetcher::new(
 ///     endpoint,
 ///     std::time::Duration::from_secs(5 * 60),
 /// );
-/// // Get the Arc to access the info
-/// let agent_info_arc = fetcher.get_info();
 /// // Start the runner
 /// tokio::spawn(async move {
 ///     fetcher.run().await;
 /// });
 ///
+/// // Get the Arc to access the info
+/// let agent_info_arc = agent_info::get_agent_info();
+///
 /// // Access the info
-/// if let Some(agent_info) = agent_info_arc.load().as_ref() {
+/// if let Some(agent_info) = agent_info_arc.as_ref() {
 ///     println!(
 ///         "Agent version is {}",
 ///         agent_info.info.version.as_ref().unwrap()
@@ -125,7 +126,6 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 #[derive(Debug)]
 pub struct AgentInfoFetcher {
     info_endpoint: Endpoint,
-    info: AgentInfoArc,
     refresh_interval: Duration,
 }
 
@@ -135,16 +135,8 @@ impl AgentInfoFetcher {
     pub fn new(info_endpoint: Endpoint, refresh_interval: Duration) -> Self {
         Self {
             info_endpoint,
-            info: Arc::new(ArcSwapOption::new(None)),
             refresh_interval,
         }
-    }
-
-    /// Return an AgentInfoArc storing the info received by the agent.
-    ///
-    /// When the fetcher is running it updates the AgentInfoArc when the agent's info changes.
-    pub fn get_info(&self) -> AgentInfoArc {
-        self.info.clone()
     }
 }
 
@@ -155,13 +147,13 @@ impl Worker for AgentInfoFetcher {
     /// This method does not return and should be called within a dedicated task.
     async fn run(&mut self) {
         loop {
-            let current_info = self.info.load();
+            let current_info = AGENT_INFO_CACHE.load();
             let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
             let res = fetch_info_with_state(&self.info_endpoint, current_hash).await;
             match res {
                 Ok(FetchInfoStatus::NewState(new_info)) => {
                     info!("New /info state received");
-                    self.info.store(Some(Arc::new(*new_info)));
+                    AGENT_INFO_CACHE.store(Some(Arc::new(*new_info)));
                 }
                 Ok(FetchInfoStatus::SameState) => {
                     info!("Agent info is up-to-date")
@@ -178,6 +170,7 @@ impl Worker for AgentInfoFetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_info;
     use httpmock::prelude::*;
 
     const TEST_INFO: &str = r#"{
@@ -332,18 +325,23 @@ mod tests {
             .await;
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
         let mut fetcher = AgentInfoFetcher::new(endpoint.clone(), Duration::from_millis(100));
-        let info = fetcher.get_info();
-        assert!(info.load().is_none());
+        assert!(agent_info::get_agent_info().is_none());
         tokio::spawn(async move {
             fetcher.run().await;
         });
 
         // Wait until the info is fetched
-        while info.load().is_none() {
+        while agent_info::get_agent_info().is_none() {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        let version_1 = info.load().as_ref().unwrap().info.version.clone().unwrap();
+        let version_1 = agent_info::get_agent_info()
+            .as_ref()
+            .unwrap()
+            .info
+            .version
+            .clone()
+            .unwrap();
         assert_eq!(version_1, "1");
         mock_v1.assert_async().await;
 
@@ -369,7 +367,13 @@ mod tests {
         // very few operations. We wait for a maximum of 1s before failing the test and that should
         // give way more time than necesssary.
         for _ in 0..10 {
-            let version_2 = info.load().as_ref().unwrap().info.version.clone().unwrap();
+            let version_2 = agent_info::get_agent_info()
+                .as_ref()
+                .unwrap()
+                .info
+                .version
+                .clone()
+                .unwrap();
             if version_2 != version_1 {
                 assert_eq!(version_2, "2");
                 break;
