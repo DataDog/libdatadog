@@ -26,6 +26,8 @@ const DEFAULT_IDLE_LINGER_TIME: Duration = Duration::from_secs(60);
 
 const ENV_SIDECAR_SELF_TELEMETRY: &str = "_DD_SIDECAR_SELF_TELEMETRY";
 
+const ENV_SIDECAR_WATCHDOG_MAX_MEMORY: &str = "_DD_SIDECAR_WATCHDOG_MAX_MEMORY";
+
 const ENV_SIDECAR_APPSEC_SHARED_LIB_PATH: &str = "_DD_SIDECAR_APPSEC_SHARED_LIB_PATH";
 const ENV_SIDECAR_APPSEC_SOCKET_FILE_PATH: &str = "_DD_SIDECAR_APPSEC_SOCKET_FILE_PATH";
 const ENV_SIDECAR_APPSEC_LOCK_FILE_PATH: &str = "_DD_SIDECAR_APPSEC_LOCK_FILE_PATH";
@@ -88,6 +90,7 @@ pub struct Config {
     pub library_dependencies: Vec<LibDependency>,
     pub child_env: HashMap<std::ffi::OsString, std::ffi::OsString>,
     pub appsec_config: Option<AppSecConfig>,
+    pub max_memory: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +123,12 @@ impl Config {
         if self.appsec_config.is_some() {
             #[allow(clippy::unwrap_used)]
             res.extend(self.appsec_config.as_ref().unwrap().to_env());
+        }
+        if self.max_memory != 0 {
+            res.insert(
+                ENV_SIDECAR_WATCHDOG_MAX_MEMORY,
+                format!("{}", self.max_memory).into(),
+            );
         }
         res
     }
@@ -209,6 +218,13 @@ impl FromEnv {
         )
     }
 
+    fn max_memory() -> usize {
+        std::env::var(ENV_SIDECAR_WATCHDOG_MAX_MEMORY)
+            .unwrap_or_default()
+            .parse()
+            .unwrap_or(0)
+    }
+
     pub fn config() -> Config {
         Config {
             ipc_mode: Self::ipc_mode(),
@@ -219,6 +235,7 @@ impl FromEnv {
             library_dependencies: vec![],
             child_env: std::env::vars_os().collect(),
             appsec_config: Self::appsec_config(),
+            max_memory: Self::max_memory(),
         }
     }
 
