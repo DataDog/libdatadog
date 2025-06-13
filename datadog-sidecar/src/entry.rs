@@ -7,6 +7,7 @@ use datadog_crashtracker;
 use spawn_worker::{entrypoint, Stdio};
 use std::fs::File;
 use std::future::Future;
+use std::sync::atomic::AtomicUsize;
 use std::{
     io,
     sync::{
@@ -27,7 +28,7 @@ use crate::setup::{self, IpcClient, IpcServer, Liaison};
 
 use crate::config::{self, Config};
 use crate::self_telemetry::self_telemetry;
-use crate::tracer::get_shm_limiter;
+use crate::tracer::SHM_LIMITER;
 use crate::watchdog::Watchdog;
 use crate::{ddog_daemon_entry_point, setup_daemon_process};
 
@@ -39,12 +40,13 @@ where
 {
     let counter = Arc::new(AtomicI32::new(0));
     let cloned_counter = Arc::clone(&counter);
+    let config = Config::get();
+    let max_idle_linger_time = config.idle_linger_time;
 
     tokio::spawn({
         let cancel = cancel.clone();
         async move {
             let mut last_seen_connection_time = Instant::now();
-            let max_idle_linger_time = Config::get().idle_linger_time;
 
             loop {
                 tokio::time::sleep(Duration::from_millis(500)).await;
@@ -88,13 +90,16 @@ where
     });
 
     // Init. Early, before we start listening.
-    drop(get_shm_limiter().lock());
+    drop(SHM_LIMITER.lock());
 
     let server = SidecarServer::default();
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
 
-    let watchdog_handle =
+    let mut watchdog_handle =
         Watchdog::from_receiver(shutdown_complete_rx).spawn_watchdog(server.clone());
+    if config.max_memory != 0 {
+        watchdog_handle.mem_usage_bytes = Arc::new(AtomicUsize::new(config.max_memory));
+    }
     let telemetry_handle = self_telemetry(server.clone(), watchdog_handle);
 
     listener(Box::new({

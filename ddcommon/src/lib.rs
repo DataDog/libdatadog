@@ -25,6 +25,7 @@ pub mod hyper_migration;
 pub mod rate_limiter;
 pub mod tag;
 pub mod unix_utils;
+pub mod worker;
 
 /// Extension trait for `Mutex` to provide a method that acquires a lock, panicking if the lock is
 /// poisoned.
@@ -109,6 +110,7 @@ pub type HttpResponse = hyper_migration::HttpResponse;
 pub type HttpRequestBuilder = hyper::http::request::Builder;
 
 // Used by tag! macro
+use crate::entity_id::DD_EXTERNAL_ENV;
 pub use const_format;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
@@ -262,7 +264,7 @@ impl Endpoint {
         }
 
         // Add the External Env header if available
-        if let Some(external_env) = entity_id::get_external_env() {
+        if let Some(external_env) = *DD_EXTERNAL_ENV {
             builder = builder.header(header::DATADOG_EXTERNAL_ENV, external_env);
         }
 

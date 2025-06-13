@@ -29,7 +29,7 @@ pub use spans::*;
 ///   This function is atomic and idempotent.  Calling it multiple times is allowed.
 pub unsafe extern "C" fn ddog_crasht_disable() -> VoidResult {
     datadog_crashtracker::disable();
-    VoidResult::Ok(true)
+    VoidResult::Ok
 }
 
 #[no_mangle]
@@ -45,7 +45,7 @@ pub unsafe extern "C" fn ddog_crasht_disable() -> VoidResult {
 ///   This function is atomic and idempotent.  Calling it multiple times is allowed.
 pub unsafe extern "C" fn ddog_crasht_enable() -> VoidResult {
     datadog_crashtracker::enable();
-    VoidResult::Ok(true)
+    VoidResult::Ok
 }
 
 #[no_mangle]

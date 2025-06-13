@@ -13,7 +13,7 @@ default = []
 cbindgen = []
 
 [dependencies]
-cbindgen = {version = "0.27"}
+cbindgen = { version = "0.29" }
 serde = "1.0"
 serde_json = "1.0"
 

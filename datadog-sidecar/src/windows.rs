@@ -18,7 +18,7 @@ use std::ffi::CStr;
 use std::io::{self, Error};
 use std::os::windows::io::{AsRawHandle, IntoRawHandle, OwnedHandle};
 use std::ptr::null_mut;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
@@ -159,11 +159,7 @@ pub fn ddog_setup_crashtracking(endpoint: Option<&Endpoint>, metadata: Metadata)
     false
 }
 
-static SIDECAR_IDENTIFIER: OnceLock<String> = OnceLock::new();
-
-fn get_sidecar_identifier() -> &'static str {
-    SIDECAR_IDENTIFIER.get_or_init(fetch_sidecar_identifier)
-}
+static SIDECAR_IDENTIFIER: LazyLock<String> = LazyLock::new(fetch_sidecar_identifier);
 
 fn fetch_sidecar_identifier() -> String {
     unsafe {
@@ -232,7 +228,7 @@ fn fetch_sidecar_identifier() -> String {
 }
 
 pub fn primary_sidecar_identifier() -> &'static str {
-    get_sidecar_identifier()
+    &SIDECAR_IDENTIFIER
 }
 
 #[test]

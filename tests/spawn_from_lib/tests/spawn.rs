@@ -15,10 +15,13 @@ fn rewind_and_read(file: &mut std::fs::File) -> anyhow::Result<String> {
     Ok(buf)
 }
 
-/// run with: RUSTFLAGS="-C prefer-dynamic" cargo test --package test_spawn_from_lib --features
-/// prefer-dynamic -- --ignored
+/// run with:
+/// ```bash
+/// RUSTFLAGS="-C prefer-dynamic" cargo test \
+///     --package test_spawn_from_lib \
+///     --features prefer-dynamic
+/// ```
 #[test]
-#[ignore = "requires -C prefer-dynamic"]
 #[cfg(feature = "prefer-dynamic")]
 fn test_spawning_trampoline_worker() {
     let mut stdout = tempfile::tempfile().unwrap();

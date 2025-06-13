@@ -7,7 +7,7 @@ use hyper_util::client::legacy::connect;
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 use std::task::{Context, Poll};
 
 #[cfg(unix)]
@@ -27,15 +27,11 @@ pub enum Connector {
     Https(hyper_rustls::HttpsConnector<connect::HttpConnector>),
 }
 
-// TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
-static DEFAULT_CONNECTOR: OnceLock<Connector> = OnceLock::new();
-fn get_default_connector() -> &'static Connector {
-    DEFAULT_CONNECTOR.get_or_init(Connector::new)
-}
+static DEFAULT_CONNECTOR: LazyLock<Connector> = LazyLock::new(Connector::new);
 
 impl Default for Connector {
     fn default() -> Self {
-        get_default_connector().clone()
+        DEFAULT_CONNECTOR.clone()
     }
 }
 
@@ -95,19 +91,20 @@ mod https {
     /// When using aws-lc-rs, rustls needs to be initialized with the default CryptoProvider;
     /// sometimes this is done as a side-effect of other operations, but we need to ensure it
     /// happens here.  On non-unix platforms, ddcommon uses `ring` instead, which handles this
-    /// at rustls initialization. TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
+    /// at rustls initialization.
     /// In fips mode we expect someone to have done this already.
     #[cfg(any(not(feature = "fips"), coverage))]
     fn ensure_crypto_provider_initialized() {
-        use std::sync::OnceLock;
-        static INIT_CRYPTO_PROVIDER: OnceLock<()> = OnceLock::new();
-        INIT_CRYPTO_PROVIDER.get_or_init(|| {
+        use std::sync::LazyLock;
+        static INIT_CRYPTO_PROVIDER: LazyLock<()> = LazyLock::new(|| {
             #[cfg(unix)]
             #[allow(clippy::expect_used)]
             rustls::crypto::aws_lc_rs::default_provider()
                 .install_default()
                 .expect("Failed to install default CryptoProvider");
         });
+
+        let _ = &*INIT_CRYPTO_PROVIDER;
     }
 
     // This actually needs to be done by the user somewhere in their own main. This will only

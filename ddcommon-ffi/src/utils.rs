@@ -35,6 +35,6 @@ pub trait ToHexStr {
 
 impl ToHexStr for usize {
     fn to_hex_str(&self) -> String {
-        format!("0x{:X}", self)
+        format!("0x{self:X}")
     }
 }

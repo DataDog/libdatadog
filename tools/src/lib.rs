@@ -6,23 +6,18 @@ pub mod headers {
     use std::collections::HashSet;
     use std::fs::{File, OpenOptions};
     use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
-    use std::sync::OnceLock;
+    use std::sync::LazyLock;
 
-    // TODO: Move to the more ergonomic LazyLock when MSRV is 1.80
-    static HEADER_TYPE_DECL_RE: OnceLock<Regex> = OnceLock::new();
-
-    fn get_header_type_decl_re() -> &'static Regex {
-        HEADER_TYPE_DECL_RE.get_or_init(|| {
-            RegexBuilder::new(r"^(/\*\*([^*]|\*+[^*/])*\*+/\n)?(#define [a-zA-Z_0-9]+ [^\n]+|typedef (struct|enum) [a-zA-Z_0-9]+ +(\{.*?\} )?[a-zA-Z_0-9]+;)\n+")
-                .multi_line(true)
-                .dot_matches_new_line(true)
-                .build()
-                .unwrap()
-        })
-    }
+    static HEADER_TYPE_DECL_RE: LazyLock<Regex> = LazyLock::new(|| {
+        RegexBuilder::new(r"^(/\*\*([^*]|\*+[^*/])*\*+/\n)?(#define [a-zA-Z_0-9]+ [^\n]+|typedef (struct|enum) [a-zA-Z_0-9]+ +(\{.*?\} )?[a-zA-Z_0-9]+;)\n+")
+            .multi_line(true)
+            .dot_matches_new_line(true)
+            .build()
+            .unwrap()
+    });
 
     fn collect_definitions(header: &str) -> Vec<regex::Match<'_>> {
-        get_header_type_decl_re().find_iter(header).collect()
+        HEADER_TYPE_DECL_RE.find_iter(header).collect()
     }
 
     fn read(f: &mut BufReader<&File>) -> String {

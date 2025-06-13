@@ -11,8 +11,9 @@ use crate::{
     metrics::{ContextKey, MetricBuckets, MetricContexts},
 };
 use ddcommon::Endpoint;
-use ddcommon::{hyper_migration, tag::Tag};
+use ddcommon::{hyper_migration, tag::Tag, worker::Worker};
 
+use std::fmt::Debug;
 use std::iter::Sum;
 use std::ops::Add;
 use std::{
@@ -103,6 +104,7 @@ pub struct LogIdentifier {
 }
 
 // Holds the current state of the telemetry worker
+#[derive(Debug)]
 struct TelemetryWorkerData {
     started: bool,
     dependencies: store::Store<Dependency>,
@@ -116,6 +118,7 @@ struct TelemetryWorkerData {
 }
 
 pub struct TelemetryWorker {
+    flavor: TelemetryWorkerFlavor,
     config: Config,
     mailbox: mpsc::Receiver<TelemetryActions>,
     cancellation_token: CancellationToken,
@@ -124,6 +127,50 @@ pub struct TelemetryWorker {
     client: Box<dyn http_client::HttpClient + Sync + Send>,
     deadlines: scheduler::Scheduler<LifecycleAction>,
     data: TelemetryWorkerData,
+}
+impl Debug for TelemetryWorker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TelemetryWorker")
+            .field("flavor", &self.flavor)
+            .field("config", &self.config)
+            .field("mailbox", &self.mailbox)
+            .field("cancellation_token", &self.cancellation_token)
+            .field("seq_id", &self.seq_id)
+            .field("runtime_id", &self.runtime_id)
+            .field("deadlines", &self.deadlines)
+            .field("data", &self.data)
+            .finish()
+    }
+}
+
+impl Worker for TelemetryWorker {
+    // Runs a state machine that waits for actions, either from the worker's
+    // mailbox, or scheduled actions from the worker's deadline object.
+    async fn run(&mut self) {
+        loop {
+            if self.cancellation_token.is_cancelled() {
+                return;
+            }
+
+            let action = self.recv_next_action().await;
+
+            let action_result = match self.flavor {
+                TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
+                TelemetryWorkerFlavor::MetricsLogs => {
+                    self.dispatch_metrics_logs_action(action).await
+                }
+            };
+
+            match action_result {
+                ControlFlow::Continue(()) => {}
+                ControlFlow::Break(()) => {
+                    if !self.config.restartable {
+                        break;
+                    }
+                }
+            };
+        }
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -213,25 +260,6 @@ impl TelemetryWorker {
         })
     }
 
-    async fn run_metrics_logs(mut self) {
-        loop {
-            if self.cancellation_token.is_cancelled() {
-                return;
-            }
-
-            let action = self.recv_next_action().await;
-
-            match self.dispatch_metrics_logs_action(action).await {
-                ControlFlow::Continue(()) => {}
-                ControlFlow::Break(()) => {
-                    if !self.config.restartable {
-                        break;
-                    }
-                }
-            };
-        }
-    }
-
     async fn dispatch_metrics_logs_action(&mut self, action: TelemetryActions) -> ControlFlow<()> {
         telemetry_worker_log!(self, DEBUG, "Handling metric action {:?}", action);
         use LifecycleAction::*;
@@ -272,6 +300,12 @@ impl TelemetryWorker {
                 if !(self.data.started || self.config.restartable) {
                     return CONTINUE;
                 }
+
+                #[allow(clippy::unwrap_used)]
+                self.deadlines
+                    .schedule_event(LifecycleAction::FlushData)
+                    .unwrap();
+
                 let batch = self.build_observability_batch();
                 if !batch.is_empty() {
                     let payload = data::Payload::MessageBatch(batch);
@@ -280,11 +314,6 @@ impl TelemetryWorker {
                         Err(e) => self.log_err(&e),
                     }
                 }
-
-                #[allow(clippy::unwrap_used)]
-                self.deadlines
-                    .schedule_event(LifecycleAction::FlushData)
-                    .unwrap();
             }
             AddConfig(_) | AddDependecy(_) | AddIntegration(_) | Lifecycle(ExtendedHeartbeat) => {}
             Lifecycle(Stop) => {
@@ -311,27 +340,6 @@ impl TelemetryWorker {
             }
         };
         CONTINUE
-    }
-
-    // Runs a state machine that waits for actions, either from the worker's
-    // mailbox, or scheduled actions from the worker's deadline object.
-    async fn run(mut self) {
-        loop {
-            if self.cancellation_token.is_cancelled() {
-                return;
-            }
-
-            let action = self.recv_next_action().await;
-
-            match self.dispatch_action(action).await {
-                ControlFlow::Continue(()) => {}
-                ControlFlow::Break(()) => {
-                    if !self.config.restartable {
-                        break;
-                    }
-                }
-            };
-        }
     }
 
     async fn dispatch_action(&mut self, action: TelemetryActions) -> ControlFlow<()> {
@@ -385,6 +393,12 @@ impl TelemetryWorker {
                 if !(self.data.started || self.config.restartable) {
                     return CONTINUE;
                 }
+
+                #[allow(clippy::unwrap_used)]
+                self.deadlines
+                    .schedule_event(LifecycleAction::FlushData)
+                    .unwrap();
+
                 let mut batch = self.build_app_events_batch();
                 let payload = if batch.is_empty() {
                     data::Payload::AppHeartbeat(())
@@ -405,11 +419,6 @@ impl TelemetryWorker {
                         Err(err) => self.log_err(&err),
                     }
                 }
-
-                #[allow(clippy::unwrap_used)]
-                self.deadlines
-                    .schedule_event(LifecycleAction::FlushData)
-                    .unwrap();
             }
             Lifecycle(ExtendedHeartbeat) => {
                 self.data.dependencies.unflush_stored();
@@ -874,6 +883,7 @@ impl TelemetryWorkerHandle {
                 count: 1,
                 tags: String::new(),
                 is_sensitive: false,
+                is_crash: false,
             },
         )))?;
         Ok(())
@@ -900,7 +910,7 @@ impl TelemetryWorkerHandle {
 /// How many dependencies/integrations/configs we keep in memory at most
 pub const MAX_ITEMS: usize = 5000;
 
-#[derive(Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub enum TelemetryWorkerFlavor {
     /// Send all telemetry messages including lifecylce events like app-started, hearbeats,
     /// dependencies and configurations
@@ -974,7 +984,10 @@ impl TelemetryWorkerBuilder {
         }
     }
 
-    fn build_worker(
+    /// Build the corresponding worker and it's handle.
+    /// The runtime handle is wrapped in the worker handle and should be the one used to run the
+    /// worker task.
+    pub fn build_worker(
         self,
         tokio_runtime: Handle,
     ) -> Result<(TelemetryWorkerHandle, TelemetryWorker)> {
@@ -991,6 +1004,7 @@ impl TelemetryWorkerBuilder {
 
         #[allow(clippy::unwrap_used)]
         let worker = TelemetryWorker {
+            flavor: self.flavor,
             data: TelemetryWorkerData {
                 started: false,
                 dependencies: self.dependencies,
@@ -1040,13 +1054,9 @@ impl TelemetryWorkerBuilder {
     pub async fn spawn(self) -> Result<(TelemetryWorkerHandle, JoinHandle<()>)> {
         let tokio_runtime = tokio::runtime::Handle::current();
 
-        let flavor = self.flavor;
-        let (worker_handle, worker) = self.build_worker(tokio_runtime.clone())?;
+        let (worker_handle, mut worker) = self.build_worker(tokio_runtime.clone())?;
 
-        let join_handle = match flavor {
-            TelemetryWorkerFlavor::Full => tokio_runtime.spawn(worker.run()),
-            TelemetryWorkerFlavor::MetricsLogs => tokio_runtime.spawn(worker.run_metrics_logs()),
-        };
+        let join_handle = tokio_runtime.spawn(async move { worker.run().await });
 
         Ok((worker_handle, join_handle))
     }
@@ -1056,14 +1066,10 @@ impl TelemetryWorkerBuilder {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let flavor = self.flavor;
-        let (handle, worker) = self.build_worker(runtime.handle().clone())?;
+        let (handle, mut worker) = self.build_worker(runtime.handle().clone())?;
         let notify_shutdown = handle.shutdown.clone();
         std::thread::spawn(move || {
-            match flavor {
-                TelemetryWorkerFlavor::Full => runtime.block_on(worker.run()),
-                TelemetryWorkerFlavor::MetricsLogs => runtime.block_on(worker.run_metrics_logs()),
-            }
+            runtime.block_on(worker.run());
             runtime.shutdown_background();
             notify_shutdown.shutdown_finished();
         });

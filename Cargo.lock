@@ -774,7 +774,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -783,7 +783,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -797,9 +797,9 @@ dependencies = [
 
 [[package]]
 name = "bumpalo"
-version = "3.16.0"
+version = "3.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79296716171880943b8470b5f8d03aa55eb2e645a4874bdbb28adb49162e012c"
+checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 
 [[package]]
 name = "byteorder"
@@ -865,12 +865,12 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cbindgen"
-version = "0.27.0"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fce8dd7fcfcbf3a0a87d8f515194b49d6135acab73e18bd380d1d93bb1a15eb"
+checksum = "975982cdb7ad6a142be15bdf84aea7ec6a9e5d4d797c004d43185b24cfe4e684"
 dependencies = [
  "clap",
- "heck 0.4.1",
+ "heck 0.5.0",
  "indexmap 2.6.0",
  "log",
  "proc-macro2",
@@ -1339,7 +1339,7 @@ checksum = "575f75dfd25738df5b91b8e43e14d44bda14637a58fae779fd2b064f8bf3e010"
 
 [[package]]
 name = "data-pipeline"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1372,7 +1372,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline-ffi"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "build_common",
  "data-pipeline",
@@ -1385,7 +1385,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-alloc"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "allocator-api2",
  "bolero",
@@ -1395,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -1427,7 +1427,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker-ffi"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1446,7 +1446,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ddsketch"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -1559,8 +1559,9 @@ dependencies = [
 
 [[package]]
 name = "datadog-log"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
+ "chrono",
  "ddcommon-ffi",
  "tempfile",
  "tracing",
@@ -1570,7 +1571,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-log-ffi"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "build_common",
  "datadog-log",
@@ -1579,7 +1580,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -1610,7 +1611,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1639,7 +1640,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-protobuf"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "bolero",
  "datadog-profiling-protobuf",
@@ -1648,7 +1649,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1771,7 +1772,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1782,7 +1783,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1800,7 +1801,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -1813,7 +1814,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1849,18 +1850,19 @@ dependencies = [
 
 [[package]]
 name = "datadog-tracer-flare"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "datadog-remote-config",
  "ddcommon",
  "hyper 1.6.0",
+ "serde_json",
  "tokio",
 ]
 
 [[package]]
 name = "ddcommon"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -1893,7 +1895,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1907,7 +1909,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1931,7 +1933,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "build_common",
  "ddcommon",
@@ -1953,9 +1955,9 @@ dependencies = [
 
 [[package]]
 name = "deranged"
-version = "0.3.11"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b42b6fa04a440b495c8b04d0e71b707c585f83cb9cb28cf8cd0d976c315e31b4"
+checksum = "9c9e6a11ca8224451684bc0d7d5a7adbf8f2fd6887261a1cfc3c0432f9d4068e"
 dependencies = [
  "powerfmt",
  "serde",
@@ -2043,7 +2045,7 @@ dependencies = [
 
 [[package]]
 name = "dogstatsd-client"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "anyhow",
  "cadence",
@@ -2212,9 +2214,9 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 
 [[package]]
 name = "flate2"
-version = "1.0.34"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1b589b4dc103969ad3cf85c950899926ec64300a1a46d76c03a6072957036f0"
+checksum = "7ced92e76e966ca2fd84c8f7aa01a4aea65b0eb6648d72f7c8f3e2764a67fece"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
@@ -3208,10 +3210,11 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.72"
+version = "0.3.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a88f1bda2bd75b0452a14784937d796722fdebfe50df998aeb3f0b7603019a9"
+checksum = "1cfaf33c695fc6e08064efbc1f72ec937429614f25eef83af942d0e227c3a28f"
 dependencies = [
+ "once_cell",
  "wasm-bindgen",
 ]
 
@@ -3340,9 +3343,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.22"
+version = "0.4.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
+checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 dependencies = [
  "value-bag",
 ]
@@ -3482,9 +3485,9 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "miniz_oxide"
-version = "0.8.0"
+version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2d80299ef12ff69b16a84bb182e3b9df68b5a91574d3d4fa6e41b65deec4df1"
+checksum = "3be647b768db090acb35d5ec5db2b0e1f1de11133ca123b9eacf5137868f892a"
 dependencies = [
  "adler2",
  "simd-adler32",
@@ -5156,7 +5159,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5439,9 +5442,9 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.36"
+version = "0.3.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5dfd88e563464686c916c7e46e623e520ddc6d79fa6641390f2e3fa86e83e885"
+checksum = "8a7619e19bc266e0f9c5e6686659d394bc57973859340060a69221e57dbc0c40"
 dependencies = [
  "deranged",
  "itoa",
@@ -5454,15 +5457,15 @@ dependencies = [
 
 [[package]]
 name = "time-core"
-version = "0.1.2"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef927ca75afb808a4d64dd374f00a2adf8d0fcff8e7b184af886c3c87ec4a3f3"
+checksum = "c9e9a38711f559d9e3ce1cdb06dd7c5b8ea546bc90052da6d06bb76da74bb07c"
 
 [[package]]
 name = "time-macros"
-version = "0.2.18"
+version = "0.2.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f252a68540fde3a3877aeea552b832b40ab9a69e318efd078774a01ddee1ccf"
+checksum = "3526739392ec93fd8b359c8e98514cb3e8e021beb4e5f597b00a0221f8ed8a49"
 dependencies = [
  "num-conv",
  "time-core",
@@ -5479,7 +5482,7 @@ dependencies = [
 
 [[package]]
 name = "tinybytes"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "once_cell",
  "pretty_assertions",
@@ -5694,7 +5697,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "18.1.0"
+version = "19.0.0"
 dependencies = [
  "regex",
 ]
@@ -6030,24 +6033,24 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.95"
+version = "0.2.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "128d1e363af62632b8eb57219c8fd7877144af57558fb2ef0368d0087bddeb2e"
+checksum = "1edc8929d7499fc4e8f0be2262a241556cfc54a0bea223790e71446f2aab1ef5"
 dependencies = [
  "cfg-if",
  "once_cell",
+ "rustversion",
  "wasm-bindgen-macro",
 ]
 
 [[package]]
 name = "wasm-bindgen-backend"
-version = "0.2.95"
+version = "0.2.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb6dd4d3ca0ddffd1dd1c9c04f94b868c37ff5fac97c30b97cff2d74fce3a358"
+checksum = "2f0a0651a5c2bc21487bde11ee802ccaf4c51935d0d3d42a6101f98161700bc6"
 dependencies = [
  "bumpalo",
  "log",
- "once_cell",
  "proc-macro2",
  "quote",
  "syn 2.0.87",
@@ -6068,9 +6071,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.95"
+version = "0.2.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e79384be7f8f5a9dd5d7167216f022090cf1f9ec128e6e6a482a2cb5c5422c56"
+checksum = "7fe63fc6d09ed3792bd0897b314f53de8e16568c2b3f7982f468c0bf9bd0b407"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -6078,9 +6081,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.95"
+version = "0.2.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26c6ab57572f7a24a4985830b120de1594465e5d500f24afe89e16b4e833ef68"
+checksum = "8ae87ea40c9f689fc23f209965b6fb8a99ad69aeeb0231408be24920604395de"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6091,9 +6094,12 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.95"
+version = "0.2.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65fc09f10666a9f147042251e0dda9c18f166ff7de300607007e96bdebc1068d"
+checksum = "1a05d73b933a847d6cccdda8f838a22ff101ad9bf93e33684f39c1f5f0eece3d"
+dependencies = [
+ "unicode-ident",
+]
 
 [[package]]
 name = "web-sys"

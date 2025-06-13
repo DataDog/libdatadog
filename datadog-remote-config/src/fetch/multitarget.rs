@@ -770,8 +770,8 @@ mod tests {
         let state = Arc::new(NotifyState::default());
 
         server.files.lock().unwrap().insert(
-            get_path_first().clone(),
-            (vec![get_dummy_target().clone()], 1, "v1".to_string()),
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
         );
 
         let fut = storage.await_fetches(1);
@@ -788,14 +788,14 @@ mod tests {
                 id: 1,
                 state: state.clone(),
             },
-            get_other_target(),
+            &OTHER_TARGET,
         );
         assert_eq!(
             *fetcher
                 .services
                 .lock()
                 .unwrap()
-                .get(get_other_target())
+                .get(&*OTHER_TARGET)
                 .unwrap()
                 .fetcher
                 .runtime_id
@@ -810,7 +810,7 @@ mod tests {
                 id: 1,
                 state: state.clone(),
             },
-            get_dummy_target(),
+            &DUMMY_TARGET,
         );
         fetcher.add_runtime(
             RT_ID_2.to_string(),
@@ -818,7 +818,7 @@ mod tests {
                 id: 2,
                 state: state.clone(),
             },
-            get_dummy_target(),
+            &DUMMY_TARGET,
         );
 
         assert_eq!(
@@ -826,7 +826,7 @@ mod tests {
                 .services
                 .lock()
                 .unwrap()
-                .get(get_dummy_target())
+                .get(&*DUMMY_TARGET)
                 .unwrap()
                 .fetcher
                 .runtime_id
@@ -839,7 +839,7 @@ mod tests {
                 .services
                 .lock()
                 .unwrap()
-                .get(get_other_target())
+                .get(&*OTHER_TARGET)
                 .unwrap()
                 .fetcher
                 .runtime_id
@@ -857,7 +857,7 @@ mod tests {
                 id: 3,
                 state: state.clone(),
             },
-            get_other_target(),
+            &OTHER_TARGET,
         );
 
         fut.await;
@@ -867,7 +867,7 @@ mod tests {
             .recent_fetches
             .lock()
             .unwrap()
-            .get(get_dummy_target())
+            .get(&*DUMMY_TARGET)
             .unwrap()
             .iter()
             .map(|p| p.store.data.clone())
@@ -876,8 +876,8 @@ mod tests {
 
         let fut = storage.await_fetches(2);
         server.files.lock().unwrap().insert(
-            get_path_first().clone(),
-            (vec![get_other_target().clone()], 1, "v1".to_string()),
+            PATH_FIRST.clone(),
+            (vec![OTHER_TARGET.clone()], 1, "v1".to_string()),
         );
 
         fut.await;
@@ -887,7 +887,7 @@ mod tests {
             .recent_fetches
             .lock()
             .unwrap()
-            .get(get_other_target())
+            .get(&*OTHER_TARGET)
             .unwrap()
             .iter()
             .map(|p| p.store.data.clone())
@@ -897,7 +897,7 @@ mod tests {
                 .recent_fetches
                 .lock()
                 .unwrap()
-                .get(get_other_target())
+                .get(&*OTHER_TARGET)
                 .unwrap()
                 .len(),
             1
@@ -909,14 +909,14 @@ mod tests {
             );
         }
 
-        fetcher.delete_runtime(RT_ID_1, get_other_target());
-        fetcher.delete_runtime(RT_ID_1, get_dummy_target());
-        fetcher.delete_runtime(RT_ID_2, get_dummy_target());
-        fetcher.delete_runtime(RT_ID_3, get_other_target());
+        fetcher.delete_runtime(RT_ID_1, &OTHER_TARGET);
+        fetcher.delete_runtime(RT_ID_1, &DUMMY_TARGET);
+        fetcher.delete_runtime(RT_ID_2, &DUMMY_TARGET);
+        fetcher.delete_runtime(RT_ID_3, &OTHER_TARGET);
 
         fetcher.shutdown();
-        storage.expect_expiration(get_dummy_target());
-        storage.expect_expiration(get_other_target());
+        storage.expect_expiration(&DUMMY_TARGET);
+        storage.expect_expiration(&OTHER_TARGET);
 
         on_dead.await
     }

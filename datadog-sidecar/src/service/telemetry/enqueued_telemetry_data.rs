@@ -16,7 +16,7 @@ use std::ops::Sub;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant, SystemTime};
 use tracing::warn;
 
@@ -26,17 +26,10 @@ use crate::service::SidecarAction;
 
 type ComposerCache = HashMap<PathBuf, (SystemTime, Arc<Vec<data::Dependency>>)>;
 
-static COMPOSER_CACHE: OnceLock<tokio::sync::Mutex<ComposerCache>> = OnceLock::new();
+static COMPOSER_CACHE: LazyLock<tokio::sync::Mutex<ComposerCache>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(Default::default()));
 
-fn get_composer_cache() -> &'static tokio::sync::Mutex<ComposerCache> {
-    COMPOSER_CACHE.get_or_init(|| tokio::sync::Mutex::new(Default::default()))
-}
-
-static LAST_CACHE_CLEAN: OnceLock<AtomicU64> = OnceLock::new();
-
-fn get_last_cache_clean() -> &'static AtomicU64 {
-    LAST_CACHE_CLEAN.get_or_init(|| AtomicU64::new(0))
-}
+static LAST_CACHE_CLEAN: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
 
 #[serde_as]
 #[derive(Deserialize)]
@@ -185,7 +178,7 @@ impl EnqueuedTelemetryData {
     fn extract_composer_telemetry(path: PathBuf) -> ManualFuture<Arc<Vec<data::Dependency>>> {
         let (deps, completer) = ManualFuture::new();
         tokio::spawn(async {
-            let mut cache = get_composer_cache().lock().await;
+            let mut cache = COMPOSER_CACHE.lock().await;
             let packages = match tokio::fs::metadata(&path).await.and_then(|m| m.modified()) {
                 Err(e) => {
                     warn!("Failed to report dependencies from {path:?}, could not read modification time: {e:?}");
@@ -214,10 +207,10 @@ impl EnqueuedTelemetryData {
                     cache.insert(path, (now, packages.clone()));
                     // cheap way to avoid unbounded caching
                     const CACHE_INTERVAL: u64 = 2000;
-                    let last_clean = get_last_cache_clean().load(Ordering::Relaxed);
+                    let last_clean = LAST_CACHE_CLEAN.load(Ordering::Relaxed);
                     let now_secs = Instant::now().elapsed().as_secs();
                     if now_secs > last_clean + CACHE_INTERVAL
-                        && get_last_cache_clean()
+                        && LAST_CACHE_CLEAN
                             .compare_exchange(
                                 last_clean,
                                 now_secs,

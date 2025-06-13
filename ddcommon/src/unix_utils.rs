@@ -204,9 +204,9 @@ fn is_being_traced() -> io::Result<bool> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn alt_fork() -> pid_t {
+pub fn alt_fork() -> libc::pid_t {
     use libc::{
-        c_ulong, c_void, syscall, SYS_clone, CLONE_CHILD_CLEARTID, CLONE_CHILD_SETTID,
+        c_ulong, c_void, pid_t, syscall, SYS_clone, CLONE_CHILD_CLEARTID, CLONE_CHILD_SETTID,
         CLONE_PTRACE, SIGCHLD,
     };
 

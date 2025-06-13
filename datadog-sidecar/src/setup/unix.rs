@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::LazyLock;
 use std::{
     env, fs, io,
     os::unix::{
@@ -10,14 +11,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::primary_sidecar_identifier;
+use crate::setup::Liaison;
+use datadog_ipc::platform::{self, locks::FLock, Channel};
+
 #[cfg(feature = "logging")]
 use log::{debug, warn};
 #[cfg(not(feature = "logging"))]
 use tracing::{debug, warn};
-
-use crate::primary_sidecar_identifier;
-use crate::setup::Liaison;
-use datadog_ipc::platform::{self, locks::FLock, Channel};
 
 pub type IpcClient = tokio::net::UnixStream;
 pub type IpcServer = UnixListener;
@@ -82,11 +83,10 @@ impl Liaison for SharedDirLiaison {
     }
 
     fn ipc_per_process() -> Self {
-        static PROCESS_RANDOM_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
-        let random_id = PROCESS_RANDOM_ID.get_or_init(rand::random);
+        static PROCESS_RANDOM_ID: LazyLock<u16> = LazyLock::new(rand::random);
 
         let pid = std::process::id();
-        let liason_path = env::temp_dir().join(format!("libdatadog.{random_id}.{pid}"));
+        let liason_path = env::temp_dir().join(format!("libdatadog.{}.{pid}", *PROCESS_RANDOM_ID));
         Self::new(liason_path)
     }
 }
