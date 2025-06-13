@@ -163,12 +163,12 @@ fn handle_posix_signal_impl(
     // Optionally, create the receiver.  This all hinges on whether or not the configuration has a
     // non-null unix domain socket specified.  If it doesn't, then we need to check the receiver
     // configuration.  If it does, then we just connect to the socket.
-    let unix_socket_path = config.unix_socket_path().clone().unwrap_or_default();
+    let unix_socket_path = config.unix_socket_path().as_deref().unwrap_or_default();
 
     let receiver = if unix_socket_path.is_empty() {
         Receiver::spawn_from_stored_config()?
     } else {
-        Receiver::from_socket(&unix_socket_path)?
+        Receiver::from_socket(unix_socket_path)?
     };
 
     let collector = Collector::spawn(
@@ -182,7 +182,7 @@ fn handle_posix_signal_impl(
 
     // We're done. Wrap up our interaction with the receiver.
     collector.finish(start_time, timeout_ms);
-    let timeout_ms = std::cmp::min(
+    let timeout_ms = std::cmp::max(
         timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32),
         DD_CRASHTRACK_MINIMUM_REAP_TIME_MS,
     );
