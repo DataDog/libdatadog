@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 pub mod agent_response;
 pub mod error;
-use self::agent_response::AgentResponse;
+
+pub use self::agent_response::AgentResponse;
+
 use crate::agent_info::{AgentInfoArc, AgentInfoFetcher};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
