@@ -3,13 +3,13 @@
 pub mod agent_response;
 pub mod error;
 use self::agent_response::AgentResponse;
-use crate::agent_info::{AgentInfoArc, AgentInfoFetcher};
+use crate::agent_info::AgentInfoFetcher;
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient, TelemetryClientBuilder};
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use crate::{
-    health_metrics, health_metrics::HealthMetric, span_concentrator::SpanConcentrator,
+    agent_info, health_metrics, health_metrics::HealthMetric, span_concentrator::SpanConcentrator,
     stats_exporter,
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
@@ -203,7 +203,6 @@ pub struct TraceExporter {
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
     client_side_stats: ArcSwap<StatsComputationStatus>,
-    agent_info: AgentInfoArc,
     previous_info_state: ArcSwapOption<String>,
     telemetry: Option<TelemetryClient>,
     workers: Arc<Mutex<TraceExporterWorkers>>,
@@ -435,7 +434,7 @@ impl TraceExporter {
 
     /// Check for a new state of agent_info and update the trace exporter if needed
     fn check_agent_info(&self) {
-        if let Some(agent_info) = self.agent_info.load().as_deref() {
+        if let Some(agent_info) = agent_info::get_agent_info() {
             if Some(agent_info.state_hash.as_str())
                 != self
                     .previous_info_state
@@ -518,7 +517,7 @@ impl TraceExporter {
             if std::time::Instant::now().duration_since(start) > timeout {
                 anyhow::bail!("Timeout waiting for agent info to be ready",);
             }
-            if self.agent_info.load().is_some() {
+            if agent_info::get_agent_info().is_some() {
                 return Ok(());
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -1131,7 +1130,6 @@ impl TraceExporterBuilder {
             Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT)),
             Duration::from_secs(5 * 60),
         );
-        let agent_info = info_fetcher.get_info();
         let mut info_fetcher_worker = PausableWorker::new(info_fetcher);
         info_fetcher_worker.start(&runtime).map_err(|e| {
             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
@@ -1207,7 +1205,6 @@ impl TraceExporterBuilder {
             dogstatsd,
             common_stats_tags: vec![libdatadog_version],
             client_side_stats: ArcSwap::new(stats.into()),
-            agent_info,
             previous_info_state: ArcSwapOption::new(None),
             telemetry: telemetry_client,
             workers: Arc::new(Mutex::new(TraceExporterWorkers {
