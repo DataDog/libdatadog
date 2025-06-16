@@ -3,7 +3,7 @@
 
 #[cfg(test)]
 mod tracing_integration_tests {
-    use arc_swap::access::Access;
+    use data_pipeline::agent_info;
     use data_pipeline::agent_info::{fetch_info, AgentInfoFetcher};
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use ddcommon::{worker::Worker, Endpoint};
@@ -31,13 +31,12 @@ mod tracing_integration_tests {
         let test_agent = DatadogTestAgent::new(None, None, &[]).await;
         let endpoint = Endpoint::from_url(test_agent.get_uri_for_endpoint("info", None).await);
         let mut fetcher = AgentInfoFetcher::new(endpoint, Duration::from_secs(1));
-        let info_arc = fetcher.get_info();
         tokio::spawn(async move { fetcher.run().await });
         let info_received = async {
-            while info_arc.load().is_none() {
+            while agent_info::get_agent_info().is_none() {
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
-            info_arc.load()
+            agent_info::get_agent_info().unwrap()
         };
 
         let info = tokio::time::timeout(Duration::from_secs(10), info_received)
@@ -45,11 +44,9 @@ mod tracing_integration_tests {
             .expect("Agent request timed out");
 
         assert!(
-            info.as_ref()
-                .unwrap()
-                .info
+            info.info
                 .version
-                .clone()
+                .as_ref()
                 .expect("Missing version field in agent response")
                 == "test"
         );
