@@ -15,7 +15,9 @@ use crate::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use datadog_trace_utils::msgpack_decoder::{self, decode::error::DecodeError};
-use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryError};
+use datadog_trace_utils::send_with_retry::{
+    send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
+};
 use datadog_trace_utils::span::{Span, SpanText};
 use datadog_trace_utils::trace_utils::{self, TracerHeaderTags};
 use datadog_trace_utils::tracer_payload;
@@ -193,6 +195,7 @@ struct TraceExporterWorkers {
 #[derive(Debug)]
 pub struct TraceExporter {
     endpoint: Endpoint,
+    info_endpoint: Arc<Endpoint>,
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
@@ -237,6 +240,7 @@ impl TraceExporter {
                 // Create a new current thread runtime with all features enabled
                 let runtime = Arc::new(
                     tokio::runtime::Builder::new_multi_thread()
+                        .worker_threads(1)
                         .enable_all()
                         .build()?,
                 );
@@ -417,6 +421,7 @@ impl TraceExporter {
             cancellation_token,
         } = &**self.client_side_stats.load()
         {
+            // If there's no runtime there's no exporter to stop
             if let Ok(runtime) = self.runtime() {
                 runtime.block_on(async {
                     cancellation_token.cancel();
@@ -792,26 +797,7 @@ impl TraceExporter {
 
         let payload_len = mp_payload.len();
 
-        let runtime = {
-            let mut runtime_guard = self.runtime.lock_or_panic();
-            let runtime = match runtime_guard.as_ref() {
-                Some(runtime) => runtime.clone(),
-                None => {
-                    // Create a new current thread runtime with all features enabled
-                    let runtime = Arc::new(
-                        tokio::runtime::Builder::new_multi_thread()
-                            .worker_threads(1)
-                            .enable_all()
-                            .build()?,
-                    );
-                    *runtime_guard = Some(runtime.clone());
-                    runtime
-                }
-            };
-            runtime
-        };
-
-        runtime.block_on(async {
+        self.runtime()?.block_on(async {
             // Send traces to the agent
             let result = send_with_retry(&endpoint, mp_payload, &headers, &strategy, None).await;
 
@@ -826,79 +812,100 @@ impl TraceExporter {
                 }
             }
 
-            // Handle the result
-            match result {
-                Ok((response, _)) => {
-                    let status = response.status();
-                    let body = match response.into_body().collect().await {
-                        Ok(body) => String::from_utf8_lossy(&body.to_bytes()).to_string(),
-                        Err(err) => {
-                            error!(?err, "Error reading agent response body");
-                            self.emit_metric(
-                                HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                                None,
-                            );
-                            return Err(TraceExporterError::from(err));
-                        }
-                    };
+            self.handle_send_result(result, chunks).await
+        })
+    }
 
-                    if status.is_success() {
-                        info!(
-                            chunks = chunks,
-                            status = %status,
-                            "Trace chunks sent successfully to agent"
-                        );
-                        self.emit_metric(
-                            HealthMetric::Count(health_metrics::STAT_SEND_TRACES, chunks as i64),
-                            None,
-                        );
-                        Ok(body)
-                    } else {
-                        warn!(
-                            status = %status,
-                            "Agent returned non-success status for trace send"
-                        );
+    /// Handle the result of sending traces to the agent
+    async fn handle_send_result(
+        &self,
+        result: SendWithRetryResult,
+        chunks: usize,
+    ) -> Result<String, TraceExporterError> {
+        match result {
+            Ok((response, _)) => {
+                let status = response.status();
+
+                // Check if the agent state has changed
+                agent_info::check_response_for_new_state(&response, self.info_endpoint.clone())
+                    .await;
+
+                let body = match response.into_body().collect().await {
+                    Ok(body) => String::from_utf8_lossy(&body.to_bytes()).to_string(),
+                    Err(err) => {
+                        error!(?err, "Error reading agent response body");
                         self.emit_metric(
                             HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
                             None,
                         );
-                        Err(TraceExporterError::Request(RequestError::new(
-                            status, &body,
-                        )))
+                        return Err(TraceExporterError::from(err));
                     }
-                }
-                Err(err) => {
-                    error!(?err, "Error sending traces");
+                };
+
+                if status.is_success() {
+                    info!(
+                        chunks = chunks,
+                        status = %status,
+                        "Trace chunks sent successfully to agent"
+                    );
+                    self.emit_metric(
+                        HealthMetric::Count(health_metrics::STAT_SEND_TRACES, chunks as i64),
+                        None,
+                    );
+                    Ok(body)
+                } else {
+                    warn!(
+                        status = %status,
+                        "Agent returned non-success status for trace send"
+                    );
                     self.emit_metric(
                         HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
                         None,
                     );
-                    match err {
-                        SendWithRetryError::Http(response, _) => {
-                            let status = response.status();
-                            let body = match response.into_body().collect().await {
-                                Ok(body) => body.to_bytes(),
-                                Err(err) => {
-                                    error!(?err, "Error reading agent response body");
-                                    return Err(TraceExporterError::from(err));
-                                }
-                            };
-                            Err(TraceExporterError::Request(RequestError::new(
-                                status,
-                                &String::from_utf8_lossy(&body),
-                            )))
-                        }
-                        SendWithRetryError::Timeout(_) => Err(TraceExporterError::from(
-                            io::Error::from(io::ErrorKind::TimedOut),
-                        )),
-                        SendWithRetryError::Network(err, _) => Err(TraceExporterError::from(err)),
-                        SendWithRetryError::Build(_) => Err(TraceExporterError::from(
-                            io::Error::from(io::ErrorKind::Other),
-                        )),
-                    }
+                    Err(TraceExporterError::Request(RequestError::new(
+                        status, &body,
+                    )))
                 }
             }
-        })
+            Err(err) => {
+                error!(?err, "Error sending traces");
+                self.emit_metric(
+                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                    None,
+                );
+                match err {
+                    SendWithRetryError::Http(response, _) => {
+                        let status = response.status();
+
+                        // Check if the agent state has changed for error responses
+                        agent_info::check_response_for_new_state(
+                            &response,
+                            self.info_endpoint.clone(),
+                        )
+                        .await;
+
+                        let body = match response.into_body().collect().await {
+                            Ok(body) => body.to_bytes(),
+                            Err(err) => {
+                                error!(?err, "Error reading agent response body");
+                                return Err(TraceExporterError::from(err));
+                            }
+                        };
+                        Err(TraceExporterError::Request(RequestError::new(
+                            status,
+                            &String::from_utf8_lossy(&body),
+                        )))
+                    }
+                    SendWithRetryError::Timeout(_) => Err(TraceExporterError::from(
+                        io::Error::from(io::ErrorKind::TimedOut),
+                    )),
+                    SendWithRetryError::Network(err, _) => Err(TraceExporterError::from(err)),
+                    SendWithRetryError::Build(_) => Err(TraceExporterError::from(io::Error::from(
+                        io::ErrorKind::Other,
+                    ))),
+                }
+            }
+        }
     }
 
     fn get_agent_url(&self) -> Uri {
@@ -1126,10 +1133,9 @@ impl TraceExporterBuilder {
         let libdatadog_version = tag!("libdatadog_version", env!("CARGO_PKG_VERSION"));
         let mut stats = StatsComputationStatus::Disabled;
 
-        let info_fetcher = AgentInfoFetcher::new(
-            Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT)),
-            Duration::from_secs(5 * 60),
-        );
+        let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
+        let info_fetcher =
+            AgentInfoFetcher::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
         let mut info_fetcher_worker = PausableWorker::new(info_fetcher);
         info_fetcher_worker.start(&runtime).map_err(|e| {
             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
@@ -1183,6 +1189,7 @@ impl TraceExporterBuilder {
                 test_token: self.test_session_token.map(|token| token.into()),
                 ..Default::default()
             },
+            info_endpoint: Arc::new(info_endpoint),
             metadata: TracerMetadata {
                 tracer_version: self.tracer_version,
                 language_version: self.language_version,

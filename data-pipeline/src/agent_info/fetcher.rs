@@ -13,7 +13,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info};
 
-#[allow(clippy::declare_interior_mutable_const)]
+/// HTTP header containing the agent state hash.
 const DATADOG_AGENT_STATE: HeaderName = HeaderName::from_static("datadog-agent-state");
 
 /// Whether the agent reported the same value or not.
@@ -148,6 +148,9 @@ impl Worker for AgentInfoFetcher {
     async fn run(&mut self) {
         loop {
             let current_info = AGENT_INFO_CACHE.load();
+            if current_info.is_some() {
+                sleep(self.refresh_interval).await;
+            }
             let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
             let res = fetch_info_with_state(&self.info_endpoint, current_hash).await;
             match res {
@@ -162,7 +165,56 @@ impl Worker for AgentInfoFetcher {
                     error!(?err, "Error while fetching /info");
                 }
             }
-            sleep(self.refresh_interval).await;
+        }
+    }
+}
+
+/// Check an `hyper::requests` for the agent state header and refresh info if needed.
+///
+/// Check if the state sent by the agent in the `Datadog-Agent-State` header is different from
+/// the current state and triggers a refresh if needed. The refresh is spawned as a background task
+/// running in the current runtime.
+///
+/// # Note
+/// This will not trigger a fetch if the global cache is empty to avoid spamming the agent.
+pub async fn check_response_for_new_state<T>(
+    response: &hyper::Response<T>,
+    info_endpoint: Arc<Endpoint>,
+) {
+    if let Some(agent_state) = response.headers().get(DATADOG_AGENT_STATE) {
+        // If if no info has been loaded yet, skip to let the AgentInfoFetcher fetch the first
+        // version and avoid spamming the agent.
+        if let Some(current_info) = AGENT_INFO_CACHE.load_full() {
+            println!("current_info is some");
+            if let Ok(state) = agent_state.to_str() {
+                println!("state is {}", state);
+                println!(
+                    "current_info.state_hash is {}",
+                    current_info.state_hash.as_str()
+                );
+                if state != current_info.state_hash.as_str() {
+                    println!("Starting background task to fetch /info");
+                    tokio::spawn(async move {
+                        println!("fetching /info");
+                        let res =
+                            fetch_info_with_state(&info_endpoint, Some(&current_info.state_hash))
+                                .await;
+                        println!("res is {:?}", res);
+                        match res {
+                            Ok(FetchInfoStatus::NewState(new_info)) => {
+                                info!("New /info state received");
+                                AGENT_INFO_CACHE.store(Some(Arc::new(*new_info)));
+                            }
+                            Ok(FetchInfoStatus::SameState) => {
+                                info!("Agent info is up-to-date")
+                            }
+                            Err(err) => {
+                                error!(?err, "Error while fetching /info");
+                            }
+                        }
+                    });
+                }
+            }
         }
     }
 }
@@ -221,7 +273,7 @@ mod tests {
                 }
         },
         "peer_tags": ["db.hostname","http.host","aws.s3.bucket"]
-        }"#;
+    }"#;
 
     const TEST_INFO_HASH: &str = "8c732aba385d605b010cd5bd12c03fef402eaefce989f0055aa4c7e92fe30077";
 
@@ -380,5 +432,145 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_check_response_no_current_info() {
+        let server = MockServer::start();
+        let mock = server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .header("datadog-agent-state", TEST_INFO_HASH)
+                    .body(TEST_INFO);
+            })
+            .await;
+
+        AGENT_INFO_CACHE.store(None);
+
+        let response = hyper::Response::builder()
+            .status(200)
+            .header("datadog-agent-state", TEST_INFO_HASH)
+            .body(())
+            .unwrap();
+
+        let endpoint = Arc::new(Endpoint::from_url(server.url("/info").parse().unwrap()));
+        check_response_for_new_state(&response, endpoint).await;
+
+        // The background task should not be triggered, but we wait to make sure it fails if it is.
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        // Should not trigger a fetch since there's no current info
+        mock.assert_hits_async(0).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_check_response_same_state() {
+        let server = MockServer::start();
+        let mock = server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .header("datadog-agent-state", TEST_INFO_HASH)
+                    .body(TEST_INFO);
+            })
+            .await;
+
+        // Populate the cache
+        AGENT_INFO_CACHE.store(Some(Arc::new(AgentInfo {
+            state_hash: TEST_INFO_HASH.to_string(),
+            info: serde_json::from_str(TEST_INFO).unwrap(),
+        })));
+
+        let response = hyper::Response::builder()
+            .status(200)
+            .header("datadog-agent-state", TEST_INFO_HASH)
+            .body(())
+            .unwrap();
+
+        let endpoint = Arc::new(Endpoint::from_url(server.url("/info").parse().unwrap()));
+        check_response_for_new_state(&response, endpoint).await;
+
+        // The background task should not be triggered, but we wait to make sure it fails if it is.
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        // Should not trigger a fetch since the state matches
+        mock.assert_hits_async(0).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_check_response_different_state() {
+        let server = MockServer::start();
+        let mock = server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .header("datadog-agent-state", "new_state_hash")
+                    .body(TEST_INFO);
+            })
+            .await;
+
+        // Populate the cache
+        AGENT_INFO_CACHE.store(Some(Arc::new(AgentInfo {
+            state_hash: "old_state_hash".to_string(),
+            info: serde_json::from_str(TEST_INFO).unwrap(),
+        })));
+
+        let response = hyper::Response::builder()
+            .status(200)
+            .header("datadog-agent-state", "new_state_hash")
+            .body(())
+            .unwrap();
+
+        let endpoint = Arc::new(Endpoint::from_url(server.url("/info").parse().unwrap()));
+        check_response_for_new_state(&response, endpoint).await;
+
+        // Wait for the background task to complete with a timeout of 5 seconds
+        let mut i = 0;
+        while mock.hits_async().await == 0 && i < 10 {
+            i += 1;
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+
+        // Should trigger a fetch since the state is different
+        mock.assert_hits_async(1).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_check_response_no_state_header() {
+        let server = MockServer::start();
+        let mock = server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .header("datadog-agent-state", TEST_INFO_HASH)
+                    .body(TEST_INFO);
+            })
+            .await;
+
+        // Populate the cache
+        AGENT_INFO_CACHE.store(Some(Arc::new(AgentInfo {
+            state_hash: TEST_INFO_HASH.to_string(),
+            info: serde_json::from_str(TEST_INFO).unwrap(),
+        })));
+
+        let response = hyper::Response::builder().status(200).body(()).unwrap();
+
+        let endpoint = Arc::new(Endpoint::from_url(server.url("/info").parse().unwrap()));
+        check_response_for_new_state(&response, endpoint).await;
+
+        // The background task should not be triggered, but we wait to make sure it fails if it is.
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        // Should not trigger a fetch since there's no state header
+        mock.assert_hits_async(0).await;
     }
 }
