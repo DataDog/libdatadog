@@ -185,6 +185,11 @@ pub fn alt_fork() -> i32 {
 
 #[cfg(target_os = "linux")]
 fn is_being_traced() -> io::Result<bool> {
+    // Check to see whether we are being traced.  This will fail on systems where procfs is
+    // unavailable, but presumably in those systems `ptrace()` is also unavailable.
+    // The caller is free to treat a failure as a false.
+    // This function may run in signal handler, so we should ensure that we do not allocate
+    // memory on the heap (ex: avoiding using BufReader for exao).
     let mut file = File::open("/proc/self/status")?;
     let mut buf = [0u8; 8192];
     let n = file.read(&mut buf)?;
@@ -192,8 +197,10 @@ fn is_being_traced() -> io::Result<bool> {
 
     for line in data.split(|&b| b == b'\n') {
         if let Ok(line_str) = std::str::from_utf8(line) {
-            let tracer_pid = line_str.split_whitespace().nth(1).unwrap_or("0");
-            return Ok(tracer_pid != "0");
+            if line_str.starts_with("TracerPid:") {
+                let tracer_pid = line_str.split_whitespace().nth(1).unwrap_or("0");
+                return Ok(tracer_pid != "0");
+            }
         }
     }
     Ok(false)
