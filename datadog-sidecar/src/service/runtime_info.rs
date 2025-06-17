@@ -1,26 +1,19 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::service::{
-    remote_configs::RemoteConfigsGuard, telemetry::AppInstance, InstanceId, QueueId,
-};
+use crate::service::{remote_configs::RemoteConfigsGuard, InstanceId, QueueId};
 use datadog_live_debugger::sender::{generate_tags, PayloadSender};
 use ddcommon::{tag::Tag, MutexExt};
-use futures::future::{self, join_all, Shared};
-use manual_future::ManualFuture;
 use simd_json::prelude::ArrayTrait;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::{Arc, Mutex, MutexGuard};
 use tracing::{debug, info};
 
-type AppMap = HashMap<(String, String), Shared<ManualFuture<Option<AppInstance>>>>;
-
 /// `RuntimeInfo` is a struct that contains information about a runtime.
 /// It contains a map of apps and a map of app or actions.
 #[derive(Clone, Default)]
 pub(crate) struct RuntimeInfo {
-    pub(crate) apps: Arc<Mutex<AppMap>>,
     applications: Arc<Mutex<HashMap<QueueId, ActiveApplication>>>,
     pub(crate) instance_id: InstanceId,
 }
@@ -53,40 +46,10 @@ impl RuntimeInfo {
             self.instance_id.runtime_id, self.instance_id.session_id
         );
 
-        let instance_futures: Vec<_> = self
-            .lock_apps()
-            .drain()
-            .map(|(_, instance)| instance)
-            .collect();
-        let instances: Vec<_> = join_all(instance_futures).await;
-        let instances_shutting_down: Vec<_> = instances
-            .into_iter()
-            .map(|instance| {
-                tokio::spawn(async move {
-                    if let Some(instance) = instance {
-                        drop(instance.telemetry); // start shutdown
-                        instance.telemetry_worker_shutdown.await;
-                    }
-                })
-            })
-            .collect();
-        future::join_all(instances_shutting_down).await;
-
         debug!(
             "Successfully shut down runtime_id {} for session {}",
             self.instance_id.runtime_id, self.instance_id.session_id
         );
-    }
-
-    // TODO: APMSP-1076 Investigate if we can encapsulate the stats computation functionality so we
-    // don't have to expose apps publicly.
-    /// Locks the apps map and returns a mutable reference to it.
-    ///
-    /// # Returns
-    ///
-    /// * `<MutexGuard<AppMap>>` - A mutable reference to the apps map.
-    pub(crate) fn lock_apps(&self) -> MutexGuard<AppMap> {
-        self.apps.lock_or_panic()
     }
 
     /// Locks the applications map and returns a mutable reference to it.

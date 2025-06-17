@@ -4,8 +4,8 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::service::{
-    InstanceId, QueueId, RequestIdentification, RequestIdentifier,
-    SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    InstanceId, QueueId, RequestIdentification, RequestIdentifier, SerializedTracerHeaderTags,
+    SessionConfig, SidecarAction,
 };
 use anyhow::Result;
 use datadog_ipc::platform::ShmHandle;
