@@ -7,8 +7,12 @@
 #[macro_export]
 macro_rules! wrap_with_ffi_result {
     ($body:block) => {{
+        use antithesis_sdk::prelude::*;
         use anyhow::Context;
         (|| $body)()
+            .inspect_err(|err| {
+                assert_unreachable!("FFI function failed");
+            })
             .context(concat!(function_name!(), " failed"))
             .into()
     }};
@@ -19,11 +23,16 @@ macro_rules! wrap_with_ffi_result {
 #[macro_export]
 macro_rules! wrap_with_void_ffi_result {
     ($body:block) => {{
+        use antithesis_sdk::prelude::*;
         use anyhow::Context;
+
         (|| {
             $body;
             anyhow::Ok(())
         })()
+        .inspect_err(|err| {
+            assert_unreachable!("FFI function failed");
+        })
         .context(concat!(function_name!(), " failed"))
         .into()
     }};

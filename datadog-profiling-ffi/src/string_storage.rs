@@ -1,6 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use antithesis_sdk::assert_unreachable;
 use anyhow::Context;
 use datadog_profiling::api::ManagedStringId;
 use datadog_profiling::collections::string_storage::ManagedStringStorage as InternalManagedStringStorage;
@@ -82,6 +83,9 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
 
         anyhow::Ok(ManagedStringId::new(string_id))
     })()
+    .inspect_err(|_| {
+        assert_unreachable!("ddog_prof_ManagedStringStorage_intern failed");
+    })
     .context("ddog_prof_ManagedStringStorage_intern failed")
     .into()
 }
@@ -130,6 +134,9 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern_all(
 
         anyhow::Ok(())
     })()
+    .inspect_err(|_| {
+        assert_unreachable!("ddog_prof_ManagedStringStorage_intern_all failed");
+    })
     .context("ddog_prof_ManagedStringStorage_intern failed");
 
     match result {
@@ -157,6 +164,9 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
 
         write_locked_storage.unintern(non_empty_string_id)
     })()
+    .inspect_err(|_| {
+        assert_unreachable!("ddog_prof_ManagedStringStorage_unintern failed");
+    })
     .context("ddog_prof_ManagedStringStorage_unintern failed");
 
     match result {
@@ -184,6 +194,9 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern_all(
 
         anyhow::Ok(())
     })()
+    .inspect_err(|_| {
+        assert_unreachable!("ddog_prof_ManagedStringStorage_unintern_all failed");
+    })
     .context("ddog_prof_ManagedStringStorage_unintern failed");
 
     match result {
@@ -215,6 +228,9 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
 
         anyhow::Ok(string)
     })()
+    .inspect_err(|_| {
+        assert_unreachable!("ddog_prof_ManagedStringStorage_get_string failed");
+    })
     .context("ddog_prof_ManagedStringStorage_get_string failed")
     .into()
 }
@@ -234,6 +250,9 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_advance_gen(
 
         anyhow::Ok(())
     })()
+    .inspect_err(|_| {
+        assert_unreachable!("ddog_prof_ManagedStringStorage_advance_gen failed");
+    })
     .context("ddog_prof_ManagedStringStorage_advance_gen failed");
 
     match result {
