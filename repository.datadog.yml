@@ -4,3 +4,7 @@
 schema-version: v1
 kind: mergequeue
 merge_method: squash
+---
+schema-version: v1
+kind: stale-branches
+max_age: 2190h  # 3 months
