@@ -26,7 +26,9 @@ impl Collector {
         sig_info: *const siginfo_t,
         ucontext: *const ucontext_t,
     ) -> anyhow::Result<Self> {
-        let ppid = unsafe { libc::getppid() };
+        // When we spawn the child, our pid becomes the ppid.
+        // SAFETY: This function has no safety requirements.
+        let pid = unsafe { libc::getpid() };
 
         match alt_fork() {
             0 => {
@@ -38,7 +40,7 @@ impl Collector {
                     sig_info,
                     ucontext,
                     receiver.handle.uds_fd,
-                    ppid,
+                    pid,
                 );
             }
             pid if pid > 0 => Ok(Self {
