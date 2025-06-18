@@ -19,6 +19,63 @@ use std::{
 #[cfg(target_os = "linux")]
 use std::io::{self, BufRead, BufReader};
 
+#[derive(Debug, Eq, PartialEq, thiserror::Error)]
+pub enum ReapError {
+    #[error("Timeout waiting for child process to exit")]
+    Timeout,
+    #[error("Error waiting for child process to exit: {0}")]
+    WaitError(#[from] nix::Error),
+}
+
+#[derive(Debug, Eq, PartialEq, thiserror::Error)]
+pub enum PollError {
+    #[error("Poll failed with errno: {0}")]
+    PollError(i32),
+    #[error("Poll returned unexpected result: revents = {0}")]
+    UnexpectedResult(i16),
+}
+
+pub struct TimeoutManager {
+    start_time: Instant,
+    timeout: Duration,
+}
+
+impl TimeoutManager {
+    // 4ms per sched slice, give ~4x10 slices for safety
+    const MINIMUM_REAP_TIME: Duration = Duration::from_millis(160);
+    pub fn new(timeout: Duration) -> Self {
+        Self {
+            start_time: Instant::now(),
+            timeout,
+        }
+    }
+
+    pub fn remaining(&self) -> Duration {
+        // If elapsed > timeout, remaining will be 0
+        let remaining = self.timeout - self.start_time.elapsed();
+        remaining.max(Self::MINIMUM_REAP_TIME)
+    }
+
+    pub fn elapsed(&self) -> Duration {
+        self.start_time.elapsed()
+    }
+
+    pub fn timeout(&self) -> Duration {
+        self.timeout
+    }
+}
+
+impl std::fmt::Debug for TimeoutManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TimeoutManager")
+            .field("start_time", &self.start_time)
+            .field("elapsed", &self.elapsed())
+            .field("timeout", &self.timeout)
+            .field("remaining", &self.remaining())
+            .finish()
+    }
+}
+
 // The args_cstrings and env_vars_strings fields are just storage.  Even though they're
 // unreferenced, they're a necessary part of the struct.
 #[allow(dead_code)]
@@ -121,24 +178,26 @@ pub fn open_file_or_quiet(filename: Option<&str>) -> anyhow::Result<RawFd> {
 // Note: some resources indicate it is unsafe to call `waitpid` from a signal handler, especially
 //       on macos, where the OS will terminate an offending process.  This appears to be untrue
 //       and `waitpid()` is characterized as async-signal safe by POSIX.
-pub fn reap_child_non_blocking(pid: Pid, timeout_ms: u32) -> anyhow::Result<bool> {
-    let timeout = Duration::from_millis(timeout_ms.into());
-    let start_time = Instant::now();
-
+pub fn reap_child_non_blocking(
+    pid: Pid,
+    timeout_manager: &TimeoutManager,
+) -> Result<bool, ReapError> {
     loop {
         match waitpid(pid, Some(WaitPidFlag::WNOHANG)) {
-            Ok(WaitStatus::StillAlive) => anyhow::ensure!(
-                start_time.elapsed() <= timeout,
-                "Timeout waiting for child process to exit"
-            ),
+            Ok(WaitStatus::StillAlive) => {
+                if timeout_manager.elapsed() > timeout_manager.timeout() {
+                    return Err(ReapError::Timeout);
+                }
+                // TODO, this is currently a busy loop.  Consider sleeping for a short time.
+            }
             Ok(_status) => return Ok(true),
             Err(nix::Error::ECHILD) => {
                 // Non-availability of the specified process is weird, since we should have
                 // exclusive access to reaping its exit, but at the very least means there is
                 // nothing further for us to do.
-                return Ok(true);
+                return Ok(false);
             }
-            _ => anyhow::bail!("Error waiting for child process to exit"),
+            Err(e) => return Err(ReapError::WaitError(e)),
         }
     }
 }
@@ -150,26 +209,39 @@ pub fn terminate() -> ! {
 }
 
 /// true if successful wait, false if timeout occurred.
-pub fn wait_for_pollhup(target_fd: RawFd, timeout_ms: i32) -> anyhow::Result<bool> {
+pub fn wait_for_pollhup(
+    target_fd: RawFd,
+    timeout_manager: &TimeoutManager,
+) -> Result<bool, PollError> {
     let mut poll_fds = [pollfd {
         fd: target_fd,
         events: POLLHUP,
         revents: 0,
     }];
 
-    match unsafe { poll(poll_fds.as_mut_ptr(), poll_fds.len() as nfds_t, timeout_ms) } {
-        -1 => Err(anyhow::anyhow!(
-            "poll failed with errno: {}",
-            std::io::Error::last_os_error()
-        )),
-        0 => Ok(false), // Timeout occurred
-        _ => {
-            let revents = poll_fds[0].revents;
-            anyhow::ensure!(
-                revents & POLLHUP != 0,
-                "poll returned unexpected result: revents = {revents}"
-            );
-            Ok(true) // POLLHUP detected
+    loop {
+        let timeout_ms = timeout_manager.remaining().as_millis() as i32;
+        let poll_result =
+            unsafe { poll(poll_fds.as_mut_ptr(), poll_fds.len() as nfds_t, timeout_ms) };
+        match poll_result {
+            -1 => {
+                match nix::Error::last_raw() {
+                    libc::EAGAIN | libc::EINTR => {
+                        // Retry on EAGAIN or EINTR
+                        continue;
+                    }
+                    errno => return Err(PollError::PollError(errno)),
+                }
+            }
+            0 => return Ok(false), // Timeout occurred
+            _ => {
+                let revents = poll_fds[0].revents;
+                if revents & POLLHUP != 0 {
+                    return Ok(true); // POLLHUP detected
+                } else {
+                    return Err(PollError::UnexpectedResult(revents));
+                }
+            }
         }
     }
 }

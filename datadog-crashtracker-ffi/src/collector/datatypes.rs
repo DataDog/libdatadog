@@ -5,6 +5,7 @@ pub use datadog_crashtracker::{OpTypes, StacktraceCollection};
 use ddcommon::Endpoint;
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use ddcommon_ffi::{Error, Slice};
+use std::time::Duration;
 
 #[repr(C)]
 pub struct EnvVar<'a> {
@@ -68,6 +69,7 @@ pub struct Config<'a> {
     /// If empty, use the default set.
     pub signals: Slice<'a, i32>,
     /// Timeout in milliseconds before the signal handler starts tearing things down to return.
+    /// If 0, uses the default timeout. Otherwise, uses the specified timeout value.
     /// This is given as a uint32_t, but the actual timeout needs to fit inside of an i32 (max
     /// 2^31-1). This is a limitation of the various interfaces used to guarantee the timeout.
     pub timeout_ms: u32,
@@ -89,7 +91,11 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
         let endpoint = value.endpoint.cloned();
         let resolve_frames = value.resolve_frames;
         let signals = value.signals.iter().copied().collect();
-        let timeout_ms = value.timeout_ms;
+        let timeout = if value.timeout_ms == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(value.timeout_ms as u64))
+        };
         let unix_socket_path = value.optional_unix_socket_filename.try_to_string_option()?;
         let demangle_names = value.demangle_names;
         Self::new(
@@ -99,7 +105,7 @@ impl<'a> TryFrom<Config<'a>> for datadog_crashtracker::CrashtrackerConfiguration
             endpoint,
             resolve_frames,
             signals,
-            timeout_ms,
+            timeout,
             unix_socket_path,
             demangle_names,
         )
