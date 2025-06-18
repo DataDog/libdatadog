@@ -9,17 +9,12 @@ use std::time::Instant;
 
 pub(crate) struct ProcessHandle {
     pub uds_fd: RawFd,
-    pub pid: i32,
-    pub oneshot: bool,
+    pub pid: Option<i32>,
 }
 
 impl ProcessHandle {
-    pub fn new(uds_fd: RawFd, pid: i32, oneshot: bool) -> Self {
-        Self {
-            uds_fd,
-            pid,
-            oneshot,
-        }
+    pub fn new(uds_fd: RawFd, pid: Option<i32>) -> Self {
+        Self { uds_fd, pid }
     }
 
     pub fn finish(&self, start_time: Instant, timeout_ms: u32) {
@@ -28,15 +23,15 @@ impl ProcessHandle {
             .min(i32::MAX as u32) as i32;
         let _ = wait_for_pollhup(self.uds_fd, pollhup_allowed_ms);
 
-        if self.oneshot {
+        if let Some(pid) = self.pid {
             // If we have less than the minimum amount of time, give ourselves a few scheduler
             // slices worth of headroom to help guarantee that we don't leak a zombie process.
-            let _ = unsafe { libc::kill(self.pid, libc::SIGKILL) };
+            let _ = unsafe { libc::kill(pid, libc::SIGKILL) };
 
             // `self` is actually a handle to a child process and `self.pid` is the child process's
             // pid.
-            let child_pid = Pid::from_raw(self.pid);
-            let reaping_allowed_ms = std::cmp::min(
+            let child_pid = Pid::from_raw(pid);
+            let reaping_allowed_ms = std::cmp::max(
                 timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32),
                 DD_CRASHTRACK_MINIMUM_REAP_TIME_MS,
             );

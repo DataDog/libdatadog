@@ -44,7 +44,7 @@ impl Receiver {
             .context("Failed to connect to receiver")?
             .into_raw_fd();
         Ok(Self {
-            handle: ProcessHandle::new(uds_fd, 0, false),
+            handle: ProcessHandle::new(uds_fd, None),
         })
     }
 
@@ -76,7 +76,7 @@ impl Receiver {
                 // Parent
                 let _ = unsafe { libc::close(uds_child) };
                 Ok(Self {
-                    handle: ProcessHandle::new(uds_parent, pid, false),
+                    handle: ProcessHandle::new(uds_parent, Some(pid)),
                 })
             }
             _ => {
