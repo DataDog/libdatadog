@@ -182,24 +182,15 @@ pub async fn check_response_for_new_state<T>(
     info_endpoint: Arc<Endpoint>,
 ) {
     if let Some(agent_state) = response.headers().get(DATADOG_AGENT_STATE) {
-        // If if no info has been loaded yet, skip to let the AgentInfoFetcher fetch the first
+        // If no info has been loaded yet, skip to let the AgentInfoFetcher fetch the first
         // version and avoid spamming the agent.
         if let Some(current_info) = AGENT_INFO_CACHE.load_full() {
-            println!("current_info is some");
             if let Ok(state) = agent_state.to_str() {
-                println!("state is {}", state);
-                println!(
-                    "current_info.state_hash is {}",
-                    current_info.state_hash.as_str()
-                );
                 if state != current_info.state_hash.as_str() {
-                    println!("Starting background task to fetch /info");
                     tokio::spawn(async move {
-                        println!("fetching /info");
                         let res =
                             fetch_info_with_state(&info_endpoint, Some(&current_info.state_hash))
                                 .await;
-                        println!("res is {:?}", res);
                         match res {
                             Ok(FetchInfoStatus::NewState(new_info)) => {
                                 info!("New /info state received");
