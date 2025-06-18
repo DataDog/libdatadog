@@ -31,7 +31,7 @@ impl ProcessHandle {
             // `self` is actually a handle to a child process and `self.pid` is the child process's
             // pid.
             let child_pid = Pid::from_raw(pid);
-            let reaping_allowed_ms = std::cmp::min(
+            let reaping_allowed_ms = std::cmp::max(
                 timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32),
                 DD_CRASHTRACK_MINIMUM_REAP_TIME_MS,
             );
