@@ -7,7 +7,6 @@ use datadog_crashtracker;
 use spawn_worker::{entrypoint, Stdio};
 use std::fs::File;
 use std::future::Future;
-use std::sync::atomic::AtomicUsize;
 use std::{
     io,
     sync::{
@@ -95,11 +94,11 @@ where
     let server = SidecarServer::default();
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
 
-    let mut watchdog_handle =
-        Watchdog::from_receiver(shutdown_complete_rx).spawn_watchdog(server.clone());
+    let mut watchdog = Watchdog::from_receiver(shutdown_complete_rx);
     if config.max_memory != 0 {
-        watchdog_handle.mem_usage_bytes = Arc::new(AtomicUsize::new(config.max_memory));
+        watchdog.max_memory_usage_bytes = config.max_memory;
     }
+    let watchdog_handle = watchdog.spawn_watchdog(server.clone());
     let telemetry_handle = self_telemetry(server.clone(), watchdog_handle);
 
     listener(Box::new({
