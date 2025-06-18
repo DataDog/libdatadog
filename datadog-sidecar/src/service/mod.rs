@@ -62,6 +62,7 @@ pub struct SessionConfig {
     pub log_file: config::LogMethod,
     pub remote_config_products: Vec<RemoteConfigProduct>,
     pub remote_config_capabilities: Vec<RemoteConfigCapabilities>,
+    pub remote_config_enabled: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

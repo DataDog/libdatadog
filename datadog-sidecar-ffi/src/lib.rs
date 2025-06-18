@@ -543,6 +543,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     remote_config_products_count: usize,
     remote_config_capabilities: *const RemoteConfigCapabilities,
     remote_config_capabilities_count: usize,
+    remote_config_enabled: bool,
     is_fork: bool,
 ) -> MaybeError {
     #[cfg(unix)]
@@ -586,6 +587,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             )
             .as_slice()
             .to_vec(),
+            remote_config_enabled,
         },
         is_fork
     ));
@@ -851,7 +853,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_remote_config_data(
     app_version: ffi::CharSlice,
     global_tags: &ddcommon_ffi::Vec<Tag>,
 ) -> MaybeError {
-    try_c!(blocking::set_remote_config_data(
+    try_c!(blocking::set_universal_service_tags(
         transport,
         instance_id,
         queue_id,

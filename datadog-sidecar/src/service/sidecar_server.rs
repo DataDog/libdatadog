@@ -3,13 +3,13 @@
 
 use crate::log::{TemporarilyRetainedMapStats, MULTI_LOG_FILTER, MULTI_LOG_WRITER};
 use crate::service::{
-    sidecar_interface::ServeSidecarInterface, tracing::TraceFlusher, InstanceId, QueueId,
-    RequestIdentification, RequestIdentifier, RuntimeInfo, RuntimeMetadata,
+    sidecar_interface::ServeSidecarInterface,
+    telemetry::{TelemetryCachedClient, TelemetryCachedClientSet},
+    tracing::TraceFlusher,
+    InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeInfo, RuntimeMetadata,
     SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction, SidecarInterface,
     SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
-use base64::Engine;
 use datadog_ipc::platform::{AsyncChannel, ShmHandle};
 use datadog_ipc::tarpc;
 use datadog_ipc::tarpc::context::Context;
@@ -18,25 +18,18 @@ use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::tracer_payload::decode_to_trace_chunks;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
 use ddcommon::{Endpoint, MutexExt};
-use ddtelemetry::worker::{
-    LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerStats,
-};
+use ddtelemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
 use futures::future;
 use futures::future::Ready;
 use manual_future::ManualFutureCompleter;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
-use std::ffi::CString;
-use std::hash::{Hash, Hasher};
-use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tracing::{debug, error, info, trace, warn};
-use zwohash::ZwoHasher;
 
 use futures::FutureExt;
 use serde::{Deserialize, Serialize};
@@ -122,107 +115,7 @@ pub struct SidecarServer {
     process_handle: Option<ProcessHandle>,
 }
 
-pub fn path_for_telemetry(service: &str, env: &str, version: &str) -> CString {
-    let mut hasher = ZwoHasher::default();
-    service.hash(&mut hasher);
-    env.hash(&mut hasher);
-    version.hash(&mut hasher);
-    let hash = hasher.finish();
-
-    let mut path = format!(
-        "/ddtl{}-{}",
-        primary_sidecar_identifier(),
-        BASE64_URL_SAFE_NO_PAD.encode(hash.to_ne_bytes()),
-    );
-    path.truncate(31);
-
-    #[allow(clippy::unwrap_used)]
-    CString::new(path).unwrap()
-}
-
 impl SidecarServer {
-    pub fn get_or_create_telemetry_client(
-        &self,
-        service: &str,
-        env: &str,
-        version: &str,
-        instance_id: &InstanceId,
-        runtime_meta: &RuntimeMetadata,
-    ) -> Option<TelemetryCachedClient> {
-        let key = (service.to_string(), env.to_string(), version.to_string());
-
-        let mut clients = self.telemetry_clients.inner.lock_or_panic();
-
-        if let Some(existing) = clients.get_mut(&key) {
-            existing.last_used = Instant::now();
-            let telemetry = existing.clone();
-            tokio::spawn(async move {
-                telemetry
-                    .client
-                    .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                    .await
-                    .ok();
-            });
-            return Some(existing.clone());
-        }
-
-        // Build and spawn worker
-        let mut builder = TelemetryWorkerBuilder::new_fetch_host(
-            service.to_string(),
-            runtime_meta.language_name.to_string(),
-            runtime_meta.language_version.to_string(),
-            runtime_meta.tracer_version.to_string(),
-        );
-
-        builder.runtime_id = Some(instance_id.runtime_id.clone());
-        builder.application.env = Some(env.to_string());
-
-        let session_info = self.get_session(&instance_id.session_id);
-        let config = session_info
-            .session_config
-            .lock_or_panic()
-            .clone()
-            .unwrap_or_else(ddtelemetry::config::Config::from_env);
-
-        builder.config = config.clone();
-
-        match builder.spawn().now_or_never() {
-            Some(Ok((handle, _join))) => {
-                let telemetry_client = TelemetryCachedClient {
-                    client: handle.clone(),
-                    shmem_file: PathBuf::from(std::ffi::OsStr::from_bytes(
-                        path_for_telemetry(service, env, version).as_bytes(),
-                    )),
-                    last_used: Instant::now(),
-                    buffered_integrations: HashSet::new(),
-                    buffered_composer_paths: HashSet::new(),
-                    telemetry_metrics: Default::default(),
-                };
-                clients.insert(key, telemetry_client.clone());
-
-                let telemetry = telemetry_client.clone();
-                tokio::spawn(async move {
-                    telemetry
-                        .client
-                        .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                        .await
-                        .ok();
-                });
-
-                info!("spawning telemetry worker {config:?}");
-                Some(telemetry_client)
-            }
-            Some(Err(e)) => {
-                error!("failed to spawn telemetry worker: {:?}", e);
-                None
-            }
-            None => {
-                error!("failed to spawn telemetry worker: spawn did not complete immediately");
-                None
-            }
-        }
-    }
-
     /// Accepts a new connection and starts processing requests.
     ///
     /// This function creates a new `tarpc` server with the provided `async_channel` and starts
@@ -494,12 +387,18 @@ impl SidecarInterface for SidecarServer {
                 let version = value.app_version.clone().unwrap();
                 let service = value.service_name.clone().unwrap();
 
-                let mut telemetry = match self.get_or_create_telemetry_client(
+                let mut telemetry = match self.telemetry_clients.get_or_create(
                     &service,
                     &env,
                     &version,
                     &instance_id,
                     &runtime_metadata,
+                    || {
+                        self.get_session(&instance_id.session_id)
+                            .session_config
+                            .lock_or_panic()
+                            .clone()
+                    },
                 ) {
                     Some(client) => client,
                     None => return no_response(),
@@ -507,17 +406,22 @@ impl SidecarInterface for SidecarServer {
 
                 let mut actions_to_process = vec![];
                 let mut composer_paths_to_process = vec![];
+                let mut buffered_info_changed = false;
 
                 for action in actions {
-                    match &action {
-                        SidecarAction::Telemetry(TelemetryActions::AddIntegration(integration)) => {
+                    match action {
+                        SidecarAction::Telemetry(TelemetryActions::AddIntegration(
+                            ref integration,
+                        )) => {
                             if telemetry.buffered_integrations.insert(integration.clone()) {
                                 actions_to_process.push(action);
+                                buffered_info_changed = true;
                             }
                         }
                         SidecarAction::PhpComposerTelemetryFile(path) => {
                             if telemetry.buffered_composer_paths.insert(path.clone()) {
-                                composer_paths_to_process.push(path.clone());
+                                composer_paths_to_process.push(path);
+                                buffered_info_changed = true;
                             }
                         }
                         _ => {
@@ -560,16 +464,13 @@ impl SidecarInterface for SidecarServer {
                     });
                 }
 
-                // Synchronous SHM write
-                if let Ok(buf) = bincode::serialize(&(
-                    &telemetry.buffered_integrations,
-                    &telemetry.buffered_composer_paths,
-                )) {
-                    if let Err(e) = std::fs::write(&telemetry.shmem_file, buf) {
-                        error!(
-                            "Failed to write telemetry SHM file to {:?}: {:?}",
-                            telemetry.shmem_file, e
-                        );
+                // Synchronous SHM write if changes have been made
+                if buffered_info_changed {
+                    if let Ok(buf) = bincode::serialize(&(
+                        &telemetry.buffered_integrations,
+                        &telemetry.buffered_composer_paths,
+                    )) {
+                        telemetry.shm_writer.write(&buf);
                     }
                 }
             }
@@ -594,7 +495,7 @@ impl SidecarInterface for SidecarServer {
     ) -> Self::SetSessionConfigFut {
         debug!("Set session config for {session_id} to {config:?}");
 
-        let session = self.get_session(&session_id);
+        let mut session = self.get_session(&session_id);
         #[cfg(unix)]
         {
             session.pid.store(pid, Ordering::Relaxed);
@@ -604,6 +505,7 @@ impl SidecarInterface for SidecarServer {
         {
             *session.remote_config_notify_function.lock().unwrap() = remote_config_notify_function;
         }
+        session.remote_config_enabled = config.remote_config_enabled;
         session.modify_telemetry_config(|cfg| {
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
             let endpoint =
@@ -833,9 +735,9 @@ impl SidecarInterface for SidecarServer {
         no_response()
     }
 
-    type SetRemoteConfigDataFut = NoResponse;
+    type SetUniversalServiceTagsFut = NoResponse;
 
-    fn set_remote_config_data(
+    fn set_universal_service_tags(
         self,
         _: Context,
         instance_id: InstanceId,
@@ -844,7 +746,7 @@ impl SidecarInterface for SidecarServer {
         env_name: String,
         app_version: String,
         global_tags: Vec<Tag>,
-    ) -> Self::SetRemoteConfigDataFut {
+    ) -> Self::SetUniversalServiceTagsFut {
         debug!("Registered remote config metadata: instance {instance_id:?}, queue_id: {queue_id:?}, service: {service_name}, env: {env_name}, version: {app_version}");
 
         let session = self.get_session(&instance_id.session_id);
@@ -871,16 +773,18 @@ impl SidecarInterface for SidecarServer {
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
         let mut applications = runtime_info.lock_applications();
         let app = applications.entry(queue_id).or_default();
-        app.remote_config_guard = Some(self.remote_configs.add_runtime(
-            invariants,
-            *session.remote_config_interval.lock_or_panic(),
-            instance_id.runtime_id,
-            notify_target,
-            env_name.clone(),
-            service_name.clone(),
-            app_version.clone(),
-            global_tags.clone(),
-        ));
+        if session.remote_config_enabled {
+            app.remote_config_guard = Some(self.remote_configs.add_runtime(
+                invariants,
+                *session.remote_config_interval.lock_or_panic(),
+                instance_id.runtime_id,
+                notify_target,
+                env_name.clone(),
+                service_name.clone(),
+                app_version.clone(),
+                global_tags.clone(),
+            ));
+        }
         app.set_metadata(env_name, app_version, service_name, global_tags);
 
         no_response()

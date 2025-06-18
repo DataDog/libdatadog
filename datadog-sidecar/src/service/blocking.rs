@@ -383,7 +383,7 @@ pub fn acquire_exception_hash_rate_limiter(
 /// # Returns
 ///
 /// An `io::Result<()>` indicating the result of the operation.
-pub fn set_remote_config_data(
+pub fn set_universal_service_tags(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
     queue_id: &QueueId,
@@ -392,7 +392,7 @@ pub fn set_remote_config_data(
     app_version: String,
     global_tags: Vec<Tag>,
 ) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::SetRemoteConfigData {
+    transport.send(SidecarInterfaceRequest::SetUniversalServiceTags {
         instance_id: instance_id.clone(),
         queue_id: *queue_id,
         service_name,

@@ -1,43 +1,46 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::one_way_shared_memory::OneWayShmWriter;
+use crate::primary_sidecar_identifier;
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
+use base64::Engine;
+use datadog_ipc::platform::NamedShmHandle;
+use ddcommon::MutexExt;
 use std::collections::{HashMap, HashSet};
-use std::ops::Sub;
+use std::ffi::CString;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
+use zwohash::ZwoHasher;
 
-use ddcommon::{tag::Tag, MutexExt};
+use crate::service::{InstanceId, RuntimeMetadata};
+use ddcommon::tag::Tag;
+use ddtelemetry::worker::TelemetryWorkerBuilder;
+use futures::FutureExt;
+use serde::Deserialize;
+use std::ops::Sub;
+use std::sync::LazyLock;
+use std::time::SystemTime;
+use tracing::{info, warn};
+
 use ddtelemetry::data::{self, Integration};
 use ddtelemetry::metrics::{ContextKey, MetricContext};
-use ddtelemetry::worker::{TelemetryActions, TelemetryWorkerHandle};
+use ddtelemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerHandle};
 use manual_future::ManualFuture;
-use serde::Deserialize;
 use serde_with::{serde_as, VecSkipError};
 use tokio::time::sleep;
-use tracing::warn;
 
 use crate::service::SidecarAction;
 
-//
-// ──────────────────────────────────────────────
-//   ⬇ Type aliases and statics
-// ──────────────────────────────────────────────
-//
-
 type ComposerCache = HashMap<PathBuf, (SystemTime, Arc<Vec<data::Dependency>>)>;
-static COMPOSER_CACHE: OnceLock<tokio::sync::Mutex<ComposerCache>> = OnceLock::new();
-static LAST_CACHE_CLEAN: OnceLock<AtomicU64> = OnceLock::new();
 
-fn get_composer_cache() -> &'static tokio::sync::Mutex<ComposerCache> {
-    COMPOSER_CACHE.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()))
-}
+static COMPOSER_CACHE: LazyLock<tokio::sync::Mutex<ComposerCache>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(Default::default()));
 
-fn get_last_cache_clean() -> &'static AtomicU64 {
-    LAST_CACHE_CLEAN.get_or_init(|| AtomicU64::new(0))
-}
+static LAST_CACHE_CLEAN: AtomicU64 = AtomicU64::new(0);
 
 #[serde_as]
 #[derive(Deserialize)]
@@ -46,16 +49,10 @@ struct ComposerPackages {
     packages: Vec<data::Dependency>,
 }
 
-//
-// ──────────────────────────────────────────────
-//  Telemetry Client Structs
-// ──────────────────────────────────────────────
-//
-
 #[derive(Clone)]
 pub struct TelemetryCachedClient {
     pub client: TelemetryWorkerHandle,
-    pub shmem_file: PathBuf,
+    pub shm_writer: Arc<OneWayShmWriter<NamedShmHandle>>,
     pub last_used: Instant,
     pub buffered_integrations: HashSet<Integration>,
     pub buffered_composer_paths: HashSet<PathBuf>,
@@ -63,6 +60,43 @@ pub struct TelemetryCachedClient {
 }
 
 impl TelemetryCachedClient {
+    pub fn new(
+        service: &str,
+        env: &str,
+        version: &str,
+        instance_id: &InstanceId,
+        runtime_meta: &RuntimeMetadata,
+        get_config: impl FnOnce() -> Option<ddtelemetry::config::Config>,
+    ) -> Option<Self> {
+        let mut builder = TelemetryWorkerBuilder::new_fetch_host(
+            service.to_string(),
+            runtime_meta.language_name.to_string(),
+            runtime_meta.language_version.to_string(),
+            runtime_meta.tracer_version.to_string(),
+        );
+
+        builder.runtime_id = Some(instance_id.runtime_id.clone());
+        builder.application.env = Some(env.to_string());
+        let config = get_config()?;
+        builder.config = config.clone();
+
+        let (handle, _join) = builder.spawn().now_or_never().and_then(Result::ok)?;
+
+        info!("spawning telemetry worker {config:?}");
+        Some(Self {
+            client: handle.clone(),
+            shm_writer: Arc::new(
+                #[allow(clippy::unwrap_used)]
+                OneWayShmWriter::<NamedShmHandle>::new(path_for_telemetry(service, env, version))
+                    .unwrap(),
+            ),
+            last_used: Instant::now(),
+            buffered_integrations: HashSet::new(),
+            buffered_composer_paths: HashSet::new(),
+            telemetry_metrics: Default::default(),
+        })
+    }
+
     pub fn register_metric(&self, metric: MetricContext) {
         let mut metrics = self.telemetry_metrics.lock_or_panic();
         if !metrics.contains_key(&metric.name) {
@@ -119,9 +153,8 @@ impl TelemetryCachedClient {
 
     pub fn extract_composer_telemetry(path: PathBuf) -> ManualFuture<Arc<Vec<data::Dependency>>> {
         let (deps, completer) = ManualFuture::new();
-
         tokio::spawn(async {
-            let mut cache = get_composer_cache().lock().await;
+            let mut cache = COMPOSER_CACHE.lock().await;
             let packages = match tokio::fs::metadata(&path).await.and_then(|m| m.modified()) {
                 Err(e) => {
                     warn!("Failed to report dependencies from {path:?}, could not read modification time: {e:?}");
@@ -135,30 +168,25 @@ impl TelemetryCachedClient {
                             return;
                         }
                     }
-
                     async fn parse(path: &PathBuf) -> anyhow::Result<Vec<data::Dependency>> {
-                        let mut json = tokio::fs::read(path).await?;
+                        let mut json = tokio::fs::read(&path).await?;
                         #[cfg(not(target_arch = "x86"))]
                         let parsed: ComposerPackages = simd_json::from_slice(json.as_mut_slice())?;
                         #[cfg(target_arch = "x86")]
-                        let parsed = crate::interface::ComposerPackages { packages: vec![] };
+                        let parsed = crate::interface::ComposerPackages { packages: vec![] }; // not interested in 32 bit
                         Ok(parsed.packages)
                     }
-
                     let packages = Arc::new(parse(&path).await.unwrap_or_else(|e| {
                         warn!("Failed to report dependencies from {path:?}: {e:?}");
                         vec![]
                     }));
-
                     cache.insert(path, (now, packages.clone()));
-
-                    // Periodic cleanup
+                    // cheap way to avoid unbounded caching
                     const CACHE_INTERVAL: u64 = 2000;
-                    let last_clean = get_last_cache_clean().load(Ordering::Relaxed);
+                    let last_clean = LAST_CACHE_CLEAN.load(Ordering::Relaxed);
                     let now_secs = Instant::now().elapsed().as_secs();
-
                     if now_secs > last_clean + CACHE_INTERVAL
-                        && get_last_cache_clean()
+                        && LAST_CACHE_CLEAN
                             .compare_exchange(
                                 last_clean,
                                 now_secs,
@@ -171,14 +199,11 @@ impl TelemetryCachedClient {
                             *inserted > now.sub(Duration::from_secs(CACHE_INTERVAL))
                         });
                     }
-
                     packages
                 }
             };
-
             completer.complete(packages).await;
         });
-
         deps
     }
 }
@@ -229,4 +254,81 @@ impl Clone for TelemetryCachedClientSet {
             cleanup_handle: None,
         }
     }
+}
+
+impl TelemetryCachedClientSet {
+    pub fn get_or_create<F>(
+        &self,
+        service: &str,
+        env: &str,
+        version: &str,
+        instance_id: &InstanceId,
+        runtime_meta: &RuntimeMetadata,
+        get_config: F,
+    ) -> Option<TelemetryCachedClient>
+    where
+        F: FnOnce() -> Option<ddtelemetry::config::Config>,
+    {
+        let key = (service.to_string(), env.to_string(), version.to_string());
+
+        let mut map = self.inner.lock_or_panic();
+
+        if let Some(existing) = map.get_mut(&key) {
+            existing.last_used = Instant::now();
+            let client = existing.clone();
+            tokio::spawn({
+                let telemetry = client.clone();
+                async move {
+                    telemetry
+                        .client
+                        .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
+                        .await
+                        .ok();
+                }
+            });
+            return Some(client);
+        }
+
+        let client = TelemetryCachedClient::new(
+            service,
+            env,
+            version,
+            instance_id,
+            runtime_meta,
+            get_config,
+        )?;
+
+        map.insert(key, client.clone());
+
+        tokio::spawn({
+            let telemetry = client.clone();
+            async move {
+                telemetry
+                    .client
+                    .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
+                    .await
+                    .ok();
+            }
+        });
+
+        Some(client)
+    }
+}
+
+pub fn path_for_telemetry(service: &str, env: &str, version: &str) -> CString {
+    let mut hasher = ZwoHasher::default();
+    service.hash(&mut hasher);
+    env.hash(&mut hasher);
+    version.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    let mut path = format!(
+        "/ddtl{}-{}",
+        primary_sidecar_identifier(),
+        BASE64_URL_SAFE_NO_PAD.encode(hash.to_ne_bytes()),
+    );
+    path.truncate(31);
+
+    #[allow(clippy::unwrap_used)]
+    CString::new(path).unwrap()
 }
