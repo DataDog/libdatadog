@@ -42,7 +42,7 @@ impl Collector {
                 );
             }
             pid if pid > 0 => Ok(Self {
-                handle: ProcessHandle::new(receiver.handle.uds_fd, pid, false),
+                handle: ProcessHandle::new(receiver.handle.uds_fd, Some(pid)),
             }),
             _ => {
                 // Error
