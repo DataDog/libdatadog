@@ -137,7 +137,7 @@ pub trait SidecarInterface {
     /// * `granularity` - how much time needs to pass between two exceptions
     async fn acquire_exception_hash_rate_limiter(exception_hash: u64, granularity: Duration);
 
-    /// Sets contextual data for the remote config client.
+    /// Sets contextual data
     ///
     /// # Arguments
     /// * `instance_id` - The ID of the instance.
@@ -146,7 +146,7 @@ pub trait SidecarInterface {
     /// * `env_name` - The name of the environment.
     /// * `app_version` - The application version.
     /// * `global_tags` - Global tags which need to be propagated.
-    async fn set_remote_config_data(
+    async fn set_universal_service_tags(
         instance_id: InstanceId,
         queue_id: QueueId,
         service_name: String,
