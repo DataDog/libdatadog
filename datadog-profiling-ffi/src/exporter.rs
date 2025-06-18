@@ -4,6 +4,7 @@
 #![allow(renamed_and_removed_lints)]
 #![allow(clippy::box_vec)]
 
+use antithesis_sdk::assert_always;
 use datadog_profiling::exporter;
 use datadog_profiling::exporter::{ProfileExporter, Request};
 use datadog_profiling::internal::EncodedProfile;
@@ -176,8 +177,9 @@ pub unsafe extern "C" fn ddog_prof_Exporter_set_timeout(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_Exporter_drop(mut exporter: *mut Handle<ProfileExporter>) {
     // Technically, this function has been designed so if it's double-dropped
-    // then it's okay, but it's not something that should be relied on.
-    drop(exporter.take())
+    let taken = exporter.take();
+    assert_always!(taken.is_ok(), "exporter take() failed");
+    drop(taken)
 }
 
 unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> {
@@ -272,7 +274,9 @@ unsafe fn parse_json(
 pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(mut request: *mut Handle<Request>) {
     // Technically, this function has been designed so if it's double-dropped
     // then it's okay, but it's not something that should be relied on.
-    drop(request.take())
+    let taken = request.take();
+    assert_always!(taken.is_ok(), "request take() failed");
+    drop(taken)
 }
 
 /// Sends the request, returning the HttpStatus.
@@ -372,7 +376,9 @@ pub unsafe extern "C" fn ddog_CancellationToken_cancel(
 pub unsafe extern "C" fn ddog_CancellationToken_drop(
     mut token: *mut Handle<TokioCancellationToken>,
 ) {
-    drop(token.take())
+    let taken = token.take();
+    assert_always!(taken.is_ok(), "exporter take() failed");
+    drop(taken)
 }
 
 #[cfg(test)]
