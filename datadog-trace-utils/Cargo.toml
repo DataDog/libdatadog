@@ -31,6 +31,7 @@ datadog-trace-normalization = { path = "../datadog-trace-normalization" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 rand = "0.8.5"
 bytes = "1.6.0"
+hashbrown = { version = "0.15", features = ["serde"] }
 rmpv = { version = "1.3.0", default-features = false }
 rmp = { version = "0.8.14", default-features = false }
 tinybytes = { path = "../tinybytes", features = [
@@ -78,3 +79,4 @@ proxy = ["hyper-http-proxy"]
 compression = ["zstd", "flate2"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["ddcommon/fips"]
+allocator = ["hashbrown/nightly"]

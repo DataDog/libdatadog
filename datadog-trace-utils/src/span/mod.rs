@@ -4,15 +4,22 @@
 pub mod trace_utils;
 pub mod v05;
 
+use hashbrown::{DefaultHashBuilder, HashMap};
 use serde::ser::SerializeStruct;
 use serde::Serialize;
+#[cfg(feature = "allocator")]
+use std::alloc::{Allocator, Global};
 use std::borrow::Borrow;
-use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
 use std::str::FromStr;
 use tinybytes::{Bytes, BytesString};
 use v05::dict::SharedDict;
+
+#[cfg(not(feature = "allocator"))]
+type Allocator = ();
+#[cfg(not(feature = "allocator"))]
+type Global = ();
 
 use crate::tracer_payload::TraceChunks;
 
@@ -97,9 +104,13 @@ fn is_empty_str<T: Borrow<str>>(value: &T) -> bool {
 /// }
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct Span<T>
+#[serde(bound(serialize = "T: Serialize"))]
+pub struct Span<T, A: Allocator + Default = Global>
 where
     T: SpanText,
+    Vec<AttributeArrayValue<T>, A>: Default + Serialize,
+    Vec<SpanLink<T, A>, A>: Default + Serialize,
+    Vec<SpanEvent<T, A>, A>: Default + Serialize,
 {
     pub service: T,
     pub name: T,
@@ -115,23 +126,24 @@ where
     #[serde(skip_serializing_if = "is_default")]
     pub error: i32,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta: HashMap<T, T>,
+    pub meta: HashMap<T, T, DefaultHashBuilder, A>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub metrics: HashMap<T, f64>,
+    pub metrics: HashMap<T, f64, DefaultHashBuilder, A>,
     // TODO: APMSP-1941 - Replace `Bytes` with a wrapper that borrows the underlying
     // slice and serializes to bytes in MessagePack.
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta_struct: HashMap<T, Bytes>,
+    pub meta_struct: HashMap<T, Bytes, DefaultHashBuilder, A>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub span_links: Vec<SpanLink<T>>,
+    pub span_links: Vec<SpanLink<T, A>, A>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub span_events: Vec<SpanEvent<T>>,
+    pub span_events: Vec<SpanEvent<T, A>, A>,
 }
 
 /// The generic representation of a V04 span link.
 /// `T` is the type used to represent strings in the span link.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct SpanLink<T>
+#[serde(bound(serialize = "T: Serialize"))]
+pub struct SpanLink<T, A: Allocator + Default = Global>
 where
     T: SpanText,
 {
@@ -139,7 +151,7 @@ where
     pub trace_id_high: u64,
     pub span_id: u64,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub attributes: HashMap<T, T>,
+    pub attributes: HashMap<T, T, DefaultHashBuilder, A>,
     #[serde(skip_serializing_if = "is_empty_str")]
     pub tracestate: T,
     #[serde(skip_serializing_if = "is_default")]
@@ -149,28 +161,32 @@ where
 /// The generic representation of a V04 span event.
 /// `T` is the type used to represent strings in the span event.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct SpanEvent<T>
+#[serde(bound(serialize = "T: Serialize"))]
+pub struct SpanEvent<T, A: Allocator + Default = Global>
 where
     T: SpanText,
+    Vec<AttributeArrayValue<T>, A>: Default + Serialize,
 {
     pub time_unix_nano: u64,
     pub name: T,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub attributes: HashMap<T, AttributeAnyValue<T>>,
+    pub attributes: HashMap<T, AttributeAnyValue<T, A>, DefaultHashBuilder, A>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum AttributeAnyValue<T>
+pub enum AttributeAnyValue<T, A: Allocator + Default = Global>
 where
     T: SpanText,
+    Vec<AttributeArrayValue<T>, A>: Default + Serialize,
 {
     SingleValue(AttributeArrayValue<T>),
-    Array(Vec<AttributeArrayValue<T>>),
+    Array(Vec<AttributeArrayValue<T>, A>),
 }
 
-impl<T> Serialize for AttributeAnyValue<T>
+impl<T, A: Allocator + Default> Serialize for AttributeAnyValue<T, A>
 where
     T: SpanText,
+    Vec<AttributeArrayValue<T>, A>: Default + Serialize,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -193,11 +209,12 @@ where
     }
 }
 
-impl<T> From<&AttributeAnyValue<T>> for u8
+impl<T, A: Allocator + Default> From<&AttributeAnyValue<T, A>> for u8
 where
     T: SpanText,
+    Vec<AttributeArrayValue<T>, A>: Default + Serialize,
 {
-    fn from(attribute: &AttributeAnyValue<T>) -> u8 {
+    fn from(attribute: &AttributeAnyValue<T, A>) -> u8 {
         match attribute {
             AttributeAnyValue::SingleValue(value) => value.into(),
             AttributeAnyValue::Array(_) => 4,
@@ -262,27 +279,39 @@ where
     }
 }
 
-pub type SpanBytes = Span<BytesString>;
-pub type SpanLinkBytes = SpanLink<BytesString>;
-pub type SpanEventBytes = SpanEvent<BytesString>;
-pub type AttributeAnyValueBytes = AttributeAnyValue<BytesString>;
+pub type SpanBytes<A: Allocator + Default = Global> = Span<BytesString, A>;
+pub type SpanLinkBytes<A: Allocator + Default = Global> = SpanLink<BytesString, A>;
+pub type SpanEventBytes<A: Allocator + Default = Global> = SpanEvent<BytesString, A>;
+pub type AttributeAnyValueBytes<A: Allocator + Default = Global> =
+    AttributeAnyValue<BytesString, A>;
 pub type AttributeArrayValueBytes = AttributeArrayValue<BytesString>;
 
-pub type SpanSlice<'a> = Span<&'a str>;
-pub type SpanLinkSlice<'a> = SpanLink<&'a str>;
-pub type SpanEventSlice<'a> = SpanEvent<&'a str>;
-pub type AttributeAnyValueSlice<'a> = AttributeAnyValue<&'a str>;
+pub type SpanSlice<'a, A: Allocator + Default = Global> = Span<&'a str, A>;
+pub type SpanLinkSlice<'a, A: Allocator + Default = Global> = SpanLink<&'a str, A>;
+pub type SpanEventSlice<'a, A: Allocator + Default = Global> = SpanEvent<&'a str, A>;
+pub type AttributeAnyValueSlice<'a, A: Allocator + Default = Global> =
+    AttributeAnyValue<&'a str, A>;
 pub type AttributeArrayValueSlice<'a> = AttributeArrayValue<&'a str>;
 
 pub type TraceChunksBytes = TraceChunks<BytesString>;
 
 pub type SharedDictBytes = SharedDict<BytesString>;
 
-impl SpanSlice<'_> {
+impl<'a, A: Allocator + Default> SpanSlice<'a, A>
+where
+    Vec<SpanLinkBytes<A>, A>: Default + Serialize + FromIterator<SpanLinkBytes<A>>,
+    Vec<SpanEventBytes<A>, A>: Default + Serialize + FromIterator<SpanEventBytes<A>>,
+    Vec<AttributeArrayValue<BytesString>, A>:
+        Default + Serialize + FromIterator<AttributeArrayValue<BytesString>>,
+    Vec<AttributeArrayValue<&'a str>, A>:
+        Default + Serialize + FromIterator<AttributeArrayValue<&'a str>>,
+    Vec<SpanLink<&'a str, A>, A>: Default + Serialize,
+    Vec<SpanEvent<&'a str, A>, A>: Default + Serialize,
+{
     /// Converts a borrowed `SpanSlice` into an owned `SpanBytes`, by resolving all internal
     /// references into slices of the provided `Bytes` buffer. Returns `None` if any slice is
     /// out of bounds or invalid.
-    pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<SpanBytes> {
+    pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<SpanBytes<A>> {
         Some(SpanBytes {
             service: BytesString::try_from_bytes_slice(bytes, self.service)?,
             name: BytesString::try_from_bytes_slice(bytes, self.name)?,
@@ -303,36 +332,42 @@ impl SpanSlice<'_> {
                         BytesString::try_from_bytes_slice(bytes, v)?,
                     ))
                 })
-                .collect::<Option<HashMap<BytesString, BytesString>>>()?,
+                .collect::<Option<HashMap<BytesString, BytesString, DefaultHashBuilder, A>>>()?,
             metrics: self
                 .metrics
                 .iter()
                 .map(|(k, v)| Some((BytesString::try_from_bytes_slice(bytes, k)?, *v)))
-                .collect::<Option<HashMap<BytesString, f64>>>()?,
+                .collect::<Option<HashMap<BytesString, f64, DefaultHashBuilder, A>>>()?,
             meta_struct: self
                 .meta_struct
                 .iter()
                 .map(|(k, v)| Some((BytesString::try_from_bytes_slice(bytes, k)?, v.clone())))
-                .collect::<Option<HashMap<BytesString, Bytes>>>()?,
+                .collect::<Option<HashMap<BytesString, Bytes, DefaultHashBuilder, A>>>()?,
             span_links: self
                 .span_links
                 .iter()
                 .map(|link| link.try_to_bytes(bytes))
-                .collect::<Option<Vec<SpanLinkBytes>>>()?,
+                .collect::<Option<Vec<SpanLink<BytesString, A>, A>>>()?,
             span_events: self
                 .span_events
                 .iter()
                 .map(|event| event.try_to_bytes(bytes))
-                .collect::<Option<Vec<SpanEventBytes>>>()?,
+                .collect::<Option<Vec<SpanEventBytes<A>, A>>>()?,
         })
     }
 }
 
-impl SpanLinkSlice<'_> {
+impl<'a, A: Allocator + Default> SpanLinkSlice<'a, A>
+where
+    Vec<AttributeArrayValue<BytesString>, A>:
+        Default + Serialize + FromIterator<AttributeArrayValue<BytesString>>,
+    Vec<AttributeArrayValue<&'a str>, A>:
+        Default + Serialize + FromIterator<AttributeArrayValue<&'a str>>,
+{
     /// Converts a borrowed `SpanLinkSlice` into an owned `SpanLinkBytes`, using the provided
     /// `Bytes` buffer to resolve all referenced strings. Returns `None` if conversion fails due
     /// to invalid slice ranges.
-    pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<SpanLinkBytes> {
+    pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<SpanLinkBytes<A>> {
         Some(SpanLinkBytes {
             trace_id: self.trace_id,
             trace_id_high: self.trace_id_high,
@@ -346,40 +381,55 @@ impl SpanLinkSlice<'_> {
                         BytesString::try_from_bytes_slice(bytes, v)?,
                     ))
                 })
-                .collect::<Option<HashMap<BytesString, BytesString>>>()?,
+                .collect::<Option<HashMap<BytesString, BytesString, DefaultHashBuilder, A>>>()?,
             tracestate: BytesString::try_from_bytes_slice(bytes, self.tracestate)?,
             flags: self.flags,
         })
     }
 }
 
-impl SpanEventSlice<'_> {
+impl<'a, A: Allocator + Default> SpanEventSlice<'a, A>
+where
+    Vec<AttributeArrayValue<BytesString>, A>:
+        Default + Serialize + FromIterator<AttributeArrayValue<BytesString>>,
+    Vec<AttributeArrayValue<&'a str>, A>:
+        Default + Serialize + FromIterator<AttributeArrayValue<&'a str>>,
+{
     /// Converts a borrowed `SpanEventSlice` into an owned `SpanEventBytes`, resolving references
     /// into the provided `Bytes` buffer. Fails with `None` if any slice is invalid or cannot be
     /// converted.
-    pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<SpanEventBytes> {
-        Some(SpanEventBytes {
-            time_unix_nano: self.time_unix_nano,
-            name: BytesString::try_from_bytes_slice(bytes, self.name)?,
-            attributes: self
-                .attributes
-                .iter()
-                .map(|(k, v)| {
-                    Some((
-                        BytesString::try_from_bytes_slice(bytes, k)?,
-                        v.try_to_bytes(bytes)?,
-                    ))
-                })
-                .collect::<Option<HashMap<BytesString, AttributeAnyValueBytes>>>()?,
-        })
+    pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<SpanEventBytes<A>> {
+        Some(
+            SpanEventBytes {
+                time_unix_nano: self.time_unix_nano,
+                name: BytesString::try_from_bytes_slice(bytes, self.name)?,
+                attributes: self
+                    .attributes
+                    .iter()
+                    .map(|(k, v)| {
+                        Some((
+                            BytesString::try_from_bytes_slice(bytes, k)?,
+                            v.try_to_bytes(bytes)?,
+                        ))
+                    })
+                    .collect::<Option<
+                        HashMap<BytesString, AttributeAnyValueBytes<A>, DefaultHashBuilder, A>,
+                    >>()?,
+            },
+        )
     }
 }
 
-impl AttributeAnyValueSlice<'_> {
+impl<'a, A: Allocator + Default> AttributeAnyValueSlice<'a, A>
+where
+    Vec<AttributeArrayValueBytes, A>: Default + Serialize + FromIterator<AttributeArrayValueBytes>,
+    Vec<AttributeArrayValue<&'a str>, A>:
+        Default + Serialize + FromIterator<AttributeArrayValue<&'a str>>,
+{
     /// Converts a borrowed `AttributeAnyValueSlice` into its owned `AttributeAnyValueBytes`
     /// representation, using the provided `Bytes` buffer. Recursively processes inner values if
     /// it's an array.
-    pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<AttributeAnyValueBytes> {
+    pub fn try_to_bytes(&self, bytes: &Bytes) -> Option<AttributeAnyValueBytes<A>> {
         match self {
             AttributeAnyValue::SingleValue(value) => {
                 Some(AttributeAnyValue::SingleValue(value.try_to_bytes(bytes)?))
@@ -388,7 +438,7 @@ impl AttributeAnyValueSlice<'_> {
                 value
                     .iter()
                     .map(|attribute| attribute.try_to_bytes(bytes))
-                    .collect::<Option<Vec<AttributeArrayValueBytes>>>()?,
+                    .collect::<Option<Vec<AttributeArrayValueBytes, A>>>()?,
             )),
         }
     }
@@ -437,7 +487,7 @@ fn is_default<T: Default + PartialEq>(t: &T) -> bool {
 mod tests {
     use super::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
     use crate::msgpack_decoder::v04::span::decode_span;
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
 
     #[test]
     fn skip_serializing_empty_fields_test() {

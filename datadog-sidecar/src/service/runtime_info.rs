@@ -13,7 +13,6 @@ use futures::{
     FutureExt,
 };
 use manual_future::{ManualFuture, ManualFutureCompleter};
-use simd_json::prelude::ArrayTrait;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::sync::{Arc, Mutex, MutexGuard};

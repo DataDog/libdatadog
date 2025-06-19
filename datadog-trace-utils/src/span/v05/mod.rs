@@ -5,8 +5,8 @@ pub mod dict;
 
 use crate::span::{v05::dict::SharedDict, SpanText};
 use anyhow::Result;
+use hashbrown::HashMap;
 use serde::Serialize;
-use std::collections::HashMap;
 
 /// Structure that represent a TraceChunk Span which String fields are interned in a shared
 /// dictionary. The number of elements is fixed by the spec and they all need to be serialized, in

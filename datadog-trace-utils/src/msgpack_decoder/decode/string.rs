@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::msgpack_decoder::decode::error::DecodeError;
+use hashbrown::HashMap;
 use rmp::decode;
 use rmp::decode::DecodeStringError;
-use std::collections::HashMap;
 
 // https://docs.rs/rmp/latest/rmp/enum.Marker.html#variant.Null (0xc0 == 192)
 const NULL_MARKER: &u8 = &0xc0;

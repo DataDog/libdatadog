@@ -4,8 +4,8 @@
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::map::{read_map, read_map_len};
 use crate::msgpack_decoder::decode::string::{handle_null_marker, read_string_ref};
+use hashbrown::HashMap;
 use rmp::decode;
-use std::collections::HashMap;
 use tinybytes::Bytes;
 
 fn read_byte_array_len(buf: &mut &[u8]) -> Result<u32, DecodeError> {

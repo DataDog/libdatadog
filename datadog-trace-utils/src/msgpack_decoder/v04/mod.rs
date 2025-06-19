@@ -156,10 +156,10 @@ mod tests {
     use super::*;
     use crate::test_utils::{create_test_json_span, create_test_no_alloc_span};
     use bolero::check;
+    use hashbrown::HashMap;
     use rmp_serde;
     use rmp_serde::to_vec_named;
     use serde_json::json;
-    use std::collections::HashMap;
     use tinybytes::{Bytes, BytesString};
 
     #[test]

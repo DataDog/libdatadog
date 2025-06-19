@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::msgpack_decoder::decode::error::DecodeError;
+use hashbrown::HashMap;
 use rmp::{decode, decode::RmpRead, Marker};
-use std::collections::HashMap;
 
 /// Reads a map from the buffer and returns it as a `HashMap`.
 ///

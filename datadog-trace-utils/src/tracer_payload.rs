@@ -156,7 +156,6 @@ impl TracerPayloadCollection {
 /// ```rust
 /// use datadog_trace_protobuf::pb::{Span, TraceChunk};
 /// use datadog_trace_utils::tracer_payload::TraceChunkProcessor;
-/// use std::collections::HashMap;
 ///
 /// struct CustomTagProcessor {
 ///     tag_key: String,
@@ -241,8 +240,8 @@ mod tests {
     use crate::span::SpanBytes;
     use crate::test_utils::create_test_no_alloc_span;
     use datadog_trace_protobuf::pb;
+    use hashbrown::HashMap;
     use serde_json::json;
-    use std::collections::HashMap;
     use tinybytes::BytesString;
 
     fn create_dummy_collection_v07() -> TracerPayloadCollection {

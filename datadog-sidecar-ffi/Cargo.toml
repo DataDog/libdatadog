@@ -23,6 +23,7 @@ datadog-live-debugger = { path = "../datadog-live-debugger" }
 dogstatsd-client = { path = "../dogstatsd-client" }
 tinybytes = { path = "../tinybytes" }
 paste = "1"
+hashbrown = "0.15"
 libc = "0.2"
 tracing = { version = "0.1", default-features = false }
 rmp-serde = "1.1.1"

@@ -6,6 +6,10 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
+// Allocator API is nightly only. We need to explicitly opt-in here, only if the feature is enabled.
+#![cfg_attr(feature = "allocator", allow(internal_features))]
+#![cfg_attr(feature = "allocator", feature(allow_internal_unstable))]
+#![cfg_attr(feature = "allocator", feature(allocator_api))]
 
 pub mod config_utils;
 pub mod msgpack_decoder;

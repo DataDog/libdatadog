@@ -4,7 +4,7 @@
 //! Trace-utils functionalities implementation for tinybytes based spans
 
 use super::{Span, SpanText};
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";

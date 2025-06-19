@@ -1025,7 +1025,7 @@ impl SidecarInterface for SidecarServer {
         #[allow(clippy::expect_used)]
         Box::pin(async move {
             let stats = self.compute_stats().await;
-            simd_json::serde::to_string(&stats).expect("unable to serialize stats to string")
+            serde_json::to_string(&stats).expect("unable to serialize stats to string")
         })
     }
 }

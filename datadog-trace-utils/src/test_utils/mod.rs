@@ -11,7 +11,7 @@
 
 pub mod datadog_test_agent;
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::time::Duration;
 
 use crate::send_data::SendData;

@@ -5,7 +5,7 @@ use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::number::read_number_slice;
 use crate::msgpack_decoder::decode::string::{handle_null_marker, read_string_ref};
 use crate::span::{AttributeAnyValueSlice, AttributeArrayValueSlice, SpanEventSlice};
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::str::FromStr;
 
 /// Reads a slice of bytes and decodes it into a vector of `SpanEvent` objects.

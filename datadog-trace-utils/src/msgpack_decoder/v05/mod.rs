@@ -8,7 +8,7 @@ use crate::msgpack_decoder::decode::{
     string::{handle_null_marker, read_string_ref},
 };
 use crate::span::{SpanBytes, SpanSlice};
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 const PAYLOAD_LEN: u32 = 2;
 const SPAN_ELEM_COUNT: u32 = 12;
@@ -108,8 +108,8 @@ pub fn from_bytes(data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize)
 ///
 /// ```
 /// use datadog_trace_utils::msgpack_decoder::v05::from_slice;
+/// use hashbrown::HashMap;
 /// use rmp_serde::to_vec;
-/// use std::collections::HashMap;
 /// use tinybytes;
 ///
 /// let data = (
@@ -259,7 +259,7 @@ fn read_metrics<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use hashbrown::HashMap;
     type V05Span = (
         u8,
         u8,

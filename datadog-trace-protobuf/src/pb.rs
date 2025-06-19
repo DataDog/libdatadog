@@ -122,6 +122,7 @@ pub struct Span {
     #[prost(string, tag = "12")]
     #[serde(default)]
     #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
+    
     pub r#type: ::prost::alloc::string::String,
     /// meta_struct is a registry of structured "other" data used by, e.g., AppSec.
     /// @gotags: json:"meta_struct,omitempty" msg:"meta_struct,omitempty"
