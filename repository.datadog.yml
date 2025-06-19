@@ -1,0 +1,10 @@
+---
+# This file defines overrides for the merge queue configuration.
+# See https://datadoghq.atlassian.net/wiki/spaces/DEVX/pages/3121612126/MergeQueue#Configuration-Specification for defaults.
+schema-version: v1
+kind: mergequeue
+merge_method: squash
+---
+schema-version: v1
+kind: stale-branches
+max_age: 2190h  # 3 months
