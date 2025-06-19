@@ -356,6 +356,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_agent_info_fetcher_run() {
+        AGENT_INFO_CACHE.store(None);
         let server = MockServer::start();
         let mock_v1 = server
             .mock_async(|when, then| {
