@@ -21,6 +21,44 @@ pub struct AgentTask {
     pub user_handle: String,
 }
 
+/// Parses JSON data into an `AgentTaskFile` structure.
+///
+/// # Arguments
+///
+/// * `data` - A slice of bytes containing JSON data representing an agent task.
+///
+/// # Returns
+///
+/// * `Ok(AgentTaskFile)` - The parsed agent task file if successful.
+/// * `Err(serde_json::error::Error)` - An error if the JSON parsing fails.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - The JSON data is malformed.
+/// - The JSON structure doesn't match the expected `AgentTaskFile` format.
+/// - Required fields are missing from the JSON data.
+///
+/// # Examples
+///
+/// ```
+/// use datadog_remote_config::config::agent_task::parse_json;
+///
+/// let json_data = r#"{
+///     "args": {
+///         "case_id": "flare-12345",
+///         "hostname": "my-host-name",
+///         "user_handle": "my-user@datadoghq.com"
+///     },
+///     "task_type": "tracer_flare",
+///     "uuid": "550e8400-e29b-41d4-a716-446655440000"
+/// }"#;
+///
+/// match parse_json(json_data.as_bytes()) {
+///     Ok(task) => println!("Parsed task: {:?}", task),
+///     Err(e) => eprintln!("Failed to parse task: {}", e),
+/// }
+/// ```
 pub fn parse_json(data: &[u8]) -> serde_json::error::Result<AgentTaskFile> {
     serde_json::from_slice(data)
 }
