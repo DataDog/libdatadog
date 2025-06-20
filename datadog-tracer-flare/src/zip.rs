@@ -11,25 +11,41 @@ use zip::{write::FileOptions, ZipWriter};
 
 use crate::error::FlareError;
 
-/// Function that :
-/// * Zip the log directory
-/// * Send it back to the agent
-/// * Is responsible for the obfuscation
-/// * Return the sendState
+/// Creates a zip archive containing the specified files and directories, obfuscates sensitive data,
+/// and sends the flare to the agent.
 ///
 /// # Arguments
 ///
-/// * `files` - Path of the directories and files needed in the flare to send.
+/// * `files` - A vector of strings representing the paths of files and directories to include in the zip archive.
 ///
 /// # Returns
 ///
-/// * `Ok(())` - If successful.
-/// * `FlareError(msg)` - If something fail.
+/// * `Ok(())` - If the zip archive was created, obfuscated, and sent successfully.
+/// * `Err(FlareError)` - An error if any step of the process fails.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - The zip file cannot be created.
+/// - Any file or directory cannot be read or added to the archive.
+/// - The zip archive cannot be finalized.
+/// - The obfuscation process fails.
+/// - The zip file cannot be sent to the agent.
+///
+/// # Examples
+///
+/// ```
+/// use datadog_tracer_flare::zip::zip_and_send;
+///
+/// let files = vec!["/path/to/logs".to_string(), "/path/to/config.txt".to_string()];
+/// match zip_and_send(files) {
+///     Ok(()) => println!("Flare sent successfully"),
+///     Err(e) => eprintln!("Failed to send flare: {}", e),
+/// }
+/// ```
 pub fn zip_and_send(files: Vec<String>) -> Result<(), FlareError> {
     // Convert paths to PathBuf
-    println!("strings : {:?}", files);
     let paths: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
-    println!("pathbuf : {:?}", paths);
 
     // Create a temporary file for the zip
     let zip_path = PathBuf::from("flare.zip");
@@ -70,8 +86,8 @@ pub fn zip_and_send(files: Vec<String>) -> Result<(), FlareError> {
     zip.finish()
         .map_err(|e| FlareError::ZipError(format!("Failed to finalize zip file: {}", e)))?;
 
-    // TODO: Implement obfuscation of sensitive data
-    // TODO: Implement sending the zip file to the agent
+    // APMSP-2118 - TODO: Implement obfuscation of sensitive data
+    // APMSP-1978 - TODO: Implement sending the zip file to the agent
 
     Ok(())
 }
