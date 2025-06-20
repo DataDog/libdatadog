@@ -442,7 +442,6 @@ impl SidecarInterface for SidecarServer {
                     entry.remove();
                 }
 
-                // Spawn: sync actions
                 if !actions_to_process.is_empty() {
                     let client_clone = telemetry.clone();
 
@@ -452,7 +451,6 @@ impl SidecarInterface for SidecarServer {
                     });
                 }
 
-                // Spawn: async composer file parsing
                 if !composer_paths_to_process.is_empty() {
                     let client_clone = telemetry.client.clone();
                     tokio::spawn(async move {
