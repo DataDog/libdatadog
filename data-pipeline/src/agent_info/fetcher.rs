@@ -211,7 +211,7 @@ pub async fn check_response_for_new_state<T>(
 }
 
 #[cfg(test)]
-mod tests {
+mod single_threaded_tests {
     use super::*;
     use crate::agent_info;
     use httpmock::prelude::*;
