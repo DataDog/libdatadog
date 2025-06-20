@@ -87,8 +87,12 @@ impl TelemetryCachedClient {
             client: handle.clone(),
             shm_writer: Arc::new(
                 #[allow(clippy::unwrap_used)]
-                OneWayShmWriter::<NamedShmHandle>::new(path_for_telemetry(service, env, version))
-                    .unwrap(),
+                OneWayShmWriter::<NamedShmHandle>::new(path_for_telemetry(
+                    service.into(),
+                    env.into(),
+                    version.into(),
+                ))
+                .unwrap(),
             ),
             last_used: Instant::now(),
             buffered_integrations: HashSet::new(),
@@ -315,7 +319,7 @@ impl TelemetryCachedClientSet {
     }
 }
 
-pub fn path_for_telemetry(service: &str, env: &str, version: &str) -> CString {
+pub fn path_for_telemetry(service: String, env: String, version: String) -> CString {
     let mut hasher = ZwoHasher::default();
     service.hash(&mut hasher);
     env.hash(&mut hasher);

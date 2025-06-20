@@ -40,7 +40,7 @@ mod serialized_tracer_header_tags;
 mod session_info;
 mod sidecar_interface;
 pub(crate) mod sidecar_server;
-mod telemetry;
+pub mod telemetry;
 pub(crate) mod tracing;
 
 pub(crate) use telemetry::telemetry_action_receiver_task;
