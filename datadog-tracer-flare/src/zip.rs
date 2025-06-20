@@ -16,7 +16,8 @@ use crate::error::FlareError;
 ///
 /// # Arguments
 ///
-/// * `files` - A vector of strings representing the paths of files and directories to include in the zip archive.
+/// * `files` - A vector of strings representing the paths of files and directories to include in
+///   the zip archive.
 ///
 /// # Returns
 ///
@@ -37,7 +38,10 @@ use crate::error::FlareError;
 /// ```
 /// use datadog_tracer_flare::zip::zip_and_send;
 ///
-/// let files = vec!["/path/to/logs".to_string(), "/path/to/config.txt".to_string()];
+/// let files = vec![
+///     "/path/to/logs".to_string(),
+///     "/path/to/config.txt".to_string(),
+/// ];
 /// match zip_and_send(files) {
 ///     Ok(()) => println!("Flare sent successfully"),
 ///     Err(e) => eprintln!("Failed to send flare: {}", e),
