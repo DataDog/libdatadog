@@ -25,6 +25,7 @@ use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
 use datadog_sidecar::service::agent_info::AgentInfoReader;
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
+    telemetry::path_for_telemetry,
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
@@ -420,7 +421,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
     let version =
         (!dependency_version.is_empty()).then(|| dependency_version.to_utf8_lossy().into_owned());
 
-    let dependency = TelemetryActions::AddDependecy(Dependency {
+    let dependency = TelemetryActions::AddDependency(Dependency {
         name: dependency_name.to_utf8_lossy().into_owned(),
         version,
     });
@@ -467,27 +468,22 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
     MaybeError::None
 }
 
-/// Registers a service and flushes any queued actions.
 #[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_telemetry_flushServiceData(
-    transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
-    runtime_meta: &RuntimeMetadata,
-    service_name: ffi::CharSlice,
-    env_name: ffi::CharSlice,
-) -> MaybeError {
-    try_c!(blocking::register_service_and_flush_queued_actions(
-        transport,
-        instance_id,
-        queue_id,
-        runtime_meta,
-        service_name.to_utf8_lossy(),
-        env_name.to_utf8_lossy(),
-    ));
-
-    MaybeError::None
+extern "C" fn ddog_telemetry_path(
+    service: ffi::CharSlice,
+    env: ffi::CharSlice,
+    version: ffi::CharSlice,
+) -> *mut c_char {
+    path_for_telemetry(
+        service.to_utf8_lossy().into_owned(),
+        env.to_utf8_lossy().into_owned(),
+        version.to_utf8_lossy().into_owned(),
+    )
+    .into_raw()
+}
+#[no_mangle]
+unsafe extern "C" fn ddog_telemetry_path_free(path: *mut c_char) {
+    drop(CString::from_raw(path));
 }
 
 /// Enqueues a list of actions to be performed.
@@ -548,6 +544,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     agent_endpoint: &Endpoint,
     dogstatsd_endpoint: &Endpoint,
     language: ffi::CharSlice,
+    language_version: ffi::CharSlice,
     tracer_version: ffi::CharSlice,
     flush_interval_milliseconds: u32,
     remote_config_poll_interval_millis: u32,
@@ -562,6 +559,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     remote_config_products_count: usize,
     remote_config_capabilities: *const RemoteConfigCapabilities,
     remote_config_capabilities_count: usize,
+    remote_config_enabled: bool,
     is_fork: bool,
 ) -> MaybeError {
     #[cfg(unix)]
@@ -576,6 +574,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             endpoint: agent_endpoint.clone(),
             dogstatsd_endpoint: dogstatsd_endpoint.clone(),
             language: language.to_utf8_lossy().into(),
+            language_version: language_version.to_utf8_lossy().into(),
             tracer_version: tracer_version.to_utf8_lossy().into(),
             flush_interval: Duration::from_millis(flush_interval_milliseconds as u64),
             remote_config_poll_interval: Duration::from_millis(
@@ -604,6 +603,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
             )
             .as_slice()
             .to_vec(),
+            remote_config_enabled,
         },
         is_fork
     ));
@@ -757,7 +757,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_remote_config_data(
     app_version: ffi::CharSlice,
     global_tags: &ddcommon_ffi::Vec<Tag>,
 ) -> MaybeError {
-    try_c!(blocking::set_remote_config_data(
+    try_c!(blocking::set_universal_service_tags(
         transport,
         instance_id,
         queue_id,

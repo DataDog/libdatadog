@@ -93,6 +93,7 @@ fn test_ddog_sidecar_register_app() {
             &Endpoint::default(),
             "".into(),
             "".into(),
+            "".into(),
             1000,
             1000000,
             1,
@@ -105,6 +106,7 @@ fn test_ddog_sidecar_register_app() {
             0,
             null(),
             0,
+            false,
             false,
         )
         .unwrap_none();
@@ -130,14 +132,6 @@ fn test_ddog_sidecar_register_app() {
         // ddog_sidecar_telemetry_addIntegration(&mut transport, instance_id, &queue_id,
         // integration_name, integration_version) TODO add ability to add configuration
 
-        assert_maybe_no_error!(ddog_sidecar_telemetry_flushServiceData(
-            &mut transport,
-            &instance_id,
-            &queue_id,
-            &meta,
-            "service_name".into(),
-            "env_name".into()
-        ));
         // reset session config - and cause shutdown of all existing instances
         ddog_sidecar_session_set_config(
             &mut transport,
@@ -147,6 +141,7 @@ fn test_ddog_sidecar_register_app() {
                 ..Default::default()
             },
             &Endpoint::default(),
+            "".into(),
             "".into(),
             "".into(),
             1000,
@@ -161,6 +156,7 @@ fn test_ddog_sidecar_register_app() {
             0,
             null(),
             0,
+            false,
             false,
         )
         .unwrap_none();
