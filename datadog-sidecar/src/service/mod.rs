@@ -40,7 +40,7 @@ mod serialized_tracer_header_tags;
 mod session_info;
 mod sidecar_interface;
 pub(crate) mod sidecar_server;
-mod telemetry;
+pub mod telemetry;
 pub(crate) mod tracing;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
