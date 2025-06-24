@@ -30,7 +30,8 @@ mod tracing_integration_tests {
     async fn test_agent_info_fetcher_with_test_agent() {
         let test_agent = DatadogTestAgent::new(None, None, &[]).await;
         let endpoint = Endpoint::from_url(test_agent.get_uri_for_endpoint("info", None).await);
-        let mut fetcher = AgentInfoFetcher::new(endpoint, Duration::from_secs(1));
+        let (mut fetcher, _response_observer) =
+            AgentInfoFetcher::new(endpoint, Duration::from_secs(1));
         tokio::spawn(async move { fetcher.run().await });
         let info_received = async {
             while agent_info::get_agent_info().is_none() {

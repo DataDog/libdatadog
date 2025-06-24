@@ -3,7 +3,7 @@
 pub mod agent_response;
 pub mod error;
 use self::agent_response::AgentResponse;
-use crate::agent_info::AgentInfoFetcher;
+use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient, TelemetryClientBuilder};
@@ -195,7 +195,6 @@ struct TraceExporterWorkers {
 #[derive(Debug)]
 pub struct TraceExporter {
     endpoint: Endpoint,
-    info_endpoint: Arc<Endpoint>,
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
@@ -207,6 +206,7 @@ pub struct TraceExporter {
     client_computed_top_level: bool,
     client_side_stats: ArcSwap<StatsComputationStatus>,
     previous_info_state: ArcSwapOption<String>,
+    response_observer: ResponseObserver,
     telemetry: Option<TelemetryClient>,
     workers: Arc<Mutex<TraceExporterWorkers>>,
 }
@@ -827,8 +827,7 @@ impl TraceExporter {
                 let status = response.status();
 
                 // Check if the agent state has changed
-                agent_info::check_response_for_new_state(&response, self.info_endpoint.clone())
-                    .await;
+                self.response_observer.check_response(&response);
 
                 let body = match response.into_body().collect().await {
                     Ok(body) => String::from_utf8_lossy(&body.to_bytes()).to_string(),
@@ -878,11 +877,7 @@ impl TraceExporter {
                         let status = response.status();
 
                         // Check if the agent state has changed for error responses
-                        agent_info::check_response_for_new_state(
-                            &response,
-                            self.info_endpoint.clone(),
-                        )
-                        .await;
+                        self.response_observer.check_response(&response);
 
                         let body = match response.into_body().collect().await {
                             Ok(body) => body.to_bytes(),
@@ -1134,7 +1129,7 @@ impl TraceExporterBuilder {
         let mut stats = StatsComputationStatus::Disabled;
 
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
-        let info_fetcher =
+        let (info_fetcher, response_observer) =
             AgentInfoFetcher::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
         let mut info_fetcher_worker = PausableWorker::new(info_fetcher);
         info_fetcher_worker.start(&runtime).map_err(|e| {
@@ -1189,7 +1184,6 @@ impl TraceExporterBuilder {
                 test_token: self.test_session_token.map(|token| token.into()),
                 ..Default::default()
             },
-            info_endpoint: Arc::new(info_endpoint),
             metadata: TracerMetadata {
                 tracer_version: self.tracer_version,
                 language_version: self.language_version,
@@ -1213,6 +1207,7 @@ impl TraceExporterBuilder {
             common_stats_tags: vec![libdatadog_version],
             client_side_stats: ArcSwap::new(stats.into()),
             previous_info_state: ArcSwapOption::new(None),
+            response_observer,
             telemetry: telemetry_client,
             workers: Arc::new(Mutex::new(TraceExporterWorkers {
                 info: info_fetcher_worker,

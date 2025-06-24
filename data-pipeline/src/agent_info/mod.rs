@@ -30,6 +30,5 @@ pub fn get_agent_info() -> Option<Arc<schema::AgentInfo>> {
 }
 
 pub use fetcher::{
-    check_response_for_new_state, fetch_info, fetch_info_with_state, AgentInfoFetcher,
-    FetchInfoStatus,
+    fetch_info, fetch_info_with_state, AgentInfoFetcher, FetchInfoStatus, ResponseObserver,
 };
