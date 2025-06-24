@@ -7,9 +7,6 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-pub mod span;
-
-use crate::span::TracesBytes;
 #[cfg(windows)]
 use datadog_crashtracker_ffi::Metadata;
 use datadog_ipc::platform::{
@@ -1031,7 +1028,7 @@ pub struct SenderParameters {
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
-    traces: &mut TracesBytes,
+    traces: &mut Vec<Vec<datadog_trace_utils::span::SpanBytes>>,
     parameters: &mut SenderParameters,
 ) {
     let size: usize = traces.iter().map(|trace| trace.len()).sum();
