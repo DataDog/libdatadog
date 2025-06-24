@@ -7,11 +7,34 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process;
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context;
 use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
 use serde_json::Value;
+
+use bin_tests::TEST_COLLECTOR_TIMEOUT_MS;
+
+fn check_file_existence(path: &Path, timeout: Duration) -> bool {
+    let start = Instant::now();
+
+    loop {
+        match path.exists() {
+            true => return true,
+            false => {
+                if start.elapsed() > timeout {
+                    return false;
+                } else {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }
+    }
+}
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -183,6 +206,11 @@ fn test_crash_tracking_bin(
         "got {s:?}"
     );
     assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
+
+    assert!(check_file_existence(
+        fixtures.crash_profile_path.as_path(),
+        Duration::from_secs(TEST_COLLECTOR_TIMEOUT_MS as u64)
+    ));
 
     // Check the crash data
     let crash_profile = fs::read(fixtures.crash_profile_path)
