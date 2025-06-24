@@ -6,22 +6,27 @@ use std::{
     io,
     path::{Path, PathBuf},
 };
+use tempfile::TempDir;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, ZipWriter};
 
 use crate::error::FlareError;
 
-/// Creates a zip archive containing the specified files and directories, obfuscates sensitive data,
-/// and sends the flare to the agent.
+/// Creates a zip archive containing the specified files and directories in a temporary location.
+///
+/// This function takes a vector of file and directory paths, creates a zip archive containing
+/// all the files, and returns the path to the created zip file. If a path is a directory,
+/// all files within that directory (including subdirectories) are included in the archive.
 ///
 /// # Arguments
 ///
 /// * `files` - A vector of strings representing the paths of files and directories to include in
 ///   the zip archive.
+/// * `temp_dir` - A temporary directory where the zip file will be created.
 ///
 /// # Returns
 ///
-/// * `Ok(())` - If the zip archive was created, obfuscated, and sent successfully.
+/// * `Ok(PathBuf)` - The path to the created zip file if successful.
 /// * `Err(FlareError)` - An error if any step of the process fails.
 ///
 /// # Errors
@@ -30,29 +35,30 @@ use crate::error::FlareError;
 /// - The zip file cannot be created.
 /// - Any file or directory cannot be read or added to the archive.
 /// - The zip archive cannot be finalized.
-/// - The obfuscation process fails.
-/// - The zip file cannot be sent to the agent.
+/// - An invalid or non-existent path is provided.
 ///
 /// # Examples
 ///
 /// ```
-/// use datadog_tracer_flare::zip::zip_and_send;
+/// use datadog_tracer_flare::zip::zip_files;
+/// use tempfile::TempDir;
 ///
+/// let temp_dir = TempDir::new().unwrap();
 /// let files = vec![
 ///     "/path/to/logs".to_string(),
 ///     "/path/to/config.txt".to_string(),
 /// ];
-/// match zip_and_send(files) {
-///     Ok(()) => println!("Flare sent successfully"),
-///     Err(e) => eprintln!("Failed to send flare: {}", e),
+/// match zip_files(files, &temp_dir) {
+///     Ok(zip_path) => println!("Zip created at: {:?}", zip_path),
+///     Err(e) => eprintln!("Failed to create zip: {}", e),
 /// }
 /// ```
-pub fn zip_and_send(files: Vec<String>) -> Result<(), FlareError> {
+fn zip_files(files: Vec<String>, temp_dir: &TempDir) -> Result<PathBuf, FlareError> {
     // Convert paths to PathBuf
     let paths: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
 
     // Create a temporary file for the zip
-    let zip_path = PathBuf::from("flare.zip");
+    let zip_path = temp_dir.path().join("flare.zip");
     let file = File::create(&zip_path)
         .map_err(|e| FlareError::ZipError(format!("Failed to create zip file: {}", e)))?;
 
@@ -72,7 +78,20 @@ pub fn zip_and_send(files: Vec<String>) -> Result<(), FlareError> {
 
                 let file_path = entry.path();
                 if file_path.is_file() {
-                    add_file_to_zip(&mut zip, file_path, &options)?;
+                    // Get the directory name to create a folder in the zip
+                    let dir_name = path.file_name().ok_or_else(|| {
+                        FlareError::ZipError(format!("Invalid directory name for path: {:?}", path))
+                    })?;
+
+                    // Calculate the relative path from the base directory
+                    let relative_path = file_path.strip_prefix(&path).map_err(|e| {
+                        FlareError::ZipError(format!("Failed to calculate relative path: {}", e))
+                    })?;
+
+                    // Create the zip path with the directory name as prefix
+                    let zip_path = PathBuf::from(dir_name).join(relative_path);
+
+                    add_file_to_zip_with_path(&mut zip, file_path, &zip_path, &options)?;
                 }
             }
         } else if path.is_file() {
@@ -90,10 +109,60 @@ pub fn zip_and_send(files: Vec<String>) -> Result<(), FlareError> {
     zip.finish()
         .map_err(|e| FlareError::ZipError(format!("Failed to finalize zip file: {}", e)))?;
 
+    Ok(zip_path)
+}
+
+/// Creates a zip archive containing the specified files and directories, obfuscates sensitive data,
+/// and sends the flare to the agent.
+///
+/// # Arguments
+///
+/// * `files` - A vector of strings representing the paths of files and directories to include in
+///   the zip archive.
+///
+/// # Returns
+///
+/// * `Ok(PathBuf)` - If the zip archive was created, obfuscated, and sent successfully.
+/// * `Err(FlareError)` - An error if any step of the process fails.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - Any problem happend while zipping the file.
+/// - The obfuscation process fails.
+/// - The zip file cannot be sent to the agent.
+///
+/// # Examples
+///
+/// ```
+/// use datadog_tracer_flare::zip::zip_and_send;
+///
+/// let files = vec![
+///     "/path/to/logs".to_string(),
+///     "/path/to/config.txt".to_string(),
+/// ];
+/// match zip_and_send(files) {
+///     Ok(_) => println!("Flare sent successfully"),
+///     Err(e) => eprintln!("Failed to send flare: {}", e),
+/// }
+/// ```
+pub fn zip_and_send(files: Vec<String>) -> Result<PathBuf, FlareError> {
+    let temp_dir = TempDir::new().unwrap();
+    let zip_path = zip_files(files, &temp_dir)?;
+
+    // Copy the zip file to the current directory
+    let current_dir_zip = PathBuf::from("flare.zip");
+    std::fs::copy(&zip_path, &current_dir_zip).map_err(|e| {
+        FlareError::ZipError(format!(
+            "Failed to copy zip file to current directory: {}",
+            e
+        ))
+    })?;
+
     // APMSP-2118 - TODO: Implement obfuscation of sensitive data
     // APMSP-1978 - TODO: Implement sending the zip file to the agent
 
-    Ok(())
+    Ok(zip_path)
 }
 
 fn add_file_to_zip(
@@ -117,11 +186,29 @@ fn add_file_to_zip(
     Ok(())
 }
 
+fn add_file_to_zip_with_path(
+    zip: &mut ZipWriter<File>,
+    file_path: &Path,
+    relative_path: &Path,
+    options: &FileOptions<()>,
+) -> Result<(), FlareError> {
+    let mut file = File::open(file_path)
+        .map_err(|e| FlareError::ZipError(format!("Failed to open file {:?}: {}", file_path, e)))?;
+
+    // Use the relative path as the zip entry name to preserve folder structure
+    zip.start_file(relative_path.to_string_lossy().as_ref(), *options)
+        .map_err(|e| FlareError::ZipError(format!("Failed to add file to zip: {}", e)))?;
+
+    io::copy(&mut file, zip)
+        .map_err(|e| FlareError::ZipError(format!("Failed to write file to zip: {}", e)))?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Read;
-    use tempfile::TempDir;
 
     fn create_test_files(temp_dir: &TempDir) -> Vec<String> {
         // Create a simple file
@@ -142,28 +229,24 @@ mod tests {
     }
 
     #[test]
-    fn test_zip_and_send() {
-        // Create a temporary directory for tests
+    fn test_zip_files() {
+        // Create a temporary directory with test files
         let temp_dir = TempDir::new().unwrap();
         let files = create_test_files(&temp_dir);
 
-        // Execute the zip_and_send function
-        let result = zip_and_send(files);
+        let zip_dir = TempDir::new().unwrap();
+        let result = zip_files(files, &zip_dir);
         assert!(result.is_ok());
-
-        // Verify that the zip file was created
-        let zip_path = PathBuf::from("flare.zip");
+        let zip_path = result.unwrap();
         assert!(zip_path.exists());
 
         // Verify the zip content
         let zip_file = File::open(&zip_path).unwrap();
         let mut archive = zip::ZipArchive::new(zip_file).unwrap();
 
-        // Verify that files are present in the zip
         assert!(archive.by_name("test.txt").is_ok());
-        assert!(archive.by_name("subfile.txt").is_ok());
+        assert!(archive.by_name("subdir/subfile.txt").is_ok());
 
-        // Verify file contents
         let mut content = String::new();
         archive
             .by_name("test.txt")
@@ -174,19 +257,17 @@ mod tests {
 
         content.clear();
         archive
-            .by_name("subfile.txt")
+            .by_name("subdir/subfile.txt")
             .unwrap()
             .read_to_string(&mut content)
             .unwrap();
         assert_eq!(content, "subdir content");
-
-        // Cleanup
-        std::fs::remove_file(zip_path).unwrap();
     }
 
     #[test]
-    fn test_zip_and_send_with_invalid_path() {
-        let result = zip_and_send(vec!["/invalid/path".to_string()]);
+    fn test_zip_files_with_invalid_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = zip_files(vec!["/invalid/path".to_string()], &temp_dir);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), FlareError::ZipError(_)));
     }

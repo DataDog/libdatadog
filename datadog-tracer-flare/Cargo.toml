@@ -16,6 +16,7 @@ serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = "1.0"
 zip = "4.0.0"
 walkdir = "2.4"
+tempfile = "3.8"
 
 [features]
 test = ["serde"]
@@ -25,4 +26,3 @@ bench = false
 
 [dev-dependencies]
 datadog-remote-config = { path = "../datadog-remote-config", features = ["test"] }
-tempfile = "3.8"
