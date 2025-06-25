@@ -17,7 +17,7 @@ use std::{
 };
 
 #[cfg(target_os = "linux")]
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, Read};
 
 #[derive(Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ReapError {
@@ -260,17 +260,21 @@ fn is_being_traced() -> io::Result<bool> {
     // Check to see whether we are being traced.  This will fail on systems where procfs is
     // unavailable, but presumably in those systems `ptrace()` is also unavailable.
     // The caller is free to treat a failure as a false.
-    let file = File::open("/proc/self/status")?;
-    let reader = BufReader::new(file);
+    // This function may run in signal handler, so we should ensure that we do not allocate
+    // memory on the heap (ex: avoiding using BufReader for exao).
+    let mut file = File::open("/proc/self/status")?;
+    let mut buf = [0u8; 8192];
+    let n = file.read(&mut buf)?;
+    let data = &buf[..n];
 
-    for line in reader.lines() {
-        let line = line?;
-        if line.starts_with("TracerPid:") {
-            let tracer_pid = line.split_whitespace().nth(1).unwrap_or("0");
-            return Ok(tracer_pid != "0");
+    for line in data.split(|&b| b == b'\n') {
+        if let Ok(line_str) = std::str::from_utf8(line) {
+            if line_str.starts_with("TracerPid:") {
+                let tracer_pid = line_str.split_whitespace().nth(1).unwrap_or("0");
+                return Ok(tracer_pid != "0");
+            }
         }
     }
-
     Ok(false)
 }
 
