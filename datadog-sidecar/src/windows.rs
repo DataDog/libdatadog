@@ -40,6 +40,7 @@ use winapi::{
     },
 };
 
+/// cbindgen:ignore
 #[no_mangle]
 pub extern "C" fn ddog_daemon_entry_point() {
     #[cfg(feature = "tracing")]
