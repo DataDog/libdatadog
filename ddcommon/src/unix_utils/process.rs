@@ -6,7 +6,7 @@ use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
 use std::os::fd::RawFd;
 
-use super::timeout::TimeoutManager;
+use crate::timeout::TimeoutManager;
 
 #[derive(Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ReapError {

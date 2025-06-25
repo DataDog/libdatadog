@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::process_handle::ProcessHandle;
-use ddcommon::unix_utils::TimeoutManager;
+use ddcommon::timeout::TimeoutManager;
 
 use crate::shared::configuration::CrashtrackerReceiverConfig;
 use anyhow::Context;

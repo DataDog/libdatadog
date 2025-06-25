@@ -24,6 +24,7 @@ pub mod config;
 pub mod hyper_migration;
 pub mod rate_limiter;
 pub mod tag;
+pub mod timeout;
 pub mod unix_utils;
 pub mod worker;
 
