@@ -1940,6 +1940,7 @@ dependencies = [
  "rustls-native-certs 0.8.1",
  "serde",
  "static_assertions",
+ "thiserror",
  "tokio",
  "tokio-rustls",
  "tower-service",

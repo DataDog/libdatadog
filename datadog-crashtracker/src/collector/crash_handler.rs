@@ -8,12 +8,11 @@ use super::receiver_manager::Receiver;
 use super::signal_handler_manager::chain_signal_handler;
 use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
-use crate::shared::constants::DD_CRASHTRACK_MINIMUM_REAP_TIME_MS;
+use ddcommon::unix_utils::TimeoutManager;
 use libc::{c_void, siginfo_t, ucontext_t};
 use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
-use std::time::Instant;
 
 // Note that this file makes use the following async-signal safe functions in a signal handler.
 // <https://man7.org/linux/man-pages/man7/signal-safety.7.html>
@@ -157,8 +156,7 @@ fn handle_posix_signal_impl(
     anyhow::ensure!(!metadata_ptr.is_null(), "No crashtracking metadata");
     let (_metadata, metadata_string) = unsafe { &*metadata_ptr };
 
-    let timeout_ms = config.timeout_ms();
-    let start_time = Instant::now(); // This is the time at which the signal was received
+    let timeout_manager = TimeoutManager::new(config.timeout());
 
     // Optionally, create the receiver.  This all hinges on whether or not the configuration has a
     // non-null unix domain socket specified.  If it doesn't, then we need to check the receiver
@@ -181,12 +179,8 @@ fn handle_posix_signal_impl(
     )?;
 
     // We're done. Wrap up our interaction with the receiver.
-    collector.finish(start_time, timeout_ms);
-    let timeout_ms = std::cmp::max(
-        timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32),
-        DD_CRASHTRACK_MINIMUM_REAP_TIME_MS,
-    );
-    receiver.finish(start_time, timeout_ms);
+    collector.finish(&timeout_manager);
+    receiver.finish(&timeout_manager);
 
     Ok(())
 }

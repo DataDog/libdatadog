@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::process_handle::ProcessHandle;
+use ddcommon::unix_utils::TimeoutManager;
 
 use crate::shared::configuration::CrashtrackerReceiverConfig;
 use anyhow::Context;
@@ -13,7 +14,6 @@ use std::os::unix::net::UnixStream;
 use std::ptr;
 use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::Ordering::SeqCst;
-use std::time::Instant;
 
 static RECEIVER_CONFIG: AtomicPtr<(CrashtrackerReceiverConfig, PreparedExecve)> =
     AtomicPtr::new(ptr::null_mut());
@@ -44,7 +44,7 @@ impl Receiver {
             .context("Failed to connect to receiver")?
             .into_raw_fd();
         Ok(Self {
-            handle: ProcessHandle::new(uds_fd, 0, false),
+            handle: ProcessHandle::new(uds_fd, None),
         })
     }
 
@@ -76,7 +76,7 @@ impl Receiver {
                 // Parent
                 let _ = unsafe { libc::close(uds_child) };
                 Ok(Self {
-                    handle: ProcessHandle::new(uds_parent, pid, false),
+                    handle: ProcessHandle::new(uds_parent, Some(pid)),
                 })
             }
             _ => {
@@ -121,8 +121,8 @@ impl Receiver {
         }
     }
 
-    pub fn finish(self, start_time: Instant, timeout_ms: u32) {
-        self.handle.finish(start_time, timeout_ms);
+    pub fn finish(self, timeout_manager: &TimeoutManager) {
+        self.handle.finish(timeout_manager);
     }
 }
 
