@@ -706,8 +706,8 @@ mod tests {
                 // duration up past the timeout duration. At such a point, the test
                 // should fail.
                 let mut children = vec![];
-                let sleep_duration_ms = 100;
-                let timeout_duration_ms = 150;
+                let sleep_duration = Duration::from_millis(100);
+                let timeout_duration = Duration::from_millis(150);
                 for _ in 0..10 {
                     match unsafe { libc::fork() } {
                         -1 => {
@@ -715,7 +715,7 @@ mod tests {
                         }
                         0 => {
                             // Grandchild process
-                            std::thread::sleep(std::time::Duration::from_millis(sleep_duration_ms));
+                            std::thread::sleep(sleep_duration);
                             std::process::exit(0); // normal exit, since we're testing waitall
                         }
                         pid => {
@@ -728,10 +728,9 @@ mod tests {
                 // Now, do the equivalent of the waitall loop.
                 // One caveat is that we do not want to hang the test, so rather than an unbounded
                 // `waitpid()`, use WNOHANG within a timer loop.
-                let timeout = Duration::from_secs(10);
                 let start_time = std::time::Instant::now();
                 loop {
-                    if start_time.elapsed() > timeout {
+                    if start_time.elapsed() > timeout_duration {
                         eprintln!("Timed out waiting for children to exit");
                         std::process::exit(-6);
                     }
