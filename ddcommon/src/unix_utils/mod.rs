@@ -11,7 +11,7 @@ mod process;
 mod timeout;
 
 pub use errors::{PollError, ReapError};
-pub use execve::PreparedExecve;
+pub use execve::{PreparedExecve, PreparedExecveError};
 pub use file_ops::open_file_or_quiet;
 pub use fork::alt_fork;
 pub use process::wait_for_pollhup;

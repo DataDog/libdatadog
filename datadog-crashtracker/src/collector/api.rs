@@ -45,7 +45,7 @@ pub fn on_fork(
 
     update_metadata(metadata)?;
     update_config(config)?;
-    Receiver::update_stored_config(receiver_config);
+    Receiver::update_stored_config(receiver_config)?;
     Ok(())
 }
 
@@ -66,7 +66,7 @@ pub fn init(
 ) -> anyhow::Result<()> {
     update_metadata(metadata)?;
     update_config(config.clone())?;
-    Receiver::update_stored_config(receiver_config);
+    Receiver::update_stored_config(receiver_config)?;
     register_crash_handlers(&config)?;
     enable();
     Ok(())
@@ -89,7 +89,7 @@ pub fn reconfigure(
 ) -> anyhow::Result<()> {
     update_metadata(metadata)?;
     update_config(config.clone())?;
-    Receiver::update_stored_config(receiver_config);
+    Receiver::update_stored_config(receiver_config)?;
     enable();
     Ok(())
 }

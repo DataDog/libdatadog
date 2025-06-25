@@ -103,13 +103,15 @@ impl Receiver {
     ///   No other crash-handler functions should be called concurrently.
     /// ATOMICITY:
     ///     This function uses a swap on an atomic pointer.
-    pub fn update_stored_config(config: CrashtrackerReceiverConfig) {
+    pub fn update_stored_config(
+        config: CrashtrackerReceiverConfig,
+    ) -> Result<(), ddcommon::unix_utils::PreparedExecveError> {
         // Heap-allocate the parts of the configuration that relate to execve.
         // This needs to be done because the execve call requires a specific layout, and achieving
         // this layout requires allocations.  We should strive not to allocate from within a
         // signal handler, so we do it now.
         let prepared_execve =
-            PreparedExecve::new(&config.path_to_receiver_binary, &config.args, &config.env);
+            PreparedExecve::new(&config.path_to_receiver_binary, &config.args, &config.env)?;
         // First, propagate the configuration
         let box_ptr = Box::into_raw(Box::new((config, prepared_execve)));
         let old = RECEIVER_CONFIG.swap(box_ptr, SeqCst);
@@ -119,6 +121,7 @@ impl Receiver {
                 std::mem::drop(Box::from_raw(old));
             }
         }
+        Ok(())
     }
 
     pub fn finish(self, timeout_manager: &TimeoutManager) {
