@@ -240,8 +240,6 @@ mod tests {
     };
     use std::sync::Arc;
 
-    #[allow(clippy::unwrap_used)]
-
     #[test]
     fn test_try_from_string_to_return_action() {
         assert_eq!(LogLevel::try_from("trace").unwrap(), LogLevel::Trace);
