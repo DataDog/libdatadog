@@ -3,17 +3,15 @@
 
 #![cfg(unix)]
 
-mod errors;
 mod execve;
 mod file_ops;
 mod fork;
 mod process;
 mod timeout;
 
-pub use errors::{PollError, ReapError};
 pub use execve::{PreparedExecve, PreparedExecveError};
 pub use file_ops::open_file_or_quiet;
 pub use fork::alt_fork;
 pub use process::wait_for_pollhup;
-pub use process::{reap_child_non_blocking, terminate};
+pub use process::{reap_child_non_blocking, terminate, PollError, ReapError};
 pub use timeout::TimeoutManager;
