@@ -1882,6 +1882,7 @@ dependencies = [
  "rustls-native-certs 0.8.1",
  "serde",
  "static_assertions",
+ "tempfile",
  "thiserror",
  "tokio",
  "tokio-rustls",
