@@ -135,6 +135,7 @@ mod tests {
         assert!(matches!(result, Ok(false)));
     }
 
+    #[cfg_attr(miri, ignore)] // miri needs to support poll https://github.com/rust-lang/miri/issues/4413
     #[test]
     fn test_wait_for_pollhup_timeout() {
         let timeout = Duration::from_millis(10);

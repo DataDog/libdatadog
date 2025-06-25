@@ -142,6 +142,7 @@ fn test_prepared_execve_exec_env_with_environment_variables() {
     }
 }
 
+#[cfg_attr(miri, ignore)] // miri doesn't support fork
 #[test]
 fn test_prepared_execve_exec_with_complex_arguments() {
     use nix::sys::wait::{waitpid, WaitStatus};
