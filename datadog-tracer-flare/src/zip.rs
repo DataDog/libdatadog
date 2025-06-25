@@ -6,11 +6,37 @@ use std::{
     io,
     path::{Path, PathBuf},
 };
-use tempfile::NamedTempFile;
+use tempfile::tempfile;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, ZipWriter};
 
 use crate::error::FlareError;
+
+/// Adds a single file to the zip archive with the specified options and relative path
+fn add_file_to_zip(
+    zip: &mut ZipWriter<File>,
+    file_path: &Path,
+    relative_path: Option<&Path>,
+    options: &FileOptions<()>,
+) -> Result<(), FlareError> {
+    let mut file = File::open(file_path)
+        .map_err(|e| FlareError::ZipError(format!("Failed to open file {:?}: {}", file_path, e)))?;
+
+    let path = match relative_path {
+        Some(relative_path) => relative_path.as_os_str(),
+        None => file_path.file_name().ok_or_else(|| {
+            FlareError::ZipError(format!("Invalid file name for path: {:?}", file_path))
+        })?,
+    };
+
+    zip.start_file(path.to_string_lossy().as_ref(), *options)
+        .map_err(|e| FlareError::ZipError(format!("Failed to add file to zip: {}", e)))?;
+
+    io::copy(&mut file, zip)
+        .map_err(|e| FlareError::ZipError(format!("Failed to write file to zip: {}", e)))?;
+
+    Ok(())
+}
 
 /// Creates a zip archive containing the specified files and directories in a temporary location.
 ///
@@ -26,7 +52,7 @@ use crate::error::FlareError;
 ///
 /// # Returns
 ///
-/// * `Ok(PathBuf)` - The path to the created zip file if successful.
+/// * `Ok(File)` - The created zip file if successful.
 /// * `Err(FlareError)` - An error if any step of the process fails.
 ///
 /// # Errors
@@ -36,17 +62,20 @@ use crate::error::FlareError;
 /// - Any file or directory cannot be read or added to the archive.
 /// - The zip archive cannot be finalized.
 /// - An invalid or non-existent path is provided.
-fn zip_files(files: Vec<String>, temp_file: &NamedTempFile) -> Result<PathBuf, FlareError> {
-    // Convert paths to PathBuf
-    let paths: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
+fn zip_files(files: Vec<String>) -> Result<File, FlareError> {
+    let temp_file = match tempfile() {
+        Ok(file) => file,
+        Err(e) => return Err(FlareError::ZipError(e.to_string())),
+    };
 
     let file = temp_file
-        .as_file()
         .try_clone()
         .map_err(|e| FlareError::ZipError(format!("Failed to clone temp file: {}", e)))?;
 
     let mut zip = ZipWriter::new(file);
     let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+    let paths: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
 
     // Iterate through all files and add them to the zip
     for path in paths {
@@ -90,7 +119,7 @@ fn zip_files(files: Vec<String>, temp_file: &NamedTempFile) -> Result<PathBuf, F
     zip.finish()
         .map_err(|e| FlareError::ZipError(format!("Failed to finalize zip file: {}", e)))?;
 
-    Ok(temp_file.path().to_path_buf())
+    Ok(temp_file)
 }
 
 /// Creates a zip archive containing the specified files and directories, obfuscates sensitive data,
@@ -103,7 +132,7 @@ fn zip_files(files: Vec<String>, temp_file: &NamedTempFile) -> Result<PathBuf, F
 ///
 /// # Returns
 ///
-/// * `Ok(PathBuf)` - If the zip archive was created, obfuscated, and sent successfully.
+/// * `Ok(())` - If the zip archive was created, obfuscated, and sent successfully.
 /// * `Err(FlareError)` - An error if any step of the process fails.
 ///
 /// # Errors
@@ -127,40 +156,11 @@ fn zip_files(files: Vec<String>, temp_file: &NamedTempFile) -> Result<PathBuf, F
 ///     Err(e) => eprintln!("Failed to send flare: {}", e),
 /// }
 /// ```
-pub fn zip_and_send(files: Vec<String>) -> Result<PathBuf, FlareError> {
-    let temp_file = match NamedTempFile::new() {
-        Ok(file) => file,
-        Err(e) => return Err(FlareError::ZipError(e.to_string())),
-    };
-    let zip_path = zip_files(files, &temp_file)?;
+pub fn zip_and_send(files: Vec<String>) -> Result<(), FlareError> {
+    let _zip = zip_files(files)?;
 
     // APMSP-2118 - TODO: Implement obfuscation of sensitive data
     // APMSP-1978 - TODO: Implement sending the zip file to the agent
-
-    Ok(zip_path)
-}
-
-fn add_file_to_zip(
-    zip: &mut ZipWriter<File>,
-    file_path: &Path,
-    relative_path: Option<&Path>,
-    options: &FileOptions<()>,
-) -> Result<(), FlareError> {
-    let mut file = File::open(file_path)
-        .map_err(|e| FlareError::ZipError(format!("Failed to open file {:?}: {}", file_path, e)))?;
-
-    let path = match relative_path {
-        Some(relative_path) => relative_path.as_os_str(),
-        None => file_path.file_name().ok_or_else(|| {
-            FlareError::ZipError(format!("Invalid file name for path: {:?}", file_path))
-        })?,
-    };
-
-    zip.start_file(path.to_string_lossy().as_ref(), *options)
-        .map_err(|e| FlareError::ZipError(format!("Failed to add file to zip: {}", e)))?;
-
-    io::copy(&mut file, zip)
-        .map_err(|e| FlareError::ZipError(format!("Failed to write file to zip: {}", e)))?;
 
     Ok(())
 }
@@ -201,14 +201,11 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let files = create_test_files(&temp_dir);
 
-        let temp_file = NamedTempFile::new().unwrap();
-        let result = zip_files(files, &temp_file);
+        let result = zip_files(files);
         assert!(result.is_ok());
-        let zip_path = result.unwrap();
-        assert!(zip_path.exists());
 
         // Verify the zip content
-        let zip_file = File::open(&zip_path).unwrap();
+        let zip_file = result.unwrap();
         let mut archive = zip::ZipArchive::new(zip_file).unwrap();
 
         assert!(archive.by_name("test.txt").is_ok());
@@ -242,8 +239,7 @@ mod tests {
 
     #[test]
     fn test_zip_files_with_invalid_path() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let result = zip_files(vec!["/invalid/path".to_string()], &temp_file);
+        let result = zip_files(vec!["/invalid/path".to_string()]);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), FlareError::ZipError(_)));
     }
