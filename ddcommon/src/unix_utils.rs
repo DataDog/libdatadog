@@ -320,12 +320,13 @@ pub fn alt_fork() -> libc::pid_t {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::fd::AsRawFd;
 
     #[test]
     fn test_timeout_manager_new() {
         let timeout = Duration::from_secs(5);
         let manager = TimeoutManager::new(timeout);
-        
+
         assert_eq!(manager.timeout(), timeout);
         assert!(manager.elapsed() < Duration::from_millis(100)); // Should be very small
         assert!(manager.remaining() >= TimeoutManager::MINIMUM_REAP_TIME);
@@ -335,12 +336,12 @@ mod tests {
     fn test_timeout_manager_remaining() {
         let timeout = Duration::from_millis(100);
         let manager = TimeoutManager::new(timeout);
-        
+
         // Initially, remaining should be close to timeout but at least MINIMUM_REAP_TIME
         let remaining = manager.remaining();
         assert!(remaining >= TimeoutManager::MINIMUM_REAP_TIME);
         // Note: remaining might be greater than timeout due to MINIMUM_REAP_TIME
-        
+
         // After sleeping, remaining should decrease (but still respect MINIMUM_REAP_TIME)
         std::thread::sleep(Duration::from_millis(10));
         let remaining_after_sleep = manager.remaining();
@@ -351,10 +352,10 @@ mod tests {
     fn test_timeout_manager_elapsed() {
         let timeout = Duration::from_secs(1);
         let manager = TimeoutManager::new(timeout);
-        
+
         // Initially elapsed should be very small
         assert!(manager.elapsed() < Duration::from_millis(100));
-        
+
         // After sleeping, elapsed should increase
         std::thread::sleep(Duration::from_millis(10));
         let elapsed = manager.elapsed();
@@ -366,7 +367,7 @@ mod tests {
     fn test_timeout_manager_minimum_reap_time() {
         let timeout = Duration::from_millis(50); // Less than MINIMUM_REAP_TIME
         let manager = TimeoutManager::new(timeout);
-        
+
         // Even with a small timeout, remaining should be at least MINIMUM_REAP_TIME
         assert_eq!(manager.remaining(), TimeoutManager::MINIMUM_REAP_TIME);
     }
@@ -375,9 +376,9 @@ mod tests {
     fn test_timeout_manager_debug() {
         let timeout = Duration::from_secs(1);
         let manager = TimeoutManager::new(timeout);
-        
+
         let debug_str = format!("{:?}", manager);
-        
+
         // Debug output should contain the expected fields
         assert!(debug_str.contains("TimeoutManager"));
         assert!(debug_str.contains("start_time"));
@@ -390,15 +391,127 @@ mod tests {
     fn test_timeout_manager_timeout_exceeded() {
         let timeout = Duration::from_millis(10);
         let manager = TimeoutManager::new(timeout);
-        
+
         // Sleep longer than the timeout
         std::thread::sleep(Duration::from_millis(50));
-        
+
         // Elapsed should be greater than timeout
         assert!(manager.elapsed() > timeout);
-        
+
         // Remaining should still be at least MINIMUM_REAP_TIME (not overflow)
         let remaining = manager.remaining();
         assert_eq!(remaining, TimeoutManager::MINIMUM_REAP_TIME);
+    }
+
+    #[test]
+    fn test_wait_for_pollhup_timeout() {
+        let timeout = Duration::from_millis(10);
+        let timeout_manager = TimeoutManager::new(timeout);
+
+        // Create a pipe and close the write end to simulate a closed fd
+        let (read_fd, write_fd) = nix::unistd::pipe().unwrap();
+
+        // Drop the write end to close it
+        drop(write_fd);
+
+        // wait_for_pollhup should return Ok(true) when the fd is closed
+        let result = wait_for_pollhup(read_fd.as_raw_fd(), &timeout_manager);
+        assert_eq!(result, Ok(true));
+        // read_fd will be closed automatically when dropped
+    }
+
+    #[test]
+    fn test_wait_for_pollhup_invalid_fd() {
+        let timeout = Duration::from_secs(1);
+        let timeout_manager = TimeoutManager::new(timeout);
+
+        // Use a positive, almost certainly invalid file descriptor
+        let invalid_fd = 999_999;
+        let result = wait_for_pollhup(invalid_fd, &timeout_manager);
+
+        // Invalid FD should result in an error, not a timeout
+        match result {
+            Err(PollError::PollError(errno)) => {
+                // Should be a valid errno (EBADF or similar)
+                assert!(errno > 0);
+            }
+            Err(PollError::UnexpectedResult(revents)) => {
+                println!("wait_for_pollhup({invalid_fd}, ..) returned UnexpectedResult({revents}) as allowed on this platform");
+            }
+            _ => panic!("Expected error for invalid FD, got: {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_reap_child_non_blocking_nonexistent_pid() {
+        let timeout = Duration::from_millis(10);
+        let timeout_manager = TimeoutManager::new(timeout);
+
+        // Try to reap a non-existent PID
+        let result = reap_child_non_blocking(Pid::from_raw(999999), &timeout_manager);
+
+        // Should return Ok(false) for non-existent process
+        assert_eq!(result, Ok(false));
+    }
+
+    #[test]
+    fn test_reap_child_non_blocking_timeout() {
+        let timeout = Duration::from_millis(10);
+        let timeout_manager = TimeoutManager::new(timeout);
+
+        // Create a child process that sleeps longer than our timeout
+        let child_pid = match unsafe { libc::fork() } {
+            -1 => panic!("fork failed"),
+            0 => {
+                // Child process: sleep for a while
+                std::thread::sleep(Duration::from_millis(100));
+                unsafe { libc::_exit(0) };
+            }
+            pid => pid,
+        };
+
+        // Try to reap the child with a short timeout
+        let result = reap_child_non_blocking(Pid::from_raw(child_pid), &timeout_manager);
+
+        // Should timeout since child is still running
+        assert_eq!(result, Err(ReapError::Timeout));
+
+        // Clean up: wait for child to finish
+        let _ = nix::sys::wait::waitpid(Pid::from_raw(child_pid), None);
+    }
+
+    #[test]
+    fn test_reap_child_non_blocking_exited_child() {
+        let timeout = Duration::from_secs(1);
+        let timeout_manager = TimeoutManager::new(timeout);
+
+        // Create a child process that exits immediately
+        let child_pid = match unsafe { libc::fork() } {
+            -1 => panic!("fork failed"),
+            0 => {
+                // Child process: exit immediately
+                unsafe { libc::_exit(0) };
+            }
+            pid => pid,
+        };
+
+        // Give the child a moment to exit
+        std::thread::sleep(Duration::from_millis(10));
+
+        // Try to reap the child
+        let result = reap_child_non_blocking(Pid::from_raw(child_pid), &timeout_manager);
+
+        // Should succeed since child has exited
+        assert_eq!(result, Ok(true));
+    }
+
+    #[test]
+    fn test_timeout_manager_constants() {
+        // Test that MINIMUM_REAP_TIME is reasonable
+        assert_eq!(
+            TimeoutManager::MINIMUM_REAP_TIME,
+            Duration::from_millis(160)
+        );
+        assert!(TimeoutManager::MINIMUM_REAP_TIME > Duration::from_millis(0));
     }
 }
