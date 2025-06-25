@@ -15,6 +15,35 @@ use std::num::NonZeroU128;
 use std::ptr::null_mut;
 use std::sync::atomic::Ordering::SeqCst;
 
+#[derive(Debug)]
+pub enum AtomicSetError {
+    NoSpace(String),
+    IndexOutOfRange(usize),
+    NoElementAtIndex(usize),
+    IoError(std::io::Error),
+}
+
+impl std::fmt::Display for AtomicSetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AtomicSetError::NoSpace(value) => write!(f, "No space to store value: {}", value),
+            AtomicSetError::IndexOutOfRange(idx) => write!(f, "Index {} out of range", idx),
+            AtomicSetError::NoElementAtIndex(idx) => {
+                write!(f, "Expected an element at index {}", idx)
+            }
+            AtomicSetError::IoError(err) => write!(f, "IO error: {}", err),
+        }
+    }
+}
+
+impl std::error::Error for AtomicSetError {}
+
+impl From<std::io::Error> for AtomicSetError {
+    fn from(err: std::io::Error) -> Self {
+        AtomicSetError::IoError(err)
+    }
+}
+
 pub(crate) type AtomicSpanSet<const LEN: usize> = AtomicMultiset<AtomicSpan, LEN>;
 pub(crate) type AtomicStringMultiset<const LEN: usize> = AtomicMultiset<AtomicString, LEN>;
 
@@ -26,8 +55,12 @@ pub trait Atomic {
         self.take().is_some()
     }
     /// Returns whether there was anything to emit.
-    fn consume_and_emit(&self, w: &mut impl Write, leak: bool, first: bool)
-        -> anyhow::Result<bool>;
+    fn consume_and_emit(
+        &self,
+        w: &mut impl Write,
+        leak: bool,
+        first: bool,
+    ) -> Result<bool, AtomicSetError>;
     /// SAFETY: This is only safe to use in a single threaded context
     #[cfg(test)]
     unsafe fn load(&self) -> Option<Self::Item>;
@@ -57,7 +90,7 @@ where
     /// is not atomic.
     /// This should only be used in a context where no other threads are modifying the set.
     /// Performance: This operation is constant time.
-    pub fn clear(&self) -> anyhow::Result<()> {
+    pub fn clear(&self) -> Result<(), AtomicSetError> {
         if !self.is_empty() {
             for v in self.set.iter() {
                 if v.clear() {
@@ -78,12 +111,14 @@ where
     ///     Until then, the invariant that `len`` >= actual number of elements in the array is
     ///     maintained
     /// Performance: This operation is constant time.
-    pub fn remove(&self, idx: usize) -> anyhow::Result<()> {
-        anyhow::ensure!(idx < self.set.len(), "Idx {idx} out of range");
+    pub fn remove(&self, idx: usize) -> Result<(), AtomicSetError> {
+        if idx >= self.set.len() {
+            return Err(AtomicSetError::IndexOutOfRange(idx));
+        }
         if self.set[idx].clear() {
             self.used.sub(1, SeqCst)
         } else {
-            anyhow::bail!("Expected an element at {idx}");
+            return Err(AtomicSetError::NoElementAtIndex(idx));
         }
         Ok(())
     }
@@ -107,12 +142,12 @@ where
     /// Performance:
     ///     As long as the invariant is maintained that the array is <= 1/2 full, this is amortized
     ///     constant time.
-    pub fn insert(&self, mut value: T::Item) -> anyhow::Result<usize> {
+    pub fn insert(&self, mut value: T::Item) -> Result<usize, AtomicSetError> {
         let used = self.used.fetch_add(1, SeqCst);
         if used >= self.set.len() / 2 {
             // We only fill to half full to get good amortized behaviour
             self.used.fetch_sub(1, SeqCst);
-            anyhow::bail!("Crashtracker Atomic Set: No space to store {:?}", &value);
+            return Err(AtomicSetError::NoSpace(format!("{:?}", &value)));
         }
 
         // Start at a random position.
@@ -142,7 +177,7 @@ where
                 return Ok(idx);
             }
         }
-        anyhow::bail!("This should be unreachable: we ensure that there was at least one empty slot before entering the loop")
+        Err(AtomicSetError::NoSpace("This should be unreachable: we ensure that there was at least one empty slot before entering the loop".to_string()))
     }
 
     /// Best effort check if the array is definitely empty.
@@ -184,7 +219,7 @@ where
     ///     not make into the emitted output.
     /// Performance: This does a linear scan over the entire array, and then emits any found items.
     /// It is therefore O(set.capacity()) + O(set.len()).
-    pub fn consume_and_emit(&self, w: &mut impl Write, leak: bool) -> anyhow::Result<()> {
+    pub fn consume_and_emit(&self, w: &mut impl Write, leak: bool) -> Result<(), AtomicSetError> {
         write!(w, "[")?;
 
         if self.used.load(SeqCst) > 0 {
@@ -202,7 +237,7 @@ where
     #[cfg(test)]
     /// This is unsafe when used in a concurrent context
     /// Putting it under cfg(test) to avoid its use in production.
-    pub fn values(&self) -> anyhow::Result<Vec<T::Item>> {
+    pub fn values(&self) -> Result<Vec<T::Item>, AtomicSetError> {
         let mut rval = Vec::with_capacity(self.used.load(SeqCst));
         if self.used.load(SeqCst) > 0 {
             for it in self.set.iter() {
@@ -250,7 +285,7 @@ impl Atomic for AtomicString {
         w: &mut impl Write,
         leak: bool,
         first: bool,
-    ) -> anyhow::Result<bool> {
+    ) -> Result<bool, AtomicSetError> {
         if let Some(s) = self.take() {
             if !first {
                 write!(w, ", ")?;
@@ -321,7 +356,7 @@ impl Atomic for AtomicSpan {
         w: &mut impl Write,
         _leak: bool,
         first: bool,
-    ) -> anyhow::Result<bool> {
+    ) -> Result<bool, AtomicSetError> {
         if let Some(v) = self.take() {
             if !first {
                 write!(w, ", ")?;
