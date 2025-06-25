@@ -52,8 +52,10 @@ impl Receiver {
         config: &CrashtrackerReceiverConfig,
         prepared_exec: &PreparedExecve,
     ) -> anyhow::Result<Self> {
-        let stderr = open_file_or_quiet(config.stderr_filename.as_deref())?;
-        let stdout = open_file_or_quiet(config.stdout_filename.as_deref())?;
+        let stderr = open_file_or_quiet(config.stderr_filename.as_deref())
+            .context("Failed to open stderr file")?;
+        let stdout = open_file_or_quiet(config.stdout_filename.as_deref())
+            .context("Failed to open stdout file")?;
 
         // Create anonymous Unix domain socket pair for communication
         let (uds_parent, uds_child) = socket::socketpair(
