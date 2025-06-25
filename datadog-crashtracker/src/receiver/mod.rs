@@ -56,7 +56,7 @@ mod tests {
                 None,
                 StacktraceCollection::Disabled,
                 default_signals(),
-                3000,
+                Some(Duration::from_secs(3)),
                 None,
                 true,
             )?)?,
