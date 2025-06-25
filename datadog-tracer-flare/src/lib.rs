@@ -240,6 +240,8 @@ mod tests {
     };
     use std::sync::Arc;
 
+    #[allow(clippy::unwrap_used)]
+
     #[test]
     fn test_try_from_string_to_return_action() {
         assert_eq!(LogLevel::try_from("trace").unwrap(), LogLevel::Trace);
@@ -255,7 +257,6 @@ mod tests {
         );
     }
 
-    #[allow(clippy::unwrap_used)]
     #[test]
     fn test_check_remote_config_file_with_valid_log_level() {
         let storage = ParsedFileStorage::default();

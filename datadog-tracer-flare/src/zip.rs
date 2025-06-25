@@ -36,23 +36,6 @@ use crate::error::FlareError;
 /// - Any file or directory cannot be read or added to the archive.
 /// - The zip archive cannot be finalized.
 /// - An invalid or non-existent path is provided.
-///
-/// # Examples
-///
-/// ```
-/// use datadog_tracer_flare::zip::zip_files;
-/// use tempfile::TempDir;
-///
-/// let temp_dir = TempDir::new().unwrap();
-/// let files = vec![
-///     "/path/to/logs".to_string(),
-///     "/path/to/config.txt".to_string(),
-/// ];
-/// match zip_files(files, &temp_dir) {
-///     Ok(zip_path) => println!("Zip created at: {:?}", zip_path),
-///     Err(e) => eprintln!("Failed to create zip: {}", e),
-/// }
-/// ```
 fn zip_files(files: Vec<String>, temp_dir: &TempDir) -> Result<PathBuf, FlareError> {
     // Convert paths to PathBuf
     let paths: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
@@ -147,17 +130,11 @@ fn zip_files(files: Vec<String>, temp_dir: &TempDir) -> Result<PathBuf, FlareErr
 /// }
 /// ```
 pub fn zip_and_send(files: Vec<String>) -> Result<PathBuf, FlareError> {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = match TempDir::new() {
+        Ok(dir) => dir,
+        Err(e) => return Err(FlareError::ZipError(e.to_string())),
+    };
     let zip_path = zip_files(files, &temp_dir)?;
-
-    // Copy the zip file to the current directory
-    let current_dir_zip = PathBuf::from("flare.zip");
-    std::fs::copy(&zip_path, &current_dir_zip).map_err(|e| {
-        FlareError::ZipError(format!(
-            "Failed to copy zip file to current directory: {}",
-            e
-        ))
-    })?;
 
     // APMSP-2118 - TODO: Implement obfuscation of sensitive data
     // APMSP-1978 - TODO: Implement sending the zip file to the agent
@@ -209,6 +186,8 @@ fn add_file_to_zip_with_path(
 mod tests {
     use super::*;
     use std::io::Read;
+
+    #[allow(clippy::unwrap_used)]
 
     fn create_test_files(temp_dir: &TempDir) -> Vec<String> {
         // Create a simple file
