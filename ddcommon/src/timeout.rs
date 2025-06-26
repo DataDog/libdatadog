@@ -91,6 +91,8 @@ mod tests {
         std::thread::sleep(Duration::from_millis(10));
         let elapsed = manager.elapsed();
         assert!(elapsed >= Duration::from_millis(10));
+
+        #[cfg(not(miri))] // miri allows the clock to go arbitrarily fast
         assert!(elapsed < Duration::from_millis(100)); // Should be reasonable
     }
 

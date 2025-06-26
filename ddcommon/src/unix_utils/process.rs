@@ -149,6 +149,7 @@ mod tests {
         assert!(matches!(result, Ok(false)));
     }
 
+    #[cfg_attr(miri, ignore)] // miri doesn't support poll
     #[test]
     fn test_wait_for_pollhup_invalid_fd() {
         let timeout = Duration::from_secs(1);
