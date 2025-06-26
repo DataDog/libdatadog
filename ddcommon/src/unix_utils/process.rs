@@ -105,6 +105,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    #[cfg_attr(miri, ignore)] // miri doesn't support waitpid
     #[test]
     fn test_reap_child_non_blocking_timeout() {
         let timeout = Duration::from_millis(10);
@@ -115,6 +116,7 @@ mod tests {
         assert!(matches!(result, Ok(false)));
     }
 
+    #[cfg_attr(miri, ignore)] // miri doesn't support waitpid
     #[test]
     fn test_reap_child_non_blocking_exited_child() {
         // This test would require actually creating a child process
@@ -126,6 +128,7 @@ mod tests {
         assert!(matches!(result, Ok(false)));
     }
 
+    #[cfg_attr(miri, ignore)] // miri doesn't support waitpid
     #[test]
     fn test_reap_child_non_blocking_nonexistent_pid() {
         let timeout = Duration::from_secs(1);

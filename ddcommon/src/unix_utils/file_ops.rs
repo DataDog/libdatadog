@@ -27,6 +27,7 @@ mod tests {
     use std::os::fd::FromRawFd;
     use tempfile::tempdir;
 
+    #[cfg_attr(miri, ignore)] // expected failure under miri
     #[test]
     fn test_open_file_or_quiet_none() {
         // Test opening /dev/null when no filename is provided
