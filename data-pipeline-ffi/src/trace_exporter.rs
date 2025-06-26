@@ -11,8 +11,9 @@ use ddcommon_ffi::{
     {slice::AsBytes, slice::ByteSlice},
 };
 use std::{ptr::NonNull, time::Duration};
+use tracing::error;
 
-#[cfg(all(feature = "catch_panic", not(panic = "abort")))]
+#[cfg(all(feature = "catch_panic", panic = "unwind"))]
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 macro_rules! gen_error {
@@ -21,17 +22,26 @@ macro_rules! gen_error {
     };
 }
 
-#[cfg(all(feature = "catch_panic", not(panic = "abort")))]
+#[cfg(all(feature = "catch_panic", panic = "unwind"))]
 macro_rules! catch_panic {
     ($f:expr, $err:expr) => {
         match catch_unwind(AssertUnwindSafe(|| $f)) {
             Ok(ret) => ret,
-            Err(_) => $err,
+            Err(info) => {
+                if let Some(s) = info.downcast_ref::<String>() {
+                    error!(error = %ErrorCode::Panic, s);
+                } else if let Some(s) = info.downcast_ref::<&str>() {
+                    error!(error = %ErrorCode::Panic, s);
+                } else {
+                    error!(error = %ErrorCode::Panic, "Unable to retrieve panic context");
+                }
+                $err
+            }
         }
     };
 }
 
-#[cfg(all(not(feature = "catch_panic"), panic = "abort"))]
+#[cfg(any(not(feature = "catch_panic"), panic = "abort"))]
 macro_rules! catch_panic {
     ($f:expr, $err:expr) => {
         $f
@@ -1074,7 +1084,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "catch_panic")]
+    #[cfg(all(feature = "catch_panic", panic = "unwind"))]
     #[test]
     fn catch_panic_test() {
         let ret = catch_panic!(panic!("Panic!"), gen_error!(ErrorCode::Panic));
