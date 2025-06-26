@@ -123,6 +123,6 @@ pub fn main() {
             builder.sanitize_libraries();
             builder.pack().unwrap()
         }
-        Err(err) => panic!("{}", format!("Building failed: {}", err)),
+        Err(err) => panic!("{}", format!("Building failed: {err}")),
     }
 }

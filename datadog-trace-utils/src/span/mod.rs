@@ -55,7 +55,7 @@ impl FromStr for SpanKey {
             "meta_struct" => Ok(SpanKey::MetaStruct),
             "span_links" => Ok(SpanKey::SpanLinks),
             "span_events" => Ok(SpanKey::SpanEvents),
-            _ => Err(SpanKeyParseError::new(format!("Invalid span key: {}", s))),
+            _ => Err(SpanKeyParseError::new(format!("Invalid span key: {s}"))),
         }
     }
 }

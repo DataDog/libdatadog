@@ -180,7 +180,7 @@ fn store_shm(
     let sliced_path = &hashed_path[..30 - name.len()];
     #[cfg(not(target_os = "macos"))]
     let sliced_path = &hashed_path;
-    let name = format!("/{}-{}", name, sliced_path);
+    let name = format!("/{name}-{sliced_path}");
     let len = file.len();
     #[cfg(windows)]
     let len = len + 4;
@@ -210,7 +210,7 @@ impl MultiTargetHandlers<StoredShmFile> for ConfigFileStorage {
             Entry::Vacant(e) => e.insert(match RemoteConfigWriter::new(&self.invariants, target) {
                 Ok(w) => w,
                 Err(e) => {
-                    let msg = format!("Failed acquiring a remote config shm writer: {:?}", e);
+                    let msg = format!("Failed acquiring a remote config shm writer: {e:?}");
                     error!(msg);
                     return false;
                 }

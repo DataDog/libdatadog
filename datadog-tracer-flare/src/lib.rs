@@ -127,8 +127,7 @@ pub fn init_remote_config_listener(
         Ok(uri) => uri,
         Err(_) => {
             return Err(FlareError::ListeningError(format!(
-                "Invalid agent url: {}",
-                agent_url
+                "Invalid agent url: {agent_url}"
             )));
         }
     };

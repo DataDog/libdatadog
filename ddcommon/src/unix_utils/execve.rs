@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn test_prepared_execve_new_large_args() {
         let binary_path = "/bin/echo";
-        let args: Vec<String> = (0..1000).map(|i| format!("arg{}", i)).collect();
+        let args: Vec<String> = (0..1000).map(|i| format!("arg{i}")).collect();
         let env = vec![("TEST".to_string(), "value".to_string())];
 
         let prepared = PreparedExecve::new(binary_path, &args, &env).unwrap();
@@ -248,7 +248,7 @@ mod tests {
         let binary_path = "/bin/echo";
         let args = vec!["test".to_string()];
         let env: Vec<(String, String)> = (0..1000)
-            .map(|i| (format!("VAR{}", i), format!("value{}", i)))
+            .map(|i| (format!("VAR{i}"), format!("value{i}")))
             .collect();
 
         let prepared = PreparedExecve::new(binary_path, &args, &env).unwrap();

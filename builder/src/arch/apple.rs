@@ -28,18 +28,13 @@ pub fn fix_rpath(lib_path: &str) {
             .expect("Failed to fix rpath using install_name_tool");
         match exit_status.code() {
             Some(0) => {}
-            Some(rc) => panic!(
-                "Failed to fix rpath using install_name_tool: return code {}",
-                rc
-            ),
+            Some(rc) => panic!("Failed to fix rpath using install_name_tool: return code {rc}"),
             None => match exit_status.signal() {
-                Some(sig) => panic!(
-                    "Failed to fix rpath using install_name_tool: killed by signal {}",
-                    sig
-                ),
+                Some(sig) => {
+                    panic!("Failed to fix rpath using install_name_tool: killed by signal {sig}")
+                }
                 None => panic!(
-                    "Failed to fix rpath using install_name_tool: exit status {:?}",
-                    exit_status
+                    "Failed to fix rpath using install_name_tool: exit status {exit_status:?}"
                 ),
             },
         }
