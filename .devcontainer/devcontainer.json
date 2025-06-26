@@ -20,7 +20,8 @@
     // Features to add to the dev container. More info: https://containers.dev/features.
     "features": {
         "ghcr.io/devcontainers/features/rust:1": {},
-        "ghcr.io/devcontainers-extra/features/cmake:1": {}
+        "ghcr.io/devcontainers-extra/features/cmake:1": {},
+        "ghcr.io/devcontainers/features/go:1": {}
     },
 
     // Use 'postCreateCommand' to run commands after the container is created.
