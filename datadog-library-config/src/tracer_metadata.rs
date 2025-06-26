@@ -52,7 +52,7 @@ mod linux {
             .map(char::from)
             .collect();
 
-        let mfd_name: String = format!("datadog-tracer-info-{}", uid);
+        let mfd_name: String = format!("datadog-tracer-info-{uid}");
 
         let mfd = memfd::MemfdOptions::default()
             .close_on_exec(true)

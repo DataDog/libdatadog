@@ -46,8 +46,8 @@ fn test_spawning_trampoline_worker() {
     let shared_file = rewind_and_read(&mut shared_file).unwrap();
 
     if code != 0 {
-        eprintln!("{}", stderr);
-        println!("{}", stdout);
+        eprintln!("{stderr}");
+        println!("{stdout}");
 
         assert_eq!(0, code, "non zero exit code");
     }

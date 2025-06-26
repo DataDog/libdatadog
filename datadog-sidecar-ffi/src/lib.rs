@@ -778,7 +778,7 @@ pub unsafe extern "C" fn ddog_sidecar_dump(
 ) -> ffi::CharSlice {
     let str = match blocking::dump(transport) {
         Ok(dump) => dump,
-        Err(e) => format!("{:?}", e),
+        Err(e) => format!("{e:?}"),
     };
     let size = str.len();
     let malloced = libc::malloc(size) as *mut u8;
@@ -795,7 +795,7 @@ pub unsafe extern "C" fn ddog_sidecar_stats(
 ) -> ffi::CharSlice {
     let str = match blocking::stats(transport) {
         Ok(stats) => stats,
-        Err(e) => format!("{:?}", e),
+        Err(e) => format!("{e:?}"),
     };
     let size = str.len();
     let malloced = libc::malloc(size) as *mut u8;

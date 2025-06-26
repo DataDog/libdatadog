@@ -168,7 +168,7 @@ mod tests {
             Err(PollError::UnexpectedResult(revents)) => {
                 println!("wait_for_pollhup({invalid_fd}, ..) returned UnexpectedResult({revents}) as allowed on this platform");
             }
-            _ => panic!("Expected error for invalid FD, got: {:?}", result),
+            _ => panic!("Expected error for invalid FD, got: {result:?}"),
         }
     }
 }

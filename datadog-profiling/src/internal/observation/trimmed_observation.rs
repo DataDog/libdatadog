@@ -246,7 +246,7 @@ mod tests {
                             }
                             (None, None) => {}
                             _ => {
-                                panic!("a: {}, b: {}", a, b);
+                                panic!("a: {a}, b: {b}");
                             }
                         }
                     });

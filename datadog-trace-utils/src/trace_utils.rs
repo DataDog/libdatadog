@@ -990,7 +990,7 @@ mod tests {
             .unwrap();
 
         let res = get_traces_from_request_body(request.into_body()).await;
-        assert!(res.is_ok(), "Failed to deserialize: {:?}", res);
+        assert!(res.is_ok(), "Failed to deserialize: {res:?}");
         assert_eq!(res.unwrap().1, expected_output);
     }
 
