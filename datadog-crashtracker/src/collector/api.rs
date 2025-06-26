@@ -110,7 +110,7 @@ mod tests {
     // look in /tmp/crashreports for the crash reports and output files
     #[ignore]
     #[test]
-    fn test_crash() -> anyhow::Result<()> {
+    fn test_crash() {
         let time = Utc::now().to_rfc3339();
         let dir = "/tmp/crashreports/";
         let output_url = format!("file://{dir}{time}.txt");
@@ -131,7 +131,8 @@ mod tests {
             path_to_receiver_binary,
             stderr_filename,
             stdout_filename,
-        )?;
+        )
+        .unwrap();
         let config = CrashtrackerConfiguration::new(
             vec![],
             create_alt_stack,
@@ -142,19 +143,20 @@ mod tests {
             Some(timeout),
             None,
             true,
-        )?;
+        )
+        .unwrap();
         let metadata = Metadata::new(
             "libname".to_string(),
             "version".to_string(),
             "family".to_string(),
             vec![],
         );
-        init(config, receiver_config, metadata)?;
-        begin_op(crate::OpTypes::ProfilerCollectingSample)?;
-        insert_span(42)?;
-        insert_trace(u128::MAX)?;
-        insert_span(12)?;
-        insert_trace(99399939399939393993)?;
+        init(config, receiver_config, metadata).unwrap();
+        begin_op(crate::OpTypes::ProfilerCollectingSample).unwrap();
+        insert_span(42).unwrap();
+        insert_trace(u128::MAX).unwrap();
+        insert_span(12).unwrap();
+        insert_trace(99399939399939393993).unwrap();
 
         let tag = tag!("apple", "banana");
         let metadata2 = Metadata::new(
@@ -170,11 +172,10 @@ mod tests {
         let p: *const u32 = std::ptr::null();
         let q = unsafe { *p };
         assert_eq!(q, 3);
-        Ok(())
     }
 
     #[test]
-    fn test_altstack_paradox() -> anyhow::Result<()> {
+    fn test_altstack_paradox() {
         let time = Utc::now().to_rfc3339();
         let dir = "/tmp/crashreports/";
         let output_url = format!("file://{dir}{time}.txt");
@@ -206,7 +207,6 @@ mod tests {
             err.to_string(),
             "Cannot create an altstack without using it"
         );
-        Ok(())
     }
 
     #[cfg(target_os = "linux")]
@@ -227,7 +227,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[cfg(target_os = "linux")]
     #[test]
-    fn test_altstack_use_create() -> anyhow::Result<()> {
+    fn test_altstack_use_create() {
         // This test initializes crashtracking in a fork, then waits on the exit status of the
         // child. We check for an atypical exit status in order to ensure that only our
         // desired exit path is taken.
@@ -253,7 +253,8 @@ mod tests {
             path_to_receiver_binary,
             stderr_filename,
             stdout_filename,
-        )?;
+        )
+        .unwrap();
         let config = CrashtrackerConfiguration::new(
             vec![],
             create_alt_stack,
@@ -264,7 +265,8 @@ mod tests {
             Some(timeout),
             None,
             true,
-        )?;
+        )
+        .unwrap();
         let metadata = Metadata::new(
             "libname".to_string(),
             "version".to_string(),
@@ -289,7 +291,7 @@ mod tests {
                 // Initialize crashtracking.  This will
                 // - create a new altstack
                 // - set the SIGUBS/SIGSEGV handlers with SA_ONSTACK
-                init(config, receiver_config, metadata)?;
+                init(config, receiver_config, metadata).unwrap();
 
                 // Get the state of the altstack after initialization
                 let after_init_sigaltstack = get_sigaltstack();
@@ -311,7 +313,7 @@ mod tests {
                 let mut exit_code = -5;
 
                 for signal in default_signals() {
-                    let signame = crate::signal_from_signum(signal)?;
+                    let signame = crate::signal_from_signum(signal).unwrap();
                     exit_code -= 1;
                     let res = unsafe { libc::sigaction(signal, std::ptr::null(), &mut sigaction) };
                     if res != 0 {
@@ -343,15 +345,12 @@ mod tests {
                 }
             }
         }
-
-        // OK, we're done
-        Ok(())
     }
 
     #[cfg_attr(miri, ignore)]
     #[cfg(target_os = "linux")]
     #[test]
-    fn test_altstack_use_nocreate() -> anyhow::Result<()> {
+    fn test_altstack_use_nocreate() {
         // Similar to the other test, this one operates inside of a fork in order to prevent
         // poisoning the main process state.
 
@@ -376,7 +375,8 @@ mod tests {
             path_to_receiver_binary,
             stderr_filename,
             stdout_filename,
-        )?;
+        )
+        .unwrap();
         let config = CrashtrackerConfiguration::new(
             vec![],
             create_alt_stack,
@@ -387,7 +387,8 @@ mod tests {
             Some(timeout),
             None,
             true,
-        )?;
+        )
+        .unwrap();
         let metadata = Metadata::new(
             "libname".to_string(),
             "version".to_string(),
@@ -412,7 +413,7 @@ mod tests {
                 // Initialize crashtracking.  This will
                 // - create a new altstack
                 // - set the SIGUBS/SIGSEGV handlers with SA_ONSTACK
-                init(config, receiver_config, metadata)?;
+                init(config, receiver_config, metadata).unwrap();
 
                 // Get the state of the altstack after initialization
                 let after_init_sigaltstack = get_sigaltstack();
@@ -473,15 +474,12 @@ mod tests {
                 }
             }
         }
-
-        // OK, we're done
-        Ok(())
     }
 
     #[cfg_attr(miri, ignore)]
     #[cfg(target_os = "linux")]
     #[test]
-    fn test_altstack_nouse() -> anyhow::Result<()> {
+    fn test_altstack_nouse() {
         // This checks that when we do not request the altstack, we do not get the altstack
 
         let time = Utc::now().to_rfc3339();
@@ -505,7 +503,8 @@ mod tests {
             path_to_receiver_binary,
             stderr_filename,
             stdout_filename,
-        )?;
+        )
+        .unwrap();
         let config = CrashtrackerConfiguration::new(
             vec![],
             create_alt_stack,
@@ -516,7 +515,8 @@ mod tests {
             Some(timeout),
             None,
             true,
-        )?;
+        )
+        .unwrap();
         let metadata = Metadata::new(
             "libname".to_string(),
             "version".to_string(),
@@ -541,7 +541,7 @@ mod tests {
                 // Initialize crashtracking.  This will
                 // - create a new altstack
                 // - set the SIGUBS/SIGSEGV handlers with SA_ONSTACK
-                init(config, receiver_config, metadata)?;
+                init(config, receiver_config, metadata).unwrap();
 
                 // Get the state of the altstack after initialization
                 let after_init_sigaltstack = get_sigaltstack();
@@ -603,16 +603,13 @@ mod tests {
                 }
             }
         }
-
-        // OK, we're done
-        Ok(())
     }
 
     #[cfg_attr(miri, ignore)]
     #[cfg(target_os = "linux")]
     #[test]
     #[ignore]
-    fn test_waitall_nohang() -> anyhow::Result<()> {
+    fn test_waitall_nohang() {
         // This test checks whether the crashtracking implementation can cause malformed `waitall()`
         // idioms to hang.
         // Consider the following code from the Ruby runtime:
@@ -670,7 +667,8 @@ mod tests {
             path_to_receiver_binary,
             stderr_filename,
             stdout_filename,
-        )?;
+        )
+        .unwrap();
         let config = CrashtrackerConfiguration::new(
             vec![],
             create_alt_stack,
@@ -681,7 +679,8 @@ mod tests {
             Some(timeout),
             None,
             true,
-        )?;
+        )
+        .unwrap();
 
         let metadata = Metadata::new(
             "libname".to_string(),
@@ -699,7 +698,7 @@ mod tests {
             0 => {
                 // Child process
                 // This is where the test actually happens!
-                init(config, receiver_config, metadata)?;
+                init(config, receiver_config, metadata).unwrap();
 
                 // Now spawn some short-lived child processes.
                 // Note:  it's easy to confirm this test actually works by cranking the sleep
@@ -760,8 +759,5 @@ mod tests {
                 }
             }
         }
-
-        // Confirmed that we have no children, so we're done.
-        Ok(())
     }
 }
