@@ -57,7 +57,7 @@ fn process_line(
                 // The config might contain sensitive data, don't log it.
                 eprintln!("Unexpected double config");
             }
-            std::mem::swap(config, &mut Some(serde_json::from_str(line)?));
+            *config = Some(serde_json::from_str(line)?);
             StdinState::Config
         }
 

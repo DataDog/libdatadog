@@ -24,7 +24,7 @@ impl ProcessHandle {
             // If we have less than the minimum amount of time, give ourselves a few scheduler
             // slices worth of headroom to help guarantee that we don't leak a zombie process.
             let kill_result = unsafe { libc::kill(pid, libc::SIGKILL) };
-            debug_assert_eq!(kill_result, 0, "kill failed with result: {}", kill_result);
+            debug_assert_eq!(kill_result, 0, "kill failed with result: {kill_result}");
 
             // `self` is actually a handle to a child process and `self.pid` is the child process's
             // pid.

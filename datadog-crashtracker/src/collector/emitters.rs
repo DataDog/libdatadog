@@ -148,7 +148,7 @@ pub(crate) fn emit_crashreport(
 
 fn emit_config(w: &mut impl Write, config_str: &str) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_CONFIG}")?;
-    writeln!(w, "{}", config_str)?;
+    writeln!(w, "{config_str}")?;
     writeln!(w, "{DD_CRASHTRACK_END_CONFIG}")?;
     w.flush()?;
     Ok(())
@@ -156,7 +156,7 @@ fn emit_config(w: &mut impl Write, config_str: &str) -> Result<(), EmitterError>
 
 fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_METADATA}")?;
-    writeln!(w, "{}", metadata_str)?;
+    writeln!(w, "{metadata_str}")?;
     writeln!(w, "{DD_CRASHTRACK_END_METADATA}")?;
     w.flush()?;
     Ok(())

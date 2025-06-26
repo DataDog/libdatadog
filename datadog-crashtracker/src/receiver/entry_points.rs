@@ -58,9 +58,8 @@ pub fn get_receiver_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<
     fn path_bind(socket_path: impl AsRef<str>) -> anyhow::Result<UnixListener> {
         let socket_path = socket_path.as_ref();
         if std::fs::metadata(socket_path).is_ok() {
-            std::fs::remove_file(socket_path).with_context(|| {
-                format!("could not delete previous socket at {:?}", socket_path)
-            })?;
+            std::fs::remove_file(socket_path)
+                .with_context(|| format!("could not delete previous socket at {socket_path:?}"))?;
         }
         Ok(UnixListener::bind(socket_path)?)
     }
