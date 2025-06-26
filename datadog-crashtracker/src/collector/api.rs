@@ -296,7 +296,7 @@ mod tests {
 
                 // Compare the initial and after-init sigaltstacks
                 if initial_sigaltstack == after_init_sigaltstack {
-                    eprintln!("Initial sigaltstack: {:?}", initial_sigaltstack);
+                    eprintln!("Initial sigaltstack: {initial_sigaltstack:?}");
                     std::process::exit(-5);
                 }
 
@@ -419,7 +419,7 @@ mod tests {
 
                 // Compare the initial and after-init sigaltstacks:  they should be the same!
                 if initial_sigaltstack != after_init_sigaltstack {
-                    eprintln!("Initial sigaltstack: {:?}", initial_sigaltstack);
+                    eprintln!("Initial sigaltstack: {initial_sigaltstack:?}");
                     std::process::exit(-5);
                 }
 
@@ -550,7 +550,7 @@ mod tests {
                 // we did not enable anything!  This checks that we don't
                 // erroneously build the altstack.
                 if initial_sigaltstack != after_init_sigaltstack {
-                    eprintln!("Initial sigaltstack: {:?}", initial_sigaltstack);
+                    eprintln!("Initial sigaltstack: {initial_sigaltstack:?}");
                     std::process::exit(-5);
                 }
 

@@ -139,7 +139,7 @@ mod mini_agent_tests {
         let v: Value = match serde_json::from_str(stats_json) {
             Ok(value) => value,
             Err(err) => {
-                panic!("Failed to parse stats JSON: {}", err);
+                panic!("Failed to parse stats JSON: {err}");
             }
         };
 

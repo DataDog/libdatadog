@@ -2348,6 +2348,11 @@ mod api_tests {
 
         let large_span_id = u64::MAX;
         // Safety: an u64 can fit into an i64, and we're testing that it's not mis-handled.
+        #[allow(
+            unknown_lints,
+            unnecessary_transmutes,
+            reason = "u64::cast_signed requires MSRV 1.87.0"
+        )]
         let large_num: i64 = unsafe { std::mem::transmute(large_span_id) };
 
         let id2_label = api::Label {
