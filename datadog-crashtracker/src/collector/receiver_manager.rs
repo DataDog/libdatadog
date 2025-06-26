@@ -52,7 +52,8 @@ impl Receiver {
             UnixStream::connect(unix_socket_path)
         } else {
             use std::os::linux::net::SocketAddrExt;
-            let addr = std::os::unix::net::SocketAddr::from_abstract_name(unix_socket_path)?;
+            let addr = std::os::unix::net::SocketAddr::from_abstract_name(unix_socket_path)
+                .map_err(ReceiverError::ConnectionError)?;
             UnixStream::connect_addr(&addr)
         };
         #[cfg(not(target_os = "linux"))]
