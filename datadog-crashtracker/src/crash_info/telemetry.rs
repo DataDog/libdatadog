@@ -247,7 +247,7 @@ mod tests {
         // This keeps alive for scope
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
-            let mut p = tmp.keep();
+            let mut p = tmp.into_path();
             p.push("crash_info");
             p
         };
