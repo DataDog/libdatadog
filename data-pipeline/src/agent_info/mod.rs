@@ -29,4 +29,6 @@ pub fn get_agent_info() -> Option<Arc<schema::AgentInfo>> {
     AGENT_INFO_CACHE.load_full()
 }
 
-pub use fetcher::{fetch_info, fetch_info_with_state, AgentInfoFetcher, FetchInfoStatus};
+pub use fetcher::{
+    fetch_info, fetch_info_with_state, AgentInfoFetcher, FetchInfoStatus, ResponseObserver,
+};
