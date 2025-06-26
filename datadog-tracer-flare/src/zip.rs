@@ -209,8 +209,18 @@ mod tests {
         let mut archive = zip::ZipArchive::new(zip_file).unwrap();
 
         assert!(archive.by_name("test.txt").is_ok());
-        assert!(archive.by_name("dir/subfile.txt").is_ok());
-        assert!(archive.by_name("dir/subdir/subsubfile.txt").is_ok());
+        assert!(archive
+            .by_name(Path::new("dir").join("subfile.txt").to_str().unwrap())
+            .is_ok());
+        assert!(archive
+            .by_name(
+                Path::new("dir")
+                    .join("subdir")
+                    .join("subsubfile.txt")
+                    .to_str()
+                    .unwrap()
+            )
+            .is_ok());
 
         let mut content = String::new();
         archive
