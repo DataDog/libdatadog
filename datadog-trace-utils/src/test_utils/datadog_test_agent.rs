@@ -491,10 +491,8 @@ impl DatadogTestAgent {
                         return Ok(response);
                     } else {
                         println!(
-                            "Request failed with status code: {}. Request attempt {} of {}",
-                            response.status(),
-                            attempts,
-                            max_attempts
+                            "Request failed with status code: {}. Request attempt {attempts} of {max_attempts}",
+                            response.status()
                         );
                         last_response = Ok(response);
                     }

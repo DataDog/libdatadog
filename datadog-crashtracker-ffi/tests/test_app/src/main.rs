@@ -47,15 +47,12 @@ fn init_crashtracking(crash_path: &str, module_name: &str) -> bool {
     // SAFETY: No preconditions
     unsafe { SetErrorMode(THREAD_ERROR_MODE(0x0001)) };
 
-    println!(
-        "Registering crash handler with module name: {}",
-        module_name
-    );
+    println!("Registering crash handler with module name: {module_name}");
 
     // Check if file exists
     let path = Path::new(&module_name);
     if !path.exists() {
-        println!("File does not exist: {:?}", path);
+        println!("File does not exist: {path:?}");
         return false;
     }
 
