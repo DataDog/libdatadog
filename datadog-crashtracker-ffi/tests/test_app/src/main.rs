@@ -59,7 +59,7 @@ fn init_crashtracking(crash_path: &str, module_name: &str) -> bool {
         return false;
     }
 
-    let endpoint = Endpoint::from_slice(format!("file://{}", crash_path).as_str());
+    let endpoint = Endpoint::from_slice(format!("file://{crash_path}").as_str());
 
     let metadata = Metadata {
         family: CharSlice::from("test_family"),
