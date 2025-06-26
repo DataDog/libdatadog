@@ -45,7 +45,7 @@ fn test_spawning_trampoline_worker() {
     let success = status.success();
 
     if !success {
-        eprintln!("{}", stderr);
+        eprintln!("{stderr}");
         panic!("unexpected exit status = {:?}", status)
     }
 

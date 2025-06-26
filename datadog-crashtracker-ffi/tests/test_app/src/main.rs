@@ -19,7 +19,7 @@ fn main() {
     }
 
     let crash_path = &args[1];
-    println!("Crash path: {}", crash_path);
+    println!("Crash path: {crash_path}");
 
     // Get the directory of the current exe
     let exe_path = std::env::current_exe().unwrap();
