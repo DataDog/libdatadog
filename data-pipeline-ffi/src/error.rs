@@ -33,6 +33,8 @@ pub enum ExporterErrorCode {
     Serde,
     TimedOut,
     Internal,
+    #[cfg(feature = "catch_panic")]
+    Panic,
 }
 
 impl Display for ExporterErrorCode {
@@ -59,6 +61,8 @@ impl Display for ExporterErrorCode {
             Self::Serde => write!(f, "Serialization/Deserialization error"),
             Self::TimedOut => write!(f, "Operation timed out"),
             Self::Internal => write!(f, "Internal error"),
+            #[cfg(feature = "catch_panic")]
+            Self::Panic => write!(f, "Operation panicked"),
         }
     }
 }

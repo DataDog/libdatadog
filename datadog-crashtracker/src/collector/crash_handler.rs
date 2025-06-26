@@ -8,7 +8,7 @@ use super::receiver_manager::Receiver;
 use super::signal_handler_manager::chain_signal_handler;
 use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
-use ddcommon::unix_utils::TimeoutManager;
+use ddcommon::timeout::TimeoutManager;
 use libc::{c_void, siginfo_t, ucontext_t};
 use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
