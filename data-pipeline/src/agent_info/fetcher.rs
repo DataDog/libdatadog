@@ -179,7 +179,7 @@ impl Worker for AgentInfoFetcher {
                     tokio::select! {
                         // Wait for manual trigger (new state from headers)
                         trigger = trigger_rx.recv() => {
-                            if let Some(_) = trigger {
+                            if trigger.is_some() {
                                 self.fetch_and_update().await;
                             } else {
                                 // The channel has been closed

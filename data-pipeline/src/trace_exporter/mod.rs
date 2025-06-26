@@ -206,7 +206,7 @@ pub struct TraceExporter {
     client_computed_top_level: bool,
     client_side_stats: ArcSwap<StatsComputationStatus>,
     previous_info_state: ArcSwapOption<String>,
-    response_observer: ResponseObserver,
+    info_response_observer: ResponseObserver,
     telemetry: Option<TelemetryClient>,
     workers: Arc<Mutex<TraceExporterWorkers>>,
 }
@@ -827,7 +827,7 @@ impl TraceExporter {
                 let status = response.status();
 
                 // Check if the agent state has changed
-                self.response_observer.check_response(&response);
+                self.info_response_observer.check_response(&response);
 
                 let body = match response.into_body().collect().await {
                     Ok(body) => String::from_utf8_lossy(&body.to_bytes()).to_string(),
@@ -877,7 +877,7 @@ impl TraceExporter {
                         let status = response.status();
 
                         // Check if the agent state has changed for error responses
-                        self.response_observer.check_response(&response);
+                        self.info_response_observer.check_response(&response);
 
                         let body = match response.into_body().collect().await {
                             Ok(body) => body.to_bytes(),
@@ -1129,7 +1129,7 @@ impl TraceExporterBuilder {
         let mut stats = StatsComputationStatus::Disabled;
 
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
-        let (info_fetcher, response_observer) =
+        let (info_fetcher, info_response_observer) =
             AgentInfoFetcher::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
         let mut info_fetcher_worker = PausableWorker::new(info_fetcher);
         info_fetcher_worker.start(&runtime).map_err(|e| {
@@ -1207,7 +1207,7 @@ impl TraceExporterBuilder {
             common_stats_tags: vec![libdatadog_version],
             client_side_stats: ArcSwap::new(stats.into()),
             previous_info_state: ArcSwapOption::new(None),
-            response_observer,
+            info_response_observer,
             telemetry: telemetry_client,
             workers: Arc::new(Mutex::new(TraceExporterWorkers {
                 info: info_fetcher_worker,
