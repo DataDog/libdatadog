@@ -3,7 +3,7 @@
 
 use super::process_handle::ProcessHandle;
 use super::receiver_manager::Receiver;
-use ddcommon::unix_utils::TimeoutManager;
+use ddcommon::timeout::TimeoutManager;
 
 use super::emitters::emit_crashreport;
 use crate::shared::configuration::CrashtrackerConfiguration;
