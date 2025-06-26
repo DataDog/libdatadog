@@ -36,6 +36,18 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
 static METADATA: AtomicPtr<(Metadata, String)> = AtomicPtr::new(ptr::null_mut());
 static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
 
+#[derive(Debug, thiserror::Error)]
+pub enum CrashHandlerError {
+    #[error("No crashtracking config available")]
+    NoConfig,
+    #[error("No crashtracking metadata available")]
+    NoMetadata,
+    #[error("Failed to spawn receiver: {0}")]
+    ReceiverSpawnError(#[from] super::receiver_manager::ReceiverError),
+    #[error("Failed to spawn collector: {0}")]
+    CollectorSpawnError(#[from] super::collector_manager::CollectorSpawnError),
+}
+
 /// Updates the crashtracker metadata for this process
 /// Metadata is stored in a global variable and sent to the crashtracking
 /// receiver when a crash occurs.
@@ -129,7 +141,7 @@ pub fn enable() {
 fn handle_posix_signal_impl(
     sig_info: *const siginfo_t,
     ucontext: *const ucontext_t,
-) -> anyhow::Result<()> {
+) -> Result<(), CrashHandlerError> {
     if !ENABLED.load(SeqCst) {
         return Ok(());
     }
@@ -149,11 +161,15 @@ fn handle_posix_signal_impl(
     // Note that these operations also replace the global states.  When the one-time guard is
     // passed, all global configuration and metadata becomes invalid.
     let config_ptr = CONFIG.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(!config_ptr.is_null(), "No crashtracking config");
+    if config_ptr.is_null() {
+        return Err(CrashHandlerError::NoConfig);
+    }
     let (config, config_str) = unsafe { &*config_ptr };
 
     let metadata_ptr = METADATA.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(!metadata_ptr.is_null(), "No crashtracking metadata");
+    if metadata_ptr.is_null() {
+        return Err(CrashHandlerError::NoMetadata);
+    }
     let (_metadata, metadata_string) = unsafe { &*metadata_ptr };
 
     let timeout_manager = TimeoutManager::new(config.timeout());
@@ -176,8 +192,7 @@ fn handle_posix_signal_impl(
         metadata_string,
         sig_info,
         ucontext,
-    )
-    .map_err(anyhow::Error::new)?;
+    )?;
 
     // We're done. Wrap up our interaction with the receiver.
     collector.finish(&timeout_manager);

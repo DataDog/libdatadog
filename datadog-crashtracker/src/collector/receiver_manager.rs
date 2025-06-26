@@ -19,9 +19,9 @@ pub enum ReceiverError {
     #[error("No receiver path provided")]
     NoReceiverPath,
     #[error("Failed to connect to receiver: {0}")]
-    ConnectionError(#[from] std::io::Error),
+    ConnectionError(std::io::Error),
     #[error("Failed to create Unix domain socket pair: {0}")]
-    SocketPairError(#[from] nix::Error),
+    SocketPairError(nix::Error),
     #[error("Failed to create receiver process (fork error code: {0})")]
     ForkFailed(i32),
     #[error("No receiver config available")]
@@ -69,8 +69,10 @@ impl Receiver {
         config: &CrashtrackerReceiverConfig,
         prepared_exec: &PreparedExecve,
     ) -> Result<Self, ReceiverError> {
-        let stderr = open_file_or_quiet(config.stderr_filename.as_deref())?;
-        let stdout = open_file_or_quiet(config.stdout_filename.as_deref())?;
+        let stderr = open_file_or_quiet(config.stderr_filename.as_deref())
+            .map_err(ReceiverError::FileOpenError)?;
+        let stdout = open_file_or_quiet(config.stdout_filename.as_deref())
+            .map_err(ReceiverError::FileOpenError)?;
 
         // Create anonymous Unix domain socket pair for communication
         let (uds_parent, uds_child) = socket::socketpair(
@@ -78,7 +80,8 @@ impl Receiver {
             socket::SockType::Stream,
             None,
             socket::SockFlag::empty(),
-        )?;
+        )
+        .map_err(ReceiverError::SocketPairError)?;
         let (uds_parent, uds_child) = (uds_parent.into_raw_fd(), uds_child.into_raw_fd());
 
         // See ddcommon::unix_utils for platform-specific comments on alt_fork()
