@@ -41,7 +41,7 @@ fn test_spawning_trampoline_worker() {
 
     if !status.success() {
         eprintln!("{}", fs::read_to_string(stderr.as_os_str()).unwrap());
-        panic!("unexpected exit status = {:?}", status)
+        panic!("unexpected exit status = {status:?}")
     }
 
     assert_eq!("__dummy_mirror_test symbol_name", output);
