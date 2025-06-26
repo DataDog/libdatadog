@@ -23,7 +23,7 @@ pub fn emit_spans(w: &mut impl Write) -> Result<(), AtomicSetError> {
 
 pub fn insert_span(value: u128) -> Result<usize, AtomicSetError> {
     let non_zero = NonZeroU128::new(value)
-        .ok_or_else(|| AtomicSetError::NoSpace("Id of 0 not allowed".to_string()))?;
+        .ok_or_else(|| AtomicSetError::InvalidValue("Id of 0 not allowed".to_string()))?;
     ACTIVE_SPANS.insert(non_zero)
 }
 
@@ -46,8 +46,9 @@ pub fn emit_traces(w: &mut impl Write) -> Result<(), AtomicSetError> {
 }
 
 pub fn insert_trace(value: u128) -> Result<usize, AtomicSetError> {
-    let non_zero = NonZeroU128::new(value)
-        .ok_or_else(|| AtomicSetError::NoSpace("A span with id 0 is not allowed".to_string()))?;
+    let non_zero = NonZeroU128::new(value).ok_or_else(|| {
+        AtomicSetError::InvalidValue("A span with id 0 is not allowed".to_string())
+    })?;
     ACTIVE_TRACES.insert(non_zero)
 }
 

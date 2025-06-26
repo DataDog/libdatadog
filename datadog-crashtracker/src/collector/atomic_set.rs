@@ -15,33 +15,18 @@ use std::num::NonZeroU128;
 use std::ptr::null_mut;
 use std::sync::atomic::Ordering::SeqCst;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum AtomicSetError {
-    NoSpace(String),
+    #[error("No space available to store value")]
+    NoSpace,
+    #[error("Index {0} out of range")]
     IndexOutOfRange(usize),
+    #[error("Expected an element at index {0}")]
     NoElementAtIndex(usize),
-    IoError(std::io::Error),
-}
-
-impl std::fmt::Display for AtomicSetError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AtomicSetError::NoSpace(value) => write!(f, "No space to store value: {}", value),
-            AtomicSetError::IndexOutOfRange(idx) => write!(f, "Index {} out of range", idx),
-            AtomicSetError::NoElementAtIndex(idx) => {
-                write!(f, "Expected an element at index {}", idx)
-            }
-            AtomicSetError::IoError(err) => write!(f, "IO error: {}", err),
-        }
-    }
-}
-
-impl std::error::Error for AtomicSetError {}
-
-impl From<std::io::Error> for AtomicSetError {
-    fn from(err: std::io::Error) -> Self {
-        AtomicSetError::IoError(err)
-    }
+    #[error("Invalid value: {0}")]
+    InvalidValue(String),
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
 }
 
 pub(crate) type AtomicSpanSet<const LEN: usize> = AtomicMultiset<AtomicSpan, LEN>;
@@ -147,7 +132,7 @@ where
         if used >= self.set.len() / 2 {
             // We only fill to half full to get good amortized behaviour
             self.used.fetch_sub(1, SeqCst);
-            return Err(AtomicSetError::NoSpace(format!("{:?}", &value)));
+            return Err(AtomicSetError::NoSpace);
         }
 
         // Start at a random position.
@@ -177,7 +162,7 @@ where
                 return Ok(idx);
             }
         }
-        Err(AtomicSetError::NoSpace("This should be unreachable: we ensure that there was at least one empty slot before entering the loop".to_string()))
+        Err(AtomicSetError::NoSpace)
     }
 
     /// Best effort check if the array is definitely empty.
