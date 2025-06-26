@@ -46,7 +46,7 @@ fn test_spawning_trampoline_worker() {
 
     if !success {
         eprintln!("{stderr}");
-        panic!("unexpected exit status = {:?}", status)
+        panic!("unexpected exit status = {status:?}")
     }
 
     assert_eq!("stderr_works_as_expected", stderr.trim());
