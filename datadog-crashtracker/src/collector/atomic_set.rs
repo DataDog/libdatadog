@@ -23,8 +23,8 @@ pub enum AtomicSetError {
     IndexOutOfRange(usize),
     #[error("Expected an element at index {0}")]
     NoElementAtIndex(usize),
-    #[error("Invalid value: {0}")]
-    InvalidValue(String),
+    #[error("Zero is not allowed as a value")]
+    ZeroNotAllowed,
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 }

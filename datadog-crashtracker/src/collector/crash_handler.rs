@@ -176,7 +176,8 @@ fn handle_posix_signal_impl(
         metadata_string,
         sig_info,
         ucontext,
-    )?;
+    )
+    .map_err(anyhow::Error::new)?;
 
     // We're done. Wrap up our interaction with the receiver.
     collector.finish(&timeout_manager);
