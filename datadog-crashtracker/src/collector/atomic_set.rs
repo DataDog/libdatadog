@@ -383,23 +383,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_span_new() -> anyhow::Result<()> {
+    fn test_span_new() {
         let s: AtomicSpanSet<16> = AtomicSpanSet::new();
         assert_eq!(s.len(), 0);
-        assert_eq!(&s.values()?, &[]);
-        Ok(())
+        assert_eq!(&s.values().unwrap(), &[]);
     }
 
     #[test]
-    fn test_string_new() -> anyhow::Result<()> {
+    fn test_string_new() {
         let s: AtomicStringMultiset<16> = AtomicStringMultiset::new();
         assert_eq!(s.len(), 0);
-        assert!(s.values()?.is_empty());
-        Ok(())
+        assert!(s.values().unwrap().is_empty());
     }
 
     #[test]
-    fn test_string_ops() -> anyhow::Result<()> {
+    fn test_string_ops() {
         let mut expected = std::collections::BTreeMap::<String, usize>::new();
         let s = AtomicStringMultiset::<8>::new();
         compare(&s, &expected);
@@ -416,17 +414,16 @@ mod tests {
         insert_and_compare(&s, &mut expected, "d".to_string());
         remove_and_compare(&s, &mut expected, "c".to_string());
 
-        s.clear()?;
+        s.clear().unwrap();
         expected.clear();
         compare(&s, &expected);
         insert_and_compare(&s, &mut expected, "z".to_string());
         // Prevent memory leaks
-        s.clear()?;
-        Ok(())
+        s.clear().unwrap();
     }
 
     #[test]
-    fn test_span_ops() -> anyhow::Result<()> {
+    fn test_span_ops() {
         let mut expected = std::collections::BTreeMap::<NonZeroU128, usize>::new();
         let s: AtomicSpanSet<8> = AtomicSpanSet::<8>::new();
         compare(&s, &expected);
@@ -443,12 +440,10 @@ mod tests {
         insert_and_compare(&s, &mut expected, nz(12));
         remove_and_compare(&s, &mut expected, nz(19));
 
-        s.clear()?;
+        s.clear().unwrap();
         expected.clear();
         compare(&s, &expected);
         insert_and_compare(&s, &mut expected, nz(12));
-
-        Ok(())
     }
 
     fn nz(v: u128) -> NonZeroU128 {
@@ -500,9 +495,9 @@ mod tests {
         s: &AtomicMultiset<T, 8>,
         expected: &mut std::collections::BTreeMap<T::Item, usize>,
         v: T::Item,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), AtomicSetError> {
         let idx = expected.get(&v).unwrap();
-        s.remove(*idx).unwrap();
+        s.remove(*idx)?;
         expected.remove(&v);
         Ok(())
     }
@@ -521,7 +516,7 @@ mod tests {
         s: &AtomicMultiset<T, 8>,
         expected: &mut std::collections::BTreeMap<T::Item, usize>,
         v: T::Item,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), AtomicSetError> {
         expected.insert(v.clone(), s.insert(v)?);
         Ok(())
     }
