@@ -20,20 +20,20 @@ fn add_file_to_zip(
     options: &FileOptions<()>,
 ) -> Result<(), FlareError> {
     let mut file = File::open(file_path)
-        .map_err(|e| FlareError::ZipError(format!("Failed to open file {:?}: {}", file_path, e)))?;
+        .map_err(|e| FlareError::ZipError(format!("Failed to open file {file_path:?}: {e}")))?;
 
     let path = match relative_path {
         Some(relative_path) => relative_path.as_os_str(),
         None => file_path.file_name().ok_or_else(|| {
-            FlareError::ZipError(format!("Invalid file name for path: {:?}", file_path))
+            FlareError::ZipError(format!("Invalid file name for path: {file_path:?}"))
         })?,
     };
 
     zip.start_file(path.to_string_lossy().as_ref(), *options)
-        .map_err(|e| FlareError::ZipError(format!("Failed to add file to zip: {}", e)))?;
+        .map_err(|e| FlareError::ZipError(format!("Failed to add file to zip: {e}")))?;
 
     io::copy(&mut file, zip)
-        .map_err(|e| FlareError::ZipError(format!("Failed to write file to zip: {}", e)))?;
+        .map_err(|e| FlareError::ZipError(format!("Failed to write file to zip: {e}")))?;
 
     Ok(())
 }
@@ -70,7 +70,7 @@ fn zip_files(files: Vec<String>) -> Result<File, FlareError> {
 
     let file = temp_file
         .try_clone()
-        .map_err(|e| FlareError::ZipError(format!("Failed to clone temp file: {}", e)))?;
+        .map_err(|e| FlareError::ZipError(format!("Failed to clone temp file: {e}")))?;
 
     let mut zip = ZipWriter::new(file);
     let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
@@ -83,19 +83,19 @@ fn zip_files(files: Vec<String>) -> Result<File, FlareError> {
             // If it's a directory, iterate through all files
             for entry in WalkDir::new(&path) {
                 let entry = entry.map_err(|e| {
-                    FlareError::ZipError(format!("Failed to read directory entry: {}", e))
+                    FlareError::ZipError(format!("Failed to read directory entry: {e}"))
                 })?;
 
                 let file_path = entry.path();
                 if file_path.is_file() {
                     // Get the directory name to create a folder in the zip
                     let dir_name = path.file_name().ok_or_else(|| {
-                        FlareError::ZipError(format!("Invalid directory name for path: {:?}", path))
+                        FlareError::ZipError(format!("Invalid directory name for path: {path:?}"))
                     })?;
 
                     // Calculate the relative path from the base directory
                     let relative_path = file_path.strip_prefix(&path).map_err(|e| {
-                        FlareError::ZipError(format!("Failed to calculate relative path: {}", e))
+                        FlareError::ZipError(format!("Failed to calculate relative path: {e}"))
                     })?;
 
                     // Create the zip path with the directory name as prefix
@@ -117,7 +117,7 @@ fn zip_files(files: Vec<String>) -> Result<File, FlareError> {
 
     // Finalize the zip
     zip.finish()
-        .map_err(|e| FlareError::ZipError(format!("Failed to finalize zip file: {}", e)))?;
+        .map_err(|e| FlareError::ZipError(format!("Failed to finalize zip file: {e}")))?;
 
     Ok(temp_file)
 }

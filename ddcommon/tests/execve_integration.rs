@@ -53,15 +53,14 @@ fn test_prepared_execve_exec_echo_with_output() {
             WaitStatus::Exited(_, status) => {
                 assert_eq!(
                     status, 0,
-                    "Child did not exit successfully: status={}",
-                    status
+                    "Child did not exit successfully: status={status}"
                 );
             }
             WaitStatus::Signaled(_, sig, _) => {
-                panic!("Child terminated by signal: {:?}", sig);
+                panic!("Child terminated by signal: {sig:?}");
             }
             other => {
-                panic!("Unexpected wait status: {:?}", other);
+                panic!("Unexpected wait status: {other:?}");
             }
         }
         // Check the output
@@ -124,15 +123,14 @@ fn test_prepared_execve_exec_env_with_environment_variables() {
             WaitStatus::Exited(_, status) => {
                 assert_eq!(
                     status, 0,
-                    "Child did not exit successfully: status={}",
-                    status
+                    "Child did not exit successfully: status={status}"
                 );
             }
             WaitStatus::Signaled(_, sig, _) => {
-                panic!("Child terminated by signal: {:?}", sig);
+                panic!("Child terminated by signal: {sig:?}");
             }
             other => {
-                panic!("Unexpected wait status: {:?}", other);
+                panic!("Unexpected wait status: {other:?}");
             }
         }
         // Check the output contains our environment variables
@@ -196,15 +194,14 @@ fn test_prepared_execve_exec_with_complex_arguments() {
             WaitStatus::Exited(_, status) => {
                 assert_eq!(
                     status, 0,
-                    "Child did not exit successfully: status={}",
-                    status
+                    "Child did not exit successfully: status={status}"
                 );
             }
             WaitStatus::Signaled(_, sig, _) => {
-                panic!("Child terminated by signal: {:?}", sig);
+                panic!("Child terminated by signal: {sig:?}");
             }
             other => {
-                panic!("Unexpected wait status: {:?}", other);
+                panic!("Unexpected wait status: {other:?}");
             }
         }
         // Check the output contains all arguments
@@ -244,15 +241,14 @@ fn test_prepared_execve_exec_nonexistent_binary() {
                 // Should exit with 127 (command not found)
                 assert_eq!(
                     status, 127,
-                    "Child should have exited with 127, got {}",
-                    status
+                    "Child should have exited with 127, got {status}"
                 );
             }
             WaitStatus::Signaled(_, sig, _) => {
-                panic!("Child terminated by signal: {:?}", sig);
+                panic!("Child terminated by signal: {sig:?}");
             }
             other => {
-                panic!("Unexpected wait status: {:?}", other);
+                panic!("Unexpected wait status: {other:?}");
             }
         }
     }

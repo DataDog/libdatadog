@@ -19,10 +19,10 @@ pub enum FlareError {
 impl std::fmt::Display for FlareError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FlareError::NoFlare(msg) => write!(f, "No flare prepared to send: {}", msg),
-            FlareError::ListeningError(msg) => write!(f, "Listening failed with: {}", msg),
-            FlareError::ParsingError(msg) => write!(f, "Parsing failed with: {}", msg),
-            FlareError::ZipError(msg) => write!(f, "Creating the zip failed with: {}", msg),
+            FlareError::NoFlare(msg) => write!(f, "No flare prepared to send: {msg}"),
+            FlareError::ListeningError(msg) => write!(f, "Listening failed with: {msg}"),
+            FlareError::ParsingError(msg) => write!(f, "Parsing failed with: {msg}"),
+            FlareError::ZipError(msg) => write!(f, "Creating the zip failed with: {msg}"),
         }
     }
 }

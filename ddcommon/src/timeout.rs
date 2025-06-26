@@ -110,7 +110,7 @@ mod tests {
         let timeout = Duration::from_secs(1);
         let manager = TimeoutManager::new(timeout);
 
-        let debug_str = format!("{:?}", manager);
+        let debug_str = format!("{manager:?}");
 
         // Debug output should contain the expected fields
         assert!(debug_str.contains("TimeoutManager"));

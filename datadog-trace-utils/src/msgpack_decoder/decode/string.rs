@@ -19,7 +19,7 @@ pub fn read_string_ref_nomut(buf: &[u8]) -> Result<(&str, &[u8]), DecodeError> {
         DecodeStringError::InvalidMarkerRead(e) => DecodeError::InvalidFormat(e.to_string()),
         DecodeStringError::InvalidDataRead(e) => DecodeError::InvalidConversion(e.to_string()),
         DecodeStringError::TypeMismatch(marker) => {
-            DecodeError::InvalidType(format!("Type mismatch at marker {:?}", marker))
+            DecodeError::InvalidType(format!("Type mismatch at marker {marker:?}"))
         }
         DecodeStringError::InvalidUtf8(_, e) => DecodeError::Utf8Error(e.to_string()),
         _ => DecodeError::IOError,

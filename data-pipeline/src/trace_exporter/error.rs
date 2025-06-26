@@ -40,12 +40,12 @@ pub enum BuilderErrorKind {
 impl Display for BuilderErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BuilderErrorKind::InvalidUri(msg) => write!(f, "Invalid URI: {}", msg),
+            BuilderErrorKind::InvalidUri(msg) => write!(f, "Invalid URI: {msg}"),
             BuilderErrorKind::InvalidTelemetryConfig => {
                 write!(f, "Invalid telemetry configuration")
             }
             BuilderErrorKind::InvalidConfiguration(msg) => {
-                write!(f, "Invalid configuration: {}", msg)
+                write!(f, "Invalid configuration: {msg}")
             }
         }
     }
@@ -63,7 +63,7 @@ impl Display for InternalErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             InternalErrorKind::InvalidWorkerState(msg) => {
-                write!(f, "Invalid worker state: {}", msg)
+                write!(f, "Invalid worker state: {msg}")
             }
         }
     }

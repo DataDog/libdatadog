@@ -65,7 +65,7 @@ impl FromStr for SpanLinkKey {
             "tracestate" => Ok(SpanLinkKey::Tracestate),
             "flags" => Ok(SpanLinkKey::Flags),
             _ => Err(DecodeError::InvalidFormat(
-                format!("Invalid span link key: {}", s).to_owned(),
+                format!("Invalid span link key: {s}").to_owned(),
             )),
         }
     }

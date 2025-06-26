@@ -222,7 +222,7 @@ impl DatadogTestAgent {
             .await
             .unwrap();
 
-        format!("http://{}:{}", container_host, container_port)
+        format!("http://{container_host}:{container_port}")
     }
 
     /// Constructs the URI for a provided endpoint of the Datadog Test Agent by concatenating the
@@ -241,11 +241,8 @@ impl DatadogTestAgent {
     pub async fn get_uri_for_endpoint(&self, endpoint: &str, snapshot_token: Option<&str>) -> Uri {
         let base_uri_string = self.get_base_uri_string().await;
         let uri_string = match snapshot_token {
-            Some(token) => format!(
-                "{}/{}?test_session_token={}",
-                base_uri_string, endpoint, token
-            ),
-            None => format!("{}/{}", base_uri_string, endpoint),
+            Some(token) => format!("{base_uri_string}/{endpoint}?test_session_token={token}"),
+            None => format!("{base_uri_string}/{endpoint}"),
         };
 
         Uri::from_str(&uri_string).expect("Invalid URI")
@@ -265,7 +262,7 @@ impl DatadogTestAgent {
                 .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
                 .collect::<Vec<_>>()
                 .join("&");
-            format!("?{}", query)
+            format!("?{query}")
         } else {
             String::new()
         };
@@ -323,8 +320,7 @@ impl DatadogTestAgent {
 
         assert_eq!(
             status_code, 200,
-            "Expected status 200, but got {}. Response body: {}",
-            status_code, body_string
+            "Expected status 200, but got {status_code}. Response body: {body_string}"
         );
     }
 
@@ -495,18 +491,15 @@ impl DatadogTestAgent {
                         return Ok(response);
                     } else {
                         println!(
-                            "Request failed with status code: {}. Request attempt {} of {}",
-                            response.status(),
-                            attempts,
-                            max_attempts
+                            "Request failed with status code: {}. Request attempt {attempts} of {max_attempts}",
+                            response.status()
                         );
                         last_response = Ok(response);
                     }
                 }
                 Err(e) => {
                     println!(
-                        "Request failed with error: {}. Request attempt {} of {}",
-                        e, attempts, max_attempts
+                        "Request failed with error: {e}. Request attempt {attempts} of {max_attempts}"
                     );
                     last_response = Err(e)
                 }

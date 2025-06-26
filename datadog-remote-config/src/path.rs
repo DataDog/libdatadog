@@ -38,7 +38,7 @@ impl Display for RemoteConfigProduct {
             RemoteConfigProduct::AsmFeatures => "ASM_FEATURES",
             RemoteConfigProduct::LiveDebugger => "LIVE_DEBUGGING",
         };
-        write!(f, "{}", str)
+        write!(f, "{str}")
     }
 }
 

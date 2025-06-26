@@ -332,8 +332,8 @@ mod tests {
         let expected_meta: HashMap<String, String> = (0..20)
             .map(|i| {
                 (
-                    format!("key {}", i).to_owned(),
-                    format!("value {}", i).to_owned(),
+                    format!("key {i}").to_owned(),
+                    format!("value {i}").to_owned(),
                 )
             })
             .collect();
@@ -381,9 +381,8 @@ mod tests {
 
     #[test]
     fn test_decoder_metrics_map16_success() {
-        let expected_metrics: HashMap<String, f64> = (0..20)
-            .map(|i| (format!("metric{}", i), i as f64))
-            .collect();
+        let expected_metrics: HashMap<String, f64> =
+            (0..20).map(|i| (format!("metric{i}"), i as f64)).collect();
 
         let mut span = create_test_json_span(1, 2, 0, 0, false);
         span["metrics"] = json!(expected_metrics.clone());

@@ -150,7 +150,7 @@ impl Logger {
                     }
                 }
             })
-            .map_err(|e| Error::from(format!("Failed to update logger configuration: {}", e)))?;
+            .map_err(|e| Error::from(format!("Failed to update logger configuration: {e}")))?;
 
         Ok(())
     }
@@ -185,7 +185,7 @@ impl Logger {
             .modify(|filter| {
                 *filter = new_filter;
             })
-            .map_err(|e| Error::from(format!("Failed to update log level: {}", e)))?;
+            .map_err(|e| Error::from(format!("Failed to update log level: {e}")))?;
 
         Ok(())
     }
@@ -226,7 +226,7 @@ fn file_layer(
     Error,
 > {
     let writer = FileWriter::new(config)
-        .map_err(|e| Error::from(format!("Failed to create file writer: {}", e)))?;
+        .map_err(|e| Error::from(format!("Failed to create file writer: {e}")))?;
 
     Ok(fmt::layer()
         .with_writer(writer)
@@ -262,7 +262,7 @@ pub fn logger_configure_file(file_config: FileConfig) -> Result<(), Error> {
     let logger_mutex = &LOGGER;
     let mut logger_guard = logger_mutex
         .lock()
-        .map_err(|e| Error::from(format!("Failed to acquire logger lock: {}", e)))?;
+        .map_err(|e| Error::from(format!("Failed to acquire logger lock: {e}")))?;
 
     if let Some(logger) = logger_guard.as_mut() {
         logger.configure_file(file_config)
@@ -281,7 +281,7 @@ pub fn logger_disable_file() -> Result<(), Error> {
     let logger_mutex = &LOGGER;
     let mut logger_guard = logger_mutex
         .lock()
-        .map_err(|e| Error::from(format!("Failed to acquire logger lock: {}", e)))?;
+        .map_err(|e| Error::from(format!("Failed to acquire logger lock: {e}")))?;
 
     if let Some(logger) = logger_guard.as_mut() {
         logger.disable_file()
@@ -298,7 +298,7 @@ pub fn logger_configure_std(std_config: StdConfig) -> Result<(), Error> {
     let logger_mutex = &LOGGER;
     let mut logger_guard = logger_mutex
         .lock()
-        .map_err(|e| Error::from(format!("Failed to acquire logger lock: {}", e)))?;
+        .map_err(|e| Error::from(format!("Failed to acquire logger lock: {e}")))?;
 
     if let Some(logger) = logger_guard.as_mut() {
         logger.configure_std(std_config)
@@ -317,7 +317,7 @@ pub fn logger_disable_std() -> Result<(), Error> {
     let logger_mutex = &LOGGER;
     let mut logger_guard = logger_mutex
         .lock()
-        .map_err(|e| Error::from(format!("Failed to acquire logger lock: {}", e)))?;
+        .map_err(|e| Error::from(format!("Failed to acquire logger lock: {e}")))?;
 
     if let Some(logger) = logger_guard.as_mut() {
         logger.disable_std()
@@ -334,7 +334,7 @@ pub fn logger_set_log_level(log_level: LogEventLevel) -> Result<(), Error> {
     let logger_mutex = &LOGGER;
     let logger_guard = logger_mutex
         .lock()
-        .map_err(|e| Error::from(format!("Failed to acquire logger lock: {}", e)))?;
+        .map_err(|e| Error::from(format!("Failed to acquire logger lock: {e}")))?;
 
     if let Some(logger) = logger_guard.as_ref() {
         logger.set_log_level(log_level)
@@ -406,7 +406,7 @@ mod tests {
 
         fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
             let field_name = field.name();
-            let field_value = format!("{:?}", value);
+            let field_value = format!("{value:?}");
             self.all_fields
                 .insert(field_name.to_string(), field_value.clone());
 
@@ -553,8 +553,7 @@ mod tests {
 
         assert!(
             log_path.exists(),
-            "Log file should be created at {:?}",
-            log_path
+            "Log file should be created at {log_path:?}"
         );
 
         // add delay to ensure file is written
@@ -621,8 +620,7 @@ mod tests {
         // Verify that the log file was created
         assert!(
             log_path.exists(),
-            "Log file should be created at {:?}",
-            log_path
+            "Log file should be created at {log_path:?}"
         );
 
         drop(logger);

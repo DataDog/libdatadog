@@ -258,8 +258,7 @@ mod tests {
             let actual = valid_card_prefix(num);
             assert_eq!(
                 actual, expected,
-                "card prefix '{}' was expected to be {:?} but got {:?}",
-                num, expected, actual
+                "card prefix '{num}' was expected to be {expected:?} but got {actual:?}"
             )
         }
     }
@@ -280,8 +279,7 @@ mod tests {
         for invalid_card in invalid_cards {
             assert!(
                 !is_card_number(invalid_card, false),
-                "invalid card '{}' was detected as valid",
-                invalid_card
+                "invalid card '{invalid_card}' was detected as valid"
             );
         }
     }
@@ -418,8 +416,7 @@ mod tests {
         for valid_card in valid_cards {
             assert!(
                 is_card_number(valid_card, false),
-                "valid card '{}' was detected as invalid",
-                valid_card
+                "valid card '{valid_card}' was detected as invalid"
             );
         }
     }
