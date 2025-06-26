@@ -88,9 +88,9 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 
 /// Fetch the info endpoint and update an ArcSwap keeping it up-to-date.
 ///
-/// Once the fetcher has been created you can get an Arc of the config by calling
-/// [`crate::agent_info::get_agent_info`]. You can then start the run method, the fetcher will
-/// update the global info state based on the given refresh interval.
+/// Once the run method has been started, the fetcher will
+/// update the global info state based on the given refresh interval. You can access the current
+/// state with [`crate::agent_info::get_agent_info`]
 ///
 /// # Response observer
 /// When the fetcher is created it also returns a [`ResponseObserver`] which can be used to check
@@ -133,7 +133,7 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 pub struct AgentInfoFetcher {
     info_endpoint: Endpoint,
     refresh_interval: Duration,
-    trigger_rx: mpsc::Receiver<String>,
+    trigger_rx: Option<mpsc::Receiver<()>>,
 }
 
 impl AgentInfoFetcher {
@@ -150,7 +150,7 @@ impl AgentInfoFetcher {
         let fetcher = Self {
             info_endpoint,
             refresh_interval,
-            trigger_rx,
+            trigger_rx: Some(trigger_rx),
         };
 
         let response_observer = ResponseObserver::new(trigger_tx);
@@ -168,49 +168,45 @@ impl Worker for AgentInfoFetcher {
         // Skip the first fetch if some info is present to avoid calling the /info endpoint
         // at fork for heavy-forking environment.
         if AGENT_INFO_CACHE.load().is_none() {
-            self.fetch_and_update(None).await;
+            self.fetch_and_update().await;
         }
 
         // Main loop waiting for a trigger event or the end of the refresh interval to trigger the
         // fetch.
         loop {
-            tokio::select! {
-                // Wait for manual trigger (new state from headers)
-                new_state = self.trigger_rx.recv() => {
-                    if let Some(state) = new_state {
-                        let current_info = AGENT_INFO_CACHE.load();
-                        let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
-                        // Check if this state is different from current before fetching
-                        if current_hash != Some(&state) {
-                            self.fetch_and_update(current_hash).await;
+            match &mut self.trigger_rx {
+                Some(trigger_rx) => {
+                    tokio::select! {
+                        // Wait for manual trigger (new state from headers)
+                        trigger = trigger_rx.recv() => {
+                            if let Some(_) = trigger {
+                                self.fetch_and_update().await;
+                            } else {
+                                // The channel has been closed
+                                self.trigger_rx = None;
+                            }
                         }
-                    } else {
-                        // The channel has been closed and we can rely only on timed fetch
-                        break;
-                    }
+                        // Regular periodic fetch timer
+                        _ = sleep(self.refresh_interval) => {
+                            self.fetch_and_update().await;
+                        }
+                    };
                 }
-                // Regular periodic fetch timer
-                _ = sleep(self.refresh_interval) => {
-                    let current_info = AGENT_INFO_CACHE.load();
-                    let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
-                    self.fetch_and_update(current_hash).await;
+                None => {
+                    // If the trigger channel is closed we only use timed fetch.
+                    sleep(self.refresh_interval).await;
+                    self.fetch_and_update().await;
                 }
-            };
-        }
-
-        // Backup loop used if the trigger channel is closed
-        loop {
-            sleep(self.refresh_interval).await;
-            let current_info = AGENT_INFO_CACHE.load();
-            let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
-            self.fetch_and_update(current_hash).await;
+            }
         }
     }
 }
 
 impl AgentInfoFetcher {
     /// Fetch agent info and update cache if needed
-    async fn fetch_and_update(&self, current_hash: Option<&str>) {
+    async fn fetch_and_update(&self) {
+        let current_info = AGENT_INFO_CACHE.load();
+        let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
         let res = fetch_info_with_state(&self.info_endpoint, current_hash).await;
         match res {
             Ok(FetchInfoStatus::NewState(new_info)) => {
@@ -233,12 +229,12 @@ impl AgentInfoFetcher {
 /// sends trigger messages to the agent info fetcher when a new state is detected.
 #[derive(Debug, Clone)]
 pub struct ResponseObserver {
-    trigger_tx: mpsc::Sender<String>,
+    trigger_tx: mpsc::Sender<()>,
 }
 
 impl ResponseObserver {
     /// Create a new ResponseObserver with the given channel sender.
-    pub fn new(trigger_tx: mpsc::Sender<String>) -> Self {
+    pub fn new(trigger_tx: mpsc::Sender<()>) -> Self {
         Self { trigger_tx }
     }
 
@@ -252,7 +248,7 @@ impl ResponseObserver {
             if let Ok(state_str) = agent_state.to_str() {
                 let current_state = AGENT_INFO_CACHE.load();
                 if current_state.as_ref().map(|s| s.state_hash.as_str()) != Some(state_str) {
-                    match self.trigger_tx.try_send(state_str.to_string()) {
+                    match self.trigger_tx.try_send(()) {
                         Ok(_) => {}
                         Err(mpsc::error::TrySendError::Full(_)) => {
                             debug!(
