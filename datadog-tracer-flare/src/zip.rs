@@ -208,19 +208,12 @@ mod tests {
         let zip_file = result.unwrap();
         let mut archive = zip::ZipArchive::new(zip_file).unwrap();
 
+        let dir_file = Path::new("dir").join("subfile.txt");
+        let subdir_file = Path::new("dir").join("subdir").join("subsubfile.txt");
+
         assert!(archive.by_name("test.txt").is_ok());
-        assert!(archive
-            .by_name(Path::new("dir").join("subfile.txt").to_str().unwrap())
-            .is_ok());
-        assert!(archive
-            .by_name(
-                Path::new("dir")
-                    .join("subdir")
-                    .join("subsubfile.txt")
-                    .to_str()
-                    .unwrap()
-            )
-            .is_ok());
+        assert!(archive.by_name(dir_file.to_str().unwrap()).is_ok());
+        assert!(archive.by_name(subdir_file.to_str().unwrap()).is_ok());
 
         let mut content = String::new();
         archive
@@ -232,7 +225,7 @@ mod tests {
 
         content.clear();
         archive
-            .by_name("dir/subfile.txt")
+            .by_name(dir_file.to_str().unwrap())
             .unwrap()
             .read_to_string(&mut content)
             .unwrap();
@@ -240,7 +233,7 @@ mod tests {
 
         content.clear();
         archive
-            .by_name("dir/subdir/subsubfile.txt")
+            .by_name(subdir_file.to_str().unwrap())
             .unwrap()
             .read_to_string(&mut content)
             .unwrap();
