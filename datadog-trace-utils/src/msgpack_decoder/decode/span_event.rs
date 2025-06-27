@@ -175,6 +175,21 @@ fn read_attributes_array<'a>(
         return Ok(Vec::default());
     }
 
+    let values_map_size = rmp::decode::read_map_len(buf).map_err(|_| {
+        DecodeError::InvalidType("Unable to get map len for attribute size".to_owned())
+    })?;
+
+    if values_map_size != 1 {
+        return Err(DecodeError::InvalidFormat(
+            "Expecting exactly one entry in the array attribute map".to_owned(),
+        ));
+    }
+
+    let values_key = read_string_ref(buf)?;
+    if values_key != "values" {
+        return Err(DecodeError::InvalidType("Expected a string key values".to_owned()))
+    }
+
     let len = rmp::decode::read_array_len(buf).map_err(|_| {
         DecodeError::InvalidType("Unable to get array len for event attributes".to_owned())
     })?;
@@ -252,7 +267,7 @@ fn decode_attribute_array<'a>(
 ) -> Result<AttributeArrayValueSlice<'a>, DecodeError> {
     let mut attribute: Option<AttributeArrayValueSlice> = None;
     let attribute_size = rmp::decode::read_map_len(buf).map_err(|_| {
-        DecodeError::InvalidType("Unable to get map len for attribute size".to_owned())
+        DecodeError::InvalidType("Unable to get map len for attribute value size".to_owned())
     })?;
 
     if attribute_size != 2 {
