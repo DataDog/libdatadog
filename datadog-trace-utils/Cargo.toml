@@ -7,7 +7,7 @@ license.workspace = true
 autobenches = false
 
 [lib]
-bench = false
+bench = true
 
 [[bench]]
 name = "main"
