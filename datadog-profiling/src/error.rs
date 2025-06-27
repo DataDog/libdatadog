@@ -1,0 +1,135 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use crate::collections::string_table::StringTableError;
+use std::collections::TryReserveError;
+use std::{fmt, io};
+
+/// Represents errors that occur in the profiling API.
+///
+/// The profiling API returns errors on allocation failures. This means the
+/// error type needs to avoid allocating, or else it's possible to hit an
+/// allocation error that it can't be reported, because the error also cannot
+/// allocate.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub enum ProfileError {
+    /// A parameter was incorrect, e.g., a null pointer was provided.
+    InvalidInput,
+    /// Entity not found.
+    NotFound,
+    /// Failed to allocate memory needed for the operation.
+    OutOfMemory,
+    /// The underlying container or storage is full. This is different from
+    /// out of memory, because it's caused by some other limitation, such as
+    /// the size being limited to 32-bit.
+    StorageFull,
+    /// Some other error. Try to categorize all the errors, but since some
+    /// things use [`io::Error`], there may be uncategorized errors.
+    Other,
+}
+
+impl ProfileError {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            ProfileError::InvalidInput => "invalid input",
+            ProfileError::NotFound => "not found",
+            ProfileError::OutOfMemory => "out of memory",
+            ProfileError::StorageFull => "storage full",
+            ProfileError::Other => "unknown error",
+        }
+    }
+}
+
+impl fmt::Display for ProfileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_str().fmt(f)
+    }
+}
+
+impl std::error::Error for ProfileError {}
+
+impl From<io::Error> for ProfileError {
+    #[cold]
+    fn from(error: io::Error) -> Self {
+        match error.kind() {
+            io::ErrorKind::InvalidInput => ProfileError::InvalidInput,
+            io::ErrorKind::NotFound => ProfileError::NotFound,
+            io::ErrorKind::OutOfMemory => ProfileError::OutOfMemory,
+            io::ErrorKind::StorageFull | io::ErrorKind::WriteZero => ProfileError::StorageFull,
+            _ => ProfileError::Other,
+        }
+    }
+}
+
+impl From<StringTableError> for ProfileError {
+    #[cold]
+    fn from(err: StringTableError) -> Self {
+        match err {
+            StringTableError::NotFound => ProfileError::NotFound,
+            StringTableError::OutOfMemory => ProfileError::OutOfMemory,
+            StringTableError::StorageFull => ProfileError::StorageFull,
+            StringTableError::InvalidInput => ProfileError::InvalidInput,
+        }
+    }
+}
+
+impl From<TryReserveError> for ProfileError {
+    #[cold]
+    fn from(_: TryReserveError) -> Self {
+        Self::OutOfMemory
+    }
+}
+
+impl From<hashbrown::TryReserveError> for ProfileError {
+    #[cold]
+    fn from(err: hashbrown::TryReserveError) -> Self {
+        match err {
+            hashbrown::TryReserveError::CapacityOverflow => ProfileError::StorageFull,
+            hashbrown::TryReserveError::AllocError { .. } => ProfileError::OutOfMemory,
+        }
+    }
+}
+
+impl From<datadog_alloc::AllocError> for ProfileError {
+    #[cold]
+    fn from(_: datadog_alloc::AllocError) -> Self {
+        Self::OutOfMemory
+    }
+}
+
+/// A result for operations that return a ProfileError on failure, and nothing
+/// on success.
+#[repr(C)]
+#[derive(Debug)]
+pub enum ProfileVoidResult {
+    Ok,
+    Err(ProfileError),
+}
+
+impl From<ProfileError> for ProfileVoidResult {
+    #[cold]
+    fn from(error: ProfileError) -> Self {
+        ProfileVoidResult::Err(error)
+    }
+}
+
+impl From<Result<(), ProfileError>> for ProfileVoidResult {
+    #[cold]
+    fn from(result: Result<(), ProfileError>) -> Self {
+        match result {
+            Ok(_) => ProfileVoidResult::Ok,
+            Err(err) => ProfileVoidResult::Err(err),
+        }
+    }
+}
+
+impl From<ProfileVoidResult> for Result<(), ProfileError> {
+    #[cold]
+    fn from(result: ProfileVoidResult) -> Self {
+        match result {
+            ProfileVoidResult::Ok => Ok(()),
+            ProfileVoidResult::Err(err) => Err(err),
+        }
+    }
+}

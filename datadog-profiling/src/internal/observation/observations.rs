@@ -111,8 +111,8 @@ impl AggregatedObservations {
         );
 
         if let Some(v) = self.data.get_mut(&sample) {
-            // SAFETY: This method is only way to build one of these, and we already checked the
-            // length matches.
+            // SAFETY: This method is only way to build one of these, and we already checked
+            // the length matches.
             unsafe { v.as_mut_slice(self.obs_len) }
                 .iter_mut()
                 .zip(values)
@@ -451,8 +451,9 @@ mod tests {
 
     #[test]
     fn fuzz_with_same_obs_len() {
-        // TODO: Figure out sane limits for these numbers. We don't simply want to go up to
-        // usize::MAX as that would result in crashes with too large Vec allocations.
+        // TODO: Figure out sane limits for these numbers. We don't simply want to go up
+        // to usize::MAX as that would result in crashes with too large Vec
+        // allocations.
         let obs_len_gen = if cfg!(miri) {
             1..=16usize
         } else {
@@ -469,10 +470,11 @@ mod tests {
             1..=1024usize
         };
 
-        // Generates 1. length of observations, 2. number of samples with timestamps, 3. number of
-        // samples without timestamps. Then, 2 and 3 are used to generate the samples vectors
-        // The body of this test simply adds these samples to the Observations and then uses the
-        // iterator to check that the samples are the same as added.
+        // Generates 1. length of observations, 2. number of samples with timestamps, 3.
+        // number of samples without timestamps. Then, 2 and 3 are used to
+        // generate the samples vectors The body of this test simply adds these
+        // samples to the Observations and then uses the iterator to check that
+        // the samples are the same as added.
         bolero::check!()
             .with_generator((obs_len_gen, num_ts_samples_gen, num_samples_gen))
             .and_then(|(observations_len, num_ts_samples, num_samples)| {

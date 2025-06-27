@@ -1,6 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub use ::prost::Message;
+
 #[derive(Eq, Hash, PartialEq, ::prost::Message)]
 pub struct Profile {
     #[prost(message, repeated, tag = "1")]

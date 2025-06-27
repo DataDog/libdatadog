@@ -45,7 +45,7 @@ impl<'a> From<&'a Function> for api::Function<'a> {
 #[derive(Clone, Debug, TypeGenerator)]
 enum LabelValue {
     Str(Box<str>),
-    Num { num: i64, num_unit: Box<str> },
+    Num(i64),
 }
 
 impl Default for LabelValue {
@@ -54,14 +54,12 @@ impl Default for LabelValue {
     }
 }
 
-// Note that Hash, Eq, Ord, etc. are implemented manually by converting the
-// Label into an api::Label calling its hash, eq, cmp, etc. functions. This
-// is a convenient way to have a consistent implementation while also taking
-// into account that these should be considered the same:
-//      LabelValue::Num {                   LabelValue::Str(Box::from(""))
-//          num: 0,
-//          num_unit: Box::from(""),
-//      }
+/// Note that Hash, Eq, Ord, etc. are implemented manually by converting the
+/// Label into an [`api::Label`] calling its hash, eq, cmp, etc. functions.
+/// This is a convenient way to have a consistent implementation while also
+/// taking into account that these should be considered the same:
+/// - `LabelValue::Num(0)`
+/// - `LabelValue::Str(Box::from(""))`
 #[derive(Clone, Debug, Default, TypeGenerator)]
 struct Label {
     key: Box<str>,
@@ -88,15 +86,15 @@ impl From<&(Box<str>, LabelValue)> for Label {
 
 impl<'a> From<&'a Label> for api::Label<'a> {
     fn from(label: &'a Label) -> Self {
-        let (str, num, num_unit) = match &label.value {
-            LabelValue::Str(str) => (str.deref(), 0, ""),
-            LabelValue::Num { num, num_unit } => ("", *num, num_unit.deref()),
+        let (str, num) = match &label.value {
+            LabelValue::Str(str) => (str.deref(), 0),
+            LabelValue::Num(num) => ("", *num),
         };
         Self {
             key: &label.key,
             str,
             num,
-            num_unit,
+            ..Self::default()
         }
     }
 }
@@ -334,8 +332,9 @@ fn assert_samples_eq(
         let mut owned_locations = Vec::new();
         for loc_id in sample.location_ids.iter() {
             // Subtract 1 because when creating pprof location ids, we use
-            // `small_non_zero_pprof_id()` function which guarantees that the id stored in pprof
-            // is +1 of the index in the vector of Locations in internal::Profile.
+            // `small_non_zero_pprof_id()` function which guarantees that the id stored in
+            // pprof is +1 of the index in the vector of Locations in
+            // internal::Profile.
             let location = &profile.locations[*loc_id as usize - 1];
 
             // PHP, Python, and Ruby don't use mappings, so allow for zero id.
@@ -388,7 +387,7 @@ fn assert_samples_eq(
                     LabelValue::Str(str) => {
                         panic!("Unexpected label value of type str for trace endpoint: {str}")
                     }
-                    LabelValue::Num { num, .. } => *num as u64,
+                    LabelValue::Num(num) => *num as u64,
                 };
                 let expected_str = endpoint_mappings
                     .get(&num)
@@ -404,12 +403,8 @@ fn assert_samples_eq(
                     value: LabelValue::Str(str),
                 });
             } else {
-                let num = label.num;
-                let num_unit = string_table_fetch_owned(profile, label.num_unit);
-                owned_labels.push(Label {
-                    key,
-                    value: LabelValue::Num { num, num_unit },
-                });
+                let value = LabelValue::Num(label.num);
+                owned_labels.push(Label { key, value });
             }
         }
 
@@ -472,10 +467,7 @@ fn fuzz_failure_001() {
                 },
                 Label {
                     key: Box::from("local root span id"),
-                    value: LabelValue::Num {
-                        num: 281474976710656,
-                        num_unit: Box::from(""),
-                    },
+                    value: LabelValue::Num(281474976710656),
                 },
             ],
         },

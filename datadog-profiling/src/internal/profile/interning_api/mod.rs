@@ -127,7 +127,8 @@ impl Profile {
         labels: GenerationalId<LabelSetId>,
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<()> {
-        // TODO: validate sample labels? Or should we do that when we make the label set?
+        // TODO: validate sample labels? Or should we do that when we make the label
+        // set?
         anyhow::ensure!(
             values.len() == self.sample_types.len(),
             "expected {} sample types, but sample had {} sample types",
@@ -178,19 +179,20 @@ impl Profile {
     }
 
     // Simple synchronization between samples and profile rotation/export.
-    // Interning a sample may require several calls to the profiler to intern intermediate values,
-    // which are not inherently atomic.  Since these intermediate values are tied to a particular
-    // profiler generation, and are invalidated when the generation changes, some coordination must
+    // Interning a sample may require several calls to the profiler to intern
+    // intermediate values, which are not inherently atomic.  Since these
+    // intermediate values are tied to a particular profiler generation, and are
+    // invalidated when the generation changes, some coordination must
     // occur between sampling and profile rotation/export.
     // When the generation changes, one of three things can happen:
     // 1. The sample can be dropped.
     // 2. The sample can be recreated and interned into the new profile.
     // 3. The profile rotation should wait until the sampling operation is complete.
     //
-    // This API provides a mechanism for samples to pause rotation until they complete, and
-    // for samples to be notified that a rotation is in progress so they can wait to begin.
-    // There are probably better ways, and maybe we should have a notification mechanism.
-    // But for now this should be enough.
+    // This API provides a mechanism for samples to pause rotation until they
+    // complete, and for samples to be notified that a rotation is in progress
+    // so they can wait to begin. There are probably better ways, and maybe we
+    // should have a notification mechanism. But for now this should be enough.
     const FLAG: u64 = u32::MAX as u64;
 
     /// Prevent any new samples from starting.

@@ -65,9 +65,10 @@ impl<T: Item> Dedup<T> for FxIndexSet<T> {
         <T as Item>::Id::from_offset(id)
     }
 
-    /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids being present in
-    /// emitted profiles. It's not likely that the incorrect ids are coming from the underlying
-    /// collection, but we're doing extra checks here so that if we see incorrect ids again,
+    /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids
+    /// being present in emitted profiles. It's not likely that the
+    /// incorrect ids are coming from the underlying collection, but we're
+    /// doing extra checks here so that if we see incorrect ids again,
     /// we are 100% sure they were not introduced at this stage.
     fn checked_dedup(&mut self, item: T) -> anyhow::Result<<T as Item>::Id> {
         let (id, _) = self.insert_full(item);

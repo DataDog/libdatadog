@@ -27,6 +27,7 @@ datadog-alloc = { path = "../datadog-alloc" }
 datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["prost_impls"] }
 ddcommon = {path = "../ddcommon" }
 futures = { version = "0.3", default-features = false }
+hashbrown = { version = "0.15"}
 http = "1.0"
 hyper = { version = "1.6", features = ["http1", "client"] }
 http-body-util = "0.1"
@@ -39,6 +40,7 @@ rustc-hash = { version = "1.1", default-features = false }
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
 target-triple = "0.1.4"
+thiserror = "1"
 tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
 

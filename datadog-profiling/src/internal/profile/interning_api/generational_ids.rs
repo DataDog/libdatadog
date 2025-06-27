@@ -13,7 +13,8 @@ pub struct Generation {
 impl Generation {
     const IMMORTAL: Self = Self { id: u64::MAX };
 
-    /// The only way to create a generation.  Guaranteed to give a new value each time.
+    /// The only way to create a generation.  Guaranteed to give a new value
+    /// each time.
     pub fn new() -> Self {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         Self {

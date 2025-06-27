@@ -88,9 +88,9 @@ use std::io::{self, Write};
 /// of elements in the array.
 ///
 /// [Condensed Reference Card]: https://protobuf.dev/programming-guides/encoding/#cheat-sheet
-#[derive(Copy, Clone, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Default, Eq, PartialEq, Hash)]
 #[repr(transparent)]
-#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
+#[cfg_attr(feature = "bolero", derive(bolero::generator::TypeGenerator))]
 pub struct Record<P: Value, const F: u32, const O: bool> {
     /// The value of the record. This is pub because of a quirk in Rust's
     /// orphan rules which prevent implementing `From<Record<P,...> for P`.
@@ -128,7 +128,7 @@ pub unsafe trait Value: Default + Eq {
     ///                size encoded as int32 varint
     /// ```
     ///
-    /// Calculate the number of bytes for `(message |  string | packed)` only.
+    /// Calculate the number of bytes for `(message | string | packed)` only.
     ///
     /// For a varint, returns between 1 and 10 bytes for the number of bytes
     /// used to encode the varint.

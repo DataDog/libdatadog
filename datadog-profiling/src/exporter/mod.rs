@@ -173,13 +173,13 @@ impl ProfileExporter {
     ///
     /// Consumes the `EncodedProfile`, which is unavailable for use after.
     ///
-    /// For details on the `internal_metadata` parameter, please reference the Datadog-internal
-    /// "RFC: Attaching internal metadata to pprof profiles".
-    /// If you use this parameter, please update the RFC with your use-case, so we can keep track of
-    /// how this is getting used.
+    /// For details on the `internal_metadata` parameter, please reference the
+    /// Datadog-internal "RFC: Attaching internal metadata to pprof
+    /// profiles". If you use this parameter, please update the RFC with
+    /// your use-case, so we can keep track of how this is getting used.
     ///
-    /// For details on the `info` parameter, please reference the Datadog-internal
-    /// "RFC: Pprof System Info Support".
+    /// For details on the `info` parameter, please reference the
+    /// Datadog-internal "RFC: Pprof System Info Support".
     pub fn build(
         &self,
         profile: EncodedProfile,
@@ -283,20 +283,22 @@ impl ProfileExporter {
             let mut encoder = FrameEncoder::new(buffer);
             encoder.write_all(file.bytes)?;
             let encoded = encoder.finish()?;
-            /* The Datadog RFC examples strip off the file extension, but the exact behavior
-             * isn't specified. This does the simple thing of using the filename
-             * without modification for the form name because intake does not care
-             * about these name of the form field for these attachments.
+            /* The Datadog RFC examples strip off the file extension, but the exact
+             * behavior isn't specified. This does the simple thing of using
+             * the filename without modification for the form name because
+             * intake does not care about these name of the form field for
+             * these attachments.
              */
             form.add_reader_file(file.name, Cursor::new(encoded), file.name);
         }
 
         for file in files_to_export_unmodified {
             let encoded = file.bytes.to_vec();
-            /* The Datadog RFC examples strip off the file extension, but the exact behavior
-             * isn't specified. This does the simple thing of using the filename
-             * without modification for the form name because intake does not care
-             * about these name of the form field for these attachments.
+            /* The Datadog RFC examples strip off the file extension, but the exact
+             * behavior isn't specified. This does the simple thing of using
+             * the filename without modification for the form name because
+             * intake does not care about these name of the form field for
+             * these attachments.
              */
             form.add_reader_file(file.name, Cursor::new(encoded), file.name)
         }

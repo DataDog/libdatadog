@@ -1,16 +1,14 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use core::slice;
+use core::{marker, mem, ptr, slice};
 use serde::ser::Error;
 use serde::Serializer;
 use std::borrow::Cow;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
 use std::os::raw::c_char;
-use std::ptr::NonNull;
-use std::str::Utf8Error;
+use std::str::{self, Utf8Error};
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -18,12 +16,12 @@ pub struct MutSlice<'a, T: 'a> {
     /// Should be non-null and suitably aligned for the underlying type. It is
     /// allowed but not recommended for the pointer to be null when the len is
     /// zero.
-    ptr: Option<NonNull<T>>,
+    ptr: Option<ptr::NonNull<T>>,
 
     /// The number of elements (not bytes) that `.ptr` points to. Must be less
     /// than or equal to [isize::MAX].
     len: usize,
-    _marker: PhantomData<&'a mut [T]>,
+    _marker: marker::PhantomData<&'a mut [T]>,
 }
 
 impl<'a, T: 'a> core::ops::Deref for MutSlice<'a, T> {
@@ -47,8 +45,8 @@ pub type CharMutSlice<'a> = MutSlice<'a, c_char>;
 pub type ByteMutSlice<'a> = MutSlice<'a, u8>;
 
 #[inline]
-fn is_aligned<T>(ptr: NonNull<T>) -> bool {
-    ptr.as_ptr() as usize % std::mem::align_of::<T>() == 0
+fn is_aligned<T>(ptr: ptr::NonNull<T>) -> bool {
+    ptr.as_ptr() as usize % mem::align_of::<T>() == 0
 }
 
 pub trait AsBytes<'a> {
@@ -56,7 +54,7 @@ pub trait AsBytes<'a> {
 
     #[inline]
     fn try_to_utf8(&self) -> Result<&'a str, Utf8Error> {
-        std::str::from_utf8(self.as_bytes())
+        str::from_utf8(self.as_bytes())
     }
 
     fn try_to_string(&self) -> Result<String, Utf8Error> {
@@ -77,7 +75,7 @@ pub trait AsBytes<'a> {
     /// # Safety
     /// Must only be used when the underlying data was already confirmed to be utf8.
     unsafe fn assume_utf8(&self) -> &'a str {
-        std::str::from_utf8_unchecked(self.as_bytes())
+        str::from_utf8_unchecked(self.as_bytes())
     }
 }
 
@@ -93,31 +91,31 @@ impl<'a, T: 'a> MutSlice<'a, T> {
     #[must_use]
     pub fn empty() -> Self {
         Self {
-            ptr: Some(NonNull::dangling()),
+            ptr: Some(ptr::NonNull::dangling()),
             len: 0,
-            _marker: PhantomData,
+            _marker: marker::PhantomData,
         }
     }
 
     /// # Safety
-    /// Uphold the same safety requirements as [std::str::from_raw_parts].
+    /// Uphold the same safety requirements as [str::from_raw_parts].
     /// However, it is allowed but not recommended to provide a null pointer
     /// when the len is 0.
     // TODO, this can be const once MSRV >= 1.85
     pub unsafe fn from_raw_parts(ptr: *mut T, len: usize) -> Self {
         Self {
-            ptr: NonNull::new(ptr),
+            ptr: ptr::NonNull::new(ptr),
             len,
-            _marker: PhantomData,
+            _marker: marker::PhantomData,
         }
     }
 
     // TODO, this can be const once MSRV >= 1.85
     pub fn new(slice: &mut [T]) -> Self {
         Self {
-            ptr: NonNull::new(slice.as_mut_ptr()),
+            ptr: ptr::NonNull::new(slice.as_mut_ptr()),
             len: slice.len(),
-            _marker: PhantomData,
+            _marker: marker::PhantomData,
         }
     }
 
@@ -145,6 +143,27 @@ impl<'a, T: 'a> MutSlice<'a, T> {
             assert_eq!(self.len, 0);
             &[]
         }
+    }
+
+    /// Tries to convert the FFI slice into a standard slice.
+    ///
+    /// # Errors
+    ///
+    ///  1. Fails if `self.ptr` is null and `self.len` is not zero.
+    ///  2. Fails if `self.ptr` is not null and is unaligned.
+    ///  3. Fails if `self.len` is larger than [`isize::MAX`].
+    ///
+    /// # Safety
+    ///
+    /// Although it checks for some errors, there are some that cannot be
+    /// checked but must be upheld:
+    ///  1. If `self.len` is more than 0, then `self.ptr` must be valid for `self.len` writes, which
+    ///     will not drop any existing values. It does not need to be valid for reads, which allows
+    ///     for uninitialized slices.
+    pub unsafe fn try_as_uninit(&self) -> Option<&'a mut [mem::MaybeUninit<T>]> {
+        let ptr = self.ptr?;
+        (ptr.is_aligned() && self.len <= isize::MAX as usize)
+            .then(|| unsafe { slice::from_raw_parts_mut(ptr.as_ptr().cast(), self.len) })
     }
 
     pub fn into_slice(self) -> &'a [T] {
@@ -214,7 +233,6 @@ impl<'a> From<&'a mut str> for MutSlice<'a, c_char> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ptr;
 
     #[derive(Debug, Eq, PartialEq)]
     struct Foo(i64);
@@ -248,7 +266,7 @@ mod tests {
         let mut null_len0: MutSlice<u8> = MutSlice {
             ptr: None,
             len: 0,
-            _marker: PhantomData,
+            _marker: marker::PhantomData,
         };
         assert_eq!(null_len0.as_mut_slice(), &[]);
     }
@@ -259,7 +277,7 @@ mod tests {
         let mut null_len0: MutSlice<u8> = MutSlice {
             ptr: None,
             len: 1,
-            _marker: PhantomData,
+            _marker: marker::PhantomData,
         };
         _ = null_len0.as_mut_slice();
     }
@@ -270,7 +288,7 @@ mod tests {
         let mut dangerous: MutSlice<u8> = MutSlice {
             ptr: Some(ptr::NonNull::dangling()),
             len: isize::MAX as usize + 1,
-            _marker: PhantomData,
+            _marker: marker::PhantomData,
         };
         _ = dangerous.as_mut_slice();
     }

@@ -3,6 +3,7 @@
 
 use super::*;
 use datadog_profiling_protobuf::{prost_impls, Record, StringOffset};
+use std::hash::Hash;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum LabelValue {
@@ -76,15 +77,14 @@ impl From<&Label> for prost_impls::Label {
 
 impl From<Label> for datadog_profiling_protobuf::Label {
     fn from(label: Label) -> Self {
-        let (str, num, num_unit) = match label.value {
-            LabelValue::Str(str) => (str, 0, StringOffset::ZERO),
-            LabelValue::Num { num, num_unit } => (StringOffset::ZERO, num, num_unit),
+        let (str, num) = match label.value {
+            LabelValue::Str(str) => (str, 0),
+            LabelValue::Num { num, .. } => (StringOffset::ZERO, num),
         };
         Self {
             key: Record::from(label.key),
             str: Record::from(str),
             num: Record::from(num),
-            num_unit: Record::from(num_unit),
         }
     }
 }
