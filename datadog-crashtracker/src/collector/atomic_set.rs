@@ -15,6 +15,20 @@ use std::num::NonZeroU128;
 use std::ptr::null_mut;
 use std::sync::atomic::Ordering::SeqCst;
 
+#[derive(Debug, thiserror::Error)]
+pub enum AtomicSetError {
+    #[error("No space available to store value")]
+    NoSpace,
+    #[error("Index {0} out of range")]
+    IndexOutOfRange(usize),
+    #[error("Expected an element at index {0}")]
+    NoElementAtIndex(usize),
+    #[error("Zero is not allowed as a value")]
+    ZeroNotAllowed,
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+}
+
 pub(crate) type AtomicSpanSet<const LEN: usize> = AtomicMultiset<AtomicSpan, LEN>;
 pub(crate) type AtomicStringMultiset<const LEN: usize> = AtomicMultiset<AtomicString, LEN>;
 
@@ -26,8 +40,12 @@ pub trait Atomic {
         self.take().is_some()
     }
     /// Returns whether there was anything to emit.
-    fn consume_and_emit(&self, w: &mut impl Write, leak: bool, first: bool)
-        -> anyhow::Result<bool>;
+    fn consume_and_emit(
+        &self,
+        w: &mut impl Write,
+        leak: bool,
+        first: bool,
+    ) -> Result<bool, AtomicSetError>;
     /// SAFETY: This is only safe to use in a single threaded context
     #[cfg(test)]
     unsafe fn load(&self) -> Option<Self::Item>;
@@ -57,7 +75,7 @@ where
     /// is not atomic.
     /// This should only be used in a context where no other threads are modifying the set.
     /// Performance: This operation is constant time.
-    pub fn clear(&self) -> anyhow::Result<()> {
+    pub fn clear(&self) -> Result<(), AtomicSetError> {
         if !self.is_empty() {
             for v in self.set.iter() {
                 if v.clear() {
@@ -78,12 +96,14 @@ where
     ///     Until then, the invariant that `len`` >= actual number of elements in the array is
     ///     maintained
     /// Performance: This operation is constant time.
-    pub fn remove(&self, idx: usize) -> anyhow::Result<()> {
-        anyhow::ensure!(idx < self.set.len(), "Idx {idx} out of range");
+    pub fn remove(&self, idx: usize) -> Result<(), AtomicSetError> {
+        if idx >= self.set.len() {
+            return Err(AtomicSetError::IndexOutOfRange(idx));
+        }
         if self.set[idx].clear() {
             self.used.sub(1, SeqCst)
         } else {
-            anyhow::bail!("Expected an element at {idx}");
+            return Err(AtomicSetError::NoElementAtIndex(idx));
         }
         Ok(())
     }
@@ -107,12 +127,12 @@ where
     /// Performance:
     ///     As long as the invariant is maintained that the array is <= 1/2 full, this is amortized
     ///     constant time.
-    pub fn insert(&self, mut value: T::Item) -> anyhow::Result<usize> {
+    pub fn insert(&self, mut value: T::Item) -> Result<usize, AtomicSetError> {
         let used = self.used.fetch_add(1, SeqCst);
         if used >= self.set.len() / 2 {
             // We only fill to half full to get good amortized behaviour
             self.used.fetch_sub(1, SeqCst);
-            anyhow::bail!("Crashtracker Atomic Set: No space to store {:?}", &value);
+            return Err(AtomicSetError::NoSpace);
         }
 
         // Start at a random position.
@@ -142,7 +162,7 @@ where
                 return Ok(idx);
             }
         }
-        anyhow::bail!("This should be unreachable: we ensure that there was at least one empty slot before entering the loop")
+        Err(AtomicSetError::NoSpace)
     }
 
     /// Best effort check if the array is definitely empty.
@@ -184,7 +204,7 @@ where
     ///     not make into the emitted output.
     /// Performance: This does a linear scan over the entire array, and then emits any found items.
     /// It is therefore O(set.capacity()) + O(set.len()).
-    pub fn consume_and_emit(&self, w: &mut impl Write, leak: bool) -> anyhow::Result<()> {
+    pub fn consume_and_emit(&self, w: &mut impl Write, leak: bool) -> Result<(), AtomicSetError> {
         write!(w, "[")?;
 
         if self.used.load(SeqCst) > 0 {
@@ -202,7 +222,7 @@ where
     #[cfg(test)]
     /// This is unsafe when used in a concurrent context
     /// Putting it under cfg(test) to avoid its use in production.
-    pub fn values(&self) -> anyhow::Result<Vec<T::Item>> {
+    pub fn values(&self) -> Result<Vec<T::Item>, AtomicSetError> {
         let mut rval = Vec::with_capacity(self.used.load(SeqCst));
         if self.used.load(SeqCst) > 0 {
             for it in self.set.iter() {
@@ -250,7 +270,7 @@ impl Atomic for AtomicString {
         w: &mut impl Write,
         leak: bool,
         first: bool,
-    ) -> anyhow::Result<bool> {
+    ) -> Result<bool, AtomicSetError> {
         if let Some(s) = self.take() {
             if !first {
                 write!(w, ", ")?;
@@ -321,7 +341,7 @@ impl Atomic for AtomicSpan {
         w: &mut impl Write,
         _leak: bool,
         first: bool,
-    ) -> anyhow::Result<bool> {
+    ) -> Result<bool, AtomicSetError> {
         if let Some(v) = self.take() {
             if !first {
                 write!(w, ", ")?;
@@ -363,23 +383,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_span_new() -> anyhow::Result<()> {
+    fn test_span_new() {
         let s: AtomicSpanSet<16> = AtomicSpanSet::new();
         assert_eq!(s.len(), 0);
-        assert_eq!(&s.values()?, &[]);
-        Ok(())
+        assert_eq!(&s.values().unwrap(), &[]);
     }
 
     #[test]
-    fn test_string_new() -> anyhow::Result<()> {
+    fn test_string_new() {
         let s: AtomicStringMultiset<16> = AtomicStringMultiset::new();
         assert_eq!(s.len(), 0);
-        assert!(s.values()?.is_empty());
-        Ok(())
+        assert!(s.values().unwrap().is_empty());
     }
 
     #[test]
-    fn test_string_ops() -> anyhow::Result<()> {
+    fn test_string_ops() {
         let mut expected = std::collections::BTreeMap::<String, usize>::new();
         let s = AtomicStringMultiset::<8>::new();
         compare(&s, &expected);
@@ -396,17 +414,16 @@ mod tests {
         insert_and_compare(&s, &mut expected, "d".to_string());
         remove_and_compare(&s, &mut expected, "c".to_string());
 
-        s.clear()?;
+        s.clear().unwrap();
         expected.clear();
         compare(&s, &expected);
         insert_and_compare(&s, &mut expected, "z".to_string());
         // Prevent memory leaks
-        s.clear()?;
-        Ok(())
+        s.clear().unwrap();
     }
 
     #[test]
-    fn test_span_ops() -> anyhow::Result<()> {
+    fn test_span_ops() {
         let mut expected = std::collections::BTreeMap::<NonZeroU128, usize>::new();
         let s: AtomicSpanSet<8> = AtomicSpanSet::<8>::new();
         compare(&s, &expected);
@@ -423,12 +440,10 @@ mod tests {
         insert_and_compare(&s, &mut expected, nz(12));
         remove_and_compare(&s, &mut expected, nz(19));
 
-        s.clear()?;
+        s.clear().unwrap();
         expected.clear();
         compare(&s, &expected);
         insert_and_compare(&s, &mut expected, nz(12));
-
-        Ok(())
     }
 
     fn nz(v: u128) -> NonZeroU128 {
@@ -480,9 +495,9 @@ mod tests {
         s: &AtomicMultiset<T, 8>,
         expected: &mut std::collections::BTreeMap<T::Item, usize>,
         v: T::Item,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), AtomicSetError> {
         let idx = expected.get(&v).unwrap();
-        s.remove(*idx).unwrap();
+        s.remove(*idx)?;
         expected.remove(&v);
         Ok(())
     }
@@ -501,7 +516,7 @@ mod tests {
         s: &AtomicMultiset<T, 8>,
         expected: &mut std::collections::BTreeMap<T::Item, usize>,
         v: T::Item,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), AtomicSetError> {
         expected.insert(v.clone(), s.insert(v)?);
         Ok(())
     }

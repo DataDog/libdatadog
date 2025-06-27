@@ -5,7 +5,6 @@ use super::process_handle::ProcessHandle;
 use ddcommon::timeout::TimeoutManager;
 
 use crate::shared::configuration::CrashtrackerReceiverConfig;
-use anyhow::Context;
 use ddcommon::unix_utils::{alt_fork, open_file_or_quiet, terminate, PreparedExecve};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use nix::sys::socket;
@@ -15,6 +14,24 @@ use std::ptr;
 use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::Ordering::SeqCst;
 
+#[derive(Debug, thiserror::Error)]
+pub enum ReceiverError {
+    #[error("No receiver path provided")]
+    NoReceiverPath,
+    #[error("Failed to connect to receiver: {0}")]
+    ConnectionError(std::io::Error),
+    #[error("Failed to create Unix domain socket pair: {0}")]
+    SocketPairError(nix::Error),
+    #[error("Failed to create receiver process (fork error code: {0})")]
+    ForkFailed(i32),
+    #[error("No receiver config available")]
+    NoConfig,
+    #[error("Failed to open file: {0}")]
+    FileOpenError(std::io::Error),
+    #[error("Failed to prepare execve: {0}")]
+    PreparedExecveError(#[from] ddcommon::unix_utils::PreparedExecveError),
+}
+
 static RECEIVER_CONFIG: AtomicPtr<(CrashtrackerReceiverConfig, PreparedExecve)> =
     AtomicPtr::new(ptr::null_mut());
 
@@ -23,25 +40,26 @@ pub(crate) struct Receiver {
 }
 
 impl Receiver {
-    pub(crate) fn from_socket(unix_socket_path: &str) -> anyhow::Result<Self> {
+    pub(crate) fn from_socket(unix_socket_path: &str) -> Result<Self, ReceiverError> {
         // Creates a fake "Receiver", which can be waited on like a normal receiver.
         // This is intended to support configurations where the collector is speaking to a
         // long-lived, async receiver process.
         if unix_socket_path.is_empty() {
-            return Err(anyhow::anyhow!("No receiver path provided"));
+            return Err(ReceiverError::NoReceiverPath);
         }
         #[cfg(target_os = "linux")]
         let unix_stream = if unix_socket_path.starts_with(['.', '/']) {
             UnixStream::connect(unix_socket_path)
         } else {
             use std::os::linux::net::SocketAddrExt;
-            let addr = std::os::unix::net::SocketAddr::from_abstract_name(unix_socket_path)?;
+            let addr = std::os::unix::net::SocketAddr::from_abstract_name(unix_socket_path)
+                .map_err(ReceiverError::ConnectionError)?;
             UnixStream::connect_addr(&addr)
         };
         #[cfg(not(target_os = "linux"))]
         let unix_stream = UnixStream::connect(unix_socket_path);
         let uds_fd = unix_stream
-            .context("Failed to connect to receiver")?
+            .map_err(ReceiverError::ConnectionError)?
             .into_raw_fd();
         Ok(Self {
             handle: ProcessHandle::new(uds_fd, None),
@@ -51,11 +69,11 @@ impl Receiver {
     pub(crate) fn spawn_from_config(
         config: &CrashtrackerReceiverConfig,
         prepared_exec: &PreparedExecve,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, ReceiverError> {
         let stderr = open_file_or_quiet(config.stderr_filename.as_deref())
-            .context("Failed to open stderr file")?;
+            .map_err(ReceiverError::FileOpenError)?;
         let stdout = open_file_or_quiet(config.stdout_filename.as_deref())
-            .context("Failed to open stdout file")?;
+            .map_err(ReceiverError::FileOpenError)?;
 
         // Create anonymous Unix domain socket pair for communication
         let (uds_parent, uds_child) = socket::socketpair(
@@ -64,8 +82,8 @@ impl Receiver {
             None,
             socket::SockFlag::empty(),
         )
-        .context("Failed to create Unix domain socket pair")
-        .map(|(a, b)| (a.into_raw_fd(), b.into_raw_fd()))?;
+        .map_err(ReceiverError::SocketPairError)?;
+        let (uds_parent, uds_child) = (uds_parent.into_raw_fd(), uds_child.into_raw_fd());
 
         // See ddcommon::unix_utils for platform-specific comments on alt_fork()
         match alt_fork() {
@@ -81,19 +99,20 @@ impl Receiver {
                     handle: ProcessHandle::new(uds_parent, Some(pid)),
                 })
             }
-            _ => {
+            code => {
                 // Error
-                Err(anyhow::anyhow!("Failed to create receiver process"))
+                Err(ReceiverError::ForkFailed(code))
             }
         }
     }
 
-    pub(crate) fn spawn_from_stored_config() -> anyhow::Result<Self> {
+    pub(crate) fn spawn_from_stored_config() -> Result<Self, ReceiverError> {
         let receiver_config = RECEIVER_CONFIG.swap(ptr::null_mut(), SeqCst);
-        anyhow::ensure!(!receiver_config.is_null(), "No receiver config");
+        if receiver_config.is_null() {
+            return Err(ReceiverError::NoConfig);
+        }
         // Intentionally leak since we're in a signal handler
-        let (config, prepared_exec) =
-            unsafe { receiver_config.as_ref().context("receiver config")? };
+        let (config, prepared_exec) = unsafe { &*receiver_config };
         Self::spawn_from_config(config, prepared_exec)
     }
 
@@ -105,9 +124,7 @@ impl Receiver {
     ///   No other crash-handler functions should be called concurrently.
     /// ATOMICITY:
     ///     This function uses a swap on an atomic pointer.
-    pub fn update_stored_config(
-        config: CrashtrackerReceiverConfig,
-    ) -> Result<(), ddcommon::unix_utils::PreparedExecveError> {
+    pub fn update_stored_config(config: CrashtrackerReceiverConfig) -> Result<(), ReceiverError> {
         // Heap-allocate the parts of the configuration that relate to execve.
         // This needs to be done because the execve call requires a specific layout, and achieving
         // this layout requires allocations.  We should strive not to allocate from within a

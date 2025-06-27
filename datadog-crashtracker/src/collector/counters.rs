@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::sync::atomic::{AtomicI64, Ordering::SeqCst};
+use thiserror::Error;
 
 #[cfg(unix)]
 use std::io::Write;
@@ -31,13 +32,13 @@ impl OpTypes {
     /// A static string giving the name of the `ProfilingOpType`.
     /// We implement this, rather than `to_string`, to avoid the memory
     /// allocation associated with `String`.
-    pub fn name(i: usize) -> anyhow::Result<&'static str> {
+    pub fn name(i: usize) -> Result<&'static str, CounterError> {
         let rval = match i {
             0 => "profiler_inactive",
             1 => "profiler_collecting_sample",
             2 => "profiler_unwinding",
             3 => "profiler_serializing",
-            _ => anyhow::bail!("invalid enum val {i}"),
+            _ => return Err(CounterError::InvalidEnumValue(i)),
         };
         Ok(rval)
     }
@@ -56,11 +57,13 @@ static OP_COUNTERS: [AtomicI64; OpTypes::SIZE as usize] = [ATOMIC_ZERO; OpTypes:
 ///     This function assumes that the crash-tracker is initialized.
 /// ATOMICITY:
 ///     This function is atomic.
-pub fn begin_op(op: OpTypes) -> anyhow::Result<()> {
+pub fn begin_op(op: OpTypes) -> Result<(), CounterError> {
     // TODO: I'm making everything SeqCst for now.  Could possibly gain some
     // performance by using a weaker ordering.
     let old = OP_COUNTERS[op as usize].fetch_add(1, SeqCst);
-    anyhow::ensure!(old < i64::MAX, "Overflowed counter {op:?}");
+    if old == i64::MAX - 1 {
+        return Err(CounterError::CounterOverflow(op));
+    }
     Ok(())
 }
 
@@ -68,9 +71,11 @@ pub fn begin_op(op: OpTypes) -> anyhow::Result<()> {
 /// Currently, we assume states are discrete (i.e. not nested).
 /// PRECONDITIONS: This function assumes that the crash-tracker is initialized.
 /// ATOMICITY: This function is atomic.  
-pub fn end_op(op: OpTypes) -> anyhow::Result<()> {
+pub fn end_op(op: OpTypes) -> Result<(), CounterError> {
     let old = OP_COUNTERS[op as usize].fetch_sub(1, SeqCst);
-    anyhow::ensure!(old > 0, "Can't end profiling '{op:?}' with count 0");
+    if old <= 0 {
+        return Err(CounterError::OperationNotStarted(op));
+    }
     Ok(())
 }
 
@@ -93,7 +98,7 @@ pub fn end_op(op: OpTypes) -> anyhow::Result<()> {
 ///     This function is careful to only write to the handle, without doing any
 ///     unnecessary mutexes or memory allocation.
 #[cfg(unix)]
-pub fn emit_counters(w: &mut impl Write) -> anyhow::Result<()> {
+pub fn emit_counters(w: &mut impl Write) -> Result<(), CounterError> {
     use crate::shared::constants::*;
 
     writeln!(w, "{DD_CRASHTRACK_BEGIN_COUNTERS}")?;
@@ -111,9 +116,21 @@ pub fn emit_counters(w: &mut impl Write) -> anyhow::Result<()> {
 ///     This is NOT ATOMIC.
 ///     Should only be used when no conflicting updates can occur,
 ///     e.g. after a fork but before ops start on the child.
-pub fn reset_counters() -> anyhow::Result<()> {
+pub fn reset_counters() -> Result<(), CounterError> {
     for c in OP_COUNTERS.iter() {
         c.store(0, SeqCst);
     }
     Ok(())
+}
+
+#[derive(Debug, Error)]
+pub enum CounterError {
+    #[error("Invalid enum value: {0}")]
+    InvalidEnumValue(usize),
+    #[error("Counter overflow for operation {0:?}")]
+    CounterOverflow(OpTypes),
+    #[error("Attempted to end operation {0:?} but it was never started or already ended")]
+    OperationNotStarted(OpTypes),
+    #[error("Failed to write to output: {0}")]
+    WriteError(#[from] std::io::Error),
 }
