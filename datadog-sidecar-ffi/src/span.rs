@@ -7,7 +7,7 @@ use datadog_trace_utils::span::{
 use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::ffi::{c_char, CString};
+use std::ffi::c_char;
 use tinybytes::{Bytes, BytesString};
 
 fn convert_char_slice_to_bytes_string(slice: CharSlice) -> BytesString {
@@ -181,11 +181,9 @@ pub extern "C" fn ddog_trace_new_span_with_capacities(trace: &mut TraceBytes, me
 #[no_mangle]
 pub extern "C" fn ddog_span_debug_log(span: &SpanBytes) -> CharSlice<'static> {
     unsafe {
-        let debug_str = format!("{:?}", span);
-        let len = debug_str.len();
-        let cstring = CString::new(debug_str).unwrap_or_default();
-
-        CharSlice::from_raw_parts(cstring.into_raw().cast(), len)
+        let debug_str = format!("{:?}\0", &span);
+        let len = debug_str.len() - 1;
+        CharSlice::from_raw_parts(debug_str.leak().as_ptr().cast(), len)
     }
 }
 
@@ -197,10 +195,9 @@ pub extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
         return;
     }
 
-    // SAFETY: we assume this pointer came from `CString::into_raw`
+    // SAFETY: we assume this pointer came from `String::leak`
     unsafe {
-        let owned_ptr = ptr as *mut c_char;
-        let _ = CString::from_raw(owned_ptr);
+        let _ = String::from_raw_parts(ptr.cast_mut().cast(), len, len);
     }
 }
 
