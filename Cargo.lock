@@ -1810,7 +1810,10 @@ dependencies = [
  "http 1.1.0",
  "libc",
  "paste",
+ "rmp-serde",
  "tempfile",
+ "tinybytes",
+ "tracing",
 ]
 
 [[package]]
