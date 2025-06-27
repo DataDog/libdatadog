@@ -47,7 +47,6 @@ use libc::c_char;
 use std::ffi::{c_void, CStr, CString};
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::Cursor;
 #[cfg(unix)]
 use std::os::unix::prelude::FromRawFd;
 #[cfg(windows)]
@@ -56,6 +55,7 @@ use std::ptr::NonNull;
 use std::slice;
 use std::sync::Arc;
 use std::time::Duration;
+use datadog_trace_utils::msgpack_encoder;
 
 #[no_mangle]
 #[cfg(target_os = "windows")]
@@ -1165,9 +1165,10 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
 
     // Write traces to the shared memory
-    let mut cursor = Cursor::new(mapped_shm.as_slice_mut());
-    let written = match rmp_serde::encode::write_named(&mut cursor, &traces) {
-        Ok(()) => cursor.position() as usize,
+    let mut shm_slice = mapped_shm.as_slice_mut();
+    let shm_slice_len = shm_slice.len();
+    let written = match msgpack_encoder::v04::to_slice(&mut shm_slice, &traces) {
+        Ok(()) => shm_slice_len - shm_slice.len(),
         Err(_) => {
             tracing::error!("Failed serializing the traces");
             return;
@@ -1193,16 +1194,10 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
 
     // Retry sending traces via bytes if there was an error
     if send_error.is_err() {
-        let mut buffer = vec![0u8; written];
-        let mut cursor = Cursor::new(buffer.as_mut_slice());
-        rmp_serde::encode::write_named(&mut cursor, &traces).unwrap_or_else(|_| {
-            tracing::error!("Failed serializing the traces");
-        });
-
         match blocking::send_trace_v04_bytes(
             &mut parameters.transport,
             &parameters.instance_id,
-            buffer,
+            msgpack_encoder::v04::to_vec_with_capacity(&traces, written as u32),
             check!(
                 (&parameters.tracer_headers_tags).try_into(),
                 "Failed to convert tracer headers tags"

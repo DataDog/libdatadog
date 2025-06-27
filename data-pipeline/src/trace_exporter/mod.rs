@@ -28,6 +28,7 @@ use crate::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use datadog_trace_utils::msgpack_decoder::{self, decode::error::DecodeError};
+use datadog_trace_utils::msgpack_encoder;
 use datadog_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
 };
@@ -1058,7 +1059,7 @@ impl TraceExporter {
     ) -> Result<Vec<u8>, TraceExporterError> {
         match payload {
             tracer_payload::TraceChunks::V04(p) => {
-                rmp_serde::to_vec_named(p).map_err(TraceExporterError::Serialization)
+                Ok(msgpack_encoder::v04::to_vec(p))
             }
             tracer_payload::TraceChunks::V05(p) => {
                 rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)
