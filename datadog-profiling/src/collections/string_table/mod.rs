@@ -395,6 +395,16 @@ impl IntoLendingIterator for StringTable {
 mod tests {
     use super::*;
 
+    /// Well-known strings that should always be present in a new
+    /// [`StringTable`], in order.
+    const WELL_KNOWN_STRINGS: &[&str] = &[
+        "",
+        "end_timestamp_ns",
+        "local root span id",
+        "trace endpoint",
+        "span id",
+    ];
+
     #[test]
     fn fuzz_arena_allocator() {
         bolero::check!()
@@ -438,8 +448,9 @@ mod tests {
             .for_each(|strings| {
                 // Compare our optimized implementation against a "golden" version
                 // from the standard library.
-                let mut golden_list = vec![""];
-                let mut golden_set = std::collections::HashSet::from([""]);
+                let mut golden_list = WELL_KNOWN_STRINGS.to_vec();
+                let mut golden_set: std::collections::HashSet<&str> =
+                    std::collections::HashSet::from_iter(WELL_KNOWN_STRINGS.iter().copied());
                 let mut st = StringTable::new();
 
                 for string in strings {
@@ -471,37 +482,55 @@ mod tests {
     #[test]
     fn test_basics() {
         let mut table = StringTable::new();
-        // The empty string should already be present.
-        assert_eq!(1, table.len());
+        // The well-known strings should already be present.
+        assert_eq!(StringTable::WELL_KNOWN_COUNT, table.len());
         assert_eq!(StringOffset::ZERO, table.intern(""));
         assert_eq!(table.lookup(StringOffset::ZERO).unwrap(), "");
 
         // Intern a string literal to ensure ?Sized works.
         let string = table.intern("datadog");
-        assert_eq!(StringOffset::new(1), string);
-        assert_eq!(2, table.len());
+        assert_eq!(
+            StringOffset::new(StringTable::WELL_KNOWN_COUNT as u32),
+            string
+        );
+        assert_eq!(StringTable::WELL_KNOWN_COUNT + 1, table.len());
         assert_eq!(table.lookup(string).unwrap(), "datadog");
     }
 
     #[track_caller]
     fn test_from_src(src: &[&str]) {
+        // Build the expected result: well-known strings first, then unique strings from src
+        assert_eq!(
+            WELL_KNOWN_STRINGS.len(),
+            StringTable::WELL_KNOWN_COUNT,
+            "Ensure these are in sync"
+        );
+        let mut expected_order = WELL_KNOWN_STRINGS.to_vec();
+        let mut unique_count = WELL_KNOWN_STRINGS.len();
+
+        for &string in src {
+            if !expected_order.contains(&string) {
+                expected_order.push(string);
+                unique_count += 1;
+            }
+        }
+
         // Insert all the strings.
         let mut table = StringTable::new();
-        let n_strings = src.len();
         for string in src {
             table.intern(string);
         }
-        assert_eq!(n_strings, table.len());
+        assert_eq!(unique_count, table.len());
 
         // Re-inserting doesn't change the size.
         for string in src {
             table.intern(string);
         }
-        assert_eq!(n_strings, table.len());
+        assert_eq!(unique_count, table.len());
 
         // Check that they are ordered correctly when iterating.
         let mut actual_iter = table.into_lending_iter();
-        let mut expected_iter = src.iter();
+        let mut expected_iter = expected_order.iter();
         while let (Some(expected), Some(actual)) = (expected_iter.next(), actual_iter.next()) {
             assert_eq!(*expected, actual);
         }
