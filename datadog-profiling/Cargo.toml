@@ -47,3 +47,4 @@ tokio-util = "0.7.1"
 [dev-dependencies]
 bolero = "0.13"
 criterion = "0.5.1"
+datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["bolero", "prost_impls"] }
