@@ -4,5 +4,7 @@
 use criterion::criterion_main;
 
 mod deserialization;
+mod serialization;
 
-criterion_main!(deserialization::benches);
+
+criterion_main!(serialization::serialize_benches, deserialization::deserialize_benches);

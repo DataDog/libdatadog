@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::io::Write;
 #[cfg(feature = "compression")]
 use zstd::stream::write::Encoder;
+use crate::msgpack_encoder;
 
 #[derive(Debug, Clone)]
 /// `SendData` is a structure that holds the data to be sent to a target endpoint.
@@ -346,10 +347,7 @@ impl SendData {
                 headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
                 headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
 
-                let payload = match rmp_serde::to_vec_named(payload) {
-                    Ok(p) => p,
-                    Err(e) => return result.error(anyhow!(e)),
-                };
+                let payload = msgpack_encoder::v04::to_vec(payload);
 
                 futures.push(self.send_payload(chunks, payload, headers, http_proxy));
             }
@@ -481,7 +479,7 @@ mod tests {
                 total
             }
             TracerPayloadCollection::V04(payloads) => {
-                rmp_serde::to_vec_named(payloads).unwrap().len()
+                msgpack_encoder::v04::to_len(payloads) as usize
             }
             TracerPayloadCollection::V05(payloads) => rmp_serde::to_vec(payloads).unwrap().len(),
         }

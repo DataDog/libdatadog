@@ -80,6 +80,12 @@ unsafe fn new_vector_item<T: Default>(vec: &mut Vec<T>) -> &mut T {
     vec.last_mut().unwrap_unchecked()
 }
 
+#[allow(clippy::missing_safety_doc)]
+unsafe fn new_vector_push<T>(vec: &mut Vec<T>, el: T) -> &mut T {
+    vec.push(el);
+    vec.last_mut().unwrap_unchecked()
+}
+
 #[no_mangle]
 fn set_event_attribute(
     event: &mut SpanEventBytes,
@@ -159,6 +165,17 @@ pub extern "C" fn ddog_get_span(trace: &mut TraceBytes, index: usize) -> *mut Sp
 #[no_mangle]
 pub extern "C" fn ddog_trace_new_span(trace: &mut TraceBytes) -> &mut SpanBytes {
     unsafe { new_vector_item(trace) }
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_trace_new_span_with_capacities(trace: &mut TraceBytes, meta_size: usize, metrics_size: usize) -> &mut SpanBytes {
+    unsafe {
+        new_vector_push(trace, SpanBytes {
+            meta: HashMap::with_capacity(meta_size),
+            metrics: HashMap::with_capacity(metrics_size),
+            ..SpanBytes::default()
+        })
+    }
 }
 
 #[no_mangle]
@@ -441,7 +458,7 @@ pub extern "C" fn ddog_set_link_span_id(link: &mut SpanLinkBytes, value: u64) {
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_set_link_flags(link: &mut SpanLinkBytes, value: u64) {
+pub extern "C" fn ddog_set_link_flags(link: &mut SpanLinkBytes, value: u32) {
     link.flags = value;
 }
 
