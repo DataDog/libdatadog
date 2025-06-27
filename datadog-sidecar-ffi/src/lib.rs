@@ -1032,15 +1032,6 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
 ) {
     let size: usize = traces.iter().map(|trace| trace.len()).sum();
 
-    // Check connection to the sidecar
-    if parameters.transport.is_closed() {
-        tracing::info!(
-            "Skipping flushing traces of size {} as connection to sidecar failed",
-            size
-        );
-        return;
-    }
-
     // Create and map shared memory
     let shm = check!(
         ShmHandle::new(parameters.limit),
@@ -1096,12 +1087,7 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
         };
     }
 
-    tracing::event!(target: "info", tracing::Level::INFO, "Flushing trace of size {} to send-queue for {}", size, parameters.url);
-    // tracing::info!(
-    //     "Flushing traces of size {} to send-queue for {}",
-    //     size,
-    //     parameters.url
-    // );
+    tracing::info!("Flushing traces of size {} to send-queue for {}", size, parameters.url);
 }
 
 /// Drops the agent info reader.
