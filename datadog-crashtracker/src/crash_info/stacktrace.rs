@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(unix)]
+use crate::CachedElfResolvers;
+#[cfg(unix)]
 use blazesym::{
-    helper::ElfResolver,
     normalize::Normalizer,
     symbolize::{source::Source, Input, Symbolized, Symbolizer, TranslateFileOffset},
     Pid,
 };
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use symbolic_common::Name;
@@ -87,13 +89,20 @@ impl StackTrace {
 
 #[cfg(unix)]
 impl StackTrace {
-    pub fn normalize_ips(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
+    pub fn normalize_ips(
+        &mut self,
+        normalizer: &Normalizer,
+        pid: Pid,
+        elf_resolvers: &mut CachedElfResolvers,
+    ) -> anyhow::Result<()> {
         let mut errors = 0;
         for frame in &mut self.frames {
-            frame.normalize_ip(normalizer, pid).unwrap_or_else(|e| {
-                frame.comments.push(e.to_string());
-                errors += 1;
-            });
+            frame
+                .normalize_ip(normalizer, pid, elf_resolvers)
+                .unwrap_or_else(|e| {
+                    frame.comments.push(e.to_string());
+                    errors += 1;
+                });
         }
         anyhow::ensure!(errors == 0);
         Ok(())
@@ -167,7 +176,12 @@ impl StackFrame {
 
 #[cfg(unix)]
 impl StackFrame {
-    pub fn normalize_ip(&mut self, normalizer: &Normalizer, pid: Pid) -> anyhow::Result<()> {
+    pub fn normalize_ip(
+        &mut self,
+        normalizer: &Normalizer,
+        pid: Pid,
+        elf_resolvers: &mut CachedElfResolvers,
+    ) -> anyhow::Result<()> {
         use anyhow::Context;
         if let Some(ip) = &self.ip {
             let ip = ip.trim_start_matches("0x");
@@ -177,7 +191,7 @@ impl StackFrame {
             let (file_offset, meta_idx) = normed.outputs[0];
             let meta = &normed.meta[meta_idx];
             let elf = meta.as_elf().context("Not elf")?;
-            let resolver = ElfResolver::open(&elf.path)?;
+            let resolver = elf_resolvers.get(&elf.path)?;
             let virt_address = resolver
                 .file_offset_to_virt_offset(file_offset)?
                 .context("No matching segment found")?;
