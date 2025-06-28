@@ -1,8 +1,14 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 use super::stacktrace::StackTrace;
+#[cfg(unix)]
+use blazesym::helper::ElfResolver;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
+use std::collections::HashMap;
+#[cfg(unix)]
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ErrorData {
@@ -17,9 +23,30 @@ pub struct ErrorData {
 }
 
 #[cfg(unix)]
+#[derive(Default)]
+pub struct CachedElfResolvers {
+    elf_resolvers: HashMap<PathBuf, ElfResolver>,
+}
+
+#[cfg(unix)]
+impl CachedElfResolvers {
+    pub fn get(&mut self, file_path: &PathBuf) -> anyhow::Result<&ElfResolver> {
+        use anyhow::Context;
+        if !self.elf_resolvers.contains_key(file_path.as_path()) {
+            let resolver = ElfResolver::open(file_path)?;
+            self.elf_resolvers.insert(file_path.clone(), resolver);
+        }
+        self.elf_resolvers
+            .get(file_path.as_path())
+            .with_context(|| "key '{}' not found in ElfResolver cache")
+    }
+}
+
+#[cfg(unix)]
 impl ErrorData {
     pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
         let mut errors = 0;
+        let mut elf_resolvers = CachedElfResolvers::default();
         let normalizer = blazesym::normalize::Normalizer::builder()
             .enable_vma_caching(true)
             .enable_build_ids(true)
@@ -27,13 +54,13 @@ impl ErrorData {
             .build();
         let pid = pid.into();
         self.stack
-            .normalize_ips(&normalizer, pid)
+            .normalize_ips(&normalizer, pid, &mut elf_resolvers)
             .unwrap_or_else(|_| errors += 1);
 
         for thread in &mut self.threads {
             thread
                 .stack
-                .normalize_ips(&normalizer, pid)
+                .normalize_ips(&normalizer, pid, &mut elf_resolvers)
                 .unwrap_or_else(|_| errors += 1);
         }
         anyhow::ensure!(
