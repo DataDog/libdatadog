@@ -11,11 +11,13 @@ pub struct LiveDebuggingParseResult {
     opaque_data: Option<Box<datadog_live_debugger::LiveDebuggingData>>,
 }
 
+/// # Safety
+/// The `json` must be a valid UTF-8 string.
 #[no_mangle]
-pub extern "C" fn ddog_parse_live_debugger_json(json: CharSlice) -> LiveDebuggingParseResult {
-    if let Ok(parsed) =
-        datadog_live_debugger::parse_json(unsafe { std::str::from_utf8_unchecked(json.as_bytes()) })
-    {
+pub unsafe extern "C" fn ddog_parse_live_debugger_json(
+    json: CharSlice,
+) -> LiveDebuggingParseResult {
+    if let Ok(parsed) = datadog_live_debugger::parse_json(unsafe { json.assume_utf8() }) {
         let parsed = Box::new(parsed);
         LiveDebuggingParseResult {
             // we have the box. Rust doesn't allow us to specify a self-referential struct, so
