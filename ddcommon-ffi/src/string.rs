@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::slice::CharSlice;
+use crate::slice::{AsBytes, CharSlice};
 use crate::vec::Vec;
 use crate::Error;
 
@@ -16,7 +16,7 @@ pub struct StringWrapper {
 impl AsRef<str> for StringWrapper {
     fn as_ref(&self) -> &str {
         // Safety: .message is a String (just FFI safe).
-        unsafe { std::str::from_utf8_unchecked(self.message.as_slice().as_slice()) }
+        unsafe { self.message.as_slice().assume_utf8() }
     }
 }
 
