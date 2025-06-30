@@ -19,13 +19,14 @@ mod unix {
     };
     use std::env;
     use std::path::Path;
+    use std::time::Duration;
 
     use datadog_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata,
     };
     use ddcommon::{tag, Endpoint};
 
-    const TEST_COLLECTOR_TIMEOUT_MS: u32 = 10_000;
+    const TEST_COLLECTOR_TIMEOUT: Duration = Duration::from_secs(10);
 
     #[inline(never)]
     pub unsafe fn cause_segfault() -> anyhow::Result<()> {
@@ -70,7 +71,7 @@ mod unix {
             endpoint,
             crashtracker::StacktraceCollection::WithoutSymbols,
             crashtracker::default_signals(),
-            TEST_COLLECTOR_TIMEOUT_MS,
+            Some(TEST_COLLECTOR_TIMEOUT),
             Some("".to_string()),
             true,
         )?;

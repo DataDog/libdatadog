@@ -651,7 +651,14 @@ impl Profile {
         let local_root_span_id = if let LabelValue::Num { num, .. } = label.get_value() {
             // Safety: the value is an u64, but pprof only has signed values, so we
             // transmute it; the backend does the same.
-            unsafe { std::mem::transmute::<i64, u64>(*num) }
+            #[allow(
+                unknown_lints,
+                unnecessary_transmutes,
+                reason = "i64::cast_unsigned requires MSRV 1.87.0"
+            )]
+            unsafe {
+                std::mem::transmute::<i64, u64>(*num)
+            }
         } else {
             return Err(anyhow::format_err!("the local root span id label value must be sent as a number, not a string, given {:?}",
             label));
@@ -695,7 +702,7 @@ impl Profile {
     fn get_stacktrace(&self, st: StackTraceId) -> anyhow::Result<&StackTrace> {
         self.stack_traces
             .get_index(st.to_raw_id())
-            .with_context(|| format!("StackTraceId {:?} to exist in profile", st))
+            .with_context(|| format!("StackTraceId {st:?} to exist in profile"))
     }
 
     /// Interns the `str` as a string, returning the id in the string table.
@@ -2341,6 +2348,11 @@ mod api_tests {
 
         let large_span_id = u64::MAX;
         // Safety: an u64 can fit into an i64, and we're testing that it's not mis-handled.
+        #[allow(
+            unknown_lints,
+            unnecessary_transmutes,
+            reason = "u64::cast_signed requires MSRV 1.87.0"
+        )]
         let large_num: i64 = unsafe { std::mem::transmute(large_span_id) };
 
         let id2_label = api::Label {

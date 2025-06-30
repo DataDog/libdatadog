@@ -211,6 +211,25 @@ impl<'a> From<&'a str> for Slice<'a, c_char> {
     }
 }
 
+impl<'a> CharSlice<'a> {
+    /// Create a `CharSlice` from a byte slice.
+    ///
+    /// This method is provided instead of a `From` implementation to avoid
+    /// type deduction conflicts with the generic `From<&[T]>` implementation.
+    pub fn from_bytes(s: &'a [u8]) -> Self {
+        #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+        {
+            Slice::from(s)
+        }
+        #[cfg(not(all(target_arch = "aarch64", target_os = "linux")))]
+        {
+            // SAFETY: c_char and u8 have the same memory layout, just differ
+            // in their signedness.
+            unsafe { Slice::from_raw_parts(s.as_ptr().cast(), s.len()) }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,6 +261,18 @@ mod tests {
     fn string_from_c_char() {
         let raw: &[u8] = b"_ZN9wikipedia7article6formatE";
         let slice = unsafe { Slice::from_raw_parts(raw.as_ptr() as *const c_char, raw.len()) };
+
+        let result = slice.try_to_utf8();
+        assert!(result.is_ok());
+
+        let expected = "_ZN9wikipedia7article6formatE";
+        assert_eq!(expected, result.unwrap())
+    }
+
+    #[test]
+    fn char_slice_from_bytes() {
+        let raw: &[u8] = b"_ZN9wikipedia7article6formatE";
+        let slice = CharSlice::from_bytes(raw);
 
         let result = slice.try_to_utf8();
         assert!(result.is_ok());

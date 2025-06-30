@@ -396,7 +396,7 @@ mod tests {
         for i in 0..expected.len() {
             let res = tokenizer.scan();
             assert_eq!(
-                format!("{:?}", res),
+                format!("{res:?}"),
                 format!("RedisTokenizerScanResult {}", expected[i])
             );
         }

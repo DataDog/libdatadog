@@ -24,7 +24,7 @@ mod macros {
                 Err(e) => {
                     return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                         ({
-                            let res = std::fmt::format(format_args!("{0:?}", e));
+                            let res = std::fmt::format(format_args!("{e:?}"));
                             res
                         }),
                     ));
@@ -45,7 +45,7 @@ mod macros {
             Err(e) => {
                 return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                     ({
-                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        let res = std::fmt::format(format_args!("{e:?}"));
                         res
                     }),
                 ));
@@ -67,7 +67,7 @@ mod macros {
                 Err(e) => {
                     return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                         ({
-                            let res = std::fmt::format(format_args!("{0:?}", e));
+                            let res = std::fmt::format(format_args!("{e:?}"));
                             res
                         }),
                     ));
@@ -89,7 +89,7 @@ mod macros {
                 Err(e) => {
                     return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                         ({
-                            let res = std::fmt::format(format_args!("{0:?}", e));
+                            let res = std::fmt::format(format_args!("{e:?}"));
                             res
                         }),
                     ));
@@ -111,7 +111,7 @@ mod macros {
                 Err(e) => {
                     return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                         ({
-                            let res = std::fmt::format(format_args!("{0:?}", e));
+                            let res = std::fmt::format(format_args!("{e:?}"));
                             res
                         }),
                     ));
@@ -132,7 +132,7 @@ mod macros {
             Err(e) => {
                 return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                     ({
-                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        let res = std::fmt::format(format_args!("{e:?}"));
                         res
                     }),
                 ));
@@ -153,7 +153,7 @@ mod macros {
             Err(e) => {
                 return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                     ({
-                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        let res = std::fmt::format(format_args!("{e:?}"));
                         res
                     }),
                 ));
@@ -174,7 +174,7 @@ mod macros {
             Err(e) => {
                 return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                     ({
-                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        let res = std::fmt::format(format_args!("{e:?}"));
                         res
                     }),
                 ));
@@ -195,7 +195,7 @@ mod macros {
             Err(e) => {
                 return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                     ({
-                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        let res = std::fmt::format(format_args!("{e:?}"));
                         res
                     }),
                 ));
@@ -216,7 +216,7 @@ mod macros {
             Err(e) => {
                 return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                     ({
-                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        let res = std::fmt::format(format_args!("{e:?}"));
                         res
                     }),
                 ));
@@ -237,7 +237,7 @@ mod macros {
             Err(e) => {
                 return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                     ({
-                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        let res = std::fmt::format(format_args!("{e:?}"));
                         res
                     }),
                 ));
@@ -306,7 +306,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -323,7 +323,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -340,7 +340,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -357,7 +357,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -374,7 +374,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -391,7 +391,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -407,7 +407,7 @@ mod macros {
                     Err(e) => {
                         return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                             ({
-                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                let res = std::fmt::format(format_args!("{e:?}"));
                                 res
                             }),
                         ));
@@ -424,7 +424,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -441,7 +441,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -458,7 +458,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -474,7 +474,7 @@ mod macros {
                     Err(e) => {
                         return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                             ({
-                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                let res = std::fmt::format(format_args!("{e:?}"));
                                 res
                             }),
                         ));
@@ -523,7 +523,7 @@ mod macros {
             Err(e) => {
                 return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                     ({
-                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        let res = std::fmt::format(format_args!("{e:?}"));
                         res
                     }),
                 ));
@@ -540,7 +540,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -557,7 +557,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -574,7 +574,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -591,7 +591,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -608,7 +608,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -625,7 +625,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -641,7 +641,7 @@ mod macros {
                     Err(e) => {
                         return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                             ({
-                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                let res = std::fmt::format(format_args!("{e:?}"));
                                 res
                             }),
                         ));
@@ -658,7 +658,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -675,7 +675,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -692,7 +692,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -708,7 +708,7 @@ mod macros {
                     Err(e) => {
                         return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                             ({
-                                let res = std::fmt::format(format_args!("{0:?}", e));
+                                let res = std::fmt::format(format_args!("{e:?}"));
                                 res
                             }),
                         ));
@@ -730,7 +730,7 @@ mod macros {
                 Err(e) => {
                     return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                         ({
-                            let res = std::fmt::format(format_args!("{0:?}", e));
+                            let res = std::fmt::format(format_args!("{e:?}"));
                             res
                         }),
                     ));
@@ -766,7 +766,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));
@@ -795,7 +795,7 @@ mod macros {
             Err(e) => {
                 return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                     ({
-                        let res = std::fmt::format(format_args!("{0:?}", e));
+                        let res = std::fmt::format(format_args!("{e:?}"));
                         res
                     }),
                 ));
@@ -809,7 +809,7 @@ mod macros {
                         Err(e) => {
                             return ffi::MaybeError::Some(ddcommon_ffi::Error::from(
                                 ({
-                                    let res = std::fmt::format(format_args!("{0:?}", e));
+                                    let res = std::fmt::format(format_args!("{e:?}"));
                                     res
                                 }),
                             ));

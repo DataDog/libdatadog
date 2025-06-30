@@ -3,7 +3,7 @@
 //! Provides utilities to get config from the /info endpoint of an agent
 #![deny(missing_docs)]
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use arc_swap::ArcSwapOption;
 
@@ -11,7 +11,24 @@ pub mod schema;
 
 mod fetcher;
 
-/// Stores an AgentInfo in an ArcSwap to be updated by an AgentInfoFetcher
-pub type AgentInfoArc = Arc<ArcSwapOption<schema::AgentInfo>>;
+static AGENT_INFO_CACHE: LazyLock<ArcSwapOption<schema::AgentInfo>> =
+    LazyLock::new(|| ArcSwapOption::new(None));
 
-pub use fetcher::{fetch_info, fetch_info_with_state, AgentInfoFetcher, FetchInfoStatus};
+/// Returns the most recent [`AgentInfo`] cached globally.
+///
+/// This function provides access to the latest [`AgentInfo`] that has been
+/// fetched from the Datadog Agent's `/info` endpoint by the [`AgentInfoFetcher`].
+/// The [`AgentInfo`] is stored in a global static cache that persists across thread
+/// boundaries and process forks.
+///
+/// # Return Value
+///
+/// Returns `Some(Arc<AgentInfo>)` if an [`AgentInfo`] has been successfully
+/// fetched at least once, or `None` if no [`AgentInfo`] is available yet.
+pub fn get_agent_info() -> Option<Arc<schema::AgentInfo>> {
+    AGENT_INFO_CACHE.load_full()
+}
+
+pub use fetcher::{
+    fetch_info, fetch_info_with_state, AgentInfoFetcher, FetchInfoStatus, ResponseObserver,
+};

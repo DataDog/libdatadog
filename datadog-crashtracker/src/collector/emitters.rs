@@ -6,13 +6,29 @@ use crate::collector::counters::emit_counters;
 use crate::collector::spans::{emit_spans, emit_traces};
 use crate::shared::constants::*;
 use crate::{translate_si_code, CrashtrackerConfiguration, SignalNames, StacktraceCollection};
-use anyhow::Context;
 use backtrace::Frame;
 use libc::{siginfo_t, ucontext_t};
 use std::{
     fs::File,
     io::{Read, Write},
 };
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum EmitterError {
+    #[error("Failed to write to output: {0}")]
+    WriteError(#[from] std::io::Error),
+    #[error("Failed to open file: {0}")]
+    FileOpenError(std::io::Error),
+    #[error("Null pointer provided for ucontext")]
+    NullUcontext,
+    #[error("Null pointer provided for siginfo")]
+    NullSiginfo,
+    #[error("Counter error: {0}")]
+    CounterError(#[from] crate::collector::counters::CounterError),
+    #[error("Atomic set error: {0}")]
+    AtomicSetError(#[from] crate::collector::atomic_set::AtomicSetError),
+}
 
 /// Emit a stacktrace onto the given handle as formatted json.
 /// SAFETY:
@@ -30,12 +46,12 @@ unsafe fn emit_backtrace_by_frames(
     w: &mut impl Write,
     resolve_frames: StacktraceCollection,
     fault_rsp: usize,
-) -> anyhow::Result<()> {
+) -> Result<(), EmitterError> {
     // https://docs.rs/backtrace/latest/backtrace/index.html
     writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
 
     // Absolute addresses appear to be safer to collect during a crash than debug info.
-    fn emit_absolute_addresses(w: &mut impl Write, frame: &Frame) -> anyhow::Result<()> {
+    fn emit_absolute_addresses(w: &mut impl Write, frame: &Frame) -> Result<(), EmitterError> {
         write!(w, "\"ip\": \"{:?}\"", frame.ip())?;
         if let Some(module_base_address) = frame.module_base_address() {
             write!(w, ", \"module_base_address\": \"{module_base_address:?}\"",)?;
@@ -87,8 +103,7 @@ unsafe fn emit_backtrace_by_frames(
         }
         true // keep going to the next frame
     });
-    #[allow(clippy::unwrap_used)]
-    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}").unwrap();
+    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
     w.flush()?;
     Ok(())
 }
@@ -101,7 +116,7 @@ pub(crate) fn emit_crashreport(
     sig_info: *const siginfo_t,
     ucontext: *const ucontext_t,
     ppid: i32,
-) -> anyhow::Result<()> {
+) -> Result<(), EmitterError> {
     emit_metadata(pipe, metadata_string)?;
     emit_config(pipe, config_str)?;
     emit_siginfo(pipe, sig_info)?;
@@ -131,23 +146,23 @@ pub(crate) fn emit_crashreport(
     Ok(())
 }
 
-fn emit_config(w: &mut impl Write, config_str: &str) -> anyhow::Result<()> {
+fn emit_config(w: &mut impl Write, config_str: &str) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_CONFIG}")?;
-    writeln!(w, "{}", config_str)?;
+    writeln!(w, "{config_str}")?;
     writeln!(w, "{DD_CRASHTRACK_END_CONFIG}")?;
     w.flush()?;
     Ok(())
 }
 
-fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> anyhow::Result<()> {
+fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_METADATA}")?;
-    writeln!(w, "{}", metadata_str)?;
+    writeln!(w, "{metadata_str}")?;
     writeln!(w, "{DD_CRASHTRACK_END_METADATA}")?;
     w.flush()?;
     Ok(())
 }
 
-fn emit_procinfo(w: &mut impl Write, pid: i32) -> anyhow::Result<()> {
+fn emit_procinfo(w: &mut impl Write, pid: i32) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
     writeln!(w, "{{\"pid\": {pid} }}")?;
     writeln!(w, "{DD_CRASHTRACK_END_PROCINFO}")?;
@@ -158,14 +173,16 @@ fn emit_procinfo(w: &mut impl Write, pid: i32) -> anyhow::Result<()> {
 #[cfg(target_os = "linux")]
 /// Assumes that the memory layout of the current process (child) is identical to
 /// the layout of the target process (parent), which should always be true.
-fn emit_proc_self_maps(w: &mut impl Write) -> anyhow::Result<()> {
+fn emit_proc_self_maps(w: &mut impl Write) -> Result<(), EmitterError> {
     emit_text_file(w, "/proc/self/maps")?;
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
-fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> anyhow::Result<()> {
-    anyhow::ensure!(!ucontext.is_null());
+fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), EmitterError> {
+    if ucontext.is_null() {
+        return Err(EmitterError::NullUcontext);
+    }
     writeln!(w, "{DD_CRASHTRACK_BEGIN_UCONTEXT}")?;
     // SAFETY: the pointer is given to us by the signal handler, and is non-null.
     writeln!(w, "{:?}", unsafe { *ucontext })?;
@@ -175,8 +192,10 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> anyhow::Res
 }
 
 #[cfg(target_os = "macos")]
-fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> anyhow::Result<()> {
-    anyhow::ensure!(!ucontext.is_null());
+fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), EmitterError> {
+    if ucontext.is_null() {
+        return Err(EmitterError::NullUcontext);
+    }
     // On MacOS, the actual machine context is behind a second pointer.
     // SAFETY: the pointer is given to us by the signal handler, and is non-null.
     let mcontext = unsafe { *ucontext }.uc_mcontext;
@@ -193,8 +212,10 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> anyhow::Res
     Ok(())
 }
 
-fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> anyhow::Result<()> {
-    anyhow::ensure!(!sig_info.is_null());
+fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> Result<(), EmitterError> {
+    if sig_info.is_null() {
+        return Err(EmitterError::NullSiginfo);
+    }
 
     let si_signo = unsafe { (*sig_info).si_signo };
     let si_signo_human_readable: SignalNames = si_signo.into();
@@ -253,10 +274,10 @@ fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> anyhow::Resul
 ///     This function is careful to only write to the handle, without doing any
 ///     unnecessary mutexes or memory allocation.
 #[allow(dead_code)]
-fn emit_text_file(w: &mut impl Write, path: &str) -> anyhow::Result<()> {
+fn emit_text_file(w: &mut impl Write, path: &str) -> Result<(), EmitterError> {
     // open is signal safe
     // https://man7.org/linux/man-pages/man7/signal-safety.7.html
-    let mut file = File::open(path).with_context(|| path.to_string())?;
+    let mut file = File::open(path).map_err(EmitterError::FileOpenError)?;
 
     // Reading the file into a fixed buffer is signal safe.
     // Doing anything more complicated may involve allocation which is not.

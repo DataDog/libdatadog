@@ -64,7 +64,7 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
                     _ = match sym.kind() {
                         SymbolKind::Text => {
                             if !sym.is_weak() {
-                                writeln!(generated, "void {}() {{}}", name)
+                                writeln!(generated, "void {name}() {{}}")
                             } else {
                                 Ok(())
                             }
@@ -77,7 +77,7 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
                                 #[cfg(not(target_os = "macos"))]
                                 let ret = Ok(());
                                 #[cfg(target_os = "macos")]
-                                let ret = writeln!(generated, "char {}[1];", name);
+                                let ret = writeln!(generated, "char {name}[1];");
                                 ret
                             }
                         }
@@ -88,7 +88,7 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
                                 #[cfg(not(target_os = "macos"))]
                                 let ret = Ok(());
                                 #[cfg(target_os = "macos")]
-                                let ret = writeln!(generated, "__thread char {}[1];", name);
+                                let ret = writeln!(generated, "__thread char {name}[1];");
                                 ret
                             }
                         }

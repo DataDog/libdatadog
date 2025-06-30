@@ -112,6 +112,11 @@ impl<'pprof> Replayer<'pprof> {
         let mut endpoint_info = None;
         if let (Some(lsri_label), Some(endpoint_label)) = (lrsi, endpoint) {
             let num: i64 = lsri_label.num;
+            #[allow(
+                unknown_lints,
+                unnecessary_transmutes,
+                reason = "i64::cast_unsigned requires MSRV 1.87.0"
+            )]
             let local_root_span_id: u64 = unsafe { std::mem::transmute(num) };
             anyhow::ensure!(
                 local_root_span_id != 0,

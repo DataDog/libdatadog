@@ -118,8 +118,8 @@ impl DebuggerDiagnosticsBookkeeper {
         DebuggerDiagnosticsBookkeeperStats {
             runtime_ids: buffers.len() as u32,
             total_probes: buffers
-                .iter()
-                .map(|(_, active)| active.active_probes.len() as u32)
+                .values()
+                .map(|active| active.active_probes.len() as u32)
                 .sum(),
         }
     }

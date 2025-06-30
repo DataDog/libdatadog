@@ -8,12 +8,11 @@ use super::receiver_manager::Receiver;
 use super::signal_handler_manager::chain_signal_handler;
 use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
-use crate::shared::constants::DD_CRASHTRACK_MINIMUM_REAP_TIME_MS;
+use ddcommon::timeout::TimeoutManager;
 use libc::{c_void, siginfo_t, ucontext_t};
 use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
-use std::time::Instant;
 
 // Note that this file makes use the following async-signal safe functions in a signal handler.
 // <https://man7.org/linux/man-pages/man7/signal-safety.7.html>
@@ -36,6 +35,18 @@ use std::time::Instant;
 // `Box::from_raw` to recreate the box, then dropping it.
 static METADATA: AtomicPtr<(Metadata, String)> = AtomicPtr::new(ptr::null_mut());
 static CONFIG: AtomicPtr<(CrashtrackerConfiguration, String)> = AtomicPtr::new(ptr::null_mut());
+
+#[derive(Debug, thiserror::Error)]
+pub enum CrashHandlerError {
+    #[error("No crashtracking config available")]
+    NoConfig,
+    #[error("No crashtracking metadata available")]
+    NoMetadata,
+    #[error("Failed to spawn receiver: {0}")]
+    ReceiverSpawnError(#[from] super::receiver_manager::ReceiverError),
+    #[error("Failed to spawn collector: {0}")]
+    CollectorSpawnError(#[from] super::collector_manager::CollectorSpawnError),
+}
 
 /// Updates the crashtracker metadata for this process
 /// Metadata is stored in a global variable and sent to the crashtracking
@@ -130,7 +141,7 @@ pub fn enable() {
 fn handle_posix_signal_impl(
     sig_info: *const siginfo_t,
     ucontext: *const ucontext_t,
-) -> anyhow::Result<()> {
+) -> Result<(), CrashHandlerError> {
     if !ENABLED.load(SeqCst) {
         return Ok(());
     }
@@ -150,25 +161,28 @@ fn handle_posix_signal_impl(
     // Note that these operations also replace the global states.  When the one-time guard is
     // passed, all global configuration and metadata becomes invalid.
     let config_ptr = CONFIG.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(!config_ptr.is_null(), "No crashtracking config");
+    if config_ptr.is_null() {
+        return Err(CrashHandlerError::NoConfig);
+    }
     let (config, config_str) = unsafe { &*config_ptr };
 
     let metadata_ptr = METADATA.swap(ptr::null_mut(), SeqCst);
-    anyhow::ensure!(!metadata_ptr.is_null(), "No crashtracking metadata");
+    if metadata_ptr.is_null() {
+        return Err(CrashHandlerError::NoMetadata);
+    }
     let (_metadata, metadata_string) = unsafe { &*metadata_ptr };
 
-    let timeout_ms = config.timeout_ms();
-    let start_time = Instant::now(); // This is the time at which the signal was received
+    let timeout_manager = TimeoutManager::new(config.timeout());
 
     // Optionally, create the receiver.  This all hinges on whether or not the configuration has a
     // non-null unix domain socket specified.  If it doesn't, then we need to check the receiver
     // configuration.  If it does, then we just connect to the socket.
-    let unix_socket_path = config.unix_socket_path().clone().unwrap_or_default();
+    let unix_socket_path = config.unix_socket_path().as_deref().unwrap_or_default();
 
     let receiver = if unix_socket_path.is_empty() {
         Receiver::spawn_from_stored_config()?
     } else {
-        Receiver::from_socket(&unix_socket_path)?
+        Receiver::from_socket(unix_socket_path)?
     };
 
     let collector = Collector::spawn(
@@ -181,12 +195,8 @@ fn handle_posix_signal_impl(
     )?;
 
     // We're done. Wrap up our interaction with the receiver.
-    collector.finish(start_time, timeout_ms);
-    let timeout_ms = std::cmp::min(
-        timeout_ms.saturating_sub(start_time.elapsed().as_millis() as u32),
-        DD_CRASHTRACK_MINIMUM_REAP_TIME_MS,
-    );
-    receiver.finish(start_time, timeout_ms);
+    collector.finish(&timeout_manager);
+    receiver.finish(&timeout_manager);
 
     Ok(())
 }
