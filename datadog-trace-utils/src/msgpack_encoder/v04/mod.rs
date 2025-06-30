@@ -1,23 +1,32 @@
-use rmp::encode::{write_array_len, ByteBuf, RmpWrite, ValueWriteError};
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::span::{Span, SpanText};
+use rmp::encode::{write_array_len, ByteBuf, RmpWrite, ValueWriteError};
 
 mod span;
 
 #[inline(always)]
-fn to_writer<W: RmpWrite, T: SpanText>(writer: &mut W, traces: &Vec<Vec<Span<T>>>) -> Result<(), ValueWriteError<W::Error>> {
+fn to_writer<W: RmpWrite, T: SpanText>(
+    writer: &mut W,
+    traces: &Vec<Vec<Span<T>>>,
+) -> Result<(), ValueWriteError<W::Error>> {
     write_array_len(writer, traces.len() as u32)?;
     for trace in traces {
         write_array_len(writer, trace.len() as u32)?;
         for span in trace {
-            span::encode_span(writer, &span)?;
+            span::encode_span(writer, span)?;
         }
     }
 
     Ok(())
 }
 
-pub fn to_slice<T: SpanText>(mut slice: &mut [u8], traces: &Vec<Vec<Span<T>>>) -> Result<(), ValueWriteError> {
-    to_writer(&mut slice, traces)
+pub fn to_slice<T: SpanText>(
+    slice: &mut &mut [u8],
+    traces: &Vec<Vec<Span<T>>>,
+) -> Result<(), ValueWriteError> {
+    to_writer(slice, traces)
 }
 
 pub fn to_vec<T: SpanText>(traces: &Vec<Vec<Span<T>>>) -> Vec<u8> {

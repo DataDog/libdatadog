@@ -442,8 +442,8 @@ fn is_default<T: Default + PartialEq>(t: &T) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
-    use std::collections::HashMap;
     use crate::msgpack_decoder::v04::from_slice;
+    use std::collections::HashMap;
 
     #[test]
     fn skip_serializing_empty_fields_test() {
@@ -455,7 +455,7 @@ mod tests {
 
     #[test]
     fn skip_serializing_empty_fields_test_manual_encoder() {
-        let expected = b"\x87\xa7service\xa0\xa4name\xa0\xa8resource\xa0\xa8trace_id\x00\xa7span_id\x00\xa5start\x00\xa8duration\x00";
+        let expected = b"\x91\x91\x87\xa7service\xa0\xa4name\xa0\xa8resource\xa0\xa8trace_id\xcf\x00\x00\x00\x00\x00\x00\x00\x00\xa7span_id\xcf\x00\x00\x00\x00\x00\x00\x00\x00\xa5start\xd3\x00\x00\x00\x00\x00\x00\x00\x00\xa8duration\x00";
         let val: Span<&str> = Span::default();
         let serialized = crate::msgpack_encoder::v04::to_vec(&vec![vec![val]]);
         assert_eq!(expected, serialized.as_slice());
@@ -485,7 +485,9 @@ mod tests {
                         ),
                         (
                             "exception.type",
-                            AttributeAnyValue::SingleValue(AttributeArrayValue::String("RuntimeError")),
+                            AttributeAnyValue::SingleValue(AttributeArrayValue::String(
+                                "RuntimeError",
+                            )),
                         ),
                         (
                             "exception.escaped",
@@ -498,8 +500,12 @@ mod tests {
                         (
                             "exception.lines",
                             AttributeAnyValue::Array(vec![
-                                AttributeArrayValue::String("  File \"<string>\", line 1, in <module>"),
-                                AttributeArrayValue::String("  File \"<string>\", line 1, in divide"),
+                                AttributeArrayValue::String(
+                                    "  File \"<string>\", line 1, in <module>",
+                                ),
+                                AttributeArrayValue::String(
+                                    "  File \"<string>\", line 1, in divide",
+                                ),
                                 AttributeArrayValue::String("RuntimeError: Cannot divide by zero"),
                             ]),
                         ),

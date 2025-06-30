@@ -168,13 +168,20 @@ pub extern "C" fn ddog_trace_new_span(trace: &mut TraceBytes) -> &mut SpanBytes 
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_trace_new_span_with_capacities(trace: &mut TraceBytes, meta_size: usize, metrics_size: usize) -> &mut SpanBytes {
+pub extern "C" fn ddog_trace_new_span_with_capacities(
+    trace: &mut TraceBytes,
+    meta_size: usize,
+    metrics_size: usize,
+) -> &mut SpanBytes {
     unsafe {
-        new_vector_push(trace, SpanBytes {
-            meta: HashMap::with_capacity(meta_size),
-            metrics: HashMap::with_capacity(metrics_size),
-            ..SpanBytes::default()
-        })
+        new_vector_push(
+            trace,
+            SpanBytes {
+                meta: HashMap::with_capacity(meta_size),
+                metrics: HashMap::with_capacity(metrics_size),
+                ..SpanBytes::default()
+            },
+        )
     }
 }
 
@@ -197,7 +204,7 @@ pub extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
 
     // SAFETY: we assume this pointer came from `String::leak`
     unsafe {
-        let _ = String::from_raw_parts(ptr.cast_mut().cast(), len, len);
+        let _ = String::from_raw_parts(ptr.cast_mut().cast(), len + 1, len + 1);
     }
 }
 
