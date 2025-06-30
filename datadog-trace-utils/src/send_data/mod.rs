@@ -205,6 +205,15 @@ impl SendData {
         self.retry_strategy = retry_strategy;
     }
 
+    /// Overrides the set target Endpoint.
+    ///
+    /// # Arguments
+    ///
+    /// * `endpoint`: The new endpoint to be used.
+    pub fn set_target(&mut self, endpoint: Endpoint) {
+        self.target = endpoint;
+    }
+
     /// Sends the data to the target endpoint.
     ///
     /// # Returns
