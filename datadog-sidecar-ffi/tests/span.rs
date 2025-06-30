@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use tinybytes::*;
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_set_get_all_core_fields() {
     let mut traces = ddog_get_traces();
     let trace = ddog_traces_new_trace(&mut traces);
@@ -47,6 +48,7 @@ fn test_set_get_all_core_fields() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_meta_crud() {
     unsafe {
         let mut traces = ddog_get_traces();
@@ -88,6 +90,7 @@ fn test_meta_crud() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_metrics_crud() {
     unsafe {
         let mut traces = ddog_get_traces();
@@ -132,6 +135,7 @@ fn test_metrics_crud() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_meta_struct_crud() {
     unsafe {
         let mut traces = ddog_get_traces();
@@ -173,6 +177,7 @@ fn test_meta_struct_crud() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_span_debug_log_output() {
     let mut traces = ddog_get_traces();
     let trace = ddog_traces_new_trace(&mut traces);
@@ -197,6 +202,7 @@ fn get_bytes(value: &'static str) -> Bytes {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_full_link() {
     let mut traces = ddog_get_traces();
     let trace = ddog_traces_new_trace(traces.as_mut());
@@ -227,6 +233,7 @@ fn test_full_link() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_full_event() {
     let mut traces = ddog_get_traces();
     let trace = ddog_traces_new_trace(traces.as_mut());
@@ -285,6 +292,7 @@ fn test_full_event() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_full_span() {
     let mut traces = ddog_get_traces();
     let trace = ddog_traces_new_trace(traces.as_mut());

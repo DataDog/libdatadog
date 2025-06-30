@@ -187,7 +187,9 @@ fn read_attributes_array<'a>(
 
     let values_key = read_string_ref(buf)?;
     if values_key != "values" {
-        return Err(DecodeError::InvalidType("Expected a string key values".to_owned()))
+        return Err(DecodeError::InvalidType(
+            "Expected a string key values".to_owned(),
+        ));
     }
 
     let len = rmp::decode::read_array_len(buf).map_err(|_| {

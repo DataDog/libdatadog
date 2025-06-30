@@ -788,9 +788,7 @@ impl TraceExporter {
 
         let strategy = RetryStrategy::default();
         let mp_payload = match &payload {
-            tracer_payload::TraceChunks::V04(p) => {
-                msgpack_encoder::v04::to_vec(p)
-            }
+            tracer_payload::TraceChunks::V04(p) => msgpack_encoder::v04::to_vec(p),
             tracer_payload::TraceChunks::V05(p) => {
                 rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)?
             }
