@@ -1,16 +1,15 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::slice::AsBytes;
 use core::slice;
 use serde::ser::Error;
 use serde::Serializer;
-use std::borrow::Cow;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::os::raw::c_char;
 use std::ptr::NonNull;
-use std::str::Utf8Error;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -49,36 +48,6 @@ pub type ByteMutSlice<'a> = MutSlice<'a, u8>;
 #[inline]
 fn is_aligned<T>(ptr: NonNull<T>) -> bool {
     ptr.as_ptr() as usize % std::mem::align_of::<T>() == 0
-}
-
-pub trait AsBytes<'a> {
-    fn as_bytes(&self) -> &'a [u8];
-
-    #[inline]
-    fn try_to_utf8(&self) -> Result<&'a str, Utf8Error> {
-        std::str::from_utf8(self.as_bytes())
-    }
-
-    fn try_to_string(&self) -> Result<String, Utf8Error> {
-        Ok(self.try_to_utf8()?.to_string())
-    }
-
-    #[inline]
-    fn try_to_string_option(&self) -> Result<Option<String>, Utf8Error> {
-        Ok(Some(self.try_to_string()?).filter(|x| !x.is_empty()))
-    }
-
-    #[inline]
-    fn to_utf8_lossy(&self) -> Cow<'a, str> {
-        String::from_utf8_lossy(self.as_bytes())
-    }
-
-    #[inline]
-    /// # Safety
-    /// Must only be used when the underlying data was already confirmed to be utf8.
-    unsafe fn assume_utf8(&self) -> &'a str {
-        std::str::from_utf8_unchecked(self.as_bytes())
-    }
 }
 
 impl<'a> AsBytes<'a> for MutSlice<'a, u8> {
