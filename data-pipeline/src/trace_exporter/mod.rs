@@ -299,7 +299,7 @@ impl TraceExporter {
     ///
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent
-    /// * Err(TraceExporterError): An error detailling what went wrong in the process
+    /// * Err(TraceExporterError): An error detailing what went wrong in the process
     pub fn send(
         &self,
         data: &[u8],
@@ -514,7 +514,7 @@ impl TraceExporter {
     /// The `send`` function will check agent_info when running, which will only be available if the
     /// fetcher had time to reach to the agent.
     /// Since agent_info can enable CSS computation, waiting for this during testing can make
-    /// snapshots non-determinitic.
+    /// snapshots non-deterministic.
     #[cfg(feature = "test-utils")]
     pub fn wait_agent_info_ready(&self, timeout: Duration) -> anyhow::Result<()> {
         let start = std::time::Instant::now();
@@ -1539,7 +1539,7 @@ mod tests {
         dogstatsd_url: Option<String>,
         input: TraceExporterInputFormat,
         output: TraceExporterOutputFormat,
-        enable_telemrty: bool,
+        enable_telemetry: bool,
     ) -> TraceExporter {
         let mut builder = TraceExporterBuilder::default();
         builder
@@ -1557,7 +1557,7 @@ mod tests {
             builder.set_dogstatsd_url(&url);
         };
 
-        if enable_telemrty {
+        if enable_telemetry {
             builder.enable_telemetry(Some(TelemetryConfig {
                 heartbeat: 100,
                 ..Default::default()

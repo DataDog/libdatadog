@@ -46,10 +46,10 @@ impl Display for ExporterErrorCode {
             Self::ConnectionReset => write!(f, "Connection reset by peer"),
             Self::HttpBodyFormat => write!(f, "Error parsing HTTP body"),
             Self::HttpBodyTooLong => write!(f, "HTTP body too long"),
-            Self::HttpClient => write!(f, "HTTP error orgininated by client"),
+            Self::HttpClient => write!(f, "HTTP error originated by client"),
             Self::HttpEmptyBody => write!(f, "HTTP empty body"),
             Self::HttpParse => write!(f, "Error while parsing HTTP message"),
-            Self::HttpServer => write!(f, "HTTP error orgininated by server"),
+            Self::HttpServer => write!(f, "HTTP error originated by server"),
             Self::HttpWrongStatus => write!(f, "HTTP wrong status number"),
             Self::HttpUnknown => write!(f, "HTTP unknown error"),
             Self::InvalidArgument => write!(f, "Invalid argument provided"),
@@ -67,7 +67,7 @@ impl Display for ExporterErrorCode {
     }
 }
 
-/// Stucture that contains error information that `TraceExporter` API can return.
+/// Structure that contains error information that `TraceExporter` API can return.
 #[repr(C)]
 #[derive(Debug, PartialEq)]
 pub struct ExporterError {
@@ -140,7 +140,7 @@ impl Drop for ExporterError {
         if !self.msg.is_null() {
             // SAFETY: `the caller must ensure that `ExporterError` has been created through its
             // `new` method which ensures that `msg` property is originated from
-            // `Cstring::into_raw` call. Any other posibility could lead to UB.
+            // `Cstring::into_raw` call. Any other possibility could lead to UB.
             unsafe {
                 drop(CString::from_raw(self.msg));
                 self.msg = std::ptr::null_mut();

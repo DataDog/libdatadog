@@ -8,7 +8,7 @@ use ddtelemetry::metrics::ContextKey;
 use ddtelemetry::worker::TelemetryWorkerHandle;
 use std::ops::Index;
 
-/// Used as indentifier to match the different metrics.
+/// Used as identifier to match the different metrics.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub enum MetricKind {
     /// trace_api.requests metric

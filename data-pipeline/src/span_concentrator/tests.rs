@@ -532,7 +532,7 @@ fn test_concentrator_stats_counts() {
     }
 }
 
-/// Test the criterias to include a span in stats computation
+/// Test the criteria to include a span in stats computation
 #[test]
 fn test_span_should_be_included_in_stats() {
     let now = SystemTime::now();
