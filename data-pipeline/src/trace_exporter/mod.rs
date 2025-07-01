@@ -1147,7 +1147,7 @@ impl TraceExporterBuilder {
     }
 
     /// Enables storing and checking the agent payload
-    pub fn enable_agent_rates_payload_version_enabled(&mut self) -> &mut Self {
+    pub fn enable_agent_rates_payload_version(&mut self) -> &mut Self {
         self.agent_rates_payload_version_enabled = true;
         self
     }
@@ -2157,7 +2157,7 @@ mod tests {
         let mut builder = TraceExporterBuilder::default();
         builder
             .set_url(&server.url("/"))
-            .enable_agent_rates_payload_version_enabled();
+            .enable_agent_rates_payload_version();
         let exporter = builder.build().unwrap();
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref(), 1).unwrap();
