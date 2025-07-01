@@ -102,7 +102,7 @@ mod queuehashmap {
         fn insert_nocheck(&mut self, hash: u64, key: K, value: V) -> usize {
             let item_index = self.items.len() + self.popped;
 
-            // Separate set and items since set is mutably borrowed, while items is un-mutably
+            // Separate set and items since set is mutably borrowed, while items is immutable
             let Self {
                 table,
                 items,
