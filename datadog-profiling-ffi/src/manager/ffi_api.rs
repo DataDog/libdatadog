@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::manager::{
-    profiler_manager::{
-        ManagedSampleCallbacks, ManagerCallbacks, ProfilerManager, ProfilerManagerConfig,
-    },
+    fork_handler,
+    profiler_manager::{ManagedSampleCallbacks, ProfilerManagerConfig},
     ManagedProfilerClient,
 };
 use crate::profiles::datatypes::{Profile, ProfilePtrExt};
@@ -35,14 +34,12 @@ pub unsafe extern "C" fn ddog_prof_ProfilerManager_start(
 ) -> FFIResult<Handle<ManagedProfilerClient>> {
     wrap_with_ffi_result!({
         let internal_profile = *profile.take()?;
-        let client: ManagedProfilerClient = ProfilerManager::start(
+        let client = fork_handler::start(
             internal_profile,
-            ManagerCallbacks {
-                cpu_sampler_callback,
-                upload_callback,
-                sample_callbacks,
-            },
             config,
+            cpu_sampler_callback,
+            upload_callback,
+            sample_callbacks,
         )?;
         anyhow::Ok(Handle::from(client))
     })
@@ -100,15 +97,10 @@ pub unsafe extern "C" fn ddog_prof_ProfilerManager_try_recv_recycled(
 /// - The handle must have been returned by ddog_prof_ProfilerManager_start and not yet dropped.
 #[no_mangle]
 #[named]
-pub unsafe extern "C" fn ddog_prof_ProfilerManager_shutdown(
-    mut handle: *mut Handle<ManagedProfilerClient>,
-) -> FFIResult<Profile> {
-    wrap_with_ffi_result!({
-        let profile = handle
-            .take()?
-            .shutdown()
-            .map_err(|e| anyhow::anyhow!("Failed to shutdown client: {:?}", e))?;
-        anyhow::Ok(Profile::new(profile))
+pub unsafe extern "C" fn ddog_prof_ProfilerManager_shutdown() -> VoidResult {
+    wrap_with_void_ffi_result!({
+        fork_handler::shutdown_global_manager()
+            .map_err(|e| anyhow::anyhow!("Failed to shutdown global manager: {:?}", e))?;
     })
 }
 

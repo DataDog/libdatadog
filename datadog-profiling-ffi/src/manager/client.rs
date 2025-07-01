@@ -8,24 +8,22 @@ use datadog_profiling::internal;
 use super::ClientSampleChannels;
 use super::SendSample;
 
+#[derive(Debug, Clone)]
 pub struct ManagedProfilerClient {
     channels: ClientSampleChannels,
+    is_shutdown: Arc<AtomicBool>,
+}
+
+pub struct ManagedProfilerController {
     handle: JoinHandle<Result<internal::Profile>>,
     shutdown_sender: Sender<()>,
     is_shutdown: Arc<AtomicBool>,
 }
 
 impl ManagedProfilerClient {
-    pub fn new(
-        channels: ClientSampleChannels,
-        handle: JoinHandle<Result<internal::Profile>>,
-        shutdown_sender: Sender<()>,
-        is_shutdown: Arc<AtomicBool>,
-    ) -> Self {
+    pub fn new(channels: ClientSampleChannels, is_shutdown: Arc<AtomicBool>) -> Self {
         Self {
             channels,
-            handle,
-            shutdown_sender,
             is_shutdown,
         }
     }
@@ -52,6 +50,20 @@ impl ManagedProfilerClient {
             return Err(crossbeam_channel::TryRecvError::Disconnected);
         }
         self.channels.try_recv_recycled()
+    }
+}
+
+impl ManagedProfilerController {
+    pub fn new(
+        handle: JoinHandle<Result<internal::Profile>>,
+        shutdown_sender: Sender<()>,
+        is_shutdown: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            handle,
+            shutdown_sender,
+            is_shutdown,
+        }
     }
 
     pub fn shutdown(self) -> Result<internal::Profile> {

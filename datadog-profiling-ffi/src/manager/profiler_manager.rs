@@ -9,7 +9,7 @@ use datadog_profiling::internal;
 use ddcommon_ffi::Handle;
 use tokio_util::sync::CancellationToken;
 
-use super::client::ManagedProfilerClient;
+use super::client::{ManagedProfilerClient, ManagedProfilerController};
 use super::samples::{ClientSampleChannels, ManagerSampleChannels, SendSample};
 use crate::profiles::datatypes::Sample;
 
@@ -22,6 +22,7 @@ pub struct ManagerCallbacks {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct ProfilerManagerConfig {
     pub channel_depth: usize,
     pub cpu_sampling_interval_ms: u64,
@@ -81,7 +82,7 @@ impl ProfilerManager {
         profile: internal::Profile,
         callbacks: ManagerCallbacks,
         config: ProfilerManagerConfig,
-    ) -> Result<ManagedProfilerClient> {
+    ) -> Result<(ManagedProfilerClient, ManagedProfilerController)> {
         let (client_channels, manager_channels) = ClientSampleChannels::new(config.channel_depth);
         let (shutdown_sender, shutdown_receiver) = crossbeam_channel::bounded(1);
         let (upload_sender, upload_receiver) = crossbeam_channel::bounded(2);
@@ -119,12 +120,11 @@ impl ProfilerManager {
 
         let handle = std::thread::spawn(move || manager.main());
 
-        Ok(ManagedProfilerClient::new(
-            client_channels,
-            handle,
-            shutdown_sender,
-            is_shutdown,
-        ))
+        let client = ManagedProfilerClient::new(client_channels, is_shutdown.clone());
+
+        let controller = ManagedProfilerController::new(handle, shutdown_sender, is_shutdown);
+
+        Ok((client, controller))
     }
 
     fn handle_sample(
@@ -150,7 +150,7 @@ impl ProfilerManager {
         let old_profile = self.profile.reset_and_return_previous()?;
         self.upload_sender
             .send(old_profile)
-            .map_err(|e| anyhow::anyhow!("Failed to send profile for upload: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to send profile for upload: {e}"))?;
         Ok(())
     }
 
@@ -161,6 +161,13 @@ impl ProfilerManager {
         // Mark as shutdown
         self.is_shutdown
             .store(true, std::sync::atomic::Ordering::SeqCst);
+
+        // Cancel any ongoing upload
+        self.cancellation_token.cancel();
+
+        // Drop the sender to signal the upload thread that no more messages will be sent
+        // This is necessary to allow the upload thread to exit its message processing loop
+        drop(self.upload_sender);
 
         // Process any remaining samples
         while let Ok(sample) = self.channels.samples_receiver.try_recv() {
@@ -176,16 +183,9 @@ impl ProfilerManager {
             (self.callbacks.sample_callbacks.drop)(sample);
         }
 
-        // Cancel any ongoing upload
-        self.cancellation_token.cancel();
-
-        // Drop the sender to signal the upload thread that no more messages will be sent
-        // This is necessary to allow the upload thread to exit its message processing loop
-        drop(self.upload_sender);
-
         // Wait for the upload thread to finish
         if let Err(e) = self.upload_thread.join() {
-            eprintln!("Error joining upload thread: {:?}", e);
+            eprintln!("Error joining upload thread: {e:?}");
         }
 
         Ok(self.profile)
@@ -199,14 +199,14 @@ impl ProfilerManager {
             select! {
                 recv(self.channels.samples_receiver) -> raw_sample => {
                     let _ = self.handle_sample(raw_sample)
-                        .map_err(|e| eprintln!("Failed to process sample: {}", e));
+                        .map_err(|e| eprintln!("Failed to process sample: {e}"));
                 },
                 recv(self.cpu_ticker) -> msg => {
                     self.handle_cpu_tick();
                 },
                 recv(self.upload_ticker) -> msg => {
                     let _ = self.handle_upload_tick()
-                        .map_err(|e| eprintln!("Failed to handle upload: {}", e));
+                        .map_err(|e| eprintln!("Failed to handle upload: {e}"));
                 },
                 recv(self.shutdown_receiver) -> _ => {
                     return self.handle_shutdown();

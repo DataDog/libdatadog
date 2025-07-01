@@ -32,6 +32,24 @@ pub struct ClientSampleChannels {
     recycled_samples_receiver: Receiver<SendSample>,
 }
 
+impl std::fmt::Debug for ClientSampleChannels {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientSampleChannels")
+            .field("samples_sender", &"Sender<SendSample>")
+            .field("recycled_samples_receiver", &"Receiver<SendSample>")
+            .finish()
+    }
+}
+
+impl Clone for ClientSampleChannels {
+    fn clone(&self) -> Self {
+        Self {
+            samples_sender: self.samples_sender.clone(),
+            recycled_samples_receiver: self.recycled_samples_receiver.clone(),
+        }
+    }
+}
+
 pub struct ManagerSampleChannels {
     pub samples_receiver: Receiver<SendSample>,
     pub recycled_samples_sender: Sender<SendSample>,

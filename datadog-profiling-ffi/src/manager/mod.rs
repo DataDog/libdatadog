@@ -13,6 +13,6 @@ mod samples;
 #[cfg(test)]
 mod tests;
 
-pub use client::ManagedProfilerClient;
+pub use client::{ManagedProfilerClient, ManagedProfilerController};
 pub use profiler_manager::{ManagedSampleCallbacks, ProfilerManager};
 pub use samples::{ClientSampleChannels, SendSample};

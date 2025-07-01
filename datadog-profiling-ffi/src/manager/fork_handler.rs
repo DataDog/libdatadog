@@ -1,23 +1,39 @@
 #![allow(clippy::unwrap_used)]
 
-use super::client::ManagedProfilerClient;
+use super::client::{ManagedProfilerClient, ManagedProfilerController};
 use super::profiler_manager::{
     ManagedSampleCallbacks, ManagerCallbacks, ProfilerManager, ProfilerManagerConfig,
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
 use datadog_profiling::internal::Profile;
 use std::sync::Mutex;
 
-// Global state for the profile manager
-static MANAGER: Mutex<Option<ProfilerManager>> = Mutex::new(None);
-static PROFILE: Mutex<Option<Profile>> = Mutex::new(None);
-static CONFIG: Mutex<Option<ProfilerManagerConfig>> = Mutex::new(None);
-static CALLBACKS: Mutex<Option<ManagerCallbacks>> = Mutex::new(None);
+/// Global state for the profile manager during fork operations
+enum ManagerState {
+    /// Manager has not been initialized yet
+    Uninitialized,
+    /// Manager is running with active profiler client and controller
+    Running {
+        client: ManagedProfilerClient,
+        controller: ManagedProfilerController,
+        config: ProfilerManagerConfig,
+        callbacks: ManagerCallbacks,
+    },
+    /// Manager is paused (shutdown) with stored profile
+    Paused {
+        profile: Box<datadog_profiling::internal::Profile>,
+        config: ProfilerManagerConfig,
+        callbacks: ManagerCallbacks,
+    },
+}
 
-/// Stores the current profile manager state globally.
-/// This should be called before forking to ensure clean state.
-pub fn store_manager_state(
-    manager: ProfilerManager,
+// Global state for the profile manager
+static MANAGER_STATE: Mutex<ManagerState> = Mutex::new(ManagerState::Uninitialized);
+
+/// Starts a new profile manager and stores the global state.
+/// Returns the client for external use.
+pub fn start(
+    profile: datadog_profiling::internal::Profile,
     config: ProfilerManagerConfig,
     cpu_sampler_callback: extern "C" fn(*mut Profile),
     upload_callback: extern "C" fn(
@@ -25,74 +41,87 @@ pub fn store_manager_state(
         &mut Option<tokio_util::sync::CancellationToken>,
     ),
     sample_callbacks: ManagedSampleCallbacks,
-) -> Result<()> {
-    // Store the manager
-    *MANAGER.lock().unwrap() = Some(manager);
+) -> Result<ManagedProfilerClient> {
+    let (client, controller) = ProfilerManager::start(
+        profile,
+        ManagerCallbacks {
+            cpu_sampler_callback,
+            upload_callback,
+            sample_callbacks: sample_callbacks.clone(),
+        },
+        config,
+    )?;
 
-    // Store the config and callbacks separately
-    *CONFIG.lock().unwrap() = Some(config);
-    *CALLBACKS.lock().unwrap() = Some(ManagerCallbacks {
-        cpu_sampler_callback,
-        upload_callback,
-        sample_callbacks,
-    });
+    let mut state = MANAGER_STATE.lock().unwrap();
+    *state = ManagerState::Running {
+        client: client.clone(),
+        controller,
+        config,
+        callbacks: ManagerCallbacks {
+            cpu_sampler_callback,
+            upload_callback,
+            sample_callbacks,
+        },
+    };
 
-    Ok(())
+    Ok(client)
 }
 
 /// Shuts down the stored profile manager and stores its profile.
 /// This should be called before forking to ensure clean state.
-pub fn shutdown_stored_manager() -> Result<()> {
-    let manager = MANAGER
-        .lock()
-        .unwrap()
-        .take()
-        .context("No profile manager stored")?;
-
-    let profile = manager.handle_shutdown()?;
-
-    // Store the profile
-    *PROFILE.lock().unwrap() = Some(profile);
-
-    Ok(())
+pub fn shutdown_global_manager() -> Result<()> {
+    let mut state = MANAGER_STATE.lock().unwrap();
+    match std::mem::replace(&mut *state, ManagerState::Uninitialized) {
+        ManagerState::Running {
+            client: _,
+            controller,
+            config,
+            callbacks,
+        } => {
+            let profile = controller.shutdown()?;
+            *state = ManagerState::Paused {
+                profile: Box::new(profile),
+                config,
+                callbacks,
+            };
+            Ok(())
+        }
+        _ => Err(anyhow::anyhow!("Manager is not in running state")),
+    }
 }
 
 /// Restarts the profile manager in the parent process with the stored profile.
 /// This should be called after fork in the parent process.
-pub fn restart_manager_in_parent() -> Result<ManagedProfilerClient> {
-    let profile = PROFILE
-        .lock()
-        .unwrap()
-        .take()
-        .context("No profile stored")?;
+pub fn restart_manager_in_parent() -> Result<(ManagedProfilerClient, ManagedProfilerController)> {
+    let mut state = MANAGER_STATE.lock().unwrap();
 
-    let config = CONFIG.lock().unwrap().take().context("No config stored")?;
-
-    let callbacks = CALLBACKS
-        .lock()
-        .unwrap()
-        .take()
-        .context("No callbacks stored")?;
+    let (profile, config, callbacks) =
+        match std::mem::replace(&mut *state, ManagerState::Uninitialized) {
+            ManagerState::Paused {
+                profile,
+                config,
+                callbacks,
+            } => (*profile, config, callbacks),
+            _ => return Err(anyhow::anyhow!("Manager is not in paused state")),
+        };
 
     ProfilerManager::start(profile, callbacks, config)
 }
 
 /// Restarts the profile manager in the child process with a fresh profile.
 /// This should be called after fork in the child process.
-pub fn restart_manager_in_child() -> Result<ManagedProfilerClient> {
-    let config = CONFIG.lock().unwrap().take().context("No config stored")?;
+pub fn restart_manager_in_child() -> Result<(ManagedProfilerClient, ManagedProfilerController)> {
+    let mut state = MANAGER_STATE.lock().unwrap();
 
-    let callbacks = CALLBACKS
-        .lock()
-        .unwrap()
-        .take()
-        .context("No callbacks stored")?;
-
-    let mut profile = PROFILE
-        .lock()
-        .unwrap()
-        .take()
-        .context("No profile stored")?;
+    let (mut profile, config, callbacks) =
+        match std::mem::replace(&mut *state, ManagerState::Uninitialized) {
+            ManagerState::Paused {
+                profile,
+                config,
+                callbacks,
+            } => (*profile, config, callbacks),
+            _ => return Err(anyhow::anyhow!("Manager is not in paused state")),
+        };
 
     // Reset the profile, discarding the previous one
     let _ = profile.reset_and_return_previous()?;

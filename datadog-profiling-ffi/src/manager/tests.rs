@@ -182,7 +182,7 @@ fn test_profiler_manager() {
 
     let sample_types = [ValueType::new("samples", "count")];
     let profile = Profile::new(&sample_types, None);
-    let client = ProfilerManager::start(
+    let (client, controller) = ProfilerManager::start(
         profile,
         ManagerCallbacks {
             cpu_sampler_callback: test_cpu_sampler_callback,
@@ -209,7 +209,7 @@ fn test_profiler_manager() {
     assert_eq!(UPLOAD_COUNT.load(Ordering::SeqCst), 1);
 
     // Get the profile and verify it has no samples (they were consumed by the upload)
-    let profile = client.shutdown().unwrap();
+    let profile = controller.shutdown().unwrap();
     let pprof = roundtrip_to_pprof(profile);
     assert_eq!(pprof.samples.len(), 0);
 }
