@@ -1,9 +1,7 @@
 use std::sync::Arc;
-use std::{ffi::c_void, sync::atomic::AtomicBool, thread::JoinHandle};
+use std::{ffi::c_void, sync::atomic::AtomicBool};
 
-use anyhow::{ensure, Result};
-use crossbeam_channel::{SendError, Sender};
-use datadog_profiling::internal;
+use crossbeam_channel::SendError;
 
 use super::ClientSampleChannels;
 use super::SendSample;
@@ -11,12 +9,6 @@ use super::SendSample;
 #[derive(Debug, Clone)]
 pub struct ManagedProfilerClient {
     channels: ClientSampleChannels,
-    is_shutdown: Arc<AtomicBool>,
-}
-
-pub struct ManagedProfilerController {
-    handle: JoinHandle<Result<internal::Profile>>,
-    shutdown_sender: Sender<()>,
     is_shutdown: Arc<AtomicBool>,
 }
 
@@ -50,30 +42,5 @@ impl ManagedProfilerClient {
             return Err(crossbeam_channel::TryRecvError::Disconnected);
         }
         self.channels.try_recv_recycled()
-    }
-}
-
-impl ManagedProfilerController {
-    pub fn new(
-        handle: JoinHandle<Result<internal::Profile>>,
-        shutdown_sender: Sender<()>,
-        is_shutdown: Arc<AtomicBool>,
-    ) -> Self {
-        Self {
-            handle,
-            shutdown_sender,
-            is_shutdown,
-        }
-    }
-
-    pub fn shutdown(self) -> Result<internal::Profile> {
-        ensure!(
-            !self.is_shutdown.load(std::sync::atomic::Ordering::SeqCst),
-            "Profiler manager is already shutdown"
-        );
-        self.shutdown_sender.send(())?;
-        self.handle
-            .join()
-            .map_err(|e| anyhow::anyhow!("Failed to join manager thread: {:?}", e))?
     }
 }

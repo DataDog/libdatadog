@@ -7,12 +7,11 @@
 mod client;
 mod ffi_api;
 mod ffi_utils;
-mod fork_handler;
 mod profiler_manager;
 mod samples;
 #[cfg(test)]
 mod tests;
 
-pub use client::{ManagedProfilerClient, ManagedProfilerController};
-pub use profiler_manager::{ManagedSampleCallbacks, ProfilerManager};
+pub use client::ManagedProfilerClient;
+pub use profiler_manager::{ManagedProfilerController, ManagedSampleCallbacks, ProfilerManager};
 pub use samples::{ClientSampleChannels, SendSample};

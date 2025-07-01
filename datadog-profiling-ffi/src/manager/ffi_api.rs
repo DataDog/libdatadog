@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::manager::{
-    fork_handler,
-    profiler_manager::{ManagedSampleCallbacks, ProfilerManagerConfig},
+    profiler_manager::{
+        ManagedSampleCallbacks, ManagerCallbacks, ProfilerManager, ProfilerManagerConfig,
+    },
     ManagedProfilerClient,
 };
 use crate::profiles::datatypes::{Profile, ProfilePtrExt};
@@ -34,13 +35,12 @@ pub unsafe extern "C" fn ddog_prof_ProfilerManager_start(
 ) -> FFIResult<Handle<ManagedProfilerClient>> {
     wrap_with_ffi_result!({
         let internal_profile = *profile.take()?;
-        let client = fork_handler::start(
-            internal_profile,
-            config,
+        let callbacks = ManagerCallbacks {
             cpu_sampler_callback,
             upload_callback,
             sample_callbacks,
-        )?;
+        };
+        let client = ProfilerManager::start(internal_profile, callbacks, config)?;
         anyhow::Ok(Handle::from(client))
     })
 }
@@ -99,8 +99,8 @@ pub unsafe extern "C" fn ddog_prof_ProfilerManager_try_recv_recycled(
 #[named]
 pub unsafe extern "C" fn ddog_prof_ProfilerManager_shutdown() -> VoidResult {
     wrap_with_void_ffi_result!({
-        fork_handler::shutdown_global_manager()
-            .map_err(|e| anyhow::anyhow!("Failed to shutdown global manager: {:?}", e))?;
+        ProfilerManager::pause()
+            .map_err(|e| anyhow::anyhow!("Failed to pause global manager: {:?}", e))?;
     })
 }
 
