@@ -94,7 +94,7 @@ mod queuehashmap {
 
         /// # Safety
         ///
-        /// This function inserts a new item in the store unconditional
+        /// This function inserts a new item in the store unconditionally
         /// If the item already exists, it's drop implementation will not be called, and memory
         /// might leak
         ///
