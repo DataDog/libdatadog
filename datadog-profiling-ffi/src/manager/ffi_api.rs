@@ -93,23 +93,86 @@ pub unsafe extern "C" fn ddog_prof_ProfilerManager_try_recv_recycled(
     })
 }
 
+/// Pauses the global profiler manager, shutting down the current instance and storing the profile.
+/// The manager can be restarted later using restart functions.
+///
+/// # Safety
+/// - This function is thread-safe and can be called from any thread.
+/// - The manager must be in running state.
+#[no_mangle]
+#[named]
+pub unsafe extern "C" fn ddog_prof_ProfilerManager_pause() -> VoidResult {
+    wrap_with_void_ffi_result!({
+        ProfilerManager::pause().context("Failed to pause global manager")?;
+    })
+}
+
+/// Restarts the profiler manager in the parent process after a fork.
+/// This preserves the profile data from before the pause.
+///
+/// # Safety
+/// - This function is thread-safe and can be called from any thread.
+/// - The manager must be in paused state.
+/// - This should be called in the parent process after a fork.
+#[no_mangle]
+#[named]
+pub unsafe extern "C" fn ddog_prof_ProfilerManager_restart_in_parent(
+) -> FFIResult<Handle<ManagedProfilerClient>> {
+    wrap_with_ffi_result!({
+        let client =
+            ProfilerManager::restart_in_parent().context("Failed to restart manager in parent")?;
+        anyhow::Ok(Handle::from(client))
+    })
+}
+
+/// Restarts the profiler manager in the child process after a fork.
+/// This discards the profile data from before the pause and starts fresh.
+///
+/// # Safety
+/// - This function is thread-safe and can be called from any thread.
+/// - The manager must be in paused state.
+/// - This should be called in the child process after a fork.
+#[no_mangle]
+#[named]
+pub unsafe extern "C" fn ddog_prof_ProfilerManager_restart_in_child(
+) -> FFIResult<Handle<ManagedProfilerClient>> {
+    wrap_with_ffi_result!({
+        let client =
+            ProfilerManager::restart_in_child().context("Failed to restart manager in child")?;
+        anyhow::Ok(Handle::from(client))
+    })
+}
+
+/// Terminates the global profiler manager and returns the final profile.
+/// This should be called when the profiler is no longer needed.
+///
+/// # Safety
+/// - This function is thread-safe and can be called from any thread.
+/// - The manager must be in running or paused state.
+/// - The returned profile handle must be properly managed by the caller.
+#[no_mangle]
+#[named]
+pub unsafe extern "C" fn ddog_prof_ProfilerManager_terminate(
+) -> FFIResult<Handle<internal::Profile>> {
+    wrap_with_ffi_result!({
+        let profile = ProfilerManager::terminate().context("Failed to terminate global manager")?;
+        anyhow::Ok(Handle::from(profile))
+    })
+}
+
+/// Drops a profiler client handle.
+/// This only drops the client handle and does not affect the global manager state.
+///
 /// # Safety
 /// - The handle must have been returned by ddog_prof_ProfilerManager_start and not yet dropped.
 #[no_mangle]
 #[named]
-pub unsafe extern "C" fn ddog_prof_ProfilerManager_shutdown() -> VoidResult {
-    wrap_with_void_ffi_result!({
-        ProfilerManager::pause()
-            .map_err(|e| anyhow::anyhow!("Failed to pause global manager: {:?}", e))?;
-    })
-}
-
-/// # Safety
-/// - The handle must have been returned by ddog_prof_ProfilerManager_start and not yet dropped.
-#[no_mangle]
-// TODO: Do we want drop and shutdown to be separate functions? Or should it always be shutdown?
-pub unsafe extern "C" fn ddog_prof_ProfilerManager_drop(
+pub unsafe extern "C" fn ddog_prof_ProfilerClient_drop(
     mut handle: *mut Handle<ManagedProfilerClient>,
-) {
-    let _ = handle.take();
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        handle
+            .take()
+            .context("Failed to drop profiler client handle")?;
+    })
 }

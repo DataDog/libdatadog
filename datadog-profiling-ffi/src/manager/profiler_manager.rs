@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use crossbeam_channel::{select, tick, Receiver, Sender};
 use datadog_profiling::internal;
 use ddcommon_ffi::Handle;
@@ -231,10 +231,7 @@ impl ProfilerManager {
         callbacks: ManagerCallbacks,
         config: ProfilerManagerConfig,
     ) -> Result<ManagedProfilerClient> {
-        let mut state = MANAGER_STATE
-            .lock()
-            .map_err(|e| anyhow::anyhow!("{}", e))
-            .context("Failed to lock MANAGER_STATE")?;
+        let mut state = MANAGER_STATE.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
 
         // Check if manager is already initialized
         anyhow::ensure!(
@@ -294,10 +291,7 @@ impl ProfilerManager {
     }
 
     pub fn pause() -> Result<()> {
-        let mut state = MANAGER_STATE
-            .lock()
-            .map_err(|e| anyhow::anyhow!("{}", e))
-            .context("Failed to lock MANAGER_STATE")?;
+        let mut state = MANAGER_STATE.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
 
         // Check if manager is in running state
         anyhow::ensure!(
@@ -329,10 +323,7 @@ impl ProfilerManager {
     }
 
     pub fn restart_in_parent() -> Result<ManagedProfilerClient> {
-        let mut state = MANAGER_STATE
-            .lock()
-            .map_err(|e| anyhow::anyhow!("{}", e))
-            .context("Failed to lock MANAGER_STATE")?;
+        let mut state = MANAGER_STATE.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
 
         let (profile, config, callbacks) =
             match std::mem::replace(&mut *state, ManagerState::Uninitialized) {
@@ -341,17 +332,14 @@ impl ProfilerManager {
                     config,
                     callbacks,
                 } => (*profile, config, callbacks),
-                _ => return Err(anyhow::anyhow!("Manager is not in paused state")),
+                _ => anyhow::bail!("Manager is not in paused state"),
             };
 
         Self::start(profile, callbacks, config)
     }
 
     pub fn restart_in_child() -> Result<ManagedProfilerClient> {
-        let mut state = MANAGER_STATE
-            .lock()
-            .map_err(|e| anyhow::anyhow!("{}", e))
-            .context("Failed to lock MANAGER_STATE")?;
+        let mut state = MANAGER_STATE.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
 
         let (mut profile, config, callbacks) =
             match std::mem::replace(&mut *state, ManagerState::Uninitialized) {
@@ -360,7 +348,7 @@ impl ProfilerManager {
                     config,
                     callbacks,
                 } => (*profile, config, callbacks),
-                _ => return Err(anyhow::anyhow!("Manager is not in paused state")),
+                _ => anyhow::bail!("Manager is not in paused state"),
             };
 
         // Reset the profile, discarding the previous one
@@ -372,10 +360,7 @@ impl ProfilerManager {
     /// Terminates the global profile manager and returns the final profile.
     /// This should be called when the profiler is no longer needed.
     pub fn terminate() -> Result<internal::Profile> {
-        let mut state = MANAGER_STATE
-            .lock()
-            .map_err(|e| anyhow::anyhow!("{}", e))
-            .context("Failed to lock MANAGER_STATE")?;
+        let mut state = MANAGER_STATE.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
 
         // Check if manager is in running or paused state
         anyhow::ensure!(
