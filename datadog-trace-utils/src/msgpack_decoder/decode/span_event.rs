@@ -57,7 +57,7 @@ impl FromStr for SpanEventKey {
             "name" => Ok(SpanEventKey::Name),
             "attributes" => Ok(SpanEventKey::Attributes),
             _ => Err(DecodeError::InvalidFormat(
-                format!("Invalid span event key: {}", s).to_owned(),
+                format!("Invalid span event key: {s}").to_owned(),
             )),
         }
     }
@@ -211,7 +211,7 @@ impl FromStr for AttributeArrayKey {
             "int_value" => Ok(AttributeArrayKey::IntValue),
             "double_value" => Ok(AttributeArrayKey::DoubleValue),
             _ => Err(DecodeError::InvalidFormat(
-                format!("Invalid attribute key: {}", s).to_owned(),
+                format!("Invalid attribute key: {s}").to_owned(),
             )),
         }
     }

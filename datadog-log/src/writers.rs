@@ -125,11 +125,11 @@ impl CustomFileAppender {
             .filter_map(|entry| {
                 let file_name = entry.file_name().to_string_lossy().to_string();
 
-                let expected_prefix = format!("{}_", base_name);
+                let expected_prefix = format!("{base_name}_");
                 if file_name.starts_with(&expected_prefix) {
                     match &extension {
                         Some(ext) => {
-                            if file_name.ends_with(&format!(".{}", ext)) {
+                            if file_name.ends_with(&format!(".{ext}")) {
                                 let timestamp_part = &file_name
                                     [expected_prefix.len()..file_name.len() - ext.len() - 1];
                                 Some((entry.path(), timestamp_part.to_string()))

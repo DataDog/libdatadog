@@ -3,6 +3,7 @@
 use crate::{default_signals, shared::constants, signal_from_signum};
 use ddcommon::Endpoint;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// Stacktrace collection occurs in the context of a crashing process.
 /// If the stack is sufficiently corruputed, it is possible (but unlikely),
@@ -33,7 +34,7 @@ pub struct CrashtrackerConfiguration {
     endpoint: Option<Endpoint>,
     resolve_frames: StacktraceCollection,
     signals: Vec<i32>,
-    timeout_ms: u32,
+    timeout: Duration,
     unix_socket_path: Option<String>,
     use_alt_stack: bool,
 }
@@ -81,7 +82,7 @@ impl CrashtrackerConfiguration {
         endpoint: Option<Endpoint>,
         resolve_frames: StacktraceCollection,
         mut signals: Vec<i32>,
-        timeout_ms: u32,
+        timeout: Option<Duration>,
         unix_socket_path: Option<String>,
         demangle_names: bool,
     ) -> anyhow::Result<Self> {
@@ -90,13 +91,7 @@ impl CrashtrackerConfiguration {
             !create_alt_stack || use_alt_stack,
             "Cannot create an altstack without using it"
         );
-        let timeout_ms = if timeout_ms == 0 {
-            constants::DD_CRASHTRACK_DEFAULT_TIMEOUT_MS
-        } else if timeout_ms > i32::MAX as u32 {
-            anyhow::bail!("Timeout must be less than i32::MAX")
-        } else {
-            timeout_ms
-        };
+        let timeout = timeout.unwrap_or(constants::DD_CRASHTRACK_DEFAULT_TIMEOUT);
         if signals.is_empty() {
             signals = default_signals();
         } else {
@@ -123,7 +118,7 @@ impl CrashtrackerConfiguration {
             endpoint,
             resolve_frames,
             signals,
-            timeout_ms,
+            timeout,
             unix_socket_path,
             demangle_names,
         })
@@ -153,8 +148,8 @@ impl CrashtrackerConfiguration {
         &self.signals
     }
 
-    pub fn timeout_ms(&self) -> u32 {
-        self.timeout_ms
+    pub fn timeout(&self) -> Duration {
+        self.timeout
     }
 
     pub fn unix_socket_path(&self) -> &Option<String> {

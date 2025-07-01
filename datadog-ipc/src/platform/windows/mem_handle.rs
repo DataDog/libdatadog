@@ -166,8 +166,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
         #[allow(clippy::panic)]
         if expected_size > MAPPING_MAX_SIZE {
             panic!(
-                "Tried to allocate {} bytes for shared mapping (limit: {} bytes)",
-                expected_size, MAPPING_MAX_SIZE
+                "Tried to allocate {expected_size} bytes for shared mapping (limit: {MAPPING_MAX_SIZE} bytes)",
             );
         }
 

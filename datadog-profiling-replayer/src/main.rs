@@ -103,9 +103,9 @@ impl Sysinfo {
         for (label, m) in &self.observations {
             if let Some(p) = prev {
                 let delta = *m as i64 - p;
-                println!("{}:\t{}\tDelta: {}", label, *m / 1000, delta / 1000);
+                println!("{label}:\t{}\tDelta: {}", *m / 1000, delta / 1000);
             } else {
-                println!("{}:\t{}", label, *m / 1000);
+                println!("{label}:\t{}", *m / 1000);
             }
             prev = Some(*m as i64);
         }

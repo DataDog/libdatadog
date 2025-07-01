@@ -15,9 +15,9 @@ pub enum Number {
 impl fmt::Display for Number {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Number::Signed(val) => write!(f, "{}", val),
-            Number::Unsigned(val) => write!(f, "{}", val),
-            Number::Float(val) => write!(f, "{}", val),
+            Number::Signed(val) => write!(f, "{val}"),
+            Number::Unsigned(val) => write!(f, "{val}"),
+            Number::Float(val) => write!(f, "{val}"),
         }
     }
 }
@@ -47,11 +47,10 @@ impl Number {
                 };
                 if val >= lower_bound.try_into().unwrap() && upper_bound_check {
                     val.try_into()
-                        .map_err(|e| DecodeError::InvalidConversion(format!("{:?}", e)))
+                        .map_err(|e| DecodeError::InvalidConversion(format!("{e:?}")))
                 } else {
                     Err(DecodeError::InvalidConversion(format!(
-                        "{} is out of bounds for conversion",
-                        val
+                        "{val} is out of bounds for conversion"
                     )))
                 }
             }
@@ -64,11 +63,10 @@ impl Number {
 
                 if upper_bound_check {
                     val.try_into()
-                        .map_err(|e| DecodeError::InvalidConversion(format!("{:?}", e)))
+                        .map_err(|e| DecodeError::InvalidConversion(format!("{e:?}")))
                 } else {
                     Err(DecodeError::InvalidConversion(format!(
-                        "{} is out of bounds for conversion",
-                        val
+                        "{val} is out of bounds for conversion"
                     )))
                 }
             }
@@ -130,8 +128,7 @@ impl TryFrom<Number> for f64 {
                     Ok(val as f64)
                 } else {
                     Err(DecodeError::InvalidConversion(format!(
-                        "{} is out of bounds for conversion",
-                        val
+                        "{val} is out of bounds for conversion"
                     )))
                 }
             }
@@ -140,8 +137,7 @@ impl TryFrom<Number> for f64 {
                     Ok(val as f64)
                 } else {
                     Err(DecodeError::InvalidConversion(format!(
-                        "{} is out of bounds for conversion",
-                        val
+                        "{val} is out of bounds for conversion"
                     )))
                 }
             }
@@ -324,8 +320,7 @@ mod tests {
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_unsigned
+                "{invalid_unsigned} is out of bounds for conversion"
             ))),
             TryInto::<i64>::try_into(invalid_unsigned_number)
         );
@@ -369,22 +364,19 @@ mod tests {
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_unsigned
+                "{invalid_unsigned} is out of bounds for conversion"
             ))),
             TryInto::<i32>::try_into(invalid_unsigned_number)
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_signed_upper
+                "{invalid_signed_upper} is out of bounds for conversion"
             ))),
             TryInto::<i32>::try_into(invalid_signed_number_upper)
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_signed_lower
+                "{invalid_signed_lower} is out of bounds for conversion"
             ))),
             TryInto::<i32>::try_into(invalid_signed_number_lower)
         );
@@ -429,22 +421,19 @@ mod tests {
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_unsigned
+                "{invalid_unsigned} is out of bounds for conversion"
             ))),
             TryInto::<i8>::try_into(invalid_unsigned_number)
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_signed_upper
+                "{invalid_signed_upper} is out of bounds for conversion"
             ))),
             TryInto::<i8>::try_into(invalid_signed_number_upper)
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_signed_lower
+                "{invalid_signed_lower} is out of bounds for conversion"
             ))),
             TryInto::<i8>::try_into(invalid_signed_number_lower)
         );
@@ -489,22 +478,19 @@ mod tests {
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_unsigned
+                "{invalid_unsigned} is out of bounds for conversion"
             ))),
             TryInto::<i8>::try_into(invalid_unsigned_number)
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_signed_upper
+                "{invalid_signed_upper} is out of bounds for conversion"
             ))),
             TryInto::<i8>::try_into(invalid_signed_number_upper)
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_signed_lower
+                "{invalid_signed_lower} is out of bounds for conversion"
             ))),
             TryInto::<i8>::try_into(invalid_signed_number_lower)
         );
@@ -549,22 +535,19 @@ mod tests {
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_unsigned
+                "{invalid_unsigned} is out of bounds for conversion"
             ))),
             TryInto::<u8>::try_into(invalid_unsigned_number)
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_signed_upper
+                "{invalid_signed_upper} is out of bounds for conversion"
             ))),
             TryInto::<u8>::try_into(invalid_signed_number_upper)
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_signed_lower
+                "{invalid_signed_lower} is out of bounds for conversion"
             ))),
             TryInto::<u8>::try_into(invalid_signed_number_lower)
         );
@@ -609,22 +592,19 @@ mod tests {
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_unsigned
+                "{invalid_unsigned} is out of bounds for conversion"
             ))),
             TryInto::<u32>::try_into(invalid_unsigned_number)
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_signed_upper
+                "{invalid_signed_upper} is out of bounds for conversion"
             ))),
             TryInto::<u32>::try_into(invalid_signed_number_upper)
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_signed_lower
+                "{invalid_signed_lower} is out of bounds for conversion"
             ))),
             TryInto::<u32>::try_into(invalid_signed_number_lower)
         );
@@ -666,8 +646,7 @@ mod tests {
         );
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_signed_lower
+                "{invalid_signed_lower} is out of bounds for conversion"
             ))),
             TryInto::<u64>::try_into(invalid_signed_number_lower)
         );
@@ -702,8 +681,7 @@ mod tests {
         assert_eq!(0f64, TryInto::<f64>::try_into(zero_unsigned).unwrap());
         assert_eq!(
             Err(DecodeError::InvalidConversion(format!(
-                "{} is out of bounds for conversion",
-                invalid_unsigned
+                "{invalid_unsigned} is out of bounds for conversion"
             ))),
             TryInto::<i64>::try_into(invalid_unsigned_number)
         );

@@ -39,7 +39,7 @@ pub extern "C" fn ddog_crasht_init_windows(
     })();
 
     if let Err(e) = result {
-        output_debug_string(format!("ddog_crasht_init_windows failed: {}", e).as_str());
+        output_debug_string(format!("ddog_crasht_init_windows failed: {e}").as_str());
         return false;
     }
 
@@ -110,7 +110,7 @@ pub extern "C" fn OutOfProcessExceptionEventCallback(
     })();
 
     if let Err(e) = result {
-        output_debug_string(format!("OutOfProcessExceptionEventCallback failed: {}", e).as_str());
+        output_debug_string(format!("OutOfProcessExceptionEventCallback failed: {e}").as_str());
         return E_FAIL;
     }
 

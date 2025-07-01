@@ -75,7 +75,7 @@ impl EnqueuedTelemetryData {
                 SidecarAction::Telemetry(TelemetryActions::AddConfig(c)) => {
                     self.configurations.insert(c)
                 }
-                SidecarAction::Telemetry(TelemetryActions::AddDependecy(d)) => {
+                SidecarAction::Telemetry(TelemetryActions::AddDependency(d)) => {
                     self.dependencies.insert(d)
                 }
                 SidecarAction::Telemetry(TelemetryActions::AddIntegration(i)) => {
@@ -117,11 +117,11 @@ impl EnqueuedTelemetryData {
     pub(crate) async fn extract_telemetry_actions(&mut self, actions: &mut Vec<TelemetryActions>) {
         for computed_deps in self.computed_dependencies.clone() {
             for d in computed_deps.await.iter() {
-                actions.push(TelemetryActions::AddDependecy(d.clone()));
+                actions.push(TelemetryActions::AddDependency(d.clone()));
             }
         }
         for d in self.dependencies.unflushed() {
-            actions.push(TelemetryActions::AddDependecy(d.clone()));
+            actions.push(TelemetryActions::AddDependency(d.clone()));
         }
         for c in self.configurations.unflushed() {
             actions.push(TelemetryActions::AddConfig(c.clone()));
@@ -152,7 +152,7 @@ impl EnqueuedTelemetryData {
                 SidecarAction::Telemetry(t) => actions.push(t),
                 SidecarAction::PhpComposerTelemetryFile(path) => {
                     for nested in Self::extract_composer_telemetry(path).await.iter() {
-                        actions.push(TelemetryActions::AddDependecy(nested.clone()));
+                        actions.push(TelemetryActions::AddDependency(nested.clone()));
                     }
                 }
                 SidecarAction::RegisterTelemetryMetric(metric) => app.register_metric(metric),

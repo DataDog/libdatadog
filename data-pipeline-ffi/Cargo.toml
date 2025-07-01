@@ -15,7 +15,8 @@ crate-type = ["lib", "staticlib", "cdylib"]
 bench = false
 
 [features]
-default = ["cbindgen"]
+default = ["cbindgen", "catch_panic"]
+catch_panic = []
 cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 
 [build-dependencies]
@@ -30,3 +31,4 @@ datadog-trace-utils = { path = "../datadog-trace-utils" }
 data-pipeline = { path = "../data-pipeline" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 tinybytes = { path = "../tinybytes" }
+tracing = { version = "0.1", default-features = false }

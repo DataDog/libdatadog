@@ -17,9 +17,9 @@ fn main() {
     let binary_path = Path::new(&args[1]);
     let object_paths: Vec<_> = args.iter().skip(2).map(Path::new).collect();
     match generate_mock_symbols(binary_path, object_paths.as_slice()) {
-        Ok(symbols) => print!("{}", symbols),
+        Ok(symbols) => print!("{symbols}"),
         Err(err) => {
-            eprintln!("{}", err);
+            eprintln!("{err}");
             process::exit(1);
         }
     }

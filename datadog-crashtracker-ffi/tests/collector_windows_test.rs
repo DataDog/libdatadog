@@ -15,7 +15,7 @@ fn test_crash() {
         "release"
     };
 
-    println!("Profile: {:?}", profile);
+    println!("Profile: {profile:?}");
 
     let tmpdir = tempfile::TempDir::new().unwrap();
     let dirpath = tmpdir.path();
@@ -23,7 +23,7 @@ fn test_crash() {
 
     let test_app_path = get_artifact_dir().join(profile).join("test_app.exe");
 
-    println!("Test app path: {:?}", test_app_path);
+    println!("Test app path: {test_app_path:?}");
 
     let output = process::Command::new(test_app_path)
         .arg(crash_path.to_str().unwrap())
@@ -41,7 +41,7 @@ fn test_crash() {
         .context("deserializing crash report to json")
         .unwrap();
 
-    println!("Crash payload: {:?}", crash_payload);
+    println!("Crash payload: {crash_payload:?}");
 
     assert_eq!(&crash_payload["error"]["is_crash"], true);
     assert_eq!(&crash_payload["error"]["kind"], "Panic");

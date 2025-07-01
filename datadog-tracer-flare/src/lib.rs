@@ -6,7 +6,10 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-use std::{error::Error, str::FromStr, vec};
+pub mod error;
+pub mod zip;
+
+use std::{str::FromStr, vec};
 
 use datadog_remote_config::{
     fetch::{ConfigInvariants, SingleChangesFetcher},
@@ -16,28 +19,7 @@ use datadog_remote_config::{
 };
 use ddcommon::Endpoint;
 
-/// Represent error that can happen while using the tracer flare.
-#[derive(Debug, PartialEq)]
-pub enum FlareError {
-    /// Send the flare was asking without being prepared.
-    NoFlare(String),
-    /// Listening to the RemoteConfig failed.
-    ListeningError(String),
-    /// Parsing of config failed.
-    ParsingError(String),
-}
-
-impl std::fmt::Display for FlareError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FlareError::NoFlare(msg) => write!(f, "No flare prepared to send: {}", msg),
-            FlareError::ListeningError(msg) => write!(f, "Listening failed with: {}", msg),
-            FlareError::ParsingError(msg) => write!(f, "Parsing failed with: {}", msg),
-        }
-    }
-}
-
-impl Error for FlareError {}
+use crate::error::FlareError;
 
 /// Enum that hold the different log level possible
 #[derive(Debug, PartialEq)]
@@ -145,8 +127,7 @@ pub fn init_remote_config_listener(
         Ok(uri) => uri,
         Err(_) => {
             return Err(FlareError::ListeningError(format!(
-                "Invalid agent url: {}",
-                agent_url
+                "Invalid agent url: {agent_url}"
             )));
         }
     };
@@ -273,7 +254,6 @@ mod tests {
         );
     }
 
-    #[allow(clippy::unwrap_used)]
     #[test]
     fn test_check_remote_config_file_with_valid_log_level() {
         let storage = ParsedFileStorage::default();

@@ -18,7 +18,7 @@ use tracing::error;
 
 pub struct Watchdog {
     interval: tokio::time::Interval,
-    max_memory_usage_bytes: usize,
+    pub max_memory_usage_bytes: usize,
     shutdown_receiver: Receiver<()>,
 }
 

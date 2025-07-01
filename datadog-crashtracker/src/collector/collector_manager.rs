@@ -3,6 +3,7 @@
 
 use super::process_handle::ProcessHandle;
 use super::receiver_manager::Receiver;
+use ddcommon::timeout::TimeoutManager;
 
 use super::emitters::emit_crashreport;
 use crate::shared::configuration::CrashtrackerConfiguration;
@@ -11,10 +12,16 @@ use libc::{siginfo_t, ucontext_t};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use std::os::unix::io::RawFd;
 use std::os::unix::{io::FromRawFd, net::UnixStream};
-use std::time::Instant;
+use thiserror::Error;
 
 pub(crate) struct Collector {
     pub handle: ProcessHandle,
+}
+
+#[derive(Debug, Error)]
+pub enum CollectorSpawnError {
+    #[error("Failed to fork collector process (error code: {0})")]
+    ForkFailed(i32),
 }
 
 impl Collector {
@@ -25,10 +32,13 @@ impl Collector {
         metadata_str: &str,
         sig_info: *const siginfo_t,
         ucontext: *const ucontext_t,
-    ) -> anyhow::Result<Self> {
-        let ppid = unsafe { libc::getppid() };
+    ) -> Result<Self, CollectorSpawnError> {
+        // When we spawn the child, our pid becomes the ppid.
+        // SAFETY: This function has no safety requirements.
+        let pid = unsafe { libc::getpid() };
 
-        match alt_fork() {
+        let fork_result = alt_fork();
+        match fork_result {
             0 => {
                 // Child (does not exit from this function)
                 run_collector_child(
@@ -38,21 +48,21 @@ impl Collector {
                     sig_info,
                     ucontext,
                     receiver.handle.uds_fd,
-                    ppid,
+                    pid,
                 );
             }
             pid if pid > 0 => Ok(Self {
-                handle: ProcessHandle::new(receiver.handle.uds_fd, pid, false),
+                handle: ProcessHandle::new(receiver.handle.uds_fd, Some(pid)),
             }),
-            _ => {
+            code => {
                 // Error
-                Err(anyhow::anyhow!("Failed to fork collector process"))
+                Err(CollectorSpawnError::ForkFailed(code))
             }
         }
     }
 
-    pub fn finish(self, start_time: Instant, timeout_ms: u32) {
-        self.handle.finish(start_time, timeout_ms);
+    pub fn finish(self, timeout_manager: &TimeoutManager) {
+        self.handle.finish(timeout_manager);
     }
 }
 

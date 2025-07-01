@@ -19,11 +19,11 @@ pub enum DecodeError {
 impl std::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DecodeError::InvalidConversion(msg) => write!(f, "Failed to convert value: {}", msg),
-            DecodeError::InvalidType(msg) => write!(f, "Invalid type encountered: {}", msg),
-            DecodeError::InvalidFormat(msg) => write!(f, "Invalid format: {}", msg),
+            DecodeError::InvalidConversion(msg) => write!(f, "Failed to convert value: {msg}"),
+            DecodeError::InvalidType(msg) => write!(f, "Invalid type encountered: {msg}"),
+            DecodeError::InvalidFormat(msg) => write!(f, "Invalid format: {msg}"),
             DecodeError::IOError => write!(f, "Failed to read from buffer"),
-            DecodeError::Utf8Error(msg) => write!(f, "Failed to read utf8 value: {}", msg),
+            DecodeError::Utf8Error(msg) => write!(f, "Failed to read utf8 value: {msg}"),
         }
     }
 }

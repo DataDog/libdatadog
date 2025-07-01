@@ -17,8 +17,8 @@ pub enum TelemetryError {
 impl Display for TelemetryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TelemetryError::Builder(e) => write!(f, "Telemetry client builder failed: {}", e),
-            TelemetryError::Send(e) => write!(f, "Send metric failed: {}", e),
+            TelemetryError::Builder(e) => write!(f, "Telemetry client builder failed: {e}"),
+            TelemetryError::Send(e) => write!(f, "Send metric failed: {e}"),
         }
     }
 }

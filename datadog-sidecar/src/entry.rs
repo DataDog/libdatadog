@@ -39,12 +39,13 @@ where
 {
     let counter = Arc::new(AtomicI32::new(0));
     let cloned_counter = Arc::clone(&counter);
+    let config = Config::get();
+    let max_idle_linger_time = config.idle_linger_time;
 
     tokio::spawn({
         let cancel = cancel.clone();
         async move {
             let mut last_seen_connection_time = Instant::now();
-            let max_idle_linger_time = Config::get().idle_linger_time;
 
             loop {
                 tokio::time::sleep(Duration::from_millis(500)).await;
@@ -93,8 +94,11 @@ where
     let server = SidecarServer::default();
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
 
-    let watchdog_handle =
-        Watchdog::from_receiver(shutdown_complete_rx).spawn_watchdog(server.clone());
+    let mut watchdog = Watchdog::from_receiver(shutdown_complete_rx);
+    if config.max_memory != 0 {
+        watchdog.max_memory_usage_bytes = config.max_memory;
+    }
+    let watchdog_handle = watchdog.spawn_watchdog(server.clone());
     let telemetry_handle = self_telemetry(server.clone(), watchdog_handle);
 
     listener(Box::new({
