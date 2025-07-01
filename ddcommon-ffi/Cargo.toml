@@ -19,6 +19,7 @@ cbindgen = ["build_common/cbindgen"]
 build_common = { path = "../build-common" }
 
 [dependencies]
+antithesis_sdk = "0.2.5"
 anyhow = "1.0"
 chrono = { version = "0.4.38", features = ["std"] }
 crossbeam-queue = "0.3.11"
