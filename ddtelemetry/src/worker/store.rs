@@ -94,7 +94,7 @@ mod queuehashmap {
 
         /// # Safety
         ///
-        /// This function inserts a new item in the store unconditionnaly
+        /// This function inserts a new item in the store unconditional
         /// If the item already exists, it's drop implementation will not be called, and memory
         /// might leak
         ///
@@ -102,7 +102,7 @@ mod queuehashmap {
         fn insert_nocheck(&mut self, hash: u64, key: K, value: V) -> usize {
             let item_index = self.items.len() + self.popped;
 
-            // Separate set and items since set is mutably borrowed, while items is unmutably
+            // Separate set and items since set is mutably borrowed, while items is un-mutably
             let Self {
                 table,
                 items,

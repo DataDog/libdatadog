@@ -465,7 +465,7 @@ mod single_threaded_tests {
         // This check is not 100% deterministic, but between the time the mock returns the response
         // and we swap the atomic pointer holding the agent_info we only need to perform
         // very few operations. We wait for a maximum of 1s before failing the test and that should
-        // give way more time than necesssary.
+        // give way more time than necessary.
         for _ in 0..10 {
             let version_2 = agent_info::get_agent_info()
                 .as_ref()
