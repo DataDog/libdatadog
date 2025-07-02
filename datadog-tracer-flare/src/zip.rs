@@ -120,15 +120,17 @@ fn zip_files(files: Vec<String>) -> Result<File, FlareError> {
     }
 
     // Finalize the zip
-    let mut file = zip.finish()
+    let mut file = zip
+        .finish()
         .map_err(|e| FlareError::ZipError(format!("Failed to finalize zip file: {e}")))?;
 
     // Print the zip file contents for debugging
     // let mut contents = Vec::new();
-    // file.seek(std::io::SeekFrom::Start(0)).map_err(|e| FlareError::ZipError(format!("Failed to seek to start of file: {e}")))?;
-    // file.read_to_end(&mut contents).map_err(|e| FlareError::ZipError(format!("Failed to read file contents: {e}")))?;
-    // println!("Zip file contents: {:?}", contents);
-    // file.seek(std::io::SeekFrom::Start(0)).map_err(|e| FlareError::ZipError(format!("Failed to seek back to start: {e}")))?;
+    // file.seek(std::io::SeekFrom::Start(0)).map_err(|e| FlareError::ZipError(format!("Failed to
+    // seek to start of file: {e}")))?; file.read_to_end(&mut contents).map_err(|e|
+    // FlareError::ZipError(format!("Failed to read file contents: {e}")))?; println!("Zip file
+    // contents: {:?}", contents); file.seek(std::io::SeekFrom::Start(0)).map_err(|e|
+    // FlareError::ZipError(format!("Failed to seek back to start: {e}")))?;
 
     Ok(file)
 }
@@ -187,12 +189,19 @@ fn generate_payload(
         .as_secs();
     let filename = format!("tracer-{language}-{case_id}-{timestamp}-{log_level}.zip");
     payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
-    payload.extend_from_slice(format!("Content-Disposition: form-data; name=\"flare_file\"; filename=\"{}\"\r\n", filename).as_bytes());
+    payload.extend_from_slice(
+        format!(
+            "Content-Disposition: form-data; name=\"flare_file\"; filename=\"{}\"\r\n",
+            filename
+        )
+        .as_bytes(),
+    );
     payload.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
 
     // Create the zip file content separately
     let mut zip_content = Vec::new();
-    zip.seek(std::io::SeekFrom::Start(0)).map_err(|e| FlareError::ZipError(format!("Failed to seek back to start: {e}")))?;
+    zip.seek(std::io::SeekFrom::Start(0))
+        .map_err(|e| FlareError::ZipError(format!("Failed to seek back to start: {e}")))?;
     zip.read_to_end(&mut zip_content)
         .map_err(|e| FlareError::ZipError(format!("Failed to read zip file: {e}")))?;
 

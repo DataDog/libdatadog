@@ -12,7 +12,11 @@ pub mod zip;
 use std::{str::FromStr, vec};
 
 use datadog_remote_config::{
-    config::agent_task::AgentTaskFile, fetch::{ConfigInvariants, SingleChangesFetcher}, file_change_tracker::Change, file_storage::{ParsedFileStorage, RawFile, RawFileStorage}, RemoteConfigData, RemoteConfigProduct, Target
+    config::agent_task::AgentTaskFile,
+    fetch::{ConfigInvariants, SingleChangesFetcher},
+    file_change_tracker::Change,
+    file_storage::{ParsedFileStorage, RawFile, RawFileStorage},
+    RemoteConfigData, RemoteConfigProduct, Target,
 };
 use ddcommon::Endpoint;
 use hyper::Uri;
@@ -24,7 +28,7 @@ pub struct TracerFlare {
     pub agent_url: Uri, // or maybe String if we cannot add an endpoint to an Uri
     pub language: String,
     pub previous_log_level: LogLevel, // or maybe String
-    pub log_level: LogLevel, // same
+    pub log_level: LogLevel,          // same
     pub agent_task: AgentTaskFile,
     pub running: bool, // like the state but maybe ReturnAction would be a better state
 }
