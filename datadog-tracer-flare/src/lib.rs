@@ -12,14 +12,22 @@ pub mod zip;
 use std::{str::FromStr, vec};
 
 use datadog_remote_config::{
-    fetch::{ConfigInvariants, SingleChangesFetcher},
-    file_change_tracker::Change,
-    file_storage::{ParsedFileStorage, RawFile, RawFileStorage},
-    RemoteConfigData, RemoteConfigProduct, Target,
+    config::agent_task::AgentTaskFile, fetch::{ConfigInvariants, SingleChangesFetcher}, file_change_tracker::Change, file_storage::{ParsedFileStorage, RawFile, RawFileStorage}, RemoteConfigData, RemoteConfigProduct, Target
 };
 use ddcommon::Endpoint;
+use hyper::Uri;
 
 use crate::error::FlareError;
+
+pub struct TracerFlare {
+    pub listener: Listener,
+    pub agent_url: Uri, // or maybe String if we cannot add an endpoint to an Uri
+    pub language: String,
+    pub previous_log_level: LogLevel, // or maybe String
+    pub log_level: LogLevel, // same
+    pub agent_task: AgentTaskFile,
+    pub running: bool, // like the state but maybe ReturnAction would be a better state
+}
 
 /// Enum that hold the different log level possible
 #[derive(Debug, PartialEq)]
@@ -63,6 +71,10 @@ impl TryFrom<&str> for LogLevel {
 
 pub type RemoteConfigFile = std::sync::Arc<RawFile<Result<RemoteConfigData, anyhow::Error>>>;
 pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>>;
+// TODO: add something to keep the state in the listener and maybe the previous log_level too
+// probably the agent_url as uri too, and we'll probably need to link it to the zip and send func
+// too should keep also the AgentTask since we need it when sending
+// and the language
 
 /// Check the `RemoteConfigFile` and return the action that tracer flare needs
 /// to perform
@@ -292,7 +304,7 @@ mod tests {
         let task = AgentTaskFile {
             args: AgentTask {
                 case_id: "123".to_string(),
-                hostname: Some("test-host".to_string()),
+                hostname: "test-host".to_string(),
                 user_handle: "test@example.com".to_string(),
             },
             task_type: "tracer_flare".to_string(),

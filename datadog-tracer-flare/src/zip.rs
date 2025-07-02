@@ -1,10 +1,14 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
+use ddcommon::Endpoint;
 use std::{
+    collections::HashMap,
     fs::File,
-    io,
+    io::{self, Read, Seek},
     path::{Path, PathBuf},
+    str::FromStr,
 };
 use tempfile::tempfile;
 use walkdir::WalkDir;
@@ -68,11 +72,11 @@ fn zip_files(files: Vec<String>) -> Result<File, FlareError> {
         Err(e) => return Err(FlareError::ZipError(e.to_string())),
     };
 
-    let file = temp_file
-        .try_clone()
-        .map_err(|e| FlareError::ZipError(format!("Failed to clone temp file: {e}")))?;
+    // let file = temp_file
+    //     .try_clone()
+    //     .map_err(|e| FlareError::ZipError(format!("Failed to clone temp file: {e}")))?;
 
-    let mut zip = ZipWriter::new(file);
+    let mut zip = ZipWriter::new(temp_file);
     let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     let paths: Vec<PathBuf> = files.into_iter().map(PathBuf::from).collect();
@@ -116,10 +120,183 @@ fn zip_files(files: Vec<String>) -> Result<File, FlareError> {
     }
 
     // Finalize the zip
-    zip.finish()
+    let mut file = zip.finish()
         .map_err(|e| FlareError::ZipError(format!("Failed to finalize zip file: {e}")))?;
 
-    Ok(temp_file)
+    // Print the zip file contents for debugging
+    // let mut contents = Vec::new();
+    // file.seek(std::io::SeekFrom::Start(0)).map_err(|e| FlareError::ZipError(format!("Failed to seek to start of file: {e}")))?;
+    // file.read_to_end(&mut contents).map_err(|e| FlareError::ZipError(format!("Failed to read file contents: {e}")))?;
+    // println!("Zip file contents: {:?}", contents);
+    // file.seek(std::io::SeekFrom::Start(0)).map_err(|e| FlareError::ZipError(format!("Failed to seek back to start: {e}")))?;
+
+    Ok(file)
+}
+
+pub const BOUNDARY: &str = "83CAD6AA-8A24-462C-8B3D-FF9CC683B51B";
+
+fn generate_payload(
+    mut zip: File,
+    // from init rc listener
+    language: String,
+    // from agent config
+    log_level: String,
+    // from agent task
+    case_id: String,
+    hostname: String,
+    user_handle: String,
+    uuid: String,
+) -> Result<Vec<u8>, FlareError> {
+    let mut payload: Vec<u8> = Vec::new();
+
+    // Create the multipart form data in the same order:
+    // source - like tracer_* or tracer-flare-rust or something
+    payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
+    payload.extend_from_slice(b"Content-Disposition: form-data; name=\"source\"\r\n\r\n");
+    payload.extend_from_slice(format!("tracer_{}", language).as_bytes());
+    payload.extend_from_slice(b"\r\n");
+
+    // case_id - the one from agent-task
+    payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
+    payload.extend_from_slice(b"Content-Disposition: form-data; name=\"case_id\"\r\n\r\n");
+    payload.extend_from_slice(case_id.as_bytes());
+    payload.extend_from_slice(b"\r\n");
+
+    // hostname - the one from agent-task
+    payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
+    payload.extend_from_slice(b"Content-Disposition: form-data; name=\"hostname\"\r\n\r\n");
+    payload.extend_from_slice(hostname.as_bytes());
+    payload.extend_from_slice(b"\r\n");
+
+    // email - probably the user_handle from agent-task
+    payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
+    payload.extend_from_slice(b"Content-Disposition: form-data; name=\"email\"\r\n\r\n");
+    payload.extend_from_slice(user_handle.as_bytes());
+    payload.extend_from_slice(b"\r\n");
+
+    // uuid - the one from agent-task
+    payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
+    payload.extend_from_slice(b"Content-Disposition: form-data; name=\"uuid\"\r\n\r\n");
+    payload.extend_from_slice(uuid.as_bytes());
+    payload.extend_from_slice(b"\r\n");
+
+    // flare_file field with descriptive filename
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let filename = format!("tracer-{language}-{case_id}-{timestamp}-{log_level}.zip");
+    payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
+    payload.extend_from_slice(format!("Content-Disposition: form-data; name=\"flare_file\"; filename=\"{}\"\r\n", filename).as_bytes());
+    payload.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+
+    // Create the zip file content separately
+    let mut zip_content = Vec::new();
+    zip.seek(std::io::SeekFrom::Start(0)).map_err(|e| FlareError::ZipError(format!("Failed to seek back to start: {e}")))?;
+    zip.read_to_end(&mut zip_content)
+        .map_err(|e| FlareError::ZipError(format!("Failed to read zip file: {e}")))?;
+
+    println!("Zip : {:?}", zip_content);
+
+    payload.extend_from_slice(&zip_content);
+    payload.extend_from_slice(b"\r\n");
+
+    // Final boundary
+    payload.extend_from_slice(format!("--{}--\r\n", BOUNDARY).as_bytes());
+
+    println!("Payload : {:?}", payload);
+
+    Ok(payload)
+}
+
+/// Sends a zip file to the agent via a POST request.
+///
+/// This function reads the entire zip file into memory, constructs an HTTP request
+/// to the agent's flare endpoint, and sends it with retry logic. The agent URL is
+/// automatically extended with the `/tracer_flare/v1` path.
+///
+/// # Arguments
+///
+/// * `zip` - A file handle to the zip archive to be sent
+/// * `agent_url` - The base URL of the Datadog agent (e.g., "http://localhost:8126")
+///
+/// # Returns
+///
+/// * `Ok(())` - If the flare was successfully sent to the agent
+/// * `Err(FlareError)` - If any step of the process fails (file reading, network, etc.)
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - The zip file cannot be read into memory
+/// - The agent URL is invalid
+/// - The HTTP request fails after retries
+/// - The agent returns a non-success HTTP status code
+///
+/// # Example
+///
+/// ```rust
+/// use datadog_tracer_flare::zip::send;
+/// use std::fs::File;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let zip_file = File::open("flare.zip")?;
+///     let agent_url = "http://localhost:8126".to_string();
+///
+///     send(zip_file, agent_url).await?;
+///     println!("Flare sent successfully!");
+///     Ok(())
+/// }
+/// ```
+async fn send(zip: File, mut agent_url: String) -> Result<(), FlareError> {
+    let payload = generate_payload(
+        zip,
+        "rust".to_string(),
+        "debug".to_string(),
+        "1234".to_string(),
+        "host".to_string(),
+        "jane.doe@mail.com".to_string(),
+        "550e8400-e29b-41d4-a716-446655440000".to_string(),
+    )?;
+
+    agent_url.push_str("/tracer_flare/v1");
+    let agent_url = match hyper::Uri::from_str(&agent_url) {
+        Ok(uri) => uri,
+        Err(_) => {
+            return Err(FlareError::SendError(format!(
+                "Invalid agent url: {agent_url}"
+            )));
+        }
+    };
+
+    let target = Endpoint {
+        url: agent_url,
+        ..Default::default()
+    };
+
+    let headers = HashMap::from([(
+        hyper::header::CONTENT_TYPE.as_str(),
+        // ddcommon::header::APPLICATION_ZIP_STR.to_string(),
+        format!("multipart/form-data; boundary={}", BOUNDARY),
+    )]);
+
+    let result = send_with_retry(&target, payload, &headers, &RetryStrategy::default(), None).await;
+    match result {
+        Ok((response, _attempts)) => {
+            let status = response.status();
+            if status.is_success() {
+                return Ok(());
+            } else {
+                // Maybe just put a warning log message
+                return Err(FlareError::SendError(format!(
+                    "Agent returned non-success status for flare send: HTTP {}",
+                    status
+                )));
+            }
+        }
+        Err(err) => Err(FlareError::SendError(err.to_string())),
+    }
 }
 
 /// Creates a zip archive containing the specified files and directories, obfuscates sensitive data,
@@ -156,13 +333,13 @@ fn zip_files(files: Vec<String>) -> Result<File, FlareError> {
 ///     Err(e) => eprintln!("Failed to send flare: {}", e),
 /// }
 /// ```
-pub fn zip_and_send(files: Vec<String>) -> Result<(), FlareError> {
-    let _zip = zip_files(files)?;
+pub async fn zip_and_send(files: Vec<String>, agent_url: String) -> Result<(), FlareError> {
+    let zip = zip_files(files)?;
 
     // APMSP-2118 - TODO: Implement obfuscation of sensitive data
     // APMSP-1978 - TODO: Implement sending the zip file to the agent
 
-    Ok(())
+    return send(zip, agent_url).await;
 }
 
 #[cfg(test)]
@@ -246,4 +423,20 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), FlareError::ZipError(_)));
     }
+
+    // #[tokio::test]
+    // async fn test_send_and_zip() {
+    //     let agent_url = "http://0.0.0.0:8126".to_string();
+    //     let temp_dir = TempDir::new().unwrap();
+    //     let files = create_test_files(&temp_dir);
+
+    //     // Add a delay to ensure files are ready
+    //     // tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+
+    //     let result = zip_and_send(files, agent_url).await;
+
+    //     // tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+
+    //     assert!(result.is_ok())
+    // }
 }

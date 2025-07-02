@@ -87,6 +87,8 @@ pub mod header {
     pub const DATADOG_TRACE_COUNT_STR: &str = "x-datadog-trace-count";
     pub const APPLICATION_MSGPACK_STR: &str = "application/msgpack";
     pub const APPLICATION_PROTOBUF_STR: &str = "application/x-protobuf";
+    // pub const APPLICATION_ZIP_STR: &str = "application/zip";
+    pub const APPLICATION_ZIP_STR: &str = "multipart/form-data";
 
     pub const DATADOG_CONTAINER_ID: HeaderName = HeaderName::from_static("datadog-container-id");
     pub const DATADOG_ENTITY_ID: HeaderName = HeaderName::from_static("datadog-entity-id");

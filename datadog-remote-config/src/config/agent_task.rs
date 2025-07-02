@@ -16,8 +16,8 @@ pub struct AgentTaskFile {
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct AgentTask {
-    pub case_id: String,
-    pub hostname: Option<String>,
+    pub case_id: String, // Must be a digit and cannot be 0 according to spec ???
+    pub hostname: String, // Must have the hostname to send it back
     pub user_handle: String,
 }
 
