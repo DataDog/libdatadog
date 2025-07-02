@@ -5,7 +5,7 @@
 #![allow(clippy::todo)]
 
 mod client;
-mod ffi_api;
+pub mod ffi_api;
 mod ffi_utils;
 mod profiler_manager;
 mod samples;
@@ -13,5 +13,10 @@ mod samples;
 mod tests;
 
 pub use client::ManagedProfilerClient;
-pub use profiler_manager::{ManagedProfilerController, ManagedSampleCallbacks, ProfilerManager};
+pub use profiler_manager::{
+    ManagedProfilerController, ManagedSampleCallbacks, ProfilerManager, ProfilerManagerConfig,
+};
 pub use samples::{ClientSampleChannels, SendSample};
+
+// Re-export FFI functions for integration tests
+pub use ffi_api::*;

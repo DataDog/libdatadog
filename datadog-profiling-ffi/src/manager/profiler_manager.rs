@@ -6,7 +6,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossbeam_channel::{select, tick, Receiver, Sender};
+use crossbeam_channel::{select_biased, tick, Receiver, Sender};
 use datadog_profiling::internal;
 use ddcommon_ffi::Handle;
 use tokio_util::sync::CancellationToken;
@@ -66,20 +66,23 @@ impl ManagedSampleCallbacks {
 
 /// Controller for managing the profiler manager lifecycle
 pub struct ManagedProfilerController {
-    handle: JoinHandle<Result<internal::Profile>>,
+    handle: JoinHandle<()>,
     shutdown_sender: Sender<()>,
+    profile_result_receiver: Receiver<internal::Profile>,
     is_shutdown: Arc<AtomicBool>,
 }
 
 impl ManagedProfilerController {
     pub fn new(
-        handle: JoinHandle<Result<internal::Profile>>,
+        handle: JoinHandle<()>,
         shutdown_sender: Sender<()>,
+        profile_result_receiver: Receiver<internal::Profile>,
         is_shutdown: Arc<AtomicBool>,
     ) -> Self {
         Self {
             handle,
             shutdown_sender,
+            profile_result_receiver,
             is_shutdown,
         }
     }
@@ -90,9 +93,19 @@ impl ManagedProfilerController {
             "Profiler manager is already shutdown"
         );
         self.shutdown_sender.send(())?;
+
+        // Wait for the profile result from the manager thread
+        let profile = self
+            .profile_result_receiver
+            .recv()
+            .map_err(|e| anyhow::anyhow!("Failed to receive profile result: {e}"))?;
+
+        // Wait for the manager thread to finish
         self.handle
             .join()
-            .map_err(|e| anyhow::anyhow!("Failed to join manager thread: {:?}", e))?
+            .map_err(|e| anyhow::anyhow!("Failed to join manager thread: {:?}", e))?;
+
+        Ok(profile)
     }
 }
 
@@ -129,6 +142,7 @@ pub struct ProfilerManager {
     upload_sender: Sender<internal::Profile>,
     upload_thread: JoinHandle<()>,
     is_shutdown: Arc<AtomicBool>,
+    profile_result_sender: Sender<internal::Profile>,
 }
 
 impl ProfilerManager {
@@ -163,7 +177,7 @@ impl ProfilerManager {
     /// # Safety
     /// - The caller must ensure that the callbacks remain valid for the lifetime of the profiler.
     /// - The callbacks must be thread-safe.
-    pub fn handle_shutdown(mut self) -> Result<internal::Profile> {
+    pub fn handle_shutdown(mut self) {
         // Mark as shutdown
         self.is_shutdown
             .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -194,28 +208,31 @@ impl ProfilerManager {
             eprintln!("Error joining upload thread: {e:?}");
         }
 
-        Ok(self.profile)
+        // Send the profile through the channel
+        let _ = self.profile_result_sender.send(self.profile);
     }
 
     /// # Safety
     /// - The caller must ensure that the callbacks remain valid for the lifetime of the profiler.
     /// - The callbacks must be thread-safe.
-    pub fn main(mut self) -> Result<internal::Profile> {
+    pub fn main(mut self) {
         loop {
-            select! {
-                recv(self.channels.samples_receiver) -> raw_sample => {
-                    let _ = self.handle_sample(raw_sample)
-                        .map_err(|e| eprintln!("Failed to process sample: {e}"));
+            select_biased! {
+                // Prioritize shutdown signal to ensure quick response to shutdown requests
+                recv(self.shutdown_receiver) -> _ => {
+                    self.handle_shutdown();
+                    return;
                 },
                 recv(self.cpu_ticker) -> msg => {
                     self.handle_cpu_tick();
                 },
+                recv(self.channels.samples_receiver) -> raw_sample => {
+                    let _ = self.handle_sample(raw_sample)
+                        .map_err(|e| eprintln!("Failed to process sample: {e}"));
+                },
                 recv(self.upload_ticker) -> msg => {
                     let _ = self.handle_upload_tick()
                         .map_err(|e| eprintln!("Failed to handle upload: {e}"));
-                },
-                recv(self.shutdown_receiver) -> _ => {
-                    return self.handle_shutdown();
                 },
             }
         }
@@ -242,6 +259,7 @@ impl ProfilerManager {
         let (client_channels, manager_channels) = ClientSampleChannels::new(config.channel_depth);
         let (shutdown_sender, shutdown_receiver) = crossbeam_channel::bounded(1);
         let (upload_sender, upload_receiver) = crossbeam_channel::bounded(2);
+        let (profile_result_sender, profile_result_receiver) = crossbeam_channel::bounded(1);
 
         let cpu_ticker = tick(Duration::from_millis(config.cpu_sampling_interval_ms));
         let upload_ticker = tick(Duration::from_millis(config.upload_interval_ms));
@@ -272,13 +290,19 @@ impl ProfilerManager {
             upload_sender,
             upload_thread,
             is_shutdown: is_shutdown.clone(),
+            profile_result_sender,
         };
 
         let handle = std::thread::spawn(move || manager.main());
 
         let client = ManagedProfilerClient::new(client_channels, is_shutdown.clone());
 
-        let controller = ManagedProfilerController::new(handle, shutdown_sender, is_shutdown);
+        let controller = ManagedProfilerController::new(
+            handle,
+            shutdown_sender,
+            profile_result_receiver,
+            is_shutdown,
+        );
 
         *state = ManagerState::Running {
             client: client.clone(),
@@ -323,17 +347,20 @@ impl ProfilerManager {
     }
 
     pub fn restart_in_parent() -> Result<ManagedProfilerClient> {
-        let mut state = MANAGER_STATE.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
+        let (profile, config, callbacks) = {
+            let mut state = MANAGER_STATE.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        let (profile, config, callbacks) =
-            match std::mem::replace(&mut *state, ManagerState::Uninitialized) {
-                ManagerState::Paused {
-                    profile,
-                    config,
-                    callbacks,
-                } => (*profile, config, callbacks),
-                _ => anyhow::bail!("Manager is not in paused state"),
-            };
+            let (profile, config, callbacks) =
+                match std::mem::replace(&mut *state, ManagerState::Uninitialized) {
+                    ManagerState::Paused {
+                        profile,
+                        config,
+                        callbacks,
+                    } => (*profile, config, callbacks),
+                    _ => anyhow::bail!("Manager is not in paused state"),
+                };
+            (profile, config, callbacks)
+        };
 
         Self::start(profile, callbacks, config)
     }
@@ -394,5 +421,21 @@ impl ProfilerManager {
         };
 
         Ok(profile)
+    }
+
+    /// Resets the global state to uninitialized.
+    /// This is useful for testing to ensure clean state between tests.
+    /// # Safety
+    /// This function should only be used in tests. It will forcefully reset the state
+    /// without proper cleanup, which could lead to resource leaks in production code.
+    /// If the lock cannot be acquired, this function will return an error (test-only behavior).
+    pub fn reset_for_testing() -> Result<(), String> {
+        match MANAGER_STATE.lock() {
+            Ok(mut state) => {
+                *state = ManagerState::Uninitialized;
+                Ok(())
+            }
+            Err(e) => Err(format!("Failed to acquire state lock: {e}")),
+        }
     }
 }

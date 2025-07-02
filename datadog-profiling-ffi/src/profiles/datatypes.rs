@@ -425,9 +425,17 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
 }
 
 /// Same as `ddog_profile_new` but also configures a `string_storage` for the profile.
+///
+/// # Safety
+/// - `sample_types` must be a valid slice of ValueType.
+/// - `period`, if provided, must be a valid reference.
+/// - `string_storage` must be a valid ManagedStringStorage.
+/// - The caller is responsible for ensuring that all pointers remain valid for the duration of the
+///   call.
+///
+///   TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 #[no_mangle]
 #[must_use]
-/// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_Profile_with_string_storage(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
@@ -782,6 +790,12 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     .into()
 }
 
+/// Returns a slice view of the given Vec<u8>.
+///
+/// # Safety
+/// - `vec` must be a valid reference to a ddcommon_ffi::Vec<u8>.
+/// - The returned slice is only valid as long as the original Vec<u8> is valid and not mutated or
+///   dropped.
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &ddcommon_ffi::Vec<u8>) -> Slice<u8> {

@@ -176,3 +176,18 @@ pub unsafe extern "C" fn ddog_prof_ProfilerClient_drop(
             .context("Failed to drop profiler client handle")?;
     })
 }
+
+/// Resets the global profiler manager state to uninitialized.
+/// This is intended for testing purposes only and should not be used in production.
+///
+/// # Safety
+/// - This function is thread-safe and can be called from any thread.
+/// - This function will forcefully reset the state without proper cleanup.
+/// - This should only be used in test environments.
+#[no_mangle]
+#[named]
+pub unsafe extern "C" fn ddog_prof_ProfilerManager_reset_for_testing() -> VoidResult {
+    wrap_with_void_ffi_result!({
+        ProfilerManager::reset_for_testing().map_err(|msg| anyhow::anyhow!(msg))?;
+    })
+}
