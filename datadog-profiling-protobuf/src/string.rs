@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{varint, Value, WireType};
+use std::ops::Sub;
 use std::{
+    fmt,
     io::{self, Write},
     ops::{Add, Mul},
 };
@@ -31,6 +33,12 @@ unsafe impl Value for &str {
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "bolero", derive(bolero::generator::TypeGenerator))]
 pub struct StringOffset(u32);
+
+impl fmt::Display for StringOffset {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// # Safety
 /// The Default implementation will return all zero-representations.
@@ -193,6 +201,15 @@ impl Add<u32> for StringOffset {
     #[inline]
     fn add(self, rhs: u32) -> Self::Output {
         StringOffset::new(self.0 + rhs)
+    }
+}
+
+impl Sub<u32> for StringOffset {
+    type Output = StringOffset;
+
+    #[inline]
+    fn sub(self, rhs: u32) -> Self::Output {
+        StringOffset::new(self.0 - rhs)
     }
 }
 

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_profiling::collections::string_table::StringTable;
-use datadog_profiling::{ProfileError, ProfileVoidResult};
+use datadog_profiling::profiles::{ProfileError, ProfileVoidResult};
 use datadog_profiling_protobuf::StringOffset;
 use ddcommon_ffi::{CharSlice, MutSlice, Slice};
 use std::{borrow, ptr, slice, str};

@@ -107,7 +107,18 @@ impl<'a> AsBytes<'a> for Slice<'a, i8> {
     }
 }
 
-impl<'a, T: 'a> Slice<'a, T> {
+impl<'a> AsBytes<'a> for &'a [c_char] {
+    fn as_bytes(&self) -> &'a [u8] {
+        // SAFETY: We're transmuting from &[c_char] to &[i8] which is safe since they have the same
+        // layout
+        let i8_slice: &[i8] = unsafe { std::mem::transmute(*self) };
+        // SAFETY: We're transmuting from &[i8] to &[u8] which is safe since they have the same
+        // layout
+        unsafe { std::mem::transmute(i8_slice) }
+    }
+}
+
+impl<'a, T> Slice<'a, T> {
     /// Creates a valid empty slice (len=0, ptr is non-null).
     #[must_use]
     pub const fn empty() -> Self {

@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::ProfileError;
+use crate::profiles::ProfileError;
 use datadog_alloc::Box;
 use datadog_profiling_protobuf::{Record, Value};
 use lz4_flex::frame::FrameEncoder;
@@ -40,6 +40,7 @@ impl Write for SizeRestrictedBuffer {
 pub struct Encoder(FrameEncoder<SizeRestrictedBuffer>);
 
 /// Used to compress profile data. Treat the encoder as opaque.
+#[repr(C)]
 pub struct Compressor {
     encoder: *mut Encoder,
 }

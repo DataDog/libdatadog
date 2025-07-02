@@ -1,10 +1,12 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profiles::{LabelsSet, ProfileError, Range};
-use crate::profiles::{SliceId, SliceSet};
+use crate::profiles::{LabelsSet, Range};
 use datadog_alloc::Box;
-use datadog_profiling::ProfileVoidResult;
+use datadog_profiling::{
+    collections::SliceSet,
+    profiles::{ProfileError, ProfileVoidResult, SliceId},
+};
 use datadog_profiling_protobuf::{Label, Record, ValueType, NO_OPT_ZERO};
 use ddcommon_ffi::Slice;
 use std::{mem, ptr};

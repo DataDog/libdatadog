@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::ProfileError;
+use crate::profiles::ProfileError;
 use hashbrown::HashTable;
 use rustc_hash::FxHasher;
 use std::hash::{Hash, Hasher};

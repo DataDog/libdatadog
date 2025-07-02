@@ -4,7 +4,6 @@
 mod compressor;
 // mod datatypes;
 // mod interning_api;
-mod collections;
 mod endpoints;
 mod ffi_stores;
 mod labels_set;
@@ -13,9 +12,7 @@ mod samples;
 mod stack_trace_set;
 mod string_table;
 
-pub use collections::*;
 pub use compressor::*;
-pub use datadog_profiling::ProfileError;
 pub use endpoints::*;
 pub use ffi_stores::*;
 pub use labels_set::*;
@@ -23,6 +20,7 @@ pub use profile_builder::*;
 pub use samples::*;
 pub use string_table::*;
 
+use datadog_profiling::profiles::ProfileError;
 use ddcommon_ffi::CharSlice;
 
 /// A half-open range, similar to the std Range except it's Copy and not an

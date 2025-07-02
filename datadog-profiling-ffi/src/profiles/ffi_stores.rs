@@ -1,10 +1,10 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profiles::Storable;
+use crate::profiles::ProfileError;
+use datadog_profiling::collections::{Storable, Store};
 use datadog_profiling_protobuf::*;
 
-use crate::profiles::{ProfileError, Store};
 use std::ptr;
 
 trait FfiStore: Default {

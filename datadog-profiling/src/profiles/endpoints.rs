@@ -1,7 +1,8 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{collections::string_table::StringTable, ProfileError};
+use crate::collections::string_table::StringTable;
+use crate::profiles::ProfileError;
 use datadog_profiling_protobuf::StringOffset;
 use std::collections::HashMap;
 

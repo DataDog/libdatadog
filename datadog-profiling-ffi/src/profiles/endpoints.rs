@@ -1,10 +1,13 @@
-use crate::profiles::ProfileError;
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use datadog_alloc::Box;
 use datadog_profiling::{
-    collections::string_table::StringTable, ProfileVoidResult,
+    collections::string_table::StringTable,
+    profiles::{ProfileError, ProfileVoidResult},
 };
 use datadog_profiling_protobuf::StringOffset;
-use ddcommon_ffi::CharSlice;
+use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use std::{borrow::Cow, collections::HashMap, ptr};
 
 /// Manages endpoint mappings for profiling.
@@ -105,20 +108,12 @@ pub unsafe extern "C" fn ddog_prof_Endpoints_add(
         return ProfileError::InvalidInput.into();
     };
 
-    // SAFETY: convert from &[c_char] to &[u8].
-    let endpoint_bytes = unsafe {
-        std::slice::from_raw_parts(
-            endpoint_slice.as_ptr(),
-            endpoint_slice.len(),
-        )
-    };
-
     let endpoint_str = if assume_utf8 {
         // SAFETY: caller guarantees endpoint is valid UTF-8.
-        Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(endpoint_bytes) })
+        Cow::Borrowed(unsafe { endpoint_slice.assume_utf8() })
     } else {
         // Do lossy conversion like the string table APIs
-        String::from_utf8_lossy(endpoint_bytes)
+        endpoint_slice.to_utf8_lossy()
     };
 
     match endpoints.add_endpoint(local_root_span_id, &endpoint_str) {

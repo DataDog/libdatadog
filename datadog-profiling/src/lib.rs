@@ -8,11 +8,8 @@
 
 pub mod api;
 pub mod collections;
-mod error;
 pub mod exporter;
 pub mod internal;
 pub mod iter;
 pub mod pprof;
 pub mod profiles;
-
-pub use error::*;

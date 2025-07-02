@@ -3,10 +3,11 @@
 
 use crate::{
     collections::{string_table::StringTable, SliceSet, Store},
-    profiles::{Compressor, Endpoints, LabelsSet, SampleManager},
-    ProfileError,
+    profiles::{Compressor, Endpoints, LabelsSet, ProfileError, SampleManager},
 };
-use datadog_profiling_protobuf::{Function, Location, Mapping, Record, StringOffset, NO_OPT_ZERO};
+use datadog_profiling_protobuf::{
+    Function, Label, Location, Mapping, Record, StringOffset, NO_OPT_ZERO,
+};
 
 /// A builder for constructing profiles with multiple string tables.
 ///
@@ -25,6 +26,16 @@ impl ProfileBuilder {
     /// Creates a new ProfileBuilder.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Adjusts a string offset by adding the base offset only if the string is
+    /// not well-known.
+    fn adjust_string_offset(base_offset: StringOffset, offset: StringOffset) -> StringOffset {
+        if StringTable::is_well_known(offset) {
+            offset
+        } else {
+            base_offset + offset - (StringTable::WELL_KNOWN_COUNT as u32)
+        }
     }
 
     /// Adds a string table to the profile if not already added. Returns the
@@ -70,8 +81,7 @@ impl ProfileBuilder {
         let base_offset = self.next_string_offset;
 
         // Check that we can update next_string_offset before doing any work
-        let new_next_offset = self
-            .next_string_offset
+        let new_next_offset = base_offset
             .checked_add(strings_to_add)
             .ok_or(ProfileError::StorageFull)?;
 
@@ -103,9 +113,15 @@ impl ProfileBuilder {
         // Write functions with offset adjustment
         for function in functions.iter() {
             let adjusted_function = Function {
-                name: Record::from(base_offset + function.name.value),
-                system_name: Record::from(base_offset + function.system_name.value),
-                filename: Record::from(base_offset + function.filename.value),
+                name: Record::from(Self::adjust_string_offset(base_offset, function.name.value)),
+                system_name: Record::from(Self::adjust_string_offset(
+                    base_offset,
+                    function.system_name.value,
+                )),
+                filename: Record::from(Self::adjust_string_offset(
+                    base_offset,
+                    function.filename.value,
+                )),
                 ..*function
             };
 
@@ -145,8 +161,14 @@ impl ProfileBuilder {
         // Write mappings with offset adjustment
         for mapping in mappings.iter() {
             let adjusted_mapping = Mapping {
-                filename: Record::from(base_offset + mapping.filename.value),
-                build_id: Record::from(base_offset + mapping.build_id.value),
+                filename: Record::from(Self::adjust_string_offset(
+                    base_offset,
+                    mapping.filename.value,
+                )),
+                build_id: Record::from(Self::adjust_string_offset(
+                    base_offset,
+                    mapping.build_id.value,
+                )),
                 ..*mapping
             };
 
@@ -155,6 +177,21 @@ impl ProfileBuilder {
         }
 
         Ok(())
+    }
+
+    fn ensure_only_str_or_num(label: Label) {
+        let Label {
+            key: _key,
+            str,
+            num,
+            ..
+        } = label;
+
+        let str: i64 = str.value.into();
+        let num: i64 = num.value.into();
+        if str != 0 && num != 0 {
+            panic!("Profile.Label invariant violated, str: {str}, num: {num}");
+        }
     }
 
     /// Adds samples to the profile using the provided string table.
@@ -213,36 +250,43 @@ impl ProfileBuilder {
 
             // Add existing labels with adjusted offsets
             for label in sample.labels {
-                let adjusted_label =
-                    Record::<_, 3, NO_OPT_ZERO>::from(datadog_profiling_protobuf::Label {
-                        key: Record::from(labels_base_offset + label.value.key.value),
-                        str: Record::from(labels_base_offset + label.value.str.value),
-                        num: label.value.num,
-                    });
+                let adjusted_label = Record::<_, 3, NO_OPT_ZERO>::from(Label {
+                    key: Record::from(Self::adjust_string_offset(
+                        labels_base_offset,
+                        label.value.key.value,
+                    )),
+                    str: Record::from(Self::adjust_string_offset(
+                        labels_base_offset,
+                        label.value.str.value,
+                    )),
+                    num: label.value.num,
+                });
 
+                Self::ensure_only_str_or_num(adjusted_label.value);
                 temp_labels.push(adjusted_label);
             }
 
             // Add endpoint label if we found one
             if let Some(endpoint_str_offset) = endpoint_str_offset {
-                temp_labels.push(Record::<_, 3, NO_OPT_ZERO>::from(
-                    datadog_profiling_protobuf::Label {
-                        key: Record::from(StringTable::TRACE_ENDPOINT_OFFSET),
-                        str: Record::from(endpoints_base_offset + endpoint_str_offset),
-                        ..Default::default()
-                    },
-                ));
+                let label = Record::<_, 3, NO_OPT_ZERO>::from(Label {
+                    key: Record::from(StringTable::TRACE_ENDPOINT_OFFSET),
+                    str: Record::from(endpoints_base_offset + endpoint_str_offset),
+                    ..Default::default()
+                });
+
+                Self::ensure_only_str_or_num(label.value);
+                temp_labels.push(label);
             }
 
             // Add timestamp label for timestamped samples
             if timestamp != 0 {
-                temp_labels.push(Record::<_, 3, NO_OPT_ZERO>::from(
-                    datadog_profiling_protobuf::Label {
-                        key: Record::from(StringTable::END_TIMESTAMP_NS_OFFSET),
-                        num: Record::from(timestamp),
-                        ..Default::default()
-                    },
-                ));
+                let label = Record::<_, 3, NO_OPT_ZERO>::from(Label {
+                    key: Record::from(StringTable::END_TIMESTAMP_NS_OFFSET),
+                    num: Record::from(timestamp),
+                    ..Default::default()
+                });
+                Self::ensure_only_str_or_num(label.value);
+                temp_labels.push(label);
             }
 
             // Create and encode the sample

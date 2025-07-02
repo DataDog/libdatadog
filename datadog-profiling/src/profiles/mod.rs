@@ -3,6 +3,7 @@
 
 mod compressor;
 mod endpoints;
+mod error;
 mod labels_set;
 mod profile_builder;
 mod samples;
@@ -10,6 +11,7 @@ mod stack_trace_set;
 
 pub use compressor::*;
 pub use endpoints::*;
+pub use error::*;
 pub use labels_set::*;
 pub use profile_builder::*;
 pub use samples::*;

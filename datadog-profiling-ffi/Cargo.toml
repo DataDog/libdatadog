@@ -47,16 +47,13 @@ ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optio
 datadog-log-ffi = { path = "../datadog-log-ffi", default-features = false, optional = true }
 function_name = "0.3.0"
 futures = { version = "0.3", default-features = false }
-hashbrown = { version = "0.15" }
 http-body-util = "0.1"
 hyper = { version = "1.6", features = ["http1", "client"] }
 libc = "0.2"
-lz4_flex = { version = "0.11", default-features = false, features = ["frame"] }
 rustc-hash = { version = "1", default-features = false }
 serde_json = { version = "1.0" }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
 tokio-util = "0.7.1"
 
 [dev-dependencies]
-bolero = { version = "0.13" }
 datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["bolero", "prost_impls"] }

@@ -3,8 +3,7 @@
 
 use crate::{
     collections::{Range, SliceSet},
-    profiles::LabelsSet,
-    ProfileError,
+    profiles::{LabelsSet, ProfileError},
 };
 use datadog_alloc::Box;
 use datadog_profiling_protobuf::{Label, Record, ValueType, NO_OPT_ZERO};
@@ -19,13 +18,13 @@ pub use crate::collections::SliceId;
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct Sample<'a> {
-    stack_trace_id: SliceId,
-    values: &'a [i64],
+    pub stack_trace_id: SliceId,
+    pub values: &'a [i64],
     /// Don't use a timestamp label, use the `timestamp` field for that.
-    labels: SliceId,
+    pub labels: SliceId,
     /// Use 0 for no timestamp, we can do `Option<NonZeroI64>` one day. This
     /// timestamp is nanoseconds since the Unix epoch.
-    timestamp: i64,
+    pub timestamp: i64,
 }
 
 pub struct SampleManager {
@@ -48,19 +47,37 @@ impl SampleManager {
         &self.types
     }
 
-    pub fn new(types: &[ValueType]) -> Result<SampleManager, ProfileError> {
-        let mut boxed = Box::try_new_uninit_slice(types.len())?;
-        // SAFETY: &[MaybeUninit<T>] and &[T] have the same layout.
-        // This is what unstable `MaybeUninit::copy_from_slice` does.
-        let slice: &[mem::MaybeUninit<ValueType>] = unsafe { mem::transmute(types) };
-        boxed.copy_from_slice(slice);
+    /// Creates a new SampleManager from an exact-size iterator of ValueTypes.
+    /// This avoids intermediate allocations by building the Box directly.
+    pub fn new<I>(types: I) -> Result<SampleManager, ProfileError>
+    where
+        I: IntoIterator<Item = ValueType>,
+        <I as IntoIterator>::IntoIter: ExactSizeIterator,
+    {
+        let iter = types.into_iter();
+        let len = iter.len();
+
+        let mut boxed = Box::try_new_uninit_slice(len)?;
+
+        for (slot, value_type) in boxed.iter_mut().zip(iter) {
+            slot.write(value_type);
+        }
+
         Ok(Self {
-            // SAFETY: just initialized from the provided types.
+            // SAFETY: we just initialized all elements above (empty slice is trivially initialized)
             types: unsafe { boxed.assume_init() },
             timestamped_samples: vec![],
             aggregated_samples: Default::default(),
             value_storage: vec![],
         })
+    }
+
+    /// Clears all samples while preserving the sample types.
+    /// This is more efficient than dropping and recreating the SampleManager.
+    pub fn clear(&mut self) {
+        self.timestamped_samples.clear();
+        self.aggregated_samples.clear();
+        self.value_storage.clear();
     }
 }
 
