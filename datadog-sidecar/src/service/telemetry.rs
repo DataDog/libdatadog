@@ -290,6 +290,8 @@ impl TelemetryCachedClientSet {
                         .ok();
                 }
             });
+
+            info!("Reusing existing telemetry client for {key:?}");
             return Some(client);
         }
 
@@ -302,7 +304,7 @@ impl TelemetryCachedClientSet {
             get_config,
         )?;
 
-        map.insert(key, client.clone());
+        map.insert(key.clone(), client.clone());
 
         tokio::spawn({
             let telemetry = client.clone();
@@ -314,6 +316,8 @@ impl TelemetryCachedClientSet {
                     .ok();
             }
         });
+
+        info!("Created new telemetry client for {key:?}");
 
         Some(client)
     }

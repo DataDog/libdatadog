@@ -430,24 +430,14 @@ impl SidecarInterface for SidecarServer {
                     }
                 }
 
-                // Drop on Stop
-                if actions_to_process.iter().any(|action| {
-                    matches!(
-                        action,
-                        SidecarAction::Telemetry(TelemetryActions::Lifecycle(
-                            LifecycleAction::Stop
-                        ))
-                    )
-                }) {
-                    entry.remove();
-                }
-
                 if !actions_to_process.is_empty() {
                     let client_clone = telemetry.clone();
 
                     tokio::spawn(async move {
                         let processed = client_clone.process_actions(actions_to_process);
+                        info!("Sending Processed Actions {processed:?}...");
                         client_clone.client.send_msgs(processed).await.ok();
+                        info!("Processed Actions sent !");
                     });
                 }
 
@@ -458,7 +448,9 @@ impl SidecarInterface for SidecarServer {
                             composer_paths_to_process,
                         )
                         .await;
+                        info!("Sending Composer Paths {composer_actions:?}...");
                         client_clone.send_msgs(composer_actions).await.ok();
+                        info!("Composer Paths sent !");
                     });
                 }
 
@@ -468,6 +460,7 @@ impl SidecarInterface for SidecarServer {
                         &telemetry.buffered_integrations,
                         &telemetry.buffered_composer_paths,
                     )) {
+                        info!("Writing buffered info to SHM file ...");
                         telemetry.shm_writer.write(&buf);
                     }
                 }
@@ -771,7 +764,7 @@ impl SidecarInterface for SidecarServer {
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
         let mut applications = runtime_info.lock_applications();
         let app = applications.entry(queue_id).or_default();
-        if session.remote_config_enabled {
+        // if session.remote_config_enabled {
             app.remote_config_guard = Some(self.remote_configs.add_runtime(
                 invariants,
                 *session.remote_config_interval.lock_or_panic(),
@@ -782,7 +775,7 @@ impl SidecarInterface for SidecarServer {
                 app_version.clone(),
                 global_tags.clone(),
             ));
-        }
+        // }
         app.set_metadata(env_name, app_version, service_name, global_tags);
 
         no_response()
