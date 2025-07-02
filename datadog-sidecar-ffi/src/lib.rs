@@ -65,11 +65,11 @@ pub struct NativeFile {
 }
 
 /// This creates Rust PlatformHandle<File> from supplied C std FILE object.
-/// This method takes the ownership of the underlying filedescriptor.
+/// This method takes the ownership of the underlying file descriptor.
 ///
 /// # Safety
 /// Caller must ensure the file descriptor associated with FILE pointer is open, and valid
-/// Caller must not close the FILE associated filedescriptor after calling this fuction
+/// Caller must not close the FILE associated file descriptor after calling this function
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_ph_file_from(file: *mut libc::FILE) -> NativeFile {
@@ -197,9 +197,7 @@ where
     OneWayShmReader<T, Option<AgentRemoteConfigEndpoint>>: ReaderOpener<T>,
 {
     let (new, contents) = reader.read();
-    // c_char may be u8 or i8 depending on target... convert it.
-    let contents: &[c_char] = unsafe { std::mem::transmute::<&[u8], &[c_char]>(contents) };
-    *data = contents.into();
+    *data = CharSlice::from_bytes(contents);
     new
 }
 
@@ -291,9 +289,7 @@ pub extern "C" fn ddog_remote_config_read<'a>(
     data: &mut ffi::CharSlice<'a>,
 ) -> bool {
     let (new, contents) = reader.read();
-    // c_char may be u8 or i8 depending on target... convert it.
-    let contents: &[c_char] = unsafe { std::mem::transmute::<&[u8], &[c_char]>(contents) };
-    *data = contents.into();
+    *data = CharSlice::from_bytes(contents);
     new
 }
 
@@ -420,7 +416,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
     let version =
         (!dependency_version.is_empty()).then(|| dependency_version.to_utf8_lossy().into_owned());
 
-    let dependency = TelemetryActions::AddDependecy(Dependency {
+    let dependency = TelemetryActions::AddDependency(Dependency {
         name: dependency_name.to_utf8_lossy().into_owned(),
         version,
     });

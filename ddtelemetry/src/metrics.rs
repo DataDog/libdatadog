@@ -21,27 +21,27 @@ fn unix_timestamp_now() -> u64 {
 
 #[derive(Debug)]
 struct MetricBucket {
-    aggreg: MetricAggreg,
+    aggr: MetricAggr,
 }
 
 #[derive(Debug)]
-enum MetricAggreg {
+enum MetricAggr {
     Count { count: f64 },
     Gauge { value: f64 },
 }
 
 impl MetricBucket {
     fn add_point(&mut self, point: f64) {
-        match &mut self.aggreg {
-            MetricAggreg::Count { count } => *count += point,
-            MetricAggreg::Gauge { value } => *value = point,
+        match &mut self.aggr {
+            MetricAggr::Count { count } => *count += point,
+            MetricAggr::Gauge { value } => *value = point,
         }
     }
 
     fn value(&self) -> f64 {
-        match self.aggreg {
-            MetricAggreg::Count { count } => count,
-            MetricAggreg::Gauge { value } => value,
+        match self.aggr {
+            MetricAggr::Count { count } => count,
+            MetricAggr::Gauge { value } => value,
         }
     }
 }
@@ -75,7 +75,7 @@ pub struct MetricBucketStats {
 impl MetricBuckets {
     pub const METRICS_FLUSH_INTERVAL: time::Duration = time::Duration::from_secs(10);
 
-    pub fn flush_agregates(&mut self) {
+    pub fn flush_aggregates(&mut self) {
         let timestamp = unix_timestamp_now();
         for (key, bucket) in self.buckets.drain() {
             self.series
@@ -123,14 +123,14 @@ impl MetricBuckets {
                 .buckets
                 .entry(bucket_key)
                 .or_insert_with(|| MetricBucket {
-                    aggreg: MetricAggreg::Count { count: 0.0 },
+                    aggr: MetricAggr::Count { count: 0.0 },
                 })
                 .add_point(point),
             metrics::MetricType::Gauge => self
                 .buckets
                 .entry(bucket_key)
                 .or_insert_with(|| MetricBucket {
-                    aggreg: MetricAggreg::Gauge { value: 0.0 },
+                    aggr: MetricAggr::Gauge { value: 0.0 },
                 })
                 .add_point(point),
             metrics::MetricType::Distribution => {
@@ -258,11 +258,11 @@ mod tests {
 
     // Test util used to run assertions against an unsorted list
     fn check_iter<'a, U: 'a + Debug, T: Iterator<Item = &'a U>>(
-        elems: T,
+        elements: T,
         assertions: &[&dyn Fn(&U) -> bool],
     ) {
         let mut used = vec![false; assertions.len()];
-        for e in elems {
+        for e in elements {
             let mut found = false;
             for (i, &a) in assertions.iter().enumerate() {
                 if a(e) {
@@ -311,7 +311,7 @@ mod tests {
         buckets.add_point(context_key_2, 0.4, extra_tags.clone());
         assert_eq!(buckets.buckets.len(), 3);
 
-        buckets.flush_agregates();
+        buckets.flush_aggregates();
         assert_eq!(buckets.buckets.len(), 0);
         assert_eq!(buckets.series.len(), 3);
 
@@ -319,7 +319,7 @@ mod tests {
         buckets.add_point(context_key_2, 0.6, extra_tags);
         assert_eq!(buckets.buckets.len(), 2);
 
-        buckets.flush_agregates();
+        buckets.flush_aggregates();
         assert_eq!(buckets.buckets.len(), 0);
         assert_eq!(buckets.series.len(), 3);
 
@@ -495,15 +495,15 @@ mod tests {
         // Create 2 series with 2 and 3 points
         buckets.add_point(context_key_1, 1.0, Vec::new());
         buckets.add_point(context_key_2, 2.0, Vec::new());
-        buckets.flush_agregates();
+        buckets.flush_aggregates();
 
         buckets.add_point(context_key_1, 1.0, Vec::new());
         buckets.add_point(context_key_2, 2.0, Vec::new());
-        buckets.flush_agregates();
+        buckets.flush_aggregates();
 
         buckets.add_point(context_key_1, 1.1, Vec::new());
         buckets.add_point(context_key_1, 2.1, Vec::new());
-        buckets.flush_agregates();
+        buckets.flush_aggregates();
 
         // Create 2 buckets
         buckets.add_point(context_key_1, 1.0, Vec::new());

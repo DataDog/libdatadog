@@ -20,7 +20,7 @@ const DEFAULT_AGENT_PORT: u16 = 8126;
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     /// Endpoint to send the data to
-    /// This is private and should be interacted with throught the set_endpoint function
+    /// This is private and should be interacted with through the set_endpoint function
     /// to ensure the url path is properly set
     pub(crate) endpoint: Option<Endpoint>,
     /// Enables debug logging

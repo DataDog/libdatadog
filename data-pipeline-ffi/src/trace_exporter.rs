@@ -238,7 +238,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_hostname(
     )
 }
 
-/// Sets environmet information to be included in the headers request.
+/// Sets environment information to be included in the headers request.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_env(
     config: Option<&mut TraceExporterConfig>,
@@ -855,14 +855,14 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(any(target_arch = "arm", target_arch = "aarch64")))]
-    // TODO(APMSP-1632): investigate why test fails on ARM platforms due to a CharSlice constructor.
     fn config_invalid_input_test() {
         unsafe {
             let mut config = Some(TraceExporterConfig::default());
-            let invalid: [i8; 2] = [0x80u8 as i8, 0xFFu8 as i8];
-            let error =
-                ddog_trace_exporter_config_set_service(config.as_mut(), CharSlice::new(&invalid));
+            let invalid: [u8; 2] = [0x80u8, 0xFFu8];
+            let error = ddog_trace_exporter_config_set_service(
+                config.as_mut(),
+                CharSlice::from_bytes(&invalid),
+            );
 
             assert_eq!(error.unwrap().code, ErrorCode::InvalidInput);
         }

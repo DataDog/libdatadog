@@ -76,7 +76,7 @@ macro_rules! telemetry_worker_log {
 pub enum TelemetryActions {
     AddPoint((f64, ContextKey, Vec<Tag>)),
     AddConfig(data::Configuration),
-    AddDependecy(Dependency),
+    AddDependency(Dependency),
     AddIntegration(Integration),
     AddLog((LogIdentifier, Log)),
     Lifecycle(LifecycleAction),
@@ -100,7 +100,7 @@ pub enum LifecycleAction {
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct LogIdentifier {
     // Collisions? Never heard of them
-    pub indentifier: u64,
+    pub identifier: u64,
 }
 
 // Holds the current state of the telemetry worker
@@ -289,7 +289,7 @@ impl TelemetryWorker {
                 self.data.metric_buckets.add_point(key, point, extra_tags)
             }
             Lifecycle(FlushMetricAggr) => {
-                self.data.metric_buckets.flush_agregates();
+                self.data.metric_buckets.flush_aggregates();
 
                 #[allow(clippy::unwrap_used)]
                 self.deadlines
@@ -315,16 +315,16 @@ impl TelemetryWorker {
                     }
                 }
             }
-            AddConfig(_) | AddDependecy(_) | AddIntegration(_) | Lifecycle(ExtendedHeartbeat) => {}
+            AddConfig(_) | AddDependency(_) | AddIntegration(_) | Lifecycle(ExtendedHeartbeat) => {}
             Lifecycle(Stop) => {
                 if !self.data.started {
                     return BREAK;
                 }
-                self.data.metric_buckets.flush_agregates();
+                self.data.metric_buckets.flush_aggregates();
 
-                let obsevability_events = self.build_observability_batch();
+                let observability_events = self.build_observability_batch();
                 if let Err(e) = self
-                    .send_payload(&data::Payload::MessageBatch(obsevability_events))
+                    .send_payload(&data::Payload::MessageBatch(observability_events))
                     .await
                 {
                     self.log_err(&e);
@@ -369,7 +369,7 @@ impl TelemetryWorker {
                     self.data.started = true;
                 }
             }
-            AddDependecy(dep) => self.data.dependencies.insert(dep),
+            AddDependency(dep) => self.data.dependencies.insert(dep),
             AddIntegration(integration) => self.data.integrations.insert(integration),
             AddConfig(cfg) => self.data.configurations.insert(cfg),
             AddLog((identifier, log)) => {
@@ -382,7 +382,7 @@ impl TelemetryWorker {
                 self.data.metric_buckets.add_point(key, point, extra_tags)
             }
             Lifecycle(FlushMetricAggr) => {
-                self.data.metric_buckets.flush_agregates();
+                self.data.metric_buckets.flush_aggregates();
 
                 #[allow(clippy::unwrap_used)]
                 self.deadlines
@@ -445,16 +445,16 @@ impl TelemetryWorker {
                 if !self.data.started {
                     return BREAK;
                 }
-                self.data.metric_buckets.flush_agregates();
+                self.data.metric_buckets.flush_aggregates();
 
                 let mut app_events = self.build_app_events_batch();
                 app_events.push(data::Payload::AppClosing(()));
 
-                let obsevability_events = self.build_observability_batch();
+                let observability_events = self.build_observability_batch();
 
                 let mut payloads = vec![data::Payload::MessageBatch(app_events)];
-                if !obsevability_events.is_empty() {
-                    payloads.push(data::Payload::MessageBatch(obsevability_events));
+                if !observability_events.is_empty() {
+                    payloads.push(data::Payload::MessageBatch(observability_events));
                 }
 
                 let self_arc = Arc::new(tokio::sync::RwLock::new(&mut *self));
@@ -840,7 +840,10 @@ impl TelemetryWorkerHandle {
 
     pub fn add_dependency(&self, name: String, version: Option<String>) -> Result<()> {
         self.sender
-            .try_send(TelemetryActions::AddDependecy(Dependency { name, version }))?;
+            .try_send(TelemetryActions::AddDependency(Dependency {
+                name,
+                version,
+            }))?;
         Ok(())
     }
 
@@ -874,7 +877,7 @@ impl TelemetryWorkerHandle {
         identifier.hash(&mut hasher);
         self.sender.try_send(TelemetryActions::AddLog((
             LogIdentifier {
-                indentifier: hasher.finish(),
+                identifier: hasher.finish(),
             },
             data::Log {
                 message,
@@ -912,7 +915,7 @@ pub const MAX_ITEMS: usize = 5000;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub enum TelemetryWorkerFlavor {
-    /// Send all telemetry messages including lifecylce events like app-started, hearbeats,
+    /// Send all telemetry messages including lifecycle events like app-started, heartbeats,
     /// dependencies and configurations
     #[default]
     Full,
@@ -934,7 +937,7 @@ pub struct TelemetryWorkerBuilder {
 }
 
 impl TelemetryWorkerBuilder {
-    /// Creates a new telmetry worker builder and infer host information automatically
+    /// Creates a new telemetry worker builder and infer host information automatically
     pub fn new_fetch_host(
         service_name: String,
         language_name: String,
@@ -953,7 +956,7 @@ impl TelemetryWorkerBuilder {
         }
     }
 
-    /// Creates a new telmetry worker builder with the given hostname
+    /// Creates a new telemetry worker builder with the given hostname
     pub fn new(
         hostname: String,
         service_name: String,
