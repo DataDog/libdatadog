@@ -20,13 +20,13 @@ use super::enqueued_telemetry_data::EnqueuedTelemetryData;
 static TELEMETRY_ACTION_SENDER: OnceLock<mpsc::Sender<InternalTelemetryActions>> = OnceLock::new();
 
 #[derive(Debug)]
-pub(crate) struct InternalTelemetryActions {
+pub struct InternalTelemetryActions {
     pub instance_id: InstanceId,
     pub queue_id: QueueId,
     pub actions: Vec<TelemetryActions>,
 }
 
-pub(crate) fn get_telemetry_action_sender() -> Result<mpsc::Sender<InternalTelemetryActions>> {
+pub fn get_telemetry_action_sender() -> Result<mpsc::Sender<InternalTelemetryActions>> {
     TELEMETRY_ACTION_SENDER
         .get()
         .cloned()

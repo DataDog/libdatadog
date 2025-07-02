@@ -32,6 +32,12 @@ impl QueueId {
     }
 }
 
+impl From<u64> for QueueId {
+    fn from(value: u64) -> Self {
+        QueueId { inner: value }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

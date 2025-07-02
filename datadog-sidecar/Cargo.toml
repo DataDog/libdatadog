@@ -103,9 +103,6 @@ httpmock = "0.7.0"
 datadog-remote-config = { path = "../datadog-remote-config", features = ["test"] }
 datadog-trace-utils = { path = "../datadog-trace-utils", features = ["test-utils"] }
 
-[build-dependencies]
-cbindgen = "0.26"
-
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(tokio_taskdump,windows_seh_wrapper)',

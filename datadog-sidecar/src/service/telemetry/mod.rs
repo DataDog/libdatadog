@@ -12,8 +12,9 @@ pub mod enqueued_telemetry_stats;
 mod ffi;
 mod in_proc_receiver;
 
-pub(crate) use in_proc_receiver::{
-    get_telemetry_action_sender, telemetry_action_receiver_task, InternalTelemetryActions,
+pub(crate) use in_proc_receiver::telemetry_action_receiver_task;
+pub use in_proc_receiver::{
+    get_telemetry_action_sender, InternalTelemetryActions,
 };
 
 #[allow(clippy::large_enum_variant)]
