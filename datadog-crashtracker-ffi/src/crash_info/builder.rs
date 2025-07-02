@@ -429,3 +429,22 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_uuid_random(
         builder.to_inner_mut()?.with_uuid_random()?;
     })
 }
+
+/// # Safety
+/// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,
+/// which has not previously been dropped.
+/// The CharSlice must be valid.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_message(
+    mut builder: *mut Handle<CrashInfoBuilder>,
+    message: CharSlice,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        let message = message
+            .try_to_string_option()?
+            .context("message cannot be empty string")?;
+        builder.to_inner_mut()?.with_message(message)?;
+    })
+}
