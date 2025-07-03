@@ -89,8 +89,8 @@ fn test_ffi_fork_data_preservation() {
         let enqueue_result =
             unsafe { ddog_prof_ProfilerManager_enqueue_sample(&mut client_handle, sample_ptr) };
         match enqueue_result {
-            VoidResult::Ok => println!("[test] Sample {} enqueued successfully before fork", i),
-            VoidResult::Err(e) => panic!("Failed to enqueue sample {} before fork: {e}", i),
+            VoidResult::Ok => println!("[test] Sample {i} enqueued successfully before fork"),
+            VoidResult::Err(e) => panic!("Failed to enqueue sample {i} before fork: {e}"),
         }
     }
 
@@ -141,10 +141,10 @@ fn test_ffi_fork_data_preservation() {
                 };
                 match child_enqueue_result {
                     VoidResult::Ok => {
-                        println!("[child] Sample {} enqueued successfully in child", i)
+                        println!("[child] Sample {i} enqueued successfully in child")
                     }
                     VoidResult::Err(e) => {
-                        panic!("[child] Failed to enqueue sample {} in child: {e}", i)
+                        panic!("[child] Failed to enqueue sample {i} in child: {e}")
                     }
                 }
             }
@@ -184,10 +184,7 @@ fn test_ffi_fork_data_preservation() {
         }
         child_pid => {
             // Parent process - should restart preserving profile data
-            println!(
-                "[parent] Parent process continuing, child PID: {}",
-                child_pid
-            );
+            println!("[parent] Parent process continuing, child PID: {child_pid}");
 
             // Parent should restart preserving profile data
             println!("[parent] Restarting profiler manager in parent");
@@ -216,10 +213,10 @@ fn test_ffi_fork_data_preservation() {
                 };
                 match parent_enqueue_result {
                     VoidResult::Ok => {
-                        println!("[parent] Sample {} enqueued successfully in parent", i)
+                        println!("[parent] Sample {i} enqueued successfully in parent")
                     }
                     VoidResult::Err(e) => {
-                        panic!("[parent] Failed to enqueue sample {} in parent: {e}", i)
+                        panic!("[parent] Failed to enqueue sample {i} in parent: {e}")
                     }
                 }
             }
@@ -238,7 +235,7 @@ fn test_ffi_fork_data_preservation() {
 
             if libc::WIFEXITED(status) {
                 let exit_code = libc::WEXITSTATUS(status);
-                println!("[parent] Child process exited with code: {}", exit_code);
+                println!("[parent] Child process exited with code: {exit_code}");
                 assert_eq!(exit_code, 0, "Child process should exit successfully");
             } else {
                 println!("[parent] Child process terminated by signal");
@@ -280,10 +277,7 @@ fn test_ffi_fork_data_preservation() {
 
             // Verify that we had uploads (indicating data was processed)
             let total_uploads = UPLOAD_COUNT.load(Ordering::SeqCst);
-            println!(
-                "[parent] Total uploads across all processes: {}",
-                total_uploads
-            );
+            println!("[parent] Total uploads across all processes: {total_uploads}");
 
             // The exact number of uploads may vary due to timing, but we should have some
             assert!(total_uploads > 0, "Should have had at least some uploads");

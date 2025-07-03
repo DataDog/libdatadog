@@ -91,10 +91,7 @@ fn test_ffi_fork_parent_only() {
         }
         child_pid => {
             // Parent process - test restart_in_parent
-            println!(
-                "[parent] Parent process continuing, child PID: {}",
-                child_pid
-            );
+            println!("[parent] Parent process continuing, child PID: {child_pid}");
 
             // Parent should restart preserving profile data
             println!("[parent] Restarting profiler manager in parent");
@@ -138,7 +135,7 @@ fn test_ffi_fork_parent_only() {
 
             if libc::WIFEXITED(status) {
                 let exit_code = libc::WEXITSTATUS(status);
-                println!("[parent] Child process exited with code: {}", exit_code);
+                println!("[parent] Child process exited with code: {exit_code}");
                 assert_eq!(exit_code, 0, "Child process should exit successfully");
             } else {
                 println!("[parent] Child process terminated by signal");

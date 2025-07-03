@@ -148,10 +148,7 @@ fn test_ffi_fork_child_only() {
         }
         child_pid => {
             // Parent process - just wait for child and clean up
-            println!(
-                "[parent] Parent process continuing, child PID: {}",
-                child_pid
-            );
+            println!("[parent] Parent process continuing, child PID: {child_pid}");
 
             // Wait for child to complete
             println!("[parent] Waiting for child process to complete");
@@ -163,7 +160,7 @@ fn test_ffi_fork_child_only() {
 
             if libc::WIFEXITED(status) {
                 let exit_code = libc::WEXITSTATUS(status);
-                println!("[parent] Child process exited with code: {}", exit_code);
+                println!("[parent] Child process exited with code: {exit_code}");
                 assert_eq!(exit_code, 0, "Child process should exit successfully");
             } else {
                 println!("[parent] Child process terminated by signal");
