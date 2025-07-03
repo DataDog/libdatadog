@@ -37,6 +37,7 @@ pub fn encode_span<W: RmpWrite, T: SpanText>(
     span_len += if span.error != 0 { 1 } else { 0 };
     span_len += if span.meta.is_empty() { 0 } else { 1 };
     span_len += if span.metrics.is_empty() { 0 } else { 1 };
+    span_len += if span.meta_struct.is_empty() { 0 } else { 1 };
     span_len += if span.span_links.is_empty() { 0 } else { 1 };
     span_len += if span.span_events.is_empty() { 0 } else { 1 };
 

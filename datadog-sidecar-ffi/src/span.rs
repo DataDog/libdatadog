@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use datadog_trace_utils::msgpack_encoder;
 use datadog_trace_utils::span::{
     AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes,
 };
@@ -15,9 +16,7 @@ fn convert_char_slice_to_bytes_string(slice: CharSlice) -> BytesString {
     unsafe {
         match String::from_utf8_lossy(slice.as_bytes()) {
             Cow::Owned(s) => s.into(),
-            Cow::Borrowed(_) => {
-                BytesString::from_bytes_unchecked(Bytes::from_underlying(slice.as_bytes().to_vec()))
-            }
+            Cow::Borrowed(_) => BytesString::from_bytes_unchecked(slice.as_bytes().to_vec().into()),
         }
     }
 }
@@ -540,15 +539,10 @@ pub extern "C" fn ddog_add_event_attributes_float(
 
 #[no_mangle]
 pub extern "C" fn ddog_serialize_trace_into_c_string(trace: &mut TraceBytes) -> CharSlice<'static> {
-    match rmp_serde::encode::to_vec_named(&vec![trace]) {
-        Ok(vec) => {
-            let boxed_str = vec.into_boxed_slice();
-            let boxed_len = boxed_str.len();
+    let boxed_str = msgpack_encoder::v04::to_vec(&[trace]).into_boxed_slice();
+    let boxed_len = boxed_str.len();
 
-            let leaked_ptr = Box::into_raw(boxed_str) as *const c_char;
+    let leaked_ptr = Box::into_raw(boxed_str) as *const c_char;
 
-            unsafe { CharSlice::from_raw_parts(leaked_ptr, boxed_len) }
-        }
-        Err(_) => CharSlice::empty(),
-    }
+    unsafe { CharSlice::from_raw_parts(leaked_ptr, boxed_len) }
 }

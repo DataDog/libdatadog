@@ -457,7 +457,7 @@ mod tests {
     fn skip_serializing_empty_fields_test_manual_encoder() {
         let expected = b"\x91\x91\x87\xa7service\xa0\xa4name\xa0\xa8resource\xa0\xa8trace_id\xcf\x00\x00\x00\x00\x00\x00\x00\x00\xa7span_id\xcf\x00\x00\x00\x00\x00\x00\x00\x00\xa5start\xd3\x00\x00\x00\x00\x00\x00\x00\x00\xa8duration\x00";
         let val: Span<&str> = Span::default();
-        let serialized = crate::msgpack_encoder::v04::to_vec(&vec![vec![val]]);
+        let serialized = crate::msgpack_encoder::v04::to_vec(&[&[val]]);
         assert_eq!(expected, serialized.as_slice());
     }
 
@@ -517,8 +517,7 @@ mod tests {
             let trace = vec![vec![span]];
             let span = &trace[0][0];
             let serialized = process(&trace);
-            let mut serialized_slice = serialized.as_ref();
-            let deserialized_trace = from_slice(&mut serialized_slice).unwrap();
+            let deserialized_trace = from_slice(serialized.as_ref()).unwrap();
             let deserialized = &deserialized_trace.0[0][0];
 
             assert_eq!(span.name, deserialized.name);
@@ -542,6 +541,7 @@ mod tests {
         }
 
         check(|span| rmp_serde::encode::to_vec_named(span).unwrap());
+        #[allow(clippy::redundant_closure)] // otherwise we get a Mismatched types error
         check(|span| crate::msgpack_encoder::v04::to_vec(span));
     }
 

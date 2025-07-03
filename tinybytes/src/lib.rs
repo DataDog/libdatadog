@@ -201,7 +201,9 @@ impl Bytes {
         &mut self.slice
     }
 
-    pub fn from_underlying(value: impl UnderlyingBytes) -> Self {
+    // private
+
+    fn from_underlying(value: impl UnderlyingBytes) -> Self {
         unsafe {
             // SAFETY:
             // * the pointer associated with a slice is non null and valid for the length of the
