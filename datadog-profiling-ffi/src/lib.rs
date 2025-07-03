@@ -11,7 +11,8 @@
 pub use symbolizer_ffi::*;
 
 mod exporter;
-mod profiles;
+mod manager;
+pub mod profiles;
 mod string_storage;
 
 // re-export crashtracker ffi
@@ -37,3 +38,17 @@ pub use datadog_log_ffi::*;
 // re-export tracer metadata functions
 #[cfg(feature = "ddcommon-ffi")]
 pub use ddcommon_ffi::*;
+
+pub use manager::*;
+
+// Re-export for integration tests
+pub use crate::manager::ffi_api::{
+    ddog_prof_ProfilerClient_drop, ddog_prof_ProfilerManager_enqueue_sample,
+    ddog_prof_ProfilerManager_pause, ddog_prof_ProfilerManager_reset_for_testing,
+    ddog_prof_ProfilerManager_restart_in_parent, ddog_prof_ProfilerManager_start,
+    ddog_prof_ProfilerManager_terminate,
+};
+pub use crate::manager::{ManagedSampleCallbacks, ProfilerManagerConfig, SendSample};
+pub use crate::profiles::datatypes::{
+    ddog_prof_Profile_new, Function, Location, ProfileNewResult, Sample, ValueType,
+};
