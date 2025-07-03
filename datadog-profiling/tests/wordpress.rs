@@ -9,7 +9,8 @@ use std::fs::File;
 use std::io::{copy, Cursor};
 use std::time::Duration;
 
-// PHP uses a restricted set of things; this helper function cuts down on a lot of typing.
+// PHP uses a restricted set of things; this helper function cuts down on a lot
+// of typing.
 fn php_location<'a>(name: &'a str, filename: &'a str, line: i64) -> api::Location<'a> {
     api::Location {
         mapping: api::Mapping::default(),

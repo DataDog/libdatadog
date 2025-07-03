@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{Record, StringOffset, Value, WireType, OPT_ZERO};
+use std::hash::Hash;
 use std::io::{self, Write};
 
-/// Label includes additional context for this sample. It can include things
+/// A label includes additional context for this sample. It can include things
 /// like a thread id, allocation size, etc.
+/// This repr omits `num_unit` to save 8 bytes (4 from padding).
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "bolero", derive(bolero::generator::TypeGenerator))]
 pub struct Label {
     /// An annotation for a sample, e.g. "allocation_size".
     pub key: Record<StringOffset, 1, OPT_ZERO>,
@@ -16,14 +18,6 @@ pub struct Label {
     pub str: Record<StringOffset, 2, OPT_ZERO>,
     /// At most, one of the str and num should be used.
     pub num: Record<i64, 3, OPT_ZERO>,
-
-    // todo: if we don't use num_unit, then we can save 8 bytes--4 from
-    //       num_unit plus 4 from padding.
-    /// Should only be present when num is present.
-    /// Specifies the units of num.
-    /// Use arbitrary string (for example, "requests") as a custom count unit.
-    /// If no unit is specified, consumer may apply heuristic to deduce it.
-    pub num_unit: Record<StringOffset, 4, OPT_ZERO>,
 }
 
 /// # Safety
@@ -32,17 +26,13 @@ unsafe impl Value for Label {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
 
     fn proto_len(&self) -> u64 {
-        self.key.proto_len()
-            + self.str.proto_len()
-            + self.num.proto_len()
-            + self.num_unit.proto_len()
+        self.key.proto_len() + self.str.proto_len() + self.num.proto_len()
     }
 
     fn encode<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         self.key.encode(writer)?;
         self.str.encode(writer)?;
-        self.num.encode(writer)?;
-        self.num_unit.encode(writer)
+        self.num.encode(writer)
     }
 }
 
@@ -56,13 +46,10 @@ impl From<Label> for crate::prost_impls::Label {
 #[cfg(feature = "prost_impls")]
 impl From<&Label> for crate::prost_impls::Label {
     fn from(label: &Label) -> Self {
-        // If the prost file is regenerated, this may pick up new members.
-        #[allow(clippy::needless_update)]
         Self {
             key: label.key.value.into(),
             str: label.str.value.into(),
             num: label.num.value,
-            num_unit: label.num_unit.value.into(),
             ..Self::default()
         }
     }
@@ -82,7 +69,6 @@ mod tests {
             assert_eq!(i64::from(label.key.value), prost_label.key);
             assert_eq!(i64::from(label.str.value), prost_label.str);
             assert_eq!(label.num.value, prost_label.num);
-            assert_eq!(i64::from(label.num_unit.value), prost_label.num_unit);
 
             label.encode(&mut buffer).unwrap();
             let roundtrip = prost_impls::Label::decode(buffer.as_slice()).unwrap();

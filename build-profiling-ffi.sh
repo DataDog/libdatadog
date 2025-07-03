@@ -3,6 +3,12 @@
 # Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 # SPDX-License-Identifier: Apache-2.0
 
+
+# TIPS FOR FAST REBUILDS!
+# - Build with the `-s` parameter. Combined with some other changes I made,
+#   this allows cargo to reuse the cache between invocations.
+# - Don't let your IDE or other thing rebuild in the background.
+
 get_abs_filename() {
   # $1 : relative filename
   echo "$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
@@ -167,7 +173,12 @@ FEATURES=$(IFS=, ; echo "${FEATURES[*]}")
 echo "Building for features: $FEATURES"
 
 # build inside the crate to use the config.toml file
-( cd datadog-profiling-ffi && DESTDIR="$destdir" cargo rustc --features $FEATURES --release --target "${target}" --crate-type cdylib && DESTDIR="$destdir" cargo rustc --features $FEATURES --release --target "${target}" --crate-type staticlib)
+cd datadog-profiling-ffi
+# Build both crate types at once to not invalidate the cargo cache for fast
+# rebuilds when combined with `-s`. When I checked, it did not seem to affect
+# binary size (but this was on macOS, not Linux).
+DESTDIR="$destdir" cargo rustc --features $FEATURES --release --target "${target}" --crate-type cdylib,staticlib
+cd -
 
 # Remove _ffi suffix when copying
 shared_library_name="${library_prefix}datadog_profiling_ffi${shared_library_suffix}"
@@ -209,7 +220,7 @@ fi
 if $run_tests; then
     echo "Checking that native-static-libs are as expected for this platform..."
     cd datadog-profiling-ffi
-    actual_native_static_libs="$(cargo rustc --release --target "${target}" -- --print=native-static-libs 2>&1 | awk -F ':' '/note: native-static-libs:/ { print $3 }')"
+    actual_native_static_libs="$(DESTDIR="$destdir" cargo rustc --features $FEATURES --release --target "${target}" -- --print=native-static-libs 2>&1 | awk -F ':' '/note: native-static-libs:/ { print $3 }')"
     echo "Actual native-static-libs:${actual_native_static_libs}"
     echo "Expected native-static-libs:${expected_native_static_libs}"
 

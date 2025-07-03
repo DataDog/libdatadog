@@ -240,7 +240,8 @@ impl Profile {
         let non_empty_string_id = if let Some(valid_id) = NonZeroU32::new(id.value) {
             valid_id
         } else {
-            return Ok(StringId::ZERO); // Both string tables use zero for the empty string
+            // Both string tables use zero for the empty string.
+            return Ok(StringId::ZERO);
         };
 
         let string_storage = self.string_storage
@@ -478,9 +479,10 @@ impl Profile {
         Ok(self)
     }
 
-    /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids being present in
-    /// emitted profiles. We're doing extra checks here so that if we see incorrect ids again,
-    /// we are 100% sure they were not introduced prior to this stage.
+    /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids
+    /// being present in emitted profiles. We're doing extra checks here so
+    /// that if we see incorrect ids again, we are 100% sure they were not
+    /// introduced prior to this stage.
     fn check_location_ids_are_valid(&self, location_ids: &[u64], len: usize) -> anyhow::Result<()> {
         let len: u64 = u64::try_from(len)?;
         for id in location_ids.iter() {
@@ -649,8 +651,8 @@ impl Profile {
         );
 
         let local_root_span_id = if let LabelValue::Num { num, .. } = label.get_value() {
-            // Safety: the value is an u64, but pprof only has signed values, so we
-            // transmute it; the backend does the same.
+            // SAFETY: the value is an u64, but pprof only has signed values,
+            // so we transmute it; the backend does the same.
             #[allow(
                 unknown_lints,
                 unnecessary_transmutes,
@@ -1290,8 +1292,8 @@ mod api_tests {
 
         let s2 = samples.get(1).expect("sample");
 
-        // The trace endpoint label shouldn't be added to second sample because the span id doesn't
-        // match
+        // The trace endpoint label shouldn't be added to second sample because
+        // the span id doesn't match.
         assert_eq!(s2.labels.len(), 2);
         Ok(())
     }
@@ -2385,7 +2387,8 @@ mod api_tests {
 
         // Find common label strings in the string table.
         let locate_string = |string: &str| -> i64 {
-            // The table is supposed to be unique, so we shouldn't have to worry about duplicates.
+            // The table is supposed to be unique, so we shouldn't have to
+            // worry about duplicates.
             serialized_profile
                 .string_table
                 .iter()
@@ -2486,8 +2489,9 @@ mod api_tests {
             .iter()
             .any(|s| s == "world"));
 
-        // If the cache invalidation on the managed string table is working correctly, these strings
-        // get correctly re-added to the profile's string table
+        // If the cache invalidation on the managed string table is working
+        // correctly, these strings get correctly re-added to the profile's
+        // string table
 
         profile.add_string_id_sample(sample.clone(), None).unwrap();
         profile.add_string_id_sample(sample.clone(), None).unwrap();

@@ -22,8 +22,9 @@ use std::sync::Mutex;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct ManagedStringStorage {
-    // This may be null, but if not it will point to a valid InternalManagedStringStorage,
-    // wrapped as needed for correct concurrency. This type is made opaque for cbindgen.
+    // This may be null, but if not it will point to a valid
+    // InternalManagedStringStorage, wrapped as needed for correct concurrency.
+    // This type is made opaque for cbindgen.
     inner: *const c_void,
 }
 
@@ -37,7 +38,8 @@ pub enum ManagedStringStorageNewResult {
 
 #[no_mangle]
 #[must_use]
-pub extern "C" fn ddog_prof_ManagedStringStorage_new() -> ManagedStringStorageNewResult {
+pub extern "C" fn ddog_prof_ManagedStringStorage_new(
+) -> ManagedStringStorageNewResult {
     let storage = InternalManagedStringStorage::new();
 
     ManagedStringStorageNewResult::Ok(ManagedStringStorage {
@@ -47,7 +49,9 @@ pub extern "C" fn ddog_prof_ManagedStringStorage_new() -> ManagedStringStorageNe
 
 #[no_mangle]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
-pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_drop(storage: ManagedStringStorage) {
+pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_drop(
+    storage: ManagedStringStorage,
+) {
     if let Ok(storage) = get_inner_string_storage(storage, false) {
         drop(storage);
     }
@@ -117,13 +121,18 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern_all(
             .lock()
             .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
 
-        let output_slice = core::slice::from_raw_parts_mut(output_ids, output_ids_size);
+        let output_slice =
+            core::slice::from_raw_parts_mut(output_ids, output_ids_size);
 
-        for (output_id, input_str) in output_slice.iter_mut().zip(strings.iter()) {
+        for (output_id, input_str) in
+            output_slice.iter_mut().zip(strings.iter())
+        {
             let string_id = if input_str.is_empty() {
                 ManagedStringId::empty()
             } else {
-                ManagedStringId::new(write_locked_storage.intern(input_str.try_to_utf8()?)?)
+                ManagedStringId::new(
+                    write_locked_storage.intern(input_str.try_to_utf8()?)?,
+                )
             };
             output_id.write(string_id);
         }
@@ -178,7 +187,9 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern_all(
             .lock()
             .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
 
-        for non_empty_string_id in ids.iter().filter_map(|id| NonZeroU32::new(id.value)) {
+        for non_empty_string_id in
+            ids.iter().filter_map(|id| NonZeroU32::new(id.value))
+        {
             write_locked_storage.unintern(non_empty_string_id)?;
         }
 
@@ -208,7 +219,9 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
         let string: String = (*storage
             .lock()
             .map_err(|_| {
-                anyhow::anyhow!("acquisition of read lock on string storage should succeed")
+                anyhow::anyhow!(
+                    "acquisition of read lock on string storage should succeed"
+                )
             })?
             .get_string(id.value)?)
         .to_owned();
@@ -263,12 +276,12 @@ pub unsafe fn get_inner_string_storage(
         // strong count.
         Arc::increment_strong_count(storage_ptr);
     }
-    Ok(Arc::from_raw(
-        storage_ptr as *const Mutex<InternalManagedStringStorage>,
-    ))
+    Ok(Arc::from_raw(storage_ptr as *const Mutex<InternalManagedStringStorage>))
 }
 
-impl From<anyhow::Result<ManagedStringId>> for ManagedStringStorageInternResult {
+impl From<anyhow::Result<ManagedStringId>>
+    for ManagedStringStorageInternResult
+{
     fn from(value: anyhow::Result<ManagedStringId>) -> Self {
         match value {
             Ok(v) => Self::Ok(v),
@@ -298,7 +311,12 @@ mod tests {
         let mut ids_rs1 = [ManagedStringId::empty(); 2];
         let ids1 = ids_rs1.as_mut_ptr();
         let result = unsafe {
-            ddog_prof_ManagedStringStorage_intern_all(storage, strings, ids1.cast(), strings.len())
+            ddog_prof_ManagedStringStorage_intern_all(
+                storage,
+                strings,
+                ids1.cast(),
+                strings.len(),
+            )
         };
         if let MaybeError::Some(err) = result {
             panic!("{err}");
@@ -307,7 +325,12 @@ mod tests {
         let mut ids_rs2 = [ManagedStringId::empty(); 2];
         let ids2 = ids_rs2.as_mut_ptr();
         let result = unsafe {
-            ddog_prof_ManagedStringStorage_intern_all(storage, strings, ids2.cast(), strings.len())
+            ddog_prof_ManagedStringStorage_intern_all(
+                storage,
+                strings,
+                ids2.cast(),
+                strings.len(),
+            )
         };
         if let MaybeError::Some(err) = result {
             panic!("{err}");

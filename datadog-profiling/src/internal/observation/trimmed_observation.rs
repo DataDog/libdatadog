@@ -48,14 +48,16 @@ pub(super) struct TrimmedObservation {
 unsafe impl Send for TrimmedObservation {}
 
 impl TrimmedObservation {
-    /// Safety: the ObservationLength must have come from the same profile as the Observation
+    /// Safety: the ObservationLength must have come from the same profile as
+    /// the Observation
     pub unsafe fn as_mut_slice(&mut self, len: ObservationLength) -> &mut [i64] {
         unsafe { std::slice::from_raw_parts_mut(self.data, len.0) }
     }
 
     /// Consumes self, ensuring that the memory behind it is dropped.
     /// It is an error to drop a TrimmedObservation without consuming it first.
-    /// Safety: the ObservationLength must have come from the same profile as the Observation
+    /// Safety: the ObservationLength must have come from the same profile as
+    /// the Observation
     pub unsafe fn consume(self, len: ObservationLength) {
         drop(self.into_boxed_slice(len));
     }
@@ -82,7 +84,8 @@ impl TrimmedObservation {
         Self { data }
     }
 
-    /// Safety: the ObservationLength must have come from the same profile as the Observation
+    /// Safety: the ObservationLength must have come from the same profile as
+    /// the Observation
     unsafe fn into_boxed_slice(mut self, len: ObservationLength) -> Box<[i64]> {
         unsafe {
             let s: &mut [i64] = std::slice::from_raw_parts_mut(
@@ -93,7 +96,8 @@ impl TrimmedObservation {
         }
     }
 
-    /// Safety: the ObservationLength must have come from the same profile as the Observation
+    /// Safety: the ObservationLength must have come from the same profile as
+    /// the Observation
     pub(super) unsafe fn into_vec(mut self, len: ObservationLength) -> Vec<i64> {
         unsafe {
             // We built this from a vec.  Put it back together again.
@@ -182,9 +186,10 @@ mod tests {
         }
     }
 
-    // A fuzz test for TrimmedObservation. It creates a `Vec<i64>` with length (0..=64)
-    // https://github.com/camshaft/bolero/blob/f401669697ffcbe7f34cbfd09fd57b93d5df734c/lib/bolero-generator/src/alloc/mod.rs#L17
-    // and the integers in it are unbounded, then it's used to create a TrimmedObservation.
+    // A fuzz test for TrimmedObservation. It creates a `Vec<i64>` with length
+    // (0..=64) https://github.com/camshaft/bolero/blob/f401669697ffcbe7f34cbfd09fd57b93d5df734c/lib/bolero-generator/src/alloc/mod.rs#L17
+    // and the integers in it are unbounded, then it's used to create a
+    // TrimmedObservation.
     #[test]
     fn fuzz_trimmed_observation() {
         bolero::check!().with_type::<Vec<i64>>().for_each(|v| {

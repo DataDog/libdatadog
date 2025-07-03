@@ -1446,6 +1446,7 @@ version = "20.0.0"
 dependencies = [
  "allocator-api2",
  "bolero",
+ "datadog-alloc",
  "libc",
  "windows-sys 0.52.0",
 ]
@@ -1651,6 +1652,7 @@ dependencies = [
  "datadog-profiling-protobuf",
  "ddcommon",
  "futures",
+ "hashbrown 0.15.1",
  "http 1.1.0",
  "http-body-util",
  "hyper 1.6.0",
@@ -1663,6 +1665,7 @@ dependencies = [
  "serde",
  "serde_json",
  "target-triple",
+ "thiserror",
  "tokio",
  "tokio-util",
 ]
@@ -1674,10 +1677,12 @@ dependencies = [
  "anyhow",
  "build_common",
  "data-pipeline-ffi",
+ "datadog-alloc",
  "datadog-crashtracker-ffi",
  "datadog-library-config-ffi",
  "datadog-log-ffi",
  "datadog-profiling",
+ "datadog-profiling-protobuf",
  "ddcommon",
  "ddcommon-ffi",
  "ddsketch-ffi",
@@ -1687,6 +1692,7 @@ dependencies = [
  "http-body-util",
  "hyper 1.6.0",
  "libc",
+ "rustc-hash 1.1.0",
  "serde_json",
  "symbolizer-ffi",
  "tokio-util",
@@ -1711,6 +1717,15 @@ dependencies = [
  "datadog-profiling-protobuf",
  "prost",
  "sysinfo",
+]
+
+[[package]]
+name = "datadog-profiling-validator"
+version = "19.0.1"
+dependencies = [
+ "clap",
+ "datadog-profiling-protobuf",
+ "thiserror",
 ]
 
 [[package]]

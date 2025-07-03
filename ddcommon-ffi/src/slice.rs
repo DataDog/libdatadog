@@ -107,7 +107,18 @@ impl<'a> AsBytes<'a> for Slice<'a, i8> {
     }
 }
 
-impl<'a, T: 'a> Slice<'a, T> {
+impl<'a> AsBytes<'a> for &'a [c_char] {
+    fn as_bytes(&self) -> &'a [u8] {
+        // SAFETY: We're transmuting from &[c_char] to &[i8] which is safe since they have the same
+        // layout
+        let i8_slice: &[i8] = unsafe { std::mem::transmute(*self) };
+        // SAFETY: We're transmuting from &[i8] to &[u8] which is safe since they have the same
+        // layout
+        unsafe { std::mem::transmute(i8_slice) }
+    }
+}
+
+impl<'a, T> Slice<'a, T> {
     /// Creates a valid empty slice (len=0, ptr is non-null).
     #[must_use]
     pub const fn empty() -> Self {
@@ -146,6 +157,9 @@ impl<'a, T: 'a> Slice<'a, T> {
     }
 
     pub fn as_slice(&self) -> &'a [T] {
+        // Don't proxy to `try_as_slice` so that the assertion fails on the
+        // condition which was violated. The conditions between the two
+        // functions need to be synchronized.
         if !self.ptr.is_null() {
             // Crashing immediately is likely better than ignoring these.
             assert!(is_aligned(self.ptr));
@@ -155,6 +169,22 @@ impl<'a, T: 'a> Slice<'a, T> {
             // Crashing immediately is likely better than ignoring this.
             assert_eq!(self.len, 0);
             &[]
+        }
+    }
+
+    /// Tries to convert the FFI slice into a standard slice.
+    ///
+    /// # Errors
+    ///
+    /// 1. Fails if `self.ptr` is null and `self.len` is not zero.
+    /// 2. Fails if `self.ptr` is not null and is unaligned.
+    /// 3. Fails if `self.len` is larger than [`isize::MAX`].
+    pub fn try_as_slice(&self) -> Option<&'a [T]> {
+        if !self.ptr.is_null() {
+            (self.ptr.is_aligned() && self.len <= isize::MAX as usize)
+                .then(|| unsafe { slice::from_raw_parts(self.ptr, self.len) })
+        } else {
+            (self.len == 0).then_some(&[])
         }
     }
 

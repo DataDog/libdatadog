@@ -27,23 +27,25 @@ pub struct ManagedStringStorage {
 }
 
 #[derive(PartialEq, Debug)]
-// The `ManagedStringStorage::get_seq_num` operation is used to map a `ManagedStorageId` into a
-// `StringId` for a given `StringTable`. As an optimization, we store a one-element `cached_seq_num`
-//  inline cache with each `ManagedStringData` entry, so that repeatedly calling
-// `get_seq_num` with the same id provides faster lookups.
+// The `ManagedStringStorage::get_seq_num` operation is used to map a
+// `ManagedStorageId` into a `StringId` for a given `StringTable`. As an
+// optimization, we store a one-element `cached_seq_num`  inline cache with each
+// `ManagedStringData` entry, so that repeatedly calling `get_seq_num` with the
+// same id provides faster lookups.
 //
 // Because:
 // 1. Multiple profiles can be using the same `ManagedStringTable`
 // 2. The same profile resets its `StringTable` on serialization and starts anew
 // ...we need a way to identify when the cache can and cannot be reused.
 //
-// This is where the `CachedProfileId` comes in. A given `CachedProfileId` should be considered
-// as representing a unique `StringTable`. Different `StringTable`s should have different
-// `CachedProfileId`s, and when a `StringTable` gets flushed and starts anew, it should also have a
+// This is where the `CachedProfileId` comes in. A given `CachedProfileId`
+// should be considered as representing a unique `StringTable`. Different
+// `StringTable`s should have different `CachedProfileId`s, and when a
+// `StringTable` gets flushed and starts anew, it should also have a
 // different `CachedProfileId`.
 //
-// **This struct is on purpose not Copy and not Clone to try to make it really hard to accidentally
-// reuse** when a profile gets reset.
+// **This struct is on purpose not Copy and not Clone to try to make it really
+// hard to accidentally reuse** when a profile gets reset.
 pub struct CachedProfileId {
     id: u32,
 }
@@ -55,9 +57,10 @@ struct InternalCachedProfileId {
 
 // Enable Mutex<ManagedStringStorage> to be Send
 //
-// SAFETY: ManagedStringStorage **must always** be wrapped with a Mutex -- you can't pass one in to
-// a Profile without it. This is because it is not, by itself, thread-safe, and its real-world use
-// cases are expected to include concurrency.
+// SAFETY: ManagedStringStorage **must always** be wrapped with a Mutex -- you
+// can't pass one in to a Profile without it. This is because it is not, by
+// itself, thread-safe, and its real-world use cases are expected to include
+// concurrency.
 unsafe impl Send for ManagedStringStorage {}
 
 impl From<&CachedProfileId> for InternalCachedProfileId {
@@ -75,8 +78,9 @@ impl ManagedStringStorage {
             current_gen: 0,
             next_cached_profile_id: InternalCachedProfileId { id: 0 },
         };
-        // Ensure empty string gets id 0 and always has usage > 0 so it's always retained
-        // Safety: On an empty managed string table intern should never fail.
+        // Ensure empty string gets id 0 and always has usage > 0 so it's always
+        // retained Safety: On an empty managed string table intern should never
+        // fail.
         #[allow(clippy::expect_used)]
         storage.intern_new("").expect("Initialization to succeed");
         storage
@@ -148,8 +152,8 @@ impl ManagedStringStorage {
         Ok(id)
     }
 
-    // Here id is a NonZeroU32 because an id of 0 is the empty string and that can never be
-    // uninterned (and it should be skipped instead in the caller)
+    // Here id is a NonZeroU32 because an id of 0 is the empty string and that can
+    // never be uninterned (and it should be skipped instead in the caller)
     pub fn unintern(&mut self, id: NonZeroU32) -> anyhow::Result<()> {
         let data = self.get_data(id.into())?;
         let usage_count = &data.usage_count;
@@ -162,8 +166,8 @@ impl ManagedStringStorage {
         Ok(())
     }
 
-    // Here id is a NonZeroU32 because an id of 0 which StringTable always maps to 0 as well so this
-    // entire call can be skipped
+    // Here id is a NonZeroU32 because an id of 0 which StringTable always maps to 0
+    // as well so this entire call can be skipped
     // See comment on `struct CachedProfileId` for details on how to use it.
     pub fn get_seq_num(
         &mut self,
