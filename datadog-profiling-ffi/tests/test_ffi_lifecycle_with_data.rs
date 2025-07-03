@@ -6,6 +6,7 @@ use datadog_profiling_ffi::{
     ddog_prof_ProfilerManager_terminate, ManagedSampleCallbacks, ProfileNewResult,
     ProfilerManagerConfig, Slice, ValueType, VoidResult,
 };
+use ddcommon_ffi::ToInner;
 use std::ffi::c_void;
 use test_utils::*;
 
@@ -104,14 +105,17 @@ fn test_ffi_lifecycle_with_data() {
     // Terminate the profiler manager immediately
     println!("[test] Calling ddog_prof_ProfilerManager_terminate");
     let terminate_result = unsafe { ddog_prof_ProfilerManager_terminate() };
-    println!("[test] ddog_prof_ProfilerManager_terminate returned");
-    let _final_profile_handle = match terminate_result {
+    let mut final_profile_handle = match terminate_result {
         ddcommon_ffi::Result::Ok(handle) => {
             println!("[test] Profiler manager terminated successfully");
             handle
         }
         ddcommon_ffi::Result::Err(e) => panic!("Failed to terminate profiler manager: {e}"),
     };
+
+    // Check that the expected sample is present in the final profile
+    let profile_result = unsafe { final_profile_handle.take() };
+    assert_profile_has_sample_values(profile_result, &[42]);
 
     // Drop the client handles
     println!("[test] Dropping first client handle");

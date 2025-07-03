@@ -340,6 +340,8 @@ impl ProfilerManager {
             ..
         } = std::mem::replace(&mut *state, ManagerState::Invalid)
         else {
+            // TODO: Consider cleanup when global state is unexpected (e.g., if state is Invalid or
+            // contains stale resources)
             anyhow::bail!("Manager is not in running state");
         };
 
@@ -363,6 +365,8 @@ impl ProfilerManager {
             callbacks,
         } = std::mem::replace(&mut *state, ManagerState::Invalid)
         else {
+            // TODO: Consider cleanup when global state is unexpected (e.g., if state is Invalid or
+            // contains stale resources)
             anyhow::bail!("Manager is not in paused state");
         };
 
@@ -381,6 +385,8 @@ impl ProfilerManager {
             callbacks,
         } = std::mem::replace(&mut *state, ManagerState::Invalid)
         else {
+            // TODO: Consider cleanup when global state is unexpected (e.g., if state is Invalid or
+            // contains stale resources)
             anyhow::bail!("Manager is not in paused state");
         };
 
@@ -408,7 +414,11 @@ impl ProfilerManager {
                 // Return the stored profile
                 *profile
             }
-            _ => anyhow::bail!("Manager is not in running or paused state"),
+            _ => {
+                // TODO: Consider cleanup when global state is unexpected (e.g., if state is Invalid
+                // or contains stale resources)
+                anyhow::bail!("Manager is not in running or paused state")
+            }
         };
 
         // Set the final state to uninitialized
