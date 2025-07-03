@@ -7,14 +7,14 @@ use rmp::encode::{write_array_len, ByteBuf, RmpWrite, ValueWriteError};
 mod span;
 
 #[inline(always)]
-fn to_writer<W: RmpWrite, T: SpanText>(
+fn to_writer<W: RmpWrite, T: SpanText, S: AsRef<[Span<T>]>>(
     writer: &mut W,
-    traces: &Vec<Vec<Span<T>>>,
+    traces: &[S],
 ) -> Result<(), ValueWriteError<W::Error>> {
     write_array_len(writer, traces.len() as u32)?;
     for trace in traces {
-        write_array_len(writer, trace.len() as u32)?;
-        for span in trace {
+        write_array_len(writer, trace.as_ref().len() as u32)?;
+        for span in trace.as_ref() {
             span::encode_span(writer, span)?;
         }
     }
@@ -22,18 +22,21 @@ fn to_writer<W: RmpWrite, T: SpanText>(
     Ok(())
 }
 
-pub fn to_slice<T: SpanText>(
+pub fn to_slice<T: SpanText, S: AsRef<[Span<T>]>>(
     slice: &mut &mut [u8],
-    traces: &Vec<Vec<Span<T>>>,
+    traces: &[S],
 ) -> Result<(), ValueWriteError> {
     to_writer(slice, traces)
 }
 
-pub fn to_vec<T: SpanText>(traces: &Vec<Vec<Span<T>>>) -> Vec<u8> {
+pub fn to_vec<T: SpanText, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u8> {
     to_vec_with_capacity(traces, 0)
 }
 
-pub fn to_vec_with_capacity<T: SpanText>(traces: &Vec<Vec<Span<T>>>, capacity: u32) -> Vec<u8> {
+pub fn to_vec_with_capacity<T: SpanText, S: AsRef<[Span<T>]>>(
+    traces: &[S],
+    capacity: u32,
+) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
     let _ = to_writer(&mut buf, traces);
     buf.into_vec()
@@ -60,7 +63,7 @@ impl std::io::Write for CountLength {
     }
 }
 
-pub fn to_len<T: SpanText>(traces: &Vec<Vec<Span<T>>>) -> u32 {
+pub fn to_len<T: SpanText, S: AsRef<[Span<T>]>>(traces: &[S]) -> u32 {
     let mut counter = CountLength(0);
     let _ = to_writer(&mut counter, traces);
     counter.0

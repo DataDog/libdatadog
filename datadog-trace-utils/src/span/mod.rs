@@ -515,8 +515,7 @@ mod tests {
             let trace = vec![vec![span]];
             let span = &trace[0][0];
             let serialized = process(&trace);
-            let mut serialized_slice = serialized.as_ref();
-            let deserialized_trace = from_slice(&mut serialized_slice).unwrap();
+            let deserialized_trace = from_slice(serialized.as_ref()).unwrap();
             let deserialized = &deserialized_trace.0[0][0];
 
             assert_eq!(span.name, deserialized.name);
@@ -540,6 +539,7 @@ mod tests {
         }
 
         check(|span| rmp_serde::encode::to_vec_named(span).unwrap());
+        #[allow(clippy::redundant_closure)] // otherwise we get a Mismatched types error
         check(|span| crate::msgpack_encoder::v04::to_vec(span));
     }
 
