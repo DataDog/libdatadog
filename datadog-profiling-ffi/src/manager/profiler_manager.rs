@@ -332,24 +332,17 @@ impl ProfilerManager {
     pub fn pause() -> Result<()> {
         let mut state = MANAGER_STATE.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        // Check if manager is in running state
-        anyhow::ensure!(
-            matches!(&*state, ManagerState::Running { .. }),
-            "Manager is not in running state"
-        );
-
         // Extract the running state and replace with invalid during transition
-        let running_state = match std::mem::replace(&mut *state, ManagerState::Invalid) {
-            ManagerState::Running {
-                client: _,
-                controller,
-                config,
-                callbacks,
-            } => (controller, config, callbacks),
-            _ => unreachable!(), // We already checked above
+        let ManagerState::Running {
+            controller,
+            config,
+            callbacks,
+            ..
+        } = std::mem::replace(&mut *state, ManagerState::Invalid)
+        else {
+            anyhow::bail!("Manager is not in running state");
         };
 
-        let (controller, config, callbacks) = running_state;
         let profile = controller.shutdown()?;
 
         *state = ManagerState::Paused {
@@ -364,17 +357,16 @@ impl ProfilerManager {
     pub fn restart_in_parent() -> Result<ManagedProfilerClient> {
         let mut state = MANAGER_STATE.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        let (profile, config, callbacks) =
-            match std::mem::replace(&mut *state, ManagerState::Invalid) {
-                ManagerState::Paused {
-                    profile,
-                    config,
-                    callbacks,
-                } => (*profile, config, callbacks),
-                _ => anyhow::bail!("Manager is not in paused state"),
-            };
+        let ManagerState::Paused {
+            profile,
+            config,
+            callbacks,
+        } = std::mem::replace(&mut *state, ManagerState::Invalid)
+        else {
+            anyhow::bail!("Manager is not in paused state");
+        };
 
-        let (client, running_state) = Self::start_internal(profile, callbacks, config)?;
+        let (client, running_state) = Self::start_internal(*profile, callbacks, config)?;
         *state = running_state;
 
         Ok(client)
@@ -383,20 +375,19 @@ impl ProfilerManager {
     pub fn restart_in_child() -> Result<ManagedProfilerClient> {
         let mut state = MANAGER_STATE.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        let (mut profile, config, callbacks) =
-            match std::mem::replace(&mut *state, ManagerState::Invalid) {
-                ManagerState::Paused {
-                    profile,
-                    config,
-                    callbacks,
-                } => (*profile, config, callbacks),
-                _ => anyhow::bail!("Manager is not in paused state"),
-            };
+        let ManagerState::Paused {
+            mut profile,
+            config,
+            callbacks,
+        } = std::mem::replace(&mut *state, ManagerState::Invalid)
+        else {
+            anyhow::bail!("Manager is not in paused state");
+        };
 
         // Reset the profile, discarding the previous one
         let _ = profile.reset_and_return_previous()?;
 
-        let (client, running_state) = Self::start_internal(profile, callbacks, config)?;
+        let (client, running_state) = Self::start_internal(*profile, callbacks, config)?;
         *state = running_state;
 
         Ok(client)
@@ -407,35 +398,17 @@ impl ProfilerManager {
     pub fn terminate() -> Result<internal::Profile> {
         let mut state = MANAGER_STATE.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        // Check if manager is in running or paused state
-        anyhow::ensure!(
-            matches!(
-                &*state,
-                ManagerState::Running { .. } | ManagerState::Paused { .. }
-            ),
-            "Manager is not in running or paused state"
-        );
-
         // Extract the profile and replace with invalid during transition
         let profile = match std::mem::replace(&mut *state, ManagerState::Invalid) {
-            ManagerState::Running {
-                client: _,
-                controller,
-                config: _,
-                callbacks: _,
-            } => {
+            ManagerState::Running { controller, .. } => {
                 // Shutdown the controller and get the profile
                 controller.shutdown()?
             }
-            ManagerState::Paused {
-                profile,
-                config: _,
-                callbacks: _,
-            } => {
+            ManagerState::Paused { profile, .. } => {
                 // Return the stored profile
                 *profile
             }
-            _ => unreachable!(), // We already checked above
+            _ => anyhow::bail!("Manager is not in running or paused state"),
         };
 
         // Set the final state to uninitialized
