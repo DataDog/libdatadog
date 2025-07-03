@@ -1399,6 +1399,25 @@ impl TraceExporter {
     fn get_agent_url(&self) -> Uri {
         self.output_format.add_path(&self.endpoint.url)
     }
+
+    #[cfg(test)]
+    /// Test only function to check if the stats computation is active and the worker is running
+    pub fn is_stats_worker_active(&self) -> bool {
+        if !matches!(
+            **self.client_side_stats.load(),
+            StatsComputationStatus::Enabled { .. }
+        ) {
+            return false;
+        }
+
+        if let Ok(workers) = self.workers.try_lock() {
+            if let Some(stats_worker) = &workers.stats {
+                return matches!(stats_worker, PausableWorker::Running { .. });
+            }
+        }
+
+        false
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -1498,7 +1517,7 @@ mod tests {
             then.status(200).body("");
         });
 
-        let mock_info = server.mock(|when, then| {
+        let _mock_info = server.mock(|when, then| {
             when.method(GET).path("/info");
             then.status(200)
                 .header("content-type", "application/json")
@@ -1528,7 +1547,7 @@ mod tests {
         let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
 
         // Wait for the info fetcher to get the config
-        while mock_info.hits() == 0 {
+        while agent_info::get_agent_info().is_none() {
             exporter
                 .runtime
                 .lock()
@@ -1544,10 +1563,20 @@ mod tests {
         // Error received because server is returning an empty body.
         assert!(result.is_err());
 
+        // Wait for the stats worker to be active before shutting down to avoid potential flaky
+        // tests on CI where we shutdown before the stats worker had time to start
+        let start_time = std::time::Instant::now();
+        while !exporter.is_stats_worker_active() {
+            if start_time.elapsed() > Duration::from_secs(10) {
+                panic!("Timeout waiting for stats worker to become active");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
         exporter.shutdown(None).unwrap();
 
         // Wait for the mock server to process the stats
-        for _ in 0..500 {
+        for _ in 0..1000 {
             if mock_traces.hits() > 0 && mock_stats.hits() > 0 {
                 break;
             } else {
@@ -1585,7 +1614,7 @@ mod tests {
             then.delay(Duration::from_secs(10)).status(200).body("");
         });
 
-        let mock_info = server.mock(|when, then| {
+        let _mock_info = server.mock(|when, then| {
             when.method(GET).path("/info");
             then.status(200)
                 .header("content-type", "application/json")
@@ -1618,8 +1647,9 @@ mod tests {
 
         let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
 
-        // Wait for the info fetcher to get the config
-        while mock_info.hits() == 0 {
+        // Wait for agent_info to be present so that sending a trace will trigger the stats worker
+        // to start
+        while agent_info::get_agent_info().is_none() {
             exporter
                 .runtime
                 .lock()
@@ -1632,6 +1662,16 @@ mod tests {
         }
 
         exporter.send(data.as_ref(), 1).unwrap();
+
+        // Wait for the stats worker to be active before shutting down to avoid potential flaky
+        // tests on CI where we shutdown before the stats worker had time to start
+        let start_time = std::time::Instant::now();
+        while !exporter.is_stats_worker_active() {
+            if start_time.elapsed() > Duration::from_secs(10) {
+                panic!("Timeout waiting for stats worker to become active");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
 
         exporter
             .shutdown(Some(Duration::from_millis(5)))
