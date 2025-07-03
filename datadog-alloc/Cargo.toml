@@ -8,6 +8,9 @@ version.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+alloc = ["allocator-api2/alloc"]
+
 [dependencies]
 allocator-api2 = { version = "0.2", default-features = false }
 
@@ -23,7 +26,7 @@ features = [
 ]
 
 [dev-dependencies]
-allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
+datadog-alloc = { path = ".", features = ["alloc"] }
 bolero = "0.13"
 
 [lib]

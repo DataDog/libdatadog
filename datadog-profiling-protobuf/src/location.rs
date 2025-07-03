@@ -9,7 +9,7 @@ use std::io::{self, Write};
 /// field is not omitted for size/CPU reasons.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
+#[cfg_attr(feature = "bolero", derive(bolero::generator::TypeGenerator))]
 pub struct Location {
     /// Unique nonzero id for the location. A profile could use instruction
     /// addresses or any integer sequence as ids.
@@ -30,7 +30,7 @@ pub struct Location {
 /// Represents function and line number information. Omits column.  
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
+#[cfg_attr(feature = "bolero", derive(bolero::generator::TypeGenerator))]
 pub struct Line {
     /// The id of the corresponding profile.Function for this line.
     pub function_id: Record<u64, 1, OPT_ZERO>,

@@ -1,0 +1,11 @@
+[package]
+name = "datadog-profiling-validator"
+rust-version.workspace = true
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+clap = { version = "4", features = ["cargo", "color", "derive"] }
+datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["prost_impls"] }
+thiserror = "1"

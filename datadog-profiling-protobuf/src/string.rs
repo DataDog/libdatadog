@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{varint, Value, WireType};
-use std::io::{self, Write};
+use std::ops::Sub;
+use std::{
+    fmt,
+    io::{self, Write},
+    ops::{Add, Mul},
+};
 
 unsafe impl Value for &str {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
@@ -16,6 +21,7 @@ unsafe impl Value for &str {
     }
 }
 
+// todo: for OTEL, needs to be i32::MAX rather than u32::MAX.
 /// Represents an offset into the Profile's string table. Note that it cannot
 /// exceed u32 because an entire protobuf message must not be larger than or
 /// equal to 2 GiB. By the time you encode the tag and length prefix for each
@@ -23,10 +29,17 @@ unsafe impl Value for &str {
 /// exceeding the protobuf 2 GiB limit.
 ///
 /// A value of 0 means "no string" or "empty string" (they are synonymous).
+/// cbindgen:field-names=[offset]
 #[repr(C)]
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
-#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
+#[cfg_attr(feature = "bolero", derive(bolero::generator::TypeGenerator))]
 pub struct StringOffset(u32);
+
+impl fmt::Display for StringOffset {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// # Safety
 /// The Default implementation will return all zero-representations.
@@ -173,5 +186,57 @@ impl StringOffset {
     #[inline]
     pub const fn is_zero(&self) -> bool {
         self.0 == 0
+    }
+
+    /// Checked addition that returns None on overflow
+    #[inline]
+    pub fn checked_add(self, rhs: usize) -> Option<Self> {
+        let rhs_u32 = u32::try_from(rhs).ok()?;
+        Some(Self(self.0.checked_add(rhs_u32)?))
+    }
+}
+
+impl Add<u32> for StringOffset {
+    type Output = StringOffset;
+
+    #[inline]
+    fn add(self, rhs: u32) -> Self::Output {
+        StringOffset::new(self.0 + rhs)
+    }
+}
+
+impl Sub<u32> for StringOffset {
+    type Output = StringOffset;
+
+    #[inline]
+    fn sub(self, rhs: u32) -> Self::Output {
+        StringOffset::new(self.0 - rhs)
+    }
+}
+
+impl Add<StringOffset> for u32 {
+    type Output = StringOffset;
+
+    #[inline]
+    fn add(self, rhs: StringOffset) -> Self::Output {
+        StringOffset::new(self + rhs.0)
+    }
+}
+
+impl Add<StringOffset> for StringOffset {
+    type Output = StringOffset;
+
+    #[inline]
+    fn add(self, rhs: StringOffset) -> Self::Output {
+        StringOffset::new(self.0 + rhs.0)
+    }
+}
+
+impl Mul<bool> for StringOffset {
+    type Output = StringOffset;
+
+    #[inline]
+    fn mul(self, rhs: bool) -> Self::Output {
+        StringOffset::new(self.0 * (rhs as u32))
     }
 }
