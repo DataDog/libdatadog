@@ -168,6 +168,11 @@ where
     Array(Vec<AttributeArrayValue<T>>),
 }
 
+#[derive(Serialize)]
+struct ArrayValueWrapper<'a, T: SpanText> {
+    values: &'a Vec<AttributeArrayValue<T>>,
+}
+
 impl<T> Serialize for AttributeAnyValue<T>
 where
     T: SpanText,
@@ -185,7 +190,8 @@ where
             AttributeAnyValue::Array(value) => {
                 let value_type: u8 = self.into();
                 state.serialize_field("type", &value_type)?;
-                state.serialize_field("array_value", value)?;
+                let wrapped_value = ArrayValueWrapper { values: value };
+                state.serialize_field("array_value", &wrapped_value)?;
             }
         }
 
