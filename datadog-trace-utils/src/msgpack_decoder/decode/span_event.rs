@@ -175,8 +175,29 @@ fn read_attributes_array<'a>(
         return Ok(Vec::default());
     }
 
+    let map_len = rmp::decode::read_map_len(buf).map_err(|_| {
+        DecodeError::InvalidType(
+            "Unable to get map len for event attributes array_value object".to_owned(),
+        )
+    })?;
+
+    if map_len != 1 {
+        return Err(DecodeError::InvalidFormat(
+            "event attributes array_value object should only have 'values' field".to_owned(),
+        ));
+    }
+
+    let key = read_string_ref(buf)?;
+    if key != "values" {
+        return Err(DecodeError::InvalidFormat(
+            "Expected 'values' field in event attributes array_value object".to_owned(),
+        ));
+    }
+
     let len = rmp::decode::read_array_len(buf).map_err(|_| {
-        DecodeError::InvalidType("Unable to get array len for event attributes".to_owned())
+        DecodeError::InvalidType(
+            "Unable to get array len for event attributes values field".to_owned(),
+        )
     })?;
 
     let mut vec: Vec<AttributeArrayValueSlice> = Vec::with_capacity(len as usize);
