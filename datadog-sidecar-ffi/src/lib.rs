@@ -501,9 +501,28 @@ pub unsafe extern "C" fn ddog_sidecar_lifecycle_end(
         transport,
         instance_id,
         queue_id,
-        vec![SidecarAction::Telemetry(TelemetryActions::Lifecycle(
-            LifecycleAction::Stop
-        ))],
+        vec![
+            SidecarAction::Telemetry(TelemetryActions::Lifecycle(LifecycleAction::Stop)),
+            SidecarAction::ClearQueueId
+        ],
+    ));
+
+    MaybeError::None
+}
+
+/// Enqueues a list of actions to be performed.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_application_remove(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+) -> MaybeError {
+    try_c!(blocking::enqueue_actions(
+        transport,
+        instance_id,
+        queue_id,
+        vec![SidecarAction::ClearQueueId],
     ));
 
     MaybeError::None
