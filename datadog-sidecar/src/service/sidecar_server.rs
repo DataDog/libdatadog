@@ -424,21 +424,42 @@ impl SidecarInterface for SidecarServer {
                                 buffered_info_changed = true;
                             }
                         }
+                        SidecarAction::ClearQueueId => {
+                            entry.remove();
+                            break;
+                        }
                         _ => {
                             actions_to_process.push(action);
                         }
                     }
                 }
 
+                if actions_to_process.iter().any(|action| {
+                    matches!(
+                        action,
+                        SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+                            LifecycleAction::Stop
+                        ))
+                    )
+                }) {
+                    info!("Removing Telemetry Application ...");
+                    self.telemetry_clients
+                        .remove_telemetry_client(&service, &env, &version);
+                }
+
                 if !actions_to_process.is_empty() {
                     let client_clone = telemetry.clone();
-
-                    tokio::spawn(async move {
+                    let mut handle = telemetry.handle.lock_or_panic();
+                    let last_handle = handle.take();
+                    *handle = Some(tokio::spawn(async move {
+                        if let Some(last_handle) = last_handle {
+                            last_handle.await.ok();
+                        };
                         let processed = client_clone.process_actions(actions_to_process);
                         info!("Sending Processed Actions {processed:?}...");
                         client_clone.client.send_msgs(processed).await.ok();
                         info!("Processed Actions sent !");
-                    });
+                    }));
                 }
 
                 if !composer_paths_to_process.is_empty() {

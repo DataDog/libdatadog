@@ -7,6 +7,7 @@ use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use datadog_ipc::platform::NamedShmHandle;
 use ddcommon::MutexExt;
+use tokio::task::JoinHandle;
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
@@ -57,6 +58,7 @@ pub struct TelemetryCachedClient {
     pub buffered_integrations: HashSet<Integration>,
     pub buffered_composer_paths: HashSet<PathBuf>,
     pub telemetry_metrics: Arc<Mutex<HashMap<String, ContextKey>>>,
+    pub handle: Arc<Mutex<Option<JoinHandle<()>>>>
 }
 
 impl TelemetryCachedClient {
@@ -98,6 +100,7 @@ impl TelemetryCachedClient {
             buffered_integrations: HashSet::new(),
             buffered_composer_paths: HashSet::new(),
             telemetry_metrics: Default::default(),
+            handle: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -139,6 +142,7 @@ impl TelemetryCachedClient {
                     actions.push(self.to_telemetry_point(point));
                 }
                 SidecarAction::PhpComposerTelemetryFile(_) => {} // handled separately
+                SidecarAction::ClearQueueId => {} // handled separately
             }
         }
         actions
@@ -320,6 +324,11 @@ impl TelemetryCachedClientSet {
         info!("Created new telemetry client for {key:?}");
 
         Some(client)
+    }
+
+    pub fn remove_telemetry_client(&self, service: &str, env: &str, version: &str) {
+        let key = (service.to_string(), env.to_string(), version.to_string());
+        self.inner.lock_or_panic().remove(&key);
     }
 }
 
