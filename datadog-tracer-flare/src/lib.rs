@@ -109,7 +109,10 @@ pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData,
 ///
 /// * `Ok(ReturnAction)` - If successful.
 /// * `FlareError(msg)` - If something fail.
-pub fn check_remote_config_file(file: RemoteConfigFile, tracer_flare: &mut TracerFlare) -> Result<ReturnAction, FlareError> {
+pub fn check_remote_config_file(
+    file: RemoteConfigFile,
+    tracer_flare: &mut TracerFlare,
+) -> Result<ReturnAction, FlareError> {
     let config = file.contents();
     match config.as_ref() {
         Ok(data) => match data {
@@ -117,7 +120,8 @@ pub fn check_remote_config_file(file: RemoteConfigFile, tracer_flare: &mut Trace
                 if agent_config.name.starts_with("flare-log-level.") {
                     if let Some(log_level) = &agent_config.config.log_level {
                         if tracer_flare.running {
-                            // Should we return an error instead if we are trying to launch another flare while one is already running ?
+                            // Should we return an error instead if we are trying to launch another
+                            // flare while one is already running ?
                             return Ok(ReturnAction::None);
                         }
                         tracer_flare.log_level = log_level.to_string();
@@ -131,7 +135,9 @@ pub fn check_remote_config_file(file: RemoteConfigFile, tracer_flare: &mut Trace
                 if agent_task.task_type.eq("tracer_flare") {
                     if !tracer_flare.running {
                         // Should we return None instead ?
-                        return Err(FlareError::NoFlare("Cannot stop an inexisting flare".to_string()))
+                        return Err(FlareError::NoFlare(
+                            "Cannot stop an inexisting flare".to_string(),
+                        ));
                     }
                     tracer_flare.agent_task = Some(agent_task.clone());
                     return Ok(ReturnAction::Stop);
@@ -212,7 +218,8 @@ pub fn init_tracer_flare(
 ///
 /// # Arguments
 ///
-/// * `tracer_flare` - TracerFlare that hold the Listener used to fetch RemoteConfig from the agent with specific config.
+/// * `tracer_flare` - TracerFlare that hold the Listener used to fetch RemoteConfig from the agent
+///   with specific config.
 ///
 /// # Returns
 ///

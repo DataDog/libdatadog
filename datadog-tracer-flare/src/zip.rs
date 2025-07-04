@@ -242,7 +242,11 @@ fn generate_payload(
 /// ```
 async fn send(zip: File, tracer_flare: &mut TracerFlare) -> Result<(), FlareError> {
     let agent_task = match &tracer_flare.agent_task {
-        None => return Err(FlareError::SendError("Trying to send the flare without AGENT_TASK received".to_string())),
+        None => {
+            return Err(FlareError::SendError(
+                "Trying to send the flare without AGENT_TASK received".to_string(),
+            ))
+        }
         Some(agent_task) => agent_task,
     };
 
@@ -329,7 +333,10 @@ async fn send(zip: File, tracer_flare: &mut TracerFlare) -> Result<(), FlareErro
 ///     Err(e) => eprintln!("Failed to send flare: {}", e),
 /// }
 /// ```
-pub async fn zip_and_send(files: Vec<String>, tracer_flare: &mut TracerFlare) -> Result<(), FlareError> {
+pub async fn zip_and_send(
+    files: Vec<String>,
+    tracer_flare: &mut TracerFlare,
+) -> Result<(), FlareError> {
     let zip = zip_files(files)?;
 
     // APMSP-2118 - TODO: Implement obfuscation of sensitive data
