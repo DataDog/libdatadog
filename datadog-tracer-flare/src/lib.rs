@@ -12,6 +12,7 @@ pub mod zip;
 use std::{str::FromStr, vec};
 
 use datadog_remote_config::{
+    config::agent_task::AgentTaskFile,
     fetch::{ConfigInvariants, SingleChangesFetcher},
     file_change_tracker::Change,
     file_storage::{ParsedFileStorage, RawFile, RawFileStorage},
@@ -20,6 +21,38 @@ use datadog_remote_config::{
 use ddcommon::Endpoint;
 
 use crate::error::FlareError;
+
+pub struct TracerFlare {
+    pub listener: Option<Listener>, // Optionnal so we can use the component with another Listener
+    pub agent_url: String,
+    pub language: String,
+    pub log_level: String,
+    pub agent_task: Option<AgentTaskFile>,
+    pub running: bool,
+}
+
+impl TracerFlare {
+    pub fn new(agent_url: &str, language: &str) -> Self {
+        TracerFlare {
+            agent_url: agent_url.to_owned(),
+            language: language.to_owned(),
+            ..Default::default()
+        }
+    }
+}
+
+impl Default for TracerFlare {
+    fn default() -> Self {
+        TracerFlare {
+            listener: None,
+            agent_url: hyper::Uri::default().to_string(),
+            language: "rust".to_string(),
+            log_level: "off".to_string(),
+            agent_task: None,
+            running: false,
+        }
+    }
+}
 
 /// Enum that hold the different log level possible
 #[derive(Debug, PartialEq)]
@@ -65,23 +98,41 @@ pub type RemoteConfigFile = std::sync::Arc<RawFile<Result<RemoteConfigData, anyh
 pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>>;
 
 /// Check the `RemoteConfigFile` and return the action that tracer flare needs
-/// to perform
+/// to perform. This function also updates the `TracerFlare` state based on the
+/// received configuration.
 ///
 /// # Arguments
 ///
 /// * `file` - RemoteConfigFile received by the Listener.
+/// * `tracer_flare` - TracerFlare object to update with the received configuration.
 ///
 /// # Returns
 ///
 /// * `Ok(ReturnAction)` - If successful.
 /// * `FlareError(msg)` - If something fail.
-pub fn check_remote_config_file(file: RemoteConfigFile) -> Result<ReturnAction, FlareError> {
+///
+/// # Behavior
+///
+/// - For `TracerFlareConfig` with log level: Updates the tracer_flare state and returns `Start`
+/// - For `TracerFlareTask`: Stores the agent task and returns `Stop`
+/// - For other configs: Returns `None`
+pub fn check_remote_config_file(
+    file: RemoteConfigFile,
+    tracer_flare: &mut TracerFlare,
+) -> Result<ReturnAction, FlareError> {
     let config = file.contents();
     match config.as_ref() {
         Ok(data) => match data {
             RemoteConfigData::TracerFlareConfig(agent_config) => {
                 if agent_config.name.starts_with("flare-log-level.") {
                     if let Some(log_level) = &agent_config.config.log_level {
+                        if tracer_flare.running {
+                            // Should we return an error instead if we are trying to launch another
+                            // flare while one is already running ?
+                            return Ok(ReturnAction::None);
+                        }
+                        tracer_flare.log_level = log_level.to_string();
+                        tracer_flare.running = true;
                         let log_level = log_level.as_str().try_into()?;
                         return Ok(ReturnAction::Start(log_level));
                     }
@@ -89,6 +140,13 @@ pub fn check_remote_config_file(file: RemoteConfigFile) -> Result<ReturnAction, 
             }
             RemoteConfigData::TracerFlareTask(agent_task) => {
                 if agent_task.task_type.eq("tracer_flare") {
+                    if !tracer_flare.running {
+                        // Should we return None instead ?
+                        return Err(FlareError::NoFlare(
+                            "Cannot stop an inexisting flare".to_string(),
+                        ));
+                    }
+                    tracer_flare.agent_task = Some(agent_task.clone());
                     return Ok(ReturnAction::Stop);
                 }
             }
@@ -101,7 +159,10 @@ pub fn check_remote_config_file(file: RemoteConfigFile) -> Result<ReturnAction, 
     Ok(ReturnAction::None)
 }
 
-/// Function that init and return a listener of RemoteConfig
+/// Function that initializes and returns a TracerFlare with a listener of RemoteConfig
+///
+/// This function creates a new TracerFlare instance and initializes its RemoteConfig
+/// listener with the provided configuration parameters.
 ///
 /// # Arguments
 ///
@@ -113,8 +174,13 @@ pub fn check_remote_config_file(file: RemoteConfigFile) -> Result<ReturnAction, 
 /// * `app_version` - Version of the application.
 /// * `runtime_id` - Runtime id.
 ///
+/// # Returns
+///
+/// * `Ok(TracerFlare)` - A fully initialized TracerFlare instance with RemoteConfig listener.
+/// * `Err(FlareError)` - If the initialization fails.
+///
 /// These arguments will be used to listen to the remote config endpoint.
-pub fn init_remote_config_listener(
+pub fn init_tracer_flare(
     agent_url: String,
     language: String,
     tracer_version: String,
@@ -122,7 +188,9 @@ pub fn init_remote_config_listener(
     env: String,
     app_version: String,
     runtime_id: String,
-) -> Result<Listener, FlareError> {
+) -> Result<TracerFlare, FlareError> {
+    let mut tracer_flare = TracerFlare::new(&agent_url, &language);
+
     let agent_url = match hyper::Uri::from_str(&agent_url) {
         Ok(uri) => uri,
         Err(_) => {
@@ -146,7 +214,7 @@ pub fn init_remote_config_listener(
         capabilities: vec![],
     };
 
-    Ok(SingleChangesFetcher::new(
+    tracer_flare.listener = Some(SingleChangesFetcher::new(
         ParsedFileStorage::default(),
         Target {
             service,
@@ -156,14 +224,21 @@ pub fn init_remote_config_listener(
         },
         runtime_id,
         config_to_fetch,
-    ))
+    ));
+
+    Ok(tracer_flare)
 }
 
-/// Function that listen to RemoteConfig on the agent
+/// Function that listens to RemoteConfig on the agent using the TracerFlare instance
+///
+/// This function uses the listener contained within the TracerFlare to fetch
+/// RemoteConfig changes from the agent and processes them to determine the
+/// appropriate action to take.
 ///
 /// # Arguments
 ///
-/// * `listener` - Listener use to fetch RemoteConfig from the agent with specific config.
+/// * `tracer_flare` - TracerFlare that holds the Listener used to fetch RemoteConfig from the agent
+///   with specific config. The TracerFlare state will be updated based on received configurations.
 ///
 /// # Returns
 ///
@@ -172,17 +247,17 @@ pub fn init_remote_config_listener(
 ///
 /// # Examples
 ///
-/// Implementing and using the listener to fetch RemoteConfig from the agent
+/// Implementing and using the tracer flare to fetch RemoteConfig from the agent
 ///
 /// ```rust no_run
-/// use datadog_tracer_flare::{init_remote_config_listener, run_remote_config_listener};
+/// use datadog_tracer_flare::{init_tracer_flare, run_remote_config_listener};
 /// use std::time::Duration;
 /// use tokio::time::sleep;
 ///
 /// #[tokio::main(flavor = "current_thread")]
 /// async fn main() {
-///     // Setup the listener
-///     let mut listener = init_remote_config_listener(
+///     // Setup the tracer_flare
+///     let mut tracer_flare = init_tracer_flare(
 ///         "http://0.0.0.0:8126".to_string(),  // agent_url
 ///         "rust".to_string(),                 // language
 ///         "1.0.0".to_string(),                // tracer_version
@@ -195,7 +270,7 @@ pub fn init_remote_config_listener(
 ///
 ///     // Listen every second
 ///     loop {
-///         let result = run_remote_config_listener(&mut listener).await;
+///         let result = run_remote_config_listener(&mut tracer_flare).await;
 ///         assert!(result.is_ok());
 ///         // Use the result ...
 ///         sleep(Duration::from_secs(1)).await;
@@ -203,14 +278,22 @@ pub fn init_remote_config_listener(
 /// }
 /// ```
 pub async fn run_remote_config_listener(
-    listener: &mut Listener,
+    tracer_flare: &mut TracerFlare,
 ) -> Result<ReturnAction, FlareError> {
+    let listener = match &mut tracer_flare.listener {
+        Some(listener) => listener,
+        None => {
+            return Err(FlareError::ListeningError(
+                "Listener not initialized".to_string(),
+            ))
+        }
+    };
     match listener.fetch_changes().await {
         Ok(changes) => {
             println!("Got {} changes.", changes.len());
             for change in changes {
                 if let Change::Add(file) = change {
-                    let action = check_remote_config_file(file);
+                    let action = check_remote_config_file(file, tracer_flare);
                     if action != Ok(ReturnAction::None) {
                         return action;
                     }
@@ -227,7 +310,7 @@ pub async fn run_remote_config_listener(
 
 #[cfg(test)]
 mod tests {
-    use crate::{check_remote_config_file, FlareError, LogLevel, ReturnAction};
+    use crate::{check_remote_config_file, FlareError, LogLevel, ReturnAction, TracerFlare};
     use datadog_remote_config::{
         config::{
             agent_config::{AgentConfig, AgentConfigFile},
@@ -274,9 +357,12 @@ mod tests {
         let file = storage
             .store(1, path.clone(), serde_json::to_vec(&config).unwrap())
             .unwrap();
-        let result = check_remote_config_file(file);
+        let mut tracer_flare = TracerFlare::default();
+        let result = check_remote_config_file(file, &mut tracer_flare);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ReturnAction::Start(LogLevel::Info));
+        assert!(tracer_flare.running);
+        assert_eq!(tracer_flare.log_level, "info".to_string());
     }
 
     #[test]
@@ -292,7 +378,7 @@ mod tests {
         let task = AgentTaskFile {
             args: AgentTask {
                 case_id: "123".to_string(),
-                hostname: Some("test-host".to_string()),
+                hostname: "test-host".to_string(),
                 user_handle: "test@example.com".to_string(),
             },
             task_type: "tracer_flare".to_string(),
@@ -302,9 +388,15 @@ mod tests {
         let file = storage
             .store(1, path.clone(), serde_json::to_vec(&task).unwrap())
             .unwrap();
-        let result = check_remote_config_file(file);
+        let mut tracer_flare = TracerFlare {
+            // Emulate the start action
+            running: true,
+            ..Default::default()
+        };
+        let result = check_remote_config_file(file, &mut tracer_flare);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ReturnAction::Stop);
+        assert_eq!(tracer_flare.agent_task.unwrap(), task);
     }
 
     #[test]
@@ -325,7 +417,8 @@ mod tests {
         let file = storage
             .store(1, path.clone(), serde_json::to_vec(&config).unwrap())
             .unwrap();
-        let result = check_remote_config_file(file);
+        let mut tracer_flare = TracerFlare::default();
+        let result = check_remote_config_file(file, &mut tracer_flare);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ReturnAction::None);
     }
@@ -343,7 +436,8 @@ mod tests {
         let file = storage
             .store(1, path.clone(), b"invalid json".to_vec())
             .unwrap();
-        let result = check_remote_config_file(file);
+        let mut tracer_flare = TracerFlare::default();
+        let result = check_remote_config_file(file, &mut tracer_flare);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), FlareError::ParsingError(_)));
     }
