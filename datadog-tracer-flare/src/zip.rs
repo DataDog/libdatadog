@@ -14,7 +14,7 @@ use tempfile::tempfile;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, ZipWriter};
 
-use crate::error::FlareError;
+use crate::{error::FlareError, TracerFlare};
 
 /// Adds a single file to the zip archive with the specified options and relative path
 fn add_file_to_zip(
@@ -120,17 +120,9 @@ fn zip_files(files: Vec<String>) -> Result<File, FlareError> {
     }
 
     // Finalize the zip
-    let mut file = zip
+    let file = zip
         .finish()
         .map_err(|e| FlareError::ZipError(format!("Failed to finalize zip file: {e}")))?;
-
-    // Print the zip file contents for debugging
-    // let mut contents = Vec::new();
-    // file.seek(std::io::SeekFrom::Start(0)).map_err(|e| FlareError::ZipError(format!("Failed to
-    // seek to start of file: {e}")))?; file.read_to_end(&mut contents).map_err(|e|
-    // FlareError::ZipError(format!("Failed to read file contents: {e}")))?; println!("Zip file
-    // contents: {:?}", contents); file.seek(std::io::SeekFrom::Start(0)).map_err(|e|
-    // FlareError::ZipError(format!("Failed to seek back to start: {e}")))?;
 
     Ok(file)
 }
@@ -139,50 +131,42 @@ pub const BOUNDARY: &str = "83CAD6AA-8A24-462C-8B3D-FF9CC683B51B";
 
 fn generate_payload(
     mut zip: File,
-    // from init rc listener
-    language: String,
-    // from agent config
-    log_level: String,
-    // from agent task
-    case_id: String,
-    hostname: String,
-    user_handle: String,
-    uuid: String,
+    language: &String,
+    log_level: &String,
+    case_id: &String,
+    hostname: &String,
+    user_handle: &String,
+    uuid: &String,
 ) -> Result<Vec<u8>, FlareError> {
     let mut payload: Vec<u8> = Vec::new();
 
-    // Create the multipart form data in the same order:
-    // source - like tracer_* or tracer-flare-rust or something
+    // Create the multipart form data
     payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
     payload.extend_from_slice(b"Content-Disposition: form-data; name=\"source\"\r\n\r\n");
     payload.extend_from_slice(format!("tracer_{}", language).as_bytes());
     payload.extend_from_slice(b"\r\n");
 
-    // case_id - the one from agent-task
     payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
     payload.extend_from_slice(b"Content-Disposition: form-data; name=\"case_id\"\r\n\r\n");
     payload.extend_from_slice(case_id.as_bytes());
     payload.extend_from_slice(b"\r\n");
 
-    // hostname - the one from agent-task
     payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
     payload.extend_from_slice(b"Content-Disposition: form-data; name=\"hostname\"\r\n\r\n");
     payload.extend_from_slice(hostname.as_bytes());
     payload.extend_from_slice(b"\r\n");
 
-    // email - probably the user_handle from agent-task
     payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
     payload.extend_from_slice(b"Content-Disposition: form-data; name=\"email\"\r\n\r\n");
     payload.extend_from_slice(user_handle.as_bytes());
     payload.extend_from_slice(b"\r\n");
 
-    // uuid - the one from agent-task
     payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
     payload.extend_from_slice(b"Content-Disposition: form-data; name=\"uuid\"\r\n\r\n");
     payload.extend_from_slice(uuid.as_bytes());
     payload.extend_from_slice(b"\r\n");
 
-    // flare_file field with descriptive filename
+    // Add the description of the zip
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -198,7 +182,7 @@ fn generate_payload(
     );
     payload.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
 
-    // Create the zip file content separately
+    // Read the zip and add it
     let mut zip_content = Vec::new();
     zip.seek(std::io::SeekFrom::Start(0))
         .map_err(|e| FlareError::ZipError(format!("Failed to seek back to start: {e}")))?;
@@ -212,8 +196,6 @@ fn generate_payload(
 
     // Final boundary
     payload.extend_from_slice(format!("--{}--\r\n", BOUNDARY).as_bytes());
-
-    println!("Payload : {:?}", payload);
 
     Ok(payload)
 }
@@ -258,18 +240,23 @@ fn generate_payload(
 ///     Ok(())
 /// }
 /// ```
-async fn send(zip: File, mut agent_url: String) -> Result<(), FlareError> {
+async fn send(zip: File, tracer_flare: &mut TracerFlare) -> Result<(), FlareError> {
+    let agent_task = match &tracer_flare.agent_task {
+        None => return Err(FlareError::SendError("Trying to send the flare without AGENT_TASK received".to_string())),
+        Some(agent_task) => agent_task,
+    };
+
     let payload = generate_payload(
         zip,
-        "rust".to_string(),
-        "debug".to_string(),
-        "1234".to_string(),
-        "host".to_string(),
-        "jane.doe@mail.com".to_string(),
-        "550e8400-e29b-41d4-a716-446655440000".to_string(),
+        &tracer_flare.language,
+        &tracer_flare.log_level,
+        &agent_task.args.case_id,
+        &agent_task.args.hostname,
+        &agent_task.args.user_handle,
+        &agent_task.uuid,
     )?;
 
-    agent_url.push_str("/tracer_flare/v1");
+    let agent_url = tracer_flare.agent_url.clone() + "/tracer_flare/v1";
     let agent_url = match hyper::Uri::from_str(&agent_url) {
         Ok(uri) => uri,
         Err(_) => {
@@ -286,7 +273,6 @@ async fn send(zip: File, mut agent_url: String) -> Result<(), FlareError> {
 
     let headers = HashMap::from([(
         hyper::header::CONTENT_TYPE.as_str(),
-        // ddcommon::header::APPLICATION_ZIP_STR.to_string(),
         format!("multipart/form-data; boundary={}", BOUNDARY),
     )]);
 
@@ -295,13 +281,14 @@ async fn send(zip: File, mut agent_url: String) -> Result<(), FlareError> {
         Ok((response, _attempts)) => {
             let status = response.status();
             if status.is_success() {
-                return Ok(());
+                // Should we return something specific ?
+                Ok(())
             } else {
-                // Maybe just put a warning log message
-                return Err(FlareError::SendError(format!(
+                // Maybe just put a warning log message ?
+                Err(FlareError::SendError(format!(
                     "Agent returned non-success status for flare send: HTTP {}",
                     status
-                )));
+                )))
             }
         }
         Err(err) => Err(FlareError::SendError(err.to_string())),
@@ -342,13 +329,17 @@ async fn send(zip: File, mut agent_url: String) -> Result<(), FlareError> {
 ///     Err(e) => eprintln!("Failed to send flare: {}", e),
 /// }
 /// ```
-pub async fn zip_and_send(files: Vec<String>, agent_url: String) -> Result<(), FlareError> {
+pub async fn zip_and_send(files: Vec<String>, tracer_flare: &mut TracerFlare) -> Result<(), FlareError> {
     let zip = zip_files(files)?;
 
     // APMSP-2118 - TODO: Implement obfuscation of sensitive data
-    // APMSP-1978 - TODO: Implement sending the zip file to the agent
 
-    return send(zip, agent_url).await;
+    let response = send(zip, tracer_flare).await;
+
+    tracer_flare.agent_task = None;
+    tracer_flare.running = false;
+
+    response
 }
 
 #[cfg(test)]
@@ -432,20 +423,4 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), FlareError::ZipError(_)));
     }
-
-    // #[tokio::test]
-    // async fn test_send_and_zip() {
-    //     let agent_url = "http://0.0.0.0:8126".to_string();
-    //     let temp_dir = TempDir::new().unwrap();
-    //     let files = create_test_files(&temp_dir);
-
-    //     // Add a delay to ensure files are ready
-    //     // tokio::time::sleep(std::time::Duration::from_secs(15)).await;
-
-    //     let result = zip_and_send(files, agent_url).await;
-
-    //     // tokio::time::sleep(std::time::Duration::from_secs(15)).await;
-
-    //     assert!(result.is_ok())
-    // }
 }

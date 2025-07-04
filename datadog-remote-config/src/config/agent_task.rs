@@ -5,7 +5,7 @@ use serde::Deserialize;
 #[cfg(feature = "test")]
 use serde::Serialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct AgentTaskFile {
     pub args: AgentTask,
@@ -13,11 +13,11 @@ pub struct AgentTaskFile {
     pub uuid: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct AgentTask {
-    pub case_id: String,  // Must be a digit and cannot be 0 according to spec ???
-    pub hostname: String, // Must have the hostname to send it back
+    pub case_id: String, // Must be a digit and cannot be 0 according to spec ?
+    pub hostname: String,
     pub user_handle: String,
 }
 
@@ -46,7 +46,7 @@ pub struct AgentTask {
 ///
 /// let json_data = r#"{
 ///     "args": {
-///         "case_id": "flare-12345",
+///         "case_id": "12345",
 ///         "hostname": "my-host-name",
 ///         "user_handle": "my-user@datadoghq.com"
 ///     },
