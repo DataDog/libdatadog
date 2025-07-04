@@ -72,10 +72,6 @@ fn zip_files(files: Vec<String>) -> Result<File, FlareError> {
         Err(e) => return Err(FlareError::ZipError(e.to_string())),
     };
 
-    // let file = temp_file
-    //     .try_clone()
-    //     .map_err(|e| FlareError::ZipError(format!("Failed to clone temp file: {e}")))?;
-
     let mut zip = ZipWriter::new(temp_file);
     let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
@@ -141,27 +137,27 @@ fn generate_payload(
     let mut payload: Vec<u8> = Vec::new();
 
     // Create the multipart form data
-    payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
+    payload.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
     payload.extend_from_slice(b"Content-Disposition: form-data; name=\"source\"\r\n\r\n");
     payload.extend_from_slice(format!("tracer_{}", language).as_bytes());
     payload.extend_from_slice(b"\r\n");
 
-    payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
+    payload.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
     payload.extend_from_slice(b"Content-Disposition: form-data; name=\"case_id\"\r\n\r\n");
     payload.extend_from_slice(case_id.as_bytes());
     payload.extend_from_slice(b"\r\n");
 
-    payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
+    payload.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
     payload.extend_from_slice(b"Content-Disposition: form-data; name=\"hostname\"\r\n\r\n");
     payload.extend_from_slice(hostname.as_bytes());
     payload.extend_from_slice(b"\r\n");
 
-    payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
+    payload.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
     payload.extend_from_slice(b"Content-Disposition: form-data; name=\"email\"\r\n\r\n");
     payload.extend_from_slice(user_handle.as_bytes());
     payload.extend_from_slice(b"\r\n");
 
-    payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
+    payload.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
     payload.extend_from_slice(b"Content-Disposition: form-data; name=\"uuid\"\r\n\r\n");
     payload.extend_from_slice(uuid.as_bytes());
     payload.extend_from_slice(b"\r\n");
@@ -172,13 +168,10 @@ fn generate_payload(
         .unwrap_or_default()
         .as_secs();
     let filename = format!("tracer-{language}-{case_id}-{timestamp}-{log_level}.zip");
-    payload.extend_from_slice(format!("--{}\r\n", BOUNDARY).as_bytes());
+    payload.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
     payload.extend_from_slice(
-        format!(
-            "Content-Disposition: form-data; name=\"flare_file\"; filename=\"{}\"\r\n",
-            filename
-        )
-        .as_bytes(),
+        format!("Content-Disposition: form-data; name=\"flare_file\"; filename=\"{filename}\"\r\n")
+            .as_bytes(),
     );
     payload.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
 
@@ -189,13 +182,11 @@ fn generate_payload(
     zip.read_to_end(&mut zip_content)
         .map_err(|e| FlareError::ZipError(format!("Failed to read zip file: {e}")))?;
 
-    println!("Zip : {:?}", zip_content);
-
     payload.extend_from_slice(&zip_content);
     payload.extend_from_slice(b"\r\n");
 
     // Final boundary
-    payload.extend_from_slice(format!("--{}--\r\n", BOUNDARY).as_bytes());
+    payload.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
 
     Ok(payload)
 }
