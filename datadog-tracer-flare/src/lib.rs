@@ -32,10 +32,10 @@ pub struct TracerFlare {
 }
 
 impl TracerFlare {
-    pub fn new(agent_url: &String, language: &String) -> Self {
+    pub fn new(agent_url: &str, language: &str) -> Self {
         TracerFlare {
-            agent_url: agent_url.clone(),
-            language: language.clone(),
+            agent_url: agent_url.to_owned(),
+            language: language.to_owned(),
             ..Default::default()
         }
     }
@@ -98,17 +98,24 @@ pub type RemoteConfigFile = std::sync::Arc<RawFile<Result<RemoteConfigData, anyh
 pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>>;
 
 /// Check the `RemoteConfigFile` and return the action that tracer flare needs
-/// to perform
+/// to perform. This function also updates the `TracerFlare` state based on the
+/// received configuration.
 ///
 /// # Arguments
 ///
 /// * `file` - RemoteConfigFile received by the Listener.
-/// * `tracer_flare` - TracerFlare object.
+/// * `tracer_flare` - TracerFlare object to update with the received configuration.
 ///
 /// # Returns
 ///
 /// * `Ok(ReturnAction)` - If successful.
 /// * `FlareError(msg)` - If something fail.
+///
+/// # Behavior
+///
+/// - For `TracerFlareConfig` with log level: Updates the tracer_flare state and returns `Start`
+/// - For `TracerFlareTask`: Stores the agent task and returns `Stop`
+/// - For other configs: Returns `None`
 pub fn check_remote_config_file(
     file: RemoteConfigFile,
     tracer_flare: &mut TracerFlare,
@@ -152,7 +159,10 @@ pub fn check_remote_config_file(
     Ok(ReturnAction::None)
 }
 
-/// Function that init and return a TracerFlare with a listener of RemoteConfig
+/// Function that initializes and returns a TracerFlare with a listener of RemoteConfig
+///
+/// This function creates a new TracerFlare instance and initializes its RemoteConfig
+/// listener with the provided configuration parameters.
 ///
 /// # Arguments
 ///
@@ -163,6 +173,11 @@ pub fn check_remote_config_file(
 /// * `env` - Environment.
 /// * `app_version` - Version of the application.
 /// * `runtime_id` - Runtime id.
+///
+/// # Returns
+///
+/// * `Ok(TracerFlare)` - A fully initialized TracerFlare instance with RemoteConfig listener.
+/// * `Err(FlareError)` - If the initialization fails.
 ///
 /// These arguments will be used to listen to the remote config endpoint.
 pub fn init_tracer_flare(
@@ -214,12 +229,16 @@ pub fn init_tracer_flare(
     Ok(tracer_flare)
 }
 
-/// Function that listen to RemoteConfig on the agent
+/// Function that listens to RemoteConfig on the agent using the TracerFlare instance
+///
+/// This function uses the listener contained within the TracerFlare to fetch
+/// RemoteConfig changes from the agent and processes them to determine the
+/// appropriate action to take.
 ///
 /// # Arguments
 ///
-/// * `tracer_flare` - TracerFlare that hold the Listener used to fetch RemoteConfig from the agent
-///   with specific config.
+/// * `tracer_flare` - TracerFlare that holds the Listener used to fetch RemoteConfig from the agent
+///   with specific config. The TracerFlare state will be updated based on received configurations.
 ///
 /// # Returns
 ///
@@ -369,9 +388,11 @@ mod tests {
         let file = storage
             .store(1, path.clone(), serde_json::to_vec(&task).unwrap())
             .unwrap();
-        let mut tracer_flare = TracerFlare::default();
-        // Emulate the start action
-        tracer_flare.running = true;
+        let mut tracer_flare = TracerFlare {
+            // Emulate the start action
+            running: true,
+            ..Default::default()
+        };
         let result = check_remote_config_file(file, &mut tracer_flare);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ReturnAction::Stop);
