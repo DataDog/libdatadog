@@ -42,10 +42,12 @@ mod tracing_integration_tests {
                     "exception.version": {"type": 3, "double_value": 4.2},
                     "exception.escaped": {"type": 1, "bool_value": true},
                     "exception.count": {"type": 2, "int_value": 1},
-                    "exception.lines": {"type": 4, "array_value": [
-                        {"type": 0, "string_value": "  File \"<string>\", line 1, in <module>"},
-                        {"type": 0, "string_value": "  File \"<string>\", line 1, in divide"},
-                    ]}
+                    "exception.lines": {"type": 4, "array_value": {
+                        "values": [
+                            {"type": 0, "string_value": "  File \"<string>\", line 1, in <module>"},
+                            {"type": 0, "string_value": "  File \"<string>\", line 1, in divide"},
+                        ]
+                    }}
                 }
             }
         ]);
