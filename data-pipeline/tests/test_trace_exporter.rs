@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #[cfg(test)]
 mod tracing_integration_tests {
+    use data_pipeline::trace_exporter::agent_response::AgentResponse;
     use data_pipeline::trace_exporter::{
         TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
     };
@@ -131,7 +132,10 @@ mod tracing_integration_tests {
             let expected_response = format!("{{\"rate_by_service\": {rate_param}}}");
 
             assert!(response.is_ok());
-            assert_eq!(response.unwrap().body, expected_response)
+            let AgentResponse::Changed { body } = response.unwrap() else {
+                panic!("Expected a changed response");
+            };
+            assert_eq!(body, expected_response);
         })
         .await;
 
@@ -181,7 +185,10 @@ mod tracing_integration_tests {
             let expected_response = format!("{{\"rate_by_service\": {rate_param}}}");
 
             assert!(response.is_ok());
-            assert_eq!(response.unwrap().body, expected_response)
+            let AgentResponse::Changed { body } = response.unwrap() else {
+                panic!("Expected a changed response");
+            };
+            assert_eq!(body, expected_response);
         })
         .await;
 
@@ -224,7 +231,10 @@ mod tracing_integration_tests {
             let expected_response = format!("{{\"rate_by_service\": {rate_param}}}");
 
             assert!(response.is_ok());
-            assert_eq!(response.unwrap().body, expected_response)
+            let AgentResponse::Changed { body } = response.unwrap() else {
+                panic!("Expected a changed response");
+            };
+            assert_eq!(body, expected_response);
         })
         .await;
 
@@ -297,7 +307,10 @@ mod tracing_integration_tests {
             let expected_response = format!("{{\"rate_by_service\": {rate_param}}}");
 
             assert!(response.is_ok());
-            assert_eq!(response.unwrap().body, expected_response)
+            let AgentResponse::Changed { body } = response.unwrap() else {
+                panic!("Expected a changed response");
+            };
+            assert_eq!(body, expected_response);
         })
         .await;
 
