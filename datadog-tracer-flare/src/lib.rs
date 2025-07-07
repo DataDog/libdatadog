@@ -110,12 +110,6 @@ pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData,
 ///
 /// * `Ok(ReturnAction)` - If successful.
 /// * `FlareError(msg)` - If something fail.
-///
-/// # Behavior
-///
-/// - For `TracerFlareConfig` with log level: Updates the tracer_flare state and returns `Start`
-/// - For `TracerFlareTask`: Stores the agent task and returns `Stop`
-/// - For other configs: Returns `None`
 pub fn check_remote_config_file(
     file: RemoteConfigFile,
     tracer_flare: &mut TracerFlare,
@@ -159,9 +153,7 @@ pub fn check_remote_config_file(
     Ok(ReturnAction::None)
 }
 
-/// Function that initializes and returns a TracerFlare with a listener of RemoteConfig
-///
-/// This function creates a new TracerFlare instance and initializes its RemoteConfig
+/// Function that creates a new TracerFlare instance and initializes its RemoteConfig
 /// listener with the provided configuration parameters.
 ///
 /// # Arguments
