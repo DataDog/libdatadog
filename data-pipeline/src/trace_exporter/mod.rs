@@ -839,9 +839,7 @@ impl TraceExporter {
         chunks: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         match result {
-            Ok((response, _)) => {
-                self.handle_agent_response(chunks, response).await
-            }
+            Ok((response, _)) => self.handle_agent_response(chunks, response).await,
             Err(err) => {
                 error!(?err, "Error sending traces");
                 self.emit_metric(
