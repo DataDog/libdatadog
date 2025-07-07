@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Default, Copy, Clone, Hash, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct QueueId {
-    inner: u64,
+    pub(crate) inner: u64,
 }
 
 impl QueueId {
@@ -29,6 +29,12 @@ impl QueueId {
         Self {
             inner: rand::thread_rng().gen_range(1u64..u64::MAX),
         }
+    }
+}
+
+impl From<u64> for QueueId {
+    fn from(value: u64) -> Self {
+        QueueId { inner: value }
     }
 }
 
