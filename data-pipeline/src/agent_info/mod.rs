@@ -3,7 +3,7 @@
 //! Provides utilities to get config from the /info endpoint of an agent
 #![deny(missing_docs)]
 
-use std::sync::{Arc, LazyLock};
+use std::{ops::Deref, sync::Arc};
 
 use arc_swap::ArcSwapOption;
 
@@ -11,22 +11,20 @@ pub mod schema;
 
 mod fetcher;
 
-static AGENT_INFO_CACHE: LazyLock<ArcSwapOption<schema::AgentInfo>> =
-    LazyLock::new(|| ArcSwapOption::new(None));
+/// Stores an AgentInfo in an ArcSwap to be updated by an AgentInfoFetcher
+#[derive(Debug, Default, Clone)]
+pub struct AgentInfoCell(Arc<ArcSwapOption<schema::AgentInfo>>);
 
-/// Returns the most recent [`AgentInfo`] cached globally.
-///
-/// This function provides access to the latest [`AgentInfo`] that has been
-/// fetched from the Datadog Agent's `/info` endpoint by the [`AgentInfoFetcher`].
-/// The [`AgentInfo`] is stored in a global static cache that persists across thread
-/// boundaries and process forks.
-///
-/// # Return Value
-///
-/// Returns `Some(Arc<AgentInfo>)` if an [`AgentInfo`] has been successfully
-/// fetched at least once, or `None` if no [`AgentInfo`] is available yet.
-pub fn get_agent_info() -> Option<Arc<schema::AgentInfo>> {
-    AGENT_INFO_CACHE.load_full()
+impl AgentInfoCell {
+    /// load the Arc contained into the cell
+    pub fn load(&self) -> impl Deref<Target = Option<Arc<schema::AgentInfo>>> {
+        self.0.load()
+    }
+
+    /// store a new value into the cell
+    pub fn store(&self, v: Option<schema::AgentInfo>) {
+        self.0.store(v.map(Arc::new));
+    }
 }
 
 pub use fetcher::{

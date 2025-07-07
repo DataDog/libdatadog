@@ -3,12 +3,13 @@
 //! Provides utilities to fetch the agent /info endpoint and an automatic fetcher to keep info
 //! up-to-date
 
-use super::{schema::AgentInfo, AGENT_INFO_CACHE};
+use crate::agent_info::AgentInfoCell;
+
+use super::schema::AgentInfo;
 use anyhow::{anyhow, Result};
 use ddcommon::{hyper_migration, worker::Worker, Endpoint};
 use http_body_util::BodyExt;
 use hyper::{self, body::Buf, header::HeaderName};
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
@@ -105,11 +106,14 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
 /// use data_pipeline::agent_info;
+/// 
+/// let agent_info_cell = agent_info::AgentInfoCell::default();
 /// let endpoint = ddcommon::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Create the fetcher
 /// let (mut fetcher, _response_observer) = data_pipeline::agent_info::AgentInfoFetcher::new(
 ///     endpoint,
 ///     std::time::Duration::from_secs(5 * 60),
+///     agent_info_cell.clone(),
 /// );
 /// // Start the runner
 /// tokio::spawn(async move {
@@ -117,7 +121,7 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 /// });
 ///
 /// // Get the Arc to access the info
-/// let agent_info_arc = agent_info::get_agent_info();
+/// let agent_info_arc = agent_info_cell.load();
 ///
 /// // Access the info
 /// if let Some(agent_info) = agent_info_arc.as_ref() {
@@ -133,6 +137,7 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 pub struct AgentInfoFetcher {
     info_endpoint: Endpoint,
     refresh_interval: Duration,
+    info: AgentInfoCell,
     trigger_rx: Option<mpsc::Receiver<()>>,
 }
 
@@ -143,7 +148,11 @@ impl AgentInfoFetcher {
     /// Returns a tuple of (fetcher, trigger_component) where:
     /// - `fetcher`: The AgentInfoFetcher to be run in a background task
     /// - `response_observer`: The ResponseObserver component for checking HTTP responses
-    pub fn new(info_endpoint: Endpoint, refresh_interval: Duration) -> (Self, ResponseObserver) {
+    pub fn new(
+        info_endpoint: Endpoint,
+        refresh_interval: Duration,
+        info: AgentInfoCell,
+    ) -> (Self, ResponseObserver) {
         // The trigger channel stores a single message to avoid multiple triggers.
         let (trigger_tx, trigger_rx) = mpsc::channel(1);
 
@@ -151,9 +160,10 @@ impl AgentInfoFetcher {
             info_endpoint,
             refresh_interval,
             trigger_rx: Some(trigger_rx),
+            info: info.clone(),
         };
 
-        let response_observer = ResponseObserver::new(trigger_tx);
+        let response_observer = ResponseObserver::new(trigger_tx, info);
 
         (fetcher, response_observer)
     }
@@ -167,7 +177,7 @@ impl Worker for AgentInfoFetcher {
     async fn run(&mut self) {
         // Skip the first fetch if some info is present to avoid calling the /info endpoint
         // at fork for heavy-forking environment.
-        if AGENT_INFO_CACHE.load().is_none() {
+        if self.info.load().is_none() {
             self.fetch_and_update().await;
         }
 
@@ -205,13 +215,13 @@ impl Worker for AgentInfoFetcher {
 impl AgentInfoFetcher {
     /// Fetch agent info and update cache if needed
     async fn fetch_and_update(&self) {
-        let current_info = AGENT_INFO_CACHE.load();
+        let current_info = self.info.load();
         let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
         let res = fetch_info_with_state(&self.info_endpoint, current_hash).await;
         match res {
             Ok(FetchInfoStatus::NewState(new_info)) => {
                 info!("New /info state received");
-                AGENT_INFO_CACHE.store(Some(Arc::new(*new_info)));
+                self.info.store(Some(*new_info));
             }
             Ok(FetchInfoStatus::SameState) => {
                 info!("Agent info is up-to-date")
@@ -230,12 +240,16 @@ impl AgentInfoFetcher {
 #[derive(Debug, Clone)]
 pub struct ResponseObserver {
     trigger_tx: mpsc::Sender<()>,
+    agent_info: AgentInfoCell,
 }
 
 impl ResponseObserver {
     /// Create a new ResponseObserver with the given channel sender.
-    pub fn new(trigger_tx: mpsc::Sender<()>) -> Self {
-        Self { trigger_tx }
+    pub fn new(trigger_tx: mpsc::Sender<()>, agent_info: AgentInfoCell) -> Self {
+        Self {
+            trigger_tx,
+            agent_info,
+        }
     }
 
     /// Check the given HTTP response for agent state changes and trigger a fetch if needed.
@@ -246,7 +260,7 @@ impl ResponseObserver {
     pub fn check_response<T>(&self, response: &hyper::Response<T>) {
         if let Some(agent_state) = response.headers().get(DATADOG_AGENT_STATE) {
             if let Ok(state_str) = agent_state.to_str() {
-                let current_state = AGENT_INFO_CACHE.load();
+                let current_state = self.agent_info.load();
                 if current_state.as_ref().map(|s| s.state_hash.as_str()) != Some(state_str) {
                     match self.trigger_tx.try_send(()) {
                         Ok(_) => {}
@@ -268,7 +282,6 @@ impl ResponseObserver {
 #[cfg(test)]
 mod single_threaded_tests {
     use super::*;
-    use crate::agent_info;
     use httpmock::prelude::*;
 
     const TEST_INFO: &str = r#"{
@@ -411,7 +424,6 @@ mod single_threaded_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_agent_info_fetcher_run() {
-        AGENT_INFO_CACHE.store(None);
         let server = MockServer::start();
         let mock_v1 = server
             .mock_async(|when, then| {
@@ -423,19 +435,24 @@ mod single_threaded_tests {
             })
             .await;
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
-        let (mut fetcher, _response_observer) =
-            AgentInfoFetcher::new(endpoint.clone(), Duration::from_millis(100));
-        assert!(agent_info::get_agent_info().is_none());
+        let agent_info = AgentInfoCell::default();
+        let (mut fetcher, _response_observer) = AgentInfoFetcher::new(
+            endpoint.clone(),
+            Duration::from_millis(100),
+            agent_info.clone(),
+        );
+        assert!(agent_info.load().is_none());
         tokio::spawn(async move {
             fetcher.run().await;
         });
 
         // Wait until the info is fetched
-        while agent_info::get_agent_info().is_none() {
+        while agent_info.load().is_none() {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        let version_1 = agent_info::get_agent_info()
+        let version_1 = agent_info
+            .load()
             .as_ref()
             .unwrap()
             .info
@@ -467,7 +484,8 @@ mod single_threaded_tests {
         // very few operations. We wait for a maximum of 1s before failing the test and that should
         // give way more time than necessary.
         for _ in 0..10 {
-            let version_2 = agent_info::get_agent_info()
+            let version_2 = agent_info
+                .load()
                 .as_ref()
                 .unwrap()
                 .info
@@ -496,16 +514,17 @@ mod single_threaded_tests {
             })
             .await;
 
+        let agent_info = AgentInfoCell::default();
         // Populate the cache with initial state
-        AGENT_INFO_CACHE.store(Some(Arc::new(AgentInfo {
+        agent_info.store(Some(AgentInfo {
             state_hash: "old_state".to_string(),
             info: serde_json::from_str(r#"{"version":"old"}"#).unwrap(),
-        })));
+        }));
 
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
         let (mut fetcher, response_observer) =
             // Interval is too long to fetch during the test
-            AgentInfoFetcher::new(endpoint, Duration::from_secs(3600));
+            AgentInfoFetcher::new(endpoint, Duration::from_secs(3600), agent_info.clone());
 
         tokio::spawn(async move {
             fetcher.run().await;
@@ -532,7 +551,7 @@ mod single_threaded_tests {
         mock.assert_hits_async(1).await;
 
         // Verify the cache was updated
-        let updated_info = AGENT_INFO_CACHE.load();
+        let updated_info = agent_info.load();
         assert!(updated_info.is_some());
         assert_eq!(updated_info.as_ref().unwrap().state_hash, "new_state");
         assert_eq!(
@@ -561,15 +580,16 @@ mod single_threaded_tests {
             })
             .await;
 
+        let agent_info = AgentInfoCell::default();
         // Populate the cache with the same state
-        AGENT_INFO_CACHE.store(Some(Arc::new(AgentInfo {
+        agent_info.store(Some(AgentInfo {
             state_hash: "same_state".to_string(),
             info: serde_json::from_str(r#"{"version":"same"}"#).unwrap(),
-        })));
+        }));
 
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
         let (mut fetcher, response_observer) =
-            AgentInfoFetcher::new(endpoint, Duration::from_secs(3600)); // Very long interval
+            AgentInfoFetcher::new(endpoint, Duration::from_secs(3600), agent_info.clone()); // Very long interval
 
         tokio::spawn(async move {
             fetcher.run().await;

@@ -3,13 +3,13 @@
 pub mod agent_response;
 pub mod error;
 use self::agent_response::AgentResponse;
-use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
+use crate::agent_info::{AgentInfoCell, AgentInfoFetcher, ResponseObserver};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient, TelemetryClientBuilder};
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use crate::{
-    agent_info, health_metrics, health_metrics::HealthMetric, span_concentrator::SpanConcentrator,
+    health_metrics, health_metrics::HealthMetric, span_concentrator::SpanConcentrator,
     stats_exporter,
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
@@ -204,11 +204,29 @@ pub struct TraceExporter {
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
+    agent_info: AgentInfoCell,
     client_side_stats: ArcSwap<StatsComputationStatus>,
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
     telemetry: Option<TelemetryClient>,
     workers: Arc<Mutex<TraceExporterWorkers>>,
+}
+
+/// This struct contains state we want to persist when we re-create the TraceExporter after a fork
+/// 
+/// ```rust
+/// use data_pipeline::trace_exporter::{TraceExporter, TraceExporterBuilder};
+/// fn recreate_trace_exporter_after_fork(
+///     previous_trace_exporter: &mut TraceExporter,
+///     mut builder: TraceExporterBuilder,
+/// ) -> TraceExporter {
+///     builder.set_persistent_state(previous_trace_exporter.persistent_state());
+///     builder.build().expect("Failed to recreate TraceExporter after fork")
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct TraceExporterPersistentState {
+    agent_info: AgentInfoCell,
 }
 
 enum DeserInputFormat {
@@ -220,6 +238,12 @@ impl TraceExporter {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
+    }
+
+    pub fn persistent_state(&mut self) -> TraceExporterPersistentState {
+        TraceExporterPersistentState {
+            agent_info: self.agent_info.clone(),
+        }
     }
 
     fn runtime(&self) -> Result<Arc<Runtime>, TraceExporterError> {
@@ -439,7 +463,7 @@ impl TraceExporter {
 
     /// Check for a new state of agent_info and update the trace exporter if needed
     fn check_agent_info(&self) {
-        if let Some(agent_info) = agent_info::get_agent_info() {
+        if let Some(agent_info) = &*self.agent_info.load() {
             if Some(agent_info.state_hash.as_str())
                 != self
                     .previous_info_state
@@ -944,6 +968,8 @@ pub struct TraceExporterBuilder {
     peer_tags: Vec<String>,
     telemetry: Option<TelemetryConfig>,
     test_session_token: Option<String>,
+
+    persistent_state: Option<TraceExporterPersistentState>,
 }
 
 impl TraceExporterBuilder {
@@ -1097,6 +1123,14 @@ impl TraceExporterBuilder {
         self
     }
 
+    pub fn set_persistent_state(
+        &mut self,
+        persistent_state: TraceExporterPersistentState,
+    ) -> &mut Self {
+        self.persistent_state = Some(persistent_state);
+        self
+    }
+
     #[allow(missing_docs)]
     pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
@@ -1128,9 +1162,18 @@ impl TraceExporterBuilder {
         let libdatadog_version = tag!("libdatadog_version", env!("CARGO_PKG_VERSION"));
         let mut stats = StatsComputationStatus::Disabled;
 
+        let agent_info = if let Some(state) = self.persistent_state {
+            state.agent_info
+        } else {
+            AgentInfoCell::default()
+        };
+
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
-        let (info_fetcher, info_response_observer) =
-            AgentInfoFetcher::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
+        let (info_fetcher, info_response_observer) = AgentInfoFetcher::new(
+            info_endpoint.clone(),
+            Duration::from_secs(5 * 60),
+            agent_info.clone(),
+        );
         let mut info_fetcher_worker = PausableWorker::new(info_fetcher);
         info_fetcher_worker.start(&runtime).map_err(|e| {
             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
@@ -1214,6 +1257,7 @@ impl TraceExporterBuilder {
                 stats: None,
                 telemetry: telemetry_worker,
             })),
+            agent_info,
         })
     }
 
@@ -2103,6 +2147,8 @@ mod tests {
 
         let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
 
+        println!("waiting for hits");
+
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {
             exporter
@@ -2116,8 +2162,9 @@ mod tests {
                 })
         }
 
-        let _ = exporter.send(data.as_ref(), 1).unwrap();
+        let _ = dbg!(exporter.send(data.as_ref(), 1).unwrap());
 
+        println!("waiting for shutdown");
         exporter.shutdown(None).unwrap();
 
         mock_traces.assert();

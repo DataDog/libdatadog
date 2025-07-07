@@ -52,19 +52,19 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_integration(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
-/// * indentifier: identifies a logging location uniquely. This can for instance be the template
+/// * identifier: identifies a logging location uniquely. This can for instance be the template
 ///   using for the log message or the concatenated file + line of the origin of the log
 /// * stack_trace: stack trace associated with the log. If no stack trace is available, an empty
 ///   string should be passed
 pub unsafe extern "C" fn ddog_telemetry_handle_add_log(
     handle: &TelemetryWorkerHandle,
-    indentifier: ffi::CharSlice,
+    identifier: ffi::CharSlice,
     message: ffi::CharSlice,
     level: ddtelemetry::data::LogLevel,
     stack_trace: ffi::CharSlice,
 ) -> MaybeError {
     crate::try_c!(handle.add_log(
-        indentifier.as_bytes(),
+        identifier.as_bytes(),
         message.to_utf8_lossy().into_owned(),
         level,
         stack_trace
