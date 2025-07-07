@@ -51,3 +51,4 @@ libc = "0.2"
 serde_json = { version = "1.0" }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
 tokio-util = "0.7.1"
+antithesis_sdk = "0.2.5"
