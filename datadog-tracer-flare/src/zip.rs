@@ -14,7 +14,7 @@ use tempfile::tempfile;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, ZipWriter};
 
-use crate::{error::FlareError, TracerFlare};
+use crate::{error::FlareError, State, TracerFlareManager};
 
 /// Adds a single file to the zip archive with the specified options and relative path
 fn add_file_to_zip(
@@ -217,7 +217,7 @@ fn generate_payload(
 /// # Arguments
 ///
 /// * `zip` - A file handle to the zip archive to be sent
-/// * `tracer_flare` - TracerFlare instance containing the agent configuration
+/// * `tracer_flare` - TracerFlareManager instance containing the agent configuration
 ///
 /// # Returns
 ///
@@ -232,20 +232,28 @@ fn generate_payload(
 /// - The agent URL is invalid
 /// - The HTTP request fails after retries
 /// - The agent returns a non-success HTTP status code
-async fn send(zip: File, tracer_flare: &mut TracerFlare) -> Result<(), FlareError> {
-    let agent_task = match &tracer_flare.agent_task {
-        None => {
+async fn send(zip: File, tracer_flare: &mut TracerFlareManager) -> Result<(), FlareError> {
+    let (agent_task, log_level) = match &tracer_flare.state {
+        State::Sending {
+            agent_task,
+            log_level,
+        } => (agent_task, log_level),
+        _ => {
             return Err(FlareError::SendError(
                 "Trying to send the flare without AGENT_TASK received".to_string(),
             ))
-        }
-        Some(agent_task) => agent_task,
+        } /* None => {
+           *     return Err(FlareError::SendError(
+           *         "Trying to send the flare without AGENT_TASK received".to_string(),
+           *     ))
+           * }
+           * Some(agent_task) => agent_task, */
     };
 
     let payload = generate_payload(
         zip,
         &tracer_flare.language,
-        &tracer_flare.log_level,
+        &log_level,
         &agent_task.args.case_id,
         &agent_task.args.hostname,
         &agent_task.args.user_handle,
@@ -297,7 +305,7 @@ async fn send(zip: File, tracer_flare: &mut TracerFlare) -> Result<(), FlareErro
 ///
 /// * `files` - A vector of strings representing the paths of files and directories to include in
 ///   the zip archive.
-/// * `tracer_flare` - TracerFlare instance containing the agent configuration and task data.
+/// * `tracer_flare` - TracerFlareManager instance containing the agent configuration and task data.
 ///   The state will be reset after sending (agent_task set to None, running set to false).
 ///
 /// # Returns
@@ -317,17 +325,18 @@ async fn send(zip: File, tracer_flare: &mut TracerFlare) -> Result<(), FlareErro
 ///
 /// ```rust no_run
 /// use datadog_tracer_flare::zip::zip_and_send;
-/// use datadog_tracer_flare::TracerFlare;
+/// use datadog_tracer_flare::TracerFlareManager;
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+///     let mut tracer_flare = TracerFlareManager::default();
+///
+///     // ... listen to remote config and receiving an agent task ...
+///
 ///     let files = vec![
 ///         "/path/to/logs".to_string(),
 ///         "/path/to/config.txt".to_string(),
 ///     ];
-///     let mut tracer_flare = TracerFlare::default();
-///
-///     // ... listen to remote config and receiving an agent task ...
 ///
 ///     match zip_and_send(files, &mut tracer_flare).await {
 ///         Ok(_) => println!("Flare sent successfully"),
@@ -338,7 +347,7 @@ async fn send(zip: File, tracer_flare: &mut TracerFlare) -> Result<(), FlareErro
 /// ```
 pub async fn zip_and_send(
     files: Vec<String>,
-    tracer_flare: &mut TracerFlare,
+    tracer_flare: &mut TracerFlareManager,
 ) -> Result<(), FlareError> {
     let zip = zip_files(files)?;
 
@@ -346,8 +355,7 @@ pub async fn zip_and_send(
 
     let response = send(zip, tracer_flare).await;
 
-    tracer_flare.agent_task = None;
-    tracer_flare.running = false;
+    tracer_flare.state = State::Idle;
 
     response
 }
