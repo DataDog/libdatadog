@@ -1,4 +1,5 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
 
 use std::sync::Arc;
 use std::{ffi::c_void, sync::atomic::AtomicBool};
