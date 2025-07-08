@@ -253,7 +253,7 @@ async fn send(zip: File, tracer_flare: &mut TracerFlareManager) -> Result<(), Fl
     let payload = generate_payload(
         zip,
         &tracer_flare.language,
-        &log_level,
+        log_level,
         &agent_task.args.case_id,
         &agent_task.args.hostname,
         &agent_task.args.user_handle,
