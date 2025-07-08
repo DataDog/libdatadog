@@ -153,10 +153,21 @@ fn test_ffi_fork_data_preservation() {
             println!("[child] Waiting for processing in child");
             std::thread::sleep(std::time::Duration::from_millis(100));
 
-            // Don't terminate the profiler manager in child - this causes conflicts with parent
-            // Instead, just exit cleanly and let the parent handle the termination
-            println!("[child] Skipping terminate in child to avoid conflicts with parent");
-            println!("[child] Child process completed successfully");
+            // Terminate the profiler manager in child (added back)
+            println!("[child] Terminating profiler manager in child");
+            let terminate_result = unsafe { ddog_prof_ProfilerManager_terminate() };
+            let mut _final_profile_handle = match terminate_result {
+                ddcommon_ffi::Result::Ok(handle) => {
+                    println!("[child] Profiler manager terminated successfully in child");
+                    handle
+                }
+                ddcommon_ffi::Result::Err(e) => {
+                    panic!("[child] Failed to terminate profiler manager in child: {e}")
+                }
+            };
+            // Extract the profile and assert expected values
+            let profile_result = unsafe { _final_profile_handle.take() };
+            assert_profile_has_sample_values(profile_result, &[100, 101, 102]);
 
             // Drop the child client handle
             let drop_result = unsafe { ddog_prof_ProfilerClient_drop(&mut child_client_handle) };
