@@ -4,11 +4,7 @@
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
 use ddcommon::Endpoint;
 use std::{
-    collections::HashMap,
-    fs::File,
-    io::{self, Read, Seek},
-    path::{Path, PathBuf},
-    str::FromStr,
+    collections::HashMap, fs::File, io::{self, Read, Seek}, path::{Path, PathBuf}, str::FromStr
 };
 use tempfile::tempfile;
 use walkdir::WalkDir;
@@ -154,30 +150,18 @@ fn generate_payload(
     let mut payload: Vec<u8> = Vec::new();
 
     // Create the multipart form data
-    payload.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
-    payload.extend_from_slice(b"Content-Disposition: form-data; name=\"source\"\r\n\r\n");
-    payload.extend_from_slice(format!("tracer_{language}").as_bytes());
-    payload.extend_from_slice(b"\r\n");
+    let mut add_part = |name: &str, content: &[u8]| {
+        payload.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
+        payload.extend_from_slice(format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n").as_bytes());
+        payload.extend_from_slice(content);
+        payload.extend_from_slice(b"\r\n");
+    };
 
-    payload.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
-    payload.extend_from_slice(b"Content-Disposition: form-data; name=\"case_id\"\r\n\r\n");
-    payload.extend_from_slice(case_id.as_bytes());
-    payload.extend_from_slice(b"\r\n");
-
-    payload.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
-    payload.extend_from_slice(b"Content-Disposition: form-data; name=\"hostname\"\r\n\r\n");
-    payload.extend_from_slice(hostname.as_bytes());
-    payload.extend_from_slice(b"\r\n");
-
-    payload.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
-    payload.extend_from_slice(b"Content-Disposition: form-data; name=\"email\"\r\n\r\n");
-    payload.extend_from_slice(user_handle.as_bytes());
-    payload.extend_from_slice(b"\r\n");
-
-    payload.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
-    payload.extend_from_slice(b"Content-Disposition: form-data; name=\"uuid\"\r\n\r\n");
-    payload.extend_from_slice(uuid.as_bytes());
-    payload.extend_from_slice(b"\r\n");
+    add_part("source", format!("tracer_{language}").as_bytes());
+    add_part("case_id", case_id.as_bytes());
+    add_part("hostname", hostname.as_bytes());
+    add_part("email", user_handle.as_bytes());
+    add_part("uuid", uuid.as_bytes());
 
     // Add the description of the zip
     let timestamp = std::time::SystemTime::now()
@@ -242,12 +226,7 @@ async fn send(zip: File, tracer_flare: &mut TracerFlareManager) -> Result<(), Fl
             return Err(FlareError::SendError(
                 "Trying to send the flare without AGENT_TASK received".to_string(),
             ))
-        } /* None => {
-           *     return Err(FlareError::SendError(
-           *         "Trying to send the flare without AGENT_TASK received".to_string(),
-           *     ))
-           * }
-           * Some(agent_task) => agent_task, */
+        }
     };
 
     let payload = generate_payload(
