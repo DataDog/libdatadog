@@ -352,6 +352,72 @@ impl SidecarServer {
         }
     }
 
+    pub async fn process_telemetry_action(
+        &self,
+        instance_id: &InstanceId,
+        queue_id: &QueueId,
+        actions: Vec<TelemetryActions>,
+    ) -> anyhow::Result<()> {
+        tracing::debug!(
+            "Processing telemetry action for target {:?}/{:?}: {:?}",
+            instance_id,
+            queue_id,
+            actions
+        );
+        let session = self.get_session(&instance_id.session_id);
+        let trace_config = session.get_trace_config();
+        let runtime_metadata = RuntimeMetadata::new(
+            trace_config.language.clone(),
+            trace_config.language_version.clone(),
+            trace_config.tracer_version.clone(),
+        );
+
+        let rt_info = self.get_runtime(instance_id);
+        let mut applications = rt_info.lock_applications();
+
+        match applications.entry(*queue_id) {
+            #[allow(clippy::unwrap_used)]
+            Entry::Occupied(mut entry) => {
+                let value = entry.get_mut();
+
+                let env = value.env.clone().unwrap();
+                let version = value.app_version.clone().unwrap();
+                let service = value.service_name.clone().unwrap();
+
+                let telemetry = match self.telemetry_clients.get_or_create(
+                    &service,
+                    &env,
+                    &version,
+                    instance_id,
+                    &runtime_metadata,
+                    || {
+                        self.get_session(&instance_id.session_id)
+                            .session_config
+                            .lock_or_panic()
+                            .clone()
+                    },
+                ) {
+                    Some(client) => client,
+                    None => return Ok(()),
+                };
+
+                let client_clone = telemetry.clone();
+                let mut handle = telemetry.handle.lock_or_panic();
+                let last_handle = handle.take();
+                *handle = Some(tokio::spawn(async move {
+                    if let Some(last_handle) = last_handle {
+                        last_handle.await.ok();
+                    };
+                    client_clone.client.send_msgs(actions).await.ok();
+                }));
+            }
+
+            Entry::Vacant(_) => {}
+        }
+
+        Ok(())
+    }
+
     pub fn shutdown(&self) {
         self.remote_configs.shutdown();
     }
@@ -786,16 +852,16 @@ impl SidecarInterface for SidecarServer {
         let mut applications = runtime_info.lock_applications();
         let app = applications.entry(queue_id).or_default();
         // if session.remote_config_enabled {
-            app.remote_config_guard = Some(self.remote_configs.add_runtime(
-                invariants,
-                *session.remote_config_interval.lock_or_panic(),
-                instance_id.runtime_id,
-                notify_target,
-                env_name.clone(),
-                service_name.clone(),
-                app_version.clone(),
-                global_tags.clone(),
-            ));
+        app.remote_config_guard = Some(self.remote_configs.add_runtime(
+            invariants,
+            *session.remote_config_interval.lock_or_panic(),
+            instance_id.runtime_id,
+            notify_target,
+            env_name.clone(),
+            service_name.clone(),
+            app_version.clone(),
+            global_tags.clone(),
+        ));
         // }
         app.set_metadata(env_name, app_version, service_name, global_tags);
 

@@ -1,13 +1,18 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::service::{InstanceId, QueueId, RuntimeMetadata, SidecarAction, SidecarServer};
+use anyhow::{anyhow, Result};
+use ddcommon::MutexExt;
+use std::sync::OnceLock;
+use tokio::sync::mpsc;
+use tracing::{info, warn};
+
 use crate::one_way_shared_memory::OneWayShmWriter;
 use crate::primary_sidecar_identifier;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use datadog_ipc::platform::NamedShmHandle;
-use ddcommon::MutexExt;
-use tokio::task::JoinHandle;
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
@@ -15,9 +20,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio::task::JoinHandle;
 use zwohash::ZwoHasher;
 
-use crate::service::{InstanceId, RuntimeMetadata};
 use ddcommon::tag::Tag;
 use ddtelemetry::worker::TelemetryWorkerBuilder;
 use futures::FutureExt;
@@ -25,7 +30,6 @@ use serde::Deserialize;
 use std::ops::Sub;
 use std::sync::LazyLock;
 use std::time::SystemTime;
-use tracing::{info, warn};
 
 use ddtelemetry::data::{self, Integration};
 use ddtelemetry::metrics::{ContextKey, MetricContext};
@@ -34,14 +38,14 @@ use manual_future::ManualFuture;
 use serde_with::{serde_as, VecSkipError};
 use tokio::time::sleep;
 
-use crate::service::SidecarAction;
-
 type ComposerCache = HashMap<PathBuf, (SystemTime, Arc<Vec<data::Dependency>>)>;
 
 static COMPOSER_CACHE: LazyLock<tokio::sync::Mutex<ComposerCache>> =
     LazyLock::new(|| tokio::sync::Mutex::new(Default::default()));
 
 static LAST_CACHE_CLEAN: AtomicU64 = AtomicU64::new(0);
+
+static TELEMETRY_ACTION_SENDER: OnceLock<mpsc::Sender<InternalTelemetryActions>> = OnceLock::new();
 
 #[serde_as]
 #[derive(Deserialize)]
@@ -58,7 +62,7 @@ pub struct TelemetryCachedClient {
     pub buffered_integrations: HashSet<Integration>,
     pub buffered_composer_paths: HashSet<PathBuf>,
     pub telemetry_metrics: Arc<Mutex<HashMap<String, ContextKey>>>,
-    pub handle: Arc<Mutex<Option<JoinHandle<()>>>>
+    pub handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl TelemetryCachedClient {
@@ -142,7 +146,7 @@ impl TelemetryCachedClient {
                     actions.push(self.to_telemetry_point(point));
                 }
                 SidecarAction::PhpComposerTelemetryFile(_) => {} // handled separately
-                SidecarAction::ClearQueueId => {} // handled separately
+                SidecarAction::ClearQueueId => {}                // handled separately
             }
         }
         actions
@@ -348,4 +352,42 @@ pub fn path_for_telemetry(service: String, env: String, version: String) -> CStr
 
     #[allow(clippy::unwrap_used)]
     CString::new(path).unwrap()
+}
+
+#[derive(Debug)]
+pub struct InternalTelemetryActions {
+    pub instance_id: InstanceId,
+    pub queue_id: QueueId,
+    pub actions: Vec<TelemetryActions>,
+}
+
+pub fn get_telemetry_action_sender() -> Result<mpsc::Sender<InternalTelemetryActions>> {
+    TELEMETRY_ACTION_SENDER
+        .get()
+        .cloned()
+        .ok_or_else(|| anyhow!("Telemetry action sender not initialized"))
+}
+
+pub(crate) async fn telemetry_action_receiver_task(sidecar: SidecarServer) {
+    info!("Starting telemetry action receiver task...");
+
+    // create mpsc pair and set TELEMETRY_ACTION_SENDER
+    let (tx, mut rx) = mpsc::channel(1000);
+    if TELEMETRY_ACTION_SENDER.set(tx).is_err() {
+        warn!("Failed to set telemetry action sender");
+        return;
+    }
+
+    while let Some(msg) = rx.recv().await {
+        if let Err(e) = sidecar
+            .process_telemetry_action(&msg.instance_id, &msg.queue_id, msg.actions)
+            .await
+        {
+            warn!(
+                "Could not process telemetry action for target {:?}/{:?}: {}. Action dropped.",
+                msg.instance_id, msg.queue_id, e
+            );
+        }
+    }
+    info!("Telemetry action receiver task shutting down.");
 }
