@@ -1,9 +1,9 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use serde::{Deserialize, Deserializer, Serializer};
 #[cfg(feature = "test")]
 use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serializer};
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
@@ -39,7 +39,10 @@ where
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct AgentTask {
-    #[serde(deserialize_with = "non_zero_number", serialize_with = "serialize_as_string")]
+    #[serde(
+        deserialize_with = "non_zero_number",
+        serialize_with = "serialize_as_string"
+    )]
     pub case_id: u64,
     pub hostname: String,
     pub user_handle: String,
