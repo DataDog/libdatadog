@@ -203,7 +203,8 @@ fn test_ffi_fork_data_preservation() {
                     VoidResult::Ok => {
                         println!("[parent] Sample {i} enqueued successfully in parent");
                         // Add debugging: try to print the profile contents after enqueue
-                        // (This would require an FFI call to extract the profile, which we don't have, so just print a marker)
+                        // (This would require an FFI call to extract the profile, which we don't
+                        // have, so just print a marker)
                         println!("[parent] (debug) Enqueued sample value {}", 200 + i);
                     }
                     VoidResult::Err(e) => {
@@ -234,8 +235,10 @@ fn test_ffi_fork_data_preservation() {
             } else {
                 println!("[parent] Child process terminated by signal {status}");
             }
-            
-            println!("[parent] Child process completed, parent profile state should still be intact");
+
+            println!(
+                "[parent] Child process completed, parent profile state should still be intact"
+            );
 
             // Terminate the profiler manager in parent
             println!("[parent] About to terminate profiler manager in parent");
@@ -268,7 +271,11 @@ fn test_ffi_fork_data_preservation() {
                 }
             }
             for (i, &was_found) in found.iter().enumerate() {
-                assert!(was_found, "Expected pre-fork sample value {} not found in profile", [42, 43, 44, 45, 46][i]);
+                assert!(
+                    was_found,
+                    "Expected pre-fork sample value {} not found in profile",
+                    [42, 43, 44, 45, 46][i]
+                );
             }
 
             // Check for merged post-fork sample
@@ -276,10 +283,10 @@ fn test_ffi_fork_data_preservation() {
             for sample in &pprof.samples {
                 if sample.values.contains(&603) {
                     // Check function name
-                    if let Some(loc_id) = sample.location_ids.get(0) {
+                    if let Some(loc_id) = sample.location_ids.first() {
                         let loc_obj = pprof.locations.iter().find(|l| l.id == *loc_id);
                         if let Some(loc_obj) = loc_obj {
-                            let fn_id = loc_obj.lines.get(0).map(|l| l.function_id);
+                            let fn_id = loc_obj.lines.first().map(|l| l.function_id);
                             if let Some(fn_id) = fn_id {
                                 let fn_obj = pprof.functions.iter().find(|f| f.id == fn_id);
                                 if let Some(fn_obj) = fn_obj {
@@ -317,7 +324,8 @@ fn test_ffi_fork_data_preservation() {
 
             // Note: We don't require uploads in this test since we're using a long upload interval
             // to prevent premature uploads that could interfere with data preservation testing.
-            // The test has already verified that samples are correctly preserved across fork boundaries.
+            // The test has already verified that samples are correctly preserved across fork
+            // boundaries.
             let total_uploads = UPLOAD_COUNT.load(Ordering::SeqCst);
             println!("[parent] Total uploads across all processes: {total_uploads}");
 
