@@ -1,9 +1,9 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use serde::{Deserialize, Deserializer};
 #[cfg(feature = "test")]
 use serde::Serialize;
+use serde::{Deserialize, Deserializer};
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
@@ -24,8 +24,8 @@ where
                 return Err(serde::de::Error::custom("case_id cannot be zero"));
             }
             Ok(val)
-        },
-        Err(_) => Err(serde::de::Error::custom("case_id must be a digit"))
+        }
+        Err(_) => Err(serde::de::Error::custom("case_id must be a digit")),
     }
 }
 

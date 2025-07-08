@@ -4,7 +4,11 @@
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
 use ddcommon::Endpoint;
 use std::{
-    collections::HashMap, fs::File, io::{self, Read, Seek}, path::{Path, PathBuf}, str::FromStr
+    collections::HashMap,
+    fs::File,
+    io::{self, Read, Seek},
+    path::{Path, PathBuf},
+    str::FromStr,
 };
 use tempfile::tempfile;
 use walkdir::WalkDir;
@@ -152,7 +156,9 @@ fn generate_payload(
     // Create the multipart form data
     let mut add_part = |name: &str, content: &[u8]| {
         payload.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
-        payload.extend_from_slice(format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n").as_bytes());
+        payload.extend_from_slice(
+            format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n").as_bytes(),
+        );
         payload.extend_from_slice(content);
         payload.extend_from_slice(b"\r\n");
     };
