@@ -76,8 +76,8 @@ impl TracerFlareManager {
     ///
     /// # Returns
     ///
-    /// * `Ok(TracerFlareManager)` - A fully initialized TracerFlareManager instance with RemoteConfig
-    ///   listener.
+    /// * `Ok(TracerFlareManager)` - A fully initialized TracerFlareManager instance with
+    ///   RemoteConfig listener.
     /// * `Err(FlareError)` - If the initialization fails.
     ///
     /// These arguments will be used to listen to the remote config endpoint.
