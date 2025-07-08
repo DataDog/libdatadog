@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod compressor;
+mod endpoint_stats;
 mod endpoints;
 mod error;
 mod labels_set;
@@ -10,6 +11,7 @@ mod samples;
 mod stack_trace_set;
 
 pub use compressor::*;
+pub use endpoint_stats::*;
 pub use endpoints::*;
 pub use error::*;
 pub use labels_set::*;

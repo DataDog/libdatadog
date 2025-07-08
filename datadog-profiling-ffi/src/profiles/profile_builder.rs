@@ -5,11 +5,13 @@ use datadog_alloc::Box;
 use datadog_profiling::{
     collections::{string_table::StringTable, SliceSet, Store},
     profiles::{
-        Compressor, Endpoints, LabelsSet, ProfileBuilder, ProfileError,
+        EncodedProfile, Endpoints, LabelsSet, ProfileBuilder, ProfileError,
         ProfileVoidResult, SampleManager,
     },
 };
 use datadog_profiling_protobuf::{Function, Location, Mapping};
+use ddcommon_ffi::Timespec;
+use std::time::SystemTime;
 
 // FFI interface
 
@@ -23,9 +25,10 @@ pub enum ProfileBuilderNewResult<'a> {
 /// profile builder and should not be mutated until the builder is dropped.
 #[no_mangle]
 #[must_use]
-pub extern "C" fn ddog_prof_ProfileBuilder_new<'a>(
-) -> ProfileBuilderNewResult<'a> {
-    match Box::try_new(ProfileBuilder::new()) {
+pub unsafe extern "C" fn ddog_prof_ProfileBuilder_new(
+    start_time: Timespec,
+) -> ProfileBuilderNewResult<'static> {
+    match Box::try_new(ProfileBuilder::new(SystemTime::from(start_time))) {
         Ok(boxed) => ProfileBuilderNewResult::Ok(Box::into_raw(boxed)),
         Err(_) => ProfileBuilderNewResult::Err(ProfileError::OutOfMemory),
     }
@@ -40,7 +43,6 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_functions(
     builder: *mut ProfileBuilder,
     functions: *mut Store<Function>,
     strings: *mut StringTable,
-    compressor: *mut Compressor,
 ) -> ProfileVoidResult {
     let Some(builder) = builder.as_mut() else {
         return ProfileVoidResult::Err(ProfileError::InvalidInput);
@@ -51,13 +53,8 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_functions(
     let Some(strings) = strings.as_ref() else {
         return ProfileVoidResult::Err(ProfileError::InvalidInput);
     };
-    let Some(compressor) = compressor.as_mut() else {
-        return ProfileVoidResult::Err(ProfileError::InvalidInput);
-    };
 
-    ProfileVoidResult::from(
-        builder.add_functions(functions, strings, compressor),
-    )
+    ProfileVoidResult::from(builder.add_functions(functions, strings))
 }
 
 /// # Safety
@@ -68,7 +65,6 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_functions(
 pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_locations(
     builder: *mut ProfileBuilder,
     locations: *mut Store<Location>,
-    compressor: *mut Compressor,
 ) -> ProfileVoidResult {
     let Some(builder) = builder.as_mut() else {
         return ProfileVoidResult::Err(ProfileError::InvalidInput);
@@ -76,11 +72,8 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_locations(
     let Some(locations) = locations.as_ref() else {
         return ProfileVoidResult::Err(ProfileError::InvalidInput);
     };
-    let Some(compressor) = compressor.as_mut() else {
-        return ProfileVoidResult::Err(ProfileError::InvalidInput);
-    };
 
-    ProfileVoidResult::from(builder.add_locations(locations, compressor))
+    ProfileVoidResult::from(builder.add_locations(locations))
 }
 
 /// # Safety
@@ -92,7 +85,6 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_mappings(
     builder: *mut ProfileBuilder,
     mappings: *mut Store<Mapping>,
     strings: *mut StringTable,
-    compressor: *mut Compressor,
 ) -> ProfileVoidResult {
     let Some(builder) = builder.as_mut() else {
         return ProfileVoidResult::Err(ProfileError::InvalidInput);
@@ -103,11 +95,8 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_mappings(
     let Some(strings) = strings.as_ref() else {
         return ProfileVoidResult::Err(ProfileError::InvalidInput);
     };
-    let Some(compressor) = compressor.as_mut() else {
-        return ProfileVoidResult::Err(ProfileError::InvalidInput);
-    };
 
-    ProfileVoidResult::from(builder.add_mappings(mappings, strings, compressor))
+    ProfileVoidResult::from(builder.add_mappings(mappings, strings))
 }
 
 /// # Safety
@@ -122,7 +111,6 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_samples(
     labels_strings: *mut StringTable,
     stack_traces: *mut SliceSet<u64>,
     endpoints: *mut Endpoints,
-    compressor: *mut Compressor,
 ) -> ProfileVoidResult {
     let Some(builder) = builder.as_mut() else {
         return ProfileVoidResult::Err(ProfileError::InvalidInput);
@@ -142,9 +130,6 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_samples(
     let Some(endpoints) = endpoints.as_ref() else {
         return ProfileVoidResult::Err(ProfileError::InvalidInput);
     };
-    let Some(compressor) = compressor.as_mut() else {
-        return ProfileVoidResult::Err(ProfileError::InvalidInput);
-    };
 
     ProfileVoidResult::from(builder.add_samples(
         samples,
@@ -152,7 +137,6 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_samples(
         labels_strings,
         stack_traces,
         endpoints,
-        compressor,
     ))
 }
 
@@ -166,5 +150,43 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_drop(
     if !builder.is_null() && !(*builder).is_null() {
         drop(Box::from_raw(*builder));
         *builder = std::ptr::null_mut();
+    }
+}
+
+#[repr(C)]
+pub enum ProfileBuilderBuildResult {
+    Ok(*mut EncodedProfile),
+    Err(ProfileError),
+}
+
+/// Builds the profile, consuming the builder and returning an EncodedProfile.
+///
+/// # Safety
+/// The builder pointer must be valid and not null.
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_prof_ProfileBuilder_build(
+    builder: *mut *mut ProfileBuilder,
+    end_time: *const Timespec,
+) -> ProfileBuilderBuildResult {
+    let Some(builder_ptr) = builder.as_mut() else {
+        return ProfileBuilderBuildResult::Err(ProfileError::InvalidInput);
+    };
+    if builder_ptr.is_null() {
+        return ProfileBuilderBuildResult::Err(ProfileError::InvalidInput);
+    }
+    let builder = unsafe { Box::from_raw(*builder_ptr) };
+    *builder_ptr = std::ptr::null_mut();
+
+    let end = end_time.as_ref().map(SystemTime::from);
+
+    // Unbox it so we can take ownership in .build() below.
+    let builder = Box::into_inner(builder);
+    match builder.build(end) {
+        Ok(profile) => match Box::try_new(profile) {
+            Ok(boxed) => ProfileBuilderBuildResult::Ok(Box::into_raw(boxed)),
+            Err(_) => ProfileBuilderBuildResult::Err(ProfileError::OutOfMemory),
+        },
+        Err(err) => ProfileBuilderBuildResult::Err(err),
     }
 }

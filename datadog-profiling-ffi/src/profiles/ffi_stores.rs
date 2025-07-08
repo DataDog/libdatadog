@@ -93,7 +93,6 @@ pub extern "C" fn ddog_prof_Store_Mapping_new() -> *mut Store<Mapping> {
 /// # Examples
 ///
 /// ```
-/// # use datadog_profiling_ffi::Error;
 /// # use datadog_profiling_ffi::profiles::*;
 /// # use datadog_profiling_protobuf::*;
 /// # use std::ptr::addr_of_mut;
@@ -165,7 +164,6 @@ pub extern "C" fn ddog_prof_Store_Location_new() -> *mut Store<Location> {
 /// # Examples
 ///
 /// ```
-/// # use datadog_profiling_ffi::Error;
 /// # use datadog_profiling_ffi::profiles::*;
 /// # use datadog_profiling_protobuf::*;
 /// # use std::ptr::addr_of_mut;
@@ -237,7 +235,6 @@ pub extern "C" fn ddog_prof_Store_Function_new() -> *mut Store<Function> {
 /// # Examples
 ///
 /// ```
-/// # use datadog_profiling_ffi::Error;
 /// # use datadog_profiling_ffi::profiles::*;
 /// # use datadog_profiling_protobuf::*;
 /// # use std::ptr::addr_of_mut;

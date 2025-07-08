@@ -1,0 +1,12 @@
+---
+globs: examples/ffi/*
+---
+
+  - Building FFI examples have a few directories of interest:
+    1. `$srcdir`, which is wherever `examples/ffi` is.
+    2. `$Datadog_ROOT` which is wherever the libdatadog artifacts get built to, possibly `/tmp/libdatadog` or `$PWD/artifacts`. 
+    3. `$builddir` which is the location to put the cmake build files, such as `/tmp/cmake-build-debug` for a debug build of the project.
+  - To build the FFI artifacts, we need to do this from the project root (e.g. two dirs up from examples/ffi):
+    ```sh
+    rm -fr "$Datadog_ROOT" && bash -x build-profiling-ffi.sh -s "$Datadog_ROOT"
+    ```

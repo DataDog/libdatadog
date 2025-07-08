@@ -3,11 +3,25 @@
 
 use crate::{
     collections::{string_table::StringTable, SliceSet, Store},
-    profiles::{Compressor, Endpoints, LabelsSet, ProfileError, SampleManager},
+    profiles::{Compressor, EndpointStats, Endpoints, LabelsSet, ProfileError, SampleManager},
 };
 use datadog_profiling_protobuf::{
     Function, Label, Location, Mapping, Record, StringOffset, ValueType, NO_OPT_ZERO,
 };
+use std::time::SystemTime;
+
+/// A profile that has been encoded into the pprof format.
+#[derive(Debug)]
+pub struct EncodedProfile {
+    /// The start time of the profile
+    pub start: SystemTime,
+    /// The end time of the profile
+    pub end: SystemTime,
+    /// The compressed pprof data
+    pub buffer: Vec<u8>,
+    /// Statistics about endpoints seen in the profile
+    pub endpoints_stats: EndpointStats,
+}
 
 /// A builder for constructing profiles with multiple string tables.
 ///
@@ -19,20 +33,27 @@ pub struct ProfileBuilder<'a> {
     written_string_tables: Vec<(&'a StringTable, StringOffset)>,
     /// The next available string offset in the merged string table.
     written: StringOffset,
-}
-
-impl<'a> Default for ProfileBuilder<'a> {
-    fn default() -> ProfileBuilder<'a> {
-        ProfileBuilder::new()
-    }
+    /// Statistics about endpoints seen during profile building
+    endpoint_stats: EndpointStats,
+    /// The compressor used to build the profile
+    compressor: Compressor,
+    /// The start time of the profile
+    start_time: SystemTime,
 }
 
 impl<'a> ProfileBuilder<'a> {
     /// Creates a new ProfileBuilder.
-    pub const fn new() -> Self {
+    ///
+    /// # Arguments
+    /// * `start_time` - The start time for the profile.
+    pub fn new(start_time: SystemTime) -> Self {
+        const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
         Self {
             written_string_tables: Vec::new(),
             written: StringOffset::ZERO,
+            endpoint_stats: EndpointStats::new(),
+            compressor: Compressor::with_max_capacity(INITIAL_PPROF_BUFFER_SIZE),
+            start_time,
         }
     }
 
@@ -48,11 +69,7 @@ impl<'a> ProfileBuilder<'a> {
 
     /// Adds a string table to the profile if not already added. Returns the
     /// base offset where this string table starts in the merged string table.
-    fn add_string_table(
-        &mut self,
-        strings: &'a StringTable,
-        compressor: &mut Compressor,
-    ) -> Result<StringOffset, ProfileError> {
+    fn add_string_table(&mut self, strings: &'a StringTable) -> Result<StringOffset, ProfileError> {
         // Linear search through the small vec.
         for (ptr, base_offset) in &self.written_string_tables {
             if core::ptr::eq(*ptr, strings) {
@@ -68,7 +85,7 @@ impl<'a> ProfileBuilder<'a> {
         if is_first {
             for string in strings.iter().take(StringTable::WELL_KNOWN_COUNT) {
                 let record = Record::<_, 6, NO_OPT_ZERO>::from(string);
-                compressor.encode(record)?;
+                self.compressor.encode(record)?;
             }
             self.written = StringOffset::new(StringTable::WELL_KNOWN_COUNT as u32);
         }
@@ -101,7 +118,7 @@ impl<'a> ProfileBuilder<'a> {
         // Write the strings to the compressor
         for string in strings.iter().skip(StringTable::WELL_KNOWN_COUNT) {
             let record = Record::<_, 6, NO_OPT_ZERO>::from(string);
-            compressor.encode(record)?;
+            self.compressor.encode(record)?;
         }
 
         self.written_string_tables.push((strings, base_offset));
@@ -115,12 +132,9 @@ impl<'a> ProfileBuilder<'a> {
         &mut self,
         functions: &Store<Function>,
         strings: &'a StringTable,
-        compressor: &mut Compressor,
     ) -> Result<(), ProfileError> {
-        // Add string table once and get base offset for reuse
-        let base_offset = self.add_string_table(strings, compressor)?;
+        let base_offset = self.add_string_table(strings)?;
 
-        // Write functions with offset adjustment
         for function in functions.iter() {
             let adjusted_function = Function {
                 name: Record::from(Self::adjust_string_offset(base_offset, function.name.value)),
@@ -136,23 +150,17 @@ impl<'a> ProfileBuilder<'a> {
             };
 
             let record = Record::<_, 5, NO_OPT_ZERO>::from(adjusted_function);
-            compressor.encode(record)?;
+            self.compressor.encode(record)?;
         }
 
         Ok(())
     }
 
     /// Adds locations to the profile.
-    pub fn add_locations(
-        &mut self,
-        locations: &Store<Location>,
-        compressor: &mut Compressor,
-    ) -> Result<(), ProfileError> {
-        // Write locations - no string table needed since Location only
-        // contains IDs (function_id, mapping_id) which are not string offsets
+    pub fn add_locations(&mut self, locations: &Store<Location>) -> Result<(), ProfileError> {
         for location in locations.iter() {
             let record = Record::<_, 4, NO_OPT_ZERO>::from(*location);
-            compressor.encode(record)?;
+            self.compressor.encode(record)?;
         }
 
         Ok(())
@@ -163,12 +171,9 @@ impl<'a> ProfileBuilder<'a> {
         &mut self,
         mappings: &Store<Mapping>,
         strings: &'a StringTable,
-        compressor: &mut Compressor,
     ) -> Result<(), ProfileError> {
-        // Add string table once and get base offset for reuse
-        let base_offset = self.add_string_table(strings, compressor)?;
+        let base_offset = self.add_string_table(strings)?;
 
-        // Write mappings with offset adjustment
         for mapping in mappings.iter() {
             let adjusted_mapping = Mapping {
                 filename: Record::from(Self::adjust_string_offset(
@@ -183,7 +188,7 @@ impl<'a> ProfileBuilder<'a> {
             };
 
             let record = Record::<_, 3, NO_OPT_ZERO>::from(adjusted_mapping);
-            compressor.encode(record)?;
+            self.compressor.encode(record)?;
         }
 
         Ok(())
@@ -200,10 +205,9 @@ impl<'a> ProfileBuilder<'a> {
         labels_strings: &'a mut StringTable,
         stack_traces: &SliceSet<u64>,
         endpoints: &'a Endpoints,
-        compressor: &mut Compressor,
     ) -> Result<(), ProfileError> {
-        let labels_base_offset = self.add_string_table(labels_strings, compressor)?;
-        let endpoints_base_offset = self.add_string_table(endpoints.strings(), compressor)?;
+        let labels_base_offset = self.add_string_table(labels_strings)?;
+        let endpoints_base_offset = self.add_string_table(endpoints.strings())?;
 
         // Write sample types with adjusted string offsets
         for sample_type in samples.types() {
@@ -218,7 +222,7 @@ impl<'a> ProfileBuilder<'a> {
                 )),
             };
             let record = Record::<_, 1, false>::from(adjusted_type);
-            compressor.encode(record)?;
+            self.compressor.encode(record)?;
         }
 
         // Write samples with label offset adjustment and endpoint enrichment
@@ -270,6 +274,9 @@ impl<'a> ProfileBuilder<'a> {
 
             // Add endpoint label if we found one
             if let Some(endpoint_str_offset) = endpoint_str_offset {
+                self.endpoint_stats
+                    .add_endpoint_count(endpoint_str_offset, 1)?;
+
                 let label = Record::<_, 3, NO_OPT_ZERO>::from(Label {
                     key: Record::from(StringTable::TRACE_ENDPOINT_OFFSET),
                     str: Record::from(Self::adjust_string_offset(
@@ -299,12 +306,25 @@ impl<'a> ProfileBuilder<'a> {
                 labels: temp_labels.as_slice(),
             };
             let record = Record::<_, 2, false>::from(adjusted_sample);
-            compressor.encode(record)?;
+            self.compressor.encode(record)?;
 
             temp_labels.clear();
         }
 
         Ok(())
+    }
+
+    /// Builds the profile, consuming the builder and returning an EncodedProfile.
+    ///
+    /// # Arguments
+    /// * `end_time` - Optional end time for the profile. If None, uses the current time.
+    pub fn build(mut self, end_time: Option<SystemTime>) -> Result<EncodedProfile, ProfileError> {
+        Ok(EncodedProfile {
+            start: self.start_time,
+            end: end_time.unwrap_or_else(SystemTime::now),
+            buffer: self.compressor.finish()?,
+            endpoints_stats: std::mem::take(&mut self.endpoint_stats),
+        })
     }
 }
 
@@ -317,8 +337,7 @@ mod tests {
 
     #[test]
     fn test_endpoint_string_offset_adjustment() {
-        let mut builder = ProfileBuilder::new();
-        let mut compressor = Compressor::with_max_capacity(1024);
+        let mut builder = ProfileBuilder::new(SystemTime::now());
 
         // Create endpoints with a few endpoint names
         let mut endpoints = Endpoints::try_new().unwrap();
@@ -373,12 +392,11 @@ mod tests {
                 &mut labels_strings,
                 &stack_traces,
                 &endpoints,
-                &mut compressor,
             )
             .unwrap();
 
         // Get the compressed bytes, decompress them, and decode into a Profile
-        let compressed = compressor.finish().unwrap();
+        let compressed = builder.compressor.finish().unwrap();
         let mut decoder = lz4_flex::frame::FrameDecoder::new(compressed.as_slice());
         let mut decompressed = Vec::new();
         std::io::copy(&mut decoder, &mut decompressed).unwrap();

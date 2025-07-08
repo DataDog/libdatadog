@@ -20,7 +20,8 @@ pub use profile_builder::*;
 pub use samples::*;
 pub use string_table::*;
 
-use datadog_profiling::profiles::ProfileError;
+pub use datadog_profiling::profiles::ProfileError;
+
 use ddcommon_ffi::CharSlice;
 
 /// A half-open range, similar to the std Range except it's Copy and not an
