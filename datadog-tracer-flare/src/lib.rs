@@ -258,14 +258,14 @@ pub fn check_remote_config_file(
 /// Implementing and using the tracer flare to fetch RemoteConfig from the agent
 ///
 /// ```rust no_run
-/// use datadog_tracer_flare::{init_tracer_flare, run_remote_config_listener};
+/// use datadog_tracer_flare::{TracerFlareManager, run_remote_config_listener};
 /// use std::time::Duration;
 /// use tokio::time::sleep;
 ///
 /// #[tokio::main(flavor = "current_thread")]
 /// async fn main() {
 ///     // Setup the TracerFlareManager
-///     let mut tracer_flare = init_tracer_flare(
+///     let mut tracer_flare = TracerFlareManager::new_with_listener(
 ///         "http://0.0.0.0:8126".to_string(),  // agent_url
 ///         "rust".to_string(),                 // language
 ///         "1.0.0".to_string(),                // tracer_version

@@ -1,9 +1,9 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use serde::{Deserialize, Deserializer, Serializer};
 #[cfg(feature = "test")]
 use serde::Serialize;
-use serde::{Deserialize, Deserializer};
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
@@ -29,10 +29,17 @@ where
     }
 }
 
+fn serialize_as_string<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&value.to_string())
+}
+
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct AgentTask {
-    #[serde(deserialize_with = "non_zero_number")]
+    #[serde(deserialize_with = "non_zero_number", serialize_with = "serialize_as_string")]
     pub case_id: u64,
     pub hostname: String,
     pub user_handle: String,
@@ -55,6 +62,7 @@ pub struct AgentTask {
 /// - The JSON data is malformed.
 /// - The JSON structure doesn't match the expected `AgentTaskFile` format.
 /// - Required fields are missing from the JSON data.
+/// - The case_id is not a valid non-zero digit.
 ///
 /// # Examples
 ///
@@ -78,4 +86,71 @@ pub struct AgentTask {
 /// ```
 pub fn parse_json(data: &[u8]) -> serde_json::error::Result<AgentTaskFile> {
     serde_json::from_slice(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_case_id() {
+        let json_data = r#"{
+            "args": {
+                "case_id": "12345",
+                "hostname": "test-host",
+                "user_handle": "test@example.com"
+            },
+            "task_type": "tracer_flare",
+            "uuid": "test-uuid"
+        }"#;
+
+        let result = parse_json(json_data.as_bytes());
+        assert!(result.is_ok());
+        let task = result.unwrap();
+        assert_eq!(task.args.case_id, 12345);
+    }
+
+    #[test]
+    fn test_invalid_case_id_zero() {
+        let json_data = r#"{
+            "args": {
+                "case_id": "0",
+                "hostname": "test-host",
+                "user_handle": "test@example.com"
+            },
+            "task_type": "tracer_flare",
+            "uuid": "test-uuid"
+        }"#;
+
+        let result = parse_json(json_data.as_bytes());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_case_id_non_digit() {
+        let json_data = r#"{
+            "args": {
+                "case_id": "abc123",
+                "hostname": "test-host",
+                "user_handle": "test@example.com"
+            },
+            "task_type": "tracer_flare",
+            "uuid": "test-uuid"
+        }"#;
+
+        let result = parse_json(json_data.as_bytes());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_serialization() {
+        let task = AgentTask {
+            case_id: 12345,
+            hostname: "test-host".to_string(),
+            user_handle: "test@example.com".to_string(),
+        };
+
+        let serialized = serde_json::to_string(&task).unwrap();
+        assert!(serialized.contains("\"case_id\":\"12345\""));
+    }
 }
