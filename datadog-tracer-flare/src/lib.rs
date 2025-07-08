@@ -41,16 +41,6 @@ pub enum State {
     },
 }
 
-impl TracerFlareManager {
-    pub fn new(agent_url: &str, language: &str) -> Self {
-        TracerFlareManager {
-            agent_url: agent_url.to_owned(),
-            language: language.to_owned(),
-            ..Default::default()
-        }
-    }
-}
-
 impl Default for TracerFlareManager {
     fn default() -> Self {
         TracerFlareManager {
@@ -59,6 +49,85 @@ impl Default for TracerFlareManager {
             language: "rust".to_string(),
             state: State::Idle,
         }
+    }
+}
+
+impl TracerFlareManager {
+    pub fn new(agent_url: &str, language: &str) -> Self {
+        TracerFlareManager {
+            agent_url: agent_url.to_owned(),
+            language: language.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    /// Function that creates a new TracerFlareManager instance and initializes its RemoteConfig
+    /// listener with the provided configuration parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `agent_url` - Agent url computed from the environment.
+    /// * `language` - Language of the tracer.
+    /// * `tracer_version` - Version of the tracer.
+    /// * `service` - Service to listen to.
+    /// * `env` - Environment.
+    /// * `app_version` - Version of the application.
+    /// * `runtime_id` - Runtime id.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(TracerFlareManager)` - A fully initialized TracerFlareManager instance with RemoteConfig
+    ///   listener.
+    /// * `Err(FlareError)` - If the initialization fails.
+    ///
+    /// These arguments will be used to listen to the remote config endpoint.
+    pub fn new_with_listener(
+        agent_url: String,
+        language: String,
+        tracer_version: String,
+        service: String,
+        env: String,
+        app_version: String,
+        runtime_id: String,
+    ) -> Result<Self, FlareError> {
+        let mut tracer_flare = Self::new(&agent_url, &language);
+
+        let agent_url = match hyper::Uri::from_str(&agent_url) {
+            Ok(uri) => uri,
+            Err(_) => {
+                return Err(FlareError::ListeningError(format!(
+                    "Invalid agent url: {agent_url}"
+                )));
+            }
+        };
+        let remote_config_endpoint = Endpoint {
+            url: agent_url,
+            ..Default::default()
+        };
+        let config_to_fetch = ConfigInvariants {
+            language,
+            tracer_version,
+            endpoint: remote_config_endpoint,
+            products: vec![
+                RemoteConfigProduct::AgentConfig,
+                RemoteConfigProduct::AgentTask,
+            ],
+            capabilities: vec![],
+        };
+
+        tracer_flare.listener = Some(SingleChangesFetcher::new(
+            ParsedFileStorage::default(),
+            Target {
+                service,
+                env,
+                app_version,
+                tags: vec![],
+            },
+            runtime_id,
+            config_to_fetch,
+        ));
+
+        Ok(tracer_flare)
     }
 }
 
@@ -165,75 +234,6 @@ pub fn check_remote_config_file(
         }
     }
     Ok(ReturnAction::None)
-}
-
-/// Function that creates a new TracerFlareManager instance and initializes its RemoteConfig
-/// listener with the provided configuration parameters.
-///
-/// # Arguments
-///
-/// * `agent_url` - Agent url computed from the environment.
-/// * `language` - Language of the tracer.
-/// * `tracer_version` - Version of the tracer.
-/// * `service` - Service to listen to.
-/// * `env` - Environment.
-/// * `app_version` - Version of the application.
-/// * `runtime_id` - Runtime id.
-///
-/// # Returns
-///
-/// * `Ok(TracerFlareManager)` - A fully initialized TracerFlareManager instance with RemoteConfig
-///   listener.
-/// * `Err(FlareError)` - If the initialization fails.
-///
-/// These arguments will be used to listen to the remote config endpoint.
-pub fn init_tracer_flare(
-    agent_url: String,
-    language: String,
-    tracer_version: String,
-    service: String,
-    env: String,
-    app_version: String,
-    runtime_id: String,
-) -> Result<TracerFlareManager, FlareError> {
-    let mut tracer_flare = TracerFlareManager::new(&agent_url, &language);
-
-    let agent_url = match hyper::Uri::from_str(&agent_url) {
-        Ok(uri) => uri,
-        Err(_) => {
-            return Err(FlareError::ListeningError(format!(
-                "Invalid agent url: {agent_url}"
-            )));
-        }
-    };
-    let remote_config_endpoint = Endpoint {
-        url: agent_url,
-        ..Default::default()
-    };
-    let config_to_fetch = ConfigInvariants {
-        language,
-        tracer_version,
-        endpoint: remote_config_endpoint,
-        products: vec![
-            RemoteConfigProduct::AgentConfig,
-            RemoteConfigProduct::AgentTask,
-        ],
-        capabilities: vec![],
-    };
-
-    tracer_flare.listener = Some(SingleChangesFetcher::new(
-        ParsedFileStorage::default(),
-        Target {
-            service,
-            env,
-            app_version,
-            tags: vec![],
-        },
-        runtime_id,
-        config_to_fetch,
-    ));
-
-    Ok(tracer_flare)
 }
 
 /// Function that listens to RemoteConfig on the agent using the TracerFlareManager instance
