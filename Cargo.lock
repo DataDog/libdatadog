@@ -1965,6 +1965,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ddsketch-ffi"
+version = "19.0.1"
+dependencies = [
+ "build_common",
+ "datadog-ddsketch",
+ "ddcommon-ffi",
+]
+
+[[package]]
 name = "ddtelemetry"
 version = "19.0.1"
 dependencies = [

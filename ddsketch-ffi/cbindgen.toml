@@ -1,0 +1,40 @@
+# Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+autogen_warning = """
+/*
+ * Unless explicitly stated otherwise all files in this repository are licensed
+ * under the Apache License Version 2.0. This product includes software
+ * developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present
+ * Datadog, Inc.
+ */
+"""
+
+header = """
+#pragma once
+
+#include <stdint.h>
+#include <stdbool.h>
+
+#include "datadog/common.h"
+"""
+
+include_version = true
+language = "C"
+namespace = "ddog"
+cpp_compat = true
+tab_width = 4
+pragma_once = true
+include_guard = "DDOG_DDSKETCH_H"
+
+[parse]
+parse_deps = true
+include = ["ddcommon-ffi"]
+
+[export]
+include = ["ddsketch-ffi"]
+prefix = "ddog_"
+
+[export.rename]
+"DDSketchError" = "DDSketchError"
+"DDSketchErrorCode" = "DDSketchErrorCode"
