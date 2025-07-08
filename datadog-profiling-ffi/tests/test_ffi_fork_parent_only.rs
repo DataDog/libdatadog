@@ -138,7 +138,7 @@ fn test_ffi_fork_parent_only() {
                 println!("[parent] Child process exited with code: {exit_code}");
                 assert_eq!(exit_code, 0, "Child process should exit successfully");
             } else {
-                println!("[parent] Child process terminated by signal");
+                println!("[parent] Child process terminated by signal {status}");
             }
 
             // Terminate the profiler manager in parent

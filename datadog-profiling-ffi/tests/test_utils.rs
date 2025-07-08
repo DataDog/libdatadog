@@ -114,6 +114,11 @@ pub fn assert_profile_has_sample_values(
     expected_values: &[i64],
 ) {
     let pprof = roundtrip_to_pprof(profile);
+    println!("[debug] Profile contains {} samples", pprof.samples.len());
+    for (i, sample) in pprof.samples.iter().enumerate() {
+        println!("[debug] Sample {}: values = {:?}", i, sample.values);
+    }
+    
     let mut found = vec![false; expected_values.len()];
     for sample in &pprof.samples {
         for (i, &expected) in expected_values.iter().enumerate() {

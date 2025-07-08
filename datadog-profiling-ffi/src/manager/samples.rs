@@ -80,7 +80,7 @@ impl ClientSampleChannels {
     /// 2. The caller transfers ownership of the sample to this function
     ///    - The sample is not being used by any other thread
     ///    - The sample must not be accessed by the caller after this call
-    ///    - The manager will either free the sample or recycle it back
+    ///    - The sample will be properly cleaned up if it cannot be sent
     /// 3. The sample will be properly cleaned up if it cannot be sent
     pub unsafe fn send_sample(&self, sample: *mut c_void) -> Result<(), SendError<SendSample>> {
         self.samples_sender.send(SendSample::new(sample))

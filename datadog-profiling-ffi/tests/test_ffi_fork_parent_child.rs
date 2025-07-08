@@ -34,11 +34,11 @@ fn test_ffi_fork_parent_child() {
     // Create sample callbacks
     let sample_callbacks = ManagedSampleCallbacks::new(test_converter, test_reset, test_drop);
 
-    // Create config with short intervals for testing
+    // Create config with long upload interval to prevent premature uploads during test
     let config = ProfilerManagerConfig {
         channel_depth: 10,
         cpu_sampling_interval_ms: 50, // 50ms for faster testing
-        upload_interval_ms: 100,      // 100ms for faster testing
+        upload_interval_ms: 10000,    // 10 seconds - very long to prevent uploads during test
     };
 
     // Start the profiler manager
