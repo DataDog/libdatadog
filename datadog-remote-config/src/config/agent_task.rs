@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 #[cfg(feature = "test")]
 use serde::Serialize;
 
@@ -13,10 +13,27 @@ pub struct AgentTaskFile {
     pub uuid: String,
 }
 
+fn non_zero_number<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let val = String::deserialize(deserializer)?;
+    match val.parse() {
+        Ok(val) => {
+            if val == 0 {
+                return Err(serde::de::Error::custom("case_id cannot be zero"));
+            }
+            Ok(val)
+        },
+        Err(_) => Err(serde::de::Error::custom("case_id must be a digit"))
+    }
+}
+
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct AgentTask {
-    pub case_id: String, // Must be a digit and cannot be 0 according to spec ?
+    #[serde(deserialize_with = "non_zero_number")]
+    pub case_id: u64,
     pub hostname: String,
     pub user_handle: String,
 }

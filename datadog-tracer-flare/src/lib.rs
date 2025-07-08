@@ -391,7 +391,7 @@ mod tests {
 
         let task = AgentTaskFile {
             args: AgentTask {
-                case_id: "123".to_string(),
+                case_id: 123,
                 hostname: "test-host".to_string(),
                 user_handle: "test@example.com".to_string(),
             },
