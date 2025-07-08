@@ -238,7 +238,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_hostname(
     )
 }
 
-/// Sets environmet information to be included in the headers request.
+/// Sets environment information to be included in the headers request.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_env(
     config: Option<&mut TraceExporterConfig>,

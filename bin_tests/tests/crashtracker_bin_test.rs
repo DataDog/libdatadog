@@ -203,6 +203,9 @@ fn test_crash_tracking_bin(
     let sig_info = &crash_payload["sig_info"];
     assert_siginfo_message(sig_info, crash_typ);
 
+    let error = &crash_payload["error"];
+    assert_error_message(&error["message"], sig_info);
+
     let crash_telemetry = fs::read(fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
@@ -220,6 +223,16 @@ fn test_crash_tracking_bin(
     if let Ok(invalid) = fs::read(invalid_path) {
         assert_eq!(invalid, b"O");
     }
+}
+
+fn assert_error_message(message: &Value, sig_info: &Value) {
+    let expected_message = format!(
+        "Process terminated with {} ({})",
+        sig_info["si_code_human_readable"].as_str().unwrap(),
+        sig_info["si_signo_human_readable"].as_str().unwrap()
+    );
+    let message_str = message.as_str().unwrap_or("");
+    assert_eq!(message_str, expected_message);
 }
 
 fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #[cfg(test)]
 mod tracing_integration_tests {
+    use data_pipeline::trace_exporter::agent_response::AgentResponse;
     use data_pipeline::trace_exporter::{
         TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
     };
@@ -32,10 +33,12 @@ mod tracing_integration_tests {
                     "exception.version": {"type": 3, "double_value": 4.2},
                     "exception.escaped": {"type": 1, "bool_value": true},
                     "exception.count": {"type": 2, "int_value": 1},
-                    "exception.lines": {"type": 4, "array_value": [
-                        {"type": 0, "string_value": "  File \"<string>\", line 1, in <module>"},
-                        {"type": 0, "string_value": "  File \"<string>\", line 1, in divide"},
-                    ]}
+                    "exception.lines": {"type": 4, "array_value": {
+                        "values": [
+                            {"type": 0, "string_value": "  File \"<string>\", line 1, in <module>"},
+                            {"type": 0, "string_value": "  File \"<string>\", line 1, in divide"},
+                        ]
+                    }}
                 }
             }
         ]);
@@ -129,7 +132,10 @@ mod tracing_integration_tests {
             let expected_response = format!("{{\"rate_by_service\": {rate_param}}}");
 
             assert!(response.is_ok());
-            assert_eq!(response.unwrap().body, expected_response)
+            let AgentResponse::Changed { body } = response.unwrap() else {
+                panic!("Expected a changed response");
+            };
+            assert_eq!(body, expected_response);
         })
         .await;
 
@@ -179,7 +185,10 @@ mod tracing_integration_tests {
             let expected_response = format!("{{\"rate_by_service\": {rate_param}}}");
 
             assert!(response.is_ok());
-            assert_eq!(response.unwrap().body, expected_response)
+            let AgentResponse::Changed { body } = response.unwrap() else {
+                panic!("Expected a changed response");
+            };
+            assert_eq!(body, expected_response);
         })
         .await;
 
@@ -222,7 +231,10 @@ mod tracing_integration_tests {
             let expected_response = format!("{{\"rate_by_service\": {rate_param}}}");
 
             assert!(response.is_ok());
-            assert_eq!(response.unwrap().body, expected_response)
+            let AgentResponse::Changed { body } = response.unwrap() else {
+                panic!("Expected a changed response");
+            };
+            assert_eq!(body, expected_response);
         })
         .await;
 
@@ -295,7 +307,10 @@ mod tracing_integration_tests {
             let expected_response = format!("{{\"rate_by_service\": {rate_param}}}");
 
             assert!(response.is_ok());
-            assert_eq!(response.unwrap().body, expected_response)
+            let AgentResponse::Changed { body } = response.unwrap() else {
+                panic!("Expected a changed response");
+            };
+            assert_eq!(body, expected_response);
         })
         .await;
 

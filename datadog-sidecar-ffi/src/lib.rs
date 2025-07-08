@@ -27,11 +27,13 @@ use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
+use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddcommon_ffi as ffi;
 use ddcommon_ffi::{CharSlice, MaybeError};
+use ddtelemetry::worker::LogIdentifier;
 use ddtelemetry::{
     data::{self, Dependency, Integration},
     worker::{LifecycleAction, TelemetryActions},
@@ -42,10 +44,12 @@ use ffi::slice::AsBytes;
 use libc::c_char;
 use std::ffi::{c_void, CStr, CString};
 use std::fs::File;
+use std::hash::{DefaultHasher, Hash, Hasher};
 #[cfg(unix)]
 use std::os::unix::prelude::FromRawFd;
 #[cfg(windows)]
 use std::os::windows::io::{FromRawHandle, RawHandle};
+use std::ptr::NonNull;
 use std::slice;
 use std::sync::Arc;
 use std::time::Duration;
@@ -65,11 +69,11 @@ pub struct NativeFile {
 }
 
 /// This creates Rust PlatformHandle<File> from supplied C std FILE object.
-/// This method takes the ownership of the underlying filedescriptor.
+/// This method takes the ownership of the underlying file descriptor.
 ///
 /// # Safety
 /// Caller must ensure the file descriptor associated with FILE pointer is open, and valid
-/// Caller must not close the FILE associated filedescriptor after calling this fuction
+/// Caller must not close the FILE associated file descriptor after calling this function
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_ph_file_from(file: *mut libc::FILE) -> NativeFile {
@@ -416,7 +420,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
     let version =
         (!dependency_version.is_empty()).then(|| dependency_version.to_utf8_lossy().into_owned());
 
-    let dependency = TelemetryActions::AddDependecy(Dependency {
+    let dependency = TelemetryActions::AddDependency(Dependency {
         name: dependency_name.to_utf8_lossy().into_owned(),
         version,
     });
@@ -641,6 +645,118 @@ impl<'a> TryInto<SerializedTracerHeaderTags> for &'a TracerHeaderTags<'a> {
                 "Failed to convert TracerHeaderTags to SerializedTracerHeaderTags",
             )
         })
+    }
+}
+
+/// Enqueues a telemetry log action to be processed internally.
+/// Non-blocking. Logs might be dropped if the internal queue is full.
+///
+/// # Safety
+/// Pointers must be valid, strings must be null-terminated if not null.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_sidecar_enqueue_telemetry_log(
+    session_id_ffi: CharSlice,
+    runtime_id_ffi: CharSlice,
+    queue_id: u64,
+    identifier_ffi: CharSlice,
+    level: ddtelemetry::data::LogLevel,
+    message_ffi: CharSlice,
+    stack_trace_ffi: Option<NonNull<CharSlice>>,
+    tags_ffi: Option<NonNull<CharSlice>>,
+    is_sensitive: bool,
+) -> MaybeError {
+    try_c!(ddog_sidecar_enqueue_telemetry_log_impl(
+        session_id_ffi,
+        runtime_id_ffi,
+        queue_id,
+        identifier_ffi,
+        level,
+        message_ffi,
+        stack_trace_ffi,
+        tags_ffi,
+        is_sensitive,
+    ));
+
+    MaybeError::None
+}
+
+fn char_slice_to_string(slice: CharSlice) -> Result<String, String> {
+    let cast_slice =
+        unsafe { slice::from_raw_parts(slice.as_slice().as_ptr() as *const u8, slice.len()) };
+    let slice = std::str::from_utf8(cast_slice)
+        .map_err(|e| format!("Failed to convert CharSlice to String: {e}"))?;
+    Ok(slice.to_string())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ddog_sidecar_enqueue_telemetry_log_impl(
+    session_id_ffi: CharSlice,
+    runtime_id_ffi: CharSlice,
+    queue_id: u64,
+    identifier_ffi: CharSlice,
+    level: ddtelemetry::data::LogLevel,
+    message_ffi: CharSlice,
+    stack_trace_ffi: Option<NonNull<CharSlice>>,
+    tags_ffi: Option<NonNull<CharSlice>>,
+    is_sensitive: bool,
+) -> Result<(), String> {
+    if session_id_ffi.is_empty()
+        || runtime_id_ffi.is_empty()
+        || queue_id == 0
+        || identifier_ffi.is_empty()
+        || message_ffi.is_empty()
+    {
+        return Err("Null or empty required arguments".into());
+    }
+
+    let sender = match get_telemetry_action_sender() {
+        Ok(s) => s,
+        Err(e) => {
+            return Err(format!("Failed to get telemetry action sender: {e}"));
+        }
+    };
+
+    let instance_id = InstanceId::new(
+        char_slice_to_string(session_id_ffi)?,
+        char_slice_to_string(runtime_id_ffi)?,
+    );
+    let queue_id: QueueId = queue_id.into();
+    let identifier: String = char_slice_to_string(identifier_ffi)?;
+    let message: String = char_slice_to_string(message_ffi)?;
+
+    let stack_trace = stack_trace_ffi
+        .map(|s| char_slice_to_string(*unsafe { s.as_ref() }))
+        .transpose()?;
+    let tags: Option<String> = tags_ffi
+        .map(|s| char_slice_to_string(*unsafe { s.as_ref() }))
+        .transpose()?;
+
+    let mut hasher = DefaultHasher::new();
+    identifier.hash(&mut hasher);
+    let log_id = LogIdentifier {
+        identifier: hasher.finish(),
+    };
+
+    let log_data = ddtelemetry::data::Log {
+        message,
+        level,
+        stack_trace,
+        count: 1,
+        tags: tags.unwrap_or("".into()),
+        is_sensitive,
+        is_crash: false,
+    };
+    let log_action = TelemetryActions::AddLog((log_id, log_data));
+
+    let msg = InternalTelemetryActions {
+        instance_id,
+        queue_id,
+        actions: vec![log_action],
+    };
+
+    match sender.try_send(msg) {
+        Ok(_) => Ok(()),
+        Err(err) => Err(format!("Failed to send telemetry action: {err}")),
     }
 }
 

@@ -117,13 +117,13 @@ impl SpanConcentrator {
         Duration::from_nanos(self.bucket_size)
     }
 
-    /// Add a span into the concentrator, by computing stats if the span is elligible for stats
+    /// Add a span into the concentrator, by computing stats if the span is eligible for stats
     /// computation.
     pub fn add_span<T>(&mut self, span: &Span<T>)
     where
         T: SpanText,
     {
-        // If the span is elligible for stats computation
+        // If the span is eligible for stats computation
         if !should_ignore_span(span, self.span_kinds_stats_computed.as_slice()) {
             let mut bucket_timestamp =
                 align_timestamp((span.start + span.duration) as u64, self.bucket_size);

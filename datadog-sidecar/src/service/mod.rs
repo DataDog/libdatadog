@@ -44,6 +44,9 @@ pub(crate) mod sidecar_server;
 mod telemetry;
 pub(crate) mod tracing;
 
+pub(crate) use telemetry::telemetry_action_receiver_task;
+pub use telemetry::{get_telemetry_action_sender, InternalTelemetryActions};
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionConfig {
     pub endpoint: Endpoint,

@@ -8,15 +8,25 @@ use std::ffi::{c_char, CString};
 
 /// Structure containing the agent response to a trace payload
 /// MUST be freed with `ddog_trace_exporter_response_free`
+///
+/// If the agent payload version is enabled on the trace exporter, and
+/// the agent response indicates that the payload version hasn't changed,
+/// the body will be empty.
 #[derive(Debug, Default)]
 pub struct ExporterResponse {
+    /// The body of the response, which is a string containing the response from the agent.
     pub body: CString,
 }
 
 impl From<AgentResponse> for ExporterResponse {
     fn from(value: AgentResponse) -> Self {
-        ExporterResponse {
-            body: CString::new(value.body).unwrap_or_default(),
+        match value {
+            AgentResponse::Changed { body } => ExporterResponse {
+                body: CString::new(body).unwrap_or_default(),
+            },
+            AgentResponse::Unchanged => ExporterResponse {
+                body: CString::new("").unwrap_or_default(),
+            },
         }
     }
 }
@@ -45,8 +55,8 @@ mod tests {
     use std::ffi::CStr;
 
     #[test]
-    fn constructor_test() {
-        let agent_response = AgentResponse {
+    fn constructor_test_changed() {
+        let agent_response = AgentResponse::Changed {
             body: "res".to_string(),
         };
         let response = Box::new(ExporterResponse::from(agent_response));
@@ -54,5 +64,15 @@ mod tests {
             CStr::from_ptr(ddog_trace_exporter_response_get_body(&response)).to_string_lossy()
         };
         assert_eq!(body, "res".to_string());
+    }
+
+    #[test]
+    fn constructor_test_unchanged() {
+        let agent_response = AgentResponse::Unchanged;
+        let response = Box::new(ExporterResponse::from(agent_response));
+        let body = unsafe {
+            CStr::from_ptr(ddog_trace_exporter_response_get_body(&response)).to_string_lossy()
+        };
+        assert_eq!(body, "".to_string());
     }
 }
