@@ -1,3 +1,5 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+
 use std::ffi::c_void;
 
 use crossbeam_channel::{Receiver, SendError, Sender, TryRecvError};

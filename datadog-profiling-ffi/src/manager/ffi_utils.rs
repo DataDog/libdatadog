@@ -1,3 +1,5 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+
 use std::num::NonZeroI64;
 
 use crate::profiles::datatypes::{ProfileResult, Sample};

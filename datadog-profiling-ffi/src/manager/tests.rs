@@ -1,3 +1,5 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

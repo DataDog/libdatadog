@@ -1,3 +1,5 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+
 #![allow(dead_code)]
 
 use std::sync::atomic::{AtomicUsize, Ordering};

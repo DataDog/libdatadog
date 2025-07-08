@@ -1,3 +1,5 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+
 #![allow(clippy::unwrap_used)]
 
 use std::sync::atomic::AtomicBool;
