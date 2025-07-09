@@ -20,7 +20,9 @@ pub struct DDSketchBin {
 /// The returned bins must be freed with `ddog_ddsketch_bins_drop`.
 /// Returns empty bins if sketch is null.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ddsketch_ordered_bins(sketch: Option<&DDSketch>) -> ffi::Vec<DDSketchBin> {
+pub unsafe extern "C" fn ddog_ddsketch_ordered_bins(
+    sketch: Option<&DDSketch>,
+) -> ffi::Vec<DDSketchBin> {
     let sketch = match sketch {
         Some(s) => s,
         None => return ffi::Vec::new(),
