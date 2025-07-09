@@ -84,6 +84,8 @@ jobs:
           env: ci
           service: libdatadog
           files: target/nextest/ci/junit.xml
+          logs: true
+          tags: rustc:${{ matrix.rust_version }},arch:${{ runner.arch }},os:${{ runner.os }},platform:${{ matrix.platform }}
 
   ffi:
     name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
