@@ -64,6 +64,7 @@ pub struct SidecarStats {
     sessions: u32,
     session_counter_size: u32,
     runtimes: u32,
+    active_telemetry_clients: u32,
     active_apps: u32,
     remote_config_clients: u32,
     remote_configs: MultiTargetStats,
@@ -318,6 +319,12 @@ impl SidecarServer {
                 .values()
                 .map(|s| s.lock_runtimes().len() as u32)
                 .sum(),
+            active_telemetry_clients: self
+                .telemetry_clients
+                .inner
+                .lock_or_panic()
+                .values()
+                .count() as u32,
             active_apps: sessions
                 .values()
                 .map(|s| {
@@ -376,18 +383,17 @@ impl SidecarServer {
         let mut applications = rt_info.lock_applications();
 
         match applications.entry(*queue_id) {
-            #[allow(clippy::unwrap_used)]
             Entry::Occupied(mut entry) => {
                 let value = entry.get_mut();
 
-                let env = value.env.clone().unwrap();
-                let version = value.app_version.clone().unwrap();
-                let service = value.service_name.clone().unwrap();
+                let env = value.env.as_deref().unwrap_or("none");
+                let version = value.app_version.as_deref().unwrap_or("");
+                let service = value.service_name.as_deref().unwrap_or("unknown-service");
 
-                let telemetry = match self.telemetry_clients.get_or_create(
-                    &service,
-                    &env,
-                    &version,
+                let mut telemetry = match self.telemetry_clients.get_or_create(
+                    service,
+                    env,
+                    version,
                     instance_id,
                     &runtime_metadata,
                     || {
@@ -401,6 +407,23 @@ impl SidecarServer {
                     None => return Ok(()),
                 };
 
+                let mut actions_to_send = vec![];
+                let mut buffered_info_changed = false;
+
+                for action in actions {
+                    match action {
+                        TelemetryActions::AddIntegration(ref integration) => {
+                            if telemetry.buffered_integrations.insert(integration.clone()) {
+                                actions_to_send.push(action);
+                                buffered_info_changed = true;
+                            }
+                        }
+                        _ => {
+                            actions_to_send.push(action);
+                        }
+                    }
+                }
+
                 let client_clone = telemetry.clone();
                 let mut handle = telemetry.handle.lock_or_panic();
                 let last_handle = handle.take();
@@ -408,11 +431,23 @@ impl SidecarServer {
                     if let Some(last_handle) = last_handle {
                         last_handle.await.ok();
                     };
-                    client_clone.client.send_msgs(actions).await.ok();
+                    debug!("Sending Telemetry Actions: {actions_to_send:?}");
+                    client_clone.client.send_msgs(actions_to_send).await.ok();
                 }));
+
+                if buffered_info_changed {
+                    info!(
+                    "Buffered telemetry info changed for instance {instance_id:?} and queue_id {queue_id:?}"
+                );
+                    telemetry.write_shm_file();
+                }
             }
 
-            Entry::Vacant(_) => {}
+            Entry::Vacant(_) => {
+                info!(
+                    "No application found for instance {instance_id:?} and queue_id {queue_id:?}"
+                );
+            }
         }
 
         Ok(())
@@ -444,116 +479,117 @@ impl SidecarInterface for SidecarServer {
         let rt_info = self.get_runtime(&instance_id);
         let mut applications = rt_info.lock_applications();
 
-        match applications.entry(queue_id) {
-            #[allow(clippy::unwrap_used)]
-            Entry::Occupied(mut entry) => {
-                let value = entry.get_mut();
+        if let Entry::Occupied(entry) = applications.entry(queue_id) {
+            let service = entry
+                .get()
+                .service_name
+                .as_deref()
+                .unwrap_or("unknown-service");
+            let env = entry.get().env.as_deref().unwrap_or("none");
+            let version = entry.get().app_version.as_deref().unwrap_or("");
 
-                let env = value.env.clone().unwrap();
-                let version = value.app_version.clone().unwrap();
-                let service = value.service_name.clone().unwrap();
+            // Lock telemetry client
+            let mut telemetry = match self.telemetry_clients.get_or_create(
+                service,
+                env,
+                version,
+                &instance_id,
+                &runtime_metadata,
+                || {
+                    self.get_session(&instance_id.session_id)
+                        .session_config
+                        .lock_or_panic()
+                        .clone()
+                },
+            ) {
+                Some(client) => client,
+                None => return no_response(),
+            };
 
-                let mut telemetry = match self.telemetry_clients.get_or_create(
-                    &service,
-                    &env,
-                    &version,
-                    &instance_id,
-                    &runtime_metadata,
-                    || {
-                        self.get_session(&instance_id.session_id)
-                            .session_config
-                            .lock_or_panic()
-                            .clone()
-                    },
-                ) {
-                    Some(client) => client,
-                    None => return no_response(),
-                };
+            let mut actions_to_process = vec![];
+            let mut composer_paths_to_process = vec![];
+            let mut buffered_info_changed = false;
+            let mut remove_entry = false;
+            let mut remove_client = false;
 
-                let mut actions_to_process = vec![];
-                let mut composer_paths_to_process = vec![];
-                let mut buffered_info_changed = false;
-
-                for action in actions {
-                    match action {
-                        SidecarAction::Telemetry(TelemetryActions::AddIntegration(
-                            ref integration,
-                        )) => {
-                            if telemetry.buffered_integrations.insert(integration.clone()) {
-                                actions_to_process.push(action);
-                                buffered_info_changed = true;
-                            }
-                        }
-                        SidecarAction::PhpComposerTelemetryFile(path) => {
-                            if telemetry.buffered_composer_paths.insert(path.clone()) {
-                                composer_paths_to_process.push(path);
-                                buffered_info_changed = true;
-                            }
-                        }
-                        SidecarAction::ClearQueueId => {
-                            entry.remove();
-                            break;
-                        }
-                        _ => {
+            for action in actions {
+                match action {
+                    SidecarAction::Telemetry(TelemetryActions::AddIntegration(ref integration)) => {
+                        if telemetry.buffered_integrations.insert(integration.clone()) {
                             actions_to_process.push(action);
+                            buffered_info_changed = true;
                         }
                     }
-                }
-
-                if actions_to_process.iter().any(|action| {
-                    matches!(
-                        action,
-                        SidecarAction::Telemetry(TelemetryActions::Lifecycle(
-                            LifecycleAction::Stop
-                        ))
-                    )
-                }) {
-                    info!("Removing Telemetry Application ...");
-                    self.telemetry_clients
-                        .remove_telemetry_client(&service, &env, &version);
-                }
-
-                if !actions_to_process.is_empty() {
-                    let client_clone = telemetry.clone();
-                    let mut handle = telemetry.handle.lock_or_panic();
-                    let last_handle = handle.take();
-                    *handle = Some(tokio::spawn(async move {
-                        if let Some(last_handle) = last_handle {
-                            last_handle.await.ok();
-                        };
-                        let processed = client_clone.process_actions(actions_to_process);
-                        info!("Sending Processed Actions {processed:?}...");
-                        client_clone.client.send_msgs(processed).await.ok();
-                        info!("Processed Actions sent !");
-                    }));
-                }
-
-                if !composer_paths_to_process.is_empty() {
-                    let client_clone = telemetry.client.clone();
-                    tokio::spawn(async move {
-                        let composer_actions = TelemetryCachedClient::process_composer_paths(
-                            composer_paths_to_process,
-                        )
-                        .await;
-                        info!("Sending Composer Paths {composer_actions:?}...");
-                        client_clone.send_msgs(composer_actions).await.ok();
-                        info!("Composer Paths sent !");
-                    });
-                }
-
-                // Synchronous SHM write if changes have been made
-                if buffered_info_changed {
-                    if let Ok(buf) = bincode::serialize(&(
-                        &telemetry.buffered_integrations,
-                        &telemetry.buffered_composer_paths,
-                    )) {
-                        info!("Writing buffered info to SHM file ...");
-                        telemetry.shm_writer.write(&buf);
+                    SidecarAction::PhpComposerTelemetryFile(path) => {
+                        if telemetry.buffered_composer_paths.insert(path.clone()) {
+                            composer_paths_to_process.push(path);
+                            buffered_info_changed = true;
+                        }
+                    }
+                    SidecarAction::ClearQueueId => {
+                        remove_entry = true;
+                    }
+                    SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+                        LifecycleAction::Stop,
+                    )) => {
+                        remove_client = true;
+                        actions_to_process.push(action);
+                    }
+                    _ => {
+                        actions_to_process.push(action);
                     }
                 }
             }
 
-            Entry::Vacant(_) => {}
+            if !actions_to_process.is_empty() {
+                let client_clone = telemetry.clone();
+                let mut handle = telemetry.handle.lock_or_panic();
+                let last_handle = handle.take();
+                *handle = Some(tokio::spawn(async move {
+                    if let Some(last_handle) = last_handle {
+                        last_handle.await.ok();
+                    };
+                    let processed = client_clone.process_actions(actions_to_process);
+                    debug!("Sending Processed Actions :{processed:?}");
+                    client_clone.client.send_msgs(processed).await.ok();
+                }));
+            }
+
+            if !composer_paths_to_process.is_empty() {
+                let client_clone = telemetry.clone();
+                let mut handle = telemetry.handle.lock_or_panic();
+                let last_handle = handle.take();
+                *handle = Some(tokio::spawn(async move {
+                    if let Some(last_handle) = last_handle {
+                        last_handle.await.ok();
+                    };
+                    let composer_actions =
+                        TelemetryCachedClient::process_composer_paths(composer_paths_to_process)
+                            .await;
+                    debug!("Sending Composer Paths :{composer_actions:?}");
+                    client_clone.client.send_msgs(composer_actions).await.ok();
+                }));
+            }
+
+            if buffered_info_changed {
+                info!(
+                    "Buffered telemetry info changed for instance {instance_id:?} and queue_id {queue_id:?}"
+                );
+                telemetry.write_shm_file();
+            }
+
+            if remove_client {
+                info!("Removing telemetry client for instance {instance_id:?}");
+                self.telemetry_clients
+                    .remove_telemetry_client(service, env, version);
+            }
+
+            if remove_entry {
+                info!("Removing queue_id {queue_id:?} from instance {instance_id:?}");
+                entry.remove();
+            }
+        } else {
+            info!("No application found for instance {instance_id:?} and queue_id {queue_id:?}");
         }
 
         no_response()
@@ -573,7 +609,7 @@ impl SidecarInterface for SidecarServer {
     ) -> Self::SetSessionConfigFut {
         debug!("Set session config for {session_id} to {config:?}");
 
-        let mut session = self.get_session(&session_id);
+        let session = self.get_session(&session_id);
         #[cfg(unix)]
         {
             session.pid.store(pid, Ordering::Relaxed);
@@ -583,7 +619,7 @@ impl SidecarInterface for SidecarServer {
         {
             *session.remote_config_notify_function.lock().unwrap() = remote_config_notify_function;
         }
-        session.remote_config_enabled = config.remote_config_enabled;
+        *session.remote_config_enabled.lock_or_panic() = config.remote_config_enabled;
         session.modify_telemetry_config(|cfg| {
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
             let endpoint =
@@ -851,18 +887,18 @@ impl SidecarInterface for SidecarServer {
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
         let mut applications = runtime_info.lock_applications();
         let app = applications.entry(queue_id).or_default();
-        // if session.remote_config_enabled {
-        app.remote_config_guard = Some(self.remote_configs.add_runtime(
-            invariants,
-            *session.remote_config_interval.lock_or_panic(),
-            instance_id.runtime_id,
-            notify_target,
-            env_name.clone(),
-            service_name.clone(),
-            app_version.clone(),
-            global_tags.clone(),
-        ));
-        // }
+        if *session.remote_config_enabled.lock_or_panic() {
+            app.remote_config_guard = Some(self.remote_configs.add_runtime(
+                invariants,
+                *session.remote_config_interval.lock_or_panic(),
+                instance_id.runtime_id,
+                notify_target,
+                env_name.clone(),
+                service_name.clone(),
+                app_version.clone(),
+                global_tags.clone(),
+            ));
+        }
         app.set_metadata(env_name, app_version, service_name, global_tags);
 
         no_response()

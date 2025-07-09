@@ -108,6 +108,16 @@ impl TelemetryCachedClient {
         })
     }
 
+    pub fn write_shm_file(&self) {
+        if let Ok(buf) =
+            bincode::serialize(&(&self.buffered_integrations, &self.buffered_composer_paths))
+        {
+            self.shm_writer.write(&buf);
+        } else {
+            warn!("Failed to serialize telemetry data for shared memory");
+        }
+    }
+
     pub fn register_metric(&self, metric: MetricContext) {
         let mut metrics = self.telemetry_metrics.lock_or_panic();
         if !metrics.contains_key(&metric.name) {
