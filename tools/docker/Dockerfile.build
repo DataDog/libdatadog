@@ -79,6 +79,7 @@ COPY "ddtelemetry-ffi/Cargo.toml" "ddtelemetry-ffi/"
 COPY "datadog-log/Cargo.toml" "datadog-log/"
 COPY "datadog-log-ffi/Cargo.toml" "datadog-log-ffi/"
 COPY "ddsketch/Cargo.toml" "ddsketch/"
+COPY "ddsketch-ffi/Cargo.toml" "ddsketch-ffi/"
 COPY "dogstatsd-client/Cargo.toml" "dogstatsd-client/"
 COPY "datadog-library-config-ffi/Cargo.toml" "datadog-library-config-ffi/"
 COPY "datadog-library-config/Cargo.toml" "datadog-library-config/"
@@ -159,7 +160,7 @@ RUN cargo build --lib --workspace --exclude builder
 RUN cargo build --release --lib --workspace --exclude builder
 
 COPY ./ ./
-RUN cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker,datadog-library-config-ffi --release -- --out /build/output
+RUN cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker,datadog-library-config-ffi,ddsketch --release -- --out /build/output
 
 FROM scratch AS ffi_build_output
 

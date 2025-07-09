@@ -1680,6 +1680,7 @@ dependencies = [
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
+ "ddsketch-ffi",
  "ddtelemetry-ffi",
  "function_name",
  "futures",
@@ -1973,7 +1974,7 @@ dependencies = [
 
 [[package]]
 name = "ddsketch-ffi"
-version = "19.0.1"
+version = "20.0.0"
 dependencies = [
  "build_common",
  "datadog-ddsketch",

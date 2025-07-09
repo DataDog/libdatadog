@@ -1,40 +1,32 @@
-# Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 # SPDX-License-Identifier: Apache-2.0
 
-autogen_warning = """
-/*
- * Unless explicitly stated otherwise all files in this repository are licensed
- * under the Apache License Version 2.0. This product includes software
- * developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present
- * Datadog, Inc.
- */
-"""
-
-header = """
-#pragma once
-
-#include <stdint.h>
-#include <stdbool.h>
-
-#include "datadog/common.h"
-"""
-
-include_version = true
 language = "C"
-namespace = "ddog"
 cpp_compat = true
-tab_width = 4
-pragma_once = true
+tab_width = 2
+header = """// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+"""
 include_guard = "DDOG_DDSKETCH_H"
+style = "both"
+pragma_once = true
+no_includes = true
+sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
+includes = ["common.h"]
 
 [parse]
 parse_deps = true
-include = ["ddcommon-ffi"]
+include = ["ddcommon-ffi", "datadog-ddsketch"]
 
 [export]
 include = ["ddsketch-ffi"]
-prefix = "ddog_"
+prefix = "ddsketch_"
+renaming_overrides_prefixing = true
 
-[export.rename]
-"DDSketchError" = "DDSketchError"
-"DDSketchErrorCode" = "DDSketchErrorCode"
+
+[fn]
+must_use = "DDOG_CHECK_RETURN"
+
+[enum]
+prefix_with_name = true
+rename_variants = "ScreamingSnakeCase"
