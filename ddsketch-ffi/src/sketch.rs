@@ -1,4 +1,4 @@
-// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_ddsketch::DDSketch;
@@ -61,7 +61,7 @@ mod tests {
 
         unsafe {
             let bins = ddog_ddsketch_ordered_bins(Some(&sketch));
-            assert!(bins.len() > 0);
+            assert!(!bins.is_empty());
 
             ddog_ddsketch_bins_drop(bins);
         }
