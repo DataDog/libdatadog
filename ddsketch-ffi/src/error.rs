@@ -35,7 +35,7 @@ impl DDSketchError {
     pub fn new(code: DDSketchErrorCode, msg: &str) -> Self {
         Self {
             code,
-            msg: CString::new(msg).unwrap_or_else(|_| CString::new("Invalid UTF-8 in error message").unwrap()),
+            msg: CString::new_or_empty(msg),
         }
     }
 }
@@ -48,6 +48,10 @@ impl From<Box<dyn std::error::Error>> for DDSketchError {
 
 /// Frees `error` and all its contents. After being called error will not point to a valid memory
 /// address so any further actions on it could lead to undefined behavior.
+///
+/// # Safety
+///
+/// Only pass null or a pointer to a valid DDSketchError created by this library.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_ddsketch_error_free(error: Option<Box<DDSketchError>>) {
     drop(error)
@@ -75,6 +79,18 @@ mod tests {
         assert_eq!(error.code, DDSketchErrorCode::InvalidArgument);
         let msg = error.msg.as_cstr().into_std().to_str().unwrap();
         assert_eq!(msg, DDSketchErrorCode::InvalidArgument.to_string());
+
+        unsafe { ddog_ddsketch_error_free(Some(error)) };
+    }
+
+    #[test]
+    fn test_error_with_null_bytes() {
+        let code = DDSketchErrorCode::InvalidInput;
+        let error = Box::new(DDSketchError::new(code, "Error with\0null bytes"));
+
+        assert_eq!(error.code, DDSketchErrorCode::InvalidInput);
+        let msg = error.msg.as_cstr().into_std().to_str().unwrap();
+        assert_eq!(msg, ""); // Should fall back to empty string
 
         unsafe { ddog_ddsketch_error_free(Some(error)) };
     }
