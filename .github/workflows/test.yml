@@ -76,6 +76,14 @@ jobs:
           report_paths: "target/nextest/ci/junit.xml"
           check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
           include_passed: true
+      - name: Upload test results to Datadog
+        if: success() || failure()
+        uses: datadog/junit-upload-github-action@762867566348d59ac9bcf479ebb4ec040db8940a
+        with:
+          api_key: ${{ secrets.DATADOG_API_KEY }}
+          env: ci
+          service: libdatadog
+          files: target/nextest/ci/junit.xml
 
   ffi:
     name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
