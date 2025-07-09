@@ -882,7 +882,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_debugger_diagnostics(
 
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_set_remote_config_data(
+pub unsafe extern "C" fn ddog_sidecar_set_universal_service_tags(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     queue_id: &QueueId,
