@@ -991,8 +991,8 @@ pub struct TraceExporterBuilder {
     peer_tags: Vec<String>,
     telemetry: Option<TelemetryConfig>,
     test_session_token: Option<String>,
-
     agent_rates_payload_version_enabled: bool,
+    connection_timeout: Option<u64>,
 }
 
 impl TraceExporterBuilder {
@@ -1152,6 +1152,12 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Sets the the agent's connection timeout.
+    pub fn set_connection_timeout(&mut self, timeout_ms: Option<u64>) -> &mut Self {
+        self.connection_timeout = timeout_ms;
+        self
+    }
+
     #[allow(missing_docs)]
     pub fn build(self) -> Result<TraceExporter, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
@@ -1237,6 +1243,9 @@ impl TraceExporterBuilder {
             endpoint: Endpoint {
                 url: agent_url,
                 test_token: self.test_session_token.map(|token| token.into()),
+                timeout_ms: self
+                    .connection_timeout
+                    .unwrap_or(Endpoint::default().timeout_ms),
                 ..Default::default()
             },
             metadata: TracerMetadata {
@@ -2283,5 +2292,20 @@ mod tests {
         exporter.shutdown(None).unwrap();
 
         mock_traces.assert();
+    }
+
+    #[test]
+    fn test_connection_timeout() {
+        let exporter = TraceExporterBuilder::default().build().unwrap();
+
+        assert_eq!(exporter.endpoint.timeout_ms, Endpoint::default().timeout_ms);
+
+        let timeout = Some(42);
+        let mut builder = TraceExporterBuilder::default();
+        builder.set_connection_timeout(timeout);
+
+        let exporter = builder.build().unwrap();
+
+        assert_eq!(exporter.endpoint.timeout_ms, 42);
     }
 }
