@@ -55,6 +55,8 @@ impl Profiling {
         headers.push("library-config.h");
         #[cfg(feature = "log")]
         headers.push("log.h");
+        #[cfg(feature = "ddsketch")]
+        headers.push("ddsketch.h");
 
         let mut origin_path: PathBuf = [&self.source_include, "dummy.h"].iter().collect();
         let mut target_path: PathBuf = [&self.target_include, "dummy.h"].iter().collect();
