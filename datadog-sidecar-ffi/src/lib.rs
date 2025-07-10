@@ -28,7 +28,6 @@ use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
 use datadog_sidecar::service::agent_info::AgentInfoReader;
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
-    telemetry::path_for_telemetry,
     InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
 use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
@@ -469,24 +468,6 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
     ));
 
     MaybeError::None
-}
-
-#[no_mangle]
-extern "C" fn ddog_telemetry_path(
-    service: ffi::CharSlice,
-    env: ffi::CharSlice,
-    version: ffi::CharSlice,
-) -> *mut c_char {
-    path_for_telemetry(
-        service.to_utf8_lossy().into_owned(),
-        env.to_utf8_lossy().into_owned(),
-        version.to_utf8_lossy().into_owned(),
-    )
-    .into_raw()
-}
-#[no_mangle]
-unsafe extern "C" fn ddog_telemetry_path_free(path: *mut c_char) {
-    drop(CString::from_raw(path));
 }
 
 /// Enqueues a list of actions to be performed.

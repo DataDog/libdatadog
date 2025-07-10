@@ -387,13 +387,11 @@ impl SidecarServer {
                 let value = entry.get_mut();
 
                 let env = value.env.as_deref().unwrap_or("none");
-                let version = value.app_version.as_deref().unwrap_or("");
                 let service = value.service_name.as_deref().unwrap_or("unknown-service");
 
                 let mut telemetry = match self.telemetry_clients.get_or_create(
                     service,
                     env,
-                    version,
                     instance_id,
                     &runtime_metadata,
                     || {
@@ -486,13 +484,11 @@ impl SidecarInterface for SidecarServer {
                 .as_deref()
                 .unwrap_or("unknown-service");
             let env = entry.get().env.as_deref().unwrap_or("none");
-            let version = entry.get().app_version.as_deref().unwrap_or("");
 
             // Lock telemetry client
             let mut telemetry = match self.telemetry_clients.get_or_create(
                 service,
                 env,
-                version,
                 &instance_id,
                 &runtime_metadata,
                 || {
@@ -580,8 +576,7 @@ impl SidecarInterface for SidecarServer {
 
             if remove_client {
                 info!("Removing telemetry client for instance {instance_id:?}");
-                self.telemetry_clients
-                    .remove_telemetry_client(service, env, version);
+                self.telemetry_clients.remove_telemetry_client(service, env);
             }
 
             if remove_entry {

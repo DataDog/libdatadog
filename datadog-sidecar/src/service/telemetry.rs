@@ -69,7 +69,6 @@ impl TelemetryCachedClient {
     pub fn new(
         service: &str,
         env: &str,
-        version: &str,
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
         get_config: impl FnOnce() -> Option<ddtelemetry::config::Config>,
@@ -93,12 +92,7 @@ impl TelemetryCachedClient {
             client: handle.clone(),
             shm_writer: Arc::new(
                 #[allow(clippy::unwrap_used)]
-                OneWayShmWriter::<NamedShmHandle>::new(path_for_telemetry(
-                    service.into(),
-                    env.into(),
-                    version.into(),
-                ))
-                .unwrap(),
+                OneWayShmWriter::<NamedShmHandle>::new(path_for_telemetry(service, env)).unwrap(),
             ),
             last_used: Instant::now(),
             buffered_integrations: HashSet::new(),
@@ -232,8 +226,7 @@ impl TelemetryCachedClient {
 
 type ServiceString = String;
 type EnvString = String;
-type VersionString = String;
-type TelemetryCachedClientKey = (ServiceString, EnvString, VersionString);
+type TelemetryCachedClientKey = (ServiceString, EnvString);
 
 pub struct TelemetryCachedClientSet {
     pub inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedClient>>>,
@@ -283,7 +276,6 @@ impl TelemetryCachedClientSet {
         &self,
         service: &str,
         env: &str,
-        version: &str,
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
         get_config: F,
@@ -291,7 +283,7 @@ impl TelemetryCachedClientSet {
     where
         F: FnOnce() -> Option<ddtelemetry::config::Config>,
     {
-        let key = (service.to_string(), env.to_string(), version.to_string());
+        let key = (service.to_string(), env.to_string());
 
         let mut map = self.inner.lock_or_panic();
 
@@ -313,14 +305,8 @@ impl TelemetryCachedClientSet {
             return Some(client);
         }
 
-        let client = TelemetryCachedClient::new(
-            service,
-            env,
-            version,
-            instance_id,
-            runtime_meta,
-            get_config,
-        )?;
+        let client =
+            TelemetryCachedClient::new(service, env, instance_id, runtime_meta, get_config)?;
 
         map.insert(key.clone(), client.clone());
 
@@ -340,17 +326,16 @@ impl TelemetryCachedClientSet {
         Some(client)
     }
 
-    pub fn remove_telemetry_client(&self, service: &str, env: &str, version: &str) {
-        let key = (service.to_string(), env.to_string(), version.to_string());
+    pub fn remove_telemetry_client(&self, service: &str, env: &str) {
+        let key = (service.to_string(), env.to_string());
         self.inner.lock_or_panic().remove(&key);
     }
 }
 
-pub fn path_for_telemetry(service: String, env: String, version: String) -> CString {
+pub fn path_for_telemetry(service: &str, env: &str) -> CString {
     let mut hasher = ZwoHasher::default();
     service.hash(&mut hasher);
     env.hash(&mut hasher);
-    version.hash(&mut hasher);
     let hash = hasher.finish();
 
     let mut path = format!(
