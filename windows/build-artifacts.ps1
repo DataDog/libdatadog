@@ -28,7 +28,8 @@ $features = @(
     "datadog-profiling-ffi/ddtelemetry-ffi",
     "datadog-profiling-ffi/demangler",
     "datadog-library-config-ffi",
-    "datadog-log-ffi"
+    "datadog-log-ffi",
+    "ddsketch"
 ) -join ","
 
 Write-Host "Building for features: $features" -ForegroundColor Magenta
