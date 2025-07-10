@@ -157,6 +157,10 @@ impl RequestError {
     pub fn status(&self) -> StatusCode {
         self.code
     }
+
+    pub fn msg(&self) -> &str {
+        &self.msg
+    }
 }
 
 /// TraceExporterError holds different types of errors that occur when handling traces.
