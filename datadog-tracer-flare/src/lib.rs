@@ -23,7 +23,7 @@ use ddcommon::Endpoint;
 use crate::error::FlareError;
 
 pub struct TracerFlareManager {
-    pub listener: Option<Listener>, // Optionnal so we can use the component with another Listener
+    pub listener: Option<Listener>, // Optional so we can use the component with another Listener
     pub agent_url: String,
     pub language: String,
     pub state: State,
