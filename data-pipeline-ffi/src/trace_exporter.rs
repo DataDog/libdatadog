@@ -457,6 +457,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 builder.set_test_session_token(token);
             }
 
+            if config.rates_payload_version {
+                builder.enable_agent_rates_payload_version();
+            }
+
             match builder.build() {
                 Ok(exporter) => {
                     out_handle.as_ptr().write(Box::new(exporter));
