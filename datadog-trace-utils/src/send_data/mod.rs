@@ -205,13 +205,16 @@ impl SendData {
         self.retry_strategy = retry_strategy;
     }
 
-    /// Overrides the set target Endpoint.
+    /// Returns a copy of the SendData with the user-defined endpoint.
     ///
     /// # Arguments
     ///
     /// * `endpoint`: The new endpoint to be used.
-    pub fn set_target(&mut self, endpoint: Endpoint) {
-        self.target = endpoint;
+    pub fn with_endpoint(&self, endpoint: Endpoint) -> SendData{
+        SendData {
+            target: endpoint,
+            ..self.clone()
+        }
     }
 
     /// Sends the data to the target endpoint.
