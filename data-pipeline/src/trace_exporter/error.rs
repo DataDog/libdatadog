@@ -308,3 +308,15 @@ impl Display for TraceExporterError {
 }
 
 impl Error for TraceExporterError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_request_error() {
+        let error = RequestError::new(StatusCode::NOT_FOUND, "Not found");
+        assert_eq!(error.status(), StatusCode::NOT_FOUND);
+        assert_eq!(error.msg(), "Not found")
+    }
+}
