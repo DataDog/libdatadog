@@ -210,7 +210,7 @@ impl SendData {
     /// # Arguments
     ///
     /// * `endpoint`: The new endpoint to be used.
-    pub fn with_endpoint(&self, endpoint: Endpoint) -> SendData{
+    pub fn with_endpoint(&self, endpoint: Endpoint) -> SendData {
         SendData {
             target: endpoint,
             ..self.clone()
