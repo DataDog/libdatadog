@@ -187,6 +187,15 @@ impl SendData {
         &self.target
     }
 
+    /// Returns the target endpoint as mutable.
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the target endpoint.
+    pub fn get_target_mut(&mut self) -> &mut Endpoint {
+        &mut self.target
+    }
+
     /// Returns the payloads to be sent.
     ///
     /// # Returns
