@@ -2295,6 +2295,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_connection_timeout() {
         let exporter = TraceExporterBuilder::default().build().unwrap();
 
