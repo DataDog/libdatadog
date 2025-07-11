@@ -980,4 +980,46 @@ mod tests {
         assert_eq!(res.bytes_sent, 0);
         assert_eq!(res.responses_count_per_code.len(), 0);
     }
+
+    #[test]
+    fn test_with_endpoint() {
+        let header_tags = HEADER_TAGS;
+        let payload = setup_payload(&header_tags);
+        let original_endpoint = Endpoint {
+            api_key: Some(std::borrow::Cow::Borrowed("original-key")),
+            url: "http://originalexample.com/".parse::<hyper::Uri>().unwrap(),
+            timeout_ms: 1000,
+            ..Endpoint::default()
+        };
+
+        let original_data = SendData::new(
+            100,
+            TracerPayloadCollection::V07(vec![payload]),
+            header_tags,
+            &original_endpoint,
+        );
+
+        let new_endpoint = Endpoint {
+            api_key: Some(std::borrow::Cow::Borrowed("new-key")),
+            url: "http://newexample.com/".parse::<hyper::Uri>().unwrap(),
+            timeout_ms: 2000,
+            ..Endpoint::default()
+        };
+
+        let new_data = original_data.with_endpoint(new_endpoint.clone());
+
+        assert_eq!(new_data.target.api_key, new_endpoint.api_key);
+        assert_eq!(new_data.target.url, new_endpoint.url);
+        assert_eq!(new_data.target.timeout_ms, new_endpoint.timeout_ms);
+
+        assert_eq!(new_data.size, original_data.size);
+        assert_eq!(new_data.headers, original_data.headers);
+        assert_eq!(new_data.retry_strategy, original_data.retry_strategy);
+        assert_eq!(
+            new_data.tracer_payloads.size(),
+            original_data.tracer_payloads.size()
+        );
+        #[cfg(feature = "compression")]
+        assert!(matches!(new_data.compression, Compression::None));
+    }
 }
