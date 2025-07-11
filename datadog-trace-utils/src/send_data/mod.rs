@@ -205,7 +205,7 @@ impl SendData {
         self.retry_strategy = retry_strategy;
     }
 
-    /// Returns a copy of the SendData with the user-defined endpoint.
+    /// Returns a clone of the SendData with the user-defined endpoint.
     ///
     /// # Arguments
     ///
@@ -1019,6 +1019,11 @@ mod tests {
             new_data.tracer_payloads.size(),
             original_data.tracer_payloads.size()
         );
+
+        assert_eq!(original_data.target.api_key, original_endpoint.api_key);
+        assert_eq!(original_data.target.url, original_endpoint.url);
+        assert_eq!(original_data.target.timeout_ms, original_endpoint.timeout_ms);
+
         #[cfg(feature = "compression")]
         assert!(matches!(new_data.compression, Compression::None));
     }
