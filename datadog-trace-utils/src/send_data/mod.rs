@@ -1022,7 +1022,10 @@ mod tests {
 
         assert_eq!(original_data.target.api_key, original_endpoint.api_key);
         assert_eq!(original_data.target.url, original_endpoint.url);
-        assert_eq!(original_data.target.timeout_ms, original_endpoint.timeout_ms);
+        assert_eq!(
+            original_data.target.timeout_ms,
+            original_endpoint.timeout_ms
+        );
 
         #[cfg(feature = "compression")]
         assert!(matches!(new_data.compression, Compression::None));
