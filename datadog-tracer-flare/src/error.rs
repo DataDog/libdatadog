@@ -14,6 +14,8 @@ pub enum FlareError {
     ParsingError(String),
     /// Creating the zipped flare failed.
     ZipError(String),
+    /// Sending the flare failed.
+    SendError(String),
 }
 
 impl std::fmt::Display for FlareError {
@@ -23,6 +25,7 @@ impl std::fmt::Display for FlareError {
             FlareError::ListeningError(msg) => write!(f, "Listening failed with: {msg}"),
             FlareError::ParsingError(msg) => write!(f, "Parsing failed with: {msg}"),
             FlareError::ZipError(msg) => write!(f, "Creating the zip failed with: {msg}"),
+            FlareError::SendError(msg) => write!(f, "Sending the flare failed with: {msg}"),
         }
     }
 }
