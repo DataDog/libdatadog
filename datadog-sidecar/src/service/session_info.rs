@@ -42,6 +42,7 @@ pub(crate) struct SessionInfo {
         Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
     pub(crate) session_id: String,
     pub(crate) pid: Arc<AtomicI32>,
+    pub(crate) remote_config_enabled: Arc<Mutex<bool>>,
 }
 
 impl Clone for SessionInfo {
@@ -60,6 +61,7 @@ impl Clone for SessionInfo {
             log_guard: self.log_guard.clone(),
             session_id: self.session_id.clone(),
             pid: self.pid.clone(),
+            remote_config_enabled: self.remote_config_enabled.clone(),
         }
     }
 }

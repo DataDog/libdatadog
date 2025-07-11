@@ -3,7 +3,6 @@
 
 // imports for structs defined in this file
 use crate::config;
-use crate::service::telemetry::enqueued_telemetry_data::EnqueuedTelemetryData;
 use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
@@ -41,7 +40,7 @@ mod serialized_tracer_header_tags;
 mod session_info;
 mod sidecar_interface;
 pub(crate) mod sidecar_server;
-mod telemetry;
+pub mod telemetry;
 pub(crate) mod tracing;
 
 pub(crate) use telemetry::telemetry_action_receiver_task;
@@ -52,6 +51,7 @@ pub struct SessionConfig {
     pub endpoint: Endpoint,
     pub dogstatsd_endpoint: Endpoint,
     pub language: String,
+    pub language_version: String,
     pub tracer_version: String,
     pub flush_interval: Duration,
     pub remote_config_poll_interval: Duration,
@@ -62,6 +62,7 @@ pub struct SessionConfig {
     pub log_file: config::LogMethod,
     pub remote_config_products: Vec<RemoteConfigProduct>,
     pub remote_config_capabilities: Vec<RemoteConfigCapabilities>,
+    pub remote_config_enabled: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -70,4 +71,5 @@ pub enum SidecarAction {
     RegisterTelemetryMetric(MetricContext),
     AddTelemetryMetricPoint((String, f64, Vec<Tag>)),
     PhpComposerTelemetryFile(PathBuf),
+    ClearQueueId,
 }
