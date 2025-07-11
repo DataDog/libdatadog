@@ -205,13 +205,16 @@ impl SendData {
         self.retry_strategy = retry_strategy;
     }
 
-    /// Overrides the set target Endpoint.
+    /// Returns a clone of the SendData with the user-defined endpoint.
     ///
     /// # Arguments
     ///
     /// * `endpoint`: The new endpoint to be used.
-    pub fn set_target(&mut self, endpoint: Endpoint) {
-        self.target = endpoint;
+    pub fn with_endpoint(&self, endpoint: Endpoint) -> SendData {
+        SendData {
+            target: endpoint,
+            ..self.clone()
+        }
     }
 
     /// Sends the data to the target endpoint.
@@ -976,5 +979,55 @@ mod tests {
         assert_eq!(res.chunks_sent, 0);
         assert_eq!(res.bytes_sent, 0);
         assert_eq!(res.responses_count_per_code.len(), 0);
+    }
+
+    #[test]
+    fn test_with_endpoint() {
+        let header_tags = HEADER_TAGS;
+        let payload = setup_payload(&header_tags);
+        let original_endpoint = Endpoint {
+            api_key: Some(std::borrow::Cow::Borrowed("original-key")),
+            url: "http://originalexample.com/".parse::<hyper::Uri>().unwrap(),
+            timeout_ms: 1000,
+            ..Endpoint::default()
+        };
+
+        let original_data = SendData::new(
+            100,
+            TracerPayloadCollection::V07(vec![payload]),
+            header_tags,
+            &original_endpoint,
+        );
+
+        let new_endpoint = Endpoint {
+            api_key: Some(std::borrow::Cow::Borrowed("new-key")),
+            url: "http://newexample.com/".parse::<hyper::Uri>().unwrap(),
+            timeout_ms: 2000,
+            ..Endpoint::default()
+        };
+
+        let new_data = original_data.with_endpoint(new_endpoint.clone());
+
+        assert_eq!(new_data.target.api_key, new_endpoint.api_key);
+        assert_eq!(new_data.target.url, new_endpoint.url);
+        assert_eq!(new_data.target.timeout_ms, new_endpoint.timeout_ms);
+
+        assert_eq!(new_data.size, original_data.size);
+        assert_eq!(new_data.headers, original_data.headers);
+        assert_eq!(new_data.retry_strategy, original_data.retry_strategy);
+        assert_eq!(
+            new_data.tracer_payloads.size(),
+            original_data.tracer_payloads.size()
+        );
+
+        assert_eq!(original_data.target.api_key, original_endpoint.api_key);
+        assert_eq!(original_data.target.url, original_endpoint.url);
+        assert_eq!(
+            original_data.target.timeout_ms,
+            original_endpoint.timeout_ms
+        );
+
+        #[cfg(feature = "compression")]
+        assert!(matches!(new_data.compression, Compression::None));
     }
 }
