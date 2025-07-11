@@ -10,7 +10,7 @@ use ddcommon_ffi::Slice;
 use std::ptr;
 
 /// Holds a set of labels. Labels are not sorted--the input order does matter.
-pub type LabelsSet = SliceSet<Label>;
+type LabelsSet = SliceSet<Label>;
 
 /// Creates a new, empty labels set.
 ///

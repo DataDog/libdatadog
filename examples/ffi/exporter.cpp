@@ -6,185 +6,383 @@
 #include <datadog/profiling.h>
 #include <memory>
 #include <thread>
+#include <iostream>
+#include <string>
+#include <chrono>
 
-static ddog_CharSlice to_slice_c_char(const char *s) { return {.ptr = s, .len = strlen(s)}; }
-
-struct Deleter {
-  void operator()(ddog_prof_Profile *object) { ddog_prof_Profile_drop(object); }
-};
-
-void print_error(const char *s, const ddog_Error &err) {
-  auto charslice = ddog_Error_message(&err);
-  printf("%s (%.*s)\n", s, static_cast<int>(charslice.len), charslice.ptr);
+ddog_CharSlice to_slice_c_char(const char *s) {
+  return ddog_CharSlice{.ptr = s, .len = strlen(s)};
 }
 
-int main(int argc, char *argv[]) {
+struct ProfileDeleter {
+  void operator()(ddog_prof_EncodedProfile *object) { ddog_prof_EncodedProfile_drop(&object); }
+};
+
+void print_error(const char *s, const ddog_prof_Profile_Error &err) {
+  ddog_CharSlice message = ddog_prof_Profile_Error_message(err);
+  printf("%s: %.*s\n", s, static_cast<int>(message.len), message.ptr);
+}
+
+int main(int argc, char **argv) {
   if (argc != 2) {
-    printf("Usage: exporter SERVICE_NAME\n");
-    return 1;
-  }
-  const char *api_key = getenv("DD_API_KEY");
-  if (!api_key) {
-    printf("DD_API_KEY environment variable is no set\n");
+    printf("Usage: %s <service_name>\n", argv[0]);
     return 1;
   }
 
-  const auto service = argv[1];
-
-  const ddog_prof_ValueType wall_time = {
-      .type_ = DDOG_CHARSLICE_C_BARE("wall-time"),
-      .unit = DDOG_CHARSLICE_C_BARE("nanoseconds"),
-  };
-
-  const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
-  const ddog_prof_Period period = {wall_time, 60};
-  ddog_prof_Profile_NewResult profile_new_result = ddog_prof_Profile_new(sample_types, &period);
-  if (profile_new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {
-    print_error("Failed to make new profile: ", profile_new_result.err);
-    ddog_Error_drop(&profile_new_result.err);
-    exit(EXIT_FAILURE);
+  // Create string table first
+  ddog_prof_StringTable_NewResult strings_result = ddog_prof_StringTable_new();
+  if (strings_result.tag != DDOG_PROF_STRING_TABLE_NEW_RESULT_OK) {
+    print_error("Failed to create string table", strings_result.err);
+    return 1;
   }
-  std::unique_ptr<ddog_prof_Profile, Deleter> profile{&profile_new_result.ok};
+  ddog_prof_StringTable *strings = strings_result.ok;
 
-  ddog_prof_Location root_location = {
-      // yes, a zero-initialized mapping is valid
-      .mapping = {},
-      .function =
-          {
-              .name = DDOG_CHARSLICE_C_BARE("{main}"),
-              .filename = DDOG_CHARSLICE_C_BARE("/srv/example/index.php"),
-          },
+  // Create profile builder
+  ddog_prof_ValueType value_type = {
+      .type = ddog_prof_StringTable_intern_utf8(strings, to_slice_c_char("wall-time")).ok,
+      .unit = ddog_prof_StringTable_intern_utf8(strings, to_slice_c_char("nanoseconds")).ok,
   };
 
-  int64_t value = 10;
-  const ddog_prof_Label label = {
-      .key = DDOG_CHARSLICE_C_BARE("language"),
-      .str = DDOG_CHARSLICE_C_BARE("php"),
+  ddog_prof_Slice_ValueType value_types = {
+      .ptr = &value_type,
+      .len = 1,
   };
+
+  ddog_Timespec start = {
+      .seconds = 0,
+      .nanoseconds = 0,
+  };
+
+  ddog_prof_ProfileBuilder_NewResult builder_result = ddog_prof_ProfileBuilder_new(start);
+  if (builder_result.tag != DDOG_PROF_PROFILE_BUILDER_NEW_RESULT_OK) {
+    print_error("Failed to create profile builder", builder_result.err);
+    ddog_prof_StringTable_drop(&strings);
+    return 1;
+  }
+  ddog_prof_ProfileBuilder *builder = builder_result.ok;
+
+  // Create function store
+  ddog_prof_Store_Function *functions = ddog_prof_Store_Function_new();
+  if (!functions) {
+    printf("Failed to create function store\n");
+    ddog_prof_StringTable_drop(&strings);
+    ddog_prof_ProfileBuilder_drop(&builder);
+    return 1;
+  }
+
+  // Add a function
+  ddog_prof_Function function = {
+      .id = 0,
+      .name = ddog_prof_StringTable_intern_utf8(strings, to_slice_c_char("root")).ok,
+      .system_name = ddog_prof_StringTable_intern_utf8(strings, to_slice_c_char("root")).ok,
+      .filename = ddog_prof_StringTable_intern_utf8(strings, to_slice_c_char("root.cpp")).ok,
+  };
+
+  ddog_prof_Store_InsertResult add_func_result = ddog_prof_Store_Function_insert(functions, function);
+  if (add_func_result.tag != DDOG_PROF_STORE_INSERT_RESULT_OK) {
+    print_error("Failed to insert function", add_func_result.err);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
+    ddog_prof_ProfileBuilder_drop(&builder);
+    return 1;
+  }
+
+  // Create location store
+  ddog_prof_Store_Location *locations = ddog_prof_Store_Location_new();
+  if (!locations) {
+    printf("Failed to create location store\n");
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
+    ddog_prof_ProfileBuilder_drop(&builder);
+    return 1;
+  }
+
+  // Add a location
+  ddog_prof_Line line = {
+      .function_id = add_func_result.ok,
+      .lineno = 42,
+  };
+
+  ddog_prof_Location location = {
+      .id = 1,
+      .mapping_id = 0,
+      .address = 0,
+      .line = line,
+  };
+
+  ddog_prof_Store_InsertResult add_loc_result = ddog_prof_Store_Location_insert(locations, location);
+  if (add_loc_result.tag != DDOG_PROF_STORE_INSERT_RESULT_OK) {
+    print_error("Failed to insert location", add_loc_result.err);
+    ddog_prof_Store_Location_drop(&locations);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
+    ddog_prof_ProfileBuilder_drop(&builder);
+    return 1;
+  }
+
+  // Create sample manager
+  ddog_prof_SampleManagerNewResult samples_result = ddog_prof_SampleManager_new(value_types);
+  if (samples_result.tag != DDOG_PROF_SAMPLE_MANAGER_NEW_RESULT_OK) {
+    print_error("Failed to create sample manager", samples_result.err);
+    ddog_prof_Store_Location_drop(&locations);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
+    ddog_prof_ProfileBuilder_drop(&builder);
+    return 1;
+  }
+  ddog_prof_SampleManager *samples = samples_result.ok;
+
+  // Create labels set
+  ddog_prof_LabelsSet *labels_set = ddog_prof_LabelsSet_new();
+  if (!labels_set) {
+    printf("Failed to create labels set\n");
+    ddog_prof_SampleManager_drop(&samples);
+    ddog_prof_Store_Location_drop(&locations);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
+    ddog_prof_ProfileBuilder_drop(&builder);
+    return 1;
+  }
+
+  // Create stack traces
+  ddog_prof_StackTraceSet *stack_traces = ddog_prof_StackTraceSet_new();
+  if (!stack_traces) {
+    printf("Failed to create stack traces\n");
+    ddog_prof_LabelsSet_drop(&labels_set);
+    ddog_prof_SampleManager_drop(&samples);
+    ddog_prof_Store_Location_drop(&locations);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
+    ddog_prof_ProfileBuilder_drop(&builder);
+    return 1;
+  }
+
+  // Create endpoints
+  ddog_prof_Endpoints *endpoints = ddog_prof_Endpoints_new();
+  if (!endpoints) {
+    printf("Failed to create endpoints\n");
+    ddog_prof_StackTraceSet_drop(&stack_traces);
+    ddog_prof_LabelsSet_drop(&labels_set);
+    ddog_prof_SampleManager_drop(&samples);
+    ddog_prof_Store_Location_drop(&locations);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
+    ddog_prof_ProfileBuilder_drop(&builder);
+    return 1;
+  }
+
+  // Add a stack trace
+  const uint64_t locations_array[] = {1}; // Root location ID
+  const ddog_Slice_U64 locations_slice = {
+      .ptr = locations_array,
+      .len = 1,
+  };
+
+  ddog_prof_LabelsSet_InsertResult stack_id_result = ddog_prof_StackTraceSet_insert(stack_traces, locations_slice);
+  if (stack_id_result.tag != DDOG_PROF_LABELS_SET_INSERT_RESULT_OK) {
+    print_error("Failed to insert stack trace", stack_id_result.err);
+    ddog_prof_Endpoints_drop(&endpoints);
+    ddog_prof_StackTraceSet_drop(&stack_traces);
+    ddog_prof_LabelsSet_drop(&labels_set);
+    ddog_prof_SampleManager_drop(&samples);
+    ddog_prof_Store_Location_drop(&locations);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
+    ddog_prof_ProfileBuilder_drop(&builder);
+    return 1;
+  }
+
+  // Add a sample
+  int64_t sample_value = 10000000; // 10ms
+  ddog_Slice_I64 values = {
+      .ptr = &sample_value,
+      .len = 1,
+  };
+
   ddog_prof_Sample sample = {
-      .locations = {&root_location, 1},
-      .values = {&value, 1},
-      .labels = {&label, 1},
+      .stack_trace_id = stack_id_result.ok,
+      .values = values,
+      .labels = {0},
+      .timestamp = 0,
   };
-  auto add_result = ddog_prof_Profile_add(profile.get(), sample, 0);
-  if (add_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
-    print_error("Failed to add sample to profile: ", add_result.err);
-    ddog_Error_drop(&add_result.err);
+
+  ddog_prof_Profile_VoidResult add_sample_result = ddog_prof_SampleManager_add_sample(samples, sample);
+  if (add_sample_result.tag != DDOG_PROF_PROFILE_VOID_RESULT_OK) {
+    print_error("Failed to add sample", add_sample_result.err);
+    ddog_prof_Endpoints_drop(&endpoints);
+    ddog_prof_StackTraceSet_drop(&stack_traces);
+    ddog_prof_LabelsSet_drop(&labels_set);
+    ddog_prof_SampleManager_drop(&samples);
+    ddog_prof_Store_Location_drop(&locations);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
+    ddog_prof_ProfileBuilder_drop(&builder);
     return 1;
   }
 
-  uintptr_t offset[1] = {0};
-  ddog_prof_Slice_Usize offsets_slice = {.ptr = offset, .len = 1};
-  ddog_CharSlice empty_charslice = DDOG_CHARSLICE_C_BARE("");
-
-  auto upscaling_addresult = ddog_prof_Profile_add_upscaling_rule_proportional(
-      profile.get(), offsets_slice, empty_charslice, empty_charslice, 1, 1);
-
-  if (upscaling_addresult.tag == DDOG_PROF_PROFILE_RESULT_ERR) {
-    print_error("Failed to add an upscaling rule: ", upscaling_addresult.err);
-    ddog_Error_drop(&upscaling_addresult.err);
-    // in this specific case, we want to fail the execution. But in general, we should not
+  // Add functions to the profile
+  ddog_prof_Profile_VoidResult add_funcs_result = ddog_prof_ProfileBuilder_add_functions(builder, functions, strings);
+  if (add_funcs_result.tag != DDOG_PROF_PROFILE_VOID_RESULT_OK) {
+    print_error("Failed to add functions", add_funcs_result.err);
+    ddog_prof_Endpoints_drop(&endpoints);
+    ddog_prof_StackTraceSet_drop(&stack_traces);
+    ddog_prof_LabelsSet_drop(&labels_set);
+    ddog_prof_SampleManager_drop(&samples);
+    ddog_prof_Store_Location_drop(&locations);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
+    ddog_prof_ProfileBuilder_drop(&builder);
     return 1;
   }
 
-  ddog_prof_Profile_SerializeResult serialize_result =
-      ddog_prof_Profile_serialize(profile.get(), nullptr, nullptr);
-  if (serialize_result.tag == DDOG_PROF_PROFILE_SERIALIZE_RESULT_ERR) {
-    print_error("Failed to serialize profile: ", serialize_result.err);
-    ddog_Error_drop(&serialize_result.err);
+  // Add locations to the profile
+  ddog_prof_Profile_VoidResult add_locs_result = ddog_prof_ProfileBuilder_add_locations(builder, locations);
+  if (add_locs_result.tag != DDOG_PROF_PROFILE_VOID_RESULT_OK) {
+    print_error("Failed to add locations", add_locs_result.err);
+    ddog_prof_Endpoints_drop(&endpoints);
+    ddog_prof_StackTraceSet_drop(&stack_traces);
+    ddog_prof_LabelsSet_drop(&labels_set);
+    ddog_prof_SampleManager_drop(&samples);
+    ddog_prof_Store_Location_drop(&locations);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
+    ddog_prof_ProfileBuilder_drop(&builder);
     return 1;
   }
 
-  auto *encoded_profile = &serialize_result.ok;
+  // Add samples to the profile
+  ddog_prof_Profile_VoidResult add_samples_result = ddog_prof_ProfileBuilder_add_samples(builder, samples, labels_set, strings, stack_traces, endpoints);
+  if (add_samples_result.tag != DDOG_PROF_PROFILE_VOID_RESULT_OK) {
+    print_error("Failed to add samples", add_samples_result.err);
+    ddog_prof_Endpoints_drop(&endpoints);
+    ddog_prof_StackTraceSet_drop(&stack_traces);
+    ddog_prof_LabelsSet_drop(&labels_set);
+    ddog_prof_SampleManager_drop(&samples);
+    ddog_prof_Store_Location_drop(&locations);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
+    ddog_prof_ProfileBuilder_drop(&builder);
+    return 1;
+  }
 
-  auto endpoint =
-      ddog_prof_Endpoint_agentless(DDOG_CHARSLICE_C_BARE("datad0g.com"), to_slice_c_char(api_key));
+  // Build the profile
+  ddog_prof_ProfileBuilder_BuildResult build_result = ddog_prof_ProfileBuilder_build(&builder, NULL);
+  if (build_result.tag != DDOG_PROF_PROFILE_BUILDER_BUILD_RESULT_OK) {
+    print_error("Failed to build profile", build_result.err);
+    ddog_prof_Endpoints_drop(&endpoints);
+    ddog_prof_StackTraceSet_drop(&stack_traces);
+    ddog_prof_LabelsSet_drop(&labels_set);
+    ddog_prof_SampleManager_drop(&samples);
+    ddog_prof_Store_Location_drop(&locations);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
+    ddog_prof_ProfileBuilder_drop(&builder);
+    return 1;
+  }
 
+  // Create a request
   ddog_Vec_Tag tags = ddog_Vec_Tag_new();
-  ddog_Vec_Tag_PushResult tag_result =
-      ddog_Vec_Tag_push(&tags, DDOG_CHARSLICE_C_BARE("service"), to_slice_c_char(service));
-  if (tag_result.tag == DDOG_VEC_TAG_PUSH_RESULT_ERR) {
-    print_error("Failed to push tag: ", tag_result.err);
-    ddog_Error_drop(&tag_result.err);
+  ddog_Vec_Tag_PushResult push_result = ddog_Vec_Tag_push(&tags, ddog_CharSlice{.ptr = "service", .len = 7}, to_slice_c_char(argv[1]));
+  if (push_result.tag != DDOG_VEC_TAG_PUSH_RESULT_OK) {
+    ddog_CharSlice message = ddog_Error_message(&push_result.err);
+    printf("Failed to push tag: %.*s\n", static_cast<int>(message.len), message.ptr);
+    ddog_Error_drop(&push_result.err);
+    ddog_Vec_Tag_drop(tags);
+    ddog_prof_Endpoints_drop(&endpoints);
+    ddog_prof_StackTraceSet_drop(&stack_traces);
+    ddog_prof_LabelsSet_drop(&labels_set);
+    ddog_prof_SampleManager_drop(&samples);
+    ddog_prof_Store_Location_drop(&locations);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
     return 1;
   }
 
-  auto exporter_new_result = ddog_prof_Exporter_new(
-      DDOG_CHARSLICE_C_BARE("exporter-example"), DDOG_CHARSLICE_C_BARE("1.2.3"),
-      DDOG_CHARSLICE_C_BARE("native"), &tags, endpoint);
-  ddog_Vec_Tag_drop(tags);
+  // Create an exporter
+  ddog_prof_Slice_Exporter_File empty_file = ddog_prof_Exporter_Slice_File_empty();
+  ddog_prof_ProfileExporter_Result exporter_result = ddog_prof_Exporter_new(
+      ddog_CharSlice{.ptr = "dd-trace-cpp", .len = 11},
+      ddog_CharSlice{.ptr = "1.0.0", .len = 5},
+      ddog_CharSlice{.ptr = "cpp", .len = 3},
+      &tags,
+      ddog_prof_Endpoint_agentless(ddog_CharSlice{.ptr = "datadoghq.com", .len = 13}, ddog_CharSlice{.ptr = "api_key", .len = 7}));
 
-  if (exporter_new_result.tag == DDOG_PROF_PROFILE_EXPORTER_RESULT_ERR_HANDLE_PROFILE_EXPORTER) {
-    print_error("Failed to create exporter: ", exporter_new_result.err);
-    ddog_Error_drop(&exporter_new_result.err);
+  if (exporter_result.tag != DDOG_PROF_PROFILE_EXPORTER_RESULT_OK_HANDLE_PROFILE_EXPORTER) {
+    ddog_CharSlice message = ddog_Error_message(&exporter_result.err);
+    printf("Failed to create exporter: %.*s\n", static_cast<int>(message.len), message.ptr);
+    ddog_Error_drop(&exporter_result.err);
+    ddog_Vec_Tag_drop(tags);
+    ddog_prof_Endpoints_drop(&endpoints);
+    ddog_prof_StackTraceSet_drop(&stack_traces);
+    ddog_prof_LabelsSet_drop(&labels_set);
+    ddog_prof_SampleManager_drop(&samples);
+    ddog_prof_Store_Location_drop(&locations);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
     return 1;
   }
 
-  auto exporter = &exporter_new_result.ok;
+  ddog_prof_ProfileExporter exporter = exporter_result.ok;
 
-  auto files_to_compress_and_export = ddog_prof_Exporter_Slice_File_empty();
-  auto files_to_export_unmodified = ddog_prof_Exporter_Slice_File_empty();
+  // Build request
+  ddog_prof_Request_Result request_result = ddog_prof_Exporter_Request_build(
+      &exporter,
+      build_result.ok,
+      empty_file,
+      empty_file,
+      NULL,
+      NULL,
+      NULL);
 
-  ddog_CharSlice internal_metadata_example = DDOG_CHARSLICE_C_BARE(
-      "{\"no_signals_workaround_enabled\": \"true\", \"execution_trace_enabled\": \"false\"}");
-
-  ddog_CharSlice info_example =
-      DDOG_CHARSLICE_C_BARE("{\"application\": {\"start_time\": \"2024-01-24T11:17:22+0000\"}, "
-                            "\"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
-
-  auto res = ddog_prof_Exporter_set_timeout(exporter, 30000);
-  if (res.tag == DDOG_VOID_RESULT_ERR) {
-    print_error("Failed to set the timeout", res.err);
-    ddog_Error_drop(&res.err);
+  if (request_result.tag != DDOG_PROF_REQUEST_RESULT_OK_HANDLE_REQUEST) {
+    ddog_CharSlice message = ddog_Error_message(&request_result.err);
+    printf("Failed to build request: %.*s\n", static_cast<int>(message.len), message.ptr);
+    ddog_Error_drop(&request_result.err);
+    ddog_prof_Exporter_drop(&exporter);
+    ddog_Vec_Tag_drop(tags);
+    ddog_prof_Endpoints_drop(&endpoints);
+    ddog_prof_StackTraceSet_drop(&stack_traces);
+    ddog_prof_LabelsSet_drop(&labels_set);
+    ddog_prof_SampleManager_drop(&samples);
+    ddog_prof_Store_Location_drop(&locations);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
     return 1;
   }
 
-  auto build_result = ddog_prof_Exporter_Request_build(
-      exporter, encoded_profile, files_to_compress_and_export, files_to_export_unmodified, nullptr,
-      &internal_metadata_example, &info_example);
-  ddog_prof_EncodedProfile_drop(encoded_profile);
-
-  if (build_result.tag == DDOG_PROF_REQUEST_RESULT_ERR_HANDLE_REQUEST) {
-    print_error("Failed to build request: ", build_result.err);
-    ddog_Error_drop(&build_result.err);
-    return 1;
-  }
-
-  auto request = &build_result.ok;
-
-  auto cancel = ddog_CancellationToken_new();
-  auto cancel_for_background_thread = ddog_CancellationToken_clone(&cancel);
-
-  // As an example of CancellationToken usage, here we create a background
-  // thread that sleeps for some time and then cancels a request early (e.g.
-  // before the timeout in ddog_ProfileExporter_send is hit).
-  //
-  // If the request is faster than the sleep time, no cancellation takes place.
-  std::thread trigger_cancel_if_request_takes_too_long_thread(
-      [](ddog_CancellationToken cancel_for_background_thread) {
-        int timeout_ms = 5000;
-        std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms));
-        printf("Request took longer than %d ms, triggering asynchronous "
-               "cancellation\n",
-               timeout_ms);
-        ddog_CancellationToken_cancel(&cancel_for_background_thread);
-        ddog_CancellationToken_drop(&cancel_for_background_thread);
-      },
-      cancel_for_background_thread);
-  trigger_cancel_if_request_takes_too_long_thread.detach();
-
-  int exit_code = 0;
-  auto send_result = ddog_prof_Exporter_send(exporter, request, &cancel);
-  if (send_result.tag == DDOG_PROF_RESULT_HTTP_STATUS_ERR_HTTP_STATUS) {
-    print_error("Failed to send profile: ", send_result.err);
-    exit_code = 1;
-    ddog_Error_drop(&send_result.err);
-  } else {
-    printf("Response code: %d\n", send_result.ok.code);
-  }
-
-  ddog_prof_Exporter_Request_drop(request);
-  ddog_prof_Exporter_drop(exporter);
+  // Send request
+  ddog_CancellationToken cancel = ddog_CancellationToken_new();
+  ddog_prof_Result_HttpStatus send_result = ddog_prof_Exporter_send(&exporter, &request_result.ok, &cancel);
   ddog_CancellationToken_drop(&cancel);
-  return exit_code;
+
+  if (send_result.tag != DDOG_PROF_RESULT_HTTP_STATUS_OK_HTTP_STATUS) {
+    ddog_CharSlice message = ddog_Error_message(&send_result.err);
+    printf("Failed to send request: %.*s\n", static_cast<int>(message.len), message.ptr);
+    ddog_Error_drop(&send_result.err);
+    ddog_prof_Exporter_drop(&exporter);
+    ddog_Vec_Tag_drop(tags);
+    ddog_prof_Endpoints_drop(&endpoints);
+    ddog_prof_StackTraceSet_drop(&stack_traces);
+    ddog_prof_LabelsSet_drop(&labels_set);
+    ddog_prof_SampleManager_drop(&samples);
+    ddog_prof_Store_Location_drop(&locations);
+    ddog_prof_Store_Function_drop(&functions);
+    ddog_prof_StringTable_drop(&strings);
+    return 1;
+  }
+
+  printf("Profile sent successfully (HTTP %d)\n", send_result.ok.code);
+
+  // Clean up
+  ddog_prof_Exporter_drop(&exporter);
+  ddog_Vec_Tag_drop(tags);
+  ddog_prof_Endpoints_drop(&endpoints);
+  ddog_prof_StackTraceSet_drop(&stack_traces);
+  ddog_prof_LabelsSet_drop(&labels_set);
+  ddog_prof_SampleManager_drop(&samples);
+  ddog_prof_Store_Location_drop(&locations);
+  ddog_prof_Store_Function_drop(&functions);
+  ddog_prof_StringTable_drop(&strings);
+
+  return 0;
 }

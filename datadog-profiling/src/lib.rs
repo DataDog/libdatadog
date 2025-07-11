@@ -6,10 +6,10 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-pub mod api;
+// pub mod api;
 pub mod collections;
 pub mod exporter;
-pub mod internal;
+// pub mod internal;
 pub mod iter;
-pub mod pprof;
+// pub mod pprof;
 pub mod profiles;

@@ -6,7 +6,7 @@
 
 use datadog_profiling::exporter;
 use datadog_profiling::exporter::{ProfileExporter, Request};
-use datadog_profiling::internal::EncodedProfile;
+use datadog_profiling::profiles::EncodedProfile;
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use ddcommon_ffi::{

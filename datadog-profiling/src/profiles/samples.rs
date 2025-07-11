@@ -15,7 +15,6 @@ type HashMap<K, V> =
 // Re-export SliceId from collections
 pub use crate::collections::SliceId;
 
-#[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct Sample<'a> {
     pub stack_trace_id: SliceId,

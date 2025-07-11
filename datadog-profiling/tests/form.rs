@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_profiling::exporter::{ProfileExporter, Request};
-use datadog_profiling::internal::EncodedProfile;
+use datadog_profiling::profiles::EncodedProfile;
 
 fn multipart(
     exporter: &mut ProfileExporter,

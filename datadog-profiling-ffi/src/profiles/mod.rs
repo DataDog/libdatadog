@@ -24,30 +24,6 @@ pub use datadog_profiling::profiles::ProfileError;
 
 use ddcommon_ffi::CharSlice;
 
-/// A half-open range, similar to the std Range except it's Copy and not an
-/// iterator.
-///
-/// No modifying start/end!
-#[derive(Copy, Clone, Debug)]
-pub struct Range {
-    pub(crate) start: u32,
-    pub(crate) end: u32,
-}
-
-impl From<Range> for core::ops::Range<usize> {
-    fn from(range: Range) -> Self {
-        Self::from(&range)
-    }
-}
-
-impl From<&Range> for core::ops::Range<usize> {
-    fn from(range: &Range) -> Self {
-        let start = range.start as usize;
-        let end = range.end as usize;
-        Self { start, end }
-    }
-}
-
 /// Returns a short description for the error. The message is a static string
 /// and doesn't need any free/dtor/drop.
 #[no_mangle]

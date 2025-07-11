@@ -190,3 +190,16 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_build(
         Err(err) => ProfileBuilderBuildResult::Err(err),
     }
 }
+
+/// # Safety
+///
+/// Only pass a pointer to a valid reference to a `ddog_prof_EncodedProfile`, or null.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
+    profile: *mut *mut EncodedProfile,
+) {
+    if !profile.is_null() && !(*profile).is_null() {
+        drop(Box::from_raw(*profile));
+        *profile = std::ptr::null_mut();
+    }
+}

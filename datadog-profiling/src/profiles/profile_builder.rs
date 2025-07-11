@@ -274,8 +274,9 @@ impl<'a> ProfileBuilder<'a> {
 
             // Add endpoint label if we found one
             if let Some(endpoint_str_offset) = endpoint_str_offset {
+                let endpoint_str = endpoints.strings().lookup(endpoint_str_offset)?;
                 self.endpoint_stats
-                    .add_endpoint_count(endpoint_str_offset, 1)?;
+                    .add_endpoint_count(endpoint_str.to_string(), 1)?;
 
                 let label = Record::<_, 3, NO_OPT_ZERO>::from(Label {
                     key: Record::from(StringTable::TRACE_ENDPOINT_OFFSET),

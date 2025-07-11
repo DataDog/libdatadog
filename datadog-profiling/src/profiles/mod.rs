@@ -18,3 +18,10 @@ pub use labels_set::*;
 pub use profile_builder::*;
 pub use samples::*;
 pub use stack_trace_set::*;
+
+// todo: can we remove this?
+#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
+#[repr(C)]
+pub struct ManagedStringId {
+    pub value: u32,
+}
