@@ -70,6 +70,8 @@ pub fn main() {
         f.push("datadog-library-config-ffi".to_string());
         #[cfg(feature = "log")]
         f.push("datadog-log-ffi".to_string());
+        #[cfg(feature = "ddsketch")]
+        f.push("ddsketch-ffi".to_string());
         f
     };
 
