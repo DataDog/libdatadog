@@ -3,11 +3,13 @@
 pub mod agent_response;
 pub mod builder;
 pub mod error;
+pub mod metrics;
 
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
 
 use self::agent_response::AgentResponse;
+use self::metrics::MetricsEmitter;
 use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
@@ -39,8 +41,7 @@ use ddcommon::tag::Tag;
 use ddcommon::MutexExt;
 use ddcommon::{hyper_migration, Endpoint};
 use ddtelemetry::worker::TelemetryWorker;
-use dogstatsd_client::{Client, DogStatsDAction};
-use either::Either;
+use dogstatsd_client::Client;
 use http_body_util::BodyExt;
 use hyper::http::uri::PathAndQuery;
 use hyper::{header::CONTENT_TYPE, Method, Uri};
@@ -50,7 +51,7 @@ use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr, time};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] = ["client", "server", "producer", "consumer"];
 const STATS_ENDPOINT: &str = "/v0.6/stats";
@@ -846,29 +847,8 @@ impl TraceExporter {
 
     /// Emit a health metric to dogstatsd
     fn emit_metric(&self, metric: HealthMetric, custom_tags: Option<Vec<&Tag>>) {
-        let has_custom_tags = custom_tags.is_some();
-        if let Some(flusher) = &self.dogstatsd {
-            let tags = match custom_tags {
-                None => Either::Left(&self.common_stats_tags),
-                Some(custom) => Either::Right(self.common_stats_tags.iter().chain(custom)),
-            };
-            match metric {
-                HealthMetric::Count(name, c) => {
-                    debug!(
-                        metric_name = name,
-                        count = c,
-                        has_custom_tags = has_custom_tags,
-                        "Emitting health metric to dogstatsd"
-                    );
-                    flusher.send(vec![DogStatsDAction::Count(name, c, tags.into_iter())])
-                }
-            }
-        } else {
-            debug!(
-                metric = ?metric,
-                "Skipping metric emission - dogstatsd client not configured"
-            );
-        }
+        let emitter = MetricsEmitter::new(self.dogstatsd.as_ref(), &self.common_stats_tags);
+        emitter.emit(metric, custom_tags);
     }
 
     /// Add all spans from the given iterator into the stats concentrator
