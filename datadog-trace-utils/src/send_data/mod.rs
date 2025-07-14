@@ -17,7 +17,7 @@ use ddcommon::{
 };
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use hyper::header::CONTENT_TYPE;
+use hyper::header::{CONTENT_TYPE, HeaderValue};
 use send_data_result::SendDataResult;
 use std::collections::HashMap;
 #[cfg(feature = "compression")]
@@ -187,15 +187,6 @@ impl SendData {
         &self.target
     }
 
-    /// Returns the target endpoint as mutable.
-    ///
-    /// # Returns
-    ///
-    /// A mutable reference to the target endpoint.
-    pub fn get_target_mut(&mut self) -> &mut Endpoint {
-        &mut self.target
-    }
-
     /// Returns the payloads to be sent.
     ///
     /// # Returns
@@ -224,6 +215,15 @@ impl SendData {
             target: endpoint,
             ..self.clone()
         }
+    }
+
+    /// Overrides the set API key.
+    ///
+    /// # Arguments
+    ///
+    /// * `api_key`: The new API key to be used.
+    pub fn set_api_key(&mut self, api_key: &str) {
+        self.target.api_key = Some(api_key.to_string().into());
     }
 
     /// Sends the data to the target endpoint.
