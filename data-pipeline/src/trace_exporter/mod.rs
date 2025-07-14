@@ -650,23 +650,52 @@ impl TraceExporter {
         trace_count: usize,
         uri: Uri,
     ) -> hyper::Request<hyper_migration::Body> {
-        let mut req_builder = hyper::Request::builder()
+        let mut req_builder = self.create_base_request_builder(uri);
+        req_builder = self.add_metadata_headers(req_builder);
+        req_builder = self.add_trace_headers(req_builder, trace_count);
+        self.build_request_with_body(req_builder, data)
+    }
+
+    /// Create base HTTP request builder with URI, user agent, and method
+    fn create_base_request_builder(&self, uri: Uri) -> hyper::http::request::Builder {
+        hyper::Request::builder()
             .uri(uri)
             .header(
                 hyper::header::USER_AGENT,
                 concat!("Tracer/", env!("CARGO_PKG_VERSION")),
             )
-            .method(Method::POST);
+            .method(Method::POST)
+    }
 
+    /// Add metadata headers to the request builder
+    fn add_metadata_headers(
+        &self,
+        mut req_builder: hyper::http::request::Builder,
+    ) -> hyper::http::request::Builder {
         let headers: HashMap<&'static str, String> = self.metadata.borrow().into();
-
         for (key, value) in &headers {
             req_builder = req_builder.header(*key, value);
         }
-        req_builder = req_builder
-            .header("Content-type", "application/msgpack")
-            .header("X-Datadog-Trace-Count", trace_count.to_string().as_str());
+        req_builder
+    }
 
+    /// Add trace-specific headers to the request builder
+    fn add_trace_headers(
+        &self,
+        req_builder: hyper::http::request::Builder,
+        trace_count: usize,
+    ) -> hyper::http::request::Builder {
+        req_builder
+            .header("Content-type", "application/msgpack")
+            .header("X-Datadog-Trace-Count", trace_count.to_string().as_str())
+    }
+
+    /// Build the final request with body
+    fn build_request_with_body(
+        &self,
+        req_builder: hyper::http::request::Builder,
+        data: &[u8],
+    ) -> hyper::Request<hyper_migration::Body> {
         #[allow(clippy::unwrap_used)]
         req_builder
             .body(hyper_migration::Body::from_bytes(Bytes::copy_from_slice(
