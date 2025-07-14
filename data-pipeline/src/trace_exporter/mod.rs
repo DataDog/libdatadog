@@ -682,12 +682,28 @@ impl TraceExporter {
         response: hyper::Response<hyper_migration::Body>,
     ) -> Result<AgentResponse, TraceExporterError> {
         let response_status = response.status();
+        let response_body = self.extract_response_body(response).await;
+        self.log_and_emit_error_metrics(response_status);
+        Err(TraceExporterError::Request(RequestError::new(
+            response_status,
+            &response_body,
+        )))
+    }
+
+    /// Extract response body from HTTP response
+    async fn extract_response_body(
+        &self,
+        response: hyper::Response<hyper_migration::Body>,
+    ) -> String {
         // TODO: Properly handle non-OK states to prevent possible panics
         // (APMSP-18190).
         #[allow(clippy::unwrap_used)]
         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
-        let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
+        String::from_utf8(body_bytes.to_vec()).unwrap_or_default()
+    }
 
+    /// Log error and emit metrics for HTTP error response
+    fn log_and_emit_error_metrics(&self, response_status: hyper::StatusCode) {
         let resp_tag_res = &Tag::new("response_code", response_status.as_str());
         match resp_tag_res {
             Ok(resp_tag) => {
@@ -707,11 +723,6 @@ impl TraceExporter {
                 error!(?tag_err, "Failed to serialize response_code to tag")
             }
         }
-
-        Err(TraceExporterError::Request(RequestError::new(
-            response_status,
-            &response_body,
-        )))
     }
 
     /// Handle successful HTTP response
