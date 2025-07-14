@@ -440,37 +440,69 @@ impl TraceExporter {
         if let StatsComputationStatus::DisabledByAgent { bucket_size } =
             **self.client_side_stats.load()
         {
-            let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
-                bucket_size,
-                time::SystemTime::now(),
-                span_kinds,
-                peer_tags,
-            )));
-
+            let stats_concentrator =
+                self.create_stats_concentrator(bucket_size, span_kinds, peer_tags);
             let cancellation_token = CancellationToken::new();
-
-            let stats_exporter = stats_exporter::StatsExporter::new(
+            let stats_worker = self.create_and_start_stats_worker(
                 bucket_size,
-                stats_concentrator.clone(),
-                self.metadata.clone(),
-                Endpoint::from_url(add_path(&self.endpoint.url, STATS_ENDPOINT)),
-                cancellation_token.clone(),
-            );
-            let mut stats_worker = PausableWorker::new(stats_exporter);
-            let runtime = self.runtime()?;
-            stats_worker.start(&runtime).map_err(|e| {
-                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
-            })?;
-
-            self.workers.lock_or_panic().stats = Some(stats_worker);
-
-            self.client_side_stats
-                .store(Arc::new(StatsComputationStatus::Enabled {
-                    stats_concentrator,
-                    cancellation_token,
-                }));
-        };
+                &stats_concentrator,
+                &cancellation_token,
+            )?;
+            self.update_stats_state(stats_worker, stats_concentrator, cancellation_token);
+        }
         Ok(())
+    }
+
+    /// Create a new stats concentrator with the given configuration
+    fn create_stats_concentrator(
+        &self,
+        bucket_size: Duration,
+        span_kinds: Vec<String>,
+        peer_tags: Vec<String>,
+    ) -> Arc<Mutex<SpanConcentrator>> {
+        Arc::new(Mutex::new(SpanConcentrator::new(
+            bucket_size,
+            time::SystemTime::now(),
+            span_kinds,
+            peer_tags,
+        )))
+    }
+
+    /// Create stats exporter and worker, then start the worker
+    fn create_and_start_stats_worker(
+        &self,
+        bucket_size: Duration,
+        stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
+        cancellation_token: &CancellationToken,
+    ) -> anyhow::Result<PausableWorker<StatsExporter>> {
+        let stats_exporter = stats_exporter::StatsExporter::new(
+            bucket_size,
+            stats_concentrator.clone(),
+            self.metadata.clone(),
+            Endpoint::from_url(add_path(&self.endpoint.url, STATS_ENDPOINT)),
+            cancellation_token.clone(),
+        );
+        let mut stats_worker = PausableWorker::new(stats_exporter);
+        let runtime = self.runtime()?;
+        stats_worker.start(&runtime).map_err(|e| {
+            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
+        })?;
+        Ok(stats_worker)
+    }
+
+    /// Update the stats computation state with the new worker and components
+    fn update_stats_state(
+        &self,
+        stats_worker: PausableWorker<StatsExporter>,
+        stats_concentrator: Arc<Mutex<SpanConcentrator>>,
+        cancellation_token: CancellationToken,
+    ) {
+        self.workers.lock_or_panic().stats = Some(stats_worker);
+        self.client_side_stats
+            .store(Arc::new(StatsComputationStatus::Enabled {
+                stats_concentrator,
+                cancellation_token,
+            }));
     }
 
     /// Stops the stats exporter and disable stats computation
@@ -875,18 +907,41 @@ impl TraceExporter {
         traces: Vec<Vec<Span<T>>>,
         header_tags: TracerHeaderTags,
     ) -> Result<PreparedTracesPayload, TraceExporterError> {
+        let payload = self.collect_and_process_traces(traces)?;
+        let chunks = payload.size();
+        let headers = self.build_traces_headers(header_tags, chunks);
+        let mp_payload = self.serialize_payload(&payload)?;
+
+        Ok(PreparedTracesPayload {
+            data: mp_payload,
+            headers,
+            chunk_count: chunks,
+        })
+    }
+
+    /// Collect trace chunks based on output format
+    fn collect_and_process_traces<T: SpanText>(
+        &self,
+        traces: Vec<Vec<Span<T>>>,
+    ) -> Result<tracer_payload::TraceChunks<T>, TraceExporterError> {
         let use_v05_format = match self.output_format {
             TraceExporterOutputFormat::V05 => true,
             TraceExporterOutputFormat::V04 => false,
         };
-        let payload = trace_utils::collect_trace_chunks(traces, use_v05_format).map_err(|e| {
+        trace_utils::collect_trace_chunks(traces, use_v05_format).map_err(|e| {
             TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
-        })?;
+        })
+    }
 
-        let chunks = payload.size();
+    /// Build HTTP headers for traces request
+    fn build_traces_headers(
+        &self,
+        header_tags: TracerHeaderTags,
+        chunk_count: usize,
+    ) -> HashMap<&'static str, String> {
         let mut headers: HashMap<&'static str, String> = header_tags.into();
         headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
-        headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
+        headers.insert(DATADOG_TRACE_COUNT_STR, chunk_count.to_string());
         headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
         if let Some(agent_payload_response_version) = &self.agent_payload_response_version {
             headers.insert(
@@ -894,21 +949,22 @@ impl TraceExporter {
                 agent_payload_response_version.header_value(),
             );
         }
+        headers
+    }
 
-        let mp_payload = match &payload {
+    /// Serialize payload to msgpack format
+    fn serialize_payload<T: SpanText>(
+        &self,
+        payload: &tracer_payload::TraceChunks<T>,
+    ) -> Result<Vec<u8>, TraceExporterError> {
+        match payload {
             tracer_payload::TraceChunks::V04(p) => {
-                rmp_serde::to_vec_named(p).map_err(TraceExporterError::Serialization)?
+                rmp_serde::to_vec_named(p).map_err(TraceExporterError::Serialization)
             }
             tracer_payload::TraceChunks::V05(p) => {
-                rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)?
+                rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)
             }
-        };
-
-        Ok(PreparedTracesPayload {
-            data: mp_payload,
-            headers,
-            chunk_count: chunks,
-        })
+        }
     }
 
     /// Send traces payload to agent with retry and telemetry reporting
