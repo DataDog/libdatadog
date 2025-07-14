@@ -17,7 +17,10 @@ use crate::trace_exporter::agent_response::{
 };
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use crate::{
-    agent_info, health_metrics, health_metrics::HealthMetric, span_concentrator::SpanConcentrator,
+    agent_info::{self, schema::AgentInfo},
+    health_metrics,
+    health_metrics::HealthMetric,
+    span_concentrator::SpanConcentrator,
     stats_exporter,
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
@@ -52,6 +55,16 @@ use tracing::{debug, error, info, warn};
 const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] = ["client", "server", "producer", "consumer"];
 const STATS_ENDPOINT: &str = "/v0.6/stats";
 const INFO_ENDPOINT: &str = "/info";
+
+/// Prepared traces payload ready for sending to the agent
+struct PreparedTracesPayload {
+    /// Serialized msgpack payload
+    data: Vec<u8>,
+    /// HTTP headers for the request
+    headers: HashMap<&'static str, String>,
+    /// Number of trace chunks
+    chunk_count: usize,
+}
 
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
@@ -445,61 +458,70 @@ impl TraceExporter {
         }
     }
 
-    /// Check for a new state of agent_info and update the trace exporter if needed
+    /// Check if agent info state has changed
+    fn has_agent_info_state_changed(&self, agent_info: &Arc<AgentInfo>) -> bool {
+        Some(agent_info.state_hash.as_str())
+            != self
+                .previous_info_state
+                .load()
+                .as_deref()
+                .map(|s| s.as_str())
+    }
+
+    /// Get span kinds for stats computation with default fallback
+    fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
+        agent_info
+            .info
+            .span_kinds_stats_computed
+            .clone()
+            .unwrap_or_else(|| DEFAULT_STATS_ELIGIBLE_SPAN_KINDS.map(String::from).to_vec())
+    }
+
+    /// Handle stats computation when agent changes from disabled to enabled
+    fn handle_stats_disabled_by_agent(&self, agent_info: &Arc<AgentInfo>) {
+        if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
+            // Client-side stats is supported by the agent
+            let status = self.start_stats_computation(
+                Self::get_span_kinds_for_stats(agent_info),
+                agent_info.info.peer_tags.clone().unwrap_or_default(),
+            );
+            match status {
+                Ok(()) => info!("Client-side stats enabled"),
+                Err(_) => error!("Failed to start stats computation"),
+            }
+        } else {
+            info!("Client-side stats computation has been disabled by the agent")
+        }
+    }
+
+    /// Handle stats computation when it's already enabled
+    fn handle_stats_enabled(
+        &self,
+        agent_info: &Arc<AgentInfo>,
+        stats_concentrator: &Mutex<SpanConcentrator>,
+    ) {
+        if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
+            let mut concentrator = stats_concentrator.lock_or_panic();
+            concentrator.set_span_kinds(Self::get_span_kinds_for_stats(agent_info));
+            concentrator.set_peer_tags(agent_info.info.peer_tags.clone().unwrap_or_default());
+        } else {
+            self.stop_stats_computation();
+            info!("Client-side stats computation has been disabled by the agent")
+        }
+    }
+
     fn check_agent_info(&self) {
         if let Some(agent_info) = agent_info::get_agent_info() {
-            if Some(agent_info.state_hash.as_str())
-                != self
-                    .previous_info_state
-                    .load()
-                    .as_deref()
-                    .map(|s| s.as_str())
-            {
+            if self.has_agent_info_state_changed(&agent_info) {
                 match &**self.client_side_stats.load() {
                     StatsComputationStatus::Disabled => {}
                     StatsComputationStatus::DisabledByAgent { .. } => {
-                        if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
-                            // Client-side stats is supported by the agent
-                            let status = self.start_stats_computation(
-                                agent_info
-                                    .info
-                                    .span_kinds_stats_computed
-                                    .clone()
-                                    .unwrap_or_else(|| {
-                                        DEFAULT_STATS_ELIGIBLE_SPAN_KINDS.map(String::from).to_vec()
-                                    }),
-                                agent_info.info.peer_tags.clone().unwrap_or_default(),
-                            );
-                            match status {
-                                Ok(()) => info!("Client-side stats enabled"),
-                                Err(_) => error!("Failed to start stats computation"),
-                            }
-                        } else {
-                            info!("Client-side stats computation has been disabled by the agent")
-                        }
+                        self.handle_stats_disabled_by_agent(&agent_info);
                     }
                     StatsComputationStatus::Enabled {
                         stats_concentrator, ..
                     } => {
-                        if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
-                            let mut concentrator = stats_concentrator.lock_or_panic();
-
-                            concentrator.set_span_kinds(
-                                agent_info
-                                    .info
-                                    .span_kinds_stats_computed
-                                    .clone()
-                                    .unwrap_or_else(|| {
-                                        DEFAULT_STATS_ELIGIBLE_SPAN_KINDS.map(String::from).to_vec()
-                                    }),
-                            );
-                            concentrator.set_peer_tags(
-                                agent_info.info.peer_tags.clone().unwrap_or_default(),
-                            );
-                        } else {
-                            self.stop_stats_computation();
-                            info!("Client-side stats computation has been disabled by the agent")
-                        }
+                        self.handle_stats_enabled(&agent_info, stats_concentrator);
                     }
                 }
                 self.previous_info_state
@@ -593,7 +615,7 @@ impl TraceExporter {
         #[allow(clippy::unwrap_used)]
         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
         let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-        
+
         let resp_tag_res = &Tag::new("response_code", response_status.as_str());
         match resp_tag_res {
             Ok(resp_tag) => {
@@ -613,7 +635,7 @@ impl TraceExporter {
                 error!(?tag_err, "Failed to serialize response_code to tag")
             }
         }
-        
+
         Err(TraceExporterError::Request(RequestError::new(
             response_status,
             &response_body,
@@ -630,10 +652,7 @@ impl TraceExporter {
             Ok(body) => {
                 info!(trace_count, "Traces sent successfully to agent");
                 self.emit_metric(
-                    HealthMetric::Count(
-                        health_metrics::STAT_SEND_TRACES,
-                        trace_count as i64,
-                    ),
+                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES, trace_count as i64),
                     None,
                 );
                 Ok(AgentResponse::Changed {
@@ -669,7 +688,8 @@ impl TraceExporter {
                     if !response.status().is_success() {
                         self.handle_http_error_response(response).await
                     } else {
-                        self.handle_http_success_response(response, trace_count).await
+                        self.handle_http_success_response(response, trace_count)
+                            .await
                     }
                 }
                 Err(err) => {
@@ -814,7 +834,7 @@ impl TraceExporter {
         &self,
         traces: Vec<Vec<Span<T>>>,
         header_tags: TracerHeaderTags,
-    ) -> Result<(Vec<u8>, HashMap<&'static str, String>, usize), TraceExporterError> {
+    ) -> Result<PreparedTracesPayload, TraceExporterError> {
         let use_v05_format = match self.output_format {
             TraceExporterOutputFormat::V05 => true,
             TraceExporterOutputFormat::V04 => false,
@@ -844,7 +864,11 @@ impl TraceExporter {
             }
         };
 
-        Ok((mp_payload, headers, chunks))
+        Ok(PreparedTracesPayload {
+            data: mp_payload,
+            headers,
+            chunk_count: chunks,
+        })
     }
 
     /// Send traces payload to agent with retry and telemetry reporting
@@ -857,7 +881,7 @@ impl TraceExporter {
     ) -> Result<AgentResponse, TraceExporterError> {
         let strategy = RetryStrategy::default();
         let payload_len = mp_payload.len();
-        
+
         // Send traces to the agent
         let result = send_with_retry(endpoint, mp_payload, &headers, &strategy, None).await;
 
@@ -885,7 +909,7 @@ impl TraceExporter {
         self.process_traces_for_stats(&mut traces, &mut header_tags);
 
         // Prepare payload and headers
-        let (mp_payload, headers, chunks) = self.prepare_traces_payload(traces, header_tags)?;
+        let prepared = self.prepare_traces_payload(traces, header_tags)?;
 
         let endpoint = Endpoint {
             url: self.get_agent_url(),
@@ -893,7 +917,13 @@ impl TraceExporter {
         };
 
         self.runtime()?.block_on(async {
-            self.send_traces_with_telemetry(&endpoint, mp_payload, headers, chunks).await
+            self.send_traces_with_telemetry(
+                &endpoint,
+                prepared.data,
+                prepared.headers,
+                prepared.chunk_count,
+            )
+            .await
         })
     }
 
@@ -942,16 +972,13 @@ impl TraceExporter {
         }
     }
 
-    async fn handle_agent_response(
+    /// Check if the agent's payload version has changed based on response headers
+    fn check_payload_version_changed(
         &self,
-        chunks: usize,
-        response: hyper::Response<hyper_migration::Body>,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        // Check if the agent state has changed
-        self.info_response_observer.check_response(&response);
-
+        response: &hyper::Response<hyper_migration::Body>,
+    ) -> bool {
         let status = response.status();
-        let payload_version_changed = match (
+        match (
             status.is_success(),
             self.agent_payload_response_version.as_ref(),
             response.headers().get(DATADOG_RATES_PAYLOAD_VERSION_HEADER),
@@ -973,19 +1000,64 @@ impl TraceExporter {
                 }
             }
             _ => false,
-        };
+        }
+    }
 
-        let body = match response.into_body().collect().await {
-            Ok(body) => String::from_utf8_lossy(&body.to_bytes()).to_string(),
+    /// Read response body and handle potential errors
+    async fn read_response_body(
+        &self,
+        response: hyper::Response<hyper_migration::Body>,
+    ) -> Result<String, TraceExporterError> {
+        match response.into_body().collect().await {
+            Ok(body) => Ok(String::from_utf8_lossy(&body.to_bytes()).to_string()),
             Err(err) => {
                 error!(?err, "Error reading agent response body");
                 self.emit_metric(
                     HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
                     None,
                 );
-                return Err(TraceExporterError::from(err));
+                Err(TraceExporterError::from(err))
             }
-        };
+        }
+    }
+
+    /// Handle successful trace sending response
+    fn handle_successful_trace_response(
+        &self,
+        chunks: usize,
+        status: hyper::StatusCode,
+        body: String,
+        payload_version_changed: bool,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        info!(
+            chunks = chunks,
+            status = %status,
+            "Trace chunks sent successfully to agent"
+        );
+        self.emit_metric(
+            HealthMetric::Count(health_metrics::STAT_SEND_TRACES, chunks as i64),
+            None,
+        );
+
+        Ok(if payload_version_changed {
+            AgentResponse::Changed { body }
+        } else {
+            AgentResponse::Unchanged
+        })
+    }
+
+    async fn handle_agent_response(
+        &self,
+        chunks: usize,
+        response: hyper::Response<hyper_migration::Body>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        // Check if the agent state has changed
+        self.info_response_observer.check_response(&response);
+
+        let status = response.status();
+        let payload_version_changed = self.check_payload_version_changed(&response);
+        let body = self.read_response_body(response).await?;
+
         if !status.is_success() {
             warn!(
                 status = %status,
@@ -999,20 +1071,8 @@ impl TraceExporter {
                 status, &body,
             )));
         }
-        info!(
-            chunks = chunks,
-            status = %status,
-            "Trace chunks sent successfully to agent"
-        );
-        self.emit_metric(
-            HealthMetric::Count(health_metrics::STAT_SEND_TRACES, chunks as i64),
-            None,
-        );
-        Ok(if payload_version_changed {
-            AgentResponse::Changed { body }
-        } else {
-            AgentResponse::Unchanged
-        })
+
+        self.handle_successful_trace_response(chunks, status, body, payload_version_changed)
     }
 
     fn get_agent_url(&self) -> Uri {
