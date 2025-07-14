@@ -251,11 +251,18 @@ impl TraceExporter {
     }
 
     pub fn run_worker(&self) -> Result<Arc<Runtime>, TraceExporterError> {
+        let runtime = self.get_or_create_runtime()?;
+        self.start_all_workers(&runtime)?;
+        Ok(runtime)
+    }
+
+    /// Get existing runtime or create a new one
+    fn get_or_create_runtime(&self) -> Result<Arc<Runtime>, TraceExporterError> {
         let mut runtime_guard = self.runtime.lock_or_panic();
-        let runtime = match runtime_guard.as_ref() {
+        match runtime_guard.as_ref() {
             Some(runtime) => {
                 // Runtime already running
-                runtime.clone()
+                Ok(runtime.clone())
             }
             None => {
                 // Create a new current thread runtime with all features enabled
@@ -266,29 +273,62 @@ impl TraceExporter {
                         .build()?,
                 );
                 *runtime_guard = Some(runtime.clone());
-                runtime
+                Ok(runtime)
             }
-        };
+        }
+    }
 
-        // Restart workers
+    /// Start all workers with the given runtime
+    fn start_all_workers(&self, runtime: &Arc<Runtime>) -> Result<(), TraceExporterError> {
         let mut workers = self.workers.lock_or_panic();
-        workers.info.start(&runtime).map_err(|e| {
+
+        self.start_info_worker(&mut workers, runtime)?;
+        self.start_stats_worker(&mut workers, runtime)?;
+        self.start_telemetry_worker(&mut workers, runtime)?;
+
+        Ok(())
+    }
+
+    /// Start the info worker
+    fn start_info_worker(
+        &self,
+        workers: &mut TraceExporterWorkers,
+        runtime: &Arc<Runtime>,
+    ) -> Result<(), TraceExporterError> {
+        workers.info.start(runtime).map_err(|e| {
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
-        })?;
+        })
+    }
+
+    /// Start the stats worker if present
+    fn start_stats_worker(
+        &self,
+        workers: &mut TraceExporterWorkers,
+        runtime: &Arc<Runtime>,
+    ) -> Result<(), TraceExporterError> {
         if let Some(stats_worker) = &mut workers.stats {
-            stats_worker.start(&runtime).map_err(|e| {
+            stats_worker.start(runtime).map_err(|e| {
                 TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
             })?;
         }
+        Ok(())
+    }
+
+    /// Start the telemetry worker if present
+    fn start_telemetry_worker(
+        &self,
+        workers: &mut TraceExporterWorkers,
+        runtime: &Arc<Runtime>,
+    ) -> Result<(), TraceExporterError> {
         if let Some(telemetry_worker) = &mut workers.telemetry {
-            telemetry_worker.start(&runtime).map_err(|e| {
+            telemetry_worker.start(runtime).map_err(|e| {
                 TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
             })?;
             if let Some(client) = &self.telemetry {
                 runtime.block_on(client.start());
             }
-        };
-        Ok(runtime)
+        }
+        Ok(())
     }
 
     pub fn stop_worker(&self) {
