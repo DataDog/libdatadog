@@ -549,6 +549,111 @@ impl TraceExporter {
         )
     }
 
+    /// Build HTTP request for sending trace data to agent
+    fn build_trace_request(
+        &self,
+        data: &[u8],
+        trace_count: usize,
+        uri: Uri,
+    ) -> hyper::Request<hyper_migration::Body> {
+        let mut req_builder = hyper::Request::builder()
+            .uri(uri)
+            .header(
+                hyper::header::USER_AGENT,
+                concat!("Tracer/", env!("CARGO_PKG_VERSION")),
+            )
+            .method(Method::POST);
+
+        let headers: HashMap<&'static str, String> = self.metadata.borrow().into();
+
+        for (key, value) in &headers {
+            req_builder = req_builder.header(*key, value);
+        }
+        req_builder = req_builder
+            .header("Content-type", "application/msgpack")
+            .header("X-Datadog-Trace-Count", trace_count.to_string().as_str());
+
+        #[allow(clippy::unwrap_used)]
+        req_builder
+            .body(hyper_migration::Body::from_bytes(Bytes::copy_from_slice(
+                data,
+            )))
+            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
+            .unwrap()
+    }
+
+    /// Handle HTTP error response and emit appropriate metrics
+    async fn handle_http_error_response(
+        &self,
+        response: hyper::Response<hyper_migration::Body>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let response_status = response.status();
+        // TODO: Properly handle non-OK states to prevent possible panics
+        // (APMSP-18190).
+        #[allow(clippy::unwrap_used)]
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
+        
+        let resp_tag_res = &Tag::new("response_code", response_status.as_str());
+        match resp_tag_res {
+            Ok(resp_tag) => {
+                warn!(
+                    response_code = response_status.as_u16(),
+                    "HTTP error response received from agent"
+                );
+                self.emit_metric(
+                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                    Some(vec![&resp_tag]),
+                );
+            }
+            Err(tag_err) => {
+                // This should really never happen as response_status is a
+                // `NonZeroU16`, but if the response status or tag requirements
+                // ever change in the future we still don't want to panic.
+                error!(?tag_err, "Failed to serialize response_code to tag")
+            }
+        }
+        
+        Err(TraceExporterError::Request(RequestError::new(
+            response_status,
+            &response_body,
+        )))
+    }
+
+    /// Handle successful HTTP response
+    async fn handle_http_success_response(
+        &self,
+        response: hyper::Response<hyper_migration::Body>,
+        trace_count: usize,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        match response.into_body().collect().await {
+            Ok(body) => {
+                info!(trace_count, "Traces sent successfully to agent");
+                self.emit_metric(
+                    HealthMetric::Count(
+                        health_metrics::STAT_SEND_TRACES,
+                        trace_count as i64,
+                    ),
+                    None,
+                );
+                Ok(AgentResponse::Changed {
+                    body: String::from_utf8_lossy(&body.to_bytes()).to_string(),
+                })
+            }
+            Err(err) => {
+                error!(
+                    error = %err,
+                    "Failed to read agent response body"
+                );
+                self.emit_metric(
+                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                    None,
+                );
+                Err(TraceExporterError::from(err))
+            }
+        }
+    }
+
     fn send_data_to_url(
         &self,
         data: &[u8],
@@ -556,92 +661,15 @@ impl TraceExporter {
         uri: Uri,
     ) -> Result<AgentResponse, TraceExporterError> {
         self.runtime()?.block_on(async {
-            let mut req_builder = hyper::Request::builder()
-                .uri(uri)
-                .header(
-                    hyper::header::USER_AGENT,
-                    concat!("Tracer/", env!("CARGO_PKG_VERSION")),
-                )
-                .method(Method::POST);
-
-            let headers: HashMap<&'static str, String> = self.metadata.borrow().into();
-
-            for (key, value) in &headers {
-                req_builder = req_builder.header(*key, value);
-            }
-            req_builder = req_builder
-                .header("Content-type", "application/msgpack")
-                .header("X-Datadog-Trace-Count", trace_count.to_string().as_str());
-
-            #[allow(clippy::unwrap_used)]
-            let req = req_builder
-                .body(hyper_migration::Body::from_bytes(Bytes::copy_from_slice(
-                    data,
-                )))
-                // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-                .unwrap();
+            let req = self.build_trace_request(data, trace_count, uri);
 
             match hyper_migration::new_default_client().request(req).await {
                 Ok(response) => {
-                    let response_status = response.status();
-                    if !response_status.is_success() {
-                        // TODO: Properly handle non-OK states to prevent possible panics
-                        // (APMSP-18190).
-                        #[allow(clippy::unwrap_used)]
-                        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
-                        let response_body =
-                            String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                        let resp_tag_res = &Tag::new("response_code", response_status.as_str());
-                        match resp_tag_res {
-                            Ok(resp_tag) => {
-                                warn!(
-                                    response_code = response_status.as_u16(),
-                                    "HTTP error response received from agent"
-                                );
-                                self.emit_metric(
-                                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                                    Some(vec![&resp_tag]),
-                                );
-                            }
-                            Err(tag_err) => {
-                                // This should really never happen as response_status is a
-                                // `NonZeroU16`, but if the response status or tag requirements
-                                // ever change in the future we still don't want to panic.
-                                error!(?tag_err, "Failed to serialize response_code to tag")
-                            }
-                        }
-                        return Err(TraceExporterError::Request(RequestError::new(
-                            response_status,
-                            &response_body,
-                        )));
-                        //anyhow::bail!("Agent did not accept traces: {response_body}");
-                    }
-                    match response.into_body().collect().await {
-                        Ok(body) => {
-                            info!(trace_count, "Traces sent successfully to agent");
-                            self.emit_metric(
-                                HealthMetric::Count(
-                                    health_metrics::STAT_SEND_TRACES,
-                                    trace_count as i64,
-                                ),
-                                None,
-                            );
-                            Ok(AgentResponse::Changed {
-                                body: String::from_utf8_lossy(&body.to_bytes()).to_string(),
-                            })
-                        }
-                        Err(err) => {
-                            error!(
-                                error = %err,
-                                "Failed to read agent response body"
-                            );
-                            self.emit_metric(
-                                HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                                None,
-                            );
-                            Err(TraceExporterError::from(err))
-                            // anyhow::bail!("Error reading agent response body: {err}");
-                        }
+                    let response = hyper_migration::into_response(response);
+                    if !response.status().is_success() {
+                        self.handle_http_error_response(response).await
+                    } else {
+                        self.handle_http_success_response(response, trace_count).await
                     }
                 }
                 Err(err) => {
@@ -749,13 +777,12 @@ impl TraceExporter {
         self.send_trace_chunks_inner(traces)
     }
 
-    fn send_trace_chunks_inner<T: SpanText>(
+    /// Process traces for stats computation and update header tags accordingly
+    fn process_traces_for_stats<T: SpanText>(
         &self,
-        mut traces: Vec<Vec<Span<T>>>,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
-
-        // Stats computation
+        traces: &mut Vec<Vec<Span<T>>>,
+        header_tags: &mut TracerHeaderTags,
+    ) {
         if let StatsComputationStatus::Enabled {
             stats_concentrator, ..
         } = &**self.client_side_stats.load()
@@ -765,13 +792,13 @@ impl TraceExporter {
                     datadog_trace_utils::span::trace_utils::compute_top_level_span(chunk);
                 }
             }
-            self.add_spans_to_stats(stats_concentrator, &traces);
+            self.add_spans_to_stats(stats_concentrator, traces);
             // Once stats have been computed we can drop all chunks that are not going to be
             // sampled by the agent
             let datadog_trace_utils::span::trace_utils::DroppedP0Stats {
                 dropped_p0_traces,
                 dropped_p0_spans,
-            } = datadog_trace_utils::span::trace_utils::drop_chunks(&mut traces);
+            } = datadog_trace_utils::span::trace_utils::drop_chunks(traces);
 
             // Update the headers to indicate that stats have been computed and forward dropped
             // traces counts
@@ -780,7 +807,14 @@ impl TraceExporter {
             header_tags.dropped_p0_traces = dropped_p0_traces;
             header_tags.dropped_p0_spans = dropped_p0_spans;
         }
+    }
 
+    /// Prepare traces payload and HTTP headers for sending to agent
+    fn prepare_traces_payload<T: SpanText>(
+        &self,
+        traces: Vec<Vec<Span<T>>>,
+        header_tags: TracerHeaderTags,
+    ) -> Result<(Vec<u8>, HashMap<&'static str, String>, usize), TraceExporterError> {
         let use_v05_format = match self.output_format {
             TraceExporterOutputFormat::V05 => true,
             TraceExporterOutputFormat::V04 => false,
@@ -790,11 +824,7 @@ impl TraceExporter {
         })?;
 
         let chunks = payload.size();
-        let endpoint = Endpoint {
-            url: self.get_agent_url(),
-            ..self.endpoint.clone()
-        };
-        let mut headers: HashMap<&str, String> = header_tags.into();
+        let mut headers: HashMap<&'static str, String> = header_tags.into();
         headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
         headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
         headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
@@ -805,7 +835,6 @@ impl TraceExporter {
             );
         }
 
-        let strategy = RetryStrategy::default();
         let mp_payload = match &payload {
             tracer_payload::TraceChunks::V04(p) => {
                 rmp_serde::to_vec_named(p).map_err(TraceExporterError::Serialization)?
@@ -815,24 +844,56 @@ impl TraceExporter {
             }
         };
 
+        Ok((mp_payload, headers, chunks))
+    }
+
+    /// Send traces payload to agent with retry and telemetry reporting
+    async fn send_traces_with_telemetry(
+        &self,
+        endpoint: &Endpoint,
+        mp_payload: Vec<u8>,
+        headers: HashMap<&'static str, String>,
+        chunks: usize,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let strategy = RetryStrategy::default();
         let payload_len = mp_payload.len();
+        
+        // Send traces to the agent
+        let result = send_with_retry(endpoint, mp_payload, &headers, &strategy, None).await;
+
+        // Send telemetry for the payload sending
+        if let Some(telemetry) = &self.telemetry {
+            if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
+                &result,
+                payload_len as u64,
+                chunks as u64,
+            )) {
+                error!(?e, "Error sending telemetry");
+            }
+        }
+
+        self.handle_send_result(result, chunks).await
+    }
+
+    fn send_trace_chunks_inner<T: SpanText>(
+        &self,
+        mut traces: Vec<Vec<Span<T>>>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
+
+        // Process stats computation
+        self.process_traces_for_stats(&mut traces, &mut header_tags);
+
+        // Prepare payload and headers
+        let (mp_payload, headers, chunks) = self.prepare_traces_payload(traces, header_tags)?;
+
+        let endpoint = Endpoint {
+            url: self.get_agent_url(),
+            ..self.endpoint.clone()
+        };
 
         self.runtime()?.block_on(async {
-            // Send traces to the agent
-            let result = send_with_retry(&endpoint, mp_payload, &headers, &strategy, None).await;
-
-            // Send telemetry for the payload sending
-            if let Some(telemetry) = &self.telemetry {
-                if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
-                    &result,
-                    payload_len as u64,
-                    chunks as u64,
-                )) {
-                    error!(?e, "Error sending telemetry");
-                }
-            }
-
-            self.handle_send_result(result, chunks).await
+            self.send_traces_with_telemetry(&endpoint, mp_payload, headers, chunks).await
         })
     }
 
