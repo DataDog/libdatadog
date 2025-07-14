@@ -935,39 +935,60 @@ impl TraceExporter {
     ) -> Result<AgentResponse, TraceExporterError> {
         match result {
             Ok((response, _)) => self.handle_agent_response(chunks, response).await,
+            Err(err) => self.handle_send_error(err).await,
+        }
+    }
+
+    /// Handle errors from send with retry operation
+    async fn handle_send_error(
+        &self,
+        err: SendWithRetryError,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        error!(?err, "Error sending traces");
+        self.emit_metric(
+            HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+            None,
+        );
+
+        match err {
+            SendWithRetryError::Http(response, _) => self.handle_http_send_error(response).await,
+            SendWithRetryError::Timeout(_) => Err(TraceExporterError::from(io::Error::from(
+                io::ErrorKind::TimedOut,
+            ))),
+            SendWithRetryError::Network(err, _) => Err(TraceExporterError::from(err)),
+            SendWithRetryError::Build(_) => Err(TraceExporterError::from(io::Error::from(
+                io::ErrorKind::Other,
+            ))),
+        }
+    }
+
+    /// Handle HTTP error responses from send with retry
+    async fn handle_http_send_error(
+        &self,
+        response: hyper::Response<hyper_migration::Body>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let status = response.status();
+
+        // Check if the agent state has changed for error responses
+        self.info_response_observer.check_response(&response);
+
+        let body = self.read_error_response_body(response).await?;
+        Err(TraceExporterError::Request(RequestError::new(
+            status,
+            &String::from_utf8_lossy(&body),
+        )))
+    }
+
+    /// Read response body from error response
+    async fn read_error_response_body(
+        &self,
+        response: hyper::Response<hyper_migration::Body>,
+    ) -> Result<bytes::Bytes, TraceExporterError> {
+        match response.into_body().collect().await {
+            Ok(body) => Ok(body.to_bytes()),
             Err(err) => {
-                error!(?err, "Error sending traces");
-                self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                    None,
-                );
-                match err {
-                    SendWithRetryError::Http(response, _) => {
-                        let status = response.status();
-
-                        // Check if the agent state has changed for error responses
-                        self.info_response_observer.check_response(&response);
-
-                        let body = match response.into_body().collect().await {
-                            Ok(body) => body.to_bytes(),
-                            Err(err) => {
-                                error!(?err, "Error reading agent response body");
-                                return Err(TraceExporterError::from(err));
-                            }
-                        };
-                        Err(TraceExporterError::Request(RequestError::new(
-                            status,
-                            &String::from_utf8_lossy(&body),
-                        )))
-                    }
-                    SendWithRetryError::Timeout(_) => Err(TraceExporterError::from(
-                        io::Error::from(io::ErrorKind::TimedOut),
-                    )),
-                    SendWithRetryError::Network(err, _) => Err(TraceExporterError::from(err)),
-                    SendWithRetryError::Build(_) => Err(TraceExporterError::from(io::Error::from(
-                        io::ErrorKind::Other,
-                    ))),
-                }
+                error!(?err, "Error reading agent response body");
+                Err(TraceExporterError::from(err))
             }
         }
     }
