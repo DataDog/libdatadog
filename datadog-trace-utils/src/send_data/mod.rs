@@ -78,6 +78,7 @@ pub enum Compression {
     None,
 }
 
+#[derive(Clone)]
 pub struct SendDataBuilder {
     pub(crate) tracer_payloads: TracerPayloadCollection,
     pub(crate) size: usize,
