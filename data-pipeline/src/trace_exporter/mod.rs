@@ -763,31 +763,56 @@ impl TraceExporter {
         uri: Uri,
     ) -> Result<AgentResponse, TraceExporterError> {
         self.runtime()?.block_on(async {
-            let req = self.build_trace_request(data, trace_count, uri);
-
-            match hyper_migration::new_default_client().request(req).await {
-                Ok(response) => {
-                    let response = hyper_migration::into_response(response);
-                    if !response.status().is_success() {
-                        self.handle_http_error_response(response).await
-                    } else {
-                        self.handle_http_success_response(response, trace_count)
-                            .await
-                    }
-                }
-                Err(err) => {
-                    error!(
-                        error = %err,
-                        "Request to agent failed"
-                    );
-                    self.emit_metric(
-                        HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                        None,
-                    );
-                    Err(TraceExporterError::from(err))
-                }
-            }
+            self.send_request_and_handle_response(data, trace_count, uri)
+                .await
         })
+    }
+
+    /// Send HTTP request and handle the response
+    async fn send_request_and_handle_response(
+        &self,
+        data: &[u8],
+        trace_count: usize,
+        uri: Uri,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let req = self.build_trace_request(data, trace_count, uri);
+        match hyper_migration::new_default_client().request(req).await {
+            Ok(response) => {
+                let response = hyper_migration::into_response(response);
+                self.process_http_response(response, trace_count).await
+            }
+            Err(err) => self.handle_request_error(err),
+        }
+    }
+
+    /// Process HTTP response based on status code
+    async fn process_http_response(
+        &self,
+        response: hyper::Response<hyper_migration::Body>,
+        trace_count: usize,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        if !response.status().is_success() {
+            self.handle_http_error_response(response).await
+        } else {
+            self.handle_http_success_response(response, trace_count)
+                .await
+        }
+    }
+
+    /// Handle HTTP request errors
+    fn handle_request_error(
+        &self,
+        err: hyper_util::client::legacy::Error,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        error!(
+            error = %err,
+            "Request to agent failed"
+        );
+        self.emit_metric(
+            HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+            None,
+        );
+        Err(TraceExporterError::from(err))
     }
 
     /// Emit a health metric to dogstatsd
