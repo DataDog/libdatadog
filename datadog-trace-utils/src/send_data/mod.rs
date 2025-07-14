@@ -119,6 +119,11 @@ impl SendDataBuilder {
         self
     }
 
+    pub fn with_retry_strategy(mut self, retry_strategy: RetryStrategy) -> SendDataBuilder {
+        self.retry_strategy = retry_strategy;
+        self
+    }
+
     /// Checks if the user defined approximate size of the data to be sent is zero.
     ///
     /// # Returns
