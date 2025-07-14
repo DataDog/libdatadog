@@ -119,6 +119,15 @@ impl SendDataBuilder {
         self
     }
 
+    /// Checks if the user defined approximate size of the data to be sent is zero.
+    ///
+    /// # Returns
+    ///
+    /// `true` if size is 0, `false` otherwise.
+    pub fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+
     pub fn build(self) -> SendData {
         SendData {
             tracer_payloads: self.tracer_payloads,
