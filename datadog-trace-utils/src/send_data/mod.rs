@@ -124,6 +124,15 @@ impl SendDataBuilder {
         self
     }
 
+    /// Returns the user defined approximate size of the data to be sent in bytes.
+    ///
+    /// # Returns
+    ///
+    /// The size of the data.
+    pub fn len(&self) -> usize {
+        self.size
+    }
+
     /// Checks if the user defined approximate size of the data to be sent is zero.
     ///
     /// # Returns
