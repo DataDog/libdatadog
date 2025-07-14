@@ -17,7 +17,7 @@ use ddcommon::{
 };
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use hyper::header::{CONTENT_TYPE, HeaderValue};
+use hyper::header::{HeaderValue, CONTENT_TYPE};
 use send_data_result::SendDataResult;
 use std::collections::HashMap;
 #[cfg(feature = "compression")]
