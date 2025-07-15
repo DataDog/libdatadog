@@ -1077,6 +1077,7 @@ mod tests {
         .with_retry_strategy(retry_strategy.clone());
 
         assert_eq!(send_data_builder.len(), 100);
+        assert_eq!(send_data_builder.is_empty(), false);
         assert_eq!(
             send_data_builder.target.api_key,
             Some(std::borrow::Cow::Borrowed("TEST-KEY"))
