@@ -99,6 +99,7 @@ pub struct TraceExporterConfig {
     telemetry_cfg: Option<TelemetryConfig>,
     test_session_token: Option<String>,
     rates_payload_version: bool,
+    connection_timeout: Option<u64>,
 }
 
 #[no_mangle]
@@ -411,6 +412,23 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_rates_payload_version(
     )
 }
 
+/// Sets the timeout in ms for all agent's connections.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
+    config: Option<&mut TraceExporterConfig>,
+    timeout_ms: u64,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Option::Some(handle) = config {
+            handle.connection_timeout = Some(timeout_ms);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Create a new TraceExporter instance.
 ///
 /// # Arguments
@@ -442,7 +460,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 .set_app_version(config.version.as_ref().unwrap_or(&"".to_string()))
                 .set_service(config.service.as_ref().unwrap_or(&"".to_string()))
                 .set_input_format(config.input_format)
-                .set_output_format(config.output_format);
+                .set_output_format(config.output_format)
+                .set_connection_timeout(config.connection_timeout);
+
             if config.compute_stats {
                 builder.enable_stats(Duration::from_secs(10));
             } else if config.client_computed_stats {
@@ -555,6 +575,7 @@ mod tests {
             assert!(cfg.telemetry_cfg.is_none());
             assert!(cfg.test_session_token.is_none());
             assert!(!cfg.rates_payload_version);
+            assert!(cfg.connection_timeout.is_none());
 
             ddog_trace_exporter_config_free(cfg);
         }
@@ -802,6 +823,17 @@ mod tests {
                 "foo"
             );
             assert!(cfg.telemetry_cfg.as_ref().unwrap().debug_enabled);
+        }
+    }
+
+    #[test]
+    fn config_timeout_test() {
+        unsafe {
+            let mut cfg = TraceExporterConfig::default();
+            assert!(cfg.connection_timeout.is_none());
+
+            ddog_trace_exporter_config_set_connection_timeout(Some(&mut cfg), 1000);
+            assert_eq!(cfg.connection_timeout.unwrap(), 1000);
         }
     }
 
