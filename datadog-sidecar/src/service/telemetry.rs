@@ -59,6 +59,7 @@ pub struct TelemetryCachedClient {
     pub client: TelemetryWorkerHandle,
     pub shm_writer: Arc<OneWayShmWriter<NamedShmHandle>>,
     pub last_used: Instant,
+    pub config_sent: bool,
     pub buffered_integrations: HashSet<Integration>,
     pub buffered_composer_paths: HashSet<PathBuf>,
     pub telemetry_metrics: Arc<Mutex<HashMap<String, ContextKey>>>,
@@ -95,6 +96,7 @@ impl TelemetryCachedClient {
                 OneWayShmWriter::<NamedShmHandle>::new(path_for_telemetry(service, env)).unwrap(),
             ),
             last_used: Instant::now(),
+            config_sent: false,
             buffered_integrations: HashSet::new(),
             buffered_composer_paths: HashSet::new(),
             telemetry_metrics: Default::default(),
@@ -103,9 +105,11 @@ impl TelemetryCachedClient {
     }
 
     pub fn write_shm_file(&self) {
-        if let Ok(buf) =
-            bincode::serialize(&(&self.buffered_integrations, &self.buffered_composer_paths))
-        {
+        if let Ok(buf) = bincode::serialize(&(
+            &self.config_sent,
+            &self.buffered_integrations,
+            &self.buffered_composer_paths,
+        )) {
             self.shm_writer.write(&buf);
         } else {
             warn!("Failed to serialize telemetry data for shared memory");

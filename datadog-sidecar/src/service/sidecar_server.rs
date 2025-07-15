@@ -522,6 +522,11 @@ impl SidecarInterface for SidecarServer {
                             buffered_info_changed = true;
                         }
                     }
+                    SidecarAction::Telemetry(TelemetryActions::AddConfig(_)) => {
+                        telemetry.config_sent = true;
+                        buffered_info_changed = true;
+                        actions_to_process.push(action);
+                    }
                     SidecarAction::ClearQueueId => {
                         remove_entry = true;
                     }
