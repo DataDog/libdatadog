@@ -17,7 +17,7 @@ use ddcommon::{
 };
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use hyper::header::{CONTENT_TYPE};
+use hyper::header::CONTENT_TYPE;
 use send_data_result::SendDataResult;
 use std::collections::HashMap;
 #[cfg(feature = "compression")]
@@ -449,6 +449,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::send_with_retry::{RetryBackoffType, RetryStrategy};
     use crate::test_utils::create_test_no_alloc_span;
     use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, RootSpanTags};
     use crate::tracer_header_tags::TracerHeaderTags;
@@ -1058,5 +1059,28 @@ mod tests {
 
         #[cfg(feature = "compression")]
         assert!(matches!(new_data.compression, Compression::None));
+    }
+
+    #[test]
+    fn test_builder() {
+        let header_tags = HEADER_TAGS;
+        let payload = setup_payload(&header_tags);
+        let retry_strategy = RetryStrategy::new(5, 100, RetryBackoffType::Constant, None);
+
+        let send_data_builder = SendDataBuilder::new(
+            100,
+            TracerPayloadCollection::V07(vec![payload]),
+            header_tags,
+            &Endpoint::default(),
+        )
+        .with_api_key("TEST-KEY")
+        .with_retry_strategy(retry_strategy.clone());
+
+        assert_eq!(send_data_builder.len(), 100);
+        assert_eq!(
+            send_data_builder.target.api_key,
+            Some(std::borrow::Cow::Borrowed("TEST-KEY"))
+        );
+        assert_eq!(send_data_builder.retry_strategy, retry_strategy);
     }
 }
