@@ -125,24 +125,6 @@ impl SendDataBuilder {
         self
     }
 
-    /// Returns the user defined approximate size of the data to be sent in bytes.
-    ///
-    /// # Returns
-    ///
-    /// The size of the data.
-    pub fn len(&self) -> usize {
-        self.size
-    }
-
-    /// Checks if the user defined approximate size of the data to be sent is zero.
-    ///
-    /// # Returns
-    ///
-    /// `true` if size is 0, `false` otherwise.
-    pub fn is_empty(&self) -> bool {
-        self.size == 0
-    }
-
     pub fn build(self) -> SendData {
         SendData {
             tracer_payloads: self.tracer_payloads,
@@ -1067,21 +1049,22 @@ mod tests {
         let payload = setup_payload(&header_tags);
         let retry_strategy = RetryStrategy::new(5, 100, RetryBackoffType::Constant, None);
 
-        let send_data_builder = SendDataBuilder::new(
+        let send_data = SendDataBuilder::new(
             100,
             TracerPayloadCollection::V07(vec![payload]),
             header_tags,
             &Endpoint::default(),
         )
+        // Test with_api_key()
         .with_api_key("TEST-KEY")
-        .with_retry_strategy(retry_strategy.clone());
+        // Test with_retry_strategy()
+        .with_retry_strategy(retry_strategy.clone())
+        .build();
 
-        assert_eq!(send_data_builder.len(), 100);
-        assert!(!send_data_builder.is_empty());
         assert_eq!(
-            send_data_builder.target.api_key,
+            send_data.target.api_key,
             Some(std::borrow::Cow::Borrowed("TEST-KEY"))
         );
-        assert_eq!(send_data_builder.retry_strategy, retry_strategy);
+        assert_eq!(send_data.retry_strategy, retry_strategy);
     }
 }
