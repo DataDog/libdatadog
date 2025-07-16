@@ -330,10 +330,7 @@ mod tests {
         file_storage::ParsedFileStorage,
         RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
     };
-    use std::{
-        num::NonZeroU64,
-        sync::Arc,
-    };
+    use std::{num::NonZeroU64, sync::Arc};
 
     #[test]
     fn test_try_from_string_to_return_action() {
