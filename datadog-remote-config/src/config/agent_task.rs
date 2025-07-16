@@ -1,9 +1,12 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use serde::Deserialize;
+use serde_with::{serde_as, DisplayFromStr};
+use std::num::NonZeroU64;
+
 #[cfg(feature = "test")]
 use serde::Serialize;
-use serde::{Deserialize, Deserializer, Serializer};
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
@@ -13,37 +16,12 @@ pub struct AgentTaskFile {
     pub uuid: String,
 }
 
-fn non_zero_number<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let val = String::deserialize(deserializer)?;
-    match val.parse() {
-        Ok(val) => {
-            if val == 0 {
-                return Err(serde::de::Error::custom("case_id cannot be zero"));
-            }
-            Ok(val)
-        }
-        Err(_) => Err(serde::de::Error::custom("case_id must be a digit")),
-    }
-}
-
-fn serialize_as_string<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_str(&value.to_string())
-}
-
+#[serde_as]
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct AgentTask {
-    #[serde(
-        deserialize_with = "non_zero_number",
-        serialize_with = "serialize_as_string"
-    )]
-    pub case_id: u64,
+    #[serde_as(as = "DisplayFromStr")]
+    pub case_id: NonZeroU64,
     pub hostname: String,
     pub user_handle: String,
 }
@@ -110,7 +88,7 @@ mod tests {
         let result = parse_json(json_data.as_bytes());
         assert!(result.is_ok());
         let task = result.unwrap();
-        assert_eq!(task.args.case_id, 12345);
+        assert_eq!(task.args.case_id, NonZeroU64::new(12345).unwrap());
     }
 
     #[test]
@@ -148,7 +126,7 @@ mod tests {
     #[test]
     fn test_serialization() {
         let task = AgentTask {
-            case_id: 12345,
+            case_id: NonZeroU64::new(12345).unwrap(),
             hostname: "test-host".to_string(),
             user_handle: "test@example.com".to_string(),
         };

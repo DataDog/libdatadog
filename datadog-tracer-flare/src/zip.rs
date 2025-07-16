@@ -7,6 +7,7 @@ use std::{
     collections::HashMap,
     fs::File,
     io::{self, Read, Seek},
+    num::NonZeroU64,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -146,7 +147,7 @@ fn generate_payload(
     mut zip: File,
     language: &String,
     log_level: &String,
-    case_id: &u64,
+    case_id: &NonZeroU64,
     hostname: &String,
     user_handle: &String,
     uuid: &String,

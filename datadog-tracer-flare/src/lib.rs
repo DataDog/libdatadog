@@ -330,7 +330,10 @@ mod tests {
         file_storage::ParsedFileStorage,
         RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
     };
-    use std::sync::Arc;
+    use std::{
+        num::NonZeroU64,
+        sync::Arc,
+    };
 
     #[test]
     fn test_try_from_string_to_return_action() {
@@ -391,7 +394,7 @@ mod tests {
 
         let task = AgentTaskFile {
             args: AgentTask {
-                case_id: 123,
+                case_id: NonZeroU64::new(123).unwrap(),
                 hostname: "test-host".to_string(),
                 user_handle: "test@example.com".to_string(),
             },
