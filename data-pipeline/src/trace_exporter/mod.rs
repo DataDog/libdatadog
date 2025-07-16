@@ -760,12 +760,20 @@ impl TraceExporter {
         &self,
         response: hyper::Response<hyper_migration::Body>,
         trace_count: usize,
+        payload_size: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         match response.into_body().collect().await {
             Ok(body) => {
                 info!(trace_count, "Traces sent successfully to agent");
                 self.emit_metric(
                     HealthMetric::Count(health_metrics::STAT_SEND_TRACES, trace_count as i64),
+                    None,
+                );
+                self.emit_metric(
+                    HealthMetric::Distribution(
+                        health_metrics::STAT_HTTP_SENT_BYTES,
+                        payload_size as i64,
+                    ),
                     None,
                 );
                 Ok(AgentResponse::Changed {
@@ -809,7 +817,8 @@ impl TraceExporter {
         match hyper_migration::new_default_client().request(req).await {
             Ok(response) => {
                 let response = hyper_migration::into_response(response);
-                self.process_http_response(response, trace_count).await
+                self.process_http_response(response, trace_count, data.len())
+                    .await
             }
             Err(err) => self.handle_request_error(err),
         }
@@ -820,11 +829,12 @@ impl TraceExporter {
         &self,
         response: hyper::Response<hyper_migration::Body>,
         trace_count: usize,
+        payload_size: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         if !response.status().is_success() {
             self.handle_http_error_response(response).await
         } else {
-            self.handle_http_success_response(response, trace_count)
+            self.handle_http_success_response(response, trace_count, payload_size)
                 .await
         }
     }
