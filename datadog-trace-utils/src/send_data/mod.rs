@@ -78,6 +78,7 @@ pub enum Compression {
     None,
 }
 
+#[derive(Clone)]
 pub struct SendDataBuilder {
     pub(crate) tracer_payloads: TracerPayloadCollection,
     pub(crate) size: usize,
@@ -111,6 +112,16 @@ impl SendDataBuilder {
     #[cfg(feature = "compression")]
     pub fn with_compression(mut self, compression: Compression) -> SendDataBuilder {
         self.compression = compression;
+        self
+    }
+
+    pub fn with_api_key(mut self, api_key: &str) -> SendDataBuilder {
+        self.target.api_key = Some(api_key.to_string().into());
+        self
+    }
+
+    pub fn with_retry_strategy(mut self, retry_strategy: RetryStrategy) -> SendDataBuilder {
+        self.retry_strategy = retry_strategy;
         self
     }
 
@@ -420,6 +431,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::send_with_retry::{RetryBackoffType, RetryStrategy};
     use crate::test_utils::create_test_no_alloc_span;
     use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, RootSpanTags};
     use crate::tracer_header_tags::TracerHeaderTags;
@@ -1029,5 +1041,30 @@ mod tests {
 
         #[cfg(feature = "compression")]
         assert!(matches!(new_data.compression, Compression::None));
+    }
+
+    #[test]
+    fn test_builder() {
+        let header_tags = HEADER_TAGS;
+        let payload = setup_payload(&header_tags);
+        let retry_strategy = RetryStrategy::new(5, 100, RetryBackoffType::Constant, None);
+
+        let send_data = SendDataBuilder::new(
+            100,
+            TracerPayloadCollection::V07(vec![payload]),
+            header_tags,
+            &Endpoint::default(),
+        )
+        // Test with_api_key()
+        .with_api_key("TEST-KEY")
+        // Test with_retry_strategy()
+        .with_retry_strategy(retry_strategy.clone())
+        .build();
+
+        assert_eq!(
+            send_data.target.api_key,
+            Some(std::borrow::Cow::Borrowed("TEST-KEY"))
+        );
+        assert_eq!(send_data.retry_strategy, retry_strategy);
     }
 }
