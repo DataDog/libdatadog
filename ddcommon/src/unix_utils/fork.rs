@@ -64,9 +64,9 @@ pub fn alt_fork() -> libc::pid_t {
     };
 
     // The max value of a PID is configurable, but within an i32, so the failover
-    if res > pid_t::MAX as i64 {
+    if (res as i64) > (pid_t::MAX as i64) {
         pid_t::MAX
-    } else if res < pid_t::MIN as i64 {
+    } else if (res as i64) < (pid_t::MIN as i64) {
         pid_t::MIN
     } else {
         res as pid_t
