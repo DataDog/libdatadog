@@ -217,6 +217,8 @@ impl Bytes {
         }
     }
 
+    // private
+
     #[inline]
     fn safe_slice_ref(&self, start: usize, end: usize) -> Self {
         Self {

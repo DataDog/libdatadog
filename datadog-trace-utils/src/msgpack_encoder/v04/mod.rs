@@ -1,0 +1,70 @@
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use crate::span::{Span, SpanText};
+use rmp::encode::{write_array_len, ByteBuf, RmpWrite, ValueWriteError};
+
+mod span;
+
+#[inline(always)]
+fn to_writer<W: RmpWrite, T: SpanText, S: AsRef<[Span<T>]>>(
+    writer: &mut W,
+    traces: &[S],
+) -> Result<(), ValueWriteError<W::Error>> {
+    write_array_len(writer, traces.len() as u32)?;
+    for trace in traces {
+        write_array_len(writer, trace.as_ref().len() as u32)?;
+        for span in trace.as_ref() {
+            span::encode_span(writer, span)?;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn to_slice<T: SpanText, S: AsRef<[Span<T>]>>(
+    slice: &mut &mut [u8],
+    traces: &[S],
+) -> Result<(), ValueWriteError> {
+    to_writer(slice, traces)
+}
+
+pub fn to_vec<T: SpanText, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u8> {
+    to_vec_with_capacity(traces, 0)
+}
+
+pub fn to_vec_with_capacity<T: SpanText, S: AsRef<[Span<T>]>>(
+    traces: &[S],
+    capacity: u32,
+) -> Vec<u8> {
+    let mut buf = ByteBuf::with_capacity(capacity as usize);
+    let _ = to_writer(&mut buf, traces);
+    buf.into_vec()
+}
+
+struct CountLength(u32);
+
+impl std::io::Write for CountLength {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.write_all(buf)?;
+        Ok(buf.len())
+    }
+
+    #[inline]
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        self.0 += buf.len() as u32;
+        Ok(())
+    }
+}
+
+pub fn to_len<T: SpanText, S: AsRef<[Span<T>]>>(traces: &[S]) -> u32 {
+    let mut counter = CountLength(0);
+    let _ = to_writer(&mut counter, traces);
+    counter.0
+}
