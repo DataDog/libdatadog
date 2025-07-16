@@ -115,12 +115,12 @@ impl SendDataBuilder {
         self
     }
 
-    pub fn with_api_key(mut self, api_key: &str) -> SendDataBuilder {
+    pub fn with_api_key(&mut self, api_key: &str) -> &mut Self {
         self.target.api_key = Some(api_key.to_string().into());
         self
     }
 
-    pub fn with_retry_strategy(mut self, retry_strategy: RetryStrategy) -> SendDataBuilder {
+    pub fn with_retry_strategy(&mut self, retry_strategy: RetryStrategy) -> &mut Self {
         self.retry_strategy = retry_strategy;
         self
     }
