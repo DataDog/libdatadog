@@ -9,6 +9,7 @@ use tokio::time::sleep;
 /// Enum representing the type of backoff to use for the delay between retries.
 /// ```
 #[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum RetryBackoffType {
     /// Increases the delay by a fixed increment each attempt.
     Linear,
@@ -24,6 +25,7 @@ pub enum RetryBackoffType {
 /// It includes the maximum number of retries, the delay between retries, the type of backoff to
 /// use, and an optional jitter to add randomness to the delay.
 #[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct RetryStrategy {
     /// The maximum number of retries to attempt.
     max_retries: u32,
