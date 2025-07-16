@@ -26,12 +26,14 @@ time = { version = "0.3", features = ["parsing", "serde", "formatting"] }
 tracing = { version = "0.1", default-features = false }
 serde = "1.0"
 serde_json = { version = "1.0", features = ["raw_value"] }
+serde_with = "3"
 
 # Test feature
 hyper-util = { version = "0.1", features = ["service"], optional = true }
 
 [dev-dependencies]
 futures = "0.3"
+datadog-remote-config = { path = ".", features = ["test"] }
 
 [lib]
 bench = false
