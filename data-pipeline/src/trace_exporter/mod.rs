@@ -752,7 +752,7 @@ impl TraceExporter {
                 let type_tag = Tag::new("type", response_status.as_str())
                     .unwrap_or_else(|_| tag!("type", "unknown"));
                 self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
                     Some(vec![&resp_tag, &type_tag]),
                 );
                 // Emit dropped bytes metric for HTTP errors, excluding 404 (Not Found) and 415
@@ -761,14 +761,14 @@ impl TraceExporter {
                 if response_status.as_u16() != 404 && response_status.as_u16() != 415 {
                     self.emit_metric(
                         HealthMetric::Distribution(
-                            health_metrics::STAT_HTTP_DROPPED_BYTES,
+                            health_metrics::TRANSPORT_DROPPED_BYTES,
                             payload_size as i64,
                         ),
                         None,
                     );
                     self.emit_metric(
                         HealthMetric::Distribution(
-                            health_metrics::STAT_HTTP_DROPPED_TRACES,
+                            health_metrics::TRANSPORT_TRACES_DROPPED,
                             trace_count as i64,
                         ),
                         None,
@@ -794,7 +794,10 @@ impl TraceExporter {
             Ok(body) => {
                 info!(trace_count, "Traces sent successfully to agent");
                 self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES, trace_count as i64),
+                    HealthMetric::Count(
+                        health_metrics::TRANSPORT_TRACES_SUCCESSFUL,
+                        trace_count as i64,
+                    ),
                     None,
                 );
                 Ok(AgentResponse::Changed {
@@ -808,7 +811,7 @@ impl TraceExporter {
                 );
                 let type_tag = tag!("type", "response_body");
                 self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
                     Some(vec![&type_tag]),
                 );
                 Err(TraceExporterError::from(err))
@@ -875,20 +878,20 @@ impl TraceExporter {
         );
         let type_tag = tag!("type", "network");
         self.emit_metric(
-            HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+            HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
             Some(vec![&type_tag]),
         );
         // Emit dropped bytes metric for network/connection errors
         self.emit_metric(
             HealthMetric::Distribution(
-                health_metrics::STAT_HTTP_DROPPED_BYTES,
+                health_metrics::TRANSPORT_DROPPED_BYTES,
                 payload_size as i64,
             ),
             None,
         );
         self.emit_metric(
             HealthMetric::Distribution(
-                health_metrics::STAT_HTTP_DROPPED_TRACES,
+                health_metrics::TRANSPORT_TRACES_DROPPED,
                 trace_count as i64,
             ),
             None,
@@ -948,7 +951,7 @@ impl TraceExporter {
         .map_err(|e| {
             error!("Error deserializing trace from request body: {e}");
             self.emit_metric(
-                HealthMetric::Count(health_metrics::STAT_DESER_TRACES_ERRORS, 1),
+                HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
                 None,
             );
             TraceExporterError::Deserialization(e)
@@ -958,7 +961,7 @@ impl TraceExporter {
             "Trace deserialization completed successfully"
         );
         self.emit_metric(
-            HealthMetric::Count(health_metrics::STAT_DESER_TRACES, traces.len() as i64),
+            HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
             None,
         );
 
@@ -1088,7 +1091,7 @@ impl TraceExporter {
             },
         };
         self.emit_metric(
-            HealthMetric::Distribution(health_metrics::STAT_HTTP_REQUESTS, requests_count),
+            HealthMetric::Distribution(health_metrics::TRANSPORT_REQUESTS, requests_count),
             None,
         );
 
@@ -1143,11 +1146,11 @@ impl TraceExporter {
     ) -> Result<AgentResponse, TraceExporterError> {
         // Always emit http.sent.* metrics regardless of success/failure
         self.emit_metric(
-            HealthMetric::Distribution(health_metrics::STAT_HTTP_SENT_BYTES, payload_len as i64),
+            HealthMetric::Distribution(health_metrics::TRANSPORT_SENT_BYTES, payload_len as i64),
             None,
         );
         self.emit_metric(
-            HealthMetric::Distribution(health_metrics::STAT_HTTP_SENT_TRACES, chunks as i64),
+            HealthMetric::Distribution(health_metrics::TRANSPORT_TRACES_SENT, chunks as i64),
             None,
         );
 
@@ -1178,21 +1181,21 @@ impl TraceExporter {
             SendWithRetryError::Timeout(_) => {
                 let type_tag = tag!("type", "timeout");
                 self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
                     Some(vec![&type_tag]),
                 );
             }
             SendWithRetryError::Network(_, _) => {
                 let type_tag = tag!("type", "network");
                 self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
                     Some(vec![&type_tag]),
                 );
             }
             SendWithRetryError::Build(_) => {
                 let type_tag = tag!("type", "build");
                 self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
                     Some(vec![&type_tag]),
                 );
             }
@@ -1229,7 +1232,7 @@ impl TraceExporter {
         let type_tag =
             Tag::new("type", status.as_str()).unwrap_or_else(|_| tag!("type", "unknown"));
         self.emit_metric(
-            HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+            HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
             Some(vec![&type_tag]),
         );
 
@@ -1237,13 +1240,13 @@ impl TraceExporter {
         if status.as_u16() != 404 && status.as_u16() != 415 {
             self.emit_metric(
                 HealthMetric::Distribution(
-                    health_metrics::STAT_HTTP_DROPPED_BYTES,
+                    health_metrics::TRANSPORT_DROPPED_BYTES,
                     payload_len as i64,
                 ),
                 None,
             );
             self.emit_metric(
-                HealthMetric::Distribution(health_metrics::STAT_HTTP_DROPPED_TRACES, chunks as i64),
+                HealthMetric::Distribution(health_metrics::TRANSPORT_TRACES_DROPPED, chunks as i64),
                 None,
             );
         }
@@ -1311,7 +1314,7 @@ impl TraceExporter {
                 error!(?err, "Error reading agent response body");
                 let type_tag = tag!("type", "response_body");
                 self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
                     Some(vec![&type_tag]),
                 );
                 Err(TraceExporterError::from(err))
@@ -1333,7 +1336,7 @@ impl TraceExporter {
             "Trace chunks sent successfully to agent"
         );
         self.emit_metric(
-            HealthMetric::Count(health_metrics::STAT_SEND_TRACES, chunks as i64),
+            HealthMetric::Count(health_metrics::TRANSPORT_TRACES_SUCCESSFUL, chunks as i64),
             None,
         );
 
@@ -1365,21 +1368,21 @@ impl TraceExporter {
             let type_tag =
                 Tag::new("type", status.as_str()).unwrap_or_else(|_| tag!("type", "unknown"));
             self.emit_metric(
-                HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+                HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
                 Some(vec![&type_tag]),
             );
             // Emit dropped bytes metric for non-success status codes, excluding 404 and 415
             if status.as_u16() != 404 && status.as_u16() != 415 {
                 self.emit_metric(
                     HealthMetric::Distribution(
-                        health_metrics::STAT_HTTP_DROPPED_BYTES,
+                        health_metrics::TRANSPORT_DROPPED_BYTES,
                         payload_len as i64,
                     ),
                     None,
                 );
                 self.emit_metric(
                     HealthMetric::Distribution(
-                        health_metrics::STAT_HTTP_DROPPED_TRACES,
+                        health_metrics::TRANSPORT_TRACES_DROPPED,
                         chunks as i64,
                     ),
                     None,
@@ -1723,24 +1726,24 @@ mod tests {
         // Check that all expected metrics are present
         let expected_metrics = vec![
             format!(
-                "datadog.libdatadog.deser_traces:2|c|#libdatadog_version:{}",
+                "datadog.tracer.exporter.deserialize.traces:2|c|#libdatadog_version:{}",
                 env!("CARGO_PKG_VERSION")
             ),
             format!(
-                "datadog.libdatadog.send.traces:2|c|#libdatadog_version:{}",
+                "datadog.tracer.exporter.transport.traces.successful:2|c|#libdatadog_version:{}",
                 env!("CARGO_PKG_VERSION")
             ),
             format!(
-                "datadog.tracer.http.sent.bytes:{}|d|#libdatadog_version:{}",
+                "datadog.tracer.exporter.transport.sent.bytes:{}|d|#libdatadog_version:{}",
                 data.len(),
                 env!("CARGO_PKG_VERSION")
             ),
             format!(
-                "datadog.tracer.http.sent.traces:2|d|#libdatadog_version:{}",
+                "datadog.tracer.exporter.transport.traces.sent:2|d|#libdatadog_version:{}",
                 env!("CARGO_PKG_VERSION")
             ),
             format!(
-                "datadog.tracer.http.requests:1|d|#libdatadog_version:{}",
+                "datadog.tracer.exporter.transport.requests:1|d|#libdatadog_version:{}",
                 env!("CARGO_PKG_VERSION")
             ),
         ];
@@ -1776,7 +1779,7 @@ mod tests {
 
         assert_eq!(
             &format!(
-                "datadog.libdatadog.deser_traces.errors:1|c|#libdatadog_version:{}",
+                "datadog.tracer.exporter.deserialize.errors:1|c|#libdatadog_version:{}",
                 env!("CARGO_PKG_VERSION")
             ),
             &read(&stats_socket)
@@ -1828,33 +1831,33 @@ mod tests {
 
         // Expected metrics
         let expected_deser = format!(
-            "datadog.libdatadog.deser_traces:1|c|#libdatadog_version:{}",
+            "datadog.tracer.exporter.deserialize.traces:1|c|#libdatadog_version:{}",
             env!("CARGO_PKG_VERSION")
         );
         let expected_error = format!(
-            "datadog.libdatadog.send.traces.errors:1|c|#libdatadog_version:{},type:400",
+            "datadog.tracer.exporter.transport.traces.failed:1|c|#libdatadog_version:{},type:400",
             env!("CARGO_PKG_VERSION")
         );
         let expected_dropped = format!(
-            "datadog.tracer.http.dropped.bytes:{}|d|#libdatadog_version:{}",
+            "datadog.tracer.exporter.transport.dropped.bytes:{}|d|#libdatadog_version:{}",
             data.len(),
             env!("CARGO_PKG_VERSION")
         );
         let expected_sent_bytes = format!(
-            "datadog.tracer.http.sent.bytes:{}|d|#libdatadog_version:{}",
+            "datadog.tracer.exporter.transport.sent.bytes:{}|d|#libdatadog_version:{}",
             data.len(),
             env!("CARGO_PKG_VERSION")
         );
         let expected_sent_traces = format!(
-            "datadog.tracer.http.sent.traces:1|d|#libdatadog_version:{}",
+            "datadog.tracer.exporter.transport.traces.sent:1|d|#libdatadog_version:{}",
             env!("CARGO_PKG_VERSION")
         );
         let expected_dropped_traces = format!(
-            "datadog.tracer.http.dropped.traces:1|d|#libdatadog_version:{}",
+            "datadog.tracer.exporter.transport.traces.dropped:1|d|#libdatadog_version:{}",
             env!("CARGO_PKG_VERSION")
         );
         let expected_requests = format!(
-            "datadog.tracer.http.requests:5|d|#libdatadog_version:{}",
+            "datadog.tracer.exporter.transport.requests:5|d|#libdatadog_version:{}",
             env!("CARGO_PKG_VERSION")
         );
 
@@ -1928,24 +1931,24 @@ mod tests {
 
         // Expected metrics for 404 error
         let expected_deser = format!(
-            "datadog.libdatadog.deser_traces:1|c|#libdatadog_version:{}",
+            "datadog.tracer.exporter.deserialize.traces:1|c|#libdatadog_version:{}",
             env!("CARGO_PKG_VERSION")
         );
         let expected_error = format!(
-            "datadog.libdatadog.send.traces.errors:1|c|#libdatadog_version:{},type:404",
+            "datadog.tracer.exporter.transport.traces.failed:1|c|#libdatadog_version:{},type:404",
             env!("CARGO_PKG_VERSION")
         );
         let expected_sent_bytes = format!(
-            "datadog.tracer.http.sent.bytes:{}|d|#libdatadog_version:{}",
+            "datadog.tracer.exporter.transport.sent.bytes:{}|d|#libdatadog_version:{}",
             data.len(),
             env!("CARGO_PKG_VERSION")
         );
         let expected_sent_traces = format!(
-            "datadog.tracer.http.sent.traces:1|d|#libdatadog_version:{}",
+            "datadog.tracer.exporter.transport.traces.sent:1|d|#libdatadog_version:{}",
             env!("CARGO_PKG_VERSION")
         );
         let expected_requests = format!(
-            "datadog.tracer.http.requests:5|d|#libdatadog_version:{}",
+            "datadog.tracer.exporter.transport.requests:5|d|#libdatadog_version:{}",
             env!("CARGO_PKG_VERSION")
         );
 
@@ -1973,7 +1976,7 @@ mod tests {
 
         // Should NOT emit http.dropped.bytes for 404
         let dropped_bytes_metric = format!(
-            "datadog.tracer.http.dropped.bytes:{}|d|#libdatadog_version:{}",
+            "datadog.tracer.exporter.transport.dropped.bytes:{}|d|#libdatadog_version:{}",
             data.len(),
             env!("CARGO_PKG_VERSION")
         );
@@ -1984,7 +1987,7 @@ mod tests {
 
         // Should NOT emit http.dropped.traces for 404
         let dropped_traces_metric = format!(
-            "datadog.tracer.http.dropped.traces:1|d|#libdatadog_version:{}",
+            "datadog.tracer.exporter.transport.traces.dropped:1|d|#libdatadog_version:{}",
             env!("CARGO_PKG_VERSION")
         );
         assert!(
