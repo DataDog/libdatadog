@@ -522,14 +522,31 @@ mod single_threaded_tests {
         response_observer.check_response(&response);
 
         // Wait for the fetch to complete
+        const MAX_ATTEMPTS: u32 = 500;
+        const SLEEP_DURATION_MS: u64 = 10;
+
         let mut attempts = 0;
-        while mock.hits_async().await == 0 && attempts < 50 {
+        while mock.hits_async().await == 0 && attempts < MAX_ATTEMPTS {
             attempts += 1;
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(SLEEP_DURATION_MS)).await;
         }
 
         // Should trigger a fetch since the state is different
         mock.assert_hits_async(1).await;
+
+        // Wait for the cache to be updated with proper timeout
+        let mut attempts = 0;
+
+        while attempts < MAX_ATTEMPTS {
+            let updated_info = AGENT_INFO_CACHE.load();
+            if let Some(info) = updated_info.as_ref() {
+                if info.state_hash == "new_state" {
+                    break;
+                }
+            }
+            attempts += 1;
+            tokio::time::sleep(Duration::from_millis(SLEEP_DURATION_MS)).await;
+        }
 
         // Verify the cache was updated
         let updated_info = AGENT_INFO_CACHE.load();
