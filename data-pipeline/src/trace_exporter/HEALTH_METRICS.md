@@ -42,7 +42,14 @@ performance characteristics. They are emitted via DogStatsD and follow consisten
   - HTTP error responses (4xx, 5xx status codes)
   - Network/connection errors
   - Request timeout errors
-- **Tags**: `libdatadog_version`, `response_code` (for HTTP errors)
+- **Tags**: `libdatadog_version`, `type:<status_code>` (for HTTP errors), `type:<error_type>` (for other errors)
+- **Error Types**: 
+  - `type:<status_code>`: HTTP status codes (e.g., `type:400`, `type:404`, `type:500`)
+  - `type:network`: Network/connection errors
+  - `type:timeout`: Request timeout errors
+  - `type:response_body`: Response body read errors
+  - `type:build`: Request build errors
+  - `type:unknown`: Fallback for unrecognized error types
 
 ### HTTP Transport Metrics
 
@@ -61,6 +68,16 @@ performance characteristics. They are emitted via DogStatsD and follow consisten
 #### `datadog.tracer.http.dropped.bytes`
 - **Type**: Distribution
 - **Description**: Size in bytes of HTTP payloads dropped due to errors
+- **When Emitted**: 
+  - HTTP error responses (excluding 404 Not Found and 415 Unsupported Media Type)
+  - Network/connection errors
+  - Request timeout errors
+- **Tags**: `libdatadog_version`
+- **Note**: 404 and 415 status codes are excluded as they represent endpoint/format issues rather than dropped payloads
+
+#### `datadog.tracer.http.dropped.traces`
+- **Type**: Distribution
+- **Description**: Number of trace chunks dropped due to errors
 - **When Emitted**: 
   - HTTP error responses (excluding 404 Not Found and 415 Unsupported Media Type)
   - Network/connection errors
@@ -97,13 +114,13 @@ The metrics follow a hierarchical naming pattern:
 
 - **Success (2xx)**: Emit `send.traces`, `http.sent.bytes`, `http.sent.traces`
 - **Client Errors (4xx)**: Emit `send.traces.errors`, `http.sent.bytes`, `http.sent.traces`, and conditionally 
-  `http.dropped.bytes`
-- **Server Errors (5xx)**: Emit `send.traces.errors`, `http.sent.bytes`, `http.sent.traces`, `http.dropped.bytes`
-- **Network Errors**: Emit `send.traces.errors`, `http.sent.bytes`, `http.sent.traces`, `http.dropped.bytes`
+  `http.dropped.bytes`, `http.dropped.traces`
+- **Server Errors (5xx)**: Emit `send.traces.errors`, `http.sent.bytes`, `http.sent.traces`, `http.dropped.bytes`, `http.dropped.traces`
+- **Network Errors**: Emit `send.traces.errors`, `http.sent.bytes`, `http.sent.traces`, `http.dropped.bytes`, `http.dropped.traces`
 
 ### Special Status Code Exclusions
 
-The following HTTP status codes do NOT trigger `http.dropped.bytes` emission:
+The following HTTP status codes do NOT trigger `http.dropped.bytes` or `http.dropped.traces` emission:
 - **404 Not Found**: Indicates endpoint not available (agent configuration issue)
 - **415 Unsupported Media Type**: Indicates format negotiation issue
 
@@ -115,4 +132,5 @@ All metrics include the following standard tags:
 - `libdatadog_version`: Version of the libdatadog library
 
 Additional conditional tags:
-- `response_code`: HTTP status code (only for HTTP error metrics)
+- `type:<status_code>`: HTTP status code for error metrics (e.g., `type:400`, `type:404`, `type:500`)
+- `type:<error_type>`: Error type classification for non-HTTP errors (e.g., `type:network`, `type:timeout`, `type:response_body`, `type:build`, `type:unknown`)

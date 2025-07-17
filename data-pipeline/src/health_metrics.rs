@@ -12,6 +12,7 @@ pub(crate) const STAT_SER_TRACES_ERRORS: &str = "datadog.libdatadog.ser_traces.e
 pub(crate) const STAT_HTTP_SENT_BYTES: &str = "datadog.tracer.http.sent.bytes";
 pub(crate) const STAT_HTTP_SENT_TRACES: &str = "datadog.tracer.http.sent.traces";
 pub(crate) const STAT_HTTP_DROPPED_BYTES: &str = "datadog.tracer.http.dropped.bytes";
+pub(crate) const STAT_HTTP_DROPPED_TRACES: &str = "datadog.tracer.http.dropped.traces";
 pub(crate) const STAT_HTTP_REQUESTS: &str = "datadog.tracer.http.requests";
 
 #[derive(Debug)]
