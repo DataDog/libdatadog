@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{
-    InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
 use datadog_ipc::platform::{Channel, FileBackedHandle, ShmHandle};
@@ -14,7 +14,6 @@ use dogstatsd_client::DogStatsDActionOwned;
 use serde::Serialize;
 use std::sync::Mutex;
 use std::{
-    borrow::Cow,
     io,
     time::{Duration, Instant},
 };
@@ -157,39 +156,6 @@ pub fn enqueue_actions(
         queue_id: *queue_id,
         actions,
     })
-}
-
-/// Registers a service and flushes any queued actions.
-///
-/// # Arguments
-///
-/// * `transport` - The transport used for communication.
-/// * `instance_id` - The ID of the instance.
-/// * `queue_id` - The unique identifier for the action in the queue.
-/// * `runtime_metadata` - The metadata of the runtime.
-/// * `service_name` - The name of the service.
-/// * `env_name` - The name of the environment.
-///
-/// # Returns
-///
-/// An `io::Result<()>` indicating the result of the operation.
-pub fn register_service_and_flush_queued_actions(
-    transport: &mut SidecarTransport,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
-    runtime_metadata: &RuntimeMetadata,
-    service_name: Cow<str>,
-    env_name: Cow<str>,
-) -> io::Result<()> {
-    transport.send(
-        SidecarInterfaceRequest::RegisterServiceAndFlushQueuedActions {
-            instance_id: instance_id.clone(),
-            queue_id: *queue_id,
-            meta: runtime_metadata.clone(),
-            service_name: service_name.into_owned(),
-            env_name: env_name.into_owned(),
-        },
-    )
 }
 
 /// Sets the configuration for a session.
@@ -417,7 +383,7 @@ pub fn acquire_exception_hash_rate_limiter(
 /// # Returns
 ///
 /// An `io::Result<()>` indicating the result of the operation.
-pub fn set_remote_config_data(
+pub fn set_universal_service_tags(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
     queue_id: &QueueId,
@@ -426,7 +392,7 @@ pub fn set_remote_config_data(
     app_version: String,
     global_tags: Vec<Tag>,
 ) -> io::Result<()> {
-    transport.send(SidecarInterfaceRequest::SetRemoteConfigData {
+    transport.send(SidecarInterfaceRequest::SetUniversalServiceTags {
         instance_id: instance_id.clone(),
         queue_id: *queue_id,
         service_name,
