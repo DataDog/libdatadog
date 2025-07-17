@@ -10,6 +10,7 @@ pub(crate) const STAT_DESER_TRACES_ERRORS: &str = "datadog.libdatadog.deser_trac
 #[allow(dead_code)] // TODO (APMSP-1584) Add support for health metrics when using trace utils
 pub(crate) const STAT_SER_TRACES_ERRORS: &str = "datadog.libdatadog.ser_traces.errors";
 pub(crate) const STAT_HTTP_SENT_BYTES: &str = "datadog.tracer.http.sent.bytes";
+pub(crate) const STAT_HTTP_SENT_TRACES: &str = "datadog.tracer.http.sent.traces";
 pub(crate) const STAT_HTTP_DROPPED_BYTES: &str = "datadog.tracer.http.dropped.bytes";
 
 #[derive(Debug)]

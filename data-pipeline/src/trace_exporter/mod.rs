@@ -773,20 +773,12 @@ impl TraceExporter {
         &self,
         response: hyper::Response<hyper_migration::Body>,
         trace_count: usize,
-        payload_size: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         match response.into_body().collect().await {
             Ok(body) => {
                 info!(trace_count, "Traces sent successfully to agent");
                 self.emit_metric(
                     HealthMetric::Count(health_metrics::STAT_SEND_TRACES, trace_count as i64),
-                    None,
-                );
-                self.emit_metric(
-                    HealthMetric::Distribution(
-                        health_metrics::STAT_HTTP_SENT_BYTES,
-                        payload_size as i64,
-                    ),
                     None,
                 );
                 Ok(AgentResponse::Changed {
@@ -848,7 +840,7 @@ impl TraceExporter {
             self.handle_http_error_response(response, payload_size)
                 .await
         } else {
-            self.handle_http_success_response(response, trace_count, payload_size)
+            self.handle_http_success_response(response, trace_count)
                 .await
         }
     }
@@ -1108,6 +1100,16 @@ impl TraceExporter {
         chunks: usize,
         payload_len: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
+        // Always emit http.sent.* metrics regardless of success/failure
+        self.emit_metric(
+            HealthMetric::Distribution(health_metrics::STAT_HTTP_SENT_BYTES, payload_len as i64),
+            None,
+        );
+        self.emit_metric(
+            HealthMetric::Distribution(health_metrics::STAT_HTTP_SENT_TRACES, chunks as i64),
+            None,
+        );
+
         match result {
             Ok((response, _)) => {
                 self.handle_agent_response(chunks, response, payload_len)
@@ -1618,23 +1620,44 @@ mod tests {
         let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
 
         let _result = exporter
-            .send(data.as_ref(), 1)
+            .send(data.as_ref(), 2)
             .expect("failed to send trace");
 
-        assert_eq!(
-            &format!(
+        // Collect all metrics
+        let mut received_metrics = Vec::new();
+        for _ in 0..4 {
+            received_metrics.push(read(&stats_socket));
+        }
+
+        // Check that all expected metrics are present
+        let expected_metrics = vec![
+            format!(
                 "datadog.libdatadog.deser_traces:2|c|#libdatadog_version:{}",
                 env!("CARGO_PKG_VERSION")
             ),
-            &read(&stats_socket)
-        );
-        assert_eq!(
-            &format!(
+            format!(
                 "datadog.libdatadog.send.traces:2|c|#libdatadog_version:{}",
                 env!("CARGO_PKG_VERSION")
             ),
-            &read(&stats_socket)
-        );
+            format!(
+                "datadog.tracer.http.sent.bytes:{}|d|#libdatadog_version:{}",
+                data.len(),
+                env!("CARGO_PKG_VERSION")
+            ),
+            format!(
+                "datadog.tracer.http.sent.traces:2|d|#libdatadog_version:{}",
+                env!("CARGO_PKG_VERSION")
+            ),
+        ];
+
+        for expected in expected_metrics {
+            assert!(
+                received_metrics.contains(&expected),
+                "Expected metric '{}' not found in received metrics: {:?}",
+                expected,
+                received_metrics
+            );
+        }
     }
 
     #[test]
@@ -1771,31 +1794,58 @@ mod tests {
 
         assert!(result.is_err());
 
-        // Should emit deser_traces
-        assert_eq!(
-            &format!(
-                "datadog.libdatadog.deser_traces:1|c|#libdatadog_version:{}",
-                env!("CARGO_PKG_VERSION")
-            ),
-            &read(&stats_socket)
+        // Collect all metrics
+        let mut received_metrics = Vec::new();
+        for _ in 0..4 {
+            received_metrics.push(read(&stats_socket));
+        }
+
+        // Expected metrics for 404 error
+        let expected_deser = format!(
+            "datadog.libdatadog.deser_traces:1|c|#libdatadog_version:{}",
+            env!("CARGO_PKG_VERSION")
+        );
+        let expected_error = format!(
+            "datadog.libdatadog.send.traces.errors:1|c|#libdatadog_version:{}",
+            env!("CARGO_PKG_VERSION")
+        );
+        let expected_sent_bytes = format!(
+            "datadog.tracer.http.sent.bytes:{}|d|#libdatadog_version:{}",
+            data.len(),
+            env!("CARGO_PKG_VERSION")
+        );
+        let expected_sent_traces = format!(
+            "datadog.tracer.http.sent.traces:1|d|#libdatadog_version:{}",
+            env!("CARGO_PKG_VERSION")
         );
 
-        // Should emit send.traces.errors
-        assert_eq!(
-            &format!(
-                "datadog.libdatadog.send.traces.errors:1|c|#libdatadog_version:{}",
-                env!("CARGO_PKG_VERSION")
-            ),
-            &read(&stats_socket)
-        );
-
-        // Should NOT emit http.dropped.bytes for 404 - socket should timeout
-        let mut buf = [0; 1_000];
-        let result = stats_socket.recv(&mut buf);
+        // Should emit these metrics
         assert!(
-            result.is_err(),
-            "Expected timeout, but got data: {:?}",
-            result.map(|len| String::from_utf8_lossy(&buf[..len]).to_string())
+            received_metrics.contains(&expected_deser),
+            "Missing deser_traces metric. Got: {received_metrics:?}"
+        );
+        assert!(
+            received_metrics.contains(&expected_error),
+            "Missing send.traces.errors metric. Got: {received_metrics:?}"
+        );
+        assert!(
+            received_metrics.contains(&expected_sent_bytes),
+            "Missing http.sent.bytes metric. Got: {received_metrics:?}"
+        );
+        assert!(
+            received_metrics.contains(&expected_sent_traces),
+            "Missing http.sent.traces metric. Got: {received_metrics:?}"
+        );
+
+        // Should NOT emit http.dropped.bytes for 404
+        let dropped_bytes_metric = format!(
+            "datadog.tracer.http.dropped.bytes:{}|d|#libdatadog_version:{}",
+            data.len(),
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(
+            !received_metrics.contains(&dropped_bytes_metric),
+            "Should not emit http.dropped.bytes for 404. Got: {received_metrics:?}"
         );
     }
 
