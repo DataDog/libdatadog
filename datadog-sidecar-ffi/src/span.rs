@@ -201,7 +201,6 @@ pub extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
         return;
     }
 
-    // SAFETY: we assume this pointer came from `String::leak`
     unsafe {
         let _ = String::from_raw_parts(ptr.cast_mut().cast(), len + 1, len + 1);
     }

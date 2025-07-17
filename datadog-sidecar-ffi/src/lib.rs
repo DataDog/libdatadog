@@ -1043,7 +1043,7 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     // Write traces to the shared memory
     let mut shm_slice = mapped_shm.as_slice_mut();
     let shm_slice_len = shm_slice.len();
-    let written = match msgpack_encoder::v04::to_slice(&mut shm_slice, traces) {
+    let written = match msgpack_encoder::v04::write_to_slice(&mut shm_slice, traces) {
         Ok(()) => shm_slice_len - shm_slice.len(),
         Err(_) => {
             tracing::error!("Failed serializing the traces");

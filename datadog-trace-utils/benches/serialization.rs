@@ -12,11 +12,7 @@ fn generate_spans(num_spans: usize, trace_id: u64) -> Vec<Value> {
 
     for i in 0..num_spans {
         // If it's the first span make it the root
-        let span_id = if i == 0 {
-            root_span_id
-        } else {
-            root_span_id + i as u64 + 1
-        };
+        let span_id = root_span_id + i as u64;
 
         // if it's not the root, then give it the root as a parent
         let parent_id = if i == 0 { 0 } else { root_span_id };
@@ -74,7 +70,7 @@ pub fn serialize_internal_to_msgpack(c: &mut Criterion) {
                     // rmp_serde
                     // let _ = black_box(rmp_serde::encode::write_named(&mut vec.as_mut_slice(),
                     // &data));
-                    let _ = black_box(msgpack_encoder::v04::to_slice(
+                    let _ = black_box(msgpack_encoder::v04::write_to_slice(
                         &mut vec.as_mut_slice(),
                         &data,
                     ));
