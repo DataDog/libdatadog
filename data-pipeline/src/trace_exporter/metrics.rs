@@ -41,6 +41,19 @@ impl<'a> MetricsEmitter<'a> {
                     );
                     flusher.send(vec![DogStatsDAction::Count(name, c, tags.into_iter())])
                 }
+                HealthMetric::Distribution(name, value) => {
+                    debug!(
+                        metric_name = name,
+                        value = value,
+                        has_custom_tags = has_custom_tags,
+                        "Emitting distribution metric to dogstatsd"
+                    );
+                    flusher.send(vec![DogStatsDAction::Distribution(
+                        name,
+                        value as f64,
+                        tags.into_iter(),
+                    )])
+                }
             }
         } else {
             debug!(
@@ -78,5 +91,6 @@ mod tests {
             HealthMetric::Count("test.metric", 5),
             Some(vec![&tag!("custom", "tag")]),
         );
+        emitter.emit(HealthMetric::Distribution("test.distribution", 1024), None);
     }
 }
