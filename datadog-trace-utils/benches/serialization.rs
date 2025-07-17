@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::{black_box, criterion_group, Criterion};
-use serde_json::{json, Value};
 use datadog_trace_utils::msgpack_decoder;
 use datadog_trace_utils::msgpack_encoder;
+use serde_json::{json, Value};
 
 fn generate_spans(num_spans: usize, trace_id: u64) -> Vec<Value> {
     let mut spans = Vec::with_capacity(num_spans);
@@ -12,11 +12,7 @@ fn generate_spans(num_spans: usize, trace_id: u64) -> Vec<Value> {
 
     for i in 0..num_spans {
         // If it's the first span make it the root
-        let span_id = if i == 0 {
-            root_span_id
-        } else {
-            root_span_id + i as u64 + 1
-        };
+        let span_id = root_span_id + i as u64;
 
         // if it's not the root, then give it the root as a parent
         let parent_id = if i == 0 { 0 } else { root_span_id };
@@ -69,11 +65,15 @@ pub fn serialize_internal_to_msgpack(c: &mut Criterion) {
         "benching serializing traces from their internal representation to msgpack",
         |b| {
             b.iter_batched(
-                || { vec![0u8; 12_000_000] },
+                || vec![0u8; 12_000_000],
                 |mut vec| {
                     // rmp_serde
-                    // let _ = black_box(rmp_serde::encode::write_named(&mut vec.as_mut_slice(), &data));
-                    let _ = black_box(msgpack_encoder::v04::to_slice(vec.as_mut_slice(), &data));
+                    // let _ = black_box(rmp_serde::encode::write_named(&mut vec.as_mut_slice(),
+                    // &data));
+                    let _ = black_box(msgpack_encoder::v04::write_to_slice(
+                        &mut vec.as_mut_slice(),
+                        &data,
+                    ));
                     // Return the result to avoid measuring the deallocation time
                     vec
                 },

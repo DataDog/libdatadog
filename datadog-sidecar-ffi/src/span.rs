@@ -168,20 +168,27 @@ pub extern "C" fn ddog_trace_new_span(trace: &mut TraceBytes) -> &mut SpanBytes 
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_trace_new_span_with_capacities(trace: &mut TraceBytes, meta_size: usize, metrics_size: usize) -> &mut SpanBytes {
+pub extern "C" fn ddog_trace_new_span_with_capacities(
+    trace: &mut TraceBytes,
+    meta_size: usize,
+    metrics_size: usize,
+) -> &mut SpanBytes {
     unsafe {
-        new_vector_push(trace, SpanBytes {
-            meta: HashMap::with_capacity(meta_size),
-            metrics: HashMap::with_capacity(metrics_size),
-            ..SpanBytes::default()
-        })
+        new_vector_push(
+            trace,
+            SpanBytes {
+                meta: HashMap::with_capacity(meta_size),
+                metrics: HashMap::with_capacity(metrics_size),
+                ..SpanBytes::default()
+            },
+        )
     }
 }
 
 #[no_mangle]
 pub extern "C" fn ddog_span_debug_log(span: &SpanBytes) -> CharSlice<'static> {
     unsafe {
-        let debug_str = format!("{:?}", span);
+        let debug_str = format!("{span:?}");
         let len = debug_str.len();
         let cstring = CString::new(debug_str).unwrap_or_default();
 
@@ -197,7 +204,6 @@ pub extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
         return;
     }
 
-    // SAFETY: we assume this pointer came from `CString::into_raw`
     unsafe {
         let owned_ptr = ptr as *mut c_char;
         let _ = CString::from_raw(owned_ptr);

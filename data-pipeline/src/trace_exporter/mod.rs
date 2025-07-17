@@ -1058,9 +1058,7 @@ impl TraceExporter {
         payload: &tracer_payload::TraceChunks<T>,
     ) -> Result<Vec<u8>, TraceExporterError> {
         match payload {
-            tracer_payload::TraceChunks::V04(p) => {
-                Ok(msgpack_encoder::v04::to_vec(p))
-            }
+            tracer_payload::TraceChunks::V04(p) => Ok(msgpack_encoder::v04::to_vec(p)),
             tracer_payload::TraceChunks::V05(p) => {
                 rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)
             }
@@ -1526,7 +1524,7 @@ mod tests {
             ..Default::default()
         }];
 
-        let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
+        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {
@@ -1617,7 +1615,7 @@ mod tests {
             ..Default::default()
         }];
 
-        let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
+        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {
@@ -1712,7 +1710,7 @@ mod tests {
                 ..Default::default()
             }],
         ];
-        let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
+        let data = msgpack_encoder::v04::to_vec(&traces);
 
         let _result = exporter
             .send(data.as_ref(), 2)
@@ -1812,7 +1810,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
+        let data = msgpack_encoder::v04::to_vec(&traces);
         let result = exporter.send(data.as_ref(), 1);
 
         assert!(result.is_err());
@@ -1919,7 +1917,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
+        let data = msgpack_encoder::v04::to_vec(&traces);
         let result = exporter.send(data.as_ref(), 1);
 
         assert!(result.is_err());
@@ -2029,7 +2027,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
+        let data = msgpack_encoder::v04::to_vec(&traces);
         let result = exporter.send(data.as_ref(), 1).unwrap();
 
         assert_eq!(
@@ -2071,7 +2069,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
+        let data = msgpack_encoder::v04::to_vec(&traces);
         let code = match exporter.send(data.as_ref(), 1).unwrap_err() {
             TraceExporterError::Request(e) => Some(e.status()),
             _ => None,
@@ -2106,7 +2104,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
+        let data = msgpack_encoder::v04::to_vec(&traces);
         let err = exporter.send(data.as_ref(), 1);
 
         assert!(err.is_err());
@@ -2474,7 +2472,7 @@ mod tests {
             ..Default::default()
         }];
 
-        let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
+        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {

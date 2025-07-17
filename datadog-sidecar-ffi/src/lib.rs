@@ -32,6 +32,7 @@ use datadog_sidecar::service::{
 };
 use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
+use datadog_trace_utils::msgpack_encoder;
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
 use ddcommon_ffi as ffi;
@@ -55,7 +56,6 @@ use std::ptr::NonNull;
 use std::slice;
 use std::sync::Arc;
 use std::time::Duration;
-use datadog_trace_utils::msgpack_encoder;
 
 #[no_mangle]
 #[cfg(target_os = "windows")]
@@ -1167,7 +1167,7 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     // Write traces to the shared memory
     let mut shm_slice = mapped_shm.as_slice_mut();
     let shm_slice_len = shm_slice.len();
-    let written = match msgpack_encoder::v04::to_slice(&mut shm_slice, &traces) {
+    let written = match msgpack_encoder::v04::write_to_slice(&mut shm_slice, traces) {
         Ok(()) => shm_slice_len - shm_slice.len(),
         Err(_) => {
             tracing::error!("Failed serializing the traces");
@@ -1197,7 +1197,7 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
         match blocking::send_trace_v04_bytes(
             &mut parameters.transport,
             &parameters.instance_id,
-            msgpack_encoder::v04::to_vec_with_capacity(&traces, written as u32),
+            msgpack_encoder::v04::to_vec_with_capacity(traces, written as u32),
             check!(
                 (&parameters.tracer_headers_tags).try_into(),
                 "Failed to convert tracer headers tags"

@@ -143,7 +143,7 @@ where
     #[serde(skip_serializing_if = "is_empty_str")]
     pub tracestate: T,
     #[serde(skip_serializing_if = "is_default")]
-    pub flags: u64,
+    pub flags: u32,
 }
 
 /// The generic representation of a V04 span event.

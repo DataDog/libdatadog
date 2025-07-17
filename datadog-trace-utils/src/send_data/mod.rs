@@ -3,6 +3,7 @@
 
 pub mod send_data_result;
 
+use crate::msgpack_encoder;
 use crate::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryResult};
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
@@ -24,7 +25,6 @@ use std::collections::HashMap;
 use std::io::Write;
 #[cfg(feature = "compression")]
 use zstd::stream::write::Encoder;
-use crate::msgpack_encoder;
 
 #[derive(Debug, Clone)]
 /// `SendData` is a structure that holds the data to be sent to a target endpoint.
