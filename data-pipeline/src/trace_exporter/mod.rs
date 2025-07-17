@@ -1051,6 +1051,21 @@ impl TraceExporter {
         // Send traces to the agent
         let result = send_with_retry(endpoint, mp_payload, &headers, &strategy, None).await;
 
+        // Emit http.requests health metric based on number of attempts
+        let requests_count = match &result {
+            Ok((_, attempts)) => *attempts as i64,
+            Err(err) => match err {
+                SendWithRetryError::Http(_, attempts) => *attempts as i64,
+                SendWithRetryError::Timeout(attempts) => *attempts as i64,
+                SendWithRetryError::Network(_, attempts) => *attempts as i64,
+                SendWithRetryError::Build(attempts) => *attempts as i64,
+            },
+        };
+        self.emit_metric(
+            HealthMetric::Distribution(health_metrics::STAT_HTTP_REQUESTS, requests_count),
+            None,
+        );
+
         // Send telemetry for the payload sending
         if let Some(telemetry) = &self.telemetry {
             if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
@@ -1625,7 +1640,7 @@ mod tests {
 
         // Collect all metrics
         let mut received_metrics = Vec::new();
-        for _ in 0..4 {
+        for _ in 0..5 {
             received_metrics.push(read(&stats_socket));
         }
 
@@ -1648,14 +1663,16 @@ mod tests {
                 "datadog.tracer.http.sent.traces:2|d|#libdatadog_version:{}",
                 env!("CARGO_PKG_VERSION")
             ),
+            format!(
+                "datadog.tracer.http.requests:1|d|#libdatadog_version:{}",
+                env!("CARGO_PKG_VERSION")
+            ),
         ];
 
         for expected in expected_metrics {
             assert!(
                 received_metrics.contains(&expected),
-                "Expected metric '{}' not found in received metrics: {:?}",
-                expected,
-                received_metrics
+                "Expected metric '{expected}' not found in received metrics: {received_metrics:?}"
             );
         }
     }
@@ -1747,6 +1764,19 @@ mod tests {
             data.len(),
             env!("CARGO_PKG_VERSION")
         );
+        let expected_sent_bytes = format!(
+            "datadog.tracer.http.sent.bytes:{}|d|#libdatadog_version:{}",
+            data.len(),
+            env!("CARGO_PKG_VERSION")
+        );
+        let expected_sent_traces = format!(
+            "datadog.tracer.http.sent.traces:1|d|#libdatadog_version:{}",
+            env!("CARGO_PKG_VERSION")
+        );
+        let expected_requests = format!(
+            "datadog.tracer.http.requests:1|d|#libdatadog_version:{}",
+            env!("CARGO_PKG_VERSION")
+        );
 
         // Verify all expected metrics are present
         assert!(
@@ -1760,6 +1790,18 @@ mod tests {
         assert!(
             metrics.contains(&expected_dropped),
             "Missing http.dropped.bytes metric. Got: {metrics:?}"
+        );
+        assert!(
+            metrics.contains(&expected_sent_bytes),
+            "Missing http.sent.bytes metric. Got: {metrics:?}"
+        );
+        assert!(
+            metrics.contains(&expected_sent_traces),
+            "Missing http.sent.traces metric. Got: {metrics:?}"
+        );
+        assert!(
+            metrics.contains(&expected_requests),
+            "Missing http.requests metric. Got: {metrics:?}"
         );
     }
 
@@ -1796,7 +1838,7 @@ mod tests {
 
         // Collect all metrics
         let mut received_metrics = Vec::new();
-        for _ in 0..4 {
+        for _ in 0..5 {
             received_metrics.push(read(&stats_socket));
         }
 
@@ -1818,6 +1860,10 @@ mod tests {
             "datadog.tracer.http.sent.traces:1|d|#libdatadog_version:{}",
             env!("CARGO_PKG_VERSION")
         );
+        let expected_requests = format!(
+            "datadog.tracer.http.requests:1|d|#libdatadog_version:{}",
+            env!("CARGO_PKG_VERSION")
+        );
 
         // Should emit these metrics
         assert!(
@@ -1835,6 +1881,10 @@ mod tests {
         assert!(
             received_metrics.contains(&expected_sent_traces),
             "Missing http.sent.traces metric. Got: {received_metrics:?}"
+        );
+        assert!(
+            received_metrics.contains(&expected_requests),
+            "Missing http.requests metric. Got: {received_metrics:?}"
         );
 
         // Should NOT emit http.dropped.bytes for 404

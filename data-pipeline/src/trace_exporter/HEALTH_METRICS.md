@@ -68,6 +68,13 @@ performance characteristics. They are emitted via DogStatsD and follow consisten
 - **Tags**: `libdatadog_version`
 - **Note**: 404 and 415 status codes are excluded as they represent endpoint/format issues rather than dropped payloads
 
+#### `datadog.tracer.http.requests`
+- **Type**: Distribution
+- **Description**: Number of HTTP requests made to the agent
+- **When Emitted**: Always emitted after each send operation, counting all HTTP attempts including retries
+- **Tags**: `libdatadog_version`
+- **Note**: Value represents total request attempts (1 for success without retries, >1 when retries occur)
+
 ### Serialization Metrics
 
 #### `datadog.libdatadog.ser_traces.errors`
