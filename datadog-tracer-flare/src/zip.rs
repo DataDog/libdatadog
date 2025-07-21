@@ -1,8 +1,8 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
-use ddcommon::Endpoint;
+use ddcommon::{hyper_migration, Endpoint};
+use hyper::{body::Bytes, Method};
 use std::{
     collections::HashMap,
     fs::File,
@@ -10,6 +10,7 @@ use std::{
     num::NonZeroU64,
     path::{Path, PathBuf},
     str::FromStr,
+    time::Duration,
 };
 use tempfile::tempfile;
 use walkdir::WalkDir;
@@ -124,7 +125,7 @@ fn zip_files(files: Vec<String>) -> Result<File, FlareError> {
     Ok(file)
 }
 
-pub const BOUNDARY: &str = "83CAD6AA-8A24-462C-8B3D-FF9CC683B51B";
+const BOUNDARY: &str = "83CAD6AA-8A24-462C-8B3D-FF9CC683B51B";
 
 /// Generates a multipart form-data payload containing flare information and zip file, including
 /// metadata like source, case ID, hostname, email, UUID and the zip file itself.
@@ -266,21 +267,38 @@ async fn send(zip: File, tracer_flare: &mut TracerFlareManager) -> Result<(), Fl
         format!("multipart/form-data; boundary={BOUNDARY}"),
     )]);
 
-    let result = send_with_retry(&target, payload, &headers, &RetryStrategy::default(), None).await;
-    match result {
-        Ok((response, _attempts)) => {
-            let status = response.status();
-            if status.is_success() {
-                // Should we return something specific ?
-                Ok(())
-            } else {
-                // Maybe just put a warning log message ?
-                Err(FlareError::SendError(format!(
-                    "Agent returned non-success status for flare send: HTTP {status}"
-                )))
+    let payload = Bytes::from(payload);
+    let mut req = target
+        .to_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))
+        .map_err(|_| FlareError::SendError("Unable to create the request".to_owned()))?
+        .method(Method::POST);
+    for (key, value) in headers {
+        req = req.header(key, value);
+    }
+    let req = req
+        .body(hyper_migration::Body::from_bytes(payload))
+        .map_err(|_| FlareError::SendError("Unable to had the body to the request".to_owned()))?;
+
+    let req = hyper_migration::new_default_client().request(req);
+
+    match tokio::time::timeout(Duration::from_millis(target.timeout_ms), req).await {
+        Ok(resp) => match resp {
+            Ok(body) => {
+                let response = hyper_migration::into_response(body);
+                let status = response.status();
+                if status.is_success() {
+                    // Should we return something specific ?
+                    Ok(())
+                } else {
+                    // Maybe just put a warning log message ?
+                    Err(FlareError::SendError(format!(
+                        "Agent returned non-success status for flare send: HTTP {status}"
+                    )))
+                }
             }
-        }
-        Err(err) => Err(FlareError::SendError(err.to_string())),
+            Err(e) => Err(FlareError::SendError(format!("Network error: {e}"))),
+        },
+        Err(_) => Err(FlareError::SendError("Api timeout exhausted".to_owned())),
     }
 }
 

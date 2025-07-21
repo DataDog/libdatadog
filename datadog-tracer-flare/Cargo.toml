@@ -23,3 +23,7 @@ bench = false
 
 [dev-dependencies]
 datadog-remote-config = { path = "../datadog-remote-config", features = ["test"] }
+
+[features]
+default = ["listener"]
+listener = []

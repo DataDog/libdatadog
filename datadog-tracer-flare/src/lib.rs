@@ -9,24 +9,31 @@
 pub mod error;
 pub mod zip;
 
-use std::{str::FromStr, vec};
-
 use datadog_remote_config::{
-    config::agent_task::AgentTaskFile,
-    fetch::{ConfigInvariants, SingleChangesFetcher},
-    file_change_tracker::Change,
-    file_storage::{ParsedFileStorage, RawFile, RawFileStorage},
-    RemoteConfigData, RemoteConfigProduct, Target,
+    config::agent_task::AgentTaskFile, file_storage::RawFile, RemoteConfigData,
 };
-use ddcommon::Endpoint;
+
+#[cfg(feature = "listener")]
+use {
+    datadog_remote_config::{
+        fetch::{ConfigInvariants, SingleChangesFetcher},
+        file_change_tracker::Change,
+        file_storage::{ParsedFileStorage, RawFileStorage},
+        RemoteConfigProduct, Target,
+    },
+    ddcommon::Endpoint,
+    std::str::FromStr,
+};
 
 use crate::error::FlareError;
 
 pub struct TracerFlareManager {
-    pub listener: Option<Listener>, // Optional so we can use the component with another Listener
     pub agent_url: String,
     pub language: String,
     pub state: State,
+    #[cfg(feature = "listener")]
+    pub listener: Option<Listener>, /* As a featured option so we can use the component with no
+                                     * Listener */
 }
 
 #[derive(Debug, PartialEq)]
@@ -44,10 +51,11 @@ pub enum State {
 impl Default for TracerFlareManager {
     fn default() -> Self {
         TracerFlareManager {
-            listener: None,
             agent_url: hyper::Uri::default().to_string(),
             language: "rust".to_string(),
             state: State::Idle,
+            #[cfg(feature = "listener")]
+            listener: None,
         }
     }
 }
@@ -81,6 +89,7 @@ impl TracerFlareManager {
     /// * `Err(FlareError)` - If the initialization fails.
     ///
     /// These arguments will be used to listen to the remote config endpoint.
+    #[cfg(feature = "listener")]
     pub fn new_with_listener(
         agent_url: String,
         language: String,
@@ -172,6 +181,7 @@ impl TryFrom<&str> for LogLevel {
 }
 
 pub type RemoteConfigFile = std::sync::Arc<RawFile<Result<RemoteConfigData, anyhow::Error>>>;
+#[cfg(feature = "listener")]
 pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>>;
 
 /// Check the `RemoteConfigFile` and return the action that tracer flare needs
@@ -197,7 +207,6 @@ pub fn check_remote_config_file(
             RemoteConfigData::TracerFlareConfig(agent_config) => {
                 if agent_config.name.starts_with("flare-log-level.") {
                     if let Some(log_level) = &agent_config.config.log_level {
-                        // if tracer_flare.running {
                         if let State::Collecting { log_level: _ } = tracer_flare.state {
                             // Should we return an error instead if we are trying to launch another
                             // flare while one is already running ?
@@ -285,6 +294,7 @@ pub fn check_remote_config_file(
 ///     }
 /// }
 /// ```
+#[cfg(feature = "listener")]
 pub async fn run_remote_config_listener(
     tracer_flare: &mut TracerFlareManager,
 ) -> Result<ReturnAction, FlareError> {
