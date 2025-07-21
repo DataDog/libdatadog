@@ -4,7 +4,10 @@
 //! Define FFI compatible AgentResponse struct
 
 use data_pipeline::trace_exporter::agent_response::AgentResponse;
-use std::ffi::{c_char, CString};
+use std::{
+    ffi::{c_char, CString},
+    ptr::null,
+};
 
 /// Structure containing the agent response to a trace payload
 /// MUST be freed with `ddog_trace_exporter_response_free`
@@ -35,18 +38,22 @@ impl From<AgentResponse> for ExporterResponse {
 /// `response` is valid.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_response_get_body(
-    response: &ExporterResponse,
+    response: *const ExporterResponse,
 ) -> *const c_char {
-    response.body.as_ptr()
+    if response.is_null() {
+        null()
+    } else {
+        (*response).body.as_ptr()
+    }
 }
 
 /// Free `response` and all its contents. After being called response will not point to a valid
 /// memory address so any further actions on it could lead to undefined behavior.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_trace_exporter_response_free(
-    response: Option<Box<ExporterResponse>>,
-) {
-    drop(response)
+pub unsafe extern "C" fn ddog_trace_exporter_response_free(response: *mut ExporterResponse) {
+    if !response.is_null() {
+        drop(Box::from_raw(response));
+    }
 }
 
 #[cfg(test)]
@@ -59,9 +66,9 @@ mod tests {
         let agent_response = AgentResponse::Changed {
             body: "res".to_string(),
         };
-        let response = Box::new(ExporterResponse::from(agent_response));
+        let response = &ExporterResponse::from(agent_response) as *const ExporterResponse;
         let body = unsafe {
-            CStr::from_ptr(ddog_trace_exporter_response_get_body(&response)).to_string_lossy()
+            CStr::from_ptr(ddog_trace_exporter_response_get_body(response)).to_string_lossy()
         };
         assert_eq!(body, "res".to_string());
     }
@@ -69,10 +76,23 @@ mod tests {
     #[test]
     fn constructor_test_unchanged() {
         let agent_response = AgentResponse::Unchanged;
-        let response = Box::new(ExporterResponse::from(agent_response));
+        let response = Box::into_raw(Box::new(ExporterResponse::from(agent_response)));
         let body = unsafe {
-            CStr::from_ptr(ddog_trace_exporter_response_get_body(&response)).to_string_lossy()
+            CStr::from_ptr(ddog_trace_exporter_response_get_body(response)).to_string_lossy()
         };
         assert_eq!(body, "".to_string());
+        unsafe {
+            ddog_trace_exporter_response_free(response);
+        }
+    }
+
+    #[test]
+    fn handle_null_test() {
+        unsafe {
+            let body = ddog_trace_exporter_response_get_body(null());
+            assert!(body.is_null());
+
+            ddog_trace_exporter_response_free(null::<ExporterResponse>() as *mut ExporterResponse);
+        }
     }
 }
