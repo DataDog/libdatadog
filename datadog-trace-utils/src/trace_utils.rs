@@ -436,7 +436,6 @@ pub fn set_serverless_root_span_tags(
     app_name: Option<String>,
     env_type: &EnvironmentType,
 ) {
-    span.r#type = "serverless".to_string();
     let origin_tag = match env_type {
         EnvironmentType::CloudFunction => "cloudfunction",
         EnvironmentType::AzureFunction => "azurefunction",
@@ -1043,7 +1042,6 @@ mod tests {
                 ("service".to_string(), "test-service".to_string())
             ]),
         );
-        assert_eq!(span.r#type, "serverless".to_string())
     }
 
     #[test]
@@ -1068,7 +1066,6 @@ mod tests {
                 ("service".to_string(), "test-service".to_string())
             ]),
         );
-        assert_eq!(span.r#type, "serverless".to_string())
     }
 
     #[test]
