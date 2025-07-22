@@ -17,15 +17,15 @@ use crate::span::{AttributeAnyValue, AttributeArrayValue, Span, SpanText};
 /// This function will return any error emitted by the writer.
 #[inline(always)]
 pub fn encode_span<W: RmpWrite, T: SpanText>(writer: &mut W, span: &Span<T>) -> Result<(), ValueWriteError<W::Error>> {
-    /* minimal span: trace_id, span_id, service, resource, name, start, duration */
-    let mut span_len = 7;
-    span_len += if span.r#type.borrow().len() > 0 { 1 } else { 0 };
-    span_len += if span.parent_id != 0 { 1 } else { 0 };
-    span_len += if span.error != 0 { 1 } else { 0 };
-    span_len += if span.meta.len() > 0 { 1 } else { 0 };
-    span_len += if span.metrics.len() > 0 { 1 } else { 0 };
-    span_len += if span.span_links.len() > 0 { 1 } else { 0 };
-    span_len += if span.span_events.len() > 0 { 1 } else { 0 };
+    let span_len = 7 /* minimal span: trace_id, span_id, service, resource, name, start, duration */
+        + (!span.r#type.borrow().is_empty()) as usize
+        + (span.parent_id != 0) as usize
+        + (span.error != 0) as usize
+        + (!span.meta.is_empty()) as usize
+        + (!span.metrics.is_empty()) as usize
+        + (!span.meta_struct.is_empty()) as usize
+        + (!span.span_links.is_empty()) as usize
+        + (!span.span_events.is_empty()) as usize;
 
     rmp::encode::write_map_len(writer, span_len)?;
 
@@ -96,10 +96,10 @@ pub fn encode_span<W: RmpWrite, T: SpanText>(writer: &mut W, span: &Span<T>) -> 
         write_str(writer, "span_links")?;
         rmp::encode::write_array_len(writer, span.span_links.len() as u32)?;
         for link in span.span_links.iter() {
-            let mut link_len = 3; /* minimal span link: trace_id, trace_id_high, span_id */
-            link_len += if link.attributes.len() > 0 { 1 } else { 0 };
-            link_len += if link.tracestate.borrow().len() > 0 { 1 } else { 0 };
-            link_len += if link.flags != 0 { 1 } else { 0 };
+            let link_len = 3; /* minimal span link: trace_id, trace_id_high, span_id */
+                + (link.attributes.len() > 0) as usize
+                + (link.tracestate.borrow().len() > 0) as usize
+                + (link.flags != 0) as usize;
 
             rmp::encode::write_map_len(writer, link_len as u32)?;
 
@@ -137,8 +137,8 @@ pub fn encode_span<W: RmpWrite, T: SpanText>(writer: &mut W, span: &Span<T>) -> 
         write_str(writer, "span_events")?;
         rmp::encode::write_array_len(writer, span.span_events.len() as u32)?;
         for event in span.span_events.iter() {
-            let mut event_len = 2; /* minimal span event: time_unix_nano, name */
-            event_len += if event.attributes.len() > 0 { 1 } else { 0 };
+            let event_len = 2; /* minimal span event: time_unix_nano, name */
+                + (event.attributes.len() > 0) as usize;
 
             rmp::encode::write_map_len(writer, event_len)?;
 
