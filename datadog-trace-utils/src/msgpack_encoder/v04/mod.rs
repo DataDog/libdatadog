@@ -122,7 +122,8 @@ pub fn to_vec_with_capacity<T: SpanText, S: AsRef<[Span<T>]>>(
     capacity: u32,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
-    let _ = to_writer(&mut buf, traces);
+    #[allow(clippy::expect_used)]
+    to_writer(&mut buf, traces).expect("infallible: the error is std::convert::Infallible");
     buf.into_vec()
 }
 
@@ -177,6 +178,7 @@ impl std::io::Write for CountLength {
 /// ```
 pub fn to_len<T: SpanText, S: AsRef<[Span<T>]>>(traces: &[S]) -> u32 {
     let mut counter = CountLength(0);
-    let _ = to_writer(&mut counter, traces);
+    #[allow(clippy::expect_used)]
+    to_writer(&mut counter, traces).expect("infallible: CountLength never fails");
     counter.0
 }
