@@ -123,7 +123,6 @@ pub fn create_test_span(
             "functionname".to_string(),
             "dummy_function_name".to_string(),
         );
-        span.r#type = "serverless".to_string();
     }
     span
 }
@@ -185,7 +184,6 @@ pub fn create_test_gcp_span(
             .insert("_dd.origin".to_string(), "cloudfunction".to_string());
         span.meta
             .insert("origin".to_string(), "cloudfunction".to_string());
-        span.r#type = "serverless".to_string();
     }
     span
 }

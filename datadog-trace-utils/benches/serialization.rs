@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::{black_box, criterion_group, Criterion};
-use datadog_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
+use datadog_trace_utils::msgpack_decoder;
+use datadog_trace_utils::msgpack_encoder;
 use serde_json::{json, Value};
 
 fn generate_spans(num_spans: usize, trace_id: u64) -> Vec<Value> {
@@ -11,11 +12,7 @@ fn generate_spans(num_spans: usize, trace_id: u64) -> Vec<Value> {
 
     for i in 0..num_spans {
         // If it's the first span make it the root
-        let span_id = if i == 0 {
-            root_span_id
-        } else {
-            root_span_id + i as u64 + 1
-        };
+        let span_id = root_span_id + i as u64;
 
         // if it's not the root, then give it the root as a parent
         let parent_id = if i == 0 { 0 } else { root_span_id };
@@ -56,24 +53,29 @@ fn generate_trace_chunks(num_chunks: usize, num_spans: usize) -> Vec<Vec<Value>>
     chunks
 }
 
-pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
+pub fn serialize_internal_to_msgpack(c: &mut Criterion) {
     // Generate roughly 10mb of data. This is the upper bound of payload size before a tracer
     // flushes
     let data = rmp_serde::to_vec(&generate_trace_chunks(20, 2_075))
         .expect("Failed to serialize test spans.");
-    let data_as_bytes = tinybytes::Bytes::copy_from_slice(&data);
+    let (data, ..) = msgpack_decoder::v04::from_slice(data.as_slice())
+        .expect("Failed to deserialize test spans.");
 
     c.bench_function(
-        "benching deserializing traces from msgpack to their internal representation ",
+        "benching serializing traces from their internal representation to msgpack",
         |b| {
             b.iter_batched(
-                || data_as_bytes.clone(),
-                |data_as_bytes| {
-                    let result =
-                        black_box(decode_to_trace_chunks(data_as_bytes, TraceEncoding::V04));
-                    assert!(result.is_ok());
+                || vec![0u8; 12_000_000],
+                |mut vec| {
+                    // rmp_serde
+                    // let _ = black_box(rmp_serde::encode::write_named(&mut vec.as_mut_slice(),
+                    // &data));
+                    let _ = black_box(msgpack_encoder::v04::write_to_slice(
+                        &mut vec.as_mut_slice(),
+                        &data,
+                    ));
                     // Return the result to avoid measuring the deallocation time
-                    result
+                    vec
                 },
                 criterion::BatchSize::LargeInput,
             );
@@ -81,4 +83,4 @@ pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
     );
 }
 
-criterion_group!(deserialize_benches, deserialize_msgpack_to_internal);
+criterion_group!(serialize_benches, serialize_internal_to_msgpack);

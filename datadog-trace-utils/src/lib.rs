@@ -9,6 +9,7 @@
 
 pub mod config_utils;
 pub mod msgpack_decoder;
+pub mod msgpack_encoder;
 pub mod send_data;
 pub mod send_with_retry;
 pub mod stats_utils;

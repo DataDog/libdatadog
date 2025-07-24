@@ -28,6 +28,7 @@ use crate::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use datadog_trace_utils::msgpack_decoder::{self, decode::error::DecodeError};
+use datadog_trace_utils::msgpack_encoder;
 use datadog_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
 };
@@ -37,9 +38,9 @@ use datadog_trace_utils::tracer_payload;
 use ddcommon::header::{
     APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
 };
-use ddcommon::tag::Tag;
 use ddcommon::MutexExt;
 use ddcommon::{hyper_migration, Endpoint};
+use ddcommon::{tag, tag::Tag};
 use ddtelemetry::worker::TelemetryWorker;
 use dogstatsd_client::Client;
 use http_body_util::BodyExt;
@@ -710,10 +711,12 @@ impl TraceExporter {
     async fn handle_http_error_response(
         &self,
         response: hyper::Response<hyper_migration::Body>,
+        payload_size: usize,
+        trace_count: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         let response_status = response.status();
         let response_body = self.extract_response_body(response).await;
-        self.log_and_emit_error_metrics(response_status);
+        self.log_and_emit_error_metrics(response_status, payload_size, trace_count);
         Err(TraceExporterError::Request(RequestError::new(
             response_status,
             &response_body,
@@ -733,7 +736,12 @@ impl TraceExporter {
     }
 
     /// Log error and emit metrics for HTTP error response
-    fn log_and_emit_error_metrics(&self, response_status: hyper::StatusCode) {
+    fn log_and_emit_error_metrics(
+        &self,
+        response_status: hyper::StatusCode,
+        payload_size: usize,
+        trace_count: usize,
+    ) {
         let resp_tag_res = &Tag::new("response_code", response_status.as_str());
         match resp_tag_res {
             Ok(resp_tag) => {
@@ -741,10 +749,32 @@ impl TraceExporter {
                     response_code = response_status.as_u16(),
                     "HTTP error response received from agent"
                 );
+                // Create type tag based on status code
+                let type_tag = Tag::new("type", response_status.as_str())
+                    .unwrap_or_else(|_| tag!("type", "unknown"));
                 self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                    Some(vec![&resp_tag]),
+                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
+                    Some(vec![&resp_tag, &type_tag]),
                 );
+                // Emit dropped bytes metric for HTTP errors, excluding 404 (Not Found) and 415
+                // (Unsupported Media Type) since these represent endpoint/format
+                // issues rather than payload drops
+                if response_status.as_u16() != 404 && response_status.as_u16() != 415 {
+                    self.emit_metric(
+                        HealthMetric::Distribution(
+                            health_metrics::TRANSPORT_DROPPED_BYTES,
+                            payload_size as i64,
+                        ),
+                        None,
+                    );
+                    self.emit_metric(
+                        HealthMetric::Distribution(
+                            health_metrics::TRANSPORT_TRACES_DROPPED,
+                            trace_count as i64,
+                        ),
+                        None,
+                    );
+                }
             }
             Err(tag_err) => {
                 // This should really never happen as response_status is a
@@ -765,7 +795,10 @@ impl TraceExporter {
             Ok(body) => {
                 info!(trace_count, "Traces sent successfully to agent");
                 self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES, trace_count as i64),
+                    HealthMetric::Count(
+                        health_metrics::TRANSPORT_TRACES_SUCCESSFUL,
+                        trace_count as i64,
+                    ),
                     None,
                 );
                 Ok(AgentResponse::Changed {
@@ -777,9 +810,10 @@ impl TraceExporter {
                     error = %err,
                     "Failed to read agent response body"
                 );
+                let type_tag = tag!("type", "response_body");
                 self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                    None,
+                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
+                    Some(vec![&type_tag]),
                 );
                 Err(TraceExporterError::from(err))
             }
@@ -809,9 +843,10 @@ impl TraceExporter {
         match hyper_migration::new_default_client().request(req).await {
             Ok(response) => {
                 let response = hyper_migration::into_response(response);
-                self.process_http_response(response, trace_count).await
+                self.process_http_response(response, trace_count, data.len())
+                    .await
             }
-            Err(err) => self.handle_request_error(err),
+            Err(err) => self.handle_request_error(err, data.len(), trace_count),
         }
     }
 
@@ -820,9 +855,11 @@ impl TraceExporter {
         &self,
         response: hyper::Response<hyper_migration::Body>,
         trace_count: usize,
+        payload_size: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         if !response.status().is_success() {
-            self.handle_http_error_response(response).await
+            self.handle_http_error_response(response, payload_size, trace_count)
+                .await
         } else {
             self.handle_http_success_response(response, trace_count)
                 .await
@@ -833,13 +870,31 @@ impl TraceExporter {
     fn handle_request_error(
         &self,
         err: hyper_util::client::legacy::Error,
+        payload_size: usize,
+        trace_count: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         error!(
             error = %err,
             "Request to agent failed"
         );
+        let type_tag = tag!("type", "network");
         self.emit_metric(
-            HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
+            HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
+            Some(vec![&type_tag]),
+        );
+        // Emit dropped bytes metric for network/connection errors
+        self.emit_metric(
+            HealthMetric::Distribution(
+                health_metrics::TRANSPORT_DROPPED_BYTES,
+                payload_size as i64,
+            ),
+            None,
+        );
+        self.emit_metric(
+            HealthMetric::Distribution(
+                health_metrics::TRANSPORT_TRACES_DROPPED,
+                trace_count as i64,
+            ),
             None,
         );
         Err(TraceExporterError::from(err))
@@ -897,7 +952,7 @@ impl TraceExporter {
         .map_err(|e| {
             error!("Error deserializing trace from request body: {e}");
             self.emit_metric(
-                HealthMetric::Count(health_metrics::STAT_DESER_TRACES_ERRORS, 1),
+                HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
                 None,
             );
             TraceExporterError::Deserialization(e)
@@ -907,7 +962,7 @@ impl TraceExporter {
             "Trace deserialization completed successfully"
         );
         self.emit_metric(
-            HealthMetric::Count(health_metrics::STAT_DESER_TRACES, traces.len() as i64),
+            HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
             None,
         );
 
@@ -1003,9 +1058,7 @@ impl TraceExporter {
         payload: &tracer_payload::TraceChunks<T>,
     ) -> Result<Vec<u8>, TraceExporterError> {
         match payload {
-            tracer_payload::TraceChunks::V04(p) => {
-                rmp_serde::to_vec_named(p).map_err(TraceExporterError::Serialization)
-            }
+            tracer_payload::TraceChunks::V04(p) => Ok(msgpack_encoder::v04::to_vec(p)),
             tracer_payload::TraceChunks::V05(p) => {
                 rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)
             }
@@ -1026,6 +1079,21 @@ impl TraceExporter {
         // Send traces to the agent
         let result = send_with_retry(endpoint, mp_payload, &headers, &strategy, None).await;
 
+        // Emit http.requests health metric based on number of attempts
+        let requests_count = match &result {
+            Ok((_, attempts)) => *attempts as i64,
+            Err(err) => match err {
+                SendWithRetryError::Http(_, attempts) => *attempts as i64,
+                SendWithRetryError::Timeout(attempts) => *attempts as i64,
+                SendWithRetryError::Network(_, attempts) => *attempts as i64,
+                SendWithRetryError::Build(attempts) => *attempts as i64,
+            },
+        };
+        self.emit_metric(
+            HealthMetric::Distribution(health_metrics::TRANSPORT_REQUESTS, requests_count),
+            None,
+        );
+
         // Send telemetry for the payload sending
         if let Some(telemetry) = &self.telemetry {
             if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
@@ -1037,7 +1105,7 @@ impl TraceExporter {
             }
         }
 
-        self.handle_send_result(result, chunks).await
+        self.handle_send_result(result, chunks, payload_len).await
     }
 
     fn send_trace_chunks_inner<T: SpanText>(
@@ -1073,10 +1141,24 @@ impl TraceExporter {
         &self,
         result: SendWithRetryResult,
         chunks: usize,
+        payload_len: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
+        // Always emit http.sent.* metrics regardless of success/failure
+        self.emit_metric(
+            HealthMetric::Distribution(health_metrics::TRANSPORT_SENT_BYTES, payload_len as i64),
+            None,
+        );
+        self.emit_metric(
+            HealthMetric::Distribution(health_metrics::TRANSPORT_TRACES_SENT, chunks as i64),
+            None,
+        );
+
         match result {
-            Ok((response, _)) => self.handle_agent_response(chunks, response).await,
-            Err(err) => self.handle_send_error(err).await,
+            Ok((response, _)) => {
+                self.handle_agent_response(chunks, response, payload_len)
+                    .await
+            }
+            Err(err) => self.handle_send_error(err, payload_len, chunks).await,
         }
     }
 
@@ -1084,15 +1166,45 @@ impl TraceExporter {
     async fn handle_send_error(
         &self,
         err: SendWithRetryError,
+        payload_len: usize,
+        chunks: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         error!(?err, "Error sending traces");
-        self.emit_metric(
-            HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-            None,
-        );
+
+        // Only emit the error metric for non-HTTP errors here
+        // HTTP errors will be handled by handle_http_send_error with specific status codes
+        match &err {
+            SendWithRetryError::Http(_, _) => {
+                // Will be handled by handle_http_send_error
+            }
+            SendWithRetryError::Timeout(_) => {
+                let type_tag = tag!("type", "timeout");
+                self.emit_metric(
+                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
+                    Some(vec![&type_tag]),
+                );
+            }
+            SendWithRetryError::Network(_, _) => {
+                let type_tag = tag!("type", "network");
+                self.emit_metric(
+                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
+                    Some(vec![&type_tag]),
+                );
+            }
+            SendWithRetryError::Build(_) => {
+                let type_tag = tag!("type", "build");
+                self.emit_metric(
+                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
+                    Some(vec![&type_tag]),
+                );
+            }
+        };
 
         match err {
-            SendWithRetryError::Http(response, _) => self.handle_http_send_error(response).await,
+            SendWithRetryError::Http(response, _) => {
+                self.handle_http_send_error(response, payload_len, chunks)
+                    .await
+            }
             SendWithRetryError::Timeout(_) => Err(TraceExporterError::from(io::Error::from(
                 io::ErrorKind::TimedOut,
             ))),
@@ -1107,11 +1219,36 @@ impl TraceExporter {
     async fn handle_http_send_error(
         &self,
         response: hyper::Response<hyper_migration::Body>,
+        payload_len: usize,
+        chunks: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         let status = response.status();
 
         // Check if the agent state has changed for error responses
         self.info_response_observer.check_response(&response);
+
+        // Emit send traces errors metric with status code type
+        let type_tag =
+            Tag::new("type", status.as_str()).unwrap_or_else(|_| tag!("type", "unknown"));
+        self.emit_metric(
+            HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
+            Some(vec![&type_tag]),
+        );
+
+        // Emit dropped bytes metric for HTTP error responses, excluding 404 and 415
+        if status.as_u16() != 404 && status.as_u16() != 415 {
+            self.emit_metric(
+                HealthMetric::Distribution(
+                    health_metrics::TRANSPORT_DROPPED_BYTES,
+                    payload_len as i64,
+                ),
+                None,
+            );
+            self.emit_metric(
+                HealthMetric::Distribution(health_metrics::TRANSPORT_TRACES_DROPPED, chunks as i64),
+                None,
+            );
+        }
 
         let body = self.read_error_response_body(response).await?;
         Err(TraceExporterError::Request(RequestError::new(
@@ -1174,9 +1311,10 @@ impl TraceExporter {
             Ok(body) => Ok(String::from_utf8_lossy(&body.to_bytes()).to_string()),
             Err(err) => {
                 error!(?err, "Error reading agent response body");
+                let type_tag = tag!("type", "response_body");
                 self.emit_metric(
-                    HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                    None,
+                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
+                    Some(vec![&type_tag]),
                 );
                 Err(TraceExporterError::from(err))
             }
@@ -1197,7 +1335,7 @@ impl TraceExporter {
             "Trace chunks sent successfully to agent"
         );
         self.emit_metric(
-            HealthMetric::Count(health_metrics::STAT_SEND_TRACES, chunks as i64),
+            HealthMetric::Count(health_metrics::TRANSPORT_TRACES_SUCCESSFUL, chunks as i64),
             None,
         );
 
@@ -1212,6 +1350,7 @@ impl TraceExporter {
         &self,
         chunks: usize,
         response: hyper::Response<hyper_migration::Body>,
+        payload_len: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         // Check if the agent state has changed
         self.info_response_observer.check_response(&response);
@@ -1225,10 +1364,29 @@ impl TraceExporter {
                 status = %status,
                 "Agent returned non-success status for trace send"
             );
+            let type_tag =
+                Tag::new("type", status.as_str()).unwrap_or_else(|_| tag!("type", "unknown"));
             self.emit_metric(
-                HealthMetric::Count(health_metrics::STAT_SEND_TRACES_ERRORS, 1),
-                None,
+                HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
+                Some(vec![&type_tag]),
             );
+            // Emit dropped bytes metric for non-success status codes, excluding 404 and 415
+            if status.as_u16() != 404 && status.as_u16() != 415 {
+                self.emit_metric(
+                    HealthMetric::Distribution(
+                        health_metrics::TRANSPORT_DROPPED_BYTES,
+                        payload_len as i64,
+                    ),
+                    None,
+                );
+                self.emit_metric(
+                    HealthMetric::Distribution(
+                        health_metrics::TRANSPORT_TRACES_DROPPED,
+                        chunks as i64,
+                    ),
+                    None,
+                );
+            }
             return Err(TraceExporterError::Request(RequestError::new(
                 status, &body,
             )));
@@ -1239,6 +1397,25 @@ impl TraceExporter {
 
     fn get_agent_url(&self) -> Uri {
         self.output_format.add_path(&self.endpoint.url)
+    }
+
+    #[cfg(test)]
+    /// Test only function to check if the stats computation is active and the worker is running
+    pub fn is_stats_worker_active(&self) -> bool {
+        if !matches!(
+            **self.client_side_stats.load(),
+            StatsComputationStatus::Enabled { .. }
+        ) {
+            return false;
+        }
+
+        if let Ok(workers) = self.workers.try_lock() {
+            if let Some(stats_worker) = &workers.stats {
+                return matches!(stats_worker, PausableWorker::Running { .. });
+            }
+        }
+
+        false
     }
 }
 
@@ -1339,7 +1516,7 @@ mod tests {
             then.status(200).body("");
         });
 
-        let mock_info = server.mock(|when, then| {
+        let _mock_info = server.mock(|when, then| {
             when.method(GET).path("/info");
             then.status(200)
                 .header("content-type", "application/json")
@@ -1366,10 +1543,10 @@ mod tests {
             ..Default::default()
         }];
 
-        let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
+        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
 
         // Wait for the info fetcher to get the config
-        while mock_info.hits() == 0 {
+        while agent_info::get_agent_info().is_none() {
             exporter
                 .runtime
                 .lock()
@@ -1385,10 +1562,20 @@ mod tests {
         // Error received because server is returning an empty body.
         assert!(result.is_err());
 
+        // Wait for the stats worker to be active before shutting down to avoid potential flaky
+        // tests on CI where we shutdown before the stats worker had time to start
+        let start_time = std::time::Instant::now();
+        while !exporter.is_stats_worker_active() {
+            if start_time.elapsed() > Duration::from_secs(10) {
+                panic!("Timeout waiting for stats worker to become active");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
         exporter.shutdown(None).unwrap();
 
         // Wait for the mock server to process the stats
-        for _ in 0..500 {
+        for _ in 0..1000 {
             if mock_traces.hits() > 0 && mock_stats.hits() > 0 {
                 break;
             } else {
@@ -1426,7 +1613,7 @@ mod tests {
             then.delay(Duration::from_secs(10)).status(200).body("");
         });
 
-        let mock_info = server.mock(|when, then| {
+        let _mock_info = server.mock(|when, then| {
             when.method(GET).path("/info");
             then.status(200)
                 .header("content-type", "application/json")
@@ -1457,10 +1644,11 @@ mod tests {
             ..Default::default()
         }];
 
-        let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
+        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
 
-        // Wait for the info fetcher to get the config
-        while mock_info.hits() == 0 {
+        // Wait for agent_info to be present so that sending a trace will trigger the stats worker
+        // to start
+        while agent_info::get_agent_info().is_none() {
             exporter
                 .runtime
                 .lock()
@@ -1473,6 +1661,16 @@ mod tests {
         }
 
         exporter.send(data.as_ref(), 1).unwrap();
+
+        // Wait for the stats worker to be active before shutting down to avoid potential flaky
+        // tests on CI where we shutdown before the stats worker had time to start
+        let start_time = std::time::Instant::now();
+        while !exporter.is_stats_worker_active() {
+            if start_time.elapsed() > Duration::from_secs(10) {
+                panic!("Timeout waiting for stats worker to become active");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
 
         exporter
             .shutdown(Some(Duration::from_millis(5)))
@@ -1552,26 +1750,49 @@ mod tests {
                 ..Default::default()
             }],
         ];
-        let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
+        let data = msgpack_encoder::v04::to_vec(&traces);
 
         let _result = exporter
-            .send(data.as_ref(), 1)
+            .send(data.as_ref(), 2)
             .expect("failed to send trace");
 
-        assert_eq!(
-            &format!(
-                "datadog.libdatadog.deser_traces:2|c|#libdatadog_version:{}",
+        // Collect all metrics
+        let mut received_metrics = Vec::new();
+        for _ in 0..5 {
+            received_metrics.push(read(&stats_socket));
+        }
+
+        // Check that all expected metrics are present
+        let expected_metrics = vec![
+            format!(
+                "datadog.tracer.exporter.deserialize.traces:2|c|#libdatadog_version:{}",
                 env!("CARGO_PKG_VERSION")
             ),
-            &read(&stats_socket)
-        );
-        assert_eq!(
-            &format!(
-                "datadog.libdatadog.send.traces:2|c|#libdatadog_version:{}",
+            format!(
+                "datadog.tracer.exporter.transport.traces.successful:2|c|#libdatadog_version:{}",
                 env!("CARGO_PKG_VERSION")
             ),
-            &read(&stats_socket)
-        );
+            format!(
+                "datadog.tracer.exporter.transport.sent.bytes:{}|d|#libdatadog_version:{}",
+                data.len(),
+                env!("CARGO_PKG_VERSION")
+            ),
+            format!(
+                "datadog.tracer.exporter.transport.traces.sent:2|d|#libdatadog_version:{}",
+                env!("CARGO_PKG_VERSION")
+            ),
+            format!(
+                "datadog.tracer.exporter.transport.requests:1|d|#libdatadog_version:{}",
+                env!("CARGO_PKG_VERSION")
+            ),
+        ];
+
+        for expected in expected_metrics {
+            assert!(
+                received_metrics.contains(&expected),
+                "Expected metric '{expected}' not found in received metrics: {received_metrics:?}"
+            );
+        }
     }
 
     #[test]
@@ -1597,7 +1818,7 @@ mod tests {
 
         assert_eq!(
             &format!(
-                "datadog.libdatadog.deser_traces.errors:1|c|#libdatadog_version:{}",
+                "datadog.tracer.exporter.deserialize.errors:1|c|#libdatadog_version:{}",
                 env!("CARGO_PKG_VERSION")
             ),
             &read(&stats_socket)
@@ -1629,27 +1850,188 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
+        let data = msgpack_encoder::v04::to_vec(&traces);
         let result = exporter.send(data.as_ref(), 1);
 
         assert!(result.is_err());
 
-        assert_eq!(
-            &format!(
-                "datadog.libdatadog.deser_traces:1|c|#libdatadog_version:{}",
-                env!("CARGO_PKG_VERSION")
-            ),
-            &read(&stats_socket)
+        // Collect all metrics
+        let mut metrics = Vec::new();
+        loop {
+            let mut buf = [0; 1_000];
+            match stats_socket.recv(&mut buf) {
+                Ok(size) => {
+                    let datagram = String::from_utf8_lossy(&buf[..size]);
+                    metrics.push(datagram.to_string());
+                }
+                Err(_) => break, // Timeout, no more metrics
+            }
+        }
+
+        // Expected metrics
+        let expected_deser = format!(
+            "datadog.tracer.exporter.deserialize.traces:1|c|#libdatadog_version:{}",
+            env!("CARGO_PKG_VERSION")
         );
-        // todo: support health metrics from within send data?
-        //assert_eq!(&format!("datadog.libdatadog.send.traces.errors:1|c|#libdatadog_version:{},
-        // response_code:400", env!("CARGO_PKG_VERSION")), &read(&stats_socket));
-        assert_eq!(
-            &format!(
-                "datadog.libdatadog.send.traces.errors:1|c|#libdatadog_version:{}",
-                env!("CARGO_PKG_VERSION")
-            ),
-            &read(&stats_socket)
+        let expected_error = format!(
+            "datadog.tracer.exporter.transport.traces.failed:1|c|#libdatadog_version:{},type:400",
+            env!("CARGO_PKG_VERSION")
+        );
+        let expected_dropped = format!(
+            "datadog.tracer.exporter.transport.dropped.bytes:{}|d|#libdatadog_version:{}",
+            data.len(),
+            env!("CARGO_PKG_VERSION")
+        );
+        let expected_sent_bytes = format!(
+            "datadog.tracer.exporter.transport.sent.bytes:{}|d|#libdatadog_version:{}",
+            data.len(),
+            env!("CARGO_PKG_VERSION")
+        );
+        let expected_sent_traces = format!(
+            "datadog.tracer.exporter.transport.traces.sent:1|d|#libdatadog_version:{}",
+            env!("CARGO_PKG_VERSION")
+        );
+        let expected_dropped_traces = format!(
+            "datadog.tracer.exporter.transport.traces.dropped:1|d|#libdatadog_version:{}",
+            env!("CARGO_PKG_VERSION")
+        );
+        let expected_requests = format!(
+            "datadog.tracer.exporter.transport.requests:5|d|#libdatadog_version:{}",
+            env!("CARGO_PKG_VERSION")
+        );
+
+        // Verify all expected metrics are present
+        assert!(
+            metrics.contains(&expected_deser),
+            "Missing deser_traces metric. Got: {metrics:?}"
+        );
+        assert!(
+            metrics.contains(&expected_error),
+            "Missing send.traces.errors metric. Got: {metrics:?}"
+        );
+        assert!(
+            metrics.contains(&expected_dropped),
+            "Missing http.dropped.bytes metric. Got: {metrics:?}"
+        );
+        assert!(
+            metrics.contains(&expected_dropped_traces),
+            "Missing http.dropped.traces metric. Got: {metrics:?}"
+        );
+        assert!(
+            metrics.contains(&expected_sent_bytes),
+            "Missing http.sent.bytes metric. Got: {metrics:?}"
+        );
+        assert!(
+            metrics.contains(&expected_sent_traces),
+            "Missing http.sent.traces metric. Got: {metrics:?}"
+        );
+        assert!(
+            metrics.contains(&expected_requests),
+            "Missing http.requests metric. Got: {metrics:?}"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_health_metrics_dropped_bytes_exclusions() {
+        let stats_socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
+        let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
+
+        // Test 404 - should NOT emit http.dropped.bytes
+        let fake_agent = MockServer::start();
+        let _mock_traces = fake_agent.mock(|_, then| {
+            then.status(404)
+                .header("content-type", "application/json")
+                .body("{}");
+        });
+
+        let exporter = build_test_exporter(
+            fake_agent.url("/v0.4/traces"),
+            Some(stats_socket.local_addr().unwrap().to_string()),
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V04,
+            false,
+        );
+
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"test").unwrap(),
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec(&traces);
+        let result = exporter.send(data.as_ref(), 1);
+
+        assert!(result.is_err());
+
+        // Collect all metrics
+        let mut received_metrics = Vec::new();
+        for _ in 0..5 {
+            received_metrics.push(read(&stats_socket));
+        }
+
+        // Expected metrics for 404 error
+        let expected_deser = format!(
+            "datadog.tracer.exporter.deserialize.traces:1|c|#libdatadog_version:{}",
+            env!("CARGO_PKG_VERSION")
+        );
+        let expected_error = format!(
+            "datadog.tracer.exporter.transport.traces.failed:1|c|#libdatadog_version:{},type:404",
+            env!("CARGO_PKG_VERSION")
+        );
+        let expected_sent_bytes = format!(
+            "datadog.tracer.exporter.transport.sent.bytes:{}|d|#libdatadog_version:{}",
+            data.len(),
+            env!("CARGO_PKG_VERSION")
+        );
+        let expected_sent_traces = format!(
+            "datadog.tracer.exporter.transport.traces.sent:1|d|#libdatadog_version:{}",
+            env!("CARGO_PKG_VERSION")
+        );
+        let expected_requests = format!(
+            "datadog.tracer.exporter.transport.requests:5|d|#libdatadog_version:{}",
+            env!("CARGO_PKG_VERSION")
+        );
+
+        // Should emit these metrics
+        assert!(
+            received_metrics.contains(&expected_deser),
+            "Missing deser_traces metric. Got: {received_metrics:?}"
+        );
+        assert!(
+            received_metrics.contains(&expected_error),
+            "Missing send.traces.errors metric. Got: {received_metrics:?}"
+        );
+        assert!(
+            received_metrics.contains(&expected_sent_bytes),
+            "Missing http.sent.bytes metric. Got: {received_metrics:?}"
+        );
+        assert!(
+            received_metrics.contains(&expected_sent_traces),
+            "Missing http.sent.traces metric. Got: {received_metrics:?}"
+        );
+        assert!(
+            received_metrics.contains(&expected_requests),
+            "Missing http.requests metric. Got: {received_metrics:?}"
+        );
+
+        // Should NOT emit http.dropped.bytes for 404
+        let dropped_bytes_metric = format!(
+            "datadog.tracer.exporter.transport.dropped.bytes:{}|d|#libdatadog_version:{}",
+            data.len(),
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(
+            !received_metrics.contains(&dropped_bytes_metric),
+            "Should not emit http.dropped.bytes for 404. Got: {received_metrics:?}"
+        );
+
+        // Should NOT emit http.dropped.traces for 404
+        let dropped_traces_metric = format!(
+            "datadog.tracer.exporter.transport.traces.dropped:1|d|#libdatadog_version:{}",
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(
+            !received_metrics.contains(&dropped_traces_metric),
+            "Should not emit http.dropped.traces for 404. Got: {received_metrics:?}"
         );
     }
 
@@ -1685,7 +2067,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
+        let data = msgpack_encoder::v04::to_vec(&traces);
         let result = exporter.send(data.as_ref(), 1).unwrap();
 
         assert_eq!(
@@ -1727,7 +2109,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
+        let data = msgpack_encoder::v04::to_vec(&traces);
         let code = match exporter.send(data.as_ref(), 1).unwrap_err() {
             TraceExporterError::Request(e) => Some(e.status()),
             _ => None,
@@ -1762,7 +2144,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = rmp_serde::to_vec_named(&traces).expect("failed to serialize static trace");
+        let data = msgpack_encoder::v04::to_vec(&traces);
         let err = exporter.send(data.as_ref(), 1);
 
         assert!(err.is_err());
@@ -2130,7 +2512,7 @@ mod tests {
             ..Default::default()
         }];
 
-        let data = rmp_serde::to_vec_named(&vec![trace_chunk]).unwrap();
+        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
 
         // Wait for the info fetcher to get the config
         while mock_info.hits() == 0 {

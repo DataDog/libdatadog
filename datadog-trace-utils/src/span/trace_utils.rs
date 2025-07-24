@@ -193,7 +193,6 @@ mod tests {
             span.meta.insert("origin".into(), "cloudfunction".into());
             span.meta
                 .insert("functionname".into(), "dummy_function_name".into());
-            span.r#type = "serverless".into();
         }
         span
     }
