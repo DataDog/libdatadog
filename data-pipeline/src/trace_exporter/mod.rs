@@ -2089,8 +2089,12 @@ mod tests {
                     "Expected no metrics when health metrics disabled, but received: {received}"
                 );
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
                 // This is expected - no metrics should be sent when disabled
+                // WouldBlock on Unix, TimedOut on Windows
             }
             Err(e) => panic!("Unexpected error reading from socket: {e}"),
         }
