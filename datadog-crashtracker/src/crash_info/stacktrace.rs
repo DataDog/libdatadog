@@ -100,7 +100,9 @@ impl StackTrace {
             frame
                 .normalize_ip(normalizer, pid, elf_resolvers)
                 .unwrap_or_else(|e| {
-                    frame.comments.push(e.to_string());
+                    frame
+                        .comments
+                        .push(format!("normalize_ip failed with {e:#}"));
                     errors += 1;
                 });
         }
@@ -112,7 +114,10 @@ impl StackTrace {
         let mut errors = 0;
         for frame in &mut self.frames {
             frame.resolve_names(src, symbolizer).unwrap_or_else(|e| {
-                frame.comments.push(e.to_string());
+                frame
+                    .comments
+                    .push(format!("resolve_names failed with {e:#}")
+                );
                 errors += 1;
             });
         }
