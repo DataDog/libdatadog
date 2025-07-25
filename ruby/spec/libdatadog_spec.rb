@@ -25,7 +25,7 @@ RSpec.describe Libdatadog do
     after do
       begin
         FileUtils.remove_dir(temporary_directory)
-      rescue Errno::ENOENT => _e
+      rescue Errno::ENOENT, Errno::ENOTDIR
         # Do nothing, it's ok
       end
     end
