@@ -27,7 +27,7 @@ collector_windows = []
 
 [target.'cfg(unix)'.dependencies]
 # Should be kept in sync with the libdatadog symbolizer crate (also using blasesym)
-blazesym = "=0.2.0-rc.3"
+blazesym = "=0.2.0-rc.4"
 
 [dependencies]
 anyhow = "1.0"
