@@ -8,6 +8,7 @@ use anyhow::{anyhow, Result};
 use ddcommon::{hyper_migration, worker::Worker, Endpoint};
 use http_body_util::BodyExt;
 use hyper::{self, body::Buf, header::HeaderName};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -35,25 +36,15 @@ pub async fn fetch_info_with_state(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
 ) -> Result<FetchInfoStatus> {
-    let req = info_endpoint
-        .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
-        .method(hyper::Method::GET)
-        .body(hyper_migration::Body::empty());
-    let client = hyper_migration::new_default_client();
-    let res = client.request(req?).await?;
-    let new_state_hash = res
-        .headers()
-        .get(DATADOG_AGENT_STATE)
-        .ok_or_else(|| anyhow!("Agent state header not found"))?
-        .to_str()?;
+    let (new_state_hash, body_data) = fetch_and_hash_response(info_endpoint).await?;
+
     if current_state_hash.is_some_and(|state| state == new_state_hash) {
         return Ok(FetchInfoStatus::SameState);
     }
-    let state_hash = new_state_hash.to_string();
-    let body_bytes = res.into_body().collect().await?.aggregate();
+
     let info = Box::new(AgentInfo {
-        state_hash,
-        info: serde_json::from_reader(body_bytes.reader())?,
+        state_hash: new_state_hash,
+        info: serde_json::from_slice(&body_data)?,
     });
     Ok(FetchInfoStatus::NewState(info))
 }
@@ -84,6 +75,29 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
         // Should never be reached since there is no previous state.
         FetchInfoStatus::SameState => Err(anyhow!("Invalid state header")),
     }
+}
+
+/// Fetch and hash the response from the agent info endpoint.
+///
+/// Returns a tuple of (state_hash, response_body_bytes).
+/// The hash is calculated using SHA256 to match the agent's calculation method.
+async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, Vec<u8>)> {
+    let req = info_endpoint
+        .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
+        .method(hyper::Method::GET)
+        .body(hyper_migration::Body::empty());
+    let client = hyper_migration::new_default_client();
+    let res = client.request(req?).await?;
+    let body_data = res
+        .into_body()
+        .collect()
+        .await?
+        .aggregate()
+        .chunk()
+        .to_vec();
+    let hash = format!("{:x}", Sha256::digest(&body_data));
+
+    Ok((hash, body_data))
 }
 
 /// Fetch the info endpoint and update an ArcSwap keeping it up-to-date.
@@ -321,7 +335,11 @@ mod single_threaded_tests {
         "peer_tags": ["db.hostname","http.host","aws.s3.bucket"]
     }"#;
 
-    const TEST_INFO_HASH: &str = "8c732aba385d605b010cd5bd12c03fef402eaefce989f0055aa4c7e92fe30077";
+    fn calculate_hash(json: &str) -> String {
+        format!("{:x}", Sha256::digest(json.as_bytes()))
+    }
+
+    const TEST_INFO_HASH: &str = "b7709671827946c15603847bca76c90438579c038ec134eae19c51f1f3e3dfea";
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
@@ -332,7 +350,6 @@ mod single_threaded_tests {
                 when.path("/info");
                 then.status(200)
                     .header("content-type", "application/json")
-                    .header("datadog-agent-state", TEST_INFO_HASH)
                     .body(TEST_INFO);
             })
             .await;
@@ -358,7 +375,6 @@ mod single_threaded_tests {
                 when.path("/info");
                 then.status(200)
                     .header("content-type", "application/json")
-                    .header("datadog-agent-state", TEST_INFO_HASH)
                     .body(TEST_INFO);
             })
             .await;
@@ -391,7 +407,6 @@ mod single_threaded_tests {
                 when.path("/info");
                 then.status(200)
                     .header("content-type", "application/json")
-                    .header("datadog-agent-state", TEST_INFO_HASH)
                     .body(TEST_INFO);
             })
             .await;
@@ -418,7 +433,6 @@ mod single_threaded_tests {
                 when.path("/info");
                 then.status(200)
                     .header("content-type", "application/json")
-                    .header("datadog-agent-state", "1")
                     .body(r#"{"version":"1"}"#);
             })
             .await;
@@ -452,7 +466,6 @@ mod single_threaded_tests {
                 when.path("/info");
                 then.status(200)
                     .header("content-type", "application/json")
-                    .header("datadog-agent-state", "2")
                     .body(r#"{"version":"2"}"#);
             })
             .await;
@@ -491,7 +504,6 @@ mod single_threaded_tests {
                 when.path("/info");
                 then.status(200)
                     .header("content-type", "application/json")
-                    .header("datadog-agent-state", "new_state")
                     .body(r#"{"version":"triggered"}"#);
             })
             .await;
@@ -536,11 +548,12 @@ mod single_threaded_tests {
 
         // Wait for the cache to be updated with proper timeout
         let mut attempts = 0;
+        let expected_hash = calculate_hash(r#"{"version":"triggered"}"#);
 
         while attempts < MAX_ATTEMPTS {
             let updated_info = AGENT_INFO_CACHE.load();
             if let Some(info) = updated_info.as_ref() {
-                if info.state_hash == "new_state" {
+                if info.state_hash == expected_hash {
                     break;
                 }
             }
@@ -551,7 +564,7 @@ mod single_threaded_tests {
         // Verify the cache was updated
         let updated_info = AGENT_INFO_CACHE.load();
         assert!(updated_info.is_some());
-        assert_eq!(updated_info.as_ref().unwrap().state_hash, "new_state");
+        assert_eq!(updated_info.as_ref().unwrap().state_hash, expected_hash);
         assert_eq!(
             updated_info
                 .as_ref()
@@ -573,15 +586,17 @@ mod single_threaded_tests {
                 when.path("/info");
                 then.status(200)
                     .header("content-type", "application/json")
-                    .header("datadog-agent-state", "same_state")
                     .body(r#"{"version":"same"}"#);
             })
             .await;
 
+        let same_json = r#"{"version":"same"}"#;
+        let same_hash = calculate_hash(same_json);
+
         // Populate the cache with the same state
         AGENT_INFO_CACHE.store(Some(Arc::new(AgentInfo {
-            state_hash: "same_state".to_string(),
-            info: serde_json::from_str(r#"{"version":"same"}"#).unwrap(),
+            state_hash: same_hash.clone(),
+            info: serde_json::from_str(same_json).unwrap(),
         })));
 
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
@@ -595,7 +610,7 @@ mod single_threaded_tests {
         // Create a mock HTTP response with the same agent state
         let response = hyper::Response::builder()
             .status(200)
-            .header("datadog-agent-state", "same_state")
+            .header("datadog-agent-state", &same_hash)
             .body(())
             .unwrap();
 
