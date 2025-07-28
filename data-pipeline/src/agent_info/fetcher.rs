@@ -7,7 +7,7 @@ use super::{schema::AgentInfo, AGENT_INFO_CACHE};
 use anyhow::{anyhow, Result};
 use ddcommon::{hyper_migration, worker::Worker, Endpoint};
 use http_body_util::BodyExt;
-use hyper::{self, body::Buf, header::HeaderName};
+use hyper::{self, header::HeaderName};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,7 +17,6 @@ use tracing::{debug, error, info};
 
 /// HTTP header containing the agent state hash.
 const DATADOG_AGENT_STATE: HeaderName = HeaderName::from_static("datadog-agent-state");
-
 /// Whether the agent reported the same value or not.
 #[derive(Debug)]
 pub enum FetchInfoStatus {
@@ -81,20 +80,16 @@ pub async fn fetch_info(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
 ///
 /// Returns a tuple of (state_hash, response_body_bytes).
 /// The hash is calculated using SHA256 to match the agent's calculation method.
-async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, Vec<u8>)> {
+async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, bytes::Bytes)> {
     let req = info_endpoint
         .to_request_builder(concat!("Libdatadog/", env!("CARGO_PKG_VERSION")))?
         .method(hyper::Method::GET)
         .body(hyper_migration::Body::empty());
     let client = hyper_migration::new_default_client();
     let res = client.request(req?).await?;
-    let body_data = res
-        .into_body()
-        .collect()
-        .await?
-        .aggregate()
-        .chunk()
-        .to_vec();
+
+    let body_bytes = res.into_body().collect().await?;
+    let body_data = body_bytes.to_bytes();
     let hash = format!("{:x}", Sha256::digest(&body_data));
 
     Ok((hash, body_data))
