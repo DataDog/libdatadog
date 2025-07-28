@@ -1718,6 +1718,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "datadog-live-debugger",
+ "datadog-remote-config",
  "datadog-trace-protobuf",
  "ddcommon",
  "futures",
@@ -1729,6 +1730,7 @@ dependencies = [
  "manual_future",
  "serde",
  "serde_json",
+ "serde_with",
  "sha2",
  "time",
  "tokio",
@@ -1909,6 +1911,7 @@ version = "19.1.0"
 dependencies = [
  "anyhow",
  "datadog-remote-config",
+ "datadog-trace-utils",
  "ddcommon",
  "hyper 1.6.0",
  "serde_json",
