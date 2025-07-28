@@ -97,6 +97,7 @@ pub struct TraceExporterConfig {
     compute_stats: bool,
     client_computed_stats: bool,
     telemetry_cfg: Option<TelemetryConfig>,
+    health_metrics_enabled: bool,
     test_session_token: Option<String>,
     rates_payload_version: bool,
     connection_timeout: Option<u64>,
@@ -299,7 +300,24 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_service(
     )
 }
 
-/// Enables metrics.
+/// Enables health metrics emission.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_enable_health_metrics(
+    config: Option<&mut TraceExporterConfig>,
+    is_enabled: bool,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Option::Some(config) = config {
+            config.health_metrics_enabled = is_enabled;
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Enables telemetry metrics.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
     config: Option<&mut TraceExporterConfig>,
@@ -481,6 +499,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 builder.enable_agent_rates_payload_version();
             }
 
+            if config.health_metrics_enabled {
+                builder.enable_health_metrics();
+            }
+
             match builder.build() {
                 Ok(exporter) => {
                     out_handle.as_ptr().write(Box::new(exporter));
@@ -573,6 +595,7 @@ mod tests {
             assert_eq!(cfg.output_format, TraceExporterOutputFormat::V04);
             assert!(!cfg.compute_stats);
             assert!(cfg.telemetry_cfg.is_none());
+            assert!(!cfg.health_metrics_enabled);
             assert!(cfg.test_session_token.is_none());
             assert!(!cfg.rates_payload_version);
             assert!(cfg.connection_timeout.is_none());
@@ -1158,6 +1181,25 @@ mod tests {
 
             let cfg = config.unwrap();
             assert!(cfg.rates_payload_version);
+        }
+    }
+
+    #[test]
+    fn config_health_metrics_test() {
+        unsafe {
+            let error = ddog_trace_exporter_config_enable_health_metrics(None, true);
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+
+            ddog_trace_exporter_error_free(error);
+
+            let mut config = Some(TraceExporterConfig::default());
+            assert!(!config.as_ref().unwrap().health_metrics_enabled);
+
+            let error = ddog_trace_exporter_config_enable_health_metrics(config.as_mut(), true);
+            assert_eq!(error, None);
+
+            let cfg = config.unwrap();
+            assert!(cfg.health_metrics_enabled);
         }
     }
 }

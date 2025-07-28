@@ -4,11 +4,11 @@
 use crate::log::{TemporarilyRetainedMapStats, MULTI_LOG_FILTER, MULTI_LOG_WRITER};
 use crate::service::{
     sidecar_interface::ServeSidecarInterface,
-    telemetry::{AppInstance, AppOrQueue},
+    telemetry::{TelemetryCachedClient, TelemetryCachedClientSet},
     tracing::TraceFlusher,
-    EnqueuedTelemetryData, InstanceId, QueueId, RequestIdentification, RequestIdentifier,
-    RuntimeInfo, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SessionInfo,
-    SidecarAction, SidecarInterface, SidecarInterfaceRequest, SidecarInterfaceResponse,
+    InstanceId, QueueId, RequestIdentification, RequestIdentifier, RuntimeInfo, RuntimeMetadata,
+    SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction, SidecarInterface,
+    SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
 use datadog_ipc::platform::{AsyncChannel, ShmHandle};
 use datadog_ipc::tarpc;
@@ -18,12 +18,10 @@ use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::tracer_payload::decode_to_trace_chunks;
 use datadog_trace_utils::tracer_payload::TraceEncoding;
 use ddcommon::{Endpoint, MutexExt};
-use ddtelemetry::worker::{
-    LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerStats,
-};
+use ddtelemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
 use futures::future;
-use futures::future::{join_all, Ready};
-use manual_future::{ManualFuture, ManualFutureCompleter};
+use futures::future::Ready;
+use manual_future::ManualFutureCompleter;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -44,8 +42,6 @@ use crate::service::debugger_diagnostics_bookkeeper::{
 };
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
-use crate::service::runtime_info::ActiveApplication;
-use crate::service::telemetry::enqueued_telemetry_stats::EnqueuedTelemetryStats;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use datadog_ipc::platform::FileBackedHandle;
 use datadog_ipc::tarpc::server::{Channel, InFlightRequest};
@@ -68,10 +64,8 @@ pub struct SidecarStats {
     sessions: u32,
     session_counter_size: u32,
     runtimes: u32,
-    apps: u32,
+    active_telemetry_clients: u32,
     active_apps: u32,
-    enqueued_apps: u32,
-    enqueued_telemetry_data: EnqueuedTelemetryStats,
     remote_config_clients: u32,
     remote_configs: MultiTargetStats,
     debugger_diagnostics_bookkeeping: DebuggerDiagnosticsBookkeeperStats,
@@ -104,6 +98,8 @@ pub struct SidecarServer {
     sessions: Arc<Mutex<HashMap<String, SessionInfo>>>,
     /// A `Mutex` guarded `HashMap` that keeps a count of each session.
     session_counter: Arc<Mutex<HashMap<String, u32>>>,
+    /// A `Mutex` guarded `HashMap` that stores the active telemetry clients.
+    telemetry_clients: TelemetryCachedClientSet,
     /// A `Mutex` guarded optional `ManualFutureCompleter` for telemetry configuration.
     pub self_telemetry_config:
         Arc<Mutex<Option<ManualFutureCompleter<ddtelemetry::config::Config>>>>,
@@ -295,28 +291,26 @@ impl SidecarServer {
     }
 
     pub async fn compute_stats(&self) -> SidecarStats {
-        let mut telemetry_stats_errors = 0;
-        let telemetry_stats = join_all({
-            let sessions = self.sessions.lock_or_panic();
-            let mut futures = vec![];
-            for (_, s) in sessions.iter() {
-                let runtimes = s.lock_runtimes();
-                for (_, r) in runtimes.iter() {
-                    let apps = r.lock_apps();
-                    for (_, a) in apps.iter() {
-                        if let Some(Some(existing_app)) = a.peek() {
-                            match existing_app.telemetry.stats() {
-                                Ok(future) => futures.push(future),
-                                Err(_) => telemetry_stats_errors += 1,
-                            }
-                        }
-                    }
-                }
-            }
-            futures
-        })
-        .await;
+        let (futures, metric_counts): (Vec<_>, Vec<_>) = {
+            let clients = self.telemetry_clients.inner.lock_or_panic();
+
+            let futures = clients
+                .values()
+                .filter_map(|client| client.client.stats().ok())
+                .collect::<Vec<_>>();
+
+            let metric_counts = clients
+                .values()
+                .map(|client| client.telemetry_metrics.lock_or_panic().len() as u32)
+                .collect::<Vec<_>>();
+
+            (futures, metric_counts)
+        };
+
+        let telemetry_stats = futures::future::join_all(futures).await;
+        let telemetry_stats_errors = telemetry_stats.iter().filter(|r| r.is_err()).count() as u32;
         let sessions = self.sessions.lock_or_panic();
+
         SidecarStats {
             trace_flusher: self.trace_flusher.stats(),
             sessions: sessions.len() as u32,
@@ -325,15 +319,12 @@ impl SidecarServer {
                 .values()
                 .map(|s| s.lock_runtimes().len() as u32)
                 .sum(),
-            apps: sessions
+            active_telemetry_clients: self
+                .telemetry_clients
+                .inner
+                .lock_or_panic()
                 .values()
-                .map(|s| {
-                    s.lock_runtimes()
-                        .values()
-                        .map(|r| r.lock_apps().len() as u32)
-                        .sum::<u32>()
-                })
-                .sum(),
+                .count() as u32,
             active_apps: sessions
                 .values()
                 .map(|s| {
@@ -341,37 +332,6 @@ impl SidecarServer {
                         .values()
                         .map(|r| r.lock_applications().len() as u32)
                         .sum::<u32>()
-                })
-                .sum(),
-            enqueued_apps: sessions
-                .values()
-                .map(|s| {
-                    s.lock_runtimes()
-                        .values()
-                        .map(|r| {
-                            r.lock_applications()
-                                .values()
-                                .filter(|a| matches!(a.app_or_actions, AppOrQueue::Queue(_)))
-                                .count() as u32
-                        })
-                        .sum::<u32>()
-                })
-                .sum(),
-            enqueued_telemetry_data: sessions
-                .values()
-                .map(|s| {
-                    s.lock_runtimes()
-                        .values()
-                        .map(|r| {
-                            r.lock_applications()
-                                .values()
-                                .filter_map(|a| match &a.app_or_actions {
-                                    AppOrQueue::Queue(q) => Some(q.stats()),
-                                    _ => None,
-                                })
-                                .sum()
-                        })
-                        .sum()
                 })
                 .sum(),
             remote_config_clients: sessions
@@ -390,30 +350,105 @@ impl SidecarServer {
                 .sum(),
             remote_configs: self.remote_configs.stats(),
             debugger_diagnostics_bookkeeping: self.debugger_diagnostics_bookkeeper.stats(),
-            telemetry_metrics_contexts: sessions
-                .values()
-                .map(|s| {
-                    s.lock_runtimes()
-                        .values()
-                        .map(|r| {
-                            r.lock_apps()
-                                .values()
-                                .map(|a| {
-                                    a.peek().unwrap_or(&None).as_ref().map_or(0, |w| {
-                                        w.telemetry_metrics.lock_or_panic().len() as u32
-                                    })
-                                })
-                                .sum::<u32>()
-                        })
-                        .sum::<u32>()
-                })
-                .sum(),
+            telemetry_metrics_contexts: metric_counts.into_iter().sum(),
             telemetry_worker_errors: telemetry_stats_errors
                 + telemetry_stats.iter().filter(|v| v.is_err()).count() as u32,
             telemetry_worker: telemetry_stats.into_iter().filter_map(|v| v.ok()).sum(),
             log_filter: MULTI_LOG_FILTER.stats(),
             log_writer: MULTI_LOG_WRITER.stats(),
         }
+    }
+
+    pub async fn process_telemetry_action(
+        &self,
+        instance_id: &InstanceId,
+        queue_id: &QueueId,
+        actions: Vec<TelemetryActions>,
+    ) -> anyhow::Result<()> {
+        tracing::debug!(
+            "Processing telemetry action for target {:?}/{:?}: {:?}",
+            instance_id,
+            queue_id,
+            actions
+        );
+        let session = self.get_session(&instance_id.session_id);
+        let trace_config = session.get_trace_config();
+        let runtime_metadata = RuntimeMetadata::new(
+            trace_config.language.clone(),
+            trace_config.language_version.clone(),
+            trace_config.tracer_version.clone(),
+        );
+
+        let rt_info = self.get_runtime(instance_id);
+        let mut applications = rt_info.lock_applications();
+
+        match applications.entry(*queue_id) {
+            Entry::Occupied(mut entry) => {
+                let value = entry.get_mut();
+
+                let env = value.env.as_deref().unwrap_or("none");
+                let service = value.service_name.as_deref().unwrap_or("unknown-service");
+
+                let mut telemetry = match self.telemetry_clients.get_or_create(
+                    service,
+                    env,
+                    instance_id,
+                    &runtime_metadata,
+                    || {
+                        self.get_session(&instance_id.session_id)
+                            .session_config
+                            .lock_or_panic()
+                            .clone()
+                    },
+                ) {
+                    Some(client) => client,
+                    None => return Ok(()),
+                };
+
+                let mut actions_to_send = vec![];
+                let mut buffered_info_changed = false;
+
+                for action in actions {
+                    match action {
+                        TelemetryActions::AddIntegration(ref integration) => {
+                            if telemetry.buffered_integrations.insert(integration.clone()) {
+                                actions_to_send.push(action);
+                                buffered_info_changed = true;
+                            }
+                        }
+                        _ => {
+                            actions_to_send.push(action);
+                        }
+                    }
+                }
+
+                let client_clone = telemetry.clone();
+                let mut handle = telemetry.handle.lock_or_panic();
+                let last_handle = handle.take();
+                *handle = Some(tokio::spawn(async move {
+                    if let Some(last_handle) = last_handle {
+                        last_handle.await.ok();
+                    };
+                    debug!("Sending Telemetry Actions: {actions_to_send:?}");
+                    client_clone.client.send_msgs(actions_to_send).await.ok();
+                }));
+
+                if buffered_info_changed {
+                    info!(
+                    "Buffered telemetry info changed for instance {instance_id:?} and queue_id {queue_id:?}"
+                );
+                    telemetry.write_shm_file();
+                }
+            }
+
+            Entry::Vacant(_) => {
+                info!(
+                    "No application found for instance {instance_id:?} and queue_id {queue_id:?}"
+                );
+            }
+        }
+
+        Ok(())
     }
 
     pub fn shutdown(&self) {
@@ -431,215 +466,130 @@ impl SidecarInterface for SidecarServer {
         queue_id: QueueId,
         actions: Vec<SidecarAction>,
     ) -> Self::EnqueueActionsFut {
-        fn is_stop_actions(actions: &[SidecarAction]) -> bool {
-            actions.len() == 1
-                && matches!(
-                    actions[0],
-                    SidecarAction::Telemetry(TelemetryActions::Lifecycle(LifecycleAction::Stop))
-                )
-        }
+        let session = self.get_session(&instance_id.session_id);
+        let trace_config = session.get_trace_config();
+        let runtime_metadata = RuntimeMetadata::new(
+            trace_config.language.clone(),
+            trace_config.language_version.clone(),
+            trace_config.tracer_version.clone(),
+        );
 
         let rt_info = self.get_runtime(&instance_id);
         let mut applications = rt_info.lock_applications();
-        match applications.entry(queue_id) {
-            Entry::Occupied(mut entry) => {
-                let value = entry.get_mut();
-                match value.app_or_actions {
-                    AppOrQueue::Inactive => {
-                        if is_stop_actions(&actions) {
-                            entry.remove();
-                        } else {
-                            value.app_or_actions =
-                                AppOrQueue::Queue(EnqueuedTelemetryData::processed(actions));
-                        }
-                    }
-                    AppOrQueue::Queue(ref mut data) => {
-                        data.process(actions);
-                    }
-                    AppOrQueue::App(ref service_future) => {
-                        let service_future = service_future.clone();
-                        // drop on stop
-                        if actions.iter().any(|action| {
-                            matches!(
-                                action,
-                                SidecarAction::Telemetry(TelemetryActions::Lifecycle(
-                                    LifecycleAction::Stop
-                                ))
-                            )
-                        }) {
-                            entry.remove();
-                        }
-                        let apps = rt_info.apps.clone();
-                        tokio::spawn(async move {
-                            let service = service_future.await;
-                            let app_future = if let Some(fut) = apps.lock_or_panic().get(&service) {
-                                fut.clone()
-                            } else {
-                                return;
-                            };
-                            if let Some(mut app) = app_future.await {
-                                let actions =
-                                    EnqueuedTelemetryData::process_immediately(actions, &mut app)
-                                        .await;
-                                app.telemetry.send_msgs(actions).await.ok();
-                            }
-                        });
-                    }
-                }
-            }
-            Entry::Vacant(entry) => {
-                if !is_stop_actions(&actions) {
-                    entry.insert(ActiveApplication {
-                        app_or_actions: AppOrQueue::Queue(EnqueuedTelemetryData::processed(
-                            actions,
-                        )),
-                        ..Default::default()
-                    });
-                }
-            }
-        }
 
-        no_response()
-    }
+        if let Entry::Occupied(entry) = applications.entry(queue_id) {
+            let service = entry
+                .get()
+                .service_name
+                .as_deref()
+                .unwrap_or("unknown-service");
+            let env = entry.get().env.as_deref().unwrap_or("none");
 
-    type RegisterServiceAndFlushQueuedActionsFut = NoResponse;
-    fn register_service_and_flush_queued_actions(
-        self,
-        _: Context,
-        instance_id: InstanceId,
-        queue_id: QueueId,
-        runtime_meta: RuntimeMetadata,
-        service_name: String,
-        env_name: String,
-    ) -> Self::RegisterServiceAndFlushQueuedActionsFut {
-        // We need a channel to have enqueuing code await
-        let (future, completer) = ManualFuture::new();
-        let app_or_queue = {
-            let rt_info = self.get_runtime(&instance_id);
-            let mut applications = rt_info.lock_applications();
-            match applications.get_mut(&queue_id) {
-                Some(ActiveApplication {
-                    app_or_actions: ref mut app @ AppOrQueue::Queue(_),
-                    ..
-                }) => Some(std::mem::replace(app, AppOrQueue::App(future.shared()))),
-                None
-                | Some(ActiveApplication {
-                    app_or_actions: AppOrQueue::Inactive,
-                    ..
-                }) => Some(AppOrQueue::Queue(EnqueuedTelemetryData::default())),
-                _ => None,
-            }
-        };
-        if let Some(AppOrQueue::Queue(mut enqueued_data)) = app_or_queue {
-            let rt_info = self.get_runtime(&instance_id);
-            let manual_app_future = rt_info.get_app(&service_name, &env_name);
-
-            let instance_future = if manual_app_future.completer.is_some() {
-                let mut builder = TelemetryWorkerBuilder::new_fetch_host(
-                    service_name.to_owned(),
-                    runtime_meta.language_name.to_owned(),
-                    runtime_meta.language_version.to_owned(),
-                    runtime_meta.tracer_version.to_owned(),
-                );
-                builder.runtime_id = Some(instance_id.runtime_id.to_owned());
-                builder.application.env = Some(env_name.to_owned());
-                let session_info = self.get_session(&instance_id.session_id);
-                let mut config = session_info
-                    .session_config
-                    .lock_or_panic()
-                    .clone()
-                    .unwrap_or_else(ddtelemetry::config::Config::from_env);
-                config.restartable = true;
-                builder.config = config.clone();
-                Some(builder.spawn().map(move |result| {
-                    if result.is_ok() {
-                        info!("spawning telemetry worker {config:?}");
-                    }
-                    result
-                }))
-            } else {
-                None
+            // Lock telemetry client
+            let mut telemetry = match self.telemetry_clients.get_or_create(
+                service,
+                env,
+                &instance_id,
+                &runtime_metadata,
+                || {
+                    self.get_session(&instance_id.session_id)
+                        .session_config
+                        .lock_or_panic()
+                        .clone()
+                },
+            ) {
+                Some(client) => client,
+                None => return no_response(),
             };
 
-            tokio::spawn(async move {
-                if let Some(instance_future) = instance_future {
-                    let instance_option = match instance_future.await {
-                        Ok((handle, worker_join)) => {
-                            let instance = AppInstance {
-                                telemetry: handle,
-                                telemetry_worker_shutdown: worker_join
-                                    .map(Result::ok)
-                                    .boxed()
-                                    .shared(),
-                                telemetry_metrics: Default::default(),
-                            };
+            let mut actions_to_process = vec![];
+            let mut composer_paths_to_process = vec![];
+            let mut buffered_info_changed = false;
+            let mut remove_entry = false;
+            let mut remove_client = false;
 
-                            let mut actions: Vec<TelemetryActions> = vec![];
-                            enqueued_data.extract_telemetry_actions(&mut actions).await;
-                            instance.telemetry.send_msgs(actions).await.ok();
+            for action in actions {
+                match action {
+                    SidecarAction::Telemetry(TelemetryActions::AddIntegration(ref integration)) => {
+                        if telemetry.buffered_integrations.insert(integration.clone()) {
+                            actions_to_process.push(action);
+                            buffered_info_changed = true;
+                        }
+                    }
+                    SidecarAction::PhpComposerTelemetryFile(path) => {
+                        if telemetry.buffered_composer_paths.insert(path.clone()) {
+                            composer_paths_to_process.push(path);
+                            buffered_info_changed = true;
+                        }
+                    }
+                    SidecarAction::Telemetry(TelemetryActions::AddConfig(_)) => {
+                        telemetry.config_sent = true;
+                        buffered_info_changed = true;
+                        actions_to_process.push(action);
+                    }
+                    SidecarAction::ClearQueueId => {
+                        remove_entry = true;
+                    }
+                    SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+                        LifecycleAction::Stop,
+                    )) => {
+                        remove_client = true;
+                        actions_to_process.push(action);
+                    }
+                    _ => {
+                        actions_to_process.push(action);
+                    }
+                }
+            }
 
-                            instance
-                                .telemetry
-                                .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                                .await
-                                .ok();
-                            Some(instance)
-                        }
-                        Err(e) => {
-                            error!("could not spawn telemetry worker {:?}", e);
-                            None
-                        }
+            if !actions_to_process.is_empty() {
+                let client_clone = telemetry.clone();
+                let mut handle = telemetry.handle.lock_or_panic();
+                let last_handle = handle.take();
+                *handle = Some(tokio::spawn(async move {
+                    if let Some(last_handle) = last_handle {
+                        last_handle.await.ok();
                     };
+                    let processed = client_clone.process_actions(actions_to_process);
+                    debug!("Sending Processed Actions :{processed:?}");
+                    client_clone.client.send_msgs(processed).await.ok();
+                }));
+            }
 
-                    #[allow(clippy::expect_used)]
-                    manual_app_future
-                        .completer
-                        .expect("Completed expected Some ManualFuture for application instance, but found none")
-                        .complete(instance_option)
-                        .await;
-                }
+            if !composer_paths_to_process.is_empty() {
+                let client_clone = telemetry.clone();
+                let mut handle = telemetry.handle.lock_or_panic();
+                let last_handle = handle.take();
+                *handle = Some(tokio::spawn(async move {
+                    if let Some(last_handle) = last_handle {
+                        last_handle.await.ok();
+                    };
+                    let composer_actions =
+                        TelemetryCachedClient::process_composer_paths(composer_paths_to_process)
+                            .await;
+                    debug!("Sending Composer Paths :{composer_actions:?}");
+                    client_clone.client.send_msgs(composer_actions).await.ok();
+                }));
+            }
 
-                if let Some(mut app) = manual_app_future.app_future.await {
-                    // Register metrics
-                    for metric in std::mem::take(&mut enqueued_data.metrics).into_iter() {
-                        app.register_metric(metric);
-                    }
+            if buffered_info_changed {
+                info!(
+                    "Buffered telemetry info changed for instance {instance_id:?} and queue_id {queue_id:?}"
+                );
+                telemetry.write_shm_file();
+            }
 
-                    let mut actions: Vec<_> = std::mem::take(&mut enqueued_data.actions);
+            if remove_client {
+                info!("Removing telemetry client for instance {instance_id:?}");
+                self.telemetry_clients.remove_telemetry_client(service, env);
+            }
 
-                    // Send metric points
-                    for point in std::mem::take(&mut enqueued_data.points) {
-                        actions.push(app.to_telemetry_point(point));
-                    }
-
-                    // drop on stop
-                    if actions.iter().any(|action| {
-                        matches!(action, TelemetryActions::Lifecycle(LifecycleAction::Stop))
-                    }) {
-                        // Avoid self.get_runtime(), it could create a new one.
-                        if let Some(session) =
-                            self.sessions.lock_or_panic().get(&instance_id.session_id)
-                        {
-                            if let Some(runtime) =
-                                session.lock_runtimes().get(&instance_id.runtime_id)
-                            {
-                                runtime.lock_applications().remove(&queue_id);
-                            }
-                        }
-                    }
-
-                    app.telemetry.send_msgs(actions).await.ok();
-
-                    let mut extracted_actions: Vec<TelemetryActions> = vec![];
-                    enqueued_data
-                        .extract_telemetry_actions(&mut extracted_actions)
-                        .await;
-                    app.telemetry.send_msgs(extracted_actions).await.ok();
-
-                    // Ok, we dequeued all messages, now new enqueue_actions calls can handle it
-                    completer.complete((service_name, env_name)).await;
-                }
-            });
+            if remove_entry {
+                info!("Removing queue_id {queue_id:?} from instance {instance_id:?}");
+                entry.remove();
+            }
+        } else {
+            info!("No application found for instance {instance_id:?} and queue_id {queue_id:?}");
         }
 
         no_response()
@@ -669,6 +619,7 @@ impl SidecarInterface for SidecarServer {
         {
             *session.remote_config_notify_function.lock().unwrap() = remote_config_notify_function;
         }
+        *session.remote_config_enabled.lock_or_panic() = config.remote_config_enabled;
         session.modify_telemetry_config(|cfg| {
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
             let endpoint =
@@ -682,6 +633,9 @@ impl SidecarInterface for SidecarServer {
                 &config.endpoint,
             );
             cfg.set_endpoint(endpoint).ok();
+            cfg.language.clone_from(&config.language);
+            cfg.language_version.clone_from(&config.language_version);
+            cfg.tracer_version.clone_from(&config.tracer_version);
         });
         session.configure_dogstatsd(|dogstatsd| {
             let d = new(config.dogstatsd_endpoint.clone()).ok();
@@ -895,9 +849,9 @@ impl SidecarInterface for SidecarServer {
         no_response()
     }
 
-    type SetRemoteConfigDataFut = NoResponse;
+    type SetUniversalServiceTagsFut = NoResponse;
 
-    fn set_remote_config_data(
+    fn set_universal_service_tags(
         self,
         _: Context,
         instance_id: InstanceId,
@@ -906,7 +860,7 @@ impl SidecarInterface for SidecarServer {
         env_name: String,
         app_version: String,
         global_tags: Vec<Tag>,
-    ) -> Self::SetRemoteConfigDataFut {
+    ) -> Self::SetUniversalServiceTagsFut {
         debug!("Registered remote config metadata: instance {instance_id:?}, queue_id: {queue_id:?}, service: {service_name}, env: {env_name}, version: {app_version}");
 
         let session = self.get_session(&instance_id.session_id);
@@ -933,17 +887,19 @@ impl SidecarInterface for SidecarServer {
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
         let mut applications = runtime_info.lock_applications();
         let app = applications.entry(queue_id).or_default();
-        app.remote_config_guard = Some(self.remote_configs.add_runtime(
-            invariants,
-            *session.remote_config_interval.lock_or_panic(),
-            instance_id.runtime_id,
-            notify_target,
-            env_name.clone(),
-            service_name,
-            app_version.clone(),
-            global_tags.clone(),
-        ));
-        app.set_metadata(env_name, app_version, global_tags);
+        if *session.remote_config_enabled.lock_or_panic() {
+            app.remote_config_guard = Some(self.remote_configs.add_runtime(
+                invariants,
+                *session.remote_config_interval.lock_or_panic(),
+                instance_id.runtime_id,
+                notify_target,
+                env_name.clone(),
+                service_name.clone(),
+                app_version.clone(),
+                global_tags.clone(),
+            ));
+        }
+        app.set_metadata(env_name, app_version, service_name, global_tags);
 
         no_response()
     }
@@ -1022,9 +978,10 @@ impl SidecarInterface for SidecarServer {
     type StatsFut = Pin<Box<dyn Send + futures::Future<Output = String>>>;
 
     fn stats(self, _: Context) -> Self::StatsFut {
+        let this = self.clone();
         #[allow(clippy::expect_used)]
         Box::pin(async move {
-            let stats = self.compute_stats().await;
+            let stats = this.compute_stats().await;
             simd_json::serde::to_string(&stats).expect("unable to serialize stats to string")
         })
     }

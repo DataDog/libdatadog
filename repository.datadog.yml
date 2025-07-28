@@ -6,5 +6,7 @@ kind: mergequeue
 merge_method: squash
 ---
 schema-version: v1
-kind: stale-branches
-max_age: 2190h  # 3 months
+kind: mergegate
+rules:
+  - require: pull-request-freshness
+    max_age: 10d
