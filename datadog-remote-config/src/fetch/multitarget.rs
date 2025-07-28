@@ -39,6 +39,7 @@ where
     S: MultiTargetHandlers<S::StoredFile>,
 {
     /// All runtime ids belonging to a specific target
+    /// WARNING: do NOT lock runtimes while holding a lock to target_runtimes!
     target_runtimes: Mutex<HashMap<Arc<Target>, HashSet<String>>>,
     /// Keyed by runtime_id
     runtimes: Mutex<HashMap<String, RuntimeInfo<N>>>,
@@ -459,16 +460,19 @@ where
                             // notify_targets is Hash + Eq + Clone, allowing us to deduplicate. Also
                             // avoid the lock during notifying
                             let mut notify_targets = HashSet::new();
-                            if let Some(runtimes) = inner_this
-                                .target_runtimes
-                                .lock_or_panic()
-                                .get(&inner_fetcher.target)
                             {
-                                for runtime_id in runtimes {
-                                    if let Some(runtime) =
-                                        inner_this.runtimes.lock_or_panic().get(runtime_id)
-                                    {
-                                        notify_targets.insert(runtime.notify_target.clone());
+                                // Block to make sure the lock is released
+                                // Ensure runtimes lock is held before locking target_runtimes
+                                let all_runtimes = inner_this.runtimes.lock_or_panic();
+                                if let Some(runtimes) = inner_this
+                                    .target_runtimes
+                                    .lock_or_panic()
+                                    .get(&inner_fetcher.target)
+                                {
+                                    for runtime_id in runtimes {
+                                        if let Some(runtime) = all_runtimes.get(runtime_id) {
+                                            notify_targets.insert(runtime.notify_target.clone());
+                                        }
                                     }
                                 }
                             }
