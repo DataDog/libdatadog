@@ -139,12 +139,8 @@ fn resolve_frames(
             .as_ref()
             .context("Unable to resolve frames: No PID specified")?
             .pid;
-        let rval1 = crash_info.resolve_names(pid);
-        let rval2 = crash_info.normalize_ips(pid);
-        anyhow::ensure!(
-            rval1.is_ok() && rval2.is_ok(),
-            "resolve_names: {rval1:?}\tnormalize_ips: {rval2:?}"
-        );
+        let rval = crash_info.enrich_stacks(pid);
+        anyhow::ensure!(rval.is_ok(), "enrich_stacks: {rval:?}");
     }
     Ok(())
 }

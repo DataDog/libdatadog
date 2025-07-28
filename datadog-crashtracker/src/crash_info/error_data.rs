@@ -44,7 +44,7 @@ impl CachedElfResolvers {
 
 #[cfg(unix)]
 impl ErrorData {
-    pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
+    pub fn enrich_stacks(&mut self, pid: u32) -> anyhow::Result<()> {
         let mut errors = 0;
         let mut elf_resolvers = CachedElfResolvers::default();
         let normalizer = blazesym::normalize::Normalizer::builder()
@@ -52,44 +52,25 @@ impl ErrorData {
             .enable_build_ids(true)
             .enable_build_id_caching(true)
             .build();
-        let pid = pid.into();
-        self.stack
-            .normalize_ips(&normalizer, pid, &mut elf_resolvers)
-            .unwrap_or_else(|_| errors += 1);
-
-        for thread in &mut self.threads {
-            thread
-                .stack
-                .normalize_ips(&normalizer, pid, &mut elf_resolvers)
-                .unwrap_or_else(|_| errors += 1);
-        }
-        anyhow::ensure!(
-            errors == 0,
-            "Failed to normalize ips, see frame comments for details"
-        );
-        Ok(())
-    }
-
-    pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {
-        let mut errors = 0;
         let mut process = blazesym::symbolize::source::Process::new(pid.into());
         // https://github.com/libbpf/blazesym/issues/518
         process.map_files = false;
         let src = blazesym::symbolize::source::Source::Process(process);
         let symbolizer = blazesym::symbolize::Symbolizer::new();
+        let pid = pid.into();
         self.stack
-            .resolve_names(&src, &symbolizer)
+            .enrich_frames(&normalizer, &src, &symbolizer, pid, &mut elf_resolvers)
             .unwrap_or_else(|_| errors += 1);
 
         for thread in &mut self.threads {
             thread
                 .stack
-                .resolve_names(&src, &symbolizer)
+                .enrich_frames(&normalizer, &src, &symbolizer, pid, &mut elf_resolvers)
                 .unwrap_or_else(|_| errors += 1);
         }
         anyhow::ensure!(
             errors == 0,
-            "Failed to resolve names, see frame comments for details"
+            "Failed to enrich stacks, see frame comments for details"
         );
         Ok(())
     }

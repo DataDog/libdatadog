@@ -72,12 +72,8 @@ impl CrashInfo {
 
 #[cfg(unix)]
 impl CrashInfo {
-    pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
-        self.error.normalize_ips(pid)
-    }
-
-    pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {
-        self.error.resolve_names(pid)
+    pub fn enrich_stacks(&mut self, pid: u32) -> anyhow::Result<()> {
+        self.error.enrich_stacks(pid)
     }
 }
 

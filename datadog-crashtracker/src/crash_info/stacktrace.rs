@@ -89,32 +89,22 @@ impl StackTrace {
 
 #[cfg(unix)]
 impl StackTrace {
-    pub fn normalize_ips(
+    pub fn enrich_frames(
         &mut self,
         normalizer: &Normalizer,
+        src: &Source,
+        symbolizer: &Symbolizer,
         pid: Pid,
         elf_resolvers: &mut CachedElfResolvers,
     ) -> anyhow::Result<()> {
         let mut errors = 0;
         for frame in &mut self.frames {
             frame
-                .normalize_ip(normalizer, pid, elf_resolvers)
+                .enrich(normalizer, src, symbolizer, pid, elf_resolvers)
                 .unwrap_or_else(|e| {
                     frame.comments.push(e.to_string());
                     errors += 1;
                 });
-        }
-        anyhow::ensure!(errors == 0);
-        Ok(())
-    }
-
-    pub fn resolve_names(&mut self, src: &Source, symbolizer: &Symbolizer) -> anyhow::Result<()> {
-        let mut errors = 0;
-        for frame in &mut self.frames {
-            frame.resolve_names(src, symbolizer).unwrap_or_else(|e| {
-                frame.comments.push(e.to_string());
-                errors += 1;
-            });
         }
         anyhow::ensure!(errors == 0);
         Ok(())
@@ -176,54 +166,90 @@ impl StackFrame {
 
 #[cfg(unix)]
 impl StackFrame {
-    pub fn normalize_ip(
+    pub fn enrich(
         &mut self,
+        normalizer: &Normalizer,
+        src: &Source,
+        symbolizer: &Symbolizer,
+        pid: Pid,
+        elf_resolvers: &mut CachedElfResolvers,
+    ) -> anyhow::Result<()> {
+        use anyhow::Context;
+
+        if let Some(ip) = &self.ip {
+            let ip = ip.trim_start_matches("0x");
+            let ip = u64::from_str_radix(ip, 16)?;
+
+            let rval = self.resolve_name(ip, src, symbolizer);
+            if rval.is_ok() {
+                return Ok(());
+            }
+
+            // failed to symbolize, try normalization to allow remote symbolization
+            self.normalize_ip(ip, normalizer, pid, elf_resolvers)
+                .with_context(|| {
+                    format!(
+                        "Failed to symbolize ({rval:?}) and normalize ip {ip:#x} for frame {self:?}"
+                    )
+                })?;
+        }
+        Ok(())
+    }
+
+    fn resolve_name(
+        &mut self,
+        ip: u64,
+        src: &Source,
+        symbolizer: &Symbolizer,
+    ) -> anyhow::Result<()> {
+        let input = Input::AbsAddr(ip);
+        match symbolizer.symbolize_single(src, input)? {
+            Symbolized::Sym(s) => {
+                if let Some(c) = s.code_info {
+                    self.column = c.column.map(u32::from);
+                    self.file = Some(c.to_path().display().to_string());
+                    self.line = c.line;
+                }
+                self.function = Some(s.name.into_owned());
+            }
+            Symbolized::Unknown(reason) => {
+                anyhow::bail!("Couldn't symbolize {ip}: {reason}");
+            }
+        }
+        Ok(())
+    }
+
+    fn normalize_ip(
+        &mut self,
+        ip: u64,
         normalizer: &Normalizer,
         pid: Pid,
         elf_resolvers: &mut CachedElfResolvers,
     ) -> anyhow::Result<()> {
         use anyhow::Context;
-        if let Some(ip) = &self.ip {
-            let ip = ip.trim_start_matches("0x");
-            let ip = u64::from_str_radix(ip, 16)?;
-            let normed = normalizer.normalize_user_addrs(pid, &[ip])?;
-            anyhow::ensure!(normed.outputs.len() == 1);
-            let (file_offset, meta_idx) = normed.outputs[0];
-            let meta = &normed.meta[meta_idx];
-            let elf = meta.as_elf().context("Not elf")?;
-            let resolver = elf_resolvers.get(&elf.path)?;
-            let virt_address = resolver
-                .file_offset_to_virt_offset(file_offset)?
-                .context("No matching segment found")?;
 
-            self.build_id = elf.build_id.as_ref().map(|x| byte_slice_as_hex(x.as_ref()));
-            self.build_id_type = Some(BuildIdType::GNU);
-            self.file_type = Some(FileType::ELF);
-            self.path = Some(elf.path.to_string_lossy().to_string());
-            self.relative_address = Some(format!("{virt_address:#018x}"));
-        }
-        Ok(())
-    }
+        let normed = normalizer.normalize_user_addrs(pid, &[ip])?;
+        anyhow::ensure!(normed.outputs.len() == 1);
+        let (file_offset, meta_idx) = normed.outputs[0];
+        let meta = &normed.meta[meta_idx];
+        let elf = meta.as_elf().context("Not elf")?;
+        let resolver = elf_resolvers.get(&elf.path)?;
+        let virt_address = resolver
+            .file_offset_to_virt_offset(file_offset)?
+            .context("No matching segment found")?;
 
-    pub fn resolve_names(&mut self, src: &Source, symbolizer: &Symbolizer) -> anyhow::Result<()> {
-        if let Some(ip) = &self.ip {
-            let ip = ip.trim_start_matches("0x");
-            let ip = u64::from_str_radix(ip, 16)?;
-            let input = Input::AbsAddr(ip);
-            match symbolizer.symbolize_single(src, input)? {
-                Symbolized::Sym(s) => {
-                    if let Some(c) = s.code_info {
-                        self.column = c.column.map(u32::from);
-                        self.file = Some(c.to_path().display().to_string());
-                        self.line = c.line;
-                    }
-                    self.function = Some(s.name.into_owned());
-                }
-                Symbolized::Unknown(reason) => {
-                    anyhow::bail!("Couldn't symbolize {ip}: {reason}");
-                }
-            }
-        }
+        self.build_id = elf.build_id.as_ref().map(|x| byte_slice_as_hex(x.as_ref()));
+        self.build_id_type = Some(BuildIdType::GNU);
+        self.file_type = Some(FileType::ELF);
+        self.path = Some(elf.path.to_string_lossy().to_string());
+        self.relative_address = Some(format!("{virt_address:#018x}"));
+        // in case we need the file path/name
+        // same output format as libunwind
+        self.function = Some(format!(
+            "{}!<unknown>+{}",
+            elf.path.to_string_lossy(),
+            virt_address
+        ));
         Ok(())
     }
 }
