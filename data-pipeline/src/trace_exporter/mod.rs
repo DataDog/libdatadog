@@ -230,6 +230,7 @@ pub struct TraceExporter {
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
     telemetry: Option<TelemetryClient>,
+    health_metrics_enabled: bool,
     workers: Arc<Mutex<TraceExporterWorkers>>,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
 }
@@ -902,8 +903,10 @@ impl TraceExporter {
 
     /// Emit a health metric to dogstatsd
     fn emit_metric(&self, metric: HealthMetric, custom_tags: Option<Vec<&Tag>>) {
-        let emitter = MetricsEmitter::new(self.dogstatsd.as_ref(), &self.common_stats_tags);
-        emitter.emit(metric, custom_tags);
+        if self.health_metrics_enabled {
+            let emitter = MetricsEmitter::new(self.dogstatsd.as_ref(), &self.common_stats_tags);
+            emitter.emit(metric, custom_tags);
+        }
     }
 
     /// Add all spans from the given iterator into the stats concentrator
@@ -1692,6 +1695,7 @@ mod tests {
         input: TraceExporterInputFormat,
         output: TraceExporterOutputFormat,
         enable_telemetry: bool,
+        enable_health_metrics: bool,
     ) -> TraceExporter {
         let mut builder = TraceExporterBuilder::default();
         builder
@@ -1704,6 +1708,10 @@ mod tests {
             .set_language_interpreter("v8")
             .set_input_format(input)
             .set_output_format(output);
+
+        if enable_health_metrics {
+            builder.enable_health_metrics();
+        }
 
         if let Some(url) = dogstatsd_url {
             builder.set_dogstatsd_url(&url);
@@ -1738,6 +1746,7 @@ mod tests {
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
             false,
+            true,
         );
 
         let traces: Vec<Vec<SpanBytes>> = vec![
@@ -1809,6 +1818,7 @@ mod tests {
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
             false,
+            true,
         );
 
         let bad_payload = b"some_bad_payload".as_ref();
@@ -1844,6 +1854,7 @@ mod tests {
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
             false,
+            true,
         );
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
@@ -1951,6 +1962,7 @@ mod tests {
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
             false,
+            true,
         );
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
@@ -2033,6 +2045,59 @@ mod tests {
             !received_metrics.contains(&dropped_traces_metric),
             "Should not emit http.dropped.traces for 404. Got: {received_metrics:?}"
         );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_health_metrics_disabled() {
+        let stats_socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
+        let _ = stats_socket.set_read_timeout(Some(Duration::from_millis(500)));
+
+        let fake_agent = MockServer::start();
+        let _mock_traces = fake_agent.mock(|_, then| {
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{ "rate_by_service": { "service:test,env:staging": 1.0 } }"#);
+        });
+
+        let exporter = build_test_exporter(
+            fake_agent.url("/v0.4/traces"),
+            Some(stats_socket.local_addr().unwrap().to_string()),
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V04,
+            false,
+            false, // Health metrics disabled
+        );
+
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"test").unwrap(),
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec(&traces);
+
+        let _result = exporter
+            .send(data.as_ref(), 1)
+            .expect("failed to send trace");
+
+        // Try to read metrics - should timeout since none are sent
+        let mut buf = [0; 1_000];
+        match stats_socket.recv(&mut buf) {
+            Ok(_) => {
+                let datagram = String::from_utf8_lossy(buf.as_ref());
+                let received = datagram.trim_matches(char::from(0)).to_string();
+                panic!(
+                    "Expected no metrics when health metrics disabled, but received: {received}"
+                );
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                // This is expected - no metrics should be sent when disabled
+                // WouldBlock on Unix, TimedOut on Windows
+            }
+            Err(e) => panic!("Unexpected error reading from socket: {e}"),
+        }
     }
 
     #[test]
@@ -2251,6 +2316,7 @@ mod tests {
             None,
             TraceExporterInputFormat::V05,
             TraceExporterOutputFormat::V05,
+            true,
             true,
         );
 

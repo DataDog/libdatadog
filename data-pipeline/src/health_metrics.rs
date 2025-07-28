@@ -12,6 +12,10 @@
 //! error conditions, and performance characteristics. They are emitted via DogStatsD and follow
 //! consistent naming conventions.
 //!
+//! **Note**: Health metrics are **disabled by default**. They must be explicitly enabled using
+//! `TraceExporterBuilder::enable_health_metrics()` or the FFI function
+//! `ddog_trace_exporter_config_enable_health_metrics(config, true)`.
+//!
 //! ## Metric Types
 //!
 //! - **Count**: Incremental counters that track the number of occurrences
