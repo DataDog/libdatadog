@@ -83,7 +83,7 @@ fn get_v05_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Resul
     if span_size != SPAN_ELEMENT_COUNT {
         anyhow::bail!("Expected an array of exactly 12 elements in a span, got {span_size}");
     }
-    //0 - service
+    // 0 - service
     span.service = get_v05_string(reader, dict, "service")?;
     // 1 - name
     span.name = get_v05_string(reader, dict, "name")?;
@@ -117,7 +117,7 @@ fn get_v05_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Resul
         }
         val => anyhow::bail!("Error reading span parent_id, value is not an integer: {val}"),
     };
-    //6 - start
+    // 6 - start
     match read_value(reader)? {
         Value::Integer(i) => {
             span.start = i
@@ -126,7 +126,7 @@ fn get_v05_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Resul
         }
         val => anyhow::bail!("Error reading span start, value is not an integer: {val}"),
     };
-    //7 - duration
+    // 7 - duration
     match read_value(reader)? {
         Value::Integer(i) => {
             span.duration = i.as_i64().ok_or_else(|| {
@@ -135,7 +135,7 @@ fn get_v05_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Resul
         }
         val => anyhow::bail!("Error reading span duration, value is not an integer: {val}"),
     };
-    //8 - error
+    // 8 - error
     match read_value(reader)? {
         Value::Integer(i) => {
             span.error = i
@@ -145,7 +145,7 @@ fn get_v05_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Resul
         }
         val => anyhow::bail!("Error reading span error, value is not an integer: {val}"),
     }
-    //9 - meta
+    // 9 - meta
     match read_value(reader)? {
         Value::Map(meta) => {
             for (k, v) in meta.iter() {
