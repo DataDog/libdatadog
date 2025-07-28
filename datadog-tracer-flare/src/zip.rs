@@ -125,6 +125,10 @@ fn zip_files(files: Vec<String>) -> Result<File, FlareError> {
     Ok(file)
 }
 
+/// Boundary string used to separate different parts in multipart form-data.
+/// This unique identifier is used to delimit the different form fields when
+/// sending the flare zip file to the agent via HTTP POST request.
+/// The boundary must be unique and not appear in the content being sent.
 const BOUNDARY: &str = "83CAD6AA-8A24-462C-8B3D-FF9CC683B51B";
 
 /// Generates a multipart form-data payload containing flare information and zip file, including

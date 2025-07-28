@@ -31,9 +31,9 @@ pub struct TracerFlareManager {
     pub agent_url: String,
     pub language: String,
     pub state: State,
+    /// As a featured option so we can use the component with no Listener
     #[cfg(feature = "listener")]
-    pub listener: Option<Listener>, /* As a featured option so we can use the component with no
-                                     * Listener */
+    pub listener: Option<Listener>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -61,6 +61,18 @@ impl Default for TracerFlareManager {
 }
 
 impl TracerFlareManager {
+    /// Function that creates a new TracerFlareManager instance with basic configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `agent_url` - Agent url computed from the environment.
+    /// * `language` - Language of the tracer.
+    ///
+    /// # Returns
+    ///
+    /// * `TracerFlareManager` - A new TracerFlareManager instance with basic configuration.
+    ///
+    /// For full RemoteConfig functionality, use `new_with_listener` instead.
     pub fn new(agent_url: &str, language: &str) -> Self {
         TracerFlareManager {
             agent_url: agent_url.to_owned(),
@@ -82,13 +94,13 @@ impl TracerFlareManager {
     /// * `app_version` - Version of the application.
     /// * `runtime_id` - Runtime id.
     ///
+    /// These arguments will be used to listen to the remote config endpoint.
+    ///
     /// # Returns
     ///
     /// * `Ok(TracerFlareManager)` - A fully initialized TracerFlareManager instance with
     ///   RemoteConfig listener.
     /// * `Err(FlareError)` - If the initialization fails.
-    ///
-    /// These arguments will be used to listen to the remote config endpoint.
     #[cfg(feature = "listener")]
     pub fn new_with_listener(
         agent_url: String,
@@ -208,10 +220,20 @@ pub fn check_remote_config_file(
                 if agent_config.name.starts_with("flare-log-level.") {
                     if let Some(log_level) = &agent_config.config.log_level {
                         if let State::Collecting { log_level: _ } = tracer_flare.state {
-                            // Should we return an error instead if we are trying to launch another
-                            // flare while one is already running ?
-                            return Ok(ReturnAction::None);
+                            return Err(FlareError::RemoteConfigError(
+                                "Cannot start a flare while one is already running".to_string(),
+                            ));
                         }
+                        if let State::Sending {
+                            agent_task: _,
+                            log_level: _,
+                        } = tracer_flare.state
+                        {
+                            return Err(FlareError::RemoteConfigError(
+                                "Cannot start a flare while one is waiting to be sent".to_string(),
+                            ));
+                        }
+                        // Idle state
                         tracer_flare.state = State::Collecting {
                             log_level: log_level.to_string(),
                         };
@@ -228,12 +250,20 @@ pub fn check_remote_config_file(
                             log_level: log_level.to_string(),
                         };
                         return Ok(ReturnAction::Stop);
-                    } else {
-                        // Should we return None instead ?
-                        return Err(FlareError::NoFlare(
-                            "Cannot stop an inexisting flare".to_string(),
+                    }
+                    if let State::Sending {
+                        agent_task: _,
+                        log_level: _,
+                    } = tracer_flare.state
+                    {
+                        return Err(FlareError::RemoteConfigError(
+                            "Cannot stop a flare that it is already waiting to be sent".to_string(),
                         ));
                     }
+                    // Idle state
+                    return Err(FlareError::RemoteConfigError(
+                        "Cannot stop an inexisting flare".to_string(),
+                    ));
                 }
             }
             _ => return Ok(ReturnAction::None),
