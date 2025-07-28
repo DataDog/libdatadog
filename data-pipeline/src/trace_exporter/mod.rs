@@ -4,12 +4,14 @@ pub mod agent_response;
 pub mod builder;
 pub mod error;
 pub mod metrics;
+pub mod stats;
 
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
 
 use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
+use self::stats::StatsComputationStatus;
 use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
@@ -22,8 +24,6 @@ use crate::{
     agent_info::{self, schema::AgentInfo},
     health_metrics,
     health_metrics::HealthMetric,
-    span_concentrator::SpanConcentrator,
-    stats_exporter,
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
@@ -49,13 +49,10 @@ use hyper::{header::CONTENT_TYPE, Method, Uri};
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use std::{borrow::Borrow, collections::HashMap, str::FromStr, time};
+use std::{borrow::Borrow, collections::HashMap, str::FromStr};
 use tokio::runtime::Runtime;
-use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] = ["client", "server", "producer", "consumer"];
-const STATS_ENDPOINT: &str = "/v0.6/stats";
 const INFO_ENDPOINT: &str = "/info";
 
 /// Prepared traces payload ready for sending to the agent
@@ -174,22 +171,7 @@ impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
 }
 
 #[derive(Debug)]
-enum StatsComputationStatus {
-    /// Client-side stats has been disabled by the tracer
-    Disabled,
-    /// Client-side stats has been disabled by the agent or is not supported. It can be enabled
-    /// later if the agent configuration changes. This is also the state used when waiting for the
-    /// /info response.
-    DisabledByAgent { bucket_size: Duration },
-    /// Client-side stats is enabled
-    Enabled {
-        stats_concentrator: Arc<Mutex<SpanConcentrator>>,
-        cancellation_token: CancellationToken,
-    },
-}
-
-#[derive(Debug)]
-struct TraceExporterWorkers {
+pub(crate) struct TraceExporterWorkers {
     pub info: PausableWorker<AgentInfoFetcher>,
     pub stats: Option<PausableWorker<StatsExporter>>,
     pub telemetry: Option<PausableWorker<TelemetryWorker>>,
@@ -426,107 +408,6 @@ impl TraceExporter {
         }
     }
 
-    /// Start the stats exporter and enable stats computation
-    ///
-    /// Should only be used if the agent enabled stats computation
-    fn start_stats_computation(
-        &self,
-        span_kinds: Vec<String>,
-        peer_tags: Vec<String>,
-    ) -> anyhow::Result<()> {
-        if let StatsComputationStatus::DisabledByAgent { bucket_size } =
-            **self.client_side_stats.load()
-        {
-            let stats_concentrator =
-                self.create_stats_concentrator(bucket_size, span_kinds, peer_tags);
-            let cancellation_token = CancellationToken::new();
-            let stats_worker = self.create_and_start_stats_worker(
-                bucket_size,
-                &stats_concentrator,
-                &cancellation_token,
-            )?;
-            self.update_stats_state(stats_worker, stats_concentrator, cancellation_token);
-        }
-        Ok(())
-    }
-
-    /// Create a new stats concentrator with the given configuration
-    fn create_stats_concentrator(
-        &self,
-        bucket_size: Duration,
-        span_kinds: Vec<String>,
-        peer_tags: Vec<String>,
-    ) -> Arc<Mutex<SpanConcentrator>> {
-        Arc::new(Mutex::new(SpanConcentrator::new(
-            bucket_size,
-            time::SystemTime::now(),
-            span_kinds,
-            peer_tags,
-        )))
-    }
-
-    /// Create stats exporter and worker, then start the worker
-    fn create_and_start_stats_worker(
-        &self,
-        bucket_size: Duration,
-        stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
-        cancellation_token: &CancellationToken,
-    ) -> anyhow::Result<PausableWorker<StatsExporter>> {
-        let stats_exporter = stats_exporter::StatsExporter::new(
-            bucket_size,
-            stats_concentrator.clone(),
-            self.metadata.clone(),
-            Endpoint::from_url(add_path(&self.endpoint.url, STATS_ENDPOINT)),
-            cancellation_token.clone(),
-        );
-        let mut stats_worker = PausableWorker::new(stats_exporter);
-        let runtime = self.runtime()?;
-        stats_worker.start(&runtime).map_err(|e| {
-            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
-        })?;
-        Ok(stats_worker)
-    }
-
-    /// Update the stats computation state with the new worker and components
-    fn update_stats_state(
-        &self,
-        stats_worker: PausableWorker<StatsExporter>,
-        stats_concentrator: Arc<Mutex<SpanConcentrator>>,
-        cancellation_token: CancellationToken,
-    ) {
-        self.workers.lock_or_panic().stats = Some(stats_worker);
-        self.client_side_stats
-            .store(Arc::new(StatsComputationStatus::Enabled {
-                stats_concentrator,
-                cancellation_token,
-            }));
-    }
-
-    /// Stops the stats exporter and disable stats computation
-    ///
-    /// Used when client-side stats is disabled by the agent
-    fn stop_stats_computation(&self) {
-        if let StatsComputationStatus::Enabled {
-            stats_concentrator,
-            cancellation_token,
-        } = &**self.client_side_stats.load()
-        {
-            // If there's no runtime there's no exporter to stop
-            if let Ok(runtime) = self.runtime() {
-                runtime.block_on(async {
-                    cancellation_token.cancel();
-                });
-                self.workers.lock_or_panic().stats = None;
-                let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
-
-                self.client_side_stats
-                    .store(Arc::new(StatsComputationStatus::DisabledByAgent {
-                        bucket_size,
-                    }));
-            }
-        }
-    }
-
     /// Check if agent info state has changed
     fn has_agent_info_state_changed(&self, agent_info: &Arc<AgentInfo>) -> bool {
         Some(agent_info.state_hash.as_str())
@@ -537,62 +418,39 @@ impl TraceExporter {
                 .map(|s| s.as_str())
     }
 
-    /// Get span kinds for stats computation with default fallback
-    fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
-        agent_info
-            .info
-            .span_kinds_stats_computed
-            .clone()
-            .unwrap_or_else(|| DEFAULT_STATS_ELIGIBLE_SPAN_KINDS.map(String::from).to_vec())
-    }
-
-    /// Handle stats computation when agent changes from disabled to enabled
-    fn handle_stats_disabled_by_agent(&self, agent_info: &Arc<AgentInfo>) {
-        if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
-            // Client-side stats is supported by the agent
-            let status = self.start_stats_computation(
-                Self::get_span_kinds_for_stats(agent_info),
-                agent_info.info.peer_tags.clone().unwrap_or_default(),
-            );
-            match status {
-                Ok(()) => info!("Client-side stats enabled"),
-                Err(e) => {
-                    error!("Failed to start stats computation: {}", e);
-                }
-            }
-        } else {
-            info!("Client-side stats computation has been disabled by the agent")
-        }
-    }
-
-    /// Handle stats computation when it's already enabled
-    fn handle_stats_enabled(
-        &self,
-        agent_info: &Arc<AgentInfo>,
-        stats_concentrator: &Mutex<SpanConcentrator>,
-    ) {
-        if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
-            let mut concentrator = stats_concentrator.lock_or_panic();
-            concentrator.set_span_kinds(Self::get_span_kinds_for_stats(agent_info));
-            concentrator.set_peer_tags(agent_info.info.peer_tags.clone().unwrap_or_default());
-        } else {
-            self.stop_stats_computation();
-            info!("Client-side stats computation has been disabled by the agent")
-        }
-    }
-
     fn check_agent_info(&self) {
         if let Some(agent_info) = agent_info::get_agent_info() {
             if self.has_agent_info_state_changed(&agent_info) {
                 match &**self.client_side_stats.load() {
                     StatsComputationStatus::Disabled => {}
                     StatsComputationStatus::DisabledByAgent { .. } => {
-                        self.handle_stats_disabled_by_agent(&agent_info);
+                        let ctx = stats::StatsContext {
+                            metadata: &self.metadata,
+                            endpoint_url: &self.endpoint.url,
+                            runtime: &self.runtime,
+                        };
+                        stats::handle_stats_disabled_by_agent(
+                            &ctx,
+                            &agent_info,
+                            &self.client_side_stats,
+                            &self.workers,
+                        );
                     }
                     StatsComputationStatus::Enabled {
                         stats_concentrator, ..
                     } => {
-                        self.handle_stats_enabled(&agent_info, stats_concentrator);
+                        let ctx = stats::StatsContext {
+                            metadata: &self.metadata,
+                            endpoint_url: &self.endpoint.url,
+                            runtime: &self.runtime,
+                        };
+                        stats::handle_stats_enabled(
+                            &ctx,
+                            &agent_info,
+                            stats_concentrator,
+                            &self.client_side_stats,
+                            &self.workers,
+                        );
                     }
                 }
                 self.previous_info_state
@@ -905,23 +763,6 @@ impl TraceExporter {
         }
     }
 
-    /// Add all spans from the given iterator into the stats concentrator
-    /// # Panic
-    /// Will panic if another thread panicked will holding the lock on `stats_concentrator`
-    fn add_spans_to_stats<T: SpanText>(
-        &self,
-        stats_concentrator: &Mutex<SpanConcentrator>,
-        traces: &[Vec<Span<T>>],
-    ) {
-        #[allow(clippy::unwrap_used)]
-        let mut stats_concentrator = stats_concentrator.lock().unwrap();
-
-        let spans = traces.iter().flat_map(|trace| trace.iter());
-        for span in spans {
-            stats_concentrator.add_span(span);
-        }
-    }
-
     /// Send a list of trace chunks to the agent
     ///
     /// # Arguments
@@ -966,38 +807,6 @@ impl TraceExporter {
         );
 
         self.send_trace_chunks_inner(traces)
-    }
-
-    /// Process traces for stats computation and update header tags accordingly
-    fn process_traces_for_stats<T: SpanText>(
-        &self,
-        traces: &mut Vec<Vec<Span<T>>>,
-        header_tags: &mut TracerHeaderTags,
-    ) {
-        if let StatsComputationStatus::Enabled {
-            stats_concentrator, ..
-        } = &**self.client_side_stats.load()
-        {
-            if !self.client_computed_top_level {
-                for chunk in traces.iter_mut() {
-                    datadog_trace_utils::span::trace_utils::compute_top_level_span(chunk);
-                }
-            }
-            self.add_spans_to_stats(stats_concentrator, traces);
-            // Once stats have been computed we can drop all chunks that are not going to be
-            // sampled by the agent
-            let datadog_trace_utils::span::trace_utils::DroppedP0Stats {
-                dropped_p0_traces,
-                dropped_p0_spans,
-            } = datadog_trace_utils::span::trace_utils::drop_chunks(traces);
-
-            // Update the headers to indicate that stats have been computed and forward dropped
-            // traces counts
-            header_tags.client_computed_top_level = true;
-            header_tags.client_computed_stats = true;
-            header_tags.dropped_p0_traces = dropped_p0_traces;
-            header_tags.dropped_p0_spans = dropped_p0_spans;
-        }
     }
 
     /// Prepare traces payload and HTTP headers for sending to agent
@@ -1114,7 +923,12 @@ impl TraceExporter {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         // Process stats computation
-        self.process_traces_for_stats(&mut traces, &mut header_tags);
+        stats::process_traces_for_stats(
+            &mut traces,
+            &mut header_tags,
+            &self.client_side_stats,
+            self.client_computed_top_level,
+        );
 
         // Prepare payload and headers
         let prepared = self.prepare_traces_payload(traces, header_tags)?;
@@ -1401,20 +1215,7 @@ impl TraceExporter {
     #[cfg(test)]
     /// Test only function to check if the stats computation is active and the worker is running
     pub fn is_stats_worker_active(&self) -> bool {
-        if !matches!(
-            **self.client_side_stats.load(),
-            StatsComputationStatus::Enabled { .. }
-        ) {
-            return false;
-        }
-
-        if let Ok(workers) = self.workers.try_lock() {
-            if let Some(stats_worker) = &workers.stats {
-                return matches!(stats_worker, PausableWorker::Running { .. });
-            }
-        }
-
-        false
+        stats::is_stats_worker_active(&self.client_side_stats, &self.workers)
     }
 }
 
