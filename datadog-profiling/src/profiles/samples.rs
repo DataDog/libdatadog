@@ -31,6 +31,9 @@ pub struct SampleManager {
     types: Box<[ValueType]>,
     /// The timestamped samples, which are not aggregated.
     timestamped_samples: Vec<TimestampedSample>,
+    // todo: can possibly remove aggregated samples, most everything is
+    //       timestamped now, and it's mostly logically the same to have
+    //       multiple samples with the same stack trace id and labels.
     /// The non-timestamped samples, which we aggregate by the stack trace id
     /// and labels.
     aggregated_samples: HashMap<SampleKey, Range>,

@@ -248,7 +248,7 @@ impl StringTable {
     ///
     /// # Errors
     ///
-    /// Fails if the offset is not found.
+    /// Fails with [`StringTableError::NotFound`] the offset is not found.
     pub fn lookup(&self, offset: StringOffset) -> Result<&str, StringTableError> {
         self.strings
             .get_index(usize::from(offset))

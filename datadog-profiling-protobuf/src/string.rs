@@ -21,6 +21,7 @@ unsafe impl Value for &str {
     }
 }
 
+// todo: for OTEL, needs to be i32::MAX rather than u32::MAX.
 /// Represents an offset into the Profile's string table. Note that it cannot
 /// exceed u32 because an entire protobuf message must not be larger than or
 /// equal to 2 GiB. By the time you encode the tag and length prefix for each
