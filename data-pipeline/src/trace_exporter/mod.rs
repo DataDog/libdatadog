@@ -2609,4 +2609,12 @@ mod tests {
 
         assert_eq!(exporter.endpoint.timeout_ms, 42);
     }
+
+    #[test]
+    fn stop_and_start_runtime() {
+        let builder = TraceExporterBuilder::default();
+        let exporter = builder.build().unwrap();
+        exporter.stop_worker();
+        exporter.run_worker().unwrap();
+    }
 }
