@@ -246,21 +246,8 @@ impl TraceExporter {
         TraceExporterBuilder::default()
     }
 
+    /// Return the existing runtime or create a new one and start all workers
     fn runtime(&self) -> Result<Arc<Runtime>, TraceExporterError> {
-        match self.runtime.lock_or_panic().as_ref() {
-            Some(runtime) => Ok(runtime.clone()),
-            None => self.run_worker(),
-        }
-    }
-
-    pub fn run_worker(&self) -> Result<Arc<Runtime>, TraceExporterError> {
-        let runtime = self.get_or_create_runtime()?;
-        self.start_all_workers(&runtime)?;
-        Ok(runtime)
-    }
-
-    /// Get existing runtime or create a new one
-    fn get_or_create_runtime(&self) -> Result<Arc<Runtime>, TraceExporterError> {
         let mut runtime_guard = self.runtime.lock_or_panic();
         match runtime_guard.as_ref() {
             Some(runtime) => {
@@ -276,9 +263,16 @@ impl TraceExporter {
                         .build()?,
                 );
                 *runtime_guard = Some(runtime.clone());
+                self.start_all_workers(&runtime)?;
                 Ok(runtime)
             }
         }
+    }
+
+    /// Manually start all workers
+    pub fn run_worker(&self) -> Result<(), TraceExporterError> {
+        self.runtime()?;
+        Ok(())
     }
 
     /// Start all workers with the given runtime
