@@ -206,7 +206,7 @@ pub extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
 
     unsafe {
         let owned_ptr = ptr as *mut c_char;
-        let _ = CString::from_raw(owned_ptr);
+        let _ = Box::from_raw(owned_ptr);
     }
 }
 
@@ -541,7 +541,9 @@ pub extern "C" fn ddog_add_event_attributes_float(
 // ------------------- Export Functions -------------------
 
 #[no_mangle]
-pub extern "C" fn ddog_serialize_trace_into_c_string(trace: &mut TraceBytes) -> CharSlice<'static> {
+pub extern "C" fn ddog_serialize_trace_into_charslice(
+    trace: &mut TraceBytes,
+) -> CharSlice<'static> {
     match rmp_serde::encode::to_vec_named(&vec![trace]) {
         Ok(vec) => {
             let boxed_str = vec.into_boxed_slice();

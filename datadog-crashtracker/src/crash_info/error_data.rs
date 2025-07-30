@@ -33,7 +33,12 @@ impl CachedElfResolvers {
     pub fn get(&mut self, file_path: &PathBuf) -> anyhow::Result<&ElfResolver> {
         use anyhow::Context;
         if !self.elf_resolvers.contains_key(file_path.as_path()) {
-            let resolver = ElfResolver::open(file_path)?;
+            let resolver = ElfResolver::open(file_path).with_context(|| {
+                format!(
+                    "ElfResolver::open failed for '{}'",
+                    file_path.to_string_lossy()
+                )
+            })?;
             self.elf_resolvers.insert(file_path.clone(), resolver);
         }
         self.elf_resolvers
