@@ -562,7 +562,9 @@ impl TraceExporter {
             );
             match status {
                 Ok(()) => info!("Client-side stats enabled"),
-                Err(_) => error!("Failed to start stats computation"),
+                Err(e) => {
+                    error!("Failed to start stats computation: {}", e);
+                }
             }
         } else {
             info!("Client-side stats computation has been disabled by the agent")
@@ -1500,187 +1502,6 @@ mod tests {
         assert!(hashmap.contains_key("datadog-client-computed-stats"));
         assert!(hashmap.contains_key("datadog-client-computed-top-level"));
     }
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn test_shutdown() {
-        let server = MockServer::start();
-
-        let mock_traces = server.mock(|when, then| {
-            when.method(POST)
-                .header("Content-type", "application/msgpack")
-                .path("/v0.4/traces");
-            then.status(200).body("");
-        });
-
-        let mock_stats = server.mock(|when, then| {
-            when.method(POST)
-                .header("Content-type", "application/msgpack")
-                .path("/v0.6/stats");
-            then.status(200).body("");
-        });
-
-        let _mock_info = server.mock(|when, then| {
-            when.method(GET).path("/info");
-            then.status(200)
-                .header("content-type", "application/json")
-                .header("datadog-agent-state", "1")
-                .body(r#"{"version":"1","client_drop_p0s":true}"#);
-        });
-
-        let mut builder = TraceExporterBuilder::default();
-        builder
-            .set_url(&server.url("/"))
-            .set_service("test")
-            .set_env("staging")
-            .set_tracer_version("v0.1")
-            .set_language("nodejs")
-            .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .set_input_format(TraceExporterInputFormat::V04)
-            .set_output_format(TraceExporterOutputFormat::V04)
-            .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build().unwrap();
-
-        let trace_chunk = vec![SpanBytes {
-            duration: 10,
-            ..Default::default()
-        }];
-
-        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
-
-        // Wait for the info fetcher to get the config
-        while agent_info::get_agent_info().is_none() {
-            exporter
-                .runtime
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .block_on(async {
-                    sleep(Duration::from_millis(100)).await;
-                })
-        }
-
-        let result = exporter.send(data.as_ref(), 1);
-        // Error received because server is returning an empty body.
-        assert!(result.is_err());
-
-        // Wait for the stats worker to be active before shutting down to avoid potential flaky
-        // tests on CI where we shutdown before the stats worker had time to start
-        let start_time = std::time::Instant::now();
-        while !exporter.is_stats_worker_active() {
-            if start_time.elapsed() > Duration::from_secs(10) {
-                panic!("Timeout waiting for stats worker to become active");
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-
-        exporter.shutdown(None).unwrap();
-
-        // Wait for the mock server to process the stats
-        for _ in 0..1000 {
-            if mock_traces.hits() > 0 && mock_stats.hits() > 0 {
-                break;
-            } else {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
-
-        mock_traces.assert();
-        mock_stats.assert();
-    }
-
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn test_shutdown_with_timeout() {
-        let server = MockServer::start();
-
-        let mock_traces = server.mock(|when, then| {
-            when.method(POST)
-                .header("Content-type", "application/msgpack")
-                .path("/v0.4/traces");
-            then.status(200).body(
-                r#"{
-                    "rate_by_service": {
-                        "service:foo,env:staging": 1.0,
-                        "service:,env:": 0.8
-                    }
-                }"#,
-            );
-        });
-
-        let _mock_stats = server.mock(|when, then| {
-            when.method(POST)
-                .header("Content-type", "application/msgpack")
-                .path("/v0.6/stats");
-            then.delay(Duration::from_secs(10)).status(200).body("");
-        });
-
-        let _mock_info = server.mock(|when, then| {
-            when.method(GET).path("/info");
-            then.status(200)
-                .header("content-type", "application/json")
-                .header("datadog-agent-state", "1")
-                .body(r#"{"version":"1","client_drop_p0s":true}"#);
-        });
-
-        let mut builder = TraceExporterBuilder::default();
-        builder
-            .set_url(&server.url("/"))
-            .set_service("test")
-            .set_env("staging")
-            .set_tracer_version("v0.1")
-            .set_language("nodejs")
-            .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .set_input_format(TraceExporterInputFormat::V04)
-            .set_output_format(TraceExporterOutputFormat::V04)
-            .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build().unwrap();
-
-        let trace_chunk = vec![SpanBytes {
-            service: "test".into(),
-            name: "test".into(),
-            resource: "test".into(),
-            r#type: "test".into(),
-            duration: 10,
-            ..Default::default()
-        }];
-
-        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
-
-        // Wait for agent_info to be present so that sending a trace will trigger the stats worker
-        // to start
-        while agent_info::get_agent_info().is_none() {
-            exporter
-                .runtime
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .block_on(async {
-                    sleep(Duration::from_millis(100)).await;
-                })
-        }
-
-        exporter.send(data.as_ref(), 1).unwrap();
-
-        // Wait for the stats worker to be active before shutting down to avoid potential flaky
-        // tests on CI where we shutdown before the stats worker had time to start
-        let start_time = std::time::Instant::now();
-        while !exporter.is_stats_worker_active() {
-            if start_time.elapsed() > Duration::from_secs(10) {
-                panic!("Timeout waiting for stats worker to become active");
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-
-        exporter
-            .shutdown(Some(Duration::from_millis(5)))
-            .unwrap_err(); // The shutdown should timeout
-
-        mock_traces.assert();
-    }
 
     fn read(socket: &net::UdpSocket) -> String {
         let mut buf = [0; 1_000];
@@ -2614,5 +2435,204 @@ mod tests {
         let exporter = builder.build().unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, 42);
+    }
+}
+
+#[cfg(test)]
+mod single_threaded_tests {
+    use super::*;
+    use crate::agent_info;
+    use datadog_trace_utils::msgpack_encoder;
+    use datadog_trace_utils::span::SpanBytes;
+    use httpmock::prelude::*;
+    use std::time::Duration;
+    use tokio::time::sleep;
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_shutdown() {
+        // Clear the agent info cache to ensure test isolation
+        agent_info::clear_cache_for_test();
+
+        let server = MockServer::start();
+
+        let mock_traces = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.4/traces");
+            then.status(200).body("");
+        });
+
+        let mock_stats = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.6/stats");
+            then.status(200).body("");
+        });
+
+        let _mock_info = server.mock(|when, then| {
+            when.method(GET).path("/info");
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-agent-state", "1")
+                .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
+        });
+
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_url(&server.url("/"))
+            .set_service("test")
+            .set_env("staging")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .enable_stats(Duration::from_secs(10));
+        let exporter = builder.build().unwrap();
+
+        let trace_chunk = vec![SpanBytes {
+            duration: 10,
+            ..Default::default()
+        }];
+
+        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
+
+        // Wait for the info fetcher to get the config
+        while agent_info::get_agent_info().is_none() {
+            exporter
+                .runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_on(async {
+                    sleep(Duration::from_millis(100)).await;
+                })
+        }
+
+        let result = exporter.send(data.as_ref(), 1);
+        // Error received because server is returning an empty body.
+        assert!(result.is_err());
+
+        // Wait for the stats worker to be active before shutting down to avoid potential flaky
+        // tests on CI where we shutdown before the stats worker had time to start
+        let start_time = std::time::Instant::now();
+        while !exporter.is_stats_worker_active() {
+            if start_time.elapsed() > Duration::from_secs(10) {
+                panic!("Timeout waiting for stats worker to become active");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        exporter.shutdown(None).unwrap();
+
+        // Wait for the mock server to process the stats
+        for _ in 0..1000 {
+            if mock_traces.hits() > 0 && mock_stats.hits() > 0 {
+                break;
+            } else {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        mock_traces.assert();
+        mock_stats.assert();
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_shutdown_with_timeout() {
+        // Clear the agent info cache to ensure test isolation
+        agent_info::clear_cache_for_test();
+
+        let server = MockServer::start();
+
+        let mock_traces = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.4/traces");
+            then.status(200).body(
+                r#"{
+                    "rate_by_service": {
+                        "service:foo,env:staging": 1.0,
+                        "service:,env:": 0.8
+                    }
+                }"#,
+            );
+        });
+
+        let _mock_stats = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.6/stats");
+            then.delay(Duration::from_secs(10)).status(200).body("");
+        });
+
+        let _mock_info = server.mock(|when, then| {
+            when.method(GET).path("/info");
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-agent-state", "1")
+                .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
+        });
+
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_url(&server.url("/"))
+            .set_service("test")
+            .set_env("staging")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .enable_stats(Duration::from_secs(10));
+        let exporter = builder.build().unwrap();
+
+        let trace_chunk = vec![SpanBytes {
+            service: "test".into(),
+            name: "test".into(),
+            resource: "test".into(),
+            r#type: "test".into(),
+            duration: 10,
+            ..Default::default()
+        }];
+
+        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
+
+        // Wait for agent_info to be present so that sending a trace will trigger the stats worker
+        // to start
+        while agent_info::get_agent_info().is_none() {
+            exporter
+                .runtime
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .block_on(async {
+                    sleep(Duration::from_millis(100)).await;
+                })
+        }
+
+        exporter.send(data.as_ref(), 1).unwrap();
+
+        // Wait for the stats worker to be active before shutting down to avoid potential flaky
+        // tests on CI where we shutdown before the stats worker had time to start
+        let start_time = std::time::Instant::now();
+        while !exporter.is_stats_worker_active() {
+            if start_time.elapsed() > Duration::from_secs(10) {
+                panic!("Timeout waiting for stats worker to become active");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        exporter
+            .shutdown(Some(Duration::from_millis(5)))
+            .unwrap_err(); // The shutdown should timeout
+
+        mock_traces.assert();
     }
 }

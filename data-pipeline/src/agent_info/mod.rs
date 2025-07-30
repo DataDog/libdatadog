@@ -32,3 +32,9 @@ pub fn get_agent_info() -> Option<Arc<schema::AgentInfo>> {
 pub use fetcher::{
     fetch_info, fetch_info_with_state, AgentInfoFetcher, FetchInfoStatus, ResponseObserver,
 };
+
+#[cfg(test)]
+/// Clear the global agent info cache for test isolation in envs where nextest isn't used.
+pub fn clear_cache_for_test() {
+    AGENT_INFO_CACHE.store(None);
+}
