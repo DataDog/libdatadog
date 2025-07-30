@@ -45,6 +45,7 @@ pub struct TraceExporterBuilder {
     compute_stats_by_span_kind: bool,
     peer_tags: Vec<String>,
     telemetry: Option<TelemetryConfig>,
+    health_metrics_enabled: bool,
     test_session_token: Option<String>,
     agent_rates_payload_version_enabled: bool,
     connection_timeout: Option<u64>,
@@ -201,6 +202,12 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Enables health metrics emission.
+    pub fn enable_health_metrics(&mut self) -> &mut Self {
+        self.health_metrics_enabled = true;
+        self
+    }
+
     /// Enables storing and checking the agent payload
     pub fn enable_agent_rates_payload_version(&mut self) -> &mut Self {
         self.agent_rates_payload_version_enabled = true;
@@ -328,6 +335,7 @@ impl TraceExporterBuilder {
             previous_info_state: arc_swap::ArcSwapOption::new(None),
             info_response_observer,
             telemetry: telemetry_client,
+            health_metrics_enabled: self.health_metrics_enabled,
             workers: Arc::new(Mutex::new(TraceExporterWorkers {
                 info: info_fetcher_worker,
                 stats: None,

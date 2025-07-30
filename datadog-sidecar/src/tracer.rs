@@ -19,6 +19,9 @@ pub static SHM_LIMITER: LazyLock<Mutex<ShmLimiterMemory<()>>> = LazyLock::new(||
 #[derive(Default)]
 pub struct Config {
     pub endpoint: Option<Endpoint>,
+    pub language: String,
+    pub language_version: String,
+    pub tracer_version: String,
 }
 
 impl Config {

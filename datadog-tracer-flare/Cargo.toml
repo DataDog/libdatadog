@@ -10,6 +10,7 @@ autobenches = false
 anyhow = "1.0"
 ddcommon = { path = "../ddcommon" }
 datadog-remote-config = { path = "../datadog-remote-config" }
+datadog-trace-utils = { path = "../datadog-trace-utils" }
 hyper = { version = "1.6", features = ["http1", "client"] }
 tokio = { version = "1.36.0", features = ["time"] }
 serde_json = "1.0"
@@ -22,3 +23,7 @@ bench = false
 
 [dev-dependencies]
 datadog-remote-config = { path = "../datadog-remote-config", features = ["test"] }
+
+[features]
+default = ["listener"]
+listener = []
