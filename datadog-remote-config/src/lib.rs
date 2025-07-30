@@ -73,4 +73,6 @@ pub enum RemoteConfigCapabilities {
     ApmTracingEnableExceptionReplay = 39,
     ApmTracingEnableCodeOrigin = 40,
     ApmTracingEnableLiveDebugging = 41,
+    AsmDdMulticonfig = 42,
+    AsmTraceTaggingRules = 43,
 }
