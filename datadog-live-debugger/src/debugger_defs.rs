@@ -43,9 +43,13 @@ pub struct SnapshotEvaluationError {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SnapshotStackFrame {
-    pub expr: String,
-    pub message: String,
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotStackFrame<'a> {
+    pub file_name: Cow<'a, str>,
+    pub function: Cow<'a, str>,
+    pub line_number: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column_number: Option<i64>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -67,7 +71,7 @@ pub struct Snapshot<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub evaluation_errors: Vec<SnapshotEvaluationError>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub stack: Vec<SnapshotStackFrame>,
+    pub stack: Vec<SnapshotStackFrame<'a>>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
