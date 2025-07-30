@@ -5,6 +5,7 @@ pub mod builder;
 pub mod error;
 pub mod metrics;
 pub mod stats;
+mod transport;
 
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
@@ -12,6 +13,7 @@ pub use builder::TraceExporterBuilder;
 use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
+use self::transport::TransportClient;
 use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
 use crate::pausable_worker::PausableWorker;
 use crate::stats_exporter::StatsExporter;
@@ -26,7 +28,6 @@ use crate::{
     health_metrics::HealthMetric,
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
-use bytes::Bytes;
 use datadog_trace_utils::msgpack_decoder::{self, decode::error::DecodeError};
 use datadog_trace_utils::msgpack_encoder;
 use datadog_trace_utils::send_with_retry::{
@@ -45,7 +46,7 @@ use ddtelemetry::worker::TelemetryWorker;
 use dogstatsd_client::Client;
 use http_body_util::BodyExt;
 use hyper::http::uri::PathAndQuery;
-use hyper::{header::CONTENT_TYPE, Method, Uri};
+use hyper::{header::CONTENT_TYPE, Uri};
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -500,181 +501,6 @@ impl TraceExporter {
         )
     }
 
-    /// Build HTTP request for sending trace data to agent
-    fn build_trace_request(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-        uri: Uri,
-    ) -> hyper::Request<hyper_migration::Body> {
-        let mut req_builder = self.create_base_request_builder(uri);
-        req_builder = self.add_metadata_headers(req_builder);
-        req_builder = self.add_trace_headers(req_builder, trace_count);
-        self.build_request_with_body(req_builder, data)
-    }
-
-    /// Create base HTTP request builder with URI, user agent, and method
-    fn create_base_request_builder(&self, uri: Uri) -> hyper::http::request::Builder {
-        hyper::Request::builder()
-            .uri(uri)
-            .header(
-                hyper::header::USER_AGENT,
-                concat!("Tracer/", env!("CARGO_PKG_VERSION")),
-            )
-            .method(Method::POST)
-    }
-
-    /// Add metadata headers to the request builder
-    fn add_metadata_headers(
-        &self,
-        mut req_builder: hyper::http::request::Builder,
-    ) -> hyper::http::request::Builder {
-        let headers: HashMap<&'static str, String> = self.metadata.borrow().into();
-        for (key, value) in &headers {
-            req_builder = req_builder.header(*key, value);
-        }
-        req_builder
-    }
-
-    /// Add trace-specific headers to the request builder
-    fn add_trace_headers(
-        &self,
-        req_builder: hyper::http::request::Builder,
-        trace_count: usize,
-    ) -> hyper::http::request::Builder {
-        req_builder
-            .header("Content-type", "application/msgpack")
-            .header("X-Datadog-Trace-Count", trace_count.to_string().as_str())
-    }
-
-    /// Build the final request with body
-    fn build_request_with_body(
-        &self,
-        req_builder: hyper::http::request::Builder,
-        data: &[u8],
-    ) -> hyper::Request<hyper_migration::Body> {
-        #[allow(clippy::unwrap_used)]
-        req_builder
-            .body(hyper_migration::Body::from_bytes(Bytes::copy_from_slice(
-                data,
-            )))
-            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
-            .unwrap()
-    }
-
-    /// Handle HTTP error response and emit appropriate metrics
-    async fn handle_http_error_response(
-        &self,
-        response: hyper::Response<hyper_migration::Body>,
-        payload_size: usize,
-        trace_count: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        let response_status = response.status();
-        let response_body = self.extract_response_body(response).await;
-        self.log_and_emit_error_metrics(response_status, payload_size, trace_count);
-        Err(TraceExporterError::Request(RequestError::new(
-            response_status,
-            &response_body,
-        )))
-    }
-
-    /// Extract response body from HTTP response
-    async fn extract_response_body(
-        &self,
-        response: hyper::Response<hyper_migration::Body>,
-    ) -> String {
-        // TODO: Properly handle non-OK states to prevent possible panics
-        // (APMSP-18190).
-        #[allow(clippy::unwrap_used)]
-        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
-        String::from_utf8(body_bytes.to_vec()).unwrap_or_default()
-    }
-
-    /// Log error and emit metrics for HTTP error response
-    fn log_and_emit_error_metrics(
-        &self,
-        response_status: hyper::StatusCode,
-        payload_size: usize,
-        trace_count: usize,
-    ) {
-        let resp_tag_res = &Tag::new("response_code", response_status.as_str());
-        match resp_tag_res {
-            Ok(resp_tag) => {
-                warn!(
-                    response_code = response_status.as_u16(),
-                    "HTTP error response received from agent"
-                );
-                // Create type tag based on status code
-                let type_tag = Tag::new("type", response_status.as_str())
-                    .unwrap_or_else(|_| tag!("type", "unknown"));
-                self.emit_metric(
-                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
-                    Some(vec![&resp_tag, &type_tag]),
-                );
-                // Emit dropped bytes metric for HTTP errors, excluding 404 (Not Found) and 415
-                // (Unsupported Media Type) since these represent endpoint/format
-                // issues rather than payload drops
-                if response_status.as_u16() != 404 && response_status.as_u16() != 415 {
-                    self.emit_metric(
-                        HealthMetric::Distribution(
-                            health_metrics::TRANSPORT_DROPPED_BYTES,
-                            payload_size as i64,
-                        ),
-                        None,
-                    );
-                    self.emit_metric(
-                        HealthMetric::Distribution(
-                            health_metrics::TRANSPORT_TRACES_DROPPED,
-                            trace_count as i64,
-                        ),
-                        None,
-                    );
-                }
-            }
-            Err(tag_err) => {
-                // This should really never happen as response_status is a
-                // `NonZeroU16`, but if the response status or tag requirements
-                // ever change in the future we still don't want to panic.
-                error!(?tag_err, "Failed to serialize response_code to tag")
-            }
-        }
-    }
-
-    /// Handle successful HTTP response
-    async fn handle_http_success_response(
-        &self,
-        response: hyper::Response<hyper_migration::Body>,
-        trace_count: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        match response.into_body().collect().await {
-            Ok(body) => {
-                info!(trace_count, "Traces sent successfully to agent");
-                self.emit_metric(
-                    HealthMetric::Count(
-                        health_metrics::TRANSPORT_TRACES_SUCCESSFUL,
-                        trace_count as i64,
-                    ),
-                    None,
-                );
-                Ok(AgentResponse::Changed {
-                    body: String::from_utf8_lossy(&body.to_bytes()).to_string(),
-                })
-            }
-            Err(err) => {
-                error!(
-                    error = %err,
-                    "Failed to read agent response body"
-                );
-                let type_tag = tag!("type", "response_body");
-                self.emit_metric(
-                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
-                    Some(vec![&type_tag]),
-                );
-                Err(TraceExporterError::from(err))
-            }
-        }
-    }
-
     fn send_data_to_url(
         &self,
         data: &[u8],
@@ -694,30 +520,21 @@ impl TraceExporter {
         trace_count: usize,
         uri: Uri,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let req = self.build_trace_request(data, trace_count, uri);
+        let transport_client = TransportClient::new(
+            &self.metadata,
+            self.health_metrics_enabled,
+            self.dogstatsd.as_ref(),
+            &self.common_stats_tags,
+        );
+        let req = transport_client.build_trace_request(data, trace_count, uri);
         match hyper_migration::new_default_client().request(req).await {
             Ok(response) => {
                 let response = hyper_migration::into_response(response);
-                self.process_http_response(response, trace_count, data.len())
+                transport_client
+                    .process_http_response(response, trace_count, data.len())
                     .await
             }
             Err(err) => self.handle_request_error(err, data.len(), trace_count),
-        }
-    }
-
-    /// Process HTTP response based on status code
-    async fn process_http_response(
-        &self,
-        response: hyper::Response<hyper_migration::Body>,
-        trace_count: usize,
-        payload_size: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        if !response.status().is_success() {
-            self.handle_http_error_response(response, payload_size, trace_count)
-                .await
-        } else {
-            self.handle_http_success_response(response, trace_count)
-                .await
         }
     }
 
