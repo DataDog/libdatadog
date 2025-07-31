@@ -5,6 +5,7 @@ pub mod builder;
 pub mod error;
 pub mod metrics;
 pub mod stats;
+mod trace_serializer;
 mod transport;
 
 // Re-export the builder
@@ -13,6 +14,7 @@ pub use builder::TraceExporterBuilder;
 use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
+use self::trace_serializer::TraceSerializer;
 use self::transport::TransportClient;
 use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
 use crate::pausable_worker::PausableWorker;
@@ -28,17 +30,12 @@ use crate::{
     health_metrics::HealthMetric,
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
-use datadog_trace_utils::msgpack_decoder::{self, decode::error::DecodeError};
-use datadog_trace_utils::msgpack_encoder;
+use datadog_trace_utils::msgpack_decoder;
 use datadog_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
 };
 use datadog_trace_utils::span::{Span, SpanText};
-use datadog_trace_utils::trace_utils::{self, TracerHeaderTags};
-use datadog_trace_utils::tracer_payload;
-use ddcommon::header::{
-    APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
-};
+use datadog_trace_utils::trace_utils::TracerHeaderTags;
 use ddcommon::MutexExt;
 use ddcommon::{hyper_migration, Endpoint};
 use ddcommon::{tag, tag::Tag};
@@ -46,7 +43,7 @@ use ddtelemetry::worker::TelemetryWorker;
 use dogstatsd_client::Client;
 use http_body_util::BodyExt;
 use hyper::http::uri::PathAndQuery;
-use hyper::{header::CONTENT_TYPE, Uri};
+use hyper::Uri;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -55,16 +52,6 @@ use tokio::runtime::Runtime;
 use tracing::{error, info, warn};
 
 const INFO_ENDPOINT: &str = "/info";
-
-/// Prepared traces payload ready for sending to the agent
-struct PreparedTracesPayload {
-    /// Serialized msgpack payload
-    data: Vec<u8>,
-    /// HTTP headers for the request
-    headers: HashMap<&'static str, String>,
-    /// Number of trace chunks
-    chunk_count: usize,
-}
 
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
@@ -197,6 +184,11 @@ pub(crate) struct TraceExporterWorkers {
 /// another task to send stats when a time bucket expire. When this feature is enabled the
 /// TraceExporter drops all spans that may not be sampled by the agent.
 #[allow(missing_docs)]
+enum DeserInputFormat {
+    V04,
+    V05,
+}
+
 #[derive(Debug)]
 pub struct TraceExporter {
     endpoint: Endpoint,
@@ -216,11 +208,6 @@ pub struct TraceExporter {
     health_metrics_enabled: bool,
     workers: Arc<Mutex<TraceExporterWorkers>>,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
-}
-
-enum DeserInputFormat {
-    V04,
-    V05,
 }
 
 impl TraceExporter {
@@ -626,70 +613,6 @@ impl TraceExporter {
         self.send_trace_chunks_inner(traces)
     }
 
-    /// Prepare traces payload and HTTP headers for sending to agent
-    fn prepare_traces_payload<T: SpanText>(
-        &self,
-        traces: Vec<Vec<Span<T>>>,
-        header_tags: TracerHeaderTags,
-    ) -> Result<PreparedTracesPayload, TraceExporterError> {
-        let payload = self.collect_and_process_traces(traces)?;
-        let chunks = payload.size();
-        let headers = self.build_traces_headers(header_tags, chunks);
-        let mp_payload = self.serialize_payload(&payload)?;
-
-        Ok(PreparedTracesPayload {
-            data: mp_payload,
-            headers,
-            chunk_count: chunks,
-        })
-    }
-
-    /// Collect trace chunks based on output format
-    fn collect_and_process_traces<T: SpanText>(
-        &self,
-        traces: Vec<Vec<Span<T>>>,
-    ) -> Result<tracer_payload::TraceChunks<T>, TraceExporterError> {
-        let use_v05_format = match self.output_format {
-            TraceExporterOutputFormat::V05 => true,
-            TraceExporterOutputFormat::V04 => false,
-        };
-        trace_utils::collect_trace_chunks(traces, use_v05_format).map_err(|e| {
-            TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
-        })
-    }
-
-    /// Build HTTP headers for traces request
-    fn build_traces_headers(
-        &self,
-        header_tags: TracerHeaderTags,
-        chunk_count: usize,
-    ) -> HashMap<&'static str, String> {
-        let mut headers: HashMap<&'static str, String> = header_tags.into();
-        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
-        headers.insert(DATADOG_TRACE_COUNT_STR, chunk_count.to_string());
-        headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
-        if let Some(agent_payload_response_version) = &self.agent_payload_response_version {
-            headers.insert(
-                DATADOG_RATES_PAYLOAD_VERSION_HEADER,
-                agent_payload_response_version.header_value(),
-            );
-        }
-        headers
-    }
-
-    /// Serialize payload to msgpack format
-    fn serialize_payload<T: SpanText>(
-        &self,
-        payload: &tracer_payload::TraceChunks<T>,
-    ) -> Result<Vec<u8>, TraceExporterError> {
-        match payload {
-            tracer_payload::TraceChunks::V04(p) => Ok(msgpack_encoder::v04::to_vec(p)),
-            tracer_payload::TraceChunks::V05(p) => {
-                rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)
-            }
-        }
-    }
-
     /// Send traces payload to agent with retry and telemetry reporting
     async fn send_traces_with_telemetry(
         &self,
@@ -747,8 +670,11 @@ impl TraceExporter {
             self.client_computed_top_level,
         );
 
-        // Prepare payload and headers
-        let prepared = self.prepare_traces_payload(traces, header_tags)?;
+        let serializer = TraceSerializer::new(
+            self.output_format,
+            self.agent_payload_response_version.as_ref(),
+        );
+        let prepared = serializer.prepare_traces_payload(traces, header_tags)?;
 
         let endpoint = Endpoint {
             url: self.get_agent_url(),
@@ -1053,6 +979,7 @@ pub trait ResponseCallback {
 mod tests {
     use self::error::AgentErrorKind;
     use super::*;
+    use datadog_trace_utils::msgpack_encoder;
     use datadog_trace_utils::span::v05;
     use datadog_trace_utils::span::SpanBytes;
     use httpmock::prelude::*;

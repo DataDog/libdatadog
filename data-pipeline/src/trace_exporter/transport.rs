@@ -163,6 +163,7 @@ impl<'a> TransportClient<'a> {
             .body(hyper_migration::Body::from_bytes(Bytes::copy_from_slice(
                 data,
             )))
+            // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
             .unwrap()
     }
 
@@ -171,6 +172,8 @@ impl<'a> TransportClient<'a> {
         &self,
         response: hyper::Response<hyper_migration::Body>,
     ) -> String {
+        // TODO: Properly handle non-OK states to prevent possible panics
+        // (APMSP-18190).
         #[allow(clippy::unwrap_used)]
         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
         String::from_utf8(body_bytes.to_vec()).unwrap_or_default()
