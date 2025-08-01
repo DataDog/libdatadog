@@ -60,6 +60,30 @@ impl CString {
         Ok(Self::from_std(std::ffi::CString::new(t)?))
     }
 
+    /// Creates a new `CString` from the given input, or returns an empty `CString`
+    /// if the input contains null bytes.
+    ///
+    /// This method will never panic, as an empty string is guaranteed to not contain
+    /// null bytes and can always be converted to a `CString`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ddcommon_ffi::CString;
+    ///
+    /// let good = CString::new_or_empty("hello world");
+    /// assert_eq!(good.as_cstr().into_std().to_str().unwrap(), "hello world");
+    ///
+    /// let bad = CString::new_or_empty("hello\0world");
+    /// assert_eq!(bad.as_cstr().into_std().to_str().unwrap(), "");
+    /// ```
+    pub fn new_or_empty<T: Into<Vec<u8>>>(t: T) -> Self {
+        Self::new(t).unwrap_or_else(|_| {
+            #[allow(clippy::unwrap_used)]
+            Self::new("").unwrap()
+        })
+    }
+
     pub fn as_cstr(&self) -> CStr<'_> {
         CStr {
             ptr: self.ptr,
@@ -116,6 +140,18 @@ mod tests {
     fn test_cstring() {
         let s = CString::new("hello").unwrap();
         assert_eq!(s.as_cstr().into_std().to_str().unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_cstring_new_or_empty() {
+        let good = CString::new_or_empty("hello world");
+        assert_eq!(good.as_cstr().into_std().to_str().unwrap(), "hello world");
+
+        let bad = CString::new_or_empty("hello\0world");
+        assert_eq!(bad.as_cstr().into_std().to_str().unwrap(), "");
+
+        let empty = CString::new_or_empty("");
+        assert_eq!(empty.as_cstr().into_std().to_str().unwrap(), "");
     }
 
     #[test]

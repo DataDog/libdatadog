@@ -74,3 +74,7 @@ set_vcruntime_link_type(array_queue ${VCRUNTIME_LINK_TYPE})
 add_executable(library_config library_config.c)
 target_link_libraries(library_config PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(library_config ${VCRUNTIME_LINK_TYPE})
+
+add_executable(ddsketch ddsketch.c)
+target_link_libraries(ddsketch PRIVATE Datadog::Profiling)
+set_vcruntime_link_type(ddsketch ${VCRUNTIME_LINK_TYPE})
