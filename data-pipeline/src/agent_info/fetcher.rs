@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
-use tracing::{debug, error, info};
+use tracing::{debug, info, warn};
 
 /// HTTP header containing the agent state hash.
 const DATADOG_AGENT_STATE: HeaderName = HeaderName::from_static("datadog-agent-state");
@@ -226,7 +226,7 @@ impl AgentInfoFetcher {
                 info!("Agent info is up-to-date")
             }
             Err(err) => {
-                error!(?err, "Error while fetching /info");
+                warn!(?err, "Error while fetching /info");
             }
         }
     }
