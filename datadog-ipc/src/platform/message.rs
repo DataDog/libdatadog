@@ -14,11 +14,11 @@ impl<T> TransferHandles for Message<T>
 where
     T: TransferHandles,
 {
-    fn move_handles<M>(&self, mover: M) -> Result<(), M::Error>
+    fn copy_handles<M>(&self, mover: M) -> Result<(), M::Error>
     where
         M: HandlesTransport,
     {
-        self.item.move_handles(mover)
+        self.item.copy_handles(mover)
     }
 
     fn receive_handles<P>(&mut self, provider: P) -> Result<(), P::Error>
