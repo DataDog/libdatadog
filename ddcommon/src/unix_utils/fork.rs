@@ -31,67 +31,65 @@ const BUFFER_SIZE: usize = 1024;
 
 #[cfg(target_os = "linux")]
 fn is_being_traced_internal(mut file: File) -> io::Result<bool> {
-    let tracer_pid_marker = b"TracerPid:";
+    const TRACER_PID_MARKER: &[u8] = b"TracerPid:";
     let mut buffer = [0u8; BUFFER_SIZE];
     let mut data_len = 0;
-    let mut eof = false;
     let mut offset = 0;
 
-    while !eof {
+    loop {
+        // Shift unread data to the start if needed
         if offset > 0 && offset < data_len {
             let leftover_len = data_len - offset;
             buffer.copy_within(offset..data_len, 0);
             data_len = leftover_len;
             offset = 0;
-        } else if offset == data_len {
-            // All data processed, reset data_len and offset
+
+        // Handle edge case where no newline found in a full buffer,
+        // or all data processed: reset to read fresh data.
+        } else if offset == data_len || (offset == 0 && data_len == BUFFER_SIZE) {
             data_len = 0;
             offset = 0;
         }
 
-        let n = file.read(&mut buffer[data_len..])?;
-        if n == 0 {
-            eof = true;
+        let bytes_read = file.read(&mut buffer[data_len..])?;
+        if bytes_read == 0 {
+            // EOF reached, no more data to read
+            break;
         }
-        data_len += n;
+        data_len += bytes_read;
 
-        while offset < data_len {
-            if let Some(newline_pos) = buffer[offset..data_len].iter().position(|&b| b == b'\n') {
-                let line_end = offset + newline_pos;
-                let line = &buffer[offset..line_end];
+        // Process lines in the buffer
+        while let Some(newline_pos) = buffer[offset..data_len].iter().position(|&b| b == b'\n') {
+            let line_end = offset + newline_pos;
 
-                if line.starts_with(tracer_pid_marker) && line.len() > tracer_pid_marker.len() {
-                    if let Ok(line_str) = std::str::from_utf8(line) {
-                        let tracer_pid = line_str.split_whitespace().nth(1).unwrap_or("0");
-                        return Ok(tracer_pid != "0");
-                    }
-                }
-
-                offset = line_end + 1;
-            } else {
-                if offset == 0 && data_len == BUFFER_SIZE {
-                    // We did not find any newline in the buffer, so force
-                    // reading the full buffer anew
-                    offset = data_len;
-                }
-                // No newline found: partial line, stop processing and read more
-                break;
+            if let Some(result) =
+                check_tracer_pid_line(&buffer[offset..line_end], TRACER_PID_MARKER)?
+            {
+                return Ok(result);
             }
+
+            offset = line_end + 1;
         }
     }
 
-    // search in the remaining data
-    if data_len > offset {
-        let line = &buffer[offset..data_len];
-        if line.starts_with(tracer_pid_marker) {
-            if let Ok(line_str) = std::str::from_utf8(line) {
-                let tracer_pid = line_str.split_whitespace().nth(1).unwrap_or("0");
-                return Ok(tracer_pid != "0");
-            }
+    // Check remaining data without newline at EOF
+    if offset < data_len {
+        if let Some(result) = check_tracer_pid_line(&buffer[offset..data_len], TRACER_PID_MARKER)? {
+            return Ok(result);
         }
     }
-
     Ok(false)
+}
+
+#[cfg(target_os = "linux")]
+fn check_tracer_pid_line(line: &[u8], marker: &[u8]) -> io::Result<Option<bool>> {
+    if line.starts_with(marker) && line.len() > marker.len() {
+        if let Ok(line_str) = std::str::from_utf8(line) {
+            let tracer_pid = line_str.split_whitespace().nth(1).unwrap_or("0");
+            return Ok(Some(tracer_pid != "0"));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(target_os = "linux")]
@@ -157,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_being_traced_at_the_end_with_ending_newline() {
+    fn test_is_being_traced_at_the_end_with_no_newline_at_the_end() {
         let lines: &[&[u8]] = &[b"First:item\n", b"Another: 21\n", b"TracerPid: 2"];
         let f = create_temp_file(lines);
         assert!(is_being_traced_internal(f).unwrap_or(false))
@@ -200,6 +198,22 @@ mod tests {
     #[test]
     fn test_is_being_traced_with_value_zero() {
         let lines: &[&[u8]] = &[b"First:item\n", b"TracerPid: 0\n", b"AnotherItem: 21\n"];
+        let f = create_temp_file(lines);
+        assert!(!is_being_traced_internal(f).unwrap_or(true))
+    }
+
+    #[test]
+    fn test_is_being_traced_with_no_tracerpid() {
+        let lines: &[&[u8]] = &[b"First:item\n", b"AnotherItem: 21\n"];
+        let f = create_temp_file(lines);
+        assert!(!is_being_traced_internal(f).unwrap_or(true))
+    }
+
+    #[test]
+    fn test_is_being_traced_with_very_large_content_and_no_tracerpid() {
+        // Create a file with a size twice as the buffer and no
+        let large_string = "A".repeat(2 * BUFFER_SIZE + 20);
+        let lines: &[&[u8]] = &[large_string.as_bytes(), b"\n", b"Another:12\n"];
         let f = create_temp_file(lines);
         assert!(!is_being_traced_internal(f).unwrap_or(true))
     }
