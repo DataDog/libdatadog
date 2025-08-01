@@ -117,7 +117,7 @@ impl ChannelMetadata {
     where
         T: TransferHandles,
     {
-        item.move_handles(&mut *self)?;
+        item.copy_handles(&mut *self)?;
 
         let mut handle_map = HashMap::new();
         for handle in self.handles_to_send.drain(..) {

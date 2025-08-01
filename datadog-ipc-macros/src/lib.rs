@@ -55,7 +55,7 @@ pub fn impl_transfer_handles(_attr: TokenStream, input: TokenStream) -> TokenStr
                                 pat: Box::new(parse_quote! { #ident }),
                             });
                             stmts_move.push(
-                                parse_quote! { __transport.move_handle(#ident.clone().into())?; },
+                                parse_quote! { __transport.copy_handle(#ident.clone().into())?; },
                             );
                             stmts_recv.push(parse_quote! { #ident.receive_handles(__transport)?; });
                         }
@@ -86,7 +86,7 @@ pub fn impl_transfer_handles(_attr: TokenStream, input: TokenStream) -> TokenStr
             });
             if orig_attr_num != func.attrs.len() {
                 arms_res_move.push(parse_quote! {
-                    #res_name::#method(response) => response.move_handles(transport)
+                    #res_name::#method(response) => response.copy_handles(transport)
                 });
                 arms_res_recv.push(parse_quote! {
                     #res_name::#method(response) => response.receive_handles(transport)
@@ -99,7 +99,7 @@ pub fn impl_transfer_handles(_attr: TokenStream, input: TokenStream) -> TokenStr
         #item
 
         impl datadog_ipc::handles::TransferHandles for #req_name {
-            fn move_handles<Transport: datadog_ipc::handles::HandlesTransport>(
+            fn copy_handles<Transport: datadog_ipc::handles::HandlesTransport>(
                 &self,
                 __transport: Transport,
             ) -> Result<(), Transport::Error> {
@@ -125,7 +125,7 @@ pub fn impl_transfer_handles(_attr: TokenStream, input: TokenStream) -> TokenStr
         }
 
         impl datadog_ipc::handles::TransferHandles for #res_name {
-            fn move_handles<Transport: datadog_ipc::handles::HandlesTransport>(
+            fn copy_handles<Transport: datadog_ipc::handles::HandlesTransport>(
                 &self,
                 transport: Transport,
             ) -> Result<(), Transport::Error> {

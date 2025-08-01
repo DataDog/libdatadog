@@ -185,11 +185,11 @@ where
 }
 
 impl TransferHandles for ShmHandle {
-    fn move_handles<Transport: HandlesTransport>(
+    fn copy_handles<Transport: HandlesTransport>(
         &self,
         transport: Transport,
     ) -> Result<(), Transport::Error> {
-        self.handle.move_handles(transport)
+        self.handle.copy_handles(transport)
     }
 
     fn receive_handles<Transport: HandlesTransport>(

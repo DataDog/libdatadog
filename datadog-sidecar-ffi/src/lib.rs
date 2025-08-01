@@ -1223,3 +1223,10 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_drop_agent_info_reader(_: Box<AgentInfoReader>) {}
+
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_send_garbage(transport: &mut Box<SidecarTransport>) {
+    // This shall fail.
+    let _ = transport.send_garbage();
+}

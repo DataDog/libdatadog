@@ -80,7 +80,7 @@ impl std::fmt::Display for LogMethod {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub ipc_mode: IpcMode,
     pub log_method: LogMethod,
