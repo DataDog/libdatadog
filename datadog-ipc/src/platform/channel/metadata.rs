@@ -13,7 +13,7 @@ use std::os::windows::io::AsRawHandle;
 impl HandlesTransport for &mut ChannelMetadata {
     type Error = io::Error;
 
-    fn move_handle<'h, T>(self, handle: PlatformHandle<T>) -> Result<(), Self::Error> {
+    fn copy_handle<'h, T>(self, handle: PlatformHandle<T>) -> Result<(), Self::Error> {
         self.enqueue_for_sending(handle);
 
         Ok(())

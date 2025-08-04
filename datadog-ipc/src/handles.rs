@@ -10,7 +10,7 @@ pub trait HandlesTransport {
     type Error: Error;
 
     /// Move handle out of an object, to send it to remote process
-    fn move_handle<T>(self, handle: PlatformHandle<T>) -> Result<(), Self::Error>;
+    fn copy_handle<T>(self, handle: PlatformHandle<T>) -> Result<(), Self::Error>;
 
     /// Fetch handle received from a remote process based on supplied hint
     fn provide_handle<T>(self, hint: &PlatformHandle<T>) -> Result<PlatformHandle<T>, Self::Error>;
@@ -18,7 +18,7 @@ pub trait HandlesTransport {
 
 /// TransferHandles allows moving PlatformHandles from
 pub trait TransferHandles {
-    fn move_handles<Transport: HandlesTransport>(
+    fn copy_handles<Transport: HandlesTransport>(
         &self,
         transport: Transport,
     ) -> Result<(), Transport::Error>;
@@ -29,6 +29,22 @@ pub trait TransferHandles {
     ) -> Result<(), Transport::Error>;
 }
 
+impl<T: TransferHandles> TransferHandles for &T {
+    fn copy_handles<Transport: HandlesTransport>(
+        &self,
+        transport: Transport,
+    ) -> Result<(), Transport::Error> {
+        (*self).copy_handles(transport)
+    }
+
+    fn receive_handles<Transport: HandlesTransport>(
+        &mut self,
+        _transport: Transport,
+    ) -> Result<(), Transport::Error> {
+        unreachable!("receive handles should never be called on a reference (only mut reference)")
+    }
+}
+
 mod transport_impls {
     use super::{HandlesTransport, TransferHandles};
 
@@ -36,12 +52,12 @@ mod transport_impls {
     where
         T: TransferHandles,
     {
-        fn move_handles<Transport>(&self, transport: Transport) -> Result<(), Transport::Error>
+        fn copy_handles<Transport>(&self, transport: Transport) -> Result<(), Transport::Error>
         where
             Transport: HandlesTransport,
         {
             match self {
-                Ok(i) => i.move_handles(transport),
+                Ok(i) => i.copy_handles(transport),
                 Err(_) => Ok(()),
             }
         }
@@ -64,12 +80,12 @@ mod transport_impls {
     where
         T: TransferHandles,
     {
-        fn move_handles<Transport: HandlesTransport>(
+        fn copy_handles<Transport: HandlesTransport>(
             &self,
             transport: Transport,
         ) -> Result<(), Transport::Error> {
             match self {
-                Some(s) => s.move_handles(transport),
+                Some(s) => s.copy_handles(transport),
                 None => Ok(()),
             }
         }
@@ -89,11 +105,11 @@ mod transport_impls {
     use tarpc::{ClientMessage, Request, Response};
 
     impl<T: TransferHandles> TransferHandles for Response<T> {
-        fn move_handles<Transport: HandlesTransport>(
+        fn copy_handles<Transport: HandlesTransport>(
             &self,
             transport: Transport,
         ) -> Result<(), Transport::Error> {
-            self.message.move_handles(transport)
+            self.message.copy_handles(transport)
         }
 
         fn receive_handles<Transport: HandlesTransport>(
@@ -108,12 +124,12 @@ mod transport_impls {
     where
         T: TransferHandles,
     {
-        fn move_handles<M>(&self, mover: M) -> Result<(), M::Error>
+        fn copy_handles<M>(&self, mover: M) -> Result<(), M::Error>
         where
             M: HandlesTransport,
         {
             match self {
-                ClientMessage::Request(r) => r.move_handles(mover),
+                ClientMessage::Request(r) => r.copy_handles(mover),
                 ClientMessage::Cancel {
                     trace_context: _,
                     request_id: _,
@@ -144,11 +160,11 @@ mod transport_impls {
             self.message.receive_handles(provider)
         }
 
-        fn move_handles<M>(&self, mover: M) -> Result<(), M::Error>
+        fn copy_handles<M>(&self, mover: M) -> Result<(), M::Error>
         where
             M: HandlesTransport,
         {
-            self.message.move_handles(mover)
+            self.message.copy_handles(mover)
         }
     }
 }

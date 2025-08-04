@@ -46,7 +46,7 @@ impl ChannelMetadata {
     where
         T: TransferHandles,
     {
-        item.move_handles(&mut *self)?;
+        item.copy_handles(&mut *self)?;
 
         let message = Message {
             item,

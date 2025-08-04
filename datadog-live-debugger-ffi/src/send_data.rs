@@ -10,7 +10,7 @@ use crate::data::Probe;
 use datadog_live_debugger::debugger_defs::{
     Capture as DebuggerCaptureAlias, Capture, Captures, DebuggerData, DebuggerPayload, Diagnostics,
     DiagnosticsError, Entry, Fields, ProbeMetadata, ProbeMetadataLocation, ProbeStatus, Snapshot,
-    SnapshotEvaluationError, Value as DebuggerValueAlias,
+    SnapshotEvaluationError, SnapshotStackFrame, Value as DebuggerValueAlias,
 };
 use datadog_live_debugger::sender::generate_new_id;
 use datadog_live_debugger::{
@@ -326,6 +326,68 @@ pub extern "C" fn ddog_capture_value_add_field<'a, 'b: 'a, 'c: 'a>(
 #[no_mangle]
 pub extern "C" fn ddog_snapshot_format_new_uuid(buf: &mut [u8; 36]) {
     generate_new_id().as_hyphenated().encode_lower(buf);
+}
+
+fn ddog_snapshot_push_stack_frame_internal<'a, 'b: 'a, 'c: 'a>(
+    payload: &mut DebuggerPayload<'a>,
+    file_name: CharSlice<'b>,
+    function_name: CharSlice<'c>,
+    type_name: CharSlice<'c>,
+    line_number: i64,
+    column_number: Option<i64>,
+) {
+    let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
+        unreachable!();
+    };
+
+    let function_name = function_name.to_utf8_lossy();
+    snapshot.stack.push(SnapshotStackFrame {
+        file_name: file_name.to_utf8_lossy(),
+        function: if !type_name.is_empty() {
+            Cow::Owned(format!("{}::{}", function_name, type_name.to_utf8_lossy()))
+        } else {
+            function_name
+        },
+        line_number,
+        column_number,
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_snapshot_push_stack_frame<'a, 'b: 'a, 'c: 'a>(
+    payload: &mut DebuggerPayload<'a>,
+    file_name: CharSlice<'b>,
+    function_name: CharSlice<'c>,
+    type_name: CharSlice<'c>,
+    line_number: i64,
+) {
+    ddog_snapshot_push_stack_frame_internal(
+        payload,
+        file_name,
+        function_name,
+        type_name,
+        line_number,
+        None,
+    )
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_snapshot_push_stack_frame_with_column<'a, 'b: 'a, 'c: 'a>(
+    payload: &mut DebuggerPayload<'a>,
+    file_name: CharSlice<'b>,
+    function_name: CharSlice<'c>,
+    type_name: CharSlice<'c>,
+    line_number: i64,
+    column_number: i64,
+) {
+    ddog_snapshot_push_stack_frame_internal(
+        payload,
+        file_name,
+        function_name,
+        type_name,
+        line_number,
+        Some(column_number),
+    )
 }
 
 #[no_mangle]

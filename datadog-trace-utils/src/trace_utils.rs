@@ -21,7 +21,7 @@ use rmpv::{Integer, Value};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
-use tracing::error;
+use tracing::{debug, error};
 
 /// The maximum payload size for a single request that can be sent to the trace agent. Payloads
 /// larger than this size will be dropped and the agent will return a 413 error if
@@ -364,7 +364,7 @@ pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
         // If a span's parent is not in the trace, it is a root
         if !span_ids.contains(&span.parent_id) {
             if root_span_id.is_some() {
-                error!(
+                debug!(
                     trace_id = &trace[0].trace_id,
                     "trace has multiple root spans"
                 );
