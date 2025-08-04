@@ -99,7 +99,6 @@ pub struct TraceExporterConfig {
     telemetry_cfg: Option<TelemetryConfig>,
     health_metrics_enabled: bool,
     test_session_token: Option<String>,
-    rates_payload_version: bool,
     connection_timeout: Option<u64>,
 }
 
@@ -410,26 +409,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_test_session_token(
     )
 }
 
-/// Enables or disables the rates payload version feature.
-/// When enabled, the trace exporter checks the payload version in the agent's response.
-/// If the version hasn't changed since the last payload, the exporter will return an empty
-/// response.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_trace_exporter_config_set_rates_payload_version(
-    config: Option<&mut TraceExporterConfig>,
-    rates_payload_version: bool,
-) -> Option<Box<ExporterError>> {
-    catch_panic!(
-        if let Option::Some(config) = config {
-            config.rates_payload_version = rates_payload_version;
-            None
-        } else {
-            gen_error!(ErrorCode::InvalidArgument)
-        },
-        gen_error!(ErrorCode::Panic)
-    )
-}
-
 /// Sets the timeout in ms for all agent's connections.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
@@ -493,10 +472,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
             if let Some(token) = &config.test_session_token {
                 builder.set_test_session_token(token);
-            }
-
-            if config.rates_payload_version {
-                builder.enable_agent_rates_payload_version();
             }
 
             if config.health_metrics_enabled {
@@ -597,7 +572,6 @@ mod tests {
             assert!(cfg.telemetry_cfg.is_none());
             assert!(!cfg.health_metrics_enabled);
             assert!(cfg.test_session_token.is_none());
-            assert!(!cfg.rates_payload_version);
             assert!(cfg.connection_timeout.is_none());
 
             ddog_trace_exporter_config_free(cfg);
@@ -1164,24 +1138,6 @@ mod tests {
 
         assert!(ret.is_some());
         assert_eq!(ret.unwrap().code, ErrorCode::Panic);
-    }
-
-    #[test]
-    fn rates_payload_version_test() {
-        unsafe {
-            let error = ddog_trace_exporter_config_set_rates_payload_version(None, true);
-            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
-
-            ddog_trace_exporter_error_free(error);
-
-            let mut config = Some(TraceExporterConfig::default());
-            let error = ddog_trace_exporter_config_set_rates_payload_version(config.as_mut(), true);
-
-            assert_eq!(error, None);
-
-            let cfg = config.unwrap();
-            assert!(cfg.rates_payload_version);
-        }
     }
 
     #[test]
