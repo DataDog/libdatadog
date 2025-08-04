@@ -1,26 +1,23 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use bytes::{BufMut, Bytes, BytesMut};
+use serde::{Deserialize, Serialize};
+use std::marker::PhantomData;
+use std::pin::pin;
 use std::{
     io::{self, Read, Write},
     mem::MaybeUninit,
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
-use std::marker::PhantomData;
-use std::pin::pin;
-use bytes::{BufMut, Bytes, BytesMut};
-use serde::{Deserialize, Serialize};
 use tarpc::{context::Context, ClientMessage, Request, Response};
 
 use tokio_serde::{Deserializer, Serializer};
 
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
-use crate::{
-    handles::TransferHandles,
-    platform::Channel,
-};
+use crate::{handles::TransferHandles, platform::Channel};
 
 use super::DefaultCodec;
 
@@ -177,7 +174,7 @@ where
         }
         Err(io::Error::other("Request is without a response"))
     }
-    
+
     /// This function allows testing a broken pipe
     pub fn send_garbage(&mut self) -> io::Result<()> {
         let mut buf = BytesMut::new();

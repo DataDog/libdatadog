@@ -30,11 +30,17 @@ pub trait TransferHandles {
 }
 
 impl<T: TransferHandles> TransferHandles for &T {
-    fn copy_handles<Transport: HandlesTransport>(&self, transport: Transport) -> Result<(), Transport::Error> {
+    fn copy_handles<Transport: HandlesTransport>(
+        &self,
+        transport: Transport,
+    ) -> Result<(), Transport::Error> {
         (*self).copy_handles(transport)
     }
 
-    fn receive_handles<Transport: HandlesTransport>(&mut self, _transport: Transport) -> Result<(), Transport::Error> {
+    fn receive_handles<Transport: HandlesTransport>(
+        &mut self,
+        _transport: Transport,
+    ) -> Result<(), Transport::Error> {
         unreachable!("receive handles should never be called on a reference (only mut reference)")
     }
 }

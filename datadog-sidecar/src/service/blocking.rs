@@ -10,6 +10,7 @@ use datadog_ipc::transport::blocking::BlockingTransport;
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_live_debugger::sender::DebuggerType;
 use ddcommon::tag::Tag;
+use ddcommon::MutexExt;
 use dogstatsd_client::DogStatsDActionOwned;
 use serde::Serialize;
 use std::sync::{Mutex, MutexGuard};
@@ -31,7 +32,7 @@ pub struct SidecarTransport {
     /// If the reconnect_fn is given, whenever a broken pipe is encountered, the connection will be
     /// attempted to be re-established by calling this function.
     /// Note that reconnecting only changes the transport (i.e. inner), but keeps the original
-    /// reconnect_fn. 
+    /// reconnect_fn.
     pub reconnect_fn: Option<Box<dyn Fn() -> Option<Box<SidecarTransport>>>>,
 }
 
@@ -81,27 +82,38 @@ impl SidecarTransport {
             Err(_) => true,
         }
     }
-    
-    fn with_retry<F: Fn(&mut MutexGuard<BlockingTransport<SidecarInterfaceResponse, SidecarInterfaceRequest>>) -> io::Result<V>, V>(&mut self, f: F) -> io::Result<V> {
+
+    fn with_retry<
+        F: Fn(
+            &mut MutexGuard<BlockingTransport<SidecarInterfaceResponse, SidecarInterfaceRequest>>,
+        ) -> io::Result<V>,
+        V,
+    >(
+        &mut self,
+        f: F,
+    ) -> io::Result<V> {
         let mut inner = match self.inner.lock() {
             Ok(t) => t,
             Err(e) => return Err(io::Error::other(e.to_string())),
         };
         match f(&mut inner) {
             Ok(ret) => Ok(ret),
-            Err(e) => if e.kind() == io::ErrorKind::BrokenPipe {
-                if let Some(ref reconnect) = self.reconnect_fn {
-                    warn!("The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug.");
-                    *inner = match reconnect() {
-                        None => return Err(e),
-                        Some(n) => n.inner.into_inner().unwrap(),
-                    };
-                    f(&mut inner)
+            Err(e) => {
+                if e.kind() == io::ErrorKind::BrokenPipe {
+                    if let Some(ref reconnect) = self.reconnect_fn {
+                        warn!("The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug.");
+                        *inner = match reconnect() {
+                            None => return Err(e),
+                            #[allow(clippy::unwrap_used)]
+                            Some(n) => n.inner.into_inner().unwrap(),
+                        };
+                        f(&mut inner)
+                    } else {
+                        Err(e)
+                    }
                 } else {
                     Err(e)
                 }
-            } else {
-                Err(e)
             }
         }
     }
@@ -113,9 +125,9 @@ impl SidecarTransport {
     pub fn call(&mut self, item: SidecarInterfaceRequest) -> io::Result<SidecarInterfaceResponse> {
         self.with_retry(|t| t.call(&item))
     }
-    
+
     pub fn send_garbage(&mut self) -> io::Result<()> {
-        self.inner.lock().unwrap().send_garbage()
+        self.inner.lock_or_panic().send_garbage()
     }
 }
 
