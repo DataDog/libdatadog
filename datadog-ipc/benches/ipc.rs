@@ -39,20 +39,20 @@ fn criterion_benchmark(c: &mut Criterion) {
     transport.set_nonblocking(false).unwrap();
 
     c.bench_function("write only interface", |b| {
-        b.iter(|| transport.send(ExampleInterfaceRequest::Notify {}).unwrap())
+        b.iter(|| transport.send(&ExampleInterfaceRequest::Notify {}).unwrap())
     });
 
     // This consistently blocks on aarch64 (both MacOS and Linux), is there an issue with the
     // optimized code?
     #[cfg(not(target_arch = "aarch64"))]
     c.bench_function("two way interface", |b| {
-        b.iter(|| transport.call(ExampleInterfaceRequest::ReqCnt {}).unwrap())
+        b.iter(|| transport.call(&ExampleInterfaceRequest::ReqCnt {}).unwrap())
     });
 
     // This consistently blocks on aarch64 (both MacOS and Linux), is there an issue with the
     // optimized code?
     #[cfg(not(target_arch = "aarch64"))]
-    match transport.call(ExampleInterfaceRequest::ReqCnt {}).unwrap() {
+    match transport.call(&ExampleInterfaceRequest::ReqCnt {}).unwrap() {
         ExampleInterfaceResponse::ReqCnt(cnt) => {
             println!("Total requests handled: {cnt}");
         }

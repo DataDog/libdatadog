@@ -1,39 +1,42 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use bytes::{BufMut, Bytes, BytesMut};
+use serde::{Deserialize, Serialize};
+use std::marker::PhantomData;
+use std::pin::pin;
 use std::{
     io::{self, Read, Write},
     mem::MaybeUninit,
-    pin::Pin,
     sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
-
-use bytes::{BufMut, BytesMut};
-use serde::{Deserialize, Serialize};
 use tarpc::{context::Context, ClientMessage, Request, Response};
 
 use tokio_serde::{Deserializer, Serializer};
 
 use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
-use crate::{
-    handles::TransferHandles,
-    platform::{Channel, Message},
-};
+use crate::{handles::TransferHandles, platform::Channel};
 
 use super::DefaultCodec;
 
 pub struct BlockingTransport<IncomingItem, OutgoingItem> {
     requests_id: Arc<AtomicU64>,
-    transport: FramedBlocking<Response<IncomingItem>, ClientMessage<OutgoingItem>>,
+    codec: LengthDelimitedCodec,
+    read_buffer: BytesMut,
+    channel: Channel,
+    _phantom: PhantomData<(IncomingItem, OutgoingItem)>,
 }
 
 impl<IncomingItem, OutgoingItem> From<Channel> for BlockingTransport<IncomingItem, OutgoingItem> {
-    fn from(c: Channel) -> Self {
+    fn from(channel: Channel) -> Self {
         BlockingTransport {
             requests_id: Arc::from(AtomicU64::new(0)),
-            transport: c.into(),
+            codec: Default::default(),
+            read_buffer: BytesMut::with_capacity(4000),
+            channel,
+            _phantom: Default::default(),
         }
     }
 }
@@ -45,30 +48,26 @@ impl<IncomingItem, OutgoingItem> From<std::os::unix::net::UnixStream>
     fn from(s: std::os::unix::net::UnixStream) -> Self {
         BlockingTransport {
             requests_id: Arc::from(AtomicU64::new(0)),
-            transport: Channel::from(s).into(),
+            codec: Default::default(),
+            read_buffer: BytesMut::with_capacity(4000),
+            channel: Channel::from(s),
+            _phantom: Default::default(),
         }
     }
 }
 
-pub struct FramedBlocking<IncomingItem, OutgoingItem> {
-    codec: LengthDelimitedCodec,
-    read_buffer: BytesMut,
-    channel: Channel,
-    serde_codec: Pin<Box<DefaultCodec<Message<IncomingItem>, Message<OutgoingItem>>>>,
-}
-
-impl<IncomingItem, OutgoingItem> FramedBlocking<IncomingItem, OutgoingItem>
+impl<IncomingItem, OutgoingItem> BlockingTransport<IncomingItem, OutgoingItem>
 where
     IncomingItem: for<'de> Deserialize<'de> + TransferHandles,
     OutgoingItem: Serialize + TransferHandles,
 {
-    pub fn read_item(&mut self) -> Result<IncomingItem, io::Error> {
+    fn read_item(&mut self) -> Result<Response<IncomingItem>, io::Error> {
         let buf = &mut self.read_buffer;
         while buf.has_remaining_mut() {
             buf.reserve(1);
             match self.codec.decode(buf)? {
                 Some(frame) => {
-                    let message = self.serde_codec.as_mut().deserialize(&frame)?;
+                    let message = pin!(DefaultCodec::<_, ()>::default()).deserialize(&frame)?;
                     let item = self.channel.metadata.unwrap_message(message)?;
                     return Ok(item);
                 }
@@ -107,38 +106,22 @@ where
         Err(io::Error::other("couldn't read entire item"))
     }
 
-    fn do_send(&mut self, req: OutgoingItem) -> Result<(), io::Error> {
+    fn do_send(&mut self, req: &ClientMessage<&OutgoingItem>) -> Result<(), io::Error> {
         let msg = self.channel.create_message(req)?;
 
         let mut buf = BytesMut::new();
-        let data = self.serde_codec.as_mut().serialize(&msg)?;
+        let data = pin!(DefaultCodec::<(), _>::default()).serialize(&msg)?;
 
+        // TODO: inefficient, copies the data twice, once to serialize and once with length before
         self.codec.encode(data, &mut buf)?;
         self.channel.write_all(&buf)
     }
-}
 
-impl<IncomingItem, OutgoingItem> From<Channel> for FramedBlocking<IncomingItem, OutgoingItem> {
-    fn from(c: Channel) -> Self {
-        FramedBlocking {
-            codec: Default::default(),
-            read_buffer: BytesMut::with_capacity(4000),
-            channel: c,
-            serde_codec: Box::pin(Default::default()),
-        }
-    }
-}
-
-impl<IncomingItem, OutgoingItem> BlockingTransport<IncomingItem, OutgoingItem>
-where
-    OutgoingItem: Serialize + TransferHandles,
-    IncomingItem: for<'de> Deserialize<'de> + TransferHandles,
-{
-    fn new_client_message(
+    fn new_client_message<'a>(
         &self,
-        item: OutgoingItem,
+        item: &'a OutgoingItem,
         context: Context,
-    ) -> (u64, ClientMessage<OutgoingItem>) {
+    ) -> (u64, ClientMessage<&'a OutgoingItem>) {
         let request_id = self
             .requests_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -154,34 +137,34 @@ where
     }
 
     pub fn set_nonblocking(&mut self, nonblocking: bool) -> io::Result<()> {
-        self.transport.channel.set_nonblocking(nonblocking)
+        self.channel.set_nonblocking(nonblocking)
     }
 
     pub fn set_read_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
-        self.transport.channel.set_read_timeout(timeout)
+        self.channel.set_read_timeout(timeout)
     }
 
     pub fn set_write_timeout(&mut self, timeout: Option<Duration>) -> io::Result<()> {
-        self.transport.channel.set_write_timeout(timeout)
+        self.channel.set_write_timeout(timeout)
     }
 
     pub fn is_closed(&self) -> bool {
         // The blocking transport is not supposed to be readable on the client side unless it's a
         // response. So, outside of waiting for a response, it will never be readable unless
         // the server side closed its socket.
-        self.transport.channel.probe_readable()
+        self.channel.probe_readable()
     }
 
-    pub fn send(&mut self, item: OutgoingItem) -> io::Result<()> {
+    pub fn send(&mut self, item: &OutgoingItem) -> io::Result<()> {
         let mut ctx = Context::current();
         ctx.discard_response = true;
         let (_, req) = self.new_client_message(item, ctx);
-        self.transport.do_send(req)
+        self.do_send(&req)
     }
 
-    pub fn call(&mut self, item: OutgoingItem) -> io::Result<IncomingItem> {
+    pub fn call(&mut self, item: &OutgoingItem) -> io::Result<IncomingItem> {
         let (request_id, req) = self.new_client_message(item, Context::current());
-        self.transport.do_send(req)?;
+        self.do_send(&req)?;
 
         for resp in self {
             let resp = resp?;
@@ -190,6 +173,17 @@ where
             }
         }
         Err(io::Error::other("Request is without a response"))
+    }
+
+    /// This function allows testing a broken pipe
+    pub fn send_garbage(&mut self) -> io::Result<()> {
+        let mut buf = BytesMut::new();
+        self.codec.encode(Bytes::from(vec![1u8; 100]), &mut buf)?;
+        self.channel.write_all(&buf)?;
+        loop {
+            std::thread::sleep(Duration::from_millis(1));
+            self.channel.write_all(&[0])?; // write byte by byte until broken pipe
+        }
     }
 }
 
@@ -201,6 +195,6 @@ where
     type Item = io::Result<Response<IncomingItem>>;
 
     fn next(&mut self) -> Option<io::Result<Response<IncomingItem>>> {
-        Some(self.transport.read_item())
+        Some(self.read_item())
     }
 }

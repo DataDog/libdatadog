@@ -38,13 +38,16 @@ fn test_blocking_client() {
     // Test blocking sync code
     let mut transport = ExampleTransport::from(sock_b);
     transport.set_nonblocking(true).unwrap(); // sending one-way messages should be instantaineous, even if the RPC worker is not fully up
-    transport.send(ExampleInterfaceRequest::Ping {}).unwrap();
+    transport.send(&ExampleInterfaceRequest::Ping {}).unwrap();
     transport.set_nonblocking(false).unwrap(); // write should still be quick, but we'll have to block waiting for RPC worker to come up
 
     transport
         .set_write_timeout(Some(Duration::from_millis(100)))
         .unwrap();
-    match transport.call(ExampleInterfaceRequest::TimeNow {}).unwrap() {
+    match transport
+        .call(&ExampleInterfaceRequest::TimeNow {})
+        .unwrap()
+    {
         ExampleInterfaceResponse::TimeNow(time) => {
             assert!(Instant::now().elapsed().saturating_sub(time) < Duration::from_millis(10));
         }
@@ -55,18 +58,18 @@ fn test_blocking_client() {
         .set_read_timeout(Some(Duration::from_millis(100)))
         .unwrap(); // the RPC worker is up at this point - the read should be very quick
 
-    match transport.call(ExampleInterfaceRequest::ReqCnt {}).unwrap() {
+    match transport.call(&ExampleInterfaceRequest::ReqCnt {}).unwrap() {
         ExampleInterfaceResponse::ReqCnt(cnt) => assert_eq!(2, cnt),
         _ => panic!("shouldn't happen"),
     }
 
     let f = tempfile::tempfile().unwrap();
     transport
-        .call(ExampleInterfaceRequest::StoreFile { file: f.into() })
+        .call(&ExampleInterfaceRequest::StoreFile { file: f.into() })
         .unwrap();
 
     let f = match transport
-        .call(ExampleInterfaceRequest::RetrieveFile {})
+        .call(&ExampleInterfaceRequest::RetrieveFile {})
         .unwrap()
     {
         ExampleInterfaceResponse::RetrieveFile(f) => f.unwrap(),

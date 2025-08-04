@@ -111,11 +111,11 @@ impl<T> PlatformHandle<T> {
 }
 
 impl<T> TransferHandles for PlatformHandle<T> {
-    fn move_handles<Transport: crate::handles::HandlesTransport>(
+    fn copy_handles<Transport: crate::handles::HandlesTransport>(
         &self,
         transport: Transport,
     ) -> Result<(), Transport::Error> {
-        transport.move_handle(self.clone())
+        transport.copy_handle(self.clone())
     }
 
     fn receive_handles<Transport: crate::handles::HandlesTransport>(
