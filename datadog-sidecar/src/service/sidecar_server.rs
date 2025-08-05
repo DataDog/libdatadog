@@ -99,7 +99,7 @@ pub struct SidecarServer {
     /// A `Mutex` guarded `HashMap` that keeps a count of each session.
     session_counter: Arc<Mutex<HashMap<String, u32>>>,
     /// A `Mutex` guarded `HashMap` that stores the active telemetry clients.
-    telemetry_clients: TelemetryCachedClientSet,
+    pub(crate) telemetry_clients: TelemetryCachedClientSet,
     /// A `Mutex` guarded optional `ManualFutureCompleter` for telemetry configuration.
     pub self_telemetry_config:
         Arc<Mutex<Option<ManualFutureCompleter<ddtelemetry::config::Config>>>>,
@@ -357,98 +357,6 @@ impl SidecarServer {
             log_filter: MULTI_LOG_FILTER.stats(),
             log_writer: MULTI_LOG_WRITER.stats(),
         }
-    }
-
-    pub async fn process_telemetry_action(
-        &self,
-        instance_id: &InstanceId,
-        queue_id: &QueueId,
-        actions: Vec<TelemetryActions>,
-    ) -> anyhow::Result<()> {
-        tracing::debug!(
-            "Processing telemetry action for target {:?}/{:?}: {:?}",
-            instance_id,
-            queue_id,
-            actions
-        );
-        let session = self.get_session(&instance_id.session_id);
-        let trace_config = session.get_trace_config();
-        let runtime_metadata = RuntimeMetadata::new(
-            trace_config.language.clone(),
-            trace_config.language_version.clone(),
-            trace_config.tracer_version.clone(),
-        );
-
-        let rt_info = self.get_runtime(instance_id);
-        let mut applications = rt_info.lock_applications();
-
-        match applications.entry(*queue_id) {
-            Entry::Occupied(mut entry) => {
-                let value = entry.get_mut();
-
-                let env = value.env.as_deref().unwrap_or("none");
-                let service = value.service_name.as_deref().unwrap_or("unknown-service");
-
-                let mut telemetry = match self.telemetry_clients.get_or_create(
-                    service,
-                    env,
-                    instance_id,
-                    &runtime_metadata,
-                    || {
-                        self.get_session(&instance_id.session_id)
-                            .session_config
-                            .lock_or_panic()
-                            .clone()
-                    },
-                ) {
-                    Some(client) => client,
-                    None => return Ok(()),
-                };
-
-                let mut actions_to_send = vec![];
-                let mut buffered_info_changed = false;
-
-                for action in actions {
-                    match action {
-                        TelemetryActions::AddIntegration(ref integration) => {
-                            if telemetry.buffered_integrations.insert(integration.clone()) {
-                                actions_to_send.push(action);
-                                buffered_info_changed = true;
-                            }
-                        }
-                        _ => {
-                            actions_to_send.push(action);
-                        }
-                    }
-                }
-
-                let client_clone = telemetry.clone();
-                let mut handle = telemetry.handle.lock_or_panic();
-                let last_handle = handle.take();
-                *handle = Some(tokio::spawn(async move {
-                    if let Some(last_handle) = last_handle {
-                        last_handle.await.ok();
-                    };
-                    debug!("Sending Telemetry Actions: {actions_to_send:?}");
-                    client_clone.client.send_msgs(actions_to_send).await.ok();
-                }));
-
-                if buffered_info_changed {
-                    info!(
-                    "Buffered telemetry info changed for instance {instance_id:?} and queue_id {queue_id:?}"
-                );
-                    telemetry.write_shm_file();
-                }
-            }
-
-            Entry::Vacant(_) => {
-                info!(
-                    "No application found for instance {instance_id:?} and queue_id {queue_id:?}"
-                );
-            }
-        }
-
-        Ok(())
     }
 
     pub fn shutdown(&self) {
