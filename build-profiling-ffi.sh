@@ -103,7 +103,7 @@ case "$target" in
         ;;
 
     "x86_64-unknown-linux-gnu"|"aarch64-unknown-linux-gnu")
-        expected_native_static_libs=" -ldl -lrt -lpthread -lgcc_s -lc -lm -lrt -lpthread -lutil -ldl -lutil"
+        expected_native_static_libs=" -ldl -lrt -lpthread -lgcc_s -lc -lm -lrt -lpthread -lutil -ldl -lutil -lvoidstar"
         native_static_libs=" -ldl -lrt -lpthread -lc -lm -lrt -lpthread -lutil -ldl -lutil"
         symbolizer=1
         ;;
@@ -166,6 +166,16 @@ FEATURES=$(IFS=, ; echo "${FEATURES[*]}")
 echo "Building for features: $FEATURES"
 
 # build inside the crate to use the config.toml file
+export PATH_TO_LIBVOIDSTAR=/usr/lib/libvoidstar.so
+export LD_LIBRARY_PATH=${PATH_TO_LIBVOIDSTAR}
+export RUSTFLAGS=" \
+    -Ccodegen-units=1 \
+    -Cpasses=sancov-module \
+    -Cllvm-args=-sanitizer-coverage-level=3 \
+    -Cllvm-args=-sanitizer-coverage-trace-pc-guard \
+    -Clink-args=-Wl,--build-id  \
+    -L${PATH_TO_LIBVOIDSTAR} \
+    -lvoidstar"
 ( cd datadog-profiling-ffi && DESTDIR="$destdir" cargo rustc --features $FEATURES --release --target "${target}" --crate-type cdylib && DESTDIR="$destdir" cargo rustc --features $FEATURES --release --target "${target}" --crate-type staticlib)
 
 # Remove _ffi suffix when copying

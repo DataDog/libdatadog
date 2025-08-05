@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::string_storage::{get_inner_string_storage, ManagedStringStorage};
+use antithesis_sdk::prelude::*;
 use anyhow::Context;
 use datadog_profiling::api;
 use datadog_profiling::api::ManagedStringId;
@@ -65,7 +66,10 @@ impl From<anyhow::Result<()>> for ProfileResult {
     fn from(value: anyhow::Result<()>) -> Self {
         match value {
             Ok(_) => Self::Ok(true),
-            Err(err) => Self::Err(err.into()),
+            Err(err) => {
+                assert_unreachable!("ProfileResult error");
+                Self::Err(err.into())
+            }
         }
     }
 }
@@ -90,7 +94,10 @@ impl From<anyhow::Result<internal::EncodedProfile>> for SerializeResult {
     fn from(value: anyhow::Result<internal::EncodedProfile>) -> Self {
         match value {
             Ok(e) => Self::Ok(e.into()),
-            Err(err) => Self::Err(err.into()),
+            Err(err) => {
+                assert_unreachable!("SerializeResult error");
+                Self::Err(err.into())
+            }
         }
     }
 }
@@ -426,7 +433,10 @@ unsafe fn profile_new(
         Some(s) => {
             let string_storage = match get_inner_string_storage(s, true) {
                 Ok(string_storage) => string_storage,
-                Err(err) => return ProfileNewResult::Err(err.into()),
+                Err(err) => {
+                    assert_unreachable!("Failed to get inner string storage");
+                    return ProfileNewResult::Err(err.into());
+                }
             };
             internal::Profile::with_string_storage(&types, period, string_storage)
         }
@@ -440,6 +450,7 @@ unsafe fn profile_new(
 /// made by this module, which has not previously been dropped.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_Profile_drop(profile: *mut Profile) {
+    assert_always!(!profile.is_null(), "profile pointer was null");
     // Technically, this function has been designed so if it's double-dropped
     // then it's okay, but it's not something that should be relied on.
     if !profile.is_null() {
@@ -499,6 +510,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
             profile.add_sample(sample.try_into()?, timestamp)
         }
     })()
+    .inspect_err(|_| {
+        assert_unreachable!("ddog_prof_Profile_add failed");
+    })
     .context("ddog_prof_Profile_add failed")
     .into()
 }
@@ -507,10 +521,16 @@ pub(crate) unsafe fn profile_ptr_to_inner<'a>(
     profile_ptr: *mut Profile,
 ) -> anyhow::Result<&'a mut internal::Profile> {
     match profile_ptr.as_mut() {
-        None => anyhow::bail!("profile pointer was null"),
+        None => {
+            assert_unreachable!("profile pointer was null");
+            anyhow::bail!("profile pointer was null")
+        }
         Some(inner_ptr) => match inner_ptr.inner.as_mut() {
             Some(profile) => Ok(profile),
-            None => anyhow::bail!("profile's inner pointer was null (indicates use-after-free)"),
+            None => {
+                assert_unreachable!("profile's inner pointer was null");
+                anyhow::bail!("profile's inner pointer was null (indicates use-after-free)")
+            }
         },
     }
 }
@@ -543,6 +563,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint(
         let endpoint = endpoint.to_utf8_lossy();
         profile.add_endpoint(local_root_span_id, endpoint)
     })()
+    .inspect_err(|_| {
+        assert_unreachable!("ddog_prof_Profile_set_endpoint failed");
+    })
     .context("ddog_prof_Profile_set_endpoint failed")
     .into()
 }
@@ -569,6 +592,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
         let endpoint = endpoint.to_utf8_lossy();
         profile.add_endpoint_count(endpoint, value)
     })()
+    .inspect_err(|_| {
+        assert_unreachable!("ddog_prof_Profile_add_endpoint_count failed");
+    })
     .context("ddog_prof_Profile_set_endpoint failed")
     .into()
 }
@@ -620,6 +646,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
             upscaling_info,
         )
     })()
+    .inspect_err(|_| {
+        assert_unreachable!("ddog_prof_Profile_add_endpoint_count failed");
+    })
     .context("ddog_prof_Profile_add_upscaling_rule_proportional failed")
     .into()
 }
@@ -680,12 +709,16 @@ unsafe fn add_upscaling_rule(
 ) -> anyhow::Result<()> {
     let label_name_n = label_name.to_utf8_lossy();
     let label_value_n = label_value.to_utf8_lossy();
-    profile.add_upscaling_rule(
-        offset_values.as_slice(),
-        label_name_n.as_ref(),
-        label_value_n.as_ref(),
-        upscaling_info,
-    )
+    profile
+        .add_upscaling_rule(
+            offset_values.as_slice(),
+            label_name_n.as_ref(),
+            label_value_n.as_ref(),
+            upscaling_info,
+        )
+        .inspect_err(|_| {
+            assert_unreachable!("Failed to add upscaling rule");
+        })
 }
 
 /// # Safety
