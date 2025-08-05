@@ -1828,10 +1828,9 @@ mod tests {
         });
 
         let mut builder = TraceExporterBuilder::default();
-        builder
-            .set_url(&server.url("/"))
-            .enable_agent_rates_payload_version();
-        let exporter = builder.build().unwrap();
+        builder.set_url(&server.url("/"));
+        let mut exporter = builder.build().unwrap();
+        exporter.agent_payload_response_version = Some(AgentResponsePayloadVersion::new());
         let traces = vec![0x90];
         let result = exporter.send(traces.as_ref(), 1).unwrap();
         let AgentResponse::Changed { body } = result else {
