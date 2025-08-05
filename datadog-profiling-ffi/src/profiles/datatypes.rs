@@ -22,29 +22,52 @@ pub struct Profile {
 }
 
 impl Profile {
-    fn new(profile: internal::Profile) -> Self {
+    pub(crate) fn new(profile: internal::Profile) -> Self {
         Profile {
             inner: Box::into_raw(Box::new(profile)),
-        }
-    }
-
-    fn take(&mut self) -> Option<Box<internal::Profile>> {
-        // Leaving a null will help with double-free issues that can
-        // arise in C. Of course, it's best to never get there in the
-        // first place!
-        let raw = std::mem::replace(&mut self.inner, std::ptr::null_mut());
-
-        if raw.is_null() {
-            None
-        } else {
-            Some(unsafe { Box::from_raw(raw) })
         }
     }
 }
 
 impl Drop for Profile {
     fn drop(&mut self) {
-        drop(self.take())
+        // SAFETY: Profile's inner pointer is only set in new() and take(), and take() ensures
+        // the pointer is null after taking ownership. Since this is Drop, we know the Profile
+        // is being destroyed and won't be used again.
+        unsafe { drop(self.take()) }
+    }
+}
+
+impl ToInner<internal::Profile> for Profile {
+    unsafe fn to_inner_mut(&mut self) -> anyhow::Result<&mut internal::Profile> {
+        self.inner
+            .as_mut()
+            .context("inner pointer was null, indicates use after free")
+    }
+
+    unsafe fn take(&mut self) -> anyhow::Result<Box<internal::Profile>> {
+        let raw = std::mem::replace(&mut self.inner, std::ptr::null_mut());
+        anyhow::ensure!(
+            !raw.is_null(),
+            "inner pointer was null, indicates use after free"
+        );
+        Ok(Box::from_raw(raw))
+    }
+}
+
+/// Extension trait for raw Profile pointers.
+/// We need this trait because Rust's orphan rules prevent us from implementing methods directly
+/// on raw pointers (*mut Profile). This trait provides a safe way to take ownership of a Profile
+/// from a raw pointer while maintaining proper error handling.
+pub trait ProfilePtrExt {
+    /// # Safety
+    /// The pointer must be non-null and point to a valid Profile that hasn't been dropped.
+    unsafe fn take(self) -> anyhow::Result<Box<internal::Profile>>;
+}
+
+impl ProfilePtrExt for *mut Profile {
+    unsafe fn take(self) -> anyhow::Result<Box<internal::Profile>> {
+        self.as_mut().context("Null pointer")?.take()
     }
 }
 
@@ -402,9 +425,17 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
 }
 
 /// Same as `ddog_profile_new` but also configures a `string_storage` for the profile.
+///
+/// # Safety
+/// - `sample_types` must be a valid slice of ValueType.
+/// - `period`, if provided, must be a valid reference.
+/// - `string_storage` must be a valid ManagedStringStorage.
+/// - The caller is responsible for ensuring that all pointers remain valid for the duration of the
+///   call.
+///
+///   TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 #[no_mangle]
 #[must_use]
-/// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_Profile_with_string_storage(
     sample_types: Slice<ValueType>,
     period: Option<&Period>,
@@ -760,6 +791,12 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     .into()
 }
 
+/// Returns a slice view of the given Vec<u8>.
+///
+/// # Safety
+/// - `vec` must be a valid reference to a ddcommon_ffi::Vec<u8>.
+/// - The returned slice is only valid as long as the original Vec<u8> is valid and not mutated or
+///   dropped.
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &ddcommon_ffi::Vec<u8>) -> Slice<u8> {
