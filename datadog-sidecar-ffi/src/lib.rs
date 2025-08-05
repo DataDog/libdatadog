@@ -660,7 +660,8 @@ impl<'a> TryInto<SerializedTracerHeaderTags> for &'a TracerHeaderTags<'a> {
 pub unsafe extern "C" fn ddog_sidecar_enqueue_telemetry_log(
     session_id_ffi: CharSlice,
     runtime_id_ffi: CharSlice,
-    queue_id: u64,
+    service_name_ffi: CharSlice,
+    env_name_ffi: CharSlice,
     identifier_ffi: CharSlice,
     level: ddtelemetry::data::LogLevel,
     message_ffi: CharSlice,
@@ -671,7 +672,8 @@ pub unsafe extern "C" fn ddog_sidecar_enqueue_telemetry_log(
     try_c!(ddog_sidecar_enqueue_telemetry_log_impl(
         session_id_ffi,
         runtime_id_ffi,
-        queue_id,
+        service_name_ffi,
+        env_name_ffi,
         identifier_ffi,
         level,
         message_ffi,
@@ -695,7 +697,8 @@ fn char_slice_to_string(slice: CharSlice) -> Result<String, String> {
 fn ddog_sidecar_enqueue_telemetry_log_impl(
     session_id_ffi: CharSlice,
     runtime_id_ffi: CharSlice,
-    queue_id: u64,
+    service_name_ffi: CharSlice,
+    env_name_ffi: CharSlice,
     identifier_ffi: CharSlice,
     level: ddtelemetry::data::LogLevel,
     message_ffi: CharSlice,
@@ -705,7 +708,8 @@ fn ddog_sidecar_enqueue_telemetry_log_impl(
 ) -> Result<(), String> {
     if session_id_ffi.is_empty()
         || runtime_id_ffi.is_empty()
-        || queue_id == 0
+        || service_name_ffi.is_empty()
+        || env_name_ffi.is_empty()
         || identifier_ffi.is_empty()
         || message_ffi.is_empty()
     {
@@ -723,7 +727,8 @@ fn ddog_sidecar_enqueue_telemetry_log_impl(
         char_slice_to_string(session_id_ffi)?,
         char_slice_to_string(runtime_id_ffi)?,
     );
-    let queue_id: QueueId = queue_id.into();
+    let service_name: String = char_slice_to_string(service_name_ffi)?;
+    let env_name: String = char_slice_to_string(env_name_ffi)?;
     let identifier: String = char_slice_to_string(identifier_ffi)?;
     let message: String = char_slice_to_string(message_ffi)?;
 
@@ -753,7 +758,8 @@ fn ddog_sidecar_enqueue_telemetry_log_impl(
 
     let msg = InternalTelemetryActions {
         instance_id,
-        queue_id,
+        service_name,
+        env_name,
         actions: vec![log_action],
     };
 

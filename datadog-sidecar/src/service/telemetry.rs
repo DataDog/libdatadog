@@ -1,12 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::service::{InstanceId, QueueId, RuntimeMetadata, SidecarAction, SidecarServer};
+use crate::service::{InstanceId, RuntimeMetadata, SidecarAction, SidecarServer};
 use anyhow::{anyhow, Result};
 use ddcommon::MutexExt;
 use std::sync::OnceLock;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::one_way_shared_memory::OneWayShmWriter;
 use crate::primary_sidecar_identifier;
@@ -356,7 +356,8 @@ pub fn path_for_telemetry(service: &str, env: &str) -> CString {
 #[derive(Debug)]
 pub struct InternalTelemetryActions {
     pub instance_id: InstanceId,
-    pub queue_id: QueueId,
+    pub service_name: String,
+    pub env_name: String,
     pub actions: Vec<TelemetryActions>,
 }
 
@@ -377,16 +378,66 @@ pub(crate) async fn telemetry_action_receiver_task(sidecar: SidecarServer) {
         return;
     }
 
-    while let Some(msg) = rx.recv().await {
-        if let Err(e) = sidecar
-            .process_telemetry_action(&msg.instance_id, &msg.queue_id, msg.actions)
-            .await
-        {
+    while let Some(actions) = rx.recv().await {
+        let telemetry_client = get_telemetry_client(
+            &sidecar,
+            &actions.instance_id,
+            &actions.service_name,
+            &actions.env_name,
+        );
+
+        if let Some(telemetry_client) = telemetry_client {
+            for action in actions.actions {
+                let action_str = format!("{action:?}");
+                match telemetry_client.client.send_msg(action).await {
+                    Ok(_) => {
+                        debug!("Sent telemetry action to TelemetryWorker: {action_str}");
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to send telemetry action {action_str} to TelemetryWorker: {e}"
+                        );
+                    }
+                }
+            }
+        } else {
             warn!(
-                "Could not process telemetry action for target {:?}/{:?}: {}. Action dropped.",
-                msg.instance_id, msg.queue_id, e
+                "Could not get or client telemetry client for target {:?}, service {:?}, env {:?}. Action dropped.",
+                actions.instance_id, actions.service_name, actions.env_name
             );
         }
     }
     info!("Telemetry action receiver task shutting down.");
+}
+
+fn get_telemetry_client(
+    sidecar: &SidecarServer,
+    instance_id: &InstanceId,
+    service_name: &str,
+    env_name: &str,
+) -> Option<TelemetryCachedClient> {
+    let session = sidecar.get_session(&instance_id.session_id);
+    let trace_config = session.get_trace_config();
+    let runtime_meta = RuntimeMetadata::new(
+        trace_config.language.as_str(),
+        trace_config.language_version.as_str(),
+        trace_config.tracer_version.as_str(),
+    );
+
+    let get_config = || {
+        sidecar
+            .get_session(&instance_id.session_id)
+            .session_config
+            .lock_or_panic()
+            .clone()
+    };
+
+    TelemetryCachedClientSet::get_or_create(
+        &sidecar.telemetry_clients,
+        service_name,
+        env_name,
+        instance_id,
+        &runtime_meta,
+        get_config,
+    )
 }
