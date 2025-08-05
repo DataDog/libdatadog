@@ -730,7 +730,8 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_bytes<'a>(
 ///
 /// # Arguments
 /// * `profile` - a reference to the profile being serialized.
-/// * `start_time` - start time for the serialized profile.
+/// * `start_time` - optional start time for the serialized profile. If None/null is passed, the
+///   time of profile creation will be used.
 /// * `end_time` - optional end time of the profile. If None/null is passed, the current time will
 ///   be used.
 ///
