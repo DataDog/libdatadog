@@ -1,14 +1,22 @@
 # `libdatadog`
 
+<table>
+<tr>
+<td width="70%">
+
 `libdatadog` provides a shared library containing common code used in the implementation of Datadog's libraries,
 including [Continuous Profilers](https://docs.datadoghq.com/tracing/profiler/).
-
-(In a past life, `libdatadog` was known as [`libddprof`](https://github.com/DataDog/libddprof) but it was renamed when
-we decided to increase its scope).
 
 **NOTE**: If you're building a new Datadog library/profiler or want to contribute to Datadog's existing tools, you've come to the
 right place!
 Otherwise, this is possibly not the droid you were looking for.
+
+</td>
+<td width="30%" align="center">
+  <img src="docs/logo.png" alt="libdatadog logo" width="150"/>
+</td>
+</tr>
+</table>
 
 ## Development
 
