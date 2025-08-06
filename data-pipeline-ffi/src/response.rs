@@ -4,10 +4,7 @@
 //! Define FFI compatible AgentResponse struct
 
 use data_pipeline::trace_exporter::agent_response::AgentResponse;
-use std::{
-    ffi::{c_char, CString},
-    ptr::null,
-};
+use std::ptr::null;
 
 /// Structure containing the agent response to a trace payload
 /// MUST be freed with `ddog_trace_exporter_response_free`
@@ -18,21 +15,16 @@ use std::{
 #[derive(Debug, Default)]
 pub struct ExporterResponse {
     /// The body of the response, which is a string containing the response from the agent.
-    pub body: CString,
-    pub body_len: usize,
+    pub body: Option<Vec<u8>>,
 }
 
 impl From<AgentResponse> for ExporterResponse {
     fn from(value: AgentResponse) -> Self {
         match value {
             AgentResponse::Changed { body } => ExporterResponse {
-                body_len: body.len(),
-                body: CString::new(body).unwrap_or_default(),
+                body: Some(body.into_bytes()),
             },
-            AgentResponse::Unchanged => ExporterResponse {
-                body: CString::new("").unwrap_or_default(),
-                body_len: 0,
-            },
+            AgentResponse::Unchanged => ExporterResponse { body: None },
         }
     }
 }
@@ -43,15 +35,21 @@ impl From<AgentResponse> for ExporterResponse {
 pub unsafe extern "C" fn ddog_trace_exporter_response_get_body(
     response: *const ExporterResponse,
     out_len: Option<&mut usize>,
-) -> *const c_char {
-    if response.is_null() {
+) -> *const u8 {
+    let mut len: usize = 0;
+    let body = if response.is_null() {
         null()
+    } else if let Some(body) = &(*response).body {
+        len = body.len();
+        body.as_ptr()
     } else {
-        if let Some(len) = out_len {
-            *len = (*response).body_len;
-        }
-        (*response).body.as_ptr()
+        null()
+    };
+
+    if let Some(out_len) = out_len {
+        *out_len = len;
     }
+    body
 }
 
 /// Free `response` and all its contents. After being called response will not point to a valid
@@ -66,7 +64,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_response_free(response: *mut Export
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CStr;
 
     #[test]
     fn constructor_test_changed() {
@@ -75,14 +72,10 @@ mod tests {
         };
         let response = &ExporterResponse::from(agent_response) as *const ExporterResponse;
         let mut len = 0;
-        let body = unsafe {
-            CStr::from_ptr(ddog_trace_exporter_response_get_body(
-                response,
-                Some(&mut len),
-            ))
-            .to_string_lossy()
-        };
-        assert_eq!(body, "res".to_string());
+        let body = unsafe { ddog_trace_exporter_response_get_body(response, Some(&mut len)) };
+        let response =
+            unsafe { std::str::from_utf8(std::slice::from_raw_parts(body, len)).unwrap() };
+        assert_eq!(response, "res");
         assert_eq!(len, 3);
     }
 
@@ -91,14 +84,8 @@ mod tests {
         let agent_response = AgentResponse::Unchanged;
         let response = Box::into_raw(Box::new(ExporterResponse::from(agent_response)));
         let mut len = usize::MAX;
-        let body = unsafe {
-            CStr::from_ptr(ddog_trace_exporter_response_get_body(
-                response,
-                Some(&mut len),
-            ))
-            .to_string_lossy()
-        };
-        assert_eq!(body, "".to_string());
+        let body = unsafe { ddog_trace_exporter_response_get_body(response, Some(&mut len)) };
+        assert!(body.is_null());
         assert_eq!(len, 0);
 
         unsafe {

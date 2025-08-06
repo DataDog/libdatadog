@@ -1005,7 +1005,7 @@ mod tests {
             );
             assert_eq!(ret, None);
             assert_eq!(
-                response.assume_init().body.to_string_lossy(),
+                String::from_utf8_lossy(&response.assume_init().body.unwrap()),
                 r#"{
                     "rate_by_service": {
                         "service:foo,env:staging": 1.0,
@@ -1074,7 +1074,10 @@ mod tests {
             );
             mock_traces.assert();
             assert_eq!(ret, None);
-            assert_eq!(response.assume_init().body.to_string_lossy(), response_body);
+            assert_eq!(
+                String::from_utf8_lossy(&response.assume_init().body.unwrap()),
+                response_body
+            );
 
             ddog_trace_exporter_free(exporter);
         }
@@ -1149,7 +1152,10 @@ mod tests {
             );
             mock_traces.assert();
             assert_eq!(ret, None);
-            assert_eq!(response.assume_init().body.to_string_lossy(), response_body);
+            assert_eq!(
+                String::from_utf8_lossy(&response.assume_init().body.unwrap()),
+                response_body
+            );
 
             ddog_trace_exporter_free(exporter);
             // It should receive 1 payloads: metrics
