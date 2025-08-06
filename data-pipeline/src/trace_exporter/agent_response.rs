@@ -20,9 +20,6 @@ pub(crate) struct AgentResponsePayloadVersion {
 }
 
 impl AgentResponsePayloadVersion {
-    // TODO: (APMSP-2190( remove when payload versioning is enabled based on info fetcher
-    // information.
-    #[cfg(test)]
     pub fn new() -> Self {
         AgentResponsePayloadVersion {
             payload_version: ArcSwap::new(Arc::new("0".to_string())),

@@ -4,6 +4,7 @@
 use crate::agent_info::AgentInfoFetcher;
 use crate::pausable_worker::PausableWorker;
 use crate::telemetry::TelemetryClientBuilder;
+use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
 use crate::trace_exporter::{
     add_path, StatsComputationStatus, TelemetryConfig, TraceExporter, TraceExporterError,
@@ -46,6 +47,7 @@ pub struct TraceExporterBuilder {
     telemetry: Option<TelemetryConfig>,
     health_metrics_enabled: bool,
     test_session_token: Option<String>,
+    agent_rates_payload_version_enabled: bool,
     connection_timeout: Option<u64>,
 }
 
@@ -206,6 +208,12 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Enables storing and checking the agent payload
+    pub fn enable_agent_rates_payload_version(&mut self) -> &mut Self {
+        self.agent_rates_payload_version_enabled = true;
+        self
+    }
+
     /// Sets the agent's connection timeout.
     pub fn set_connection_timeout(&mut self, timeout_ms: Option<u64>) -> &mut Self {
         self.connection_timeout = timeout_ms;
@@ -333,7 +341,10 @@ impl TraceExporterBuilder {
                 stats: None,
                 telemetry: telemetry_worker,
             })),
-            agent_payload_response_version: None,
+
+            agent_payload_response_version: self
+                .agent_rates_payload_version_enabled
+                .then(AgentResponsePayloadVersion::new),
         })
     }
 
