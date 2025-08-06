@@ -63,8 +63,15 @@ impl CString {
     /// Creates a new `CString` from the given input, or returns an empty `CString`
     /// if the input contains null bytes.
     ///
-    /// This method will never panic, as an empty string is guaranteed to not contain
-    /// null bytes and can always be converted to a `CString`.
+    /// This method performs an unwrap, but will never panic, as the unwrap is for the fallback to
+    /// an empty string which is guaranteed to not contain null bytes and can always be
+    /// converted to a `CString`. The value of this function is to minimize the occurrences of
+    /// unwrap() in libdatadog.
+    ///
+    /// # Note
+    ///
+    /// This function will always return a valid `CString`. If the input contains null bytes, the
+    /// returned `CString` will be empty.
     ///
     /// # Examples
     ///
