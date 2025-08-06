@@ -9,7 +9,7 @@
 
 use datadog_ddsketch::DDSketch;
 use ddcommon_ffi as ffi;
-use std::ptr::NonNull;
+use ddcommon_ffi::{Handle, ToInner};
 
 mod error;
 mod sketch;
@@ -24,46 +24,37 @@ macro_rules! gen_error {
 }
 
 /// Creates a new DDSketch instance with default configuration.
-///
-/// # Safety
-///
-/// The `sketch` parameter must be a valid pointer to uninitialized memory
-/// where the DDSketch will be stored.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ddsketch_new(
-    sketch: NonNull<Box<DDSketch>>,
-) -> Option<Box<DDSketchError>> {
-    let sketch_box = Box::new(DDSketch::default());
-    sketch.as_ptr().write(sketch_box);
-    None
+pub extern "C" fn ddog_ddsketch_new() -> Handle<DDSketch> {
+    DDSketch::default().into()
 }
 
 /// Drops a DDSketch instance.
 ///
 /// # Safety
 ///
-/// Only pass null or a pointer to a valid, mutable DDSketch.
+/// The sketch handle must have been created by this library and not already dropped.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ddsketch_drop(sketch: Option<Box<DDSketch>>) {
-    drop(sketch);
+pub unsafe extern "C" fn ddog_ddsketch_drop(mut sketch: *mut Handle<DDSketch>) {
+    drop(sketch.take());
 }
 
 /// Adds a point to the DDSketch.
 ///
 /// # Safety
 ///
-/// The `sketch` parameter must be a valid pointer to a DDSketch instance.
+/// The `sketch` parameter must be a valid pointer to a DDSketch handle.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_ddsketch_add(
-    sketch: Option<&mut DDSketch>,
+    mut sketch: *mut Handle<DDSketch>,
     point: f64,
 ) -> Option<Box<DDSketchError>> {
-    let sketch = match sketch {
-        Some(s) => s,
-        None => return gen_error!(DDSketchErrorCode::InvalidArgument),
+    let sketch_ref = match sketch.to_inner_mut() {
+        Ok(s) => s,
+        Err(_) => return gen_error!(DDSketchErrorCode::InvalidArgument),
     };
 
-    match sketch.add(point) {
+    match sketch_ref.add(point) {
         Ok(_) => None,
         Err(e) => Some(Box::new(DDSketchError::new(
             DDSketchErrorCode::InvalidInput,
@@ -76,19 +67,19 @@ pub unsafe extern "C" fn ddog_ddsketch_add(
 ///
 /// # Safety
 ///
-/// The `sketch` parameter must be a valid pointer to a DDSketch instance.
+/// The `sketch` parameter must be a valid pointer to a DDSketch handle.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_ddsketch_add_with_count(
-    sketch: Option<&mut DDSketch>,
+    mut sketch: *mut Handle<DDSketch>,
     point: f64,
     count: f64,
 ) -> Option<Box<DDSketchError>> {
-    let sketch = match sketch {
-        Some(s) => s,
-        None => return gen_error!(DDSketchErrorCode::InvalidArgument),
+    let sketch_ref = match sketch.to_inner_mut() {
+        Ok(s) => s,
+        Err(_) => return gen_error!(DDSketchErrorCode::InvalidArgument),
     };
 
-    match sketch.add_with_count(point, count) {
+    match sketch_ref.add_with_count(point, count) {
         Ok(_) => None,
         Err(e) => Some(Box::new(DDSketchError::new(
             DDSketchErrorCode::InvalidInput,
@@ -101,95 +92,88 @@ pub unsafe extern "C" fn ddog_ddsketch_add_with_count(
 ///
 /// # Safety
 ///
-/// The `sketch` parameter must be a valid pointer to a DDSketch instance.
+/// The `sketch` parameter must be a valid pointer to a DDSketch handle.
 /// Returns 0.0 if sketch is null.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ddsketch_count(sketch: Option<&DDSketch>) -> f64 {
-    match sketch {
-        Some(s) => s.count(),
-        None => 0.0,
+pub unsafe extern "C" fn ddog_ddsketch_count(mut sketch: *mut Handle<DDSketch>) -> f64 {
+    match sketch.to_inner_mut() {
+        Ok(s) => s.count(),
+        Err(_) => 0.0,
     }
 }
 
 /// Returns the protobuf-encoded bytes of the DDSketch.
+/// The sketch handle is consumed by this operation.
 ///
 /// # Safety
 ///
-/// The `sketch` parameter must be a valid pointer to a DDSketch instance.
+/// The `sketch` parameter must be a valid pointer to a DDSketch handle.
 /// The returned vector must be freed with `ddog_Vec_U8_drop`.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ddsketch_encode(sketch: Box<DDSketch>) -> ffi::Vec<u8> {
-    let encoded = sketch.encode_to_vec();
-    ffi::Vec::from(encoded)
+pub unsafe extern "C" fn ddog_ddsketch_encode(mut sketch: *mut Handle<DDSketch>) -> ffi::Vec<u8> {
+    match sketch.take() {
+        Ok(ddsketch) => {
+            let encoded = ddsketch.encode_to_vec();
+            ffi::Vec::from(encoded)
+        }
+        Err(_) => ffi::Vec::new(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::mem::MaybeUninit;
-    use std::ptr::NonNull;
 
     #[test]
     fn test_ddsketch_new_and_drop() {
         unsafe {
-            let mut sketch: MaybeUninit<Box<DDSketch>> = MaybeUninit::uninit();
-            let result = ddog_ddsketch_new(NonNull::new(sketch.as_mut_ptr()).unwrap());
-            assert!(result.is_none());
-
-            let sketch_box = sketch.assume_init();
-            ddog_ddsketch_drop(Some(sketch_box));
+            let mut sketch = ddog_ddsketch_new();
+            ddog_ddsketch_drop(&mut sketch);
         }
     }
 
     #[test]
     fn test_ddsketch_add() {
         unsafe {
-            let mut sketch: MaybeUninit<Box<DDSketch>> = MaybeUninit::uninit();
-            ddog_ddsketch_new(NonNull::new(sketch.as_mut_ptr()).unwrap());
-            let mut sketch_box = sketch.assume_init();
+            let mut sketch = ddog_ddsketch_new();
 
-            let result = ddog_ddsketch_add(Some(&mut sketch_box), 1.0);
+            let result = ddog_ddsketch_add(&mut sketch, 1.0);
             assert!(result.is_none());
 
-            let count = ddog_ddsketch_count(Some(&sketch_box));
+            let count = ddog_ddsketch_count(&mut sketch);
             assert_eq!(count, 1.0);
 
-            ddog_ddsketch_drop(Some(sketch_box));
+            ddog_ddsketch_drop(&mut sketch);
         }
     }
 
     #[test]
     fn test_ddsketch_add_with_count() {
         unsafe {
-            let mut sketch: MaybeUninit<Box<DDSketch>> = MaybeUninit::uninit();
-            ddog_ddsketch_new(NonNull::new(sketch.as_mut_ptr()).unwrap());
-            let mut sketch_box = sketch.assume_init();
+            let mut sketch = ddog_ddsketch_new();
 
-            let result = ddog_ddsketch_add_with_count(Some(&mut sketch_box), 2.0, 3.0);
+            let result = ddog_ddsketch_add_with_count(&mut sketch, 2.0, 3.0);
             assert!(result.is_none());
 
-            let count = ddog_ddsketch_count(Some(&sketch_box));
+            let count = ddog_ddsketch_count(&mut sketch);
             assert_eq!(count, 3.0);
 
-            ddog_ddsketch_drop(Some(sketch_box));
+            ddog_ddsketch_drop(&mut sketch);
         }
     }
 
     #[test]
     fn test_ddsketch_encode() {
         unsafe {
-            let mut sketch: MaybeUninit<Box<DDSketch>> = MaybeUninit::uninit();
-            ddog_ddsketch_new(NonNull::new(sketch.as_mut_ptr()).unwrap());
-            let mut sketch_box = sketch.assume_init();
+            let mut sketch = ddog_ddsketch_new();
 
-            let _ = ddog_ddsketch_add(Some(&mut sketch_box), 1.0);
-            let _ = ddog_ddsketch_add(Some(&mut sketch_box), 2.0);
+            let _ = ddog_ddsketch_add(&mut sketch, 1.0);
+            let _ = ddog_ddsketch_add(&mut sketch, 2.0);
 
-            let encoded = ddog_ddsketch_encode(sketch_box);
+            let encoded = ddog_ddsketch_encode(&mut sketch);
             assert!(!encoded.is_empty());
 
-            // Note: In a real implementation, the caller would need to drop the Vec<u8>
-            // For now, we'll just let it be consumed by the test
+            // sketch is consumed by encode, so no need to drop it
             drop(encoded);
         }
     }

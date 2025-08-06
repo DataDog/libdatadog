@@ -3,6 +3,7 @@
 
 use datadog_ddsketch::DDSketch;
 use ddcommon_ffi as ffi;
+use ddcommon_ffi::{Handle, ToInner};
 
 /// A bin from a DDSketch containing a value and its weight.
 #[repr(C)]
@@ -16,19 +17,19 @@ pub struct DDSketchBin {
 ///
 /// # Safety
 ///
-/// The `sketch` parameter must be a valid pointer to a DDSketch instance.
+/// The `sketch` parameter must be a valid pointer to a DDSketch handle.
 /// The returned bins must be freed with `ddog_ddsketch_bins_drop`.
 /// Returns empty bins if sketch is null.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_ddsketch_ordered_bins(
-    sketch: Option<&DDSketch>,
+    mut sketch: *mut Handle<DDSketch>,
 ) -> ffi::Vec<DDSketchBin> {
-    let sketch = match sketch {
-        Some(s) => s,
-        None => return ffi::Vec::new(),
+    let sketch_ref = match sketch.to_inner_mut() {
+        Ok(s) => s,
+        Err(_) => return ffi::Vec::new(),
     };
 
-    let bins = sketch.ordered_bins();
+    let bins = sketch_ref.ordered_bins();
     let result: Vec<DDSketchBin> = bins
         .into_iter()
         .map(|(value, weight)| DDSketchBin { value, weight })
@@ -50,20 +51,22 @@ pub unsafe extern "C" fn ddog_ddsketch_bins_drop(bins: ffi::Vec<DDSketchBin>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_ddsketch::DDSketch;
 
     #[test]
     fn test_ddsketch_bins() {
-        let mut sketch = DDSketch::default();
-        sketch.add(1.0).unwrap();
-        sketch.add(2.0).unwrap();
-        sketch.add(3.0).unwrap();
+        use crate::ddog_ddsketch_new;
 
         unsafe {
-            let bins = ddog_ddsketch_ordered_bins(Some(&sketch));
+            let mut sketch = ddog_ddsketch_new();
+            let _ = crate::ddog_ddsketch_add(&mut sketch, 1.0);
+            let _ = crate::ddog_ddsketch_add(&mut sketch, 2.0);
+            let _ = crate::ddog_ddsketch_add(&mut sketch, 3.0);
+
+            let bins = ddog_ddsketch_ordered_bins(&mut sketch);
             assert!(!bins.is_empty());
 
             ddog_ddsketch_bins_drop(bins);
+            crate::ddog_ddsketch_drop(&mut sketch);
         }
     }
 

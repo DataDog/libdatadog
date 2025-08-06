@@ -19,31 +19,30 @@
 
 int main(void) {
   // Create a new DDSketch
-  ddog_DDSketch *sketch = NULL;
-  TRY(ddog_ddsketch_new(&sketch));
+  struct ddog_Handle_DDSketch sketch = ddog_ddsketch_new();
 
   printf("Created DDSketch successfully\n");
 
   // Add some sample data points
   printf("Adding sample data points...\n");
-  TRY(ddog_ddsketch_add(sketch, 1.0));
-  TRY(ddog_ddsketch_add(sketch, 2.5));
-  TRY(ddog_ddsketch_add(sketch, 5.0));
-  TRY(ddog_ddsketch_add(sketch, 10.0));
-  TRY(ddog_ddsketch_add(sketch, 15.0));
+  TRY(ddog_ddsketch_add(&sketch, 1.0));
+  TRY(ddog_ddsketch_add(&sketch, 2.5));
+  TRY(ddog_ddsketch_add(&sketch, 5.0));
+  TRY(ddog_ddsketch_add(&sketch, 10.0));
+  TRY(ddog_ddsketch_add(&sketch, 15.0));
 
   // Add points with specific counts
   printf("Adding points with specific counts...\n");
-  TRY(ddog_ddsketch_add_with_count(sketch, 3.0, 5.0));  // Add 3.0 with count 5
-  TRY(ddog_ddsketch_add_with_count(sketch, 7.0, 3.0));  // Add 7.0 with count 3
+  TRY(ddog_ddsketch_add_with_count(&sketch, 3.0, 5.0));  // Add 3.0 with count 5
+  TRY(ddog_ddsketch_add_with_count(&sketch, 7.0, 3.0));  // Add 7.0 with count 3
 
   // Get the total count
-  double count = ddog_ddsketch_count(sketch);
+  double count = ddog_ddsketch_count(&sketch);
   printf("Total count in sketch: %.0f\n", count);
 
   // Get the ordered bins (buckets)
   printf("Getting ordered bins...\n");
-  ddog_Vec_DDSketchBin bins = ddog_ddsketch_ordered_bins(sketch);
+  ddog_Vec_DDSketchBin bins = ddog_ddsketch_ordered_bins(&sketch);
   
   printf("Number of bins: %zu\n", bins.len);
   for (size_t i = 0; i < bins.len; i++) {
@@ -55,7 +54,7 @@ int main(void) {
 
   // Encode the sketch to protobuf format
   printf("Encoding sketch to protobuf...\n");
-  struct ddog_Vec_u8 encoded = ddog_ddsketch_encode(sketch);
+  struct ddog_Vec_u8 encoded = ddog_ddsketch_encode(&sketch);
   
   printf("Encoded sketch size: %zu bytes\n", encoded.len);
   

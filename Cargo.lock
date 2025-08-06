@@ -1974,7 +1974,7 @@ dependencies = [
 
 [[package]]
 name = "ddsketch-ffi"
-version = "19.0.1"
+version = "19.1.0"
 dependencies = [
  "build_common",
  "datadog-ddsketch",
