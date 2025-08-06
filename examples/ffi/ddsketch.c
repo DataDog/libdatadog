@@ -19,7 +19,7 @@
 
 int main(void) {
   // Create a new DDSketch
-  struct ddog_Handle_DDSketch sketch = ddog_ddsketch_new();
+  struct ddsketch_Handle_DDSketch sketch = ddog_ddsketch_new();
 
   printf("Created DDSketch successfully\n");
 
@@ -42,7 +42,7 @@ int main(void) {
 
   // Get the ordered bins (buckets)
   printf("Getting ordered bins...\n");
-  ddog_Vec_DDSketchBin bins = ddog_ddsketch_ordered_bins(&sketch);
+  struct ddsketch_Vec_DDSketchBin bins = ddog_ddsketch_ordered_bins(&sketch);
   
   printf("Number of bins: %zu\n", bins.len);
   for (size_t i = 0; i < bins.len; i++) {
@@ -54,7 +54,7 @@ int main(void) {
 
   // Encode the sketch to protobuf format
   printf("Encoding sketch to protobuf...\n");
-  struct ddog_Vec_u8 encoded = ddog_ddsketch_encode(&sketch);
+  struct ddsketch_Vec_u8 encoded = ddog_ddsketch_encode(&sketch);
   
   printf("Encoded sketch size: %zu bytes\n", encoded.len);
   
