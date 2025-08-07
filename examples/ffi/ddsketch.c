@@ -37,7 +37,8 @@ int main(void) {
   TRY(ddog_ddsketch_add_with_count(&sketch, 7.0, 3.0));  // Add 7.0 with count 3
 
   // Get the total count
-  double count = ddog_ddsketch_count(&sketch);
+  double count = 0.0;
+  TRY(ddog_ddsketch_count(&sketch, &count));
   printf("Total count in sketch: %.0f\n", count);
 
   // Get the ordered bins (buckets)

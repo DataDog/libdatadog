@@ -10,6 +10,7 @@
 use datadog_ddsketch::DDSketch;
 use ddcommon_ffi as ffi;
 use ddcommon_ffi::{Handle, ToInner};
+use std::mem::MaybeUninit;
 
 mod error;
 mod sketch;
@@ -88,18 +89,28 @@ pub unsafe extern "C" fn ddog_ddsketch_add_with_count(
     }
 }
 
-/// Returns the count of points in the DDSketch.
+/// Returns the count of points in the DDSketch via the output parameter.
 ///
 /// # Safety
 ///
 /// The `sketch` parameter must be a valid pointer to a DDSketch handle.
-/// Returns 0.0 if sketch is null.
+/// The `count_out` parameter must be a valid pointer to uninitialized f64 memory.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ddsketch_count(mut sketch: *mut Handle<DDSketch>) -> f64 {
-    match sketch.to_inner_mut() {
-        Ok(s) => s.count(),
-        Err(_) => 0.0,
+pub unsafe extern "C" fn ddog_ddsketch_count(
+    mut sketch: *mut Handle<DDSketch>,
+    count_out: *mut MaybeUninit<f64>,
+) -> Option<Box<DDSketchError>> {
+    if count_out.is_null() {
+        return gen_error!(DDSketchErrorCode::InvalidArgument);
     }
+
+    let sketch_ref = match sketch.to_inner_mut() {
+        Ok(s) => s,
+        Err(_) => return gen_error!(DDSketchErrorCode::InvalidArgument),
+    };
+
+    count_out.write(MaybeUninit::new(sketch_ref.count()));
+    None
 }
 
 /// Returns the protobuf-encoded bytes of the DDSketch.
@@ -140,7 +151,10 @@ mod tests {
             let result = ddog_ddsketch_add(&mut sketch, 1.0);
             assert!(result.is_none());
 
-            let count = ddog_ddsketch_count(&mut sketch);
+            let mut count = MaybeUninit::uninit();
+            let result = ddog_ddsketch_count(&mut sketch, &mut count);
+            assert!(result.is_none());
+            let count = count.assume_init();
             assert_eq!(count, 1.0);
 
             ddog_ddsketch_drop(&mut sketch);
@@ -155,7 +169,10 @@ mod tests {
             let result = ddog_ddsketch_add_with_count(&mut sketch, 2.0, 3.0);
             assert!(result.is_none());
 
-            let count = ddog_ddsketch_count(&mut sketch);
+            let mut count = MaybeUninit::uninit();
+            let result = ddog_ddsketch_count(&mut sketch, &mut count);
+            assert!(result.is_none());
+            let count = count.assume_init();
             assert_eq!(count, 3.0);
 
             ddog_ddsketch_drop(&mut sketch);
