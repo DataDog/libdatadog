@@ -48,7 +48,7 @@ impl<T> PlatformHandle<T>
 where
     T: SocketlikeViewType,
 {
-    pub fn as_socketlike_view(&self) -> io::Result<SocketlikeView<T>> {
+    pub fn as_socketlike_view(&self) -> io::Result<SocketlikeView<'_, T>> {
         Ok(self.as_owned_fd()?.as_socketlike_view())
     }
 }

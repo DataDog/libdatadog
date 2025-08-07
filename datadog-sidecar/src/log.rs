@@ -172,7 +172,7 @@ impl MultiEnvFilter {
         }
     }
 
-    pub fn add(&self, key: String) -> TemporarilyRetainedMapGuard<String, EnvFilter> {
+    pub fn add(&self, key: String) -> TemporarilyRetainedMapGuard<'_, String, EnvFilter> {
         self.map.add(key)
     }
 
