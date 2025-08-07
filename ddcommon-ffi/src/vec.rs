@@ -5,7 +5,6 @@ extern crate alloc;
 
 use crate::slice::Slice;
 use core::ops::Deref;
-use std::io::Write;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
@@ -74,9 +73,7 @@ impl<T> From<alloc::vec::Vec<T>> for Vec<T> {
 
 impl From<anyhow::Error> for Vec<u8> {
     fn from(err: anyhow::Error) -> Self {
-        let mut vec = vec![];
-        write!(vec, "{err}").expect("write to vec to always succeed");
-        Self::from(vec)
+        Self::from(err.to_string().into_bytes())
     }
 }
 
@@ -105,7 +102,7 @@ impl<T> Vec<T> {
         self.replace(vec);
     }
 
-    pub fn as_slice(&self) -> Slice<T> {
+    pub fn as_slice(&self) -> Slice<'_, T> {
         unsafe { Slice::from_raw_parts(self.ptr, self.len) }
     }
 

@@ -58,7 +58,7 @@ impl<P> Deref for RawFileContentsGuard<'_, P> {
 
 impl<P> RawFile<P> {
     /// Gets the contents behind a Deref impl (guarding a Mutex).
-    pub fn contents(&self) -> RawFileContentsGuard<P> {
+    pub fn contents(&self) -> RawFileContentsGuard<'_, P> {
         RawFileContentsGuard(self.data.lock_or_panic())
     }
 

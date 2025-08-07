@@ -150,7 +150,7 @@ impl<S> ConfigFetcherState<S> {
     /// - This files_lock() must always be called prior to locking any data structure locked within
     ///   FileStorage::store().
     /// - Also, files_lock() must not be called from within FileStorage::store().
-    pub fn files_lock(&self) -> ConfigFetcherFilesLock<S> {
+    pub fn files_lock(&self) -> ConfigFetcherFilesLock<'_, S> {
         assert!(!self.expire_unused_files);
         ConfigFetcherFilesLock {
             inner: self.target_files_by_path.lock_or_panic(),

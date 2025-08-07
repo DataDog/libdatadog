@@ -141,14 +141,14 @@ impl Display for Condition {
             Condition::Never => f.write_str("false"),
             Condition::Disjunction(b) => {
                 let (x, y) = &**b;
-                fn is_nonassoc(condition: &Condition) -> NonAssocBoolOp {
+                fn is_nonassoc(condition: &Condition) -> NonAssocBoolOp<'_> {
                     NonAssocBoolOp(condition, matches!(condition, Condition::Conjunction(_)))
                 }
                 write!(f, "{} || {}", is_nonassoc(x), is_nonassoc(y))
             }
             Condition::Conjunction(b) => {
                 let (x, y) = &**b;
-                fn is_nonassoc(condition: &Condition) -> NonAssocBoolOp {
+                fn is_nonassoc(condition: &Condition) -> NonAssocBoolOp<'_> {
                     NonAssocBoolOp(condition, matches!(condition, Condition::Disjunction(_)))
                 }
                 write!(f, "{} && {}", is_nonassoc(x), is_nonassoc(y))

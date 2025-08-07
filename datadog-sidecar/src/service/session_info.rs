@@ -144,11 +144,13 @@ impl SessionInfo {
         }
     }
 
-    pub(crate) fn lock_runtimes(&self) -> MutexGuard<HashMap<String, RuntimeInfo>> {
+    pub(crate) fn lock_runtimes(&self) -> MutexGuard<'_, HashMap<String, RuntimeInfo>> {
         self.runtimes.lock_or_panic()
     }
 
-    pub(crate) fn get_telemetry_config(&self) -> MutexGuard<Option<ddtelemetry::config::Config>> {
+    pub(crate) fn get_telemetry_config(
+        &self,
+    ) -> MutexGuard<'_, Option<ddtelemetry::config::Config>> {
         let mut cfg = self.session_config.lock_or_panic();
 
         if (*cfg).is_none() {
@@ -167,7 +169,7 @@ impl SessionInfo {
         }
     }
 
-    pub(crate) fn get_trace_config(&self) -> MutexGuard<tracer::Config> {
+    pub(crate) fn get_trace_config(&self) -> MutexGuard<'_, tracer::Config> {
         self.tracer_config.lock_or_panic()
     }
 
@@ -178,7 +180,7 @@ impl SessionInfo {
         f(&mut self.get_trace_config());
     }
 
-    pub(crate) fn get_dogstatsd(&self) -> MutexGuard<Option<dogstatsd_client::Client>> {
+    pub(crate) fn get_dogstatsd(&self) -> MutexGuard<'_, Option<dogstatsd_client::Client>> {
         self.dogstatsd.lock_or_panic()
     }
 
@@ -189,7 +191,7 @@ impl SessionInfo {
         f(&mut self.get_dogstatsd());
     }
 
-    pub fn get_debugger_config(&self) -> MutexGuard<datadog_live_debugger::sender::Config> {
+    pub fn get_debugger_config(&self) -> MutexGuard<'_, datadog_live_debugger::sender::Config> {
         self.debugger_config.lock_or_panic()
     }
 
@@ -204,7 +206,7 @@ impl SessionInfo {
         *self.remote_config_invariants.lock_or_panic() = Some(invariants);
     }
 
-    pub fn get_remote_config_invariants(&self) -> MutexGuard<Option<ConfigInvariants>> {
+    pub fn get_remote_config_invariants(&self) -> MutexGuard<'_, Option<ConfigInvariants>> {
         self.remote_config_invariants.lock_or_panic()
     }
 

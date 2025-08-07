@@ -96,7 +96,7 @@ pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
 /// # Safety
 /// Only pass null or a valid reference to a `ddog_Error`.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_Error_message(error: Option<&Error>) -> CharSlice {
+pub unsafe extern "C" fn ddog_Error_message(error: Option<&Error>) -> CharSlice<'_> {
     match error {
         None => CharSlice::empty(),
         Some(err) => CharSlice::from(err.as_ref()),

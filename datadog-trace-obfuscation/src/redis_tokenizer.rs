@@ -21,7 +21,7 @@ pub struct RedisTokenizerScanResult<'a> {
 }
 
 impl<'a> RedisTokenizer<'a> {
-    pub fn new(query: &str) -> RedisTokenizer {
+    pub fn new(query: &str) -> RedisTokenizer<'_> {
         let mut s = RedisTokenizer {
             data: query,
             offset: 0,
