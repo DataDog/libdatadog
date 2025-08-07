@@ -990,10 +990,7 @@ impl TelemetryWorkerBuilder {
     /// Build the corresponding worker and it's handle.
     /// The runtime handle is wrapped in the worker handle and should be the one used to run the
     /// worker task.
-    pub fn build_worker(
-        self,
-        tokio_runtime: Handle,
-    ) -> Result<(TelemetryWorkerHandle, TelemetryWorker)> {
+    pub fn build_worker(self, tokio_runtime: Handle) -> (TelemetryWorkerHandle, TelemetryWorker) {
         let (tx, mailbox) = mpsc::channel(5000);
         let shutdown = Arc::new(InnerTelemetryShutdown {
             is_shutdown: Mutex::new(false),
@@ -1040,7 +1037,7 @@ impl TelemetryWorkerBuilder {
             cancellation_token: token.clone(),
         };
 
-        Ok((
+        (
             TelemetryWorkerHandle {
                 sender: tx,
                 shutdown,
@@ -1049,19 +1046,19 @@ impl TelemetryWorkerBuilder {
                 contexts,
             },
             worker,
-        ))
+        )
     }
 
     /// Spawns a telemetry worker task in the current tokio runtime
-    /// The worker will capture a reference to the runtime and use it to run it's tasks
-    pub async fn spawn(self) -> Result<(TelemetryWorkerHandle, JoinHandle<()>)> {
+    /// The worker will capture a reference to the runtime and use it to run its tasks
+    pub fn spawn(self) -> (TelemetryWorkerHandle, JoinHandle<()>) {
         let tokio_runtime = tokio::runtime::Handle::current();
 
-        let (worker_handle, mut worker) = self.build_worker(tokio_runtime.clone())?;
+        let (worker_handle, mut worker) = self.build_worker(tokio_runtime.clone());
 
         let join_handle = tokio_runtime.spawn(async move { worker.run().await });
 
-        Ok((worker_handle, join_handle))
+        (worker_handle, join_handle)
     }
 
     /// Spawns a telemetry worker in a new thread and returns a handle to interact with it
@@ -1069,7 +1066,7 @@ impl TelemetryWorkerBuilder {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let (handle, mut worker) = self.build_worker(runtime.handle().clone())?;
+        let (handle, mut worker) = self.build_worker(runtime.handle().clone());
         let notify_shutdown = handle.shutdown.clone();
         std::thread::spawn(move || {
             runtime.block_on(worker.run());

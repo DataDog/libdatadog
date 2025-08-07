@@ -268,24 +268,20 @@ impl TraceExporterBuilder {
             }
         }
 
-        let telemetry = if let Some(telemetry_config) = self.telemetry {
-            Some(runtime.block_on(async {
-                let mut builder = TelemetryClientBuilder::default()
-                    .set_language(&self.language)
-                    .set_language_version(&self.language_version)
-                    .set_service_name(&self.service)
-                    .set_tracer_version(&self.tracer_version)
-                    .set_heartbeat(telemetry_config.heartbeat)
-                    .set_url(base_url)
-                    .set_debug_enabled(telemetry_config.debug_enabled);
-                if let Some(id) = telemetry_config.runtime_id {
-                    builder = builder.set_runtime_id(&id);
-                }
-                builder.build(runtime.handle().clone())
-            })?)
-        } else {
-            None
-        };
+        let telemetry = self.telemetry.map(|telemetry_config| {
+            let mut builder = TelemetryClientBuilder::default()
+                .set_language(&self.language)
+                .set_language_version(&self.language_version)
+                .set_service_name(&self.service)
+                .set_tracer_version(&self.tracer_version)
+                .set_heartbeat(telemetry_config.heartbeat)
+                .set_url(base_url)
+                .set_debug_enabled(telemetry_config.debug_enabled);
+            if let Some(id) = telemetry_config.runtime_id {
+                builder = builder.set_runtime_id(&id);
+            }
+            builder.build(runtime.handle().clone())
+        });
 
         let (telemetry_client, telemetry_worker) = match telemetry {
             Some((client, worker)) => {
