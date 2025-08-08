@@ -10,3 +10,9 @@ kind: mergegate
 rules:
   - require: pull-request-freshness
     max_age: 10d
+  - require: all-files-are-owned
+  - require: reviewers-approval
+    source_patterns:
+      - data-pipeline/**
+      - data-pipeline-ffi/**
+      - datadog-tracer-flare/**
