@@ -53,7 +53,7 @@ impl From<Box<dyn std::error::Error>> for DDSketchError {
 ///
 /// Only pass null or a pointer to a valid DDSketchError created by this library.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ddsketch_error_free(error: Option<Box<DDSketchError>>) {
+pub unsafe extern "C" fn ddog_ddsketch_error_drop(error: Option<Box<DDSketchError>>) {
     drop(error)
 }
 
@@ -80,7 +80,6 @@ mod tests {
         let msg = error.msg.as_cstr().into_std().to_str().unwrap();
         assert_eq!(msg, DDSketchErrorCode::InvalidArgument.to_string());
 
-        unsafe { ddog_ddsketch_error_free(Some(error)) };
+        unsafe { ddog_ddsketch_error_drop(Some(error)) };
     }
-
 }

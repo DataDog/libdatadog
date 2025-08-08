@@ -12,7 +12,7 @@
     if (err != NULL) {                                                                            \
       const char *message = err->msg.ptr;                                                         \
       fprintf(stderr, "ERROR: %s\n", message);                                                   \
-      ddog_ddsketch_error_free(err);                                                              \
+      ddog_ddsketch_error_drop(err);                                                              \
       return 1;                                                                                   \
     }                                                                                             \
   }
@@ -65,6 +65,9 @@ int main(void) {
     printf("%02x ", encoded.ptr[i]);
   }
   printf("\n");
+
+  // Clean up the encoded vector
+  ddog_Vec_U8_drop(encoded);
 
   // Clean up the sketch (note: sketch is consumed by ddog_ddsketch_encode)
   // ddog_ddsketch_drop is not called here because the sketch was consumed

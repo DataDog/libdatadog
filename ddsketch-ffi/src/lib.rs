@@ -131,6 +131,17 @@ pub unsafe extern "C" fn ddog_ddsketch_encode(mut sketch: *mut Handle<DDSketch>)
     }
 }
 
+/// Frees the memory allocated for a Vec<u8> returned by ddsketch functions.
+///
+/// # Safety
+///
+/// The vec parameter must be a valid Vec<u8> returned by this library.
+/// After being called, the vec will not point to valid memory.
+#[no_mangle]
+pub extern "C" fn ddog_Vec_U8_drop(_vec: ffi::Vec<u8>) {
+    // The Vec will be automatically dropped when it goes out of scope
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,7 +202,8 @@ mod tests {
             assert!(!encoded.is_empty());
 
             // sketch is consumed by encode, so no need to drop it
-            drop(encoded);
+            // Clean up the encoded Vec
+            ddog_Vec_U8_drop(encoded);
         }
     }
 }
