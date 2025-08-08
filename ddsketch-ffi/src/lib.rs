@@ -9,7 +9,7 @@
 
 use datadog_ddsketch::DDSketch;
 use ddcommon_ffi as ffi;
-use ddcommon_ffi::{Handle, ToInner};
+use ddcommon_ffi::{Error, Handle, ToInner, VoidResult};
 use std::mem::MaybeUninit;
 
 mod error;
@@ -18,10 +18,10 @@ mod sketch;
 pub use error::*;
 pub use sketch::*;
 
-macro_rules! gen_error {
-    ($l:expr) => {
-        Some(Box::new(DDSketchError::new($l, &$l.to_string())))
-    };
+const NULL_POINTER_ERROR: &str = "null pointer provided";
+
+fn ddsketch_error(msg: &str) -> Error {
+    Error::from(msg)
 }
 
 /// Creates a new DDSketch instance with default configuration.
@@ -49,18 +49,15 @@ pub unsafe extern "C" fn ddog_ddsketch_drop(mut sketch: *mut Handle<DDSketch>) {
 pub unsafe extern "C" fn ddog_ddsketch_add(
     mut sketch: *mut Handle<DDSketch>,
     point: f64,
-) -> Option<Box<DDSketchError>> {
+) -> VoidResult {
     let sketch_ref = match sketch.to_inner_mut() {
         Ok(s) => s,
-        Err(_) => return gen_error!(DDSketchErrorCode::InvalidArgument),
+        Err(e) => return VoidResult::Err(ddsketch_error(&e.to_string())),
     };
 
     match sketch_ref.add(point) {
-        Ok(_) => None,
-        Err(e) => Some(Box::new(DDSketchError::new(
-            DDSketchErrorCode::InvalidInput,
-            &e.to_string(),
-        ))),
+        Ok(_) => VoidResult::Ok,
+        Err(e) => VoidResult::Err(ddsketch_error(&e.to_string())),
     }
 }
 
@@ -74,18 +71,15 @@ pub unsafe extern "C" fn ddog_ddsketch_add_with_count(
     mut sketch: *mut Handle<DDSketch>,
     point: f64,
     count: f64,
-) -> Option<Box<DDSketchError>> {
+) -> VoidResult {
     let sketch_ref = match sketch.to_inner_mut() {
         Ok(s) => s,
-        Err(_) => return gen_error!(DDSketchErrorCode::InvalidArgument),
+        Err(e) => return VoidResult::Err(ddsketch_error(&e.to_string())),
     };
 
     match sketch_ref.add_with_count(point, count) {
-        Ok(_) => None,
-        Err(e) => Some(Box::new(DDSketchError::new(
-            DDSketchErrorCode::InvalidInput,
-            &e.to_string(),
-        ))),
+        Ok(_) => VoidResult::Ok,
+        Err(e) => VoidResult::Err(ddsketch_error(&e.to_string())),
     }
 }
 
@@ -99,18 +93,18 @@ pub unsafe extern "C" fn ddog_ddsketch_add_with_count(
 pub unsafe extern "C" fn ddog_ddsketch_count(
     mut sketch: *mut Handle<DDSketch>,
     count_out: *mut MaybeUninit<f64>,
-) -> Option<Box<DDSketchError>> {
+) -> VoidResult {
     if count_out.is_null() {
-        return gen_error!(DDSketchErrorCode::InvalidArgument);
+        return VoidResult::Err(ddsketch_error(NULL_POINTER_ERROR));
     }
 
     let sketch_ref = match sketch.to_inner_mut() {
         Ok(s) => s,
-        Err(_) => return gen_error!(DDSketchErrorCode::InvalidArgument),
+        Err(e) => return VoidResult::Err(ddsketch_error(&e.to_string())),
     };
 
     count_out.write(MaybeUninit::new(sketch_ref.count()));
-    None
+    VoidResult::Ok
 }
 
 /// Returns the protobuf-encoded bytes of the DDSketch.
@@ -160,11 +154,11 @@ mod tests {
             let mut sketch = ddog_ddsketch_new();
 
             let result = ddog_ddsketch_add(&mut sketch, 1.0);
-            assert!(result.is_none());
+            assert!(matches!(result, VoidResult::Ok));
 
             let mut count = MaybeUninit::uninit();
             let result = ddog_ddsketch_count(&mut sketch, &mut count);
-            assert!(result.is_none());
+            assert!(matches!(result, VoidResult::Ok));
             let count = count.assume_init();
             assert_eq!(count, 1.0);
 
@@ -178,11 +172,11 @@ mod tests {
             let mut sketch = ddog_ddsketch_new();
 
             let result = ddog_ddsketch_add_with_count(&mut sketch, 2.0, 3.0);
-            assert!(result.is_none());
+            assert!(matches!(result, VoidResult::Ok));
 
             let mut count = MaybeUninit::uninit();
             let result = ddog_ddsketch_count(&mut sketch, &mut count);
-            assert!(result.is_none());
+            assert!(matches!(result, VoidResult::Ok));
             let count = count.assume_init();
             assert_eq!(count, 3.0);
 
@@ -204,6 +198,35 @@ mod tests {
             // sketch is consumed by encode, so no need to drop it
             // Clean up the encoded Vec
             ddog_Vec_U8_drop(encoded);
+        }
+    }
+
+    #[test]
+    fn test_error_messages() {
+        unsafe {
+            let mut sketch = ddog_ddsketch_new();
+
+            // invalid point
+            let result = ddog_ddsketch_add(&mut sketch, -1.0);
+            match result {
+                VoidResult::Err(err) => {
+                    let msg = err.as_ref();
+                    assert!(msg.contains("point is invalid"));
+                }
+                VoidResult::Ok => panic!("Expected error for negative point"),
+            }
+
+            // invalid count
+            let result = ddog_ddsketch_add_with_count(&mut sketch, 1.0, f64::NAN);
+            match result {
+                VoidResult::Err(err) => {
+                    let msg = err.as_ref();
+                    assert!(msg.contains("count is invalid"));
+                }
+                VoidResult::Ok => panic!("Expected error for NaN count"),
+            }
+
+            ddog_ddsketch_drop(&mut sketch);
         }
     }
 }

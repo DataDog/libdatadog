@@ -8,11 +8,11 @@
 
 #define TRY(expr)                                                                                  \
   {                                                                                                \
-    struct DDSketchError *err = expr;                                                             \
-    if (err != NULL) {                                                                            \
-      const char *message = err->msg.ptr;                                                         \
-      fprintf(stderr, "ERROR: %s\n", message);                                                   \
-      ddog_ddsketch_error_drop(err);                                                              \
+    struct ddsketch_VoidResult result = expr;                                                     \
+    if (result.tag == DDSKETCH_VOID_RESULT_ERR) {                                                \
+      ddog_CharSlice message = ddog_Error_message((struct ddog_Error*)&result.err);             \
+      fprintf(stderr, "ERROR: %.*s\n", (int)message.len, message.ptr);                          \
+      ddog_Error_drop((struct ddog_Error*)&result.err);                                         \
       return 1;                                                                                   \
     }                                                                                             \
   }
