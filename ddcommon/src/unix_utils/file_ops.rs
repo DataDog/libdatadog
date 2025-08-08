@@ -161,8 +161,7 @@ mod tests {
         // Test with a path that should cause permission denied
         // This test might not work on all systems, so we'll make it conditional
         let result = open_file_or_quiet(Some("/root/protected_file.txt"));
-        if result.is_err() {
-            let error = result.unwrap_err();
+        if let Err(error) = result {
             // On some systems this might be NotFound, on others PermissionDenied
             assert!(matches!(
                 error.kind(),

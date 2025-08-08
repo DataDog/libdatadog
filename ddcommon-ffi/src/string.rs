@@ -65,7 +65,7 @@ pub unsafe extern "C" fn ddog_StringWrapper_drop(s: Option<&mut StringWrapper>) 
 /// Only pass null or a valid reference to a `ddog_StringWrapper`.
 /// The string should not be mutated nor dropped while the CharSlice is alive.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_StringWrapper_message(s: Option<&StringWrapper>) -> CharSlice {
+pub unsafe extern "C" fn ddog_StringWrapper_message(s: Option<&StringWrapper>) -> CharSlice<'_> {
     match s {
         None => CharSlice::empty(),
         Some(s) => CharSlice::from(s.as_ref()),

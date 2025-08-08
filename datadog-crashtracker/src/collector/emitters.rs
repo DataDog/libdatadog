@@ -71,31 +71,39 @@ unsafe fn emit_backtrace_by_frames(
         }
         if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
             backtrace::resolve_frame_unsynchronized(frame, |symbol| {
+                #[allow(clippy::unwrap_used)]
                 write!(w, "{{").unwrap();
                 #[allow(clippy::unwrap_used)]
                 emit_absolute_addresses(w, frame).unwrap();
                 if let Some(column) = symbol.colno() {
+                    #[allow(clippy::unwrap_used)]
                     write!(w, ", \"column\": {column}").unwrap();
                 }
                 if let Some(file) = symbol.filename() {
                     // The debug printer for path already wraps it in `"` marks.
+                    #[allow(clippy::unwrap_used)]
                     write!(w, ", \"file\": {file:?}").unwrap();
                 }
                 if let Some(function) = symbol.name() {
+                    #[allow(clippy::unwrap_used)]
                     write!(w, ", \"function\": \"{function}\"").unwrap();
                 }
                 if let Some(line) = symbol.lineno() {
+                    #[allow(clippy::unwrap_used)]
                     write!(w, ", \"line\": {line}").unwrap();
                 }
+                #[allow(clippy::unwrap_used)]
                 writeln!(w, "}}").unwrap();
                 // Flush eagerly to ensure that each frame gets emitted even if the next one fails
                 #[allow(clippy::unwrap_used)]
                 w.flush().unwrap();
             });
         } else {
+            #[allow(clippy::unwrap_used)]
             write!(w, "{{").unwrap();
             #[allow(clippy::unwrap_used)]
             emit_absolute_addresses(w, frame).unwrap();
+            #[allow(clippy::unwrap_used)]
             writeln!(w, "}}").unwrap();
             // Flush eagerly to ensure that each frame gets emitted even if the next one fails
             #[allow(clippy::unwrap_used)]

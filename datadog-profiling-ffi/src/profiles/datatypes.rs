@@ -762,7 +762,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
 
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &ddcommon_ffi::Vec<u8>) -> Slice<u8> {
+pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &ddcommon_ffi::Vec<u8>) -> Slice<'_, u8> {
     vec.as_slice()
 }
 

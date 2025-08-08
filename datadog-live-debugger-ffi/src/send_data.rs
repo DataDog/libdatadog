@@ -392,7 +392,9 @@ pub extern "C" fn ddog_snapshot_push_stack_frame_with_column<'a, 'b: 'a, 'c: 'a>
 
 #[no_mangle]
 #[allow(clippy::ptr_arg)]
-pub extern "C" fn ddog_evaluation_error_first_msg(vec: &Vec<SnapshotEvaluationError>) -> CharSlice {
+pub extern "C" fn ddog_evaluation_error_first_msg(
+    vec: &Vec<SnapshotEvaluationError>,
+) -> CharSlice<'_> {
     CharSlice::from(vec[0].message.as_str())
 }
 

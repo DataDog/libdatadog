@@ -58,7 +58,7 @@ impl RuntimeInfo {
     ///
     /// * `MutexGuard<HashMap<QueueId, ActiveApplications>>` - A mutable reference to the
     ///   applications map.
-    pub(crate) fn lock_applications(&self) -> MutexGuard<HashMap<QueueId, ActiveApplication>> {
+    pub(crate) fn lock_applications(&self) -> MutexGuard<'_, HashMap<QueueId, ActiveApplication>> {
         self.applications.lock_or_panic()
     }
 }

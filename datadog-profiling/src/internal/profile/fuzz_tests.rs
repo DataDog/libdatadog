@@ -678,12 +678,6 @@ impl From<&FuzzOperation> for Operation {
     }
 }
 
-#[derive(Debug, TypeGenerator)]
-struct ApiFunctionCalls {
-    sample_types: Vec<owned_types::ValueType>,
-    operations: Vec<FuzzOperation>,
-}
-
 #[test]
 #[cfg_attr(miri, ignore)]
 fn fuzz_api_function_calls() {

@@ -896,7 +896,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_universal_service_tags(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dump(
     transport: &mut Box<SidecarTransport>,
-) -> ffi::CharSlice {
+) -> ffi::CharSlice<'_> {
     let str = match blocking::dump(transport) {
         Ok(dump) => dump,
         Err(e) => format!("{e:?}"),
@@ -913,7 +913,7 @@ pub unsafe extern "C" fn ddog_sidecar_dump(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_stats(
     transport: &mut Box<SidecarTransport>,
-) -> ffi::CharSlice {
+) -> ffi::CharSlice<'_> {
     let str = match blocking::stats(transport) {
         Ok(stats) => stats,
         Err(e) => format!("{e:?}"),
