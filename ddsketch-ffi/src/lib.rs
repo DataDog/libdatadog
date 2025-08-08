@@ -13,10 +13,8 @@ use ddcommon_ffi::{Error, Handle, ToInner, VoidResult};
 use std::mem::MaybeUninit;
 
 mod error;
-mod sketch;
 
 pub use error::*;
-pub use sketch::*;
 
 const NULL_POINTER_ERROR: &str = "null pointer provided";
 

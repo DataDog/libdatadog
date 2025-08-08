@@ -41,17 +41,6 @@ int main(void) {
   TRY(ddog_ddsketch_count(&sketch, &count));
   printf("Total count in sketch: %.0f\n", count);
 
-  // Get the ordered bins (buckets)
-  printf("Getting ordered bins...\n");
-  struct ddsketch_Vec_DDSketchBin bins = ddog_ddsketch_ordered_bins(&sketch);
-  
-  printf("Number of bins: %zu\n", bins.len);
-  for (size_t i = 0; i < bins.len; i++) {
-    printf("  Bin %zu: value=%.2f, weight=%.0f\n", i, bins.ptr[i].value, bins.ptr[i].weight);
-  }
-
-  // Clean up bins
-  ddog_ddsketch_bins_drop(bins);
 
   // Encode the sketch to protobuf format
   printf("Encoding sketch to protobuf...\n");
