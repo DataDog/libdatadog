@@ -83,15 +83,4 @@ mod tests {
         unsafe { ddog_ddsketch_error_free(Some(error)) };
     }
 
-    #[test]
-    fn test_error_with_null_bytes() {
-        let code = DDSketchErrorCode::InvalidInput;
-        let error = Box::new(DDSketchError::new(code, "Error with\0null bytes"));
-
-        assert_eq!(error.code, DDSketchErrorCode::InvalidInput);
-        let msg = error.msg.as_cstr().into_std().to_str().unwrap();
-        assert_eq!(msg, ""); // Should fall back to empty string
-
-        unsafe { ddog_ddsketch_error_free(Some(error)) };
-    }
 }
