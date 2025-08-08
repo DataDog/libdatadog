@@ -1,22 +1,30 @@
-
 # Build FFI examples
 
-In order to be able to run FFI examples, you need to build the shared library and headers with the command:
-```bash
-cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker,library-config,log,ddsketch --release -- --out
-```
-
-You can then build the examples with:
+To build the FFI libraries, headers, and example executables, run this command from the project root directory:
 
 ```bash
-# Run the below commands at the root level
-cmake -S examples/ffi -B examples/ffi/build -D Datadog_ROOT=./release
-cmake --build ./examples/ffi/build
+./examples/ffi/build-examples.sh
 ```
+
+This will automatically build the FFI libraries and compile all the example executables.
+
+## Adding new FFI examples
+
+When adding an example for a new FFI crate, you may need to update the features list in the build script to ensure the
+crate is included in the build:
+
+1. Open `build-examples.sh`
+2. Find the `FEATURES` array
+3. Add your new feature to the array
+4. The script will automatically include it in the build
 
 # Run FFI examples
 
 The build command will create executables in the examples/ffi/build folder. You can run any of them with:
-````
-./examples/ffi/build/test-name
-````
+
+```
+./examples/ffi/build/ddsketch
+./examples/ffi/build/telemetry
+./examples/ffi/build/crashtracker
+# ... etc
+```
