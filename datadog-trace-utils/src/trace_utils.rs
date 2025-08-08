@@ -375,7 +375,7 @@ pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
     Ok(match root_span_id {
         Some(i) => i,
         None => {
-            error!(
+            debug!(
                 trace_id = &trace[0].trace_id,
                 "Could not find the root span for trace"
             );
