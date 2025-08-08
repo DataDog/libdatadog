@@ -12,10 +12,6 @@ use ddcommon_ffi as ffi;
 use ddcommon_ffi::{Error, Handle, ToInner, VoidResult};
 use std::mem::MaybeUninit;
 
-mod error;
-
-pub use error::*;
-
 const NULL_POINTER_ERROR: &str = "null pointer provided";
 
 fn ddsketch_error(msg: &str) -> Error {
