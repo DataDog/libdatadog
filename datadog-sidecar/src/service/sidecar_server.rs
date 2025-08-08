@@ -49,6 +49,7 @@ use datadog_live_debugger::sender::DebuggerType;
 use datadog_remote_config::fetch::{ConfigInvariants, MultiTargetStats};
 use datadog_trace_utils::tracer_header_tags::TracerHeaderTags;
 use ddcommon::tag::Tag;
+use ddtelemetry::config::Config;
 use dogstatsd_client::{new, DogStatsDActionOwned};
 use tinybytes;
 
@@ -386,6 +387,14 @@ impl SidecarInterface for SidecarServer {
         let mut applications = rt_info.lock_applications();
 
         if let Entry::Occupied(entry) = applications.entry(queue_id) {
+            // Avoid materializing a telemetry client just to clear it
+            if actions.len() == 1 && matches!(actions[0], SidecarAction::ClearQueueId) {
+                info!("Removing queue_id {queue_id:?} from instance {instance_id:?}");
+                entry.remove();
+
+                return no_response();
+            }
+
             let service = entry
                 .get()
                 .service_name
@@ -394,21 +403,23 @@ impl SidecarInterface for SidecarServer {
             let env = entry.get().env.as_deref().unwrap_or("none");
 
             // Lock telemetry client
-            let mut telemetry = match self.telemetry_clients.get_or_create(
+            let mut telemetry = self.telemetry_clients.get_or_create(
                 service,
                 env,
                 &instance_id,
                 &runtime_metadata,
                 || {
-                    self.get_session(&instance_id.session_id)
+                    session
                         .session_config
                         .lock_or_panic()
-                        .clone()
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            warn!("Failed to get telemetry session config for {instance_id:?}");
+                            Config::default()
+                        })
                 },
-            ) {
-                Some(client) => client,
-                None => return no_response(),
-            };
+            );
 
             let mut actions_to_process = vec![];
             let mut composer_paths_to_process = vec![];

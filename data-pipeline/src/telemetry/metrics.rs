@@ -155,9 +155,7 @@ mod tests {
             "0.1".to_string(),
             "1.0".to_string(),
         )
-        .spawn()
-        .await
-        .unwrap();
+        .spawn();
 
         let metrics = Metrics::new(&worker);
 

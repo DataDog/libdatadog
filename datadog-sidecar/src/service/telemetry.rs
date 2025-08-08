@@ -25,12 +25,12 @@ use zwohash::ZwoHasher;
 
 use ddcommon::tag::Tag;
 use ddtelemetry::worker::TelemetryWorkerBuilder;
-use futures::FutureExt;
 use serde::Deserialize;
 use std::ops::Sub;
 use std::sync::LazyLock;
 use std::time::SystemTime;
 
+use ddtelemetry::config::Config;
 use ddtelemetry::data::{self, Integration};
 use ddtelemetry::metrics::{ContextKey, MetricContext};
 use ddtelemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerHandle};
@@ -72,8 +72,8 @@ impl TelemetryCachedClient {
         env: &str,
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
-        get_config: impl FnOnce() -> Option<ddtelemetry::config::Config>,
-    ) -> Option<Self> {
+        get_config: impl FnOnce() -> ddtelemetry::config::Config,
+    ) -> Self {
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
             service.to_string(),
             runtime_meta.language_name.to_string(),
@@ -83,13 +83,13 @@ impl TelemetryCachedClient {
 
         builder.runtime_id = Some(instance_id.runtime_id.clone());
         builder.application.env = Some(env.to_string());
-        let config = get_config()?;
+        let config = get_config();
         builder.config = config.clone();
 
-        let (handle, _join) = builder.spawn().now_or_never().and_then(Result::ok)?;
+        let (handle, _join) = builder.spawn();
 
         info!("spawning telemetry worker {config:?}");
-        Some(Self {
+        Self {
             client: handle.clone(),
             shm_writer: Arc::new(
                 #[allow(clippy::unwrap_used)]
@@ -101,7 +101,7 @@ impl TelemetryCachedClient {
             buffered_composer_paths: HashSet::new(),
             telemetry_metrics: Default::default(),
             handle: Arc::new(Mutex::new(None)),
-        })
+        }
     }
 
     pub fn write_shm_file(&self) {
@@ -283,9 +283,9 @@ impl TelemetryCachedClientSet {
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
         get_config: F,
-    ) -> Option<TelemetryCachedClient>
+    ) -> TelemetryCachedClient
     where
-        F: FnOnce() -> Option<ddtelemetry::config::Config>,
+        F: FnOnce() -> ddtelemetry::config::Config,
     {
         let key = (service.to_string(), env.to_string());
 
@@ -306,11 +306,11 @@ impl TelemetryCachedClientSet {
             });
 
             info!("Reusing existing telemetry client for {key:?}");
-            return Some(client);
+            return client;
         }
 
         let client =
-            TelemetryCachedClient::new(service, env, instance_id, runtime_meta, get_config)?;
+            TelemetryCachedClient::new(service, env, instance_id, runtime_meta, get_config);
 
         map.insert(key.clone(), client.clone());
 
@@ -327,7 +327,7 @@ impl TelemetryCachedClientSet {
 
         info!("Created new telemetry client for {key:?}");
 
-        Some(client)
+        client
     }
 
     pub fn remove_telemetry_client(&self, service: &str, env: &str) {
@@ -386,25 +386,16 @@ pub(crate) async fn telemetry_action_receiver_task(sidecar: SidecarServer) {
             &actions.env_name,
         );
 
-        if let Some(telemetry_client) = telemetry_client {
-            for action in actions.actions {
-                let action_str = format!("{action:?}");
-                match telemetry_client.client.send_msg(action).await {
-                    Ok(_) => {
-                        debug!("Sent telemetry action to TelemetryWorker: {action_str}");
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to send telemetry action {action_str} to TelemetryWorker: {e}"
-                        );
-                    }
+        for action in actions.actions {
+            let action_str = format!("{action:?}");
+            match telemetry_client.client.send_msg(action).await {
+                Ok(_) => {
+                    debug!("Sent telemetry action to TelemetryWorker: {action_str}");
+                }
+                Err(e) => {
+                    warn!("Failed to send telemetry action {action_str} to TelemetryWorker: {e}");
                 }
             }
-        } else {
-            warn!(
-                "Could not get or client telemetry client for target {:?}, service {:?}, env {:?}. Action dropped.",
-                actions.instance_id, actions.service_name, actions.env_name
-            );
         }
     }
     info!("Telemetry action receiver task shutting down.");
@@ -415,7 +406,7 @@ fn get_telemetry_client(
     instance_id: &InstanceId,
     service_name: &str,
     env_name: &str,
-) -> Option<TelemetryCachedClient> {
+) -> TelemetryCachedClient {
     let session = sidecar.get_session(&instance_id.session_id);
     let trace_config = session.get_trace_config();
     let runtime_meta = RuntimeMetadata::new(
@@ -429,7 +420,12 @@ fn get_telemetry_client(
             .get_session(&instance_id.session_id)
             .session_config
             .lock_or_panic()
-            .clone()
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| {
+                warn!("Failed to get telemetry session config for {instance_id:?}.");
+                Config::default()
+            })
     };
 
     TelemetryCachedClientSet::get_or_create(

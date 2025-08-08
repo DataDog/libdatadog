@@ -190,13 +190,7 @@ impl SelfTelemetry {
             crate::sidecar_version!().to_string(),
         );
         builder.config = self.config.clone();
-        let (worker, join_handle) = match builder.spawn().await {
-            Ok(r) => r,
-            Err(_err) => {
-                self.watchdog_handle.wait_for_shutdown().await;
-                return;
-            }
-        };
+        let (worker, join_handle) = builder.spawn();
 
         let metrics = MetricData {
             worker: &worker,

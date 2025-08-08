@@ -86,10 +86,7 @@ impl TelemetryClientBuilder {
     }
 
     /// Builds the telemetry client.
-    pub fn build(
-        self,
-        runtime: Handle,
-    ) -> Result<(TelemetryClient, TelemetryWorker), TelemetryError> {
+    pub fn build(self, runtime: Handle) -> (TelemetryClient, TelemetryWorker) {
         #[allow(clippy::unwrap_used)]
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
             self.service_name.unwrap(),
@@ -105,17 +102,15 @@ impl TelemetryClientBuilder {
             builder.runtime_id = Some(id);
         }
 
-        let (worker_handle, worker) = builder
-            .build_worker(runtime)
-            .map_err(|e| TelemetryError::Builder(e.to_string()))?;
+        let (worker_handle, worker) = builder.build_worker(runtime);
 
-        Ok((
+        (
             TelemetryClient {
                 metrics: Metrics::new(&worker_handle),
                 worker: worker_handle,
             },
             worker,
-        ))
+        )
     }
 }
 
@@ -284,8 +279,7 @@ mod tests {
             .set_url(url)
             .set_heartbeat(100)
             .set_debug_enabled(true)
-            .build(Handle::current())
-            .unwrap();
+            .build(Handle::current());
         tokio::spawn(async move { worker.run().await });
         client
     }
@@ -319,14 +313,12 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test(flavor = "multi_thread")]
     async fn spawn_test() {
-        let client = TelemetryClientBuilder::default()
+        let _ = TelemetryClientBuilder::default()
             .set_service_name("test_service")
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
             .build(Handle::current());
-
-        assert!(client.is_ok());
     }
 
     #[cfg_attr(miri, ignore)]
@@ -687,7 +679,7 @@ mod tests {
             })
             .await;
 
-        let result = TelemetryClientBuilder::default()
+        let (client, mut worker) = TelemetryClientBuilder::default()
             .set_service_name("test_service")
             .set_language("test_language")
             .set_language_version("test_language_version")
@@ -696,8 +688,6 @@ mod tests {
             .set_heartbeat(100)
             .set_runtime_id("foo")
             .build(Handle::current());
-
-        let (client, mut worker) = result.unwrap();
         tokio::spawn(async move { worker.run().await });
 
         client.start().await;
