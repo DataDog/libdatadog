@@ -1,9 +1,8 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::collections::string_table::StringTable;
+use crate::profiles::collections::{StringOffset, StringTable};
 use crate::profiles::ProfileError;
-use datadog_profiling_protobuf::StringOffset;
 use std::collections::HashMap;
 
 /// Manages endpoint mappings for profiling.
@@ -12,22 +11,23 @@ use std::collections::HashMap;
 /// When samples contain a "local root span id" label, the corresponding
 /// endpoint name will be automatically added as a "trace endpoint" label
 /// during profile serialization.
-pub struct Endpoints {
+pub struct Endpoints<'a> {
     /// Maps local root span IDs to string offsets in the string table
     mappings: HashMap<u64, StringOffset>,
     /// String table for storing endpoint names
-    strings: StringTable,
+    string_table: &'a StringTable,
 }
 
-impl Endpoints {
+impl<'a> Endpoints<'a> {
     /// Creates a new empty Endpoints instance.
     ///
     /// # Errors
     /// Returns an error if memory allocation fails.
-    pub fn try_new() -> Result<Self, ProfileError> {
+    pub fn try_new(string_table: &'a StringTable) -> Result<Self, ProfileError> {
+        let mappings = HashMap::new();
         Ok(Self {
-            mappings: HashMap::new(),
-            strings: StringTable::try_new()?,
+            mappings,
+            string_table,
         })
     }
 
@@ -45,7 +45,7 @@ impl Endpoints {
         endpoint: &str,
     ) -> Result<(), ProfileError> {
         self.mappings.try_reserve(1).map_err(ProfileError::from)?;
-        let string_offset = self.strings.try_intern(endpoint)?;
+        let string_offset = self.string_table.try_intern(endpoint)?;
         self.mappings.insert(local_root_span_id, string_offset);
         Ok(())
     }
@@ -63,6 +63,6 @@ impl Endpoints {
 
     /// Gets the string table containing endpoint names.
     pub fn strings(&self) -> &StringTable {
-        &self.strings
+        &self.string_table
     }
 }

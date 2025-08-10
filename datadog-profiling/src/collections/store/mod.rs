@@ -1,3 +1,7 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use crate::profiles::ProfileId;
 use datadog_profiling_protobuf::{Function, Line, Location, Mapping, StringOffset};
 use std::collections::HashSet;
 use std::hash::{BuildHasherDefault, Hash, Hasher};
@@ -9,13 +13,15 @@ use std::ops::{Deref, Range};
 ///
 /// # Safety
 ///
+/// The default implementation must return 0 for the id field.
+///
 /// The implementing type must not have any padding bytes in the range given
 /// by [`Self::RANGE_WITHOUT_ID`]. Leading or trailing padding bytes on the
 /// struct are fine, they just can't exist in the given range.
 ///
 /// ID_OFFSET should probably be 0, but as long as it's within the object and
 /// the offset puts it at a properly aligned pointer for u64, it's fine.
-pub unsafe trait Storable: core::fmt::Debug + Clone + Sized {
+pub unsafe trait Storable: core::fmt::Debug + Clone + Default + Sized {
     const ID_OFFSET: usize;
 
     const RANGE_WITHOUT_ID: Range<usize>;
@@ -45,7 +51,7 @@ unsafe impl Storable for Location {
 }
 
 /// # Safety
-/// Mapping does not have any interior padding. It does have trailing padding,
+/// Function does not have any interior padding. It does have trailing padding,
 /// which doesn't matter.
 unsafe impl Storable for Function {
     const ID_OFFSET: usize = offset_of!(Function, id);
@@ -57,7 +63,7 @@ unsafe impl Storable for Function {
 }
 
 /// A wrapper around Storable data, which implements [`Eq`] and [`Hash`] based
-/// on the byte range that excludes the id field.
+/// on the byte range that excludes the id field
 #[repr(transparent)]
 #[derive(Debug)]
 struct Stored<T: Storable>(T);
@@ -77,8 +83,20 @@ impl<T: Storable> PartialEq for Stored<T> {
 impl<T: Storable> Eq for Stored<T> {}
 
 impl<T: Storable> Stored<T> {
+    /// # Safety
+    /// Any constraints on value ranges have been met already.
+    unsafe fn new(data: T) -> Self {
+        Stored(data)
+    }
+
     fn borrow(&self) -> Borrowed<T> {
         Borrowed(&self.0)
+    }
+
+    fn id(&self) -> ProfileId {
+        let raw_id = *self.borrow().id();
+        // SAFETY: Guaranteed to fit, because it's already been stored.
+        unsafe { ProfileId::new_unchecked(raw_id as u32) }
     }
 }
 
@@ -127,29 +145,72 @@ impl<'a, T: Storable + 'a> Hash for Borrowed<'a, T> {
 
 impl<'a, T: Storable + 'a> Eq for Borrowed<'a, T> {}
 
-#[derive(Debug, Default)]
+fn id_mut<T: Storable>(storable: &mut T) -> &mut u64 {
+    let addr = storable as *mut T;
+    unsafe { &mut *addr.add(T::ID_OFFSET).cast::<u64>() }
+}
+
+#[derive(Debug)]
 pub struct Store<T: Storable> {
     map: HashSet<Stored<T>, BuildHasherDefault<rustc_hash::FxHasher>>,
 }
 
+// todo: remove this requirement somehow so we can avoid unwrap
+impl<T: Storable> Default for Store<T> {
+    #[allow(clippy::expect_used)]
+    fn default() -> Self {
+        Self::try_new().expect("unexpectedly failed to create store")
+    }
+}
+
 impl<T: Storable> Store<T> {
-    pub fn insert(&mut self, data: T) -> Result<u64, T> {
-        let stored = Stored(data);
+    pub fn try_new() -> Result<Self, std::collections::TryReserveError> {
+        let mut map = HashSet::with_hasher(BuildHasherDefault::default());
+        map.try_reserve(1)?;
+        // SAFETY: Storable guarantees that T::default() has an ID of 0.
+        map.insert(unsafe { Stored::new(T::default()) });
+        Ok(Store { map })
+    }
+
+    pub fn insert(&mut self, mut data: T) -> Result<ProfileId, T> {
+        let stored = {
+            // next_offset will not be zero, because the T::default() is
+            // inserted into the Store at initialization.
+            let next_offset = self.map.len() as u64;
+            // OTEL requires them to fit in i32.
+            if self.map.len() > i32::MAX as u32 as usize {
+                return Err(data);
+            }
+
+            *id_mut(&mut data) = next_offset;
+            // SAFETY: did the range checks above.
+            unsafe { Stored::new(data) }
+        };
+        let id = stored.id();
+
+        // If the item already exists, we return the existing id. It _could_
+        // be that the id is 0, if someone re-inserts T::default().
         if let Some(prev) = self.map.get(&stored) {
-            return Ok(*prev.borrow().id());
+            return Ok(prev.id());
         }
 
         if self.map.try_reserve(1).is_err() {
             return Err(stored.0);
         }
 
-        let id = *stored.borrow().id();
         self.map.insert(stored);
         Ok(id)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.map.iter().map(|s| &s.0)
+    }
+
+    pub fn iter_without_default(&self) -> impl Iterator<Item = &T> {
+        self.map
+            .iter()
+            .filter(|s| s.id() != ProfileId::ZERO)
+            .map(|s| &s.0)
     }
 
     pub fn clear(&mut self) {

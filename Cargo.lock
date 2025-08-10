@@ -153,6 +153,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
 
 [[package]]
+name = "arrayvec"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
+
+[[package]]
 name = "ascii-canvas"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1642,12 +1648,14 @@ name = "datadog-profiling"
 version = "20.0.0"
 dependencies = [
  "anyhow",
+ "arrayvec",
  "bitmaps",
  "bolero",
  "byteorder",
  "bytes",
  "chrono",
  "criterion",
+ "crossbeam-utils",
  "datadog-alloc",
  "datadog-profiling-protobuf",
  "ddcommon",
@@ -1660,6 +1668,7 @@ dependencies = [
  "indexmap 2.6.0",
  "lz4_flex",
  "mime",
+ "parking_lot",
  "prost",
  "rustc-hash 1.1.0",
  "serde",

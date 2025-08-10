@@ -1,12 +1,13 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::profiles::collections::{StringOffset, StringTable};
 use crate::{
-    collections::{string_table::StringTable, SliceSet, Store},
+    collections::{SliceSet, Store},
     profiles::{Compressor, EndpointStats, Endpoints, LabelsSet, ProfileError, SampleManager},
 };
 use datadog_profiling_protobuf::{
-    Function, Label, Location, Mapping, Record, StringOffset, ValueType, NO_OPT_ZERO,
+    Function, Label, Location, Mapping, Record, ValueType, NO_OPT_ZERO,
 };
 use std::time::SystemTime;
 

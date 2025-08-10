@@ -20,6 +20,12 @@ pub enum ProfileError {
     NotFound,
     /// Failed to allocate memory needed for the operation.
     OutOfMemory,
+    /// A reference count exceeded its safe capacity. This is not necessarily
+    /// an integer overflow. For instance, a 64-bit refcount may choose to
+    /// overflow once u32::MAX has been exceeded so that multiple simultaneous
+    /// overflows are not likely to cause a refcount of 0, and can be
+    /// decremented back safely.
+    RefcountOverflow,
     /// The underlying container or storage is full. This is different from
     /// out of memory, because it's caused by some other limitation, such as
     /// the size being limited to 32-bit.
@@ -35,6 +41,7 @@ impl ProfileError {
             ProfileError::InvalidInput => "invalid input",
             ProfileError::NotFound => "not found",
             ProfileError::OutOfMemory => "out of memory",
+            ProfileError::RefcountOverflow => "reference count overflow",
             ProfileError::StorageFull => "storage full",
             ProfileError::Other => "unknown error",
         }
@@ -71,6 +78,12 @@ impl From<StringTableError> for ProfileError {
             StringTableError::StorageFull => ProfileError::StorageFull,
             StringTableError::InvalidInput => ProfileError::InvalidInput,
         }
+    }
+}
+
+impl From<datadog_alloc::LayoutError> for ProfileError {
+    fn from(_: datadog_alloc::LayoutError) -> Self {
+        ProfileError::InvalidInput
     }
 }
 

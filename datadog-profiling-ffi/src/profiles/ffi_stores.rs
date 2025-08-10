@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::profiles::ProfileError;
-use datadog_profiling::collections::{Storable, Store};
+use datadog_profiling::collections::{ProfileId, Storable, Store};
 use datadog_profiling_protobuf::*;
 
 use std::ptr;
@@ -62,11 +62,11 @@ unsafe fn ffi_store_drop<S: FfiStore>(store: *mut *mut S) {
 #[derive(Debug)]
 pub enum StoreInsertResult {
     /// The id of the stored item.
-    Ok(u64),
+    Ok(ProfileId),
     Err(ProfileError),
 }
 
-impl From<StoreInsertResult> for Result<u64, ProfileError> {
+impl From<StoreInsertResult> for Result<ProfileId, ProfileError> {
     fn from(result: StoreInsertResult) -> Self {
         match result {
             StoreInsertResult::Ok(id) => Ok(id),
