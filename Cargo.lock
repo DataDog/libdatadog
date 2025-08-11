@@ -1648,6 +1648,7 @@ dependencies = [
  "chrono",
  "criterion",
  "datadog-alloc",
+ "datadog-profiling-otel",
  "datadog-profiling-protobuf",
  "ddcommon",
  "futures",
@@ -1689,6 +1690,16 @@ dependencies = [
  "serde_json",
  "symbolizer-ffi",
  "tokio-util",
+]
+
+[[package]]
+name = "datadog-profiling-otel"
+version = "20.0.0"
+dependencies = [
+ "bolero",
+ "prost",
+ "prost-build",
+ "prost-types",
 ]
 
 [[package]]
