@@ -28,15 +28,15 @@ tokio = { version = "1.23", features = [
     "test-util",
     "time",
 ], default-features = false }
-
-ddcommon = { path = "../ddcommon" }
-ddtelemetry = { path = "../ddtelemetry" }
-datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
-datadog-trace-utils = { path = "../datadog-trace-utils" }
-datadog-ddsketch = { path = "../ddsketch" }
-dogstatsd-client = { path = "../dogstatsd-client" }
 uuid = { version = "1.10.0", features = ["v4"] }
 tokio-util = "0.7.11"
+
+ddcommon = { path = "../ddcommon", default-features = false }
+ddtelemetry = { path = "../ddtelemetry", default-features = false }
+datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
+datadog-trace-utils = { path = "../datadog-trace-utils", default-features = false }
+datadog-ddsketch = { path = "../ddsketch" }
+dogstatsd-client = { path = "../dogstatsd-client", default-features = false }
 tinybytes = { path = "../tinybytes", features = [
     "bytes_string",
     "serialization",
@@ -52,7 +52,9 @@ path = "benches/main.rs"
 
 [dev-dependencies]
 criterion = "0.5.1"
-datadog-trace-utils = { path = "../datadog-trace-utils", features = ["test-utils"] }
+datadog-trace-utils = { path = "../datadog-trace-utils", features = [
+    "test-utils",
+] }
 httpmock = "0.7.0"
 rand = "0.8.5"
 regex = "1.5"
@@ -64,4 +66,11 @@ tokio = { version = "1.23", features = [
 ], default-features = false }
 
 [features]
+default = ["https"]
+https = [
+    "ddcommon/https",
+    "ddtelemetry/https",
+    "datadog-trace-utils/https",
+    "dogstatsd-client/https",
+]
 test-utils = []
