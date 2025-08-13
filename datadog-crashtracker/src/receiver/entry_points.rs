@@ -1,5 +1,5 @@
-// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 
 use super::receive_report::receive_report_from_stream;
 use crate::{crash_info::CrashInfo, CrashtrackerConfiguration, StacktraceCollection};
@@ -85,14 +85,6 @@ pub fn get_receiver_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<
     unix_listener.context("Could not create the unix socket")
 }
 
-#[cfg(feature = "benchmarking")]
-pub async fn receiver_entry_point_bench(
-    timeout: Duration,
-    stream: impl AsyncBufReadExt + std::marker::Unpin,
-) -> anyhow::Result<()> {
-    receiver_entry_point(timeout, stream).await
-}
-
 /// Receives data from a crash collector via a stream, formats it into
 /// `CrashInfo` json, and emits it to the endpoint/file defined in `config`.
 ///
@@ -102,7 +94,7 @@ pub async fn receiver_entry_point_bench(
 ///
 /// See comments in [datadog-crashtracker/lib.rs] for a full architecture
 /// description.
-async fn receiver_entry_point(
+pub(crate) async fn receiver_entry_point(
     timeout: Duration,
     stream: impl AsyncBufReadExt + std::marker::Unpin,
 ) -> anyhow::Result<()> {
