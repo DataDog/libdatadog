@@ -10,7 +10,7 @@ use crate::{
     data::{self, Application, Dependency, Endpoint, Host, Integration, Log, Payload, Telemetry},
     metrics::{ContextKey, MetricBuckets, MetricContexts},
 };
-use libdd_common::Endpoint;
+
 use libdd_common::{hyper_migration, tag::Tag, worker::Worker};
 
 use std::iter::Sum;
@@ -776,7 +776,7 @@ impl TelemetryWorker {
         let timeout_ms = if let Some(endpoint) = self.config.endpoint.as_ref() {
             endpoint.timeout_ms
         } else {
-            Endpoint::DEFAULT_TIMEOUT
+            libdd_common::Endpoint::DEFAULT_TIMEOUT
         };
 
         debug!(
@@ -793,13 +793,13 @@ impl TelemetryWorker {
                 );
                 Err(hyper_migration::Error::Other(anyhow::anyhow!("Request cancelled")))
             },
-            _ = tokio::time::sleep(time::Duration::from_millis(timeout_ms)) => {
-                debug!(
-                    worker.runtime_id = %self.runtime_id,
-                    http.timeout_ms = timeout_ms,
-                    "Telemetry request timed out"
-                );
-                Err(hyper_migration::Error::Other(anyhow::anyhow!("Request timed out")))
+            _ = tokio::time::sleep(time::Duration::from_millis(
+                    if let Some(endpoint) = self.config.endpoint.as_ref() {
+                        endpoint.timeout_ms
+                    } else {
+                        libdd_common::Endpoint::DEFAULT_TIMEOUT
+                    })) => {
+                Err(anyhow::anyhow!("Request timed out"))
             },
             r = self.client.request(req) => {
                 match r {
