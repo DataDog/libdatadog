@@ -10,7 +10,6 @@ use crate::{
     data::{self, Application, Dependency, Endpoint, Host, Integration, Log, Payload, Telemetry},
     metrics::{ContextKey, MetricBuckets, MetricContexts},
 };
-use ddcommon::Endpoint;
 use ddcommon::{hyper_migration, tag::Tag, worker::Worker};
 
 use std::fmt::Debug;
@@ -717,7 +716,7 @@ impl TelemetryWorker {
                     if let Some(endpoint) = self.config.endpoint.as_ref() {
                         endpoint.timeout_ms
                     } else {
-                        Endpoint::DEFAULT_TIMEOUT
+                        ddcommon::Endpoint::DEFAULT_TIMEOUT
                     })) => {
                 Err(anyhow::anyhow!("Request timed out"))
             },
