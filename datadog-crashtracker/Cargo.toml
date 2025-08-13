@@ -6,10 +6,11 @@ edition.workspace = true
 version.workspace = true
 rust-version.workspace = true
 license.workspace = true
+autobenches = false
 
 [lib]
 crate-type = ["lib"]
-bench = true
+bench = false
 
 [[bin]]
 name = "crashtracker-receiver"
@@ -17,8 +18,9 @@ path = "src/bin/crashtracker_receiver.rs"
 bench = false
 
 [[bench]]
-name = "receiver_bench"
+name = "main"
 harness = false
+path = "benches/main.rs"
 
 [features]
 default = ["collector", "receiver", "collector_windows"]
@@ -64,7 +66,7 @@ thiserror = "1.0"
 windows = { version = "0.59.0", features = ["Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ErrorReporting", "Win32_System_Kernel", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_Security"] }
 
 [dev-dependencies]
-criterion = { version = "0.5.1", features = ["html_reports"] }
+criterion = { version = "0.5.1" }
 goblin = "0.9.3"
 tempfile = { version = "3.3" }
 

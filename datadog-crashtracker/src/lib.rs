@@ -85,4 +85,4 @@ pub use shared::configuration::{
 };
 
 #[cfg(all(unix, feature = "benchmarking"))]
-pub use receiver::benchmark::receiver_entry_point_bench;
+pub use receiver::benchmark;
