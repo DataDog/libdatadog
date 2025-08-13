@@ -1,21 +1,19 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use criterion::{criterion_main, criterion_group, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 
-#[cfg(feature = "benchmarking")]
+#[cfg(all(unix, feature = "benchmarking"))]
 mod receiver_bench;
 
-#[cfg(feature = "benchmarking")]
-fn active_benches(c: &mut Criterion) {
+#[cfg(all(unix, feature = "benchmarking"))]
+fn active_benches(_: &mut Criterion) {
     receiver_bench::benches();
 }
 
-#[cfg(not(feature = "benchmarking"))]
+#[cfg(any(windows, not(feature = "benchmarking")))]
 fn active_benches(_: &mut Criterion) {
-    println!(
-        "Benchmarks are disabled. Enable with `--features datadog-crashtracker/benchmarking`."
-    );
+    println!("Benchmarks are disabled.");
 }
 criterion_group!(benches, active_benches);
 criterion_main!(benches);
