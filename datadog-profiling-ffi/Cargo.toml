@@ -35,6 +35,7 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow = "1.0"
+crossbeam-channel = "0.5.15"
 data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
 datadog-crashtracker-ffi = { path = "../datadog-crashtracker-ffi", default-features = false, optional = true}
 datadog-library-config-ffi = {  path = "../datadog-library-config-ffi", default-features = false, optional = true }
@@ -50,4 +51,10 @@ hyper = { version = "1.6", features = ["http1", "client"] }
 libc = "0.2"
 serde_json = { version = "1.0" }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
+tokio = { version = "1.36", features = ["sync", "rt"] }
 tokio-util = "0.7.1"
+
+[dev-dependencies]
+lz4_flex = "0.11.3"
+prost = "0.13.5"
+datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf" }

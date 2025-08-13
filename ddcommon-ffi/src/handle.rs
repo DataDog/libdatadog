@@ -8,6 +8,7 @@ use anyhow::Context;
 /// Represents an object that should only be referred to by its handle.
 /// Do not access its member for any reason, only use the C API functions on this struct.
 #[repr(C)]
+#[derive(Debug)]
 pub struct Handle<T> {
     // This may be null, but if not it will point to a valid <T>.
     inner: *mut T,
