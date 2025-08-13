@@ -9,12 +9,16 @@ license.workspace = true
 
 [lib]
 crate-type = ["lib"]
-bench = false
+bench = true
 
 [[bin]]
 name = "crashtracker-receiver"
 path = "src/bin/crashtracker_receiver.rs"
 bench = false
+
+[[bench]]
+name = "receiver_bench"
+harness = false
 
 [features]
 default = ["collector", "receiver", "collector_windows"]
@@ -25,6 +29,8 @@ receiver = []
 # Enables the collection of crash-info on Windows
 collector_windows = []
 generate-unit-test-files = []
+# Enables benchmark functionality
+benchmarking = []
 
 [target.'cfg(unix)'.dependencies]
 # Should be kept in sync with the libdatadog symbolizer crate (also using blasesym)
@@ -58,6 +64,7 @@ thiserror = "1.0"
 windows = { version = "0.59.0", features = ["Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ErrorReporting", "Win32_System_Kernel", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_Security"] }
 
 [dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
 goblin = "0.9.3"
 tempfile = { version = "3.3" }
 

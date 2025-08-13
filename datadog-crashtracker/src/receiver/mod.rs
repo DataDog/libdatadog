@@ -9,6 +9,11 @@ pub use entry_points::{
 };
 mod receive_report;
 
+#[cfg(feature = "benchmarking")]
+pub mod benchmark {
+    pub use super::entry_points::receiver_entry_point_bench;
+}
+
 #[cfg(test)]
 mod tests {
     use super::receive_report::*;
