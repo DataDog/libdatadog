@@ -61,6 +61,11 @@ pub struct AppClientConfigurationChange {
     pub configuration: Vec<Configuration>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct AppEndpointsChange {
+    pub endpoints: Vec<Endpoint>,
+}
+
 #[derive(Serialize, Debug)]
 pub struct GenerateMetrics {
     pub series: Vec<metrics::Serie>,
