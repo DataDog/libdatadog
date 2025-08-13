@@ -6,25 +6,25 @@ use datadog_crashtracker::benchmark::receiver_entry_point;
 use std::time::Duration;
 use tokio::io::BufReader;
 
-
 fn create_dummy_crash_report() -> String {
     r#"DD_CRASHTRACK_BEGIN_STACKTRACE
 { "ip": "0x42", "module_address": "0x21", "sp": "0x11", "symbol_address": "0x73" }
 DD_CRASHTRACK_END_STACKTRACE
-DD_CRASHTRACK_DONE"#.to_string()
+DD_CRASHTRACK_DONE"#
+        .to_string()
 }
 
 async fn bench_receiver_entry_point_from_str(data: &str) {
     let cursor = std::io::Cursor::new(data.as_bytes());
     let reader = BufReader::new(cursor);
     let timeout = Duration::from_millis(5000);
-    
+
     let _ = receiver_entry_point(timeout, reader).await;
 }
 
 pub fn receiver_entry_point_benchmarks(c: &mut Criterion) {
     let mut group = c.benchmark_group("receiver_entry_point");
-    
+
     let report = create_dummy_crash_report();
     group.throughput(Throughput::Bytes(report.len() as u64));
     group.bench_with_input(
