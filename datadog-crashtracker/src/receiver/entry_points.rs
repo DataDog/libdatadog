@@ -85,6 +85,14 @@ pub fn get_receiver_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<
     unix_listener.context("Could not create the unix socket")
 }
 
+#[cfg(feature = "benchmarking")]
+pub async fn receiver_entry_point_bench(
+    timeout: Duration,
+    stream: impl AsyncBufReadExt + std::marker::Unpin,
+) -> anyhow::Result<()> {
+    receiver_entry_point(timeout, stream).await
+}
+
 /// Receives data from a crash collector via a stream, formats it into
 /// `CrashInfo` json, and emits it to the endpoint/file defined in `config`.
 ///
@@ -94,7 +102,7 @@ pub fn get_receiver_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<
 ///
 /// See comments in [datadog-crashtracker/lib.rs] for a full architecture
 /// description.
-pub(crate) async fn receiver_entry_point(
+async fn receiver_entry_point(
     timeout: Duration,
     stream: impl AsyncBufReadExt + std::marker::Unpin,
 ) -> anyhow::Result<()> {
