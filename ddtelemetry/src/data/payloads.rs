@@ -95,3 +95,64 @@ pub enum LogLevel {
     Warn,
     Debug,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct EndpointsPayload {
+    pub is_first: Option<bool>,
+    pub endpoints: Vec<Endpoint>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
+#[serde(rename_all = "UPPERCASE")]
+#[repr(C)]
+pub enum Method {
+    Get,
+    Post,
+    Put,
+    Delete,
+    Patch,
+    Head,
+    Options,
+    Trace,
+    Connect,
+    Other, //This is specified as "*" in the OpenAPI spec
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
+#[serde(rename_all = "UPPERCASE")]
+#[repr(C)]
+pub enum Authentication {
+    Jwt,
+    Basic,
+    Oauth,
+    Oidc,
+    ApiKey,
+    Session,
+    Mtls,
+    Saml,
+    Ldap,
+    Form,
+    Other,
+}
+
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
+pub struct Endpoint {
+    #[serde(default)]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub method: Option<Method>,
+    #[serde(default)]
+    pub path: Option<String>,
+    pub operation_name: String,
+    pub resource_name: String,
+    #[serde(default)]
+    pub request_body_type: Option<Vec<String>>,
+    #[serde(default)]
+    pub response_body_type: Option<Vec<String>>,
+    #[serde(default)]
+    pub response_code: Option<Vec<i32>>,
+    #[serde(default)]
+    pub authentication: Option<Vec<Authentication>>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+}

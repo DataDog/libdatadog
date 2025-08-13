@@ -7,7 +7,7 @@ pub mod store;
 
 use crate::{
     config::Config,
-    data::{self, Application, Dependency, Host, Integration, Log, Payload, Telemetry},
+    data::{self, Application, Dependency, Endpoint, Host, Integration, Log, Payload, Telemetry},
     metrics::{ContextKey, MetricBuckets, MetricContexts},
 };
 use ddcommon::Endpoint;
@@ -89,6 +89,7 @@ pub enum TelemetryActions {
     AddDependency(Dependency),
     AddIntegration(Integration),
     AddLog((LogIdentifier, Log)),
+    AddEndpoint(Endpoint),
     Lifecycle(LifecycleAction),
     #[serde(skip)]
     CollectStats(oneshot::Sender<TelemetryWorkerStats>),
@@ -120,6 +121,7 @@ struct TelemetryWorkerData {
     dependencies: store::Store<Dependency>,
     configurations: store::Store<data::Configuration>,
     integrations: store::Store<data::Integration>,
+    endpoints: store::Store<data::Endpoint>,
     logs: store::QueueHashMap<LogIdentifier, Log>,
     metric_contexts: MetricContexts,
     metric_buckets: MetricBuckets,
@@ -216,6 +218,8 @@ pub struct TelemetryWorkerStats {
     pub configurations_unflushed: u32,
     pub integrations_stored: u32,
     pub integrations_unflushed: u32,
+    pub endpoints_stored: u32,
+    pub endpoints_unflushed: u32,
     pub logs: u32,
     pub metric_contexts: u32,
     pub metric_buckets: MetricBucketStats,
@@ -232,6 +236,8 @@ impl Add for TelemetryWorkerStats {
             configurations_unflushed: self.configurations_unflushed + rhs.configurations_unflushed,
             integrations_stored: self.integrations_stored + rhs.integrations_stored,
             integrations_unflushed: self.integrations_unflushed + rhs.integrations_unflushed,
+            endpoints_stored: self.endpoints_stored + rhs.endpoints_stored,
+            endpoints_unflushed: self.endpoints_unflushed + rhs.endpoints_unflushed,
             logs: self.logs + rhs.logs,
             metric_contexts: self.metric_contexts + rhs.metric_contexts,
             metric_buckets: MetricBucketStats {
@@ -350,7 +356,7 @@ impl TelemetryWorker {
                     }
                 }
             }
-            AddConfig(_) | AddDependency(_) | AddIntegration(_) | Lifecycle(ExtendedHeartbeat) => {}
+            AddConfig(_) | AddDependency(_) | AddIntegration(_) | AddEndpoint(_) | Lifecycle(ExtendedHeartbeat) => {}
             Lifecycle(Stop) => {
                 if !self.data.started {
                     return BREAK;
@@ -407,6 +413,7 @@ impl TelemetryWorker {
             AddDependency(dep) => self.data.dependencies.insert(dep),
             AddIntegration(integration) => self.data.integrations.insert(integration),
             AddConfig(cfg) => self.data.configurations.insert(cfg),
+            AddEndpoint(endpoint) => self.data.endpoints.insert(endpoint),
             AddLog((identifier, log)) => {
                 let (l, new) = self.data.logs.get_mut_or_insert(identifier, log);
                 if !new {
@@ -459,6 +466,7 @@ impl TelemetryWorker {
                 self.data.dependencies.unflush_stored();
                 self.data.integrations.unflush_stored();
                 self.data.configurations.unflush_stored();
+                self.data.endpoints.unflush_stored();
 
                 let app_started = data::Payload::AppStarted(self.build_app_started());
                 match self.send_payload(&app_started).await {
@@ -548,6 +556,13 @@ impl TelemetryWorker {
             payloads.push(data::Payload::AppClientConfigurationChange(
                 data::AppClientConfigurationChange {
                     configuration: self.data.configurations.unflushed().cloned().collect(),
+                },
+            ))
+        }
+        if self.data.endpoints.flush_not_empty() {
+            payloads.push(data::Payload::AppEndpointsChange(
+                data::AppEndpointsChange {
+                    endpoints: self.data.endpoints.unflushed().cloned().collect(),
                 },
             ))
         }
@@ -653,6 +668,9 @@ impl TelemetryWorker {
                 .data
                 .configurations
                 .removed_flushed(p.configuration.len()),
+            AppEndpointsChange(p) => {
+                self.data.endpoints.removed_flushed(p.endpoints.len())
+            }
             MessageBatch(batch) => {
                 for p in batch {
                     self.payload_sent_success(p);
@@ -802,6 +820,8 @@ impl TelemetryWorker {
             configurations_unflushed: self.data.configurations.len_unflushed() as u32,
             integrations_stored: self.data.integrations.len_stored() as u32,
             integrations_unflushed: self.data.integrations.len_unflushed() as u32,
+            endpoints_stored: self.data.endpoints.len_stored() as u32,
+            endpoints_unflushed: self.data.endpoints.len_unflushed() as u32,
             logs: self.data.logs.len() as u32,
             metric_contexts: self.data.metric_contexts.lock().len() as u32,
             metric_buckets: self.data.metric_buckets.stats(),
@@ -995,7 +1015,7 @@ impl TelemetryWorkerHandle {
     }
 }
 
-/// How many dependencies/integrations/configs we keep in memory at most
+/// How many dependencies/integrations/configs/endpoints we keep in memory at most
 pub const MAX_ITEMS: usize = 5000;
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -1015,6 +1035,7 @@ pub struct TelemetryWorkerBuilder {
     pub dependencies: store::Store<data::Dependency>,
     pub integrations: store::Store<data::Integration>,
     pub configurations: store::Store<data::Configuration>,
+    pub endpoints: store::Store<data::Endpoint>,
     pub native_deps: bool,
     pub rust_shared_lib_deps: bool,
     pub config: Config,
@@ -1065,6 +1086,7 @@ impl TelemetryWorkerBuilder {
             dependencies: store::Store::new(MAX_ITEMS),
             integrations: store::Store::new(MAX_ITEMS),
             configurations: store::Store::new(MAX_ITEMS),
+            endpoints: store::Store::new(MAX_ITEMS),
             native_deps: true,
             rust_shared_lib_deps: false,
             config: Config::default(),
@@ -1095,6 +1117,7 @@ impl TelemetryWorkerBuilder {
                 dependencies: self.dependencies,
                 integrations: self.integrations,
                 configurations: self.configurations,
+                endpoints: self.endpoints,
                 logs: store::QueueHashMap::default(),
                 metric_contexts: contexts.clone(),
                 metric_buckets: MetricBuckets::default(),
