@@ -5,6 +5,10 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
+    // protoc is required to compile proto files. This uses protoc-bin-vendored to provide
+    // the protoc binary, setting the env var to tell prost_build where to find it.
+    std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path().unwrap());
+
     // Tell Cargo to rerun this build script if the proto files change
     println!("cargo:rerun-if-changed=profiles.proto");
     println!("cargo:rerun-if-changed=opentelemetry/proto/common/v1/common.proto");
