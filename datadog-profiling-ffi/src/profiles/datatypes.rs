@@ -754,7 +754,8 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
         }
 
         let end_time = end_time.map(SystemTime::from);
-        old_profile.serialize_into_compressed_pprof(end_time, None)
+        // TODO: make this an option instead of hardcoding to otel
+        old_profile.serialize_into_compressed_otel(end_time, None)
     })()
     .context("ddog_prof_Profile_serialize failed")
     .into()

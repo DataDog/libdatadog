@@ -3,20 +3,21 @@
 
 use crate::collections::identifiable::Id;
 use crate::internal::profile::otel_emitter::label::convert_label_to_key_value;
-use crate::internal::Profile as InternalProfile;
+use crate::internal::profile::{EncodedProfile, Profile as InternalProfile};
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use anyhow::{Context, Result};
+use datadog_profiling_otel::ProfilesDataExt;
 use std::collections::HashMap;
 
 impl InternalProfile {
-    /// Serializes the profile into OpenTelemetry format
+    /// Converts the profile into OpenTelemetry format
     ///
     /// * `end_time` - Optional end time of the profile. Passing None will use the current time.
     /// * `duration` - Optional duration of the profile. Passing None will try to calculate the
     ///   duration based on the end time minus the start time, but under anomalous conditions this
     ///   may fail as system clocks can be adjusted. The programmer may also accidentally pass an
     ///   earlier time. The duration will be set to zero these cases.
-    pub fn serialize_into_otel(
+    pub fn convert_into_otel(
         mut self,
         end_time: Option<std::time::SystemTime>,
         duration: Option<std::time::Duration>,
@@ -176,6 +177,32 @@ impl InternalProfile {
             dictionary: Some(dictionary),
         })
     }
+
+    /// Serializes the profile into OpenTelemetry format and compresses it using zstd.
+    ///
+    /// * `end_time` - Optional end time of the profile. Passing None will use the current time.
+    /// * `duration` - Optional duration of the profile. Passing None will try to calculate the
+    ///   duration based on the end time minus the start time, but under anomalous conditions this
+    ///   may fail as system clocks can be adjusted. The programmer may also accidentally pass an
+    ///   earlier time. The duration will be set to zero these cases.
+    pub fn serialize_into_compressed_otel(
+        mut self,
+        end_time: Option<std::time::SystemTime>,
+        duration: Option<std::time::Duration>,
+    ) -> anyhow::Result<EncodedProfile> {
+        // Extract values before consuming self
+        let start = self.start_time;
+        let endpoints_stats = std::mem::take(&mut self.endpoints.stats);
+        let otel_profiles_data = self.convert_into_otel(end_time, duration)?;
+        let buffer = otel_profiles_data.serialize_into_compressed_proto()?;
+        let end = end_time.unwrap_or_else(std::time::SystemTime::now);
+        Ok(EncodedProfile {
+            start,
+            end,
+            buffer,
+            endpoints_stats,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -188,7 +215,7 @@ mod tests {
         let internal_profile = InternalProfile::new(&[], None);
 
         // Convert to OpenTelemetry ProfilesData
-        let otel_profiles_data = internal_profile.serialize_into_otel(None, None).unwrap();
+        let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
         assert!(otel_profiles_data.dictionary.is_some());
@@ -237,7 +264,7 @@ mod tests {
         let _function2_id = internal_profile.add_function(&function2);
 
         // Convert to OpenTelemetry ProfilesData
-        let otel_profiles_data = internal_profile.serialize_into_otel(None, None).unwrap();
+        let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
         assert!(otel_profiles_data.dictionary.is_some());
@@ -296,7 +323,7 @@ mod tests {
         let _ = internal_profile.add_sample(sample, None);
 
         // Convert to OpenTelemetry ProfilesData
-        let otel_profiles_data = internal_profile.serialize_into_otel(None, None).unwrap();
+        let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
         assert!(otel_profiles_data.dictionary.is_some());
@@ -354,7 +381,7 @@ mod tests {
         let internal_profile = InternalProfile::new(&sample_types, None);
 
         // Convert to OpenTelemetry ProfilesData
-        let otel_profiles_data = internal_profile.serialize_into_otel(None, None).unwrap();
+        let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify that individual profiles are created for each sample type
         assert_eq!(otel_profiles_data.resource_profiles.len(), 1);
@@ -434,7 +461,7 @@ mod tests {
         let _ = internal_profile.add_sample(sample, None);
 
         // Convert to OpenTelemetry ProfilesData
-        let otel_profiles_data = internal_profile.serialize_into_otel(None, None).unwrap();
+        let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
         assert!(otel_profiles_data.dictionary.is_some());
@@ -527,7 +554,7 @@ mod tests {
         let _ = internal_profile.add_sample(sample, None);
 
         // Convert to OpenTelemetry ProfilesData
-        let otel_profiles_data = internal_profile.serialize_into_otel(None, None).unwrap();
+        let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
         let _dictionary = otel_profiles_data.dictionary.unwrap();
@@ -600,7 +627,7 @@ mod tests {
         let _ = internal_profile.add_sample(sample, Some(timestamp));
 
         // Convert to OpenTelemetry ProfilesData
-        let otel_profiles_data = internal_profile.serialize_into_otel(None, None).unwrap();
+        let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
         let profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
@@ -664,7 +691,7 @@ mod tests {
         let _ = internal_profile.add_sample(sample, None);
 
         // Convert to OpenTelemetry ProfilesData
-        let otel_profiles_data = internal_profile.serialize_into_otel(None, None).unwrap();
+        let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
         let profile0 = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
@@ -741,7 +768,7 @@ mod tests {
         let _ = internal_profile.add_sample(sample3, None);
 
         // Convert to OpenTelemetry ProfilesData
-        let otel_profiles_data = internal_profile.serialize_into_otel(None, None).unwrap();
+        let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
         let profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
@@ -772,7 +799,7 @@ mod tests {
         // Test with explicit duration
         let explicit_duration = std::time::Duration::from_secs(5);
         let otel_profiles_data = internal_profile
-            .serialize_into_otel(None, Some(explicit_duration))
+            .convert_into_otel(None, Some(explicit_duration))
             .unwrap();
 
         let profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
@@ -784,7 +811,7 @@ mod tests {
         let start_time = internal_profile2.start_time;
         let end_time = start_time + std::time::Duration::from_secs(3);
         let otel_profiles_data2 = internal_profile2
-            .serialize_into_otel(Some(end_time), None)
+            .convert_into_otel(Some(end_time), None)
             .unwrap();
 
         let profile2 = &otel_profiles_data2.resource_profiles[0].scope_profiles[0].profiles[0];
@@ -798,7 +825,7 @@ mod tests {
         let end_time3 = start_time3 + std::time::Duration::from_secs(10);
         let duration3 = std::time::Duration::from_secs(7);
         let otel_profiles_data3 = internal_profile3
-            .serialize_into_otel(Some(end_time3), Some(duration3))
+            .convert_into_otel(Some(end_time3), Some(duration3))
             .unwrap();
 
         let profile3 = &otel_profiles_data3.resource_profiles[0].scope_profiles[0].profiles[0];
@@ -817,7 +844,7 @@ mod tests {
         let internal_profile = InternalProfile::new(&sample_types, Some(period));
 
         // Convert to OpenTelemetry ProfilesData
-        let otel_profiles_data = internal_profile.serialize_into_otel(None, None).unwrap();
+        let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         let profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
 
@@ -837,7 +864,7 @@ mod tests {
         // Test without period
         let internal_profile_no_period = InternalProfile::new(&sample_types, None);
         let otel_profiles_data_no_period = internal_profile_no_period
-            .serialize_into_otel(None, None)
+            .convert_into_otel(None, None)
             .unwrap();
 
         let profile_no_period =
@@ -847,5 +874,65 @@ mod tests {
         assert!(profile_no_period.period_type.is_none());
         // Should have period value of 0 when no period is set
         assert_eq!(profile_no_period.period, 0);
+    }
+
+    #[test]
+    fn test_serialize_into_compressed_otel() {
+        // Create an internal profile with sample types
+        let sample_types = [crate::api::ValueType::new("cpu", "nanoseconds")];
+        let mut internal_profile = InternalProfile::new(&sample_types, None);
+
+        // Add a function and location
+        let function = crate::api::Function {
+            name: "test_function",
+            system_name: "test_system",
+            filename: "test_file.rs",
+        };
+        let _function_id = internal_profile.add_function(&function);
+
+        // Add a mapping
+        let mapping = crate::api::Mapping {
+            memory_start: 0x1000,
+            memory_limit: 0x2000,
+            file_offset: 0,
+            filename: "test_binary",
+            build_id: "test_build_id",
+        };
+        let _mapping_id = internal_profile.add_mapping(&mapping);
+
+        let location = crate::api::Location {
+            mapping,
+            function,
+            address: 0x1000,
+            line: 42,
+        };
+        let location_id = internal_profile.add_location(&location).unwrap();
+
+        let _stack_trace_id = internal_profile.add_stacktrace(vec![location_id]);
+
+        // Add a sample
+        let sample = crate::api::Sample {
+            locations: vec![location],
+            values: &[150],
+            labels: vec![],
+        };
+        let _ = internal_profile.add_sample(sample, None);
+
+        // Test serialization to compressed OpenTelemetry format
+        let encoded_profile = internal_profile
+            .serialize_into_compressed_otel(None, None)
+            .unwrap();
+
+        // Verify the encoded profile structure
+        assert!(encoded_profile.start > std::time::UNIX_EPOCH);
+        assert!(encoded_profile.end > encoded_profile.start);
+        assert!(!encoded_profile.buffer.is_empty());
+
+        // Verify the buffer contains compressed data (should be smaller than uncompressed)
+        // The compressed buffer should be significantly smaller than a typical uncompressed profile
+        assert!(encoded_profile.buffer.len() < 10000); // Reasonable upper bound for this small profile
+
+        // Verify endpoints stats are preserved
+        assert!(encoded_profile.endpoints_stats.is_empty()); // No endpoints added
     }
 }
