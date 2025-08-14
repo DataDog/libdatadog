@@ -14,6 +14,8 @@ bench = false
 [dependencies]
 prost = "0.13"
 prost-types = "0.13"
+zstd = "0.13"
+anyhow = "1.0"
 
 [build-dependencies]
 prost-build = "0.13"

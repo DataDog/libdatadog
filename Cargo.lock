@@ -1696,11 +1696,13 @@ dependencies = [
 name = "datadog-profiling-otel"
 version = "20.0.0"
 dependencies = [
+ "anyhow",
  "bolero",
  "prost",
  "prost-build",
  "prost-types",
  "protoc-bin-vendored",
+ "zstd",
 ]
 
 [[package]]
