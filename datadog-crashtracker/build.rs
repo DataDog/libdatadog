@@ -32,8 +32,9 @@ fn main() {
     cc::Build::new()
         .file("src/crash_info/emit_sicodes.c")
         .compile("emit_sicodes");
-    // should be put under a feature when testing
-    build_libtest_so();
+    if cfg!(feature = "generate-unit-test-files") {
+        build_libtest_so();
+    }
 }
 
 #[cfg(not(unix))]
