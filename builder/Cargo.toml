@@ -15,6 +15,7 @@ data-pipeline = []
 symbolizer = []
 library-config = []
 log = []
+ddsketch = []
 
 [lib]
 bench = false
