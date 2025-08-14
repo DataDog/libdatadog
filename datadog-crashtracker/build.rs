@@ -7,13 +7,19 @@ use std::process::Command;
 
 #[cfg(unix)]
 fn build_libtest_so() {
-    let base_path = Path::new("data");
+    let base_path = Path::new(&env!("CARGO_MANIFEST_DIR"))
+        .join("data")
+        .canonicalize()
+        .expect("Failed to canonicalize base path for libtest");
+
     let src = base_path.join("libtest.c");
     let dst = base_path.join("libtest.so");
     let mut cc_build = Command::new("cc")
         .arg(src)
         .arg("-shared")
         .arg("-fPIC")
+        // this is needed for the cross compile (cargo cross)
+        .arg("-std=c99")
         .arg("-Wl,--version-script,data/libtest.map")
         .arg("-O0")
         .arg("-gdwarf-4")
