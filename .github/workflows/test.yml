@@ -226,7 +226,7 @@ jobs:
       - run: cargo install cross || true
       - run: cross build --workspace --target x86_64-unknown-linux-gnu --exclude builder
       - run: cross test --workspace --features datadog-crashtracker/generate-unit-test-files --target x86_64-unknown-linux-gnu --exclude builder  -- --skip "::single_threaded_tests::" --skip "tracing_integration_tests::"
-      - run: cross test --workspace --features datadog-crashtracker/generate-unit-test-files--target x86_64-unknown-linux-gnu --exclude builder --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "tracing_integration_tests::"
+      - run: cross test --workspace --features datadog-crashtracker/generate-unit-test-files --target x86_64-unknown-linux-gnu --exclude builder --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "tracing_integration_tests::"
 
   ffi_bake:
     strategy:
