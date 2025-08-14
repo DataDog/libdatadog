@@ -52,6 +52,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // Skip this test when running under Miri
     fn test_serialize_into_compressed_proto() {
         // Test that we can serialize and compress a ProfilesData
         let mut profiles_dict = ProfilesDictionary::default();
