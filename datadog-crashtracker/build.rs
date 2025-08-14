@@ -10,7 +10,7 @@ fn build_libtest_so() {
     let base_path = Path::new("data");
     let src = base_path.join("libtest.c");
     let dst = base_path.join("libtest.so");
-    let mut cc_build = Command::new("clang")
+    let mut cc_build = Command::new("cc")
         .arg(src)
         .arg("-shared")
         .arg("-fPIC")
@@ -22,7 +22,7 @@ fn build_libtest_so() {
         .arg("-o")
         .arg(dst)
         .spawn()
-        .expect("failed to spawn clang command");
+        .expect("failed to spawn cc command");
 
     cc_build.wait().expect("failed to build libtest.so");
 }
