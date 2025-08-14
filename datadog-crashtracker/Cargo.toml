@@ -24,6 +24,7 @@ collector = []
 receiver = []
 # Enables the collection of crash-info on Windows
 collector_windows = []
+generate-unit-test-files = []
 
 [target.'cfg(unix)'.dependencies]
 # Should be kept in sync with the libdatadog symbolizer crate (also using blasesym)

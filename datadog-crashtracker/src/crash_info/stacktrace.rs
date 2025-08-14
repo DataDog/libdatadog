@@ -434,6 +434,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_normalize_ip() {
         let test_so = Path::new(&env!("CARGO_MANIFEST_DIR"))
             .join("data")
@@ -468,6 +469,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_symbolization() {
         let test_so = Path::new(&env!("CARGO_MANIFEST_DIR"))
             .join("data")
