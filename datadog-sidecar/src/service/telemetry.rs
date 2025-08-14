@@ -153,6 +153,9 @@ impl TelemetryCachedClient {
                 SidecarAction::AddTelemetryMetricPoint(point) => {
                     actions.push(self.to_telemetry_point(point));
                 }
+                SidecarAction::AddEndpoint(endpoint) => {
+                    actions.push(TelemetryActions::AddEndpoint(endpoint));
+                }
                 SidecarAction::PhpComposerTelemetryFile(_) => {} // handled separately
                 SidecarAction::ClearQueueId => {}                // handled separately
             }
