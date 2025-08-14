@@ -1,7 +1,9 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use std::process::Command;
+#[cfg(unix)]
 use std::path::Path;
+#[cfg(unix)]
+use std::process::Command;
 
 #[cfg(unix)]
 fn build_libtest_so() {

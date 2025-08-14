@@ -272,9 +272,9 @@ pub enum FileType {
 fn byte_slice_as_hex(bv: &[u8]) -> String {
     use std::fmt::Write;
 
-    let mut s = String::new();
+    let mut s = String::with_capacity(bv.len() * 2);
     for byte in bv {
-        let _ = write!(&mut s, "{byte:X}");
+        let _ = write!(&mut s, "{byte:02x}");
     }
     s
 }
@@ -331,6 +331,9 @@ impl super::test_utils::TestInstance for StackFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStringExt as _;
+    use std::path::Path;
 
     #[test]
     fn test_demangle_rust() {
@@ -386,5 +389,41 @@ mod tests {
         frame.demangle_name().unwrap();
         assert_eq!(frame.function, Some("invalid_mangled_name".to_string()));
         assert_eq!(frame.mangled_name, None);
+    }
+
+    #[test]
+    fn test_normalize_ip() {
+        let test_so = Path::new(&env!("CARGO_MANIFEST_DIR"))
+            .join("data")
+            .join("libtest.so")
+            .canonicalize()
+            .unwrap();
+        let so_cstr = CString::new(test_so.clone().into_os_string().into_vec()).unwrap();
+        let handle = unsafe { libc::dlopen(so_cstr.as_ptr(), libc::RTLD_NOW) };
+        assert!(!handle.is_null());
+        let my_function = unsafe { libc::dlsym(handle, c"my_function".as_ptr().cast()) };
+        assert!(!my_function.is_null());
+        let address_str = format!("{:p}", my_function);
+        let mut frame = StackFrame::new();
+        frame.ip = Some(address_str);
+
+        let normalizer = Normalizer::new();
+        frame
+            .normalize_ip(
+                &normalizer,
+                Pid::from(std::process::id()),
+                &mut CachedElfResolvers::default(),
+            )
+            .unwrap();
+
+        assert_eq!(frame.build_id_type, Some(BuildIdType::GNU));
+        assert_eq!(frame.file_type, Some(FileType::ELF));
+        assert_eq!(frame.path, Some(test_so.to_string_lossy().to_string()));
+        assert_eq!(
+            frame.build_id,
+            Some("ac33885879e4d40850d3d0fd68a1ac8e0d799dee".to_string())
+        );
+        assert!(frame.relative_address.is_some());
+        unsafe { libc::dlclose(handle) };
     }
 }
