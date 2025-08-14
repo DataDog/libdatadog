@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use criterion::{black_box, criterion_group, BenchmarkId, Criterion, Throughput};
+use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
 use datadog_crashtracker::benchmark::receiver_entry_point;
 use std::time::Duration;
 use tokio::io::BufReader;
@@ -26,7 +26,6 @@ pub fn receiver_entry_point_benchmarks(c: &mut Criterion) {
     let mut group = c.benchmark_group("receiver_entry_point");
 
     let report = create_dummy_crash_report();
-    group.throughput(Throughput::Bytes(report.len() as u64));
     group.bench_with_input(
         BenchmarkId::new("report", report.len()),
         &report,
