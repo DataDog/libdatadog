@@ -877,6 +877,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // Skip this test when running under Miri
     fn test_serialize_into_compressed_otel() {
         // Create an internal profile with sample types
         let sample_types = [crate::api::ValueType::new("cpu", "nanoseconds")];
