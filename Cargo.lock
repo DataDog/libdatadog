@@ -1458,6 +1458,7 @@ dependencies = [
  "backtrace",
  "blazesym",
  "cc",
+ "cc_utils",
  "chrono",
  "ddcommon",
  "ddtelemetry",
