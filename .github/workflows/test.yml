@@ -51,13 +51,13 @@ jobs:
       - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --exclude builder --verbose"
         shell: bash
         run: cargo build --workspace --exclude builder --verbose
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'"
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --features datadog-crashtracker/generate-unit-test-files --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'"
         shell: bash
         # Run doc tests with cargo test and run tests with nextest and generate junit.xml
         run: cargo test --workspace --features datadog-crashtracker/generate-unit-test-files --exclude builder --doc --verbose && cargo nextest run --workspace --features datadog-crashtracker/generate-unit-test-files --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
         env:
           RUST_BACKTRACE: full
-      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'"
+      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --features datadog-crashtracker/generate-unit-test-files --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'"
         if: runner.os == 'Linux'
         shell: bash
         run: cargo nextest run --workspace --features datadog-crashtracker/generate-unit-test-files --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
