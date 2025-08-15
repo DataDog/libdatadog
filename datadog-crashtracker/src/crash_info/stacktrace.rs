@@ -272,9 +272,9 @@ pub enum FileType {
 fn byte_slice_as_hex(bv: &[u8]) -> String {
     use std::fmt::Write;
 
-    let mut s = String::new();
+    let mut s = String::with_capacity(bv.len() * 2);
     for byte in bv {
-        let _ = write!(&mut s, "{byte:X}");
+        let _ = write!(&mut s, "{byte:02x}");
     }
     s
 }
@@ -331,6 +331,12 @@ impl super::test_utils::TestInstance for StackFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use libc::c_void;
+    #[cfg(unix)]
+    use std::ffi::CString;
+    #[cfg(unix)]
+    use std::path::Path;
 
     #[test]
     fn test_demangle_rust() {
@@ -386,5 +392,106 @@ mod tests {
         frame.demangle_name().unwrap();
         assert_eq!(frame.function, Some("invalid_mangled_name".to_string()));
         assert_eq!(frame.mangled_name, None);
+    }
+
+    #[cfg(unix)]
+    struct SharedLibrary {
+        handle: *mut c_void,
+    }
+
+    #[cfg(unix)]
+    impl SharedLibrary {
+        fn open(lib_path: &str) -> Result<Self, String> {
+            let cstr = CString::new(lib_path).map_err(|e| e.to_string())?;
+            // Use RTLD_NOW or another flag
+            let handle = unsafe { libc::dlopen(cstr.as_ptr(), libc::RTLD_NOW) };
+            if handle.is_null() {
+                Err("Failed to open library".to_string())
+            } else {
+                Ok(Self { handle })
+            }
+        }
+
+        fn get_symbol_address(&self, symbol: &str) -> Result<String, String> {
+            let cstr = CString::new(symbol).map_err(|e| e.to_string())?;
+            let sym = unsafe { libc::dlsym(self.handle, cstr.as_ptr()) };
+            if sym.is_null() {
+                Err(format!("Failed to find symbol: {}", symbol))
+            } else {
+                Ok(format!("{:p}", sym))
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for SharedLibrary {
+        fn drop(&mut self) {
+            if !self.handle.is_null() {
+                unsafe { libc::dlclose(self.handle) };
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_normalize_ip() {
+        let test_so = Path::new(&env!("CARGO_MANIFEST_DIR"))
+            .join("data")
+            .join("libtest.so")
+            .canonicalize()
+            .unwrap();
+
+        let libtest_so =
+            SharedLibrary::open(test_so.to_str().unwrap()).expect("Failed to open library");
+        let address = libtest_so.get_symbol_address("my_function").unwrap();
+        let mut frame = StackFrame::new();
+        frame.ip = Some(address);
+
+        let normalizer = Normalizer::new();
+        frame
+            .normalize_ip(
+                &normalizer,
+                Pid::from(std::process::id()),
+                &mut CachedElfResolvers::default(),
+            )
+            .unwrap();
+
+        assert_eq!(frame.build_id_type, Some(BuildIdType::GNU));
+        assert_eq!(frame.file_type, Some(FileType::ELF));
+        assert_eq!(frame.path, Some(test_so.to_string_lossy().to_string()));
+        assert_eq!(
+            frame.build_id,
+            Some("ac33885879e4d40850d3d0fd68a1ac8e0d799dee".to_string())
+        );
+        assert!(frame.relative_address.is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_symbolization() {
+        let test_so = Path::new(&env!("CARGO_MANIFEST_DIR"))
+            .join("data")
+            .join("libtest.so")
+            .canonicalize()
+            .unwrap();
+
+        let libtest_so =
+            SharedLibrary::open(test_so.to_str().unwrap()).expect("Failed to open library");
+        let address = libtest_so.get_symbol_address("my_function").unwrap();
+        let mut frame = StackFrame::new();
+        frame.ip = Some(address);
+
+        let mut process = blazesym::symbolize::source::Process::new(std::process::id().into());
+        process.map_files = false;
+        let src = blazesym::symbolize::source::Source::Process(process);
+        let symbolizer = blazesym::symbolize::Symbolizer::new();
+        frame.resolve_names(&src, &symbolizer).unwrap();
+
+        assert_eq!(frame.function, Some("my_function".to_string()));
+        let parent_dir = test_so.parent().unwrap();
+        let c_file = parent_dir.join("libtest.c");
+        assert_eq!(frame.file, Some(c_file.to_string_lossy().to_string()));
     }
 }

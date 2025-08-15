@@ -1,0 +1,4 @@
+ADDRS_0.0.0 {
+  global:
+    my_function;
+};
