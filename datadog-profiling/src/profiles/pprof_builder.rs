@@ -11,7 +11,7 @@
 //! - Our stack abstractions (thin slices of `SetId<Location>`) do not exist in pprof; we expand
 //!   stacks into `Sample.location_id` arrays as they are encountered while streaming.
 
-use std::collections::HashMap;
+use std::collections::{hash_map, HashMap};
 use std::io::Write;
 
 use crate::profiles::collections::SetId;
@@ -113,10 +113,9 @@ impl<'a> PprofBuilder<'a> {
             // Reserve first (which should hit the hot path most of the time),
             // so we can use the entry API to avoid double hashing.
             string_offsets.try_reserve(1)?;
-            use std::collections::hash_map::Entry;
             match string_offsets.entry(s) {
-                Entry::Occupied(o) => Ok(*o.get()),
-                Entry::Vacant(v) => {
+                hash_map::Entry::Occupied(o) => Ok(*o.get()),
+                hash_map::Entry::Vacant(v) => {
                     let off = pprof::StringOffset::from(*next_str_off);
                     *next_str_off = next_str_off
                         .checked_add(1)
@@ -185,42 +184,45 @@ impl<'a> PprofBuilder<'a> {
             func_ids: &mut HashMap<SetId<dt::Function>, u64>,
             next_func_id: &mut u64,
         ) -> Result<u64, ProfileError> {
-            if let Some(&id) = func_ids.get(&sid) {
-                return Ok(id);
-            }
-            let id = next_func_id
-                .checked_add(1)
-                .ok_or(ProfileError::StorageFull)?;
-            *next_func_id = id;
-            let f = unsafe { dict.functions().get(sid) };
-            let name = intern_string(
-                unsafe { dict.strings().get(f.name) },
-                string_offsets,
-                next_str_off,
-                w,
-            )?;
-            let sys = intern_string(
-                unsafe { dict.strings().get(f.system_name) },
-                string_offsets,
-                next_str_off,
-                w,
-            )?;
-            let file = intern_string(
-                unsafe { dict.strings().get(f.file_name) },
-                string_offsets,
-                next_str_off,
-                w,
-            )?;
-            let msg = pprof::Function {
-                id: pprof::Record::from(id),
-                name: pprof::Record::from(name),
-                system_name: pprof::Record::from(sys),
-                filename: pprof::Record::from(file),
-            };
-            pprof::Record::<pprof::Function, 5, { pprof::NO_OPT_ZERO }>::from(msg).encode(w)?;
             func_ids.try_reserve(1)?;
-            func_ids.insert(sid, id);
-            Ok(id)
+            match func_ids.entry(sid) {
+                hash_map::Entry::Occupied(o) => Ok(*o.get()),
+                hash_map::Entry::Vacant(v) => {
+                    let id = next_func_id
+                        .checked_add(1)
+                        .ok_or(ProfileError::StorageFull)?;
+                    *next_func_id = id;
+                    let f = unsafe { dict.functions().get(sid) };
+                    let name = intern_string(
+                        unsafe { dict.strings().get(f.name) },
+                        string_offsets,
+                        next_str_off,
+                        w,
+                    )?;
+                    let sys = intern_string(
+                        unsafe { dict.strings().get(f.system_name) },
+                        string_offsets,
+                        next_str_off,
+                        w,
+                    )?;
+                    let file = intern_string(
+                        unsafe { dict.strings().get(f.file_name) },
+                        string_offsets,
+                        next_str_off,
+                        w,
+                    )?;
+                    let msg = pprof::Function {
+                        id: pprof::Record::from(id),
+                        name: pprof::Record::from(name),
+                        system_name: pprof::Record::from(sys),
+                        filename: pprof::Record::from(file),
+                    };
+                    pprof::Record::<pprof::Function, 5, { pprof::NO_OPT_ZERO }>::from(msg)
+                        .encode(w)?;
+                    v.insert(id);
+                    Ok(id)
+                }
+            }
         }
 
         fn ensure_mapping<'a, W: Write>(
@@ -232,38 +234,41 @@ impl<'a> PprofBuilder<'a> {
             map_ids: &mut HashMap<SetId<dt::Mapping>, u64>,
             next_map_id: &mut u64,
         ) -> Result<u64, ProfileError> {
-            if let Some(&id) = map_ids.get(&sid) {
-                return Ok(id);
-            }
-            let id = next_map_id
-                .checked_add(1)
-                .ok_or(ProfileError::StorageFull)?;
-            *next_map_id = id;
-            let m = unsafe { dict.mappings().get(sid) };
-            let filename = intern_string(
-                unsafe { dict.strings().get(m.filename) },
-                string_offsets,
-                next_str_off,
-                w,
-            )?;
-            let build_id = intern_string(
-                unsafe { dict.strings().get(m.build_id) },
-                string_offsets,
-                next_str_off,
-                w,
-            )?;
-            let msg = pprof::Mapping {
-                id: pprof::Record::from(id),
-                memory_start: pprof::Record::from(m.memory_start),
-                memory_limit: pprof::Record::from(m.memory_limit),
-                file_offset: pprof::Record::from(m.file_offset),
-                filename: pprof::Record::from(filename),
-                build_id: pprof::Record::from(build_id),
-            };
-            pprof::Record::<pprof::Mapping, 3, { pprof::NO_OPT_ZERO }>::from(msg).encode(w)?;
             map_ids.try_reserve(1)?;
-            map_ids.insert(sid, id);
-            Ok(id)
+            match map_ids.entry(sid) {
+                hash_map::Entry::Occupied(o) => Ok(*o.get()),
+                hash_map::Entry::Vacant(v) => {
+                    let id = next_map_id
+                        .checked_add(1)
+                        .ok_or(ProfileError::StorageFull)?;
+                    *next_map_id = id;
+                    let m = unsafe { dict.mappings().get(sid) };
+                    let filename = intern_string(
+                        unsafe { dict.strings().get(m.filename) },
+                        string_offsets,
+                        next_str_off,
+                        w,
+                    )?;
+                    let build_id = intern_string(
+                        unsafe { dict.strings().get(m.build_id) },
+                        string_offsets,
+                        next_str_off,
+                        w,
+                    )?;
+                    let msg = pprof::Mapping {
+                        id: pprof::Record::from(id),
+                        memory_start: pprof::Record::from(m.memory_start),
+                        memory_limit: pprof::Record::from(m.memory_limit),
+                        file_offset: pprof::Record::from(m.file_offset),
+                        filename: pprof::Record::from(filename),
+                        build_id: pprof::Record::from(build_id),
+                    };
+                    pprof::Record::<pprof::Mapping, 3, { pprof::NO_OPT_ZERO }>::from(msg)
+                        .encode(w)?;
+                    v.insert(id);
+                    Ok(id)
+                }
+            }
         }
 
         #[allow(clippy::too_many_arguments)]
