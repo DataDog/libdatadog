@@ -286,56 +286,59 @@ impl<'a> PprofBuilder<'a> {
             map_ids: &mut HashMap<SetId<dt::Mapping>, u64>,
             loc_ids: &mut HashMap<SetId<dt::Location>, u64>,
         ) -> Result<u64, ProfileError> {
-            if let Some(&id) = loc_ids.get(&sid) {
-                return Ok(id);
-            }
-            let id = next_loc_id
-                .checked_add(1)
-                .ok_or(ProfileError::StorageFull)?;
-            *next_loc_id = id;
-            let loc = unsafe { scratch.locations().get(sid) };
-            let mapping_id = match loc.mapping_id {
-                Some(mid) => ensure_mapping(
-                    mid,
-                    w,
-                    dict,
-                    string_offsets,
-                    next_str_off,
-                    map_ids,
-                    next_map_id,
-                )?,
-                None => 0,
-            };
-            let line = if let Some(fid) = loc.line.function_id {
-                let fid64 = ensure_function(
-                    fid,
-                    w,
-                    dict,
-                    string_offsets,
-                    next_str_off,
-                    func_ids,
-                    next_func_id,
-                )?;
-                pprof::Line {
-                    function_id: pprof::Record::from(fid64),
-                    lineno: pprof::Record::from(loc.line.line_number),
-                }
-            } else {
-                pprof::Line {
-                    function_id: pprof::Record::from(0u64),
-                    lineno: pprof::Record::from(loc.line.line_number),
-                }
-            };
-            let msg = pprof::Location {
-                id: pprof::Record::from(id),
-                mapping_id: pprof::Record::from(mapping_id),
-                address: pprof::Record::from(loc.address),
-                line: pprof::Record::from(line),
-            };
-            pprof::Record::<pprof::Location, 4, { pprof::NO_OPT_ZERO }>::from(msg).encode(w)?;
             loc_ids.try_reserve(1)?;
-            loc_ids.insert(sid, id);
-            Ok(id)
+            match loc_ids.entry(sid) {
+                hash_map::Entry::Occupied(o) => Ok(*o.get()),
+                hash_map::Entry::Vacant(v) => {
+                    let id = next_loc_id
+                        .checked_add(1)
+                        .ok_or(ProfileError::StorageFull)?;
+                    *next_loc_id = id;
+                    let loc = unsafe { scratch.locations().get(sid) };
+                    let mapping_id = match loc.mapping_id {
+                        Some(mid) => ensure_mapping(
+                            mid,
+                            w,
+                            dict,
+                            string_offsets,
+                            next_str_off,
+                            map_ids,
+                            next_map_id,
+                        )?,
+                        None => 0,
+                    };
+                    let line = if let Some(fid) = loc.line.function_id {
+                        let fid64 = ensure_function(
+                            fid,
+                            w,
+                            dict,
+                            string_offsets,
+                            next_str_off,
+                            func_ids,
+                            next_func_id,
+                        )?;
+                        pprof::Line {
+                            function_id: pprof::Record::from(fid64),
+                            lineno: pprof::Record::from(loc.line.line_number),
+                        }
+                    } else {
+                        pprof::Line {
+                            function_id: pprof::Record::from(0u64),
+                            lineno: pprof::Record::from(loc.line.line_number),
+                        }
+                    };
+                    let msg = pprof::Location {
+                        id: pprof::Record::from(id),
+                        mapping_id: pprof::Record::from(mapping_id),
+                        address: pprof::Record::from(loc.address),
+                        line: pprof::Record::from(line),
+                    };
+                    pprof::Record::<pprof::Location, 4, { pprof::NO_OPT_ZERO }>::from(msg)
+                        .encode(w)?;
+                    v.insert(id);
+                    Ok(id)
+                }
+            }
         }
 
         // --- emit samples ---
