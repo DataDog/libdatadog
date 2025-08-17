@@ -15,9 +15,9 @@ use std::collections::{hash_map, HashMap};
 use std::io::Write;
 
 use crate::profiles::collections::SetId;
-use crate::profiles::datatypes as dt;
 use crate::profiles::datatypes::{Profile, ProfilesDictionary, ScratchPad};
 use crate::profiles::ProfileError;
+use crate::profiles::{datatypes as dt, datatypes};
 use datadog_profiling_protobuf as pprof;
 use datadog_profiling_protobuf::Value;
 
@@ -105,10 +105,10 @@ impl<'a> PprofBuilder<'a> {
 
         // Helper to intern and emit a string immediately.
         fn intern_string<'a, W: Write>(
+            writer: &mut W,
             s: &'a str,
             string_offsets: &mut HashMap<&'a str, pprof::StringOffset>,
             next_str_off: &mut u32,
-            writer: &mut W,
         ) -> Result<pprof::StringOffset, ProfileError> {
             // Reserve first (which should hit the hot path most of the time),
             // so we can use the entry API to avoid double hashing.
@@ -154,8 +154,8 @@ impl<'a> PprofBuilder<'a> {
                 let idx = if let Some(i) = sample_type_index.get(&(t, u)).copied() {
                     i
                 } else {
-                    let toff = intern_string(t, &mut string_offsets, &mut next_str_off, writer)?;
-                    let uoff = intern_string(u, &mut string_offsets, &mut next_str_off, writer)?;
+                    let toff = intern_string(writer, t, &mut string_offsets, &mut next_str_off)?;
+                    let uoff = intern_string(writer, u, &mut string_offsets, &mut next_str_off)?;
                     let i = global_sample_types.len();
                     global_sample_types.push((toff, uoff));
                     sample_type_index.try_reserve(1)?;
@@ -176,13 +176,13 @@ impl<'a> PprofBuilder<'a> {
 
         // --- emit helpers ---
         fn ensure_function<'a, W: Write>(
-            sid: SetId<dt::Function>,
             w: &mut W,
+            sid: SetId<dt::Function>,
             dict: &'a ProfilesDictionary,
-            string_offsets: &mut HashMap<&'a str, pprof::StringOffset>,
             next_str_off: &mut u32,
-            func_ids: &mut HashMap<SetId<dt::Function>, u64>,
             next_func_id: &mut u64,
+            string_offsets: &mut HashMap<&'a str, pprof::StringOffset>,
+            func_ids: &mut HashMap<SetId<dt::Function>, u64>,
         ) -> Result<u64, ProfileError> {
             func_ids.try_reserve(1)?;
             match func_ids.entry(sid) {
@@ -192,24 +192,25 @@ impl<'a> PprofBuilder<'a> {
                         .checked_add(1)
                         .ok_or(ProfileError::StorageFull)?;
                     *next_func_id = id;
+                    let dict_strings = dict.strings();
                     let f = unsafe { dict.functions().get(sid) };
                     let name = intern_string(
-                        unsafe { dict.strings().get(f.name) },
+                        w,
+                        unsafe { dict_strings.get(f.name) },
                         string_offsets,
                         next_str_off,
-                        w,
                     )?;
                     let sys = intern_string(
-                        unsafe { dict.strings().get(f.system_name) },
+                        w,
+                        unsafe { dict_strings.get(f.system_name) },
                         string_offsets,
                         next_str_off,
-                        w,
                     )?;
                     let file = intern_string(
-                        unsafe { dict.strings().get(f.file_name) },
+                        w,
+                        unsafe { dict_strings.get(f.file_name) },
                         string_offsets,
                         next_str_off,
-                        w,
                     )?;
                     let msg = pprof::Function {
                         id: pprof::Record::from(id),
@@ -226,13 +227,13 @@ impl<'a> PprofBuilder<'a> {
         }
 
         fn ensure_mapping<'a, W: Write>(
-            sid: SetId<dt::Mapping>,
             w: &mut W,
+            sid: SetId<dt::Mapping>,
             dict: &'a ProfilesDictionary,
-            string_offsets: &mut HashMap<&'a str, pprof::StringOffset>,
             next_str_off: &mut u32,
-            map_ids: &mut HashMap<SetId<dt::Mapping>, u64>,
             next_map_id: &mut u64,
+            string_offsets: &mut HashMap<&'a str, pprof::StringOffset>,
+            map_ids: &mut HashMap<SetId<dt::Mapping>, u64>,
         ) -> Result<u64, ProfileError> {
             map_ids.try_reserve(1)?;
             match map_ids.entry(sid) {
@@ -244,16 +245,16 @@ impl<'a> PprofBuilder<'a> {
                     *next_map_id = id;
                     let m = unsafe { dict.mappings().get(sid) };
                     let filename = intern_string(
+                        w,
                         unsafe { dict.strings().get(m.filename) },
                         string_offsets,
                         next_str_off,
-                        w,
                     )?;
                     let build_id = intern_string(
+                        w,
                         unsafe { dict.strings().get(m.build_id) },
                         string_offsets,
                         next_str_off,
-                        w,
                     )?;
                     let msg = pprof::Mapping {
                         id: pprof::Record::from(id),
@@ -297,25 +298,25 @@ impl<'a> PprofBuilder<'a> {
                     let loc = unsafe { scratch.locations().get(sid) };
                     let mapping_id = match loc.mapping_id {
                         Some(mid) => ensure_mapping(
-                            mid,
                             w,
+                            mid,
                             dict,
-                            string_offsets,
                             next_str_off,
-                            map_ids,
                             next_map_id,
+                            string_offsets,
+                            map_ids,
                         )?,
                         None => 0,
                     };
                     let line = if let Some(fid) = loc.line.function_id {
                         let fid64 = ensure_function(
-                            fid,
                             w,
+                            fid,
                             dict,
-                            string_offsets,
                             next_str_off,
-                            func_ids,
                             next_func_id,
+                            string_offsets,
+                            func_ids,
                         )?;
                         pprof::Line {
                             function_id: pprof::Record::from(fid64),
@@ -382,7 +383,7 @@ impl<'a> PprofBuilder<'a> {
                         std::borrow::Cow::Owned(s) => s.as_str(),
                     };
                     let key_off =
-                        intern_string(key_str, &mut string_offsets, &mut next_str_off, writer)?;
+                        intern_string(writer, key_str, &mut string_offsets, &mut next_str_off)?;
                     let mut lbl = pprof::Label {
                         key: pprof::Record::from(key_off),
                         ..Default::default()
@@ -390,10 +391,10 @@ impl<'a> PprofBuilder<'a> {
                     match &kv.value {
                         dt::AnyValue::String(s) => {
                             let off = intern_string(
+                                writer,
                                 s.as_str(),
                                 &mut string_offsets,
                                 &mut next_str_off,
-                                writer,
                             )?;
                             lbl.str = pprof::Record::from(off);
                         }
@@ -410,10 +411,10 @@ impl<'a> PprofBuilder<'a> {
                     // local root span id
                     {
                         let key_off = intern_string(
+                            writer,
                             "local root span id",
                             &mut string_offsets,
                             &mut next_str_off,
-                            writer,
                         )?;
                         let lbl = pprof::Label {
                             key: pprof::Record::from(key_off),
@@ -425,10 +426,10 @@ impl<'a> PprofBuilder<'a> {
                     // span id
                     {
                         let key_off = intern_string(
+                            writer,
                             "span id",
                             &mut string_offsets,
                             &mut next_str_off,
-                            writer,
                         )?;
                         let lbl = pprof::Label {
                             key: pprof::Record::from(key_off),
@@ -444,16 +445,16 @@ impl<'a> PprofBuilder<'a> {
                         scratch.endpoint_tracker().get_trace_endpoint_str(lrs_id)
                     {
                         let val_off = intern_string(
+                            writer,
                             endpoint_str,
                             &mut string_offsets,
                             &mut next_str_off,
-                            writer,
                         )?;
                         let key_off = intern_string(
+                            writer,
                             "trace endpoint",
                             &mut string_offsets,
                             &mut next_str_off,
-                            writer,
                         )?;
                         let lbl = pprof::Label {
                             key: pprof::Record::from(key_off),
