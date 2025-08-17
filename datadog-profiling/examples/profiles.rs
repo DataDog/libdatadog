@@ -7,8 +7,6 @@ use datadog_profiling::profiles::datatypes::{
     AnyValue, Function, KeyValue, Line, Location, Profile, Sample, ScratchPad, ValueType,
 };
 use datadog_profiling::profiles::string_writer::FallibleStringWriter;
-use std::io::Write;
-use std::process::exit;
 
 // Keep this in-sync with profiles.c
 fn main() {

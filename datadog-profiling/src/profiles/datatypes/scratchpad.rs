@@ -63,17 +63,14 @@ impl ScratchPad {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::marker::PhantomData;
 
-    fn is_send<T: Send>() -> bool {
-        true
-    }
-    fn is_sync<T: Sync>() -> bool {
-        true
-    }
+    fn is_send<T: Send>(_: PhantomData<T>) -> bool { true }
+    fn is_sync<T: Sync>(_: PhantomData<T>) -> bool { true }
 
     #[test]
     fn test_send_and_sync() {
-        assert!(is_send::<ScratchPad>());
-        assert!(is_sync::<ScratchPad>());
+        assert!(is_send::<ScratchPad>(PhantomData));
+        assert!(is_sync::<ScratchPad>(PhantomData));
     }
 }
