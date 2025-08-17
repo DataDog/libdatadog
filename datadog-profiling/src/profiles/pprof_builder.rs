@@ -110,17 +110,22 @@ impl<'a> PprofBuilder<'a> {
             next_str_off: &mut u32,
             writer: &mut W,
         ) -> Result<pprof::StringOffset, ProfileError> {
-            if let Some(&off) = string_offsets.get(s) {
-                return Ok(off);
-            }
-            let off = pprof::StringOffset::from(*next_str_off);
-            *next_str_off = next_str_off
-                .checked_add(1)
-                .ok_or(ProfileError::StorageFull)?;
+            // Reserve first (which should hit the hot path most of the time),
+            // so we can use the entry API to avoid double hashing.
             string_offsets.try_reserve(1)?;
-            string_offsets.insert(s, off);
-            pprof::Record::<&str, 6, { pprof::OPT_ZERO }>::from(s).encode(writer)?;
-            Ok(off)
+            use std::collections::hash_map::Entry;
+            match string_offsets.entry(s) {
+                Entry::Occupied(o) => Ok(*o.get()),
+                Entry::Vacant(v) => {
+                    let off = pprof::StringOffset::from(*next_str_off);
+                    *next_str_off = next_str_off
+                        .checked_add(1)
+                        .ok_or(ProfileError::StorageFull)?;
+                    v.insert(off);
+                    pprof::Record::<&str, 6, { pprof::OPT_ZERO }>::from(s).encode(writer)?;
+                    Ok(off)
+                }
+            }
         }
 
         // --- compact ids and first-use emission maps ---
