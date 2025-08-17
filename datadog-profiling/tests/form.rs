@@ -1,8 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_profiling::exporter::{ProfileExporter, Request};
-use datadog_profiling::profiles::EncodedProfile;
+use datadog_profiling::exporter::{EncodedProfile, ProfileExporter, Request};
 
 fn multipart(
     exporter: &mut ProfileExporter,

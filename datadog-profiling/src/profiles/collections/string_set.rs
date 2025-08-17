@@ -1,179 +1,334 @@
-// Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profiles::collections::ThinStr;
+use super::slice_set::SliceSet;
+use super::SetError;
+use super::ThinStr;
 use core::hash;
-use datadog_alloc::{AllocError, ChainAllocator, VirtualAllocator};
-use hashbrown::HashTable;
-use parking_lot::RwLock;
+
 use std::hash::BuildHasher;
-use std::hint::unreachable_unchecked;
 use std::ops::Deref;
-use std::sync::atomic::AtomicUsize;
-use crossbeam_utils::CachePadded;
 
 type Hasher = hash::BuildHasherDefault<rustc_hash::FxHasher>;
 
-/// Represents a handle to a string that can be retrieved by the string table.
-/// The exact representation is not a public detail.
+/// Represents a handle to a string that can be retrieved by the string set.
+/// The exact representation is not a public detail; it is only available so
+/// that it is known for FFI size and alignment.
+///
+/// Some [`StringId`]s refer to well-known strings, which always exist in
+/// every string table.
+///
+/// The caller needs to ensure the string set it was created from always exists
+/// when a StringId is dereferenced.
 #[repr(C)]
-pub struct StringId(ThinStr<'static>);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StringId(pub ThinStr<'static>);
 
-/// Holds unique strings and provides [`StringId`]s to fetch them later.
-pub struct StringSet {
-    /// The bytes of each string stored in `strings` are allocated here.
-    arena: RwLock<ChainAllocator<VirtualAllocator>>,
-
-    /// The unordered hash set of unique strings.
-    /// The static lifetimes are a lie; they are tied to the `arena`, which is
-    /// only moved if the string set is moved e.g.
-    /// [`StringSet::into_lending_iterator`].
-    /// References to the underlying strings should generally not be handed,
-    /// but if they are, they should be bound to the string set's lifetime or
-    /// the lending iterator's lifetime.
-    ///
-    /// The reason for 16 locks comes from using 4 bits from the hash of the
-    /// item being inserted. Note that we purposefully don't use the most
-    /// significant bits of the hash because that's what the hash table uses
-    /// in its SIMD hashing, so if we used the high bits, we'd be forcing a
-    /// bunch of hash collisions.
-    strings: [RwLock<HashTable<ThinStr<'static>>>; 16],
-
-    /// The number of strings in the set. Of course, the set is parallel,
-    /// so this is a moment-in-time length.
-    len: CachePadded<AtomicUsize>,
+impl From<&StringId> for StringId {
+    fn from(value: &StringId) -> Self {
+        *value
+    }
 }
 
+impl Default for StringId {
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
+impl StringId {
+    pub const EMPTY: StringId = StringId(ThinStr::new());
+    pub const END_TIMESTAMP_NS: StringId = StringId(ThinStr::end_timestamp_ns());
+    pub const LOCAL_ROOT_SPAN_ID: StringId = StringId(ThinStr::local_root_span_id());
+    pub const TRACE_ENDPOINT: StringId = StringId(ThinStr::trace_endpoint());
+    pub const SPAN_ID: StringId = StringId(ThinStr::span_id());
+}
+
+/// Holds unique strings and provides [`StringId`]s to fetch them later.
+/// This is a newtype around SliceSet<u8> to enforce UTF-8 invariants.
+#[repr(transparent)]
+pub struct StringSet(SliceSet<u8>);
+
+pub const WELL_KNOWN_STRING_IDS: [StringId; 5] = [
+    StringId::EMPTY,
+    StringId::END_TIMESTAMP_NS,
+    StringId::LOCAL_ROOT_SPAN_ID,
+    StringId::TRACE_ENDPOINT,
+    StringId::SPAN_ID,
+];
 
 impl StringSet {
-    /// Creates a new string set, which initially holds the empty string and
-    /// no others.
-    pub fn try_new() -> Result<Self, AllocError> {
-        // Keep this in the megabyte range. It's virtual, so we do not need
-        // to worry much about unused amounts, but asking for wildly too much
-        // up front, like in gigabyte+ range, is not good either.
-        const SIZE_HINT: usize = 2 * 1024 * 1024;
-        let arena = ChainAllocator::new_in(SIZE_HINT, VirtualAllocator {});
-
-        let mut strings = HashTable::new();
-        // The initial capacities for Rust's hash map (and set) currently go
-        // like this: 3, 7, 14, 28.
-        // The smaller values definitely can cause too much reallocation when
-        // walking a real stack for the first time, particularly because we'll
-        // be holding a write lock while reallocating.
-        if strings
-            // SAFETY: we just made the empty hash table, so there's nothing that
-            // needs to be rehashed.
-            .try_reserve(200, |_| unsafe { unreachable_unchecked() })
-            .is_err()
-        {
-            return Err(AllocError);
+    pub fn try_with_capacity(capacity: usize) -> Result<Self, SetError> {
+        let mut set = Self(SliceSet::try_with_capacity(capacity)?);
+        let strings = &mut set.0.slices;
+        for id in WELL_KNOWN_STRING_IDS {
+            let hash = Hasher::default().hash_one(id.0.deref().as_bytes());
+            strings.insert_unique(hash, id.0.into(), |t| Hasher::default().hash_one(t.deref()));
         }
 
-        const WELL_KNOWN: [ThinStr; 5] = [
-            ThinStr::new(),
-            ThinStr::end_timestamp_ns(),
-            ThinStr::local_root_span_id(),
-            ThinStr::trace_endpoint(),
-            ThinStr::span_id(),
-        ];
-        for str in WELL_KNOWN {
-            let hash = Hasher::default().hash_one(str);
-            strings.insert_unique(hash, str, |t| Hasher::default().hash_one(*t));
-        }
-
-        let lock = RwLock::new(StringSetImpl { arena, strings });
-        Ok(Self { lock })
+        Ok(set)
     }
 
-    /// Returns the number of strings currently held in the string set.
-    #[inline]
-    #[allow(clippy::len_without_is_empty, unused)]
-    pub fn len(&self) -> usize {
-        self.lock.read().strings.len()
+    /// Creates a new string set, which initially holds the empty string and
+    /// other well-known strings. The well-known strings are always
+    /// available and can be fetched using the [`WELL_KNOWN_STRING_IDS`].
+    pub fn try_new() -> Result<Self, SetError> {
+        Self::try_with_capacity(28)
+    }
+
+    unsafe fn find_with_hash(&self, hash: u64, str: &str) -> Option<StringId> {
+        let interned_str = self.0.slices.find(hash, |thin_slice| {
+            // SAFETY: We only store valid UTF-8 in string sets
+            let slice_str = unsafe { std::str::from_utf8_unchecked(thin_slice.as_slice()) };
+            slice_str == str
+        })?;
+        Some(StringId((*interned_str).into()))
+    }
+
+    /// # Safety
+    ///  1. The hash must be the same as if the str was re-hashed with the hasher the string set
+    ///     would use.
+    ///  2. The string must be unique within the set.
+    pub unsafe fn insert_unique_uncontended(&mut self, str: &str) -> Result<StringId, SetError> {
+        let hash = Hasher::default().hash_one(str.as_bytes());
+        self.insert_unique_uncontended_with_hash(hash, str)
+    }
+
+    /// Inserts a string into the string set without checking for duplicates, using a pre-calculated
+    /// hash.
+    ///
+    /// # Safety
+    ///  1. The caller must ensure that the hash was computed using the same hasher the string set
+    ///     would use.
+    ///  2. The string must be unique within the set.
+    pub unsafe fn insert_unique_uncontended_with_hash(
+        &mut self,
+        hash: u64,
+        str: &str,
+    ) -> Result<StringId, SetError> {
+        let new_slice = self
+            .0
+            .insert_unique_uncontended_with_hash(hash, str.as_bytes())?;
+        Ok(StringId(new_slice.into()))
     }
 
     /// Adds the string to the string set if it isn't present already, and
-    /// returns a reference to the newly inserted string.
-    pub fn insert(&self, str: &str) -> Result<StringId, AllocError> {
-        let hash = Hasher::default().hash_one(str);
-        let read_lock = self.lock.read();
-        let read_len = read_lock.strings.len();
-        if let Some(interned_str) = read_lock
-            .strings
-            .find(hash, |thin_str| thin_str.deref() == str)
-        {
-            return Ok(StringId(*interned_str));
-        }
-        drop(read_lock);
-
-        // No match. Acquire the write lock and check the size of the set.
-        // The StringSet doesn't have deletes, only inserts, so if the size
-        // has changed, then some other thread went before this one, and the
-        // string needs to be searched for again.
-        let mut write_lock = self.lock.write();
-        let write_len = write_lock.strings.len();
-        if read_len != write_len {
-            if let Some(interned_str) = write_lock
-                .strings
-                .find(hash, |thin_str| thin_str.deref() == str)
-            {
-                return Ok(StringId(*interned_str));
-            }
-        }
-
-        // Still no match. Reserve room in the set, allocate in virtual memory,
-        // and insert the new object into the set.
-        if write_lock
-            .strings
-            .try_reserve(1, |thin_str| Hasher::default().hash_one(*thin_str))
-            .is_err()
-        {
-            return Err(AllocError);
-        }
-
-        // Make a new string in the arena, and fudge its
-        // lifetime to appease the borrow checker.
-        let new_str = {
-            let obj = ThinStr::try_allocate_for(str, &write_lock.arena)?;
-            let uninit = unsafe { &mut *obj.as_ptr() };
-            // SAFETY: `try_allocate_for` allocates memory of the
-            // right size and layout.
-            let s = unsafe { ThinStr::from_str_in_unchecked(str, uninit) };
-
-            // SAFETY: all references to this value get re-narrowed to
-            // the lifetime of the string set. The string set will
-            // keep the arena alive, making the access safe.
-            unsafe { core::mem::transmute::<ThinStr<'_>, ThinStr<'static>>(s) }
-        };
-
-        // Add it to the set. The memory was previously reserved.
-        // SAFETY: The try_reserve above means any necessary re-hashing has
-        // already been done, so the hash closure cannot be called.
-        write_lock
-            .strings
-            .insert_unique(hash, new_str, |_| unsafe { unreachable_unchecked() });
-
-        Ok(StringId(new_str))
+    /// returns a handle to the string that can be used to retrieve it later.
+    pub fn try_insert(&mut self, str: &str) -> Result<StringId, SetError> {
+        let hash = Hasher::default().hash_one(str.as_bytes());
+        unsafe { self.try_insert_with_hash(hash, str) }
     }
 
-    /// Returns the number of bytes used by the arena allocator used to hold
-    /// string data. Note that the string set uses more memory than is in the
-    /// arena.
-    #[inline]
-    pub fn arena_used_bytes(&self) -> usize {
-        self.lock.read().arena.used_bytes()
-    }
-
-    /// Creates a `&str` from the `id`, binding it to the lifetime of
-    /// the set.
+    /// Adds the string to the string set if it isn't present already, using a pre-calculated hash.
+    /// Returns a handle to the string that can be used to retrieve it later.
     ///
     /// # Safety
-    /// The `thin_str` must live in this string set.
-    #[inline]
-    pub unsafe fn get(&self, id: StringId) -> &str {
-        // todo: debug_assert it exists in the memory region?
-        // SAFETY: see function's safety conditions.
-        unsafe { core::mem::transmute(id.0.deref()) }
+    /// The caller must ensure that the hash was computed using the same hasher the string set would
+    /// use.
+    pub unsafe fn try_insert_with_hash(
+        &mut self,
+        hash: u64,
+        str: &str,
+    ) -> Result<StringId, SetError> {
+        // SAFETY: the string's hash is correct, we use the same hasher as
+        // StringSet uses.
+        if let Some(id) = self.find_with_hash(hash, str) {
+            return Ok(id);
+        }
+
+        // SAFETY: we just checked above that the string isn't in the set.
+        self.insert_unique_uncontended_with_hash(hash, str)
+    }
+
+    /// Returns an iterator over all strings in the set as [`StringId`]s.
+    pub fn string_ids(&self) -> impl Iterator<Item = StringId> + '_ {
+        self.0.slices.iter().map(|slice| StringId((*slice).into()))
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
+
+    /// # Safety
+    /// The caller must ensure that the StringId is valid for this set.
+    pub unsafe fn get_string(&self, id: StringId) -> &str {
+        // SAFETY: safe as long as caller respects this function's safety.
+        unsafe { core::mem::transmute::<&str, &str>(id.0.deref()) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_string_set_basic_operations() {
+        let mut set = StringSet::try_new().unwrap();
+
+        // Test inserting new strings
+        let id1 = set.try_insert("hello").unwrap();
+        let id2 = set.try_insert("world").unwrap();
+        let id3 = set.try_insert("hello").unwrap(); // duplicate
+
+        // Verify duplicate returns same ID
+        assert_eq!(&*id1.0, &*id3.0);
+        assert_ne!(&*id1.0, &*id2.0);
+
+        // Verify retrieval
+        unsafe {
+            assert_eq!(set.get_string(id1), "hello");
+            assert_eq!(set.get_string(id2), "world");
+            assert_eq!(set.get_string(id3), "hello");
+        }
+    }
+
+    #[test]
+    fn test_string_lengths_and_alignment() {
+        let mut set = StringSet::try_new().unwrap();
+
+        // Test various string lengths that might cause alignment issues
+        let test_strings = [
+            "",                                    // 0 bytes
+            "a",                                   // 1 byte
+            "ab",                                  // 2 bytes
+            "abc",                                 // 3 bytes
+            "abcd",                                // 4 bytes
+            "abcdefg",                             // 7 bytes
+            "abcdefgh",                            // 8 bytes (usize boundary on 64-bit)
+            "abcdefghijklmno",                     // 15 bytes
+            "abcdefghijklmnop",                    // 16 bytes
+            "abcdefghijklmnopqrstuvwxyz123456789", // 35 bytes
+        ];
+
+        let mut ids = Vec::new();
+        for s in &test_strings {
+            let id = set.try_insert(s).unwrap();
+            ids.push(id);
+        }
+
+        // Verify all strings can be retrieved correctly
+        for (id, expected) in ids.iter().zip(&test_strings) {
+            unsafe {
+                assert_eq!(set.get_string(*id), *expected);
+            }
+        }
+    }
+
+    #[test]
+    fn test_unicode_strings() {
+        let mut set = StringSet::try_new().unwrap();
+
+        let unicode_strings = [
+            "café",         // Latin with accents
+            "🦀",           // Emoji (4 bytes)
+            "こんにちは",   // Japanese
+            "Здравствуй",   // Cyrillic
+            "🔥💯✨",       // Multiple emoji
+            "a\u{0000}b",   // Embedded null
+            "line1\nline2", // Newline
+            "tab\there",    // Tab
+        ];
+
+        let mut ids = Vec::new();
+        for s in &unicode_strings {
+            let id = set.try_insert(s).unwrap();
+            ids.push(id);
+        }
+
+        // Verify all Unicode strings are preserved correctly
+        for (id, expected) in ids.iter().zip(&unicode_strings) {
+            unsafe {
+                assert_eq!(set.get_string(*id), *expected);
+            }
+        }
+    }
+
+    #[test]
+    fn test_capacity_and_growth() {
+        // Test with minimal capacity
+        let mut set = StringSet::try_with_capacity(1).unwrap();
+
+        // Insert more strings than initial capacity to force growth
+        let test_strings: Vec<String> = (0..50).map(|i| format!("growth_test_{}", i)).collect();
+
+        let mut ids = Vec::new();
+        for s in &test_strings {
+            let id = set.try_insert(s).unwrap();
+            ids.push(id);
+        }
+
+        // Verify all strings are still accessible after growth
+        for (id, expected) in ids.iter().zip(&test_strings) {
+            unsafe {
+                assert_eq!(set.get_string(*id), expected);
+            }
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_large_strings() {
+        let mut set = StringSet::try_new().unwrap();
+
+        // Test moderately large string
+        let large_string = "x".repeat(1024);
+        let id1 = set.try_insert(&large_string).unwrap();
+
+        unsafe {
+            assert_eq!(set.get_string(id1), large_string);
+        }
+
+        // Test very large string
+        let very_large_string = "y".repeat(65536);
+        let id2 = set.try_insert(&very_large_string).unwrap();
+
+        unsafe {
+            assert_eq!(set.get_string(id2), very_large_string);
+            // Verify first string is still intact
+            assert_eq!(set.get_string(id1), large_string);
+        }
+
+        // Test extremely large string (>2 MiB) to trigger different ChainAllocator path
+        let huge_string = "z".repeat(2 * 1024 * 1024 + 1000); // >2 MiB
+        let id3 = set.try_insert(&huge_string).unwrap();
+
+        unsafe {
+            assert_eq!(set.get_string(id3), huge_string);
+            // Verify previous strings are still intact
+            assert_eq!(set.get_string(id1), large_string);
+            assert_eq!(set.get_string(id2), very_large_string);
+        }
+    }
+
+    #[test]
+    fn test_many_small_strings() {
+        const NUM_STRINGS: usize = if cfg!(miri) { 100 } else { 1000 };
+        let mut set = StringSet::try_new().unwrap();
+
+        // Insert many small strings to test fragmentation and growth
+        let mut ids = Vec::with_capacity(NUM_STRINGS);
+        let mut expected = Vec::with_capacity(NUM_STRINGS);
+
+        for i in 0..NUM_STRINGS {
+            let s = format!("{}", i);
+            let id = set.try_insert(&s).unwrap();
+            ids.push(id);
+            expected.push(s);
+        }
+
+        // Verify all strings are still correct
+        for (id, expected_str) in ids.iter().zip(&expected) {
+            unsafe {
+                assert_eq!(set.get_string(*id), expected_str);
+            }
+        }
     }
 }

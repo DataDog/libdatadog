@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::collections::string_table::StringTableError;
+use crate::profiles::collections::SetError;
 use std::collections::TryReserveError;
 use std::{fmt, io};
 
@@ -12,7 +12,7 @@ use std::{fmt, io};
 /// allocation error that it can't be reported, because the error also cannot
 /// allocate.
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ProfileError {
     /// A parameter was incorrect, e.g., a null pointer was provided.
     InvalidInput,
@@ -48,6 +48,23 @@ impl ProfileError {
     }
 }
 
+impl From<http::Error> for ProfileError {
+    fn from(_: http::Error) -> Self {
+        // todo: can we determine which things might be invalid inputs?
+        Self::Other
+    }
+}
+
+impl From<SetError> for ProfileError {
+    fn from(err: SetError) -> Self {
+        match err {
+            SetError::InvalidArgument => ProfileError::InvalidInput,
+            SetError::OutOfMemory => ProfileError::OutOfMemory,
+            SetError::ReferenceCountOverflow => ProfileError::RefcountOverflow,
+        }
+    }
+}
+
 impl fmt::Display for ProfileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.as_str().fmt(f)
@@ -65,18 +82,6 @@ impl From<io::Error> for ProfileError {
             io::ErrorKind::OutOfMemory => ProfileError::OutOfMemory,
             io::ErrorKind::StorageFull | io::ErrorKind::WriteZero => ProfileError::StorageFull,
             _ => ProfileError::Other,
-        }
-    }
-}
-
-impl From<StringTableError> for ProfileError {
-    #[cold]
-    fn from(err: StringTableError) -> Self {
-        match err {
-            StringTableError::NotFound => ProfileError::NotFound,
-            StringTableError::OutOfMemory => ProfileError::OutOfMemory,
-            StringTableError::StorageFull => ProfileError::StorageFull,
-            StringTableError::InvalidInput => ProfileError::InvalidInput,
         }
     }
 }
@@ -108,6 +113,12 @@ impl From<datadog_alloc::AllocError> for ProfileError {
     #[cold]
     fn from(_: datadog_alloc::AllocError) -> Self {
         Self::OutOfMemory
+    }
+}
+
+impl<T> From<arrayvec::CapacityError<T>> for ProfileError {
+    fn from(_: arrayvec::CapacityError<T>) -> Self {
+        Self::StorageFull
     }
 }
 

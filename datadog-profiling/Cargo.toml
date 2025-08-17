@@ -13,10 +13,6 @@ autobenches = false
 crate-type = ["lib"]
 bench = false
 
-[[bench]]
-name = "main"
-harness = false
-
 [dependencies]
 anyhow = "1.0"
 arrayvec = "0.7"
@@ -46,8 +42,10 @@ target-triple = "0.1.4"
 thiserror = "1"
 tokio = { version = "1.23", features = ["rt", "macros"] }
 tokio-util = "0.7.1"
+hyper-util = "0.1.10"
 
 [dev-dependencies]
 bolero = "0.13"
-criterion = "0.5.1"
 datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["bolero", "prost_impls"] }
+proptest = "1.5"
+uuid = { version = "1", features = ["v4"] }

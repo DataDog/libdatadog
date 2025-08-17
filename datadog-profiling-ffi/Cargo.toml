@@ -55,6 +55,7 @@ libc = "0.2"
 rustc-hash = { version = "1", default-features = false }
 serde_json = { version = "1.0" }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
+thiserror = "1"
 tokio-util = "0.7.1"
 
 [dev-dependencies]

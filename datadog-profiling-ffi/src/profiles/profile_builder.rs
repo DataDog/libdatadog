@@ -5,7 +5,7 @@ use datadog_alloc::Box;
 use datadog_profiling::{
     collections::{string_table::StringTable, SliceSet, Store},
     profiles::{
-        EncodedProfile, Endpoints, LabelsSet, ProfileBuilder, ProfileError,
+        EncodedProfile, Endpoints, LabelsSet, PprofBuilder, ProfileError,
         ProfileVoidResult, SampleManager,
     },
 };
@@ -17,7 +17,7 @@ use std::time::SystemTime;
 
 #[repr(C)]
 pub enum ProfileBuilderNewResult<'a> {
-    Ok(*mut ProfileBuilder<'a>),
+    Ok(*mut PprofBuilder<'a>),
     Err(ProfileError),
 }
 
@@ -28,7 +28,7 @@ pub enum ProfileBuilderNewResult<'a> {
 pub unsafe extern "C" fn ddog_prof_ProfileBuilder_new(
     start_time: Timespec,
 ) -> ProfileBuilderNewResult<'static> {
-    match Box::try_new(ProfileBuilder::new(SystemTime::from(start_time))) {
+    match Box::try_new(PprofBuilder::new(SystemTime::from(start_time))) {
         Ok(boxed) => ProfileBuilderNewResult::Ok(Box::into_raw(boxed)),
         Err(_) => ProfileBuilderNewResult::Err(ProfileError::OutOfMemory),
     }
@@ -40,7 +40,7 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_new(
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_functions(
-    builder: *mut ProfileBuilder,
+    builder: *mut PprofBuilder,
     functions: *mut Store<Function>,
     strings: *mut StringTable,
 ) -> ProfileVoidResult {
@@ -63,7 +63,7 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_functions(
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_locations(
-    builder: *mut ProfileBuilder,
+    builder: *mut PprofBuilder,
     locations: *mut Store<Location>,
 ) -> ProfileVoidResult {
     let Some(builder) = builder.as_mut() else {
@@ -82,7 +82,7 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_locations(
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_mappings(
-    builder: *mut ProfileBuilder,
+    builder: *mut PprofBuilder,
     mappings: *mut Store<Mapping>,
     strings: *mut StringTable,
 ) -> ProfileVoidResult {
@@ -105,7 +105,7 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_mappings(
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_samples(
-    builder: *mut ProfileBuilder,
+    builder: *mut PprofBuilder,
     samples: *mut SampleManager,
     labels_set: *mut LabelsSet,
     labels_strings: *mut StringTable,
@@ -145,7 +145,7 @@ pub unsafe extern "C" fn ddog_prof_ProfileBuilder_add_samples(
 /// All pointer parameters must be valid pointers to their respective types.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_ProfileBuilder_drop(
-    builder: *mut *mut ProfileBuilder,
+    builder: *mut *mut PprofBuilder,
 ) {
     if !builder.is_null() && !(*builder).is_null() {
         drop(Box::from_raw(*builder));
@@ -166,7 +166,7 @@ pub enum ProfileBuilderBuildResult {
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_ProfileBuilder_build(
-    builder: *mut *mut ProfileBuilder,
+    builder: *mut *mut PprofBuilder,
     end_time: *const Timespec,
 ) -> ProfileBuilderBuildResult {
     let Some(builder_ptr) = builder.as_mut() else {
