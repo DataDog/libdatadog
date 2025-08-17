@@ -357,7 +357,7 @@ impl<'a> PprofBuilder<'a> {
                     locs_out.push(id64);
                 }
 
-                // labels from attributes
+                // labels from attributes and links/endpoints
                 labels_buf.clear();
                 if !sample.attributes.is_empty() {
                     labels_buf.try_reserve(sample.attributes.len())?;
@@ -389,6 +389,66 @@ impl<'a> PprofBuilder<'a> {
                         }
                     }
                     labels_buf.push(pprof::Record::from(lbl));
+                }
+
+                // If the sample has a link, emit local root span id and span id
+                if let Some(link_id) = sample.link_id {
+                    let link = unsafe { scratch.links().get(link_id) };
+                    // local root span id
+                    {
+                        let key_off = intern_string(
+                            "local root span id",
+                            &mut string_offsets,
+                            &mut next_str_off,
+                            writer,
+                        )?;
+                        let lbl = pprof::Label {
+                            key: pprof::Record::from(key_off),
+                            num: pprof::Record::from(link.local_root_span_id as i64),
+                            ..Default::default()
+                        };
+                        labels_buf.push(pprof::Record::from(lbl));
+                    }
+                    // span id
+                    {
+                        let key_off = intern_string(
+                            "span id",
+                            &mut string_offsets,
+                            &mut next_str_off,
+                            writer,
+                        )?;
+                        let lbl = pprof::Label {
+                            key: pprof::Record::from(key_off),
+                            num: pprof::Record::from(link.span_id as i64),
+                            ..Default::default()
+                        };
+                        labels_buf.push(pprof::Record::from(lbl));
+                    }
+
+                    // Add an endpoint if we have it.
+                    let lrs_id = link.local_root_span_id as i64;
+                    if let Some(endpoint_str) =
+                        scratch.endpoint_tracker().get_trace_endpoint_str(lrs_id)
+                    {
+                        let val_off = intern_string(
+                            endpoint_str,
+                            &mut string_offsets,
+                            &mut next_str_off,
+                            writer,
+                        )?;
+                        let key_off = intern_string(
+                            "trace endpoint",
+                            &mut string_offsets,
+                            &mut next_str_off,
+                            writer,
+                        )?;
+                        let lbl = pprof::Label {
+                            key: pprof::Record::from(key_off),
+                            str: pprof::Record::from(val_off),
+                            ..Default::default()
+                        };
+                        labels_buf.push(pprof::Record::from(lbl));
+                    }
                 }
 
                 // align values to global types

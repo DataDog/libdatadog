@@ -65,8 +65,12 @@ mod tests {
     use super::*;
     use core::marker::PhantomData;
 
-    fn is_send<T: Send>(_: PhantomData<T>) -> bool { true }
-    fn is_sync<T: Sync>(_: PhantomData<T>) -> bool { true }
+    fn is_send<T: Send>(_: PhantomData<T>) -> bool {
+        true
+    }
+    fn is_sync<T: Sync>(_: PhantomData<T>) -> bool {
+        true
+    }
 
     #[test]
     fn test_send_and_sync() {

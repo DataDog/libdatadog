@@ -58,4 +58,15 @@ impl EndpointTracker {
         self.add_endpoint_count(str_id, count)?;
         Ok(str_id)
     }
+
+    /// Returns the endpoint string for a given local root span id, if present.
+    /// The returned string is borrowed from internal storage; no allocation.
+    pub fn get_trace_endpoint_str(&self, local_root_span_id: i64) -> Option<&str> {
+        let str_id = {
+            let guard = self.trace_endpoints.lock();
+            guard.get(&local_root_span_id).copied()
+        }?;
+        // SAFETY: string ids refer to entries in `strings`
+        Some(unsafe { self.strings.get(str_id) })
+    }
 }
