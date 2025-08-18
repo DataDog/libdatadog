@@ -35,6 +35,12 @@ impl FallibleStringWriter {
     pub fn try_reserve(&mut self, len: usize) -> Result<(), TryReserveError> {
         self.buf.try_reserve(len)
     }
+
+    pub fn try_push_str(&mut self, str: &str) -> Result<(), TryReserveError> {
+        self.try_reserve(str.len())?;
+        self.buf.push_str(str);
+        Ok(())
+    }
 }
 
 impl From<FallibleStringWriter> for String {

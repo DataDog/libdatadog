@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::profiles::collections::{ParallelStringSet, StringId};
-use crate::profiles::ProfileError;
+use crate::profiles::{FallibleStringWriter, ProfileError};
 use hashbrown::HashMap;
 
 pub struct EndpointTracker {
@@ -68,5 +68,19 @@ impl EndpointTracker {
         }?;
         // SAFETY: string ids refer to entries in `strings`
         Some(unsafe { self.strings.get(str_id) })
+    }
+
+    // todo: can we avoid copying?
+    pub fn get_endpoint_stats(&self) -> Result<HashMap<String, i64>, ProfileError> {
+        let mut stats = HashMap::<String, i64>::new();
+        let strings = &self.strings;
+        let guard = self.endpoint_counts.lock();
+        stats.try_reserve(guard.len())?;
+        for (id, count) in guard.iter() {
+            let mut writer = FallibleStringWriter::new();
+            writer.try_push_str(unsafe { strings.get(*id) })?;
+            stats.insert(String::from(writer), (*count) as i64);
+        }
+        Ok(stats)
     }
 }

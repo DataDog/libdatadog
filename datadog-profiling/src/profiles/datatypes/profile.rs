@@ -4,6 +4,7 @@
 use crate::profiles::datatypes::{Sample, ValueType};
 use crate::profiles::ProfileError;
 use arrayvec::ArrayVec;
+use std::time::SystemTime;
 
 pub const MAX_SAMPLE_TYPES: usize = 2;
 
@@ -11,8 +12,8 @@ pub const MAX_SAMPLE_TYPES: usize = 2;
 pub struct Profile {
     pub sample_type: ArrayVec<ValueType, MAX_SAMPLE_TYPES>,
     pub samples: Vec<Sample>,
-    pub time_nanos: Option<i64>,
-    pub duration_nanos: Option<i64>,
+    pub time_nanos: Option<SystemTime>,
+    pub duration_nanos: Option<SystemTime>,
     pub period_types: Option<ValueType>,
     pub period: Option<i64>,
 }
