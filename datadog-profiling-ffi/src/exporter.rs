@@ -4,9 +4,9 @@
 #![allow(renamed_and_removed_lints)]
 #![allow(clippy::box_vec)]
 
-use datadog_profiling::exporter;
-use datadog_profiling::exporter::{ProfileExporter, Request};
-use datadog_profiling::profiles::EncodedProfile;
+use datadog_profiling::exporter::{
+    self, EncodedProfile, ProfileExporter, Request,
+};
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use ddcommon_ffi::{

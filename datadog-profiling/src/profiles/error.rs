@@ -36,14 +36,22 @@ pub enum ProfileError {
 }
 
 impl ProfileError {
-    pub const fn as_str(&self) -> &'static str {
+    pub const fn as_cstr(&self) -> &'static core::ffi::CStr {
         match self {
-            ProfileError::InvalidInput => "invalid input",
-            ProfileError::NotFound => "not found",
-            ProfileError::OutOfMemory => "out of memory",
-            ProfileError::RefcountOverflow => "reference count overflow",
-            ProfileError::StorageFull => "storage full",
-            ProfileError::Other => "unknown error",
+            ProfileError::InvalidInput => c"invalid input",
+            ProfileError::NotFound => c"not found",
+            ProfileError::OutOfMemory => c"out of memory",
+            ProfileError::RefcountOverflow => c"reference count overflow",
+            ProfileError::StorageFull => c"storage full",
+            ProfileError::Other => c"unknown error",
+        }
+    }
+
+    pub const fn as_str(&self) -> &'static str {
+        // unwrap_unchecked is not a const fn yet
+        match self.as_cstr().to_str() {
+            Ok(str) => str,
+            Err(_) => unsafe { core::hint::unreachable_unchecked() },
         }
     }
 }

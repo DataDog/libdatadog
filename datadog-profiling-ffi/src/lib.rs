@@ -11,7 +11,6 @@ extern crate core;
 mod exporter;
 pub mod profiles;
 
-
 #[cfg(all(feature = "symbolizer", not(target_os = "windows")))]
 pub use symbolizer_ffi::*;
 
