@@ -8,8 +8,8 @@ use crate::profiles::datatypes::{AnyValue, KeyValue, Link, StackId, MAX_SAMPLE_T
 use crate::profiles::string_writer::FallibleStringWriter;
 use crate::profiles::ProfileError;
 use arrayvec::ArrayVec;
-use std::borrow::Cow;
 use core::fmt::Write;
+use std::borrow::Cow;
 
 #[derive(Debug)]
 pub struct Sample {

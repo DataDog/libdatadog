@@ -152,7 +152,9 @@ pub const OPT_ZERO: bool = true;
 /// Intended to be provided to a [`Record`] to mean that it shouldn't optimize
 /// for a value of zero. Should be used on fields that should not be zero, such
 /// as `Mapping.id` and for Records which hold arrays, since that would cause
-/// the length of the decoded array to change, which is unexpected.
+/// the length of the decoded array to change, which is unexpected. Things
+/// like sample types shouldn't get optimized away, since they get used
+/// element-wise and this would screw up the pairing.
 pub const NO_OPT_ZERO: bool = false;
 
 impl<P: Value, const F: u32, const O: bool> From<P> for Record<P, F, O> {

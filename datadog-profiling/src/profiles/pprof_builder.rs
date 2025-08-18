@@ -35,7 +35,7 @@ impl<'a> StringTable<'a> {
     }
 
     fn emit_empty<W: Write>(&mut self, writer: &mut W) -> Result<(), ProfileError> {
-        pprof::Record::<&str, 6, { pprof::OPT_ZERO }>::from("").encode(writer)?;
+        pprof::Record::<&str, 6, { pprof::NO_OPT_ZERO }>::from("").encode(writer)?;
         self.map.insert("", pprof::StringOffset::from(self.next));
         self.next = self.next.checked_add(1).ok_or(ProfileError::StorageFull)?;
         Ok(())
@@ -53,7 +53,7 @@ impl<'a> StringTable<'a> {
                 let off = pprof::StringOffset::from(self.next);
                 self.next = self.next.checked_add(1).ok_or(ProfileError::StorageFull)?;
                 v.insert(off);
-                pprof::Record::<&str, 6, { pprof::OPT_ZERO }>::from(s).encode(writer)?;
+                pprof::Record::<&str, 6, { pprof::NO_OPT_ZERO }>::from(s).encode(writer)?;
                 Ok(off)
             }
         }
@@ -204,7 +204,7 @@ impl<'a> PprofBuilder<'a> {
                 r#type: pprof::Record::from(*t_off),
                 unit: pprof::Record::from(*u_off),
             };
-            pprof::Record::<pprof::ValueType, 1, { pprof::OPT_ZERO }>::from(v).encode(writer)?;
+            pprof::Record::<pprof::ValueType, 1, { pprof::NO_OPT_ZERO }>::from(v).encode(writer)?;
         }
 
         // --- emit helpers ---

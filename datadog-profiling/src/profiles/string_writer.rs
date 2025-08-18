@@ -44,7 +44,7 @@ impl From<FallibleStringWriter> for String {
 }
 
 impl From<String> for FallibleStringWriter {
-    fn from(buf: String ) -> FallibleStringWriter {
+    fn from(buf: String) -> FallibleStringWriter {
         FallibleStringWriter { buf }
     }
 }
