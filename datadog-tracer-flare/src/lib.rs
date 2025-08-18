@@ -27,6 +27,9 @@ use {
 
 use crate::error::FlareError;
 
+// TODO: REMOVE THIS ITS FOR TESTING
+use datadog_remote_config::file_change_tracker::FilePath;
+
 pub struct TracerFlareManager {
     pub agent_url: String,
     pub language: String,
@@ -171,6 +174,7 @@ pub enum ReturnAction {
     Start(LogLevel),
     /// If AGENT_TASK received with the right properties.
     Stop,
+    // Stop { to_sent: bool },
     /// If anything else received.
     None,
 }
@@ -336,15 +340,29 @@ pub async fn run_remote_config_listener(
             ))
         }
     };
+    let mut actions = Vec::new();
     match listener.fetch_changes().await {
         Ok(changes) => {
             println!("Got {} changes.", changes.len());
             for change in changes {
                 if let Change::Add(file) = change {
-                    let action = check_remote_config_file(file, tracer_flare);
-                    if action != Ok(ReturnAction::None) {
-                        return action;
+                    // let action = check_remote_config_file(file, tracer_flare);
+                    // if action != Ok(ReturnAction::None) {
+                    //     return action;
+                    // }
+                    let filename = file.path();
+                    println!("Add {filename}");
+                    let action = check_remote_config_file(file, tracer_flare)?;
+                    if action == ReturnAction::Stop {
+                        return Ok(action);
                     }
+
+                } else if let Change::Update(file, _) = change {
+                    let filename = file.path();
+                    println!("Update {filename}");
+                } else if let Change::Remove(file) = change {
+                    let filename = file.path();
+                    println!("Remove {filename}");
                 }
             }
         }
@@ -352,8 +370,11 @@ pub async fn run_remote_config_listener(
             return Err(FlareError::ListeningError(e.to_string()));
         }
     }
+    // println!("Actions found : {actions:?}");
+    // if actions.contains()
 
-    Ok(ReturnAction::None)
+    Ok(action)
+    // Ok(actions)
 }
 
 #[cfg(test)]

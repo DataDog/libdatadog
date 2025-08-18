@@ -291,10 +291,8 @@ async fn send(zip: File, tracer_flare: &mut TracerFlareManager) -> Result<(), Fl
                 let response = hyper_migration::into_response(body);
                 let status = response.status();
                 if status.is_success() {
-                    // Should we return something specific ?
                     Ok(())
                 } else {
-                    // Maybe just put a warning log message ?
                     Err(FlareError::SendError(format!(
                         "Agent returned non-success status for flare send: HTTP {status}"
                     )))
