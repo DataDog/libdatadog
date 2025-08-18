@@ -33,7 +33,7 @@ impl FallibleStringWriter {
     /// current length. The allocator may reserve more space to speculatively
     /// avoid frequent allocations.
     pub fn try_reserve(&mut self, len: usize) -> Result<(), TryReserveError> {
-        Ok(self.buf.try_reserve(len)?)
+        self.buf.try_reserve(len)
     }
 }
 
