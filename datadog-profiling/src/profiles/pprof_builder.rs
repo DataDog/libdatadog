@@ -14,22 +14,23 @@
 use std::collections::{hash_map, HashMap};
 use std::io::Write;
 
-use crate::profiles::collections::SetId;
+use crate::profiles::collections::{SetHasher, SetId};
 use crate::profiles::datatypes::{self as dt, Profile, ProfilesDictionary, ScratchPad};
 use crate::profiles::ProfileError;
 use datadog_profiling_protobuf as pprof;
 use datadog_profiling_protobuf::Value;
 
-// String table that interns &str to compact offsets and encodes on first use
+/// String table that interns &str to compact offsets and encodes into
+/// protobuf when a string is added to the map.
 struct StringTable<'a> {
-    map: HashMap<&'a str, pprof::StringOffset>,
+    map: HashMap<&'a str, pprof::StringOffset, SetHasher>,
     next: u32,
 }
 
 impl<'a> StringTable<'a> {
     fn with_capacity(cap: usize) -> Self {
         Self {
-            map: HashMap::with_capacity(cap),
+            map: HashMap::with_capacity_and_hasher(cap, Default::default()),
             next: 0,
         }
     }
@@ -37,7 +38,7 @@ impl<'a> StringTable<'a> {
     fn emit_empty<W: Write>(&mut self, writer: &mut W) -> Result<(), ProfileError> {
         pprof::Record::<&str, 6, { pprof::NO_OPT_ZERO }>::from("").encode(writer)?;
         self.map.insert("", pprof::StringOffset::from(self.next));
-        self.next = self.next.checked_add(1).ok_or(ProfileError::StorageFull)?;
+        self.next += 1;
         Ok(())
     }
 
@@ -59,16 +60,19 @@ impl<'a> StringTable<'a> {
         }
     }
 }
-/// Compacts ids to 1..=N and emits on first use
+
+/// Compacts ids into "offsets" that begin at 1 since id=0 is reserved in
+/// pprof for these types. It serializes the K to protobuf when it first gets
+/// added to the map.
 struct CompactIdMap<K> {
-    map: HashMap<K, u64>,
+    map: HashMap<K, u64, SetHasher>,
     next: u64,
 }
 
 impl<K: Eq + core::hash::Hash> CompactIdMap<K> {
     fn with_capacity(capacity: usize) -> Self {
         Self {
-            map: HashMap::with_capacity(capacity),
+            map: HashMap::with_capacity_and_hasher(capacity, Default::default()),
             next: 0,
         }
     }
@@ -104,12 +108,14 @@ pub struct PprofOptions {
 
 impl Default for PprofOptions {
     fn default() -> Self {
+        // These are using 7/8th of a power of 2 because that's the max load
+        // factor for hash tables in the current implementation.
         Self {
-            reserve_strings: 256,
-            reserve_functions: 128,
-            reserve_mappings: 32,
-            reserve_locations: 1024,
-            reserve_samples: 4096,
+            reserve_strings: 224,
+            reserve_functions: 112,
+            reserve_mappings: 0, // some languages don't use these at all
+            reserve_locations: 896,
+            reserve_samples: 3584,
         }
     }
 }
