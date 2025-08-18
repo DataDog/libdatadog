@@ -10,9 +10,7 @@ extern crate core;
 
 mod exporter;
 pub mod profiles;
-mod string_storage;
 
-pub use string_storage::*;
 
 #[cfg(all(feature = "symbolizer", not(target_os = "windows")))]
 pub use symbolizer_ffi::*;
