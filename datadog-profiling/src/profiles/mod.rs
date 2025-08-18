@@ -11,6 +11,8 @@ pub mod string_writer;
 
 pub use compressor::*;
 pub use error::*;
+pub use pprof_builder::*;
+pub use string_writer::*;
 
 // todo: can we remove this?
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]

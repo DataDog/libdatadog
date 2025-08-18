@@ -1,16 +1,16 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use arrayvec::ArrayVec;
-use datadog_profiling::profiles;
 use datadog_profiling::profiles::datatypes::{
-    AnyValue, Function, KeyValue, Line, Location, Profile, Sample, ScratchPad, ValueType,
+    AnyValue, Function, KeyValue, Line, Location, Profile, ProfilesDictionary, SampleBuilder,
+    ScratchPad, ValueType,
 };
-use datadog_profiling::profiles::string_writer::FallibleStringWriter;
+use datadog_profiling::profiles::{Compressor, FallibleStringWriter, PprofBuilder};
+use std::io;
 
-// Keep this in-sync with profiles.c
+// Keep this roughly in-sync with profiles.c
 fn main() {
-    let dictionary = profiles::datatypes::ProfilesDictionary::try_new().unwrap();
+    let dictionary = ProfilesDictionary::try_new().unwrap();
     let strings = dictionary.strings();
     let functions = dictionary.functions();
 
@@ -76,36 +76,55 @@ fn main() {
 
     let stack_id = stacks.try_insert(&[location_1, location_2]).unwrap();
 
-    // Build attributes: process_id (string) and runtime-id (UUIDv4 as string)
-    // Process ID as string (u32 decimal fits within 10 chars)
-    let pid = std::process::id();
-    let pid_str = FallibleStringWriter::try_format_with_size_hint(&pid, 10).unwrap();
-    let process_id_attr = KeyValue {
-        key: "process_id".into(),
-        value: AnyValue::String(pid_str),
+    // Build attributes
+    let process_id_attr = {
+        let pid = std::process::id();
+        KeyValue {
+            key: "process_id".into(),
+            value: AnyValue::Integer(pid as i64),
+        }
     };
-    let process_id_attr_id = attributes.try_insert(process_id_attr).unwrap();
 
-    // UUID textual form is 36 bytes (32 hex + 4 hyphens). Reserve exactly that.
-    let runtime_id = uuid::Uuid::new_v4();
-    let runtime_id_str = FallibleStringWriter::try_format_with_size_hint(&runtime_id, 36).unwrap();
-    let runtime_id_attr = KeyValue {
-        key: "runtime-id".into(),
-        value: AnyValue::String(runtime_id_str),
+    let runtime_id_attr = {
+        use core::fmt::Write;
+        let runtime_id = uuid::Uuid::new_v4();
+        let mut rid_w = FallibleStringWriter::new();
+        // UUID textual form is 36 bytes (32 hex + 4 hyphens).
+        rid_w.try_reserve(36).unwrap();
+        write!(&mut rid_w, "{}", runtime_id).unwrap();
+        KeyValue {
+            key: "runtime-id".into(),
+            value: AnyValue::String(rid_w.into()),
+        }
     };
-    let runtime_id_attr_id = attributes.try_insert(runtime_id_attr).unwrap();
 
-    profile
-        .add_sample(Sample {
-            stack_id,
-            values: ArrayVec::from([1, 10000]),
-            attributes: vec![process_id_attr_id, runtime_id_attr_id],
-            link_id: None,
-            timestamp_nanos: 0,
-        })
+    // Build the sample via SampleBuilder
+    let sample = SampleBuilder::new(attributes, scratchpad.links())
+        .stack_id(stack_id)
+        .value(1)
+        .unwrap()
+        .value(10000)
+        .unwrap()
+        .attribute(process_id_attr)
+        .unwrap()
+        .attribute(runtime_id_attr)
+        .unwrap()
+        .timestamp(0)
+        .build()
         .unwrap();
 
-    // todo: convert the in-memory profile into an uncompressed pprof with a new type PprofBuilder.
-    // todo: compress the pprof using profiles::Compressor.
-    // todo: write the compressed pprof to stdout.
+    profile.add_sample(sample).unwrap();
+
+    // Convert the in-memory profile into pprof using PprofBuilder and
+    // stream to an LZ4 compressor, then write to stdout.
+    let mut builder = PprofBuilder::new(&dictionary, &scratchpad);
+    builder.try_add_profile(&profile).unwrap();
+
+    let mut compressor = Compressor::with_max_capacity(50 * 1024 * 1024);
+    builder.build(&mut compressor).unwrap();
+    let compressed = compressor.finish().unwrap();
+    {
+        use io::Write;
+        io::stdout().write_all(&compressed).unwrap();
+    }
 }

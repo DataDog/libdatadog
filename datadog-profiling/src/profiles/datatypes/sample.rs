@@ -9,6 +9,7 @@ use crate::profiles::string_writer::FallibleStringWriter;
 use crate::profiles::ProfileError;
 use arrayvec::ArrayVec;
 use std::borrow::Cow;
+use core::fmt::Write;
 
 #[derive(Debug)]
 pub struct Sample {
@@ -19,10 +20,12 @@ pub struct Sample {
     pub timestamp_nanos: u64,
 }
 
+/// The SampleBuilder allows for building one or two values, and has helpers
+/// for creating attributes to avoid allocations.
 #[derive(Debug)]
-pub struct SampleBuilder {
-    attributes_set: AttributeSet,
-    link_set: LinkSet,
+pub struct SampleBuilder<'a> {
+    attributes_set: &'a AttributeSet,
+    link_set: &'a LinkSet,
     stack_id: Option<StackId>,
     values: ArrayVec<i64, MAX_SAMPLE_TYPES>,
     attributes: Vec<SetId<KeyValue>>,
@@ -30,8 +33,8 @@ pub struct SampleBuilder {
     timestamp_nanos: Option<u64>,
 }
 
-impl SampleBuilder {
-    pub fn try_new(attributes_set: AttributeSet, link_set: LinkSet) -> Self {
+impl<'a> SampleBuilder<'a> {
+    pub fn new(attributes_set: &'a AttributeSet, link_set: &'a LinkSet) -> Self {
         Self {
             attributes_set,
             link_set,
@@ -48,6 +51,8 @@ impl SampleBuilder {
         self
     }
 
+    /// Tries to add a value, failing if the maximum number of sample values
+    /// per sample has been reached.
     pub fn value(mut self, value: i64) -> Result<Self, ProfileError> {
         match self.values.try_push(value) {
             Ok(_) => Ok(self),
@@ -55,6 +60,9 @@ impl SampleBuilder {
         }
     }
 
+    /// Attaches an attribute that already is in the [`KeyValue`] format. Use
+    /// this in particular if you have a static key string and an integer
+    /// value (nothing needs to allocate).
     #[inline(never)]
     pub fn attribute(mut self, key_value: KeyValue) -> Result<Self, ProfileError> {
         self.attributes.try_reserve(1)?;
@@ -72,19 +80,20 @@ impl SampleBuilder {
         value: impl AsRef<str>,
     ) -> Result<Self, ProfileError> {
         let key = key.as_ref();
-        // Prefer borrowed static keys if possible
-        let key_cow: Cow<'static, str> =
-            if let Some(static_key) = if key.is_empty() { Some("") } else { None } {
-                Cow::Borrowed(static_key)
-            } else {
-                let s = FallibleStringWriter::try_format_with_size_hint(&key, key.len())
-                    .map_err(|_| ProfileError::OutOfMemory)?;
-                Cow::Owned(s)
-            };
+        if key.is_empty() {
+            return Err(ProfileError::InvalidInput);
+        }
+        let mut key_writer = FallibleStringWriter::new();
+        key_writer.try_reserve(key.len())?;
+        write!(&mut key_writer, "{}", key).map_err(|_| ProfileError::OutOfMemory)?;
+        let key_cow: Cow<'static, str> = Cow::Owned(String::from(key_writer));
 
         let value = value.as_ref();
-        let value_owned = FallibleStringWriter::try_format_with_size_hint(&value, value.len())
+        let mut w = FallibleStringWriter::new();
+        w.try_reserve(value.len())
             .map_err(|_| ProfileError::OutOfMemory)?;
+        write!(&mut w, "{}", value).map_err(|_| ProfileError::OutOfMemory)?;
+        let value_owned = String::from(w);
 
         let key_value = KeyValue {
             key: key_cow,
@@ -98,14 +107,13 @@ impl SampleBuilder {
     /// out-of-memory.
     pub fn attribute_int(self, key: impl AsRef<str>, value: i64) -> Result<Self, ProfileError> {
         let key = key.as_ref();
-        let key_cow: Cow<'static, str> =
-            if let Some(static_key) = if key.is_empty() { Some("") } else { None } {
-                Cow::Borrowed(static_key)
-            } else {
-                let s = FallibleStringWriter::try_format_with_size_hint(&key, key.len())
-                    .map_err(|_| ProfileError::OutOfMemory)?;
-                Cow::Owned(s)
-            };
+        if key.is_empty() {
+            return Err(ProfileError::InvalidInput);
+        }
+        let mut w = FallibleStringWriter::new();
+        w.try_reserve(key.len())?;
+        write!(&mut w, "{}", key).map_err(|_| ProfileError::OutOfMemory)?;
+        let key_cow: Cow<'static, str> = Cow::Owned(String::from(w));
 
         let key_value = KeyValue {
             key: key_cow,
@@ -125,7 +133,7 @@ impl SampleBuilder {
         self
     }
 
-    pub fn finish(self) -> Result<Sample, ProfileError> {
+    pub fn build(self) -> Result<Sample, ProfileError> {
         let Some(stack_id) = self.stack_id else {
             return Err(ProfileError::InvalidInput);
         };

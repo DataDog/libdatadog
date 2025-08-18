@@ -128,3 +128,21 @@ impl Drop for Compressor {
         }
     }
 }
+
+impl Write for Compressor {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let enc = self
+            .encoder()
+            .map_err(|_| io::Error::from(io::ErrorKind::Other))?;
+        enc.0.write(buf)
+    }
+
+    #[inline]
+    fn flush(&mut self) -> io::Result<()> {
+        let enc = self
+            .encoder()
+            .map_err(|_| io::Error::from(io::ErrorKind::Other))?;
+        enc.0.flush()
+    }
+}

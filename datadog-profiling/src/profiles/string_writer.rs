@@ -2,32 +2,50 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use core::fmt::{self, Write};
+use std::collections::TryReserveError;
 
 /// A `fmt::Write` adapter that grows a `String` using `try_reserve` before
 /// each write, returning `fmt::Error` on allocation failure.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FallibleStringWriter {
     buf: String,
 }
 
+impl Default for FallibleStringWriter {
+    fn default() -> FallibleStringWriter {
+        FallibleStringWriter::new()
+    }
+}
+
 impl FallibleStringWriter {
-    /// Formats `value` into a newly allocated `String`, pre-reserving zero
-    /// additional capacity. Returns `fmt::Error` if allocation fails.
-    pub fn try_format<T: fmt::Display>(value: &T) -> Result<String, fmt::Error> {
-        Self::try_format_with_size_hint(value, 0)
+    /// Creates a new empty string writer.
+    pub const fn new() -> Self {
+        Self { buf: String::new() }
     }
 
-    /// Formats `value` into a newly allocated `String`, attempting to reserve
-    /// `capacity` bytes up-front, and reserving incrementally thereafter.
-    /// Returns `fmt::Error` if allocation fails.
-    pub fn try_format_with_size_hint<T: fmt::Display>(
-        value: &T,
-        capacity: usize,
-    ) -> Result<String, fmt::Error> {
-        let mut w = FallibleStringWriter { buf: String::new() };
-        let _ = w.buf.try_reserve(capacity);
-        write!(&mut w, "{}", value)?;
-        Ok(w.buf)
+    /// Creates a new fallible string writer with a previously existing string
+    /// as the start of the buffer. New writes will append to the end of this.
+    pub const fn new_from_existing(buf: String) -> FallibleStringWriter {
+        FallibleStringWriter { buf }
+    }
+
+    /// Tries to reserve capacity for at least additional bytes more than the
+    /// current length. The allocator may reserve more space to speculatively
+    /// avoid frequent allocations.
+    pub fn try_reserve(&mut self, len: usize) -> Result<(), TryReserveError> {
+        Ok(self.buf.try_reserve(len)?)
+    }
+}
+
+impl From<FallibleStringWriter> for String {
+    fn from(w: FallibleStringWriter) -> String {
+        w.buf
+    }
+}
+
+impl From<String> for FallibleStringWriter {
+    fn from(buf: String ) -> FallibleStringWriter {
+        FallibleStringWriter { buf }
     }
 }
 
