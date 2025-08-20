@@ -30,22 +30,10 @@ use crate::error::FlareError;
 pub struct TracerFlareManager {
     pub agent_url: String,
     pub language: String,
-    pub state: State,
+    pub agent_task: Option<AgentTaskFile>,
     /// As a featured option so we can use the component with no Listener
     #[cfg(feature = "listener")]
     pub listener: Option<Listener>,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum State {
-    Idle,
-    Collecting {
-        log_level: String,
-    },
-    Sending {
-        agent_task: AgentTaskFile,
-        log_level: String,
-    },
 }
 
 impl Default for TracerFlareManager {
@@ -53,7 +41,7 @@ impl Default for TracerFlareManager {
         TracerFlareManager {
             agent_url: hyper::Uri::default().to_string(),
             language: "rust".to_string(),
-            state: State::Idle,
+            agent_task: None,
             #[cfg(feature = "listener")]
             listener: None,
         }
@@ -168,9 +156,11 @@ pub enum LogLevel {
 #[derive(Debug, PartialEq)]
 pub enum ReturnAction {
     /// If AGENT_CONFIG received with the right properties.
-    Start(LogLevel),
+    Set(LogLevel),
+    /// If AGENT_CONFIG is removed.
+    Unset,
     /// If AGENT_TASK received with the right properties.
-    Stop,
+    Send,
     /// If anything else received.
     None,
 }
@@ -179,7 +169,7 @@ impl TryFrom<&str> for LogLevel {
     type Error = FlareError;
 
     fn try_from(level: &str) -> Result<Self, FlareError> {
-        match level {
+        match level.to_lowercase().as_str() {
             "trace" => Ok(LogLevel::Trace),
             "debug" => Ok(LogLevel::Debug),
             "info" => Ok(LogLevel::Info),
@@ -219,51 +209,15 @@ pub fn check_remote_config_file(
             RemoteConfigData::TracerFlareConfig(agent_config) => {
                 if agent_config.name.starts_with("flare-log-level.") {
                     if let Some(log_level) = &agent_config.config.log_level {
-                        if let State::Collecting { log_level: _ } = tracer_flare.state {
-                            return Err(FlareError::RemoteConfigError(
-                                "Cannot start a flare while one is already running".to_string(),
-                            ));
-                        }
-                        if let State::Sending {
-                            agent_task: _,
-                            log_level: _,
-                        } = tracer_flare.state
-                        {
-                            return Err(FlareError::RemoteConfigError(
-                                "Cannot start a flare while one is waiting to be sent".to_string(),
-                            ));
-                        }
-                        // Idle state
-                        tracer_flare.state = State::Collecting {
-                            log_level: log_level.to_string(),
-                        };
                         let log_level = log_level.as_str().try_into()?;
-                        return Ok(ReturnAction::Start(log_level));
+                        return Ok(ReturnAction::Set(log_level));
                     }
                 }
             }
             RemoteConfigData::TracerFlareTask(agent_task) => {
                 if agent_task.task_type.eq("tracer_flare") {
-                    if let State::Collecting { log_level } = &tracer_flare.state {
-                        tracer_flare.state = State::Sending {
-                            agent_task: agent_task.clone(),
-                            log_level: log_level.to_string(),
-                        };
-                        return Ok(ReturnAction::Stop);
-                    }
-                    if let State::Sending {
-                        agent_task: _,
-                        log_level: _,
-                    } = tracer_flare.state
-                    {
-                        return Err(FlareError::RemoteConfigError(
-                            "Cannot stop a flare that it is already waiting to be sent".to_string(),
-                        ));
-                    }
-                    // Idle state
-                    return Err(FlareError::RemoteConfigError(
-                        "Cannot stop an inexisting flare".to_string(),
-                    ));
+                    tracer_flare.agent_task = Some(agent_task.to_owned());
+                    return Ok(ReturnAction::Send);
                 }
             }
             _ => return Ok(ReturnAction::None),
@@ -346,6 +300,17 @@ pub async fn run_remote_config_listener(
                         return action;
                     }
                 }
+                else if let Change::Remove(file) = change {
+                    match file.contents().as_ref() {
+                        Ok(data) => match data {
+                            RemoteConfigData::TracerFlareConfig(_) => return Ok(ReturnAction::Unset),
+                            _ => continue,
+                        },
+                        Err(e) => {
+                            return Err(FlareError::ParsingError(e.to_string()));
+                        }
+                    }
+                }
             }
         }
         Err(e) => {
@@ -359,7 +324,7 @@ pub async fn run_remote_config_listener(
 #[cfg(test)]
 mod tests {
     use crate::{
-        check_remote_config_file, FlareError, LogLevel, ReturnAction, State, TracerFlareManager,
+        check_remote_config_file, FlareError, LogLevel, ReturnAction, TracerFlareManager,
     };
     use datadog_remote_config::{
         config::{
@@ -410,17 +375,11 @@ mod tests {
         let mut tracer_flare = TracerFlareManager::default();
         let result = check_remote_config_file(file, &mut tracer_flare);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), ReturnAction::Start(LogLevel::Info));
-        assert_eq!(
-            tracer_flare.state,
-            State::Collecting {
-                log_level: "info".to_string()
-            }
-        );
+        assert_eq!(result.unwrap(), ReturnAction::Set(LogLevel::Info));
     }
 
     #[test]
-    fn test_check_remote_config_file_with_stop_task() {
+    fn test_check_remote_config_file_with_send_task() {
         let storage = ParsedFileStorage::default();
         let path = Arc::new(RemoteConfigPath {
             product: RemoteConfigProduct::AgentTask,
@@ -442,22 +401,13 @@ mod tests {
         let file = storage
             .store(1, path.clone(), serde_json::to_vec(&task).unwrap())
             .unwrap();
-        let mut tracer_flare = TracerFlareManager {
-            // Emulate the start action
-            state: State::Collecting {
-                log_level: "debug".to_string(),
-            },
-            ..Default::default()
-        };
+        let mut tracer_flare = TracerFlareManager::default();
         let result = check_remote_config_file(file, &mut tracer_flare);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), ReturnAction::Stop);
+        assert_eq!(result.unwrap(), ReturnAction::Send);
         assert_eq!(
-            tracer_flare.state,
-            State::Sending {
-                agent_task: task,
-                log_level: "debug".to_string()
-            }
+            tracer_flare.agent_task,
+            Some(task)
         );
     }
 
