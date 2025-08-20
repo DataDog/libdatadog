@@ -26,7 +26,7 @@ pub mod headers {
     });
 
     /// Gather all top level typedef and #define definitions from a C header file
-    fn collect_definitions(header: &str) -> Vec<Span> {
+    fn collect_definitions(header: &str) -> Vec<Span<'_>> {
         let mut items = Vec::new();
         let mut start = 0;
 
