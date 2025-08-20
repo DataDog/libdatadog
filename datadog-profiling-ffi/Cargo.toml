@@ -29,6 +29,7 @@ crashtracker-receiver = ["crashtracker-ffi", "datadog-crashtracker-ffi/receiver"
 demangler = ["crashtracker-ffi", "datadog-crashtracker-ffi/demangler"]
 datadog-library-config-ffi = ["dep:datadog-library-config-ffi"]
 ddcommon-ffi = ["dep:ddcommon-ffi"]
+ddsketch-ffi = ["dep:ddsketch-ffi"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
@@ -43,6 +44,7 @@ ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false, optional = true }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
 datadog-log-ffi = { path = "../datadog-log-ffi", default-features = false, optional = true }
+ddsketch-ffi = { path = "../ddsketch-ffi", default-features = false, optional = true }
 function_name = "0.3.0"
 futures = { version = "0.3", default-features = false }
 http-body-util = "0.1"
