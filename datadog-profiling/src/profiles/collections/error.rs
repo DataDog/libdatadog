@@ -2,25 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum SetError {
+    #[error("set error: invalid argument")]
     InvalidArgument,
+    #[error("set error: out of memory")]
     OutOfMemory,
+    #[error("set error: reference count overflow")]
     ReferenceCountOverflow,
 }
-
-impl core::fmt::Display for SetError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            SetError::InvalidArgument => "set error: invalid argument",
-            SetError::OutOfMemory => "set error: out of memory",
-            SetError::ReferenceCountOverflow => "set error: reference count overflow",
-        }
-        .fmt(f)
-    }
-}
-
-impl core::error::Error for SetError {}
 
 impl From<datadog_alloc::AllocError> for SetError {
     fn from(_: datadog_alloc::AllocError) -> Self {

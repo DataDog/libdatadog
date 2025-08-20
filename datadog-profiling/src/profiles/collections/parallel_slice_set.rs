@@ -135,7 +135,7 @@ impl<T: Copy + hash::Hash + Eq + 'static> ParallelSliceSet<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::profiles::collections::string_set::{StringId, StringSet};
+    use crate::profiles::collections::string_set::{StringId, UnsyncStringSet};
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn test_function_deduplication() {
         // Create string set for the string data
-        let mut string_set = StringSet::try_new().unwrap();
+        let mut string_set = UnsyncStringSet::try_new().unwrap();
 
         // Create some strings
         let file1 = string_set.try_insert("src/main.rs").unwrap();
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_function_hashing() {
-        let mut string_set = StringSet::try_new().unwrap();
+        let mut string_set = UnsyncStringSet::try_new().unwrap();
 
         let file1 = string_set.try_insert("src/main.rs").unwrap();
         let func1 = string_set.try_insert("main").unwrap();
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn test_function_composition() {
-        let mut string_set = StringSet::try_new().unwrap();
+        let mut string_set = UnsyncStringSet::try_new().unwrap();
 
         let file1 = string_set.try_insert("src/utils.rs").unwrap();
         let func1 = string_set.try_insert("calculate_hash").unwrap();
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_many_functions() {
-        let mut string_set = StringSet::try_new().unwrap();
+        let mut string_set = UnsyncStringSet::try_new().unwrap();
 
         // Create a variety of file and function names
         let files = [
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn test_function_edge_cases() {
-        let mut string_set = StringSet::try_new().unwrap();
+        let mut string_set = UnsyncStringSet::try_new().unwrap();
 
         // Test with empty strings
         let empty_file = string_set.try_insert("").unwrap();

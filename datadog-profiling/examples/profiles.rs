@@ -43,7 +43,8 @@ fn main() {
             file_name: strings.try_insert("/srv/public/index.php").unwrap(),
             ..Function::default()
         })
-        .unwrap();
+        .unwrap()
+        .cast();
 
     let main_id = functions
         .try_insert(Function {
@@ -51,7 +52,8 @@ fn main() {
             file_name: strings.try_insert("/srv/public/index.php").unwrap(),
             ..Function::default()
         })
-        .unwrap();
+        .unwrap()
+        .cast();
 
     let location_1 = locations
         .try_insert(Location {

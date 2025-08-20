@@ -5,7 +5,9 @@ use super::set::{Set, SetId, SET_MIN_CAPACITY};
 use super::{Arc, SetError, SetOps};
 use super::{SetHasher as Hasher, Sharded};
 use core::hash;
+use datadog_alloc::Global;
 use std::hash::BuildHasher;
+use std::ptr;
 
 #[derive(Debug)]
 #[repr(C)]
@@ -93,6 +95,15 @@ impl<T: hash::Hash + Eq + 'static, const N: usize> ParallelSet<T, N> {
         // We do not need to lock to read the value; storage is arena-backed and
         // values are immutable once inserted. Caller guarantees `id` belongs here.
         unsafe { id.0.as_ref() }
+    }
+
+    pub fn into_raw(self) -> ptr::NonNull<()> {
+        Arc::into_raw(self.storage).cast()
+    }
+
+    pub unsafe fn from_raw(this: ptr::NonNull<()>) -> Self {
+        let storage = unsafe { Arc::from_raw_in(this.cast(), Global) };
+        Self { storage }
     }
 }
 

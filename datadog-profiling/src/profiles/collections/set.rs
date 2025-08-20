@@ -15,6 +15,24 @@ pub const SET_MIN_CAPACITY: usize = 14;
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub struct SetId<T>(pub(crate) ptr::NonNull<T>);
 
+impl<T> SetId<T> {
+    /// Cast to another type. Although this is safe, using the result is not
+    /// necessarily safe.
+    #[inline]
+    #[must_use]
+    pub fn cast<U>(self) -> SetId<U> {
+        SetId(self.0.cast())
+    }
+
+    pub fn into_raw(self) -> ptr::NonNull<()> {
+        self.0.cast()
+    }
+
+    pub unsafe fn from_raw(raw: ptr::NonNull<()>) -> Self {
+        Self(raw.cast::<T>())
+    }
+}
+
 // This is different from derive(Clone), because derive(Clone) will be Clone
 // only if T is Clone, and that's not true here--the type is always Clone.
 impl<T> Clone for SetId<T> {

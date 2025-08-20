@@ -36,6 +36,17 @@ impl FallibleStringWriter {
         self.buf.try_reserve(len)
     }
 
+    /// Tries to reserve the minimum capacity for at least `additional` bytes
+    /// more than the current length. Unlike [`try_reserve`], this will not
+    /// deliberately over-allocate to speculatively avoid frequent allocations.
+    ///
+    /// Note that the allocator may give the collection more space than it
+    /// requests. Therefore, capacity can not be relied upon to be precisely
+    /// minimal. Prefer [`try_reserve`] if future insertions are expected.
+    pub fn try_reserve_exact(&mut self, len: usize) -> Result<(), TryReserveError> {
+        self.buf.try_reserve_exact(len)
+    }
+
     pub fn try_push_str(&mut self, str: &str) -> Result<(), TryReserveError> {
         self.try_reserve(str.len())?;
         self.buf.push_str(str);

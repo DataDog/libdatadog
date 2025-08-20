@@ -39,6 +39,25 @@ pub struct ThinStr<'a> {
     inner: ThinSlice<'a, u8>,
 }
 
+impl ThinStr<'_> {
+    pub fn into_raw(self) -> NonNull<()> {
+        self.inner.thin_ptr.size_ptr.cast()
+    }
+
+    pub unsafe fn from_raw(this: NonNull<()>) -> Self {
+        let thin_ptr = ThinPtr {
+            size_ptr: this.cast(),
+            _marker: PhantomData,
+        };
+        Self {
+            inner: ThinSlice {
+                thin_ptr,
+                _marker: PhantomData,
+            },
+        }
+    }
+}
+
 impl fmt::Debug for ThinStr<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.deref().fmt(f)

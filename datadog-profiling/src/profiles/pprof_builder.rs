@@ -276,11 +276,11 @@ impl<'a> PprofBuilder<'a> {
             loc_ids.ensure_with(sid, |id| {
                 let loc = unsafe { scratch.locations().get(sid) };
                 let mapping_id = match loc.mapping_id {
-                    Some(mid) => ensure_mapping(w, mid, dict, strings, map_ids)?,
+                    Some(mid) => ensure_mapping(w, mid.cast(), dict, strings, map_ids)?,
                     None => 0,
                 };
                 let line = if let Some(fid) = loc.line.function_id {
-                    let fid64 = ensure_function(w, fid, dict, strings, func_ids)?;
+                    let fid64 = ensure_function(w, fid.cast(), dict, strings, func_ids)?;
                     pprof::Line {
                         function_id: pprof::Record::from(fid64),
                         lineno: pprof::Record::from(loc.line.line_number),
@@ -316,7 +316,7 @@ impl<'a> PprofBuilder<'a> {
                 for &lid in stack {
                     let id64 = ensure_location(
                         writer,
-                        lid,
+                        lid.cast(),
                         scratch,
                         dict,
                         &mut strings,

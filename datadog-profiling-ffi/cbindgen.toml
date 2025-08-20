@@ -24,6 +24,7 @@ prefix = "ddog_prof_"
 renaming_overrides_prefixing = true
 
 [export.rename]
+# Common
 "ByteSlice" = "ddog_ByteSlice"
 "CharSlice" = "ddog_CharSlice"
 "Endpoint" = "ddog_Endpoint"
@@ -43,6 +44,10 @@ renaming_overrides_prefixing = true
 "Vec_U8" = "ddog_Vec_U8"
 "VoidResult" = "ddog_VoidResult"
 
+# Profiles
+"ProfileStatus" = "ddog_prof_Status"
+
+# Exporter / Legacy
 "CompressorFinishResult" = "ddog_prof_Compressor_FinishResult"
 "ExporterNewResult" = "ddog_prof_Exporter_NewResult"
 "File" = "ddog_prof_Exporter_File"

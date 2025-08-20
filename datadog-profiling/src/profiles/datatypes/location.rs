@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::profiles::collections::{ParallelSet, SetId};
-use crate::profiles::datatypes::{Function, Mapping};
+use crate::profiles::datatypes::{Function, FunctionId, Mapping, MappingId};
 
 /// A representation of a location that is an intersection of the Otel and
 /// Pprof representations. Omits some fields to save space because Datadog
@@ -12,9 +12,11 @@ use crate::profiles::datatypes::{Function, Mapping};
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub struct Location {
     pub address: u64,
-    pub mapping_id: Option<SetId<Mapping>>,
+    pub mapping_id: Option<MappingId>,
     pub line: Line,
 }
+
+pub type LocationId = SetId<()>;
 
 /// A representation of a line plus function. It omits the column because it's
 /// not used by Datadog.
@@ -22,7 +24,7 @@ pub struct Location {
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub struct Line {
     pub line_number: i64,
-    pub function_id: Option<SetId<Function>>,
+    pub function_id: Option<FunctionId>,
 }
 
 pub type LocationSet = ParallelSet<Location, 4>;

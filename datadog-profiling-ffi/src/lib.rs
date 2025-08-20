@@ -6,10 +6,13 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
-extern crate core;
 
+mod ProfileResult;
 mod exporter;
 pub mod profiles;
+mod status;
+
+pub use status::*;
 
 #[cfg(all(feature = "symbolizer", not(target_os = "windows")))]
 pub use symbolizer_ffi::*;

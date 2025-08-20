@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profiles::collections::{ParallelSet, StringId};
+use crate::profiles::collections::{ParallelSet, SetId, StringId};
 
 /// A representation of a mapping that is an intersection of the Otel and Pprof
 /// representations. Omits boolean attributes because Datadog doesn't use them
@@ -15,5 +15,7 @@ pub struct Mapping {
     pub filename: StringId,
     pub build_id: StringId, // missing in Otel, is it made into an attribute?
 }
+
+pub type MappingId = SetId<()>;
 
 pub type MappingSet = ParallelSet<Mapping, 2>;

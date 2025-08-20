@@ -8,6 +8,7 @@ use core::hash;
 
 use std::hash::BuildHasher;
 use std::ops::Deref;
+use std::ptr::NonNull;
 
 type Hasher = hash::BuildHasherDefault<rustc_hash::FxHasher>;
 
@@ -23,6 +24,16 @@ type Hasher = hash::BuildHasherDefault<rustc_hash::FxHasher>;
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StringId(pub ThinStr<'static>);
+
+impl StringId {
+    pub fn into_raw(self) -> NonNull<()> {
+        self.0.into_raw()
+    }
+
+    pub unsafe fn from_raw(this: NonNull<()>) -> Self {
+        Self(ThinStr::from_raw(this))
+    }
+}
 
 impl From<&StringId> for StringId {
     fn from(value: &StringId) -> Self {
@@ -46,8 +57,7 @@ impl StringId {
 
 /// Holds unique strings and provides [`StringId`]s to fetch them later.
 /// This is a newtype around SliceSet<u8> to enforce UTF-8 invariants.
-#[repr(transparent)]
-pub struct StringSet(SliceSet<u8>);
+pub struct UnsyncStringSet(SliceSet<u8>);
 
 pub const WELL_KNOWN_STRING_IDS: [StringId; 5] = [
     StringId::EMPTY,
@@ -57,7 +67,7 @@ pub const WELL_KNOWN_STRING_IDS: [StringId; 5] = [
     StringId::SPAN_ID,
 ];
 
-impl StringSet {
+impl UnsyncStringSet {
     pub fn try_with_capacity(capacity: usize) -> Result<Self, SetError> {
         let mut set = Self(SliceSet::try_with_capacity(capacity)?);
         let strings = &mut set.0.slices;
@@ -171,7 +181,7 @@ mod tests {
 
     #[test]
     fn test_string_set_basic_operations() {
-        let mut set = StringSet::try_new().unwrap();
+        let mut set = UnsyncStringSet::try_new().unwrap();
 
         // Test inserting new strings
         let id1 = set.try_insert("hello").unwrap();
@@ -192,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_string_lengths_and_alignment() {
-        let mut set = StringSet::try_new().unwrap();
+        let mut set = UnsyncStringSet::try_new().unwrap();
 
         // Test various string lengths that might cause alignment issues
         let test_strings = [
@@ -224,7 +234,7 @@ mod tests {
 
     #[test]
     fn test_unicode_strings() {
-        let mut set = StringSet::try_new().unwrap();
+        let mut set = UnsyncStringSet::try_new().unwrap();
 
         let unicode_strings = [
             "café",         // Latin with accents
@@ -254,7 +264,7 @@ mod tests {
     #[test]
     fn test_capacity_and_growth() {
         // Test with minimal capacity
-        let mut set = StringSet::try_with_capacity(1).unwrap();
+        let mut set = UnsyncStringSet::try_with_capacity(1).unwrap();
 
         // Insert more strings than initial capacity to force growth
         let test_strings: Vec<String> = (0..50).map(|i| format!("growth_test_{}", i)).collect();
@@ -276,7 +286,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_large_strings() {
-        let mut set = StringSet::try_new().unwrap();
+        let mut set = UnsyncStringSet::try_new().unwrap();
 
         // Test moderately large string
         let large_string = "x".repeat(1024);
@@ -311,7 +321,7 @@ mod tests {
     #[test]
     fn test_many_small_strings() {
         const NUM_STRINGS: usize = if cfg!(miri) { 100 } else { 1000 };
-        let mut set = StringSet::try_new().unwrap();
+        let mut set = UnsyncStringSet::try_new().unwrap();
 
         // Insert many small strings to test fragmentation and growth
         let mut ids = Vec::with_capacity(NUM_STRINGS);
