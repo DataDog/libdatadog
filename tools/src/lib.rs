@@ -16,11 +16,13 @@ pub mod headers {
     }
 
     static ITEM_DEFINITION_HEAD: LazyLock<Regex> = LazyLock::new(|| {
-        RegexBuilder::new(r"^(?:/\*\*(?:[^*]|\*+[^*/])*\*+/\n)?(?:# *(define [a-zA-Z_0-9]+ [^\n]+)|(typedef))")
-            .multi_line(true)
-            .dot_matches_new_line(true)
-            .build()
-            .unwrap()
+        RegexBuilder::new(
+            r"^(?:/\*\*(?:[^*]|\*+[^*/])*\*+/\n)?(?:# *(define [a-zA-Z_0-9]+ [^\n]+)|(typedef))",
+        )
+        .multi_line(true)
+        .dot_matches_new_line(true)
+        .build()
+        .unwrap()
     });
 
     /// Gather all top level typedef and #define definitions from a C header file
