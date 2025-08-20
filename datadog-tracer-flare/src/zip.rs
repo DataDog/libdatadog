@@ -229,12 +229,18 @@ fn generate_payload(
 /// - The agent URL is invalid
 /// - The HTTP request fails after retries
 /// - The agent returns a non-success HTTP status code
-async fn send(zip: File, log_level: String, tracer_flare: &mut TracerFlareManager) -> Result<(), FlareError> {
+async fn send(
+    zip: File,
+    log_level: String,
+    tracer_flare: &mut TracerFlareManager,
+) -> Result<(), FlareError> {
     let agent_task = match &tracer_flare.agent_task {
         Some(agent_task) => agent_task,
-        _ => return Err(FlareError::SendError(
-            "Trying to send the flare without AGENT_TASK received".to_string(),
-        ))
+        _ => {
+            return Err(FlareError::SendError(
+                "Trying to send the flare without AGENT_TASK received".to_string(),
+            ))
+        }
     };
 
     let payload = generate_payload(

@@ -299,11 +299,12 @@ pub async fn run_remote_config_listener(
                     if action != Ok(ReturnAction::None) {
                         return action;
                     }
-                }
-                else if let Change::Remove(file) = change {
+                } else if let Change::Remove(file) = change {
                     match file.contents().as_ref() {
                         Ok(data) => match data {
-                            RemoteConfigData::TracerFlareConfig(_) => return Ok(ReturnAction::Unset),
+                            RemoteConfigData::TracerFlareConfig(_) => {
+                                return Ok(ReturnAction::Unset)
+                            }
                             _ => continue,
                         },
                         Err(e) => {
@@ -323,9 +324,7 @@ pub async fn run_remote_config_listener(
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        check_remote_config_file, FlareError, LogLevel, ReturnAction, TracerFlareManager,
-    };
+    use crate::{check_remote_config_file, FlareError, LogLevel, ReturnAction, TracerFlareManager};
     use datadog_remote_config::{
         config::{
             agent_config::{AgentConfig, AgentConfigFile},
@@ -405,10 +404,7 @@ mod tests {
         let result = check_remote_config_file(file, &mut tracer_flare);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ReturnAction::Send);
-        assert_eq!(
-            tracer_flare.agent_task,
-            Some(task)
-        );
+        assert_eq!(tracer_flare.agent_task, Some(task));
     }
 
     #[test]
