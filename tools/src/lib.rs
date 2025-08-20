@@ -259,7 +259,7 @@ typedef union my_union {
         }
 
         #[test]
-        fn colllect_multiple_definitions() {
+        fn collect_multiple_definitions() {
             let input = r"
 /**
  * `QueueId` is a struct that represents a unique identifier for a queue.
@@ -267,7 +267,7 @@ typedef union my_union {
  */
 typedef uint64_t ddog_QueueId;
 
-void foo() {`
+void foo() {
 }
   
 /**
