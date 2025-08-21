@@ -111,33 +111,33 @@ pub struct EndpointsPayload {
 #[serde(rename_all = "UPPERCASE")]
 #[repr(C)]
 pub enum Method {
-    Get,
-    Post,
-    Put,
-    Delete,
-    Patch,
-    Head,
-    Options,
-    Trace,
-    Connect,
-    Other, //This is specified as "*" in the OpenAPI spec
+    Get = 0,
+    Post = 1,
+    Put = 2,
+    Delete = 3,
+    Patch = 4,
+    Head = 5,
+    Options = 6,
+    Trace = 7,
+    Connect = 8,
+    Other = 9, //This is specified as "*" in the OpenAPI spec
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
 #[serde(rename_all = "UPPERCASE")]
 #[repr(C)]
 pub enum Authentication {
-    Jwt,
-    Basic,
-    Oauth,
-    Oidc,
-    ApiKey,
-    Session,
-    Mtls,
-    Saml,
-    Ldap,
-    Form,
-    Other,
+    Jwt = 0,
+    Basic = 1,
+    Oauth = 2,
+    Oidc = 3,
+    ApiKey = 4,
+    Session = 5,
+    Mtls = 6,
+    Saml = 7,
+    Ldap = 8,
+    Form = 9,
+    Other = 10,
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
