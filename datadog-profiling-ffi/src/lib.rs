@@ -7,11 +7,14 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-mod ProfileResult;
 mod exporter;
+mod profile_handle;
+mod profile_result;
 pub mod profiles;
 mod status;
 
+pub use profile_handle::*;
+pub use profile_result::*;
 pub use status::*;
 
 #[cfg(all(feature = "symbolizer", not(target_os = "windows")))]

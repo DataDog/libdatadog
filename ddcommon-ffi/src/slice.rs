@@ -65,7 +65,14 @@ fn is_aligned<T>(ptr: *const T) -> bool {
 }
 
 pub trait AsBytes<'a> {
-    fn as_bytes(&self) -> &'a [u8];
+    fn as_bytes(&self) -> &'a [u8] {
+        {
+            #[allow(clippy::expect_used)]
+            self.try_as_bytes().expect("failed to interpret as bytes")
+        }
+    }
+
+    fn try_as_bytes(&self) -> Option<&'a [u8]>;
 
     #[inline]
     fn try_to_utf8(&self) -> Result<&'a str, Utf8Error> {
@@ -95,15 +102,21 @@ pub trait AsBytes<'a> {
 }
 
 impl<'a> AsBytes<'a> for Slice<'a, u8> {
-    fn as_bytes(&self) -> &'a [u8] {
-        self.as_slice()
+    fn try_as_bytes(&self) -> Option<&'a [u8]> {
+        self.try_as_slice()
     }
 }
 
 impl<'a> AsBytes<'a> for Slice<'a, i8> {
-    fn as_bytes(&self) -> &'a [u8] {
-        // SAFETY: safe to convert *i8 to *u8 and then read it... I think.
-        unsafe { Slice::from_raw_parts(self.ptr.cast(), self.len) }.as_slice()
+    fn try_as_bytes(&self) -> Option<&'a [u8]> {
+        self.try_as_slice().map(|i8_slice| {
+            // SAFETY: we've gone through a successful try_as_slice, so the
+            // enforceable characteristics such as fitting in isize::MAX are
+            // all good. The rest is safe only if the consumer respects the
+            // inherent safety requirements--doesn't give invalid length,
+            // pointer to invalid memory, etc.
+            unsafe { slice::from_raw_parts(i8_slice.as_ptr().cast(), self.len) }
+        })
     }
 }
 
@@ -115,6 +128,10 @@ impl<'a> AsBytes<'a> for &'a [c_char] {
         // SAFETY: We're transmuting from &[i8] to &[u8] which is safe since they have the same
         // layout
         unsafe { std::mem::transmute(i8_slice) }
+    }
+
+    fn try_as_bytes(&self) -> Option<&'a [u8]> {
+        Some(self.as_bytes())
     }
 }
 

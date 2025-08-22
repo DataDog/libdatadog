@@ -4,18 +4,18 @@
 use crate::ProfileStatus;
 
 #[repr(C)]
-pub struct Result<T> {
+pub struct ProfileResult<T> {
     status: ProfileStatus,
     ok: T,
 }
 
-impl<T: Default, E: core::error::Error> From<std::result::Result<T, E>>
-    for Result<T>
+impl<T: Default, E: core::error::Error> From<Result<T, E>>
+    for ProfileResult<T>
 {
-    fn from(result: std::result::Result<T, E>) -> Self {
+    fn from(result: Result<T, E>) -> Self {
         match result {
-            Ok(ok) => Result { status: ProfileStatus::OK, ok },
-            Err(err) => Result {
+            Ok(ok) => ProfileResult { status: ProfileStatus::OK, ok },
+            Err(err) => ProfileResult {
                 status: ProfileStatus::from_error(err),
                 ok: Default::default(),
             },

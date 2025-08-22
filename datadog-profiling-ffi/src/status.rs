@@ -1,11 +1,14 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_alloc::{AllocError, Allocator, Global};
-use datadog_profiling::profiles::{FallibleStringWriter, ProfileError};
+use allocator_api2::alloc::{Allocator, Global, Layout};
+use datadog_alloc::AllocError;
+use datadog_profiling::profiles::FallibleStringWriter;
 use std::borrow::Cow;
 use std::ffi::{c_char, CStr, CString};
 use std::hint::unreachable_unchecked;
+use std::mem::ManuallyDrop;
+use std::ptr::NonNull;
 
 const FLAG_OK: usize = 0b00;
 const FLAG_STATIC: usize = 0b01;
@@ -15,18 +18,22 @@ const MASK_IS_ERROR: usize = 0b01;
 const MASK_IS_ALLOCATED: usize = 0b10;
 const MASK_UNUSED: usize = !(MASK_IS_ERROR | MASK_IS_ALLOCATED);
 
-pub const STATUS_OK: usize = 0;
-
-// Extracting the "common" fields allow for common union handling that is
-// agnostic to the type of T.
+/// Represents the result of an operation that either succeeds with no value,
+/// or fails with an error message. This is like `Result<(), Cow<CStr>` except
+/// its representation is smaller, and is FFI-stable.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ProfileStatus {
-    // 0 means okay, everything else is opaque in C.
-    // In Rust, it will need to reserve a bit somewhere.
-    pub flags: usize,
-    pub err: *const c_char, // null when okay
+    /// 0 means okay, everything else is opaque in C.
+    /// In Rust, the bits help us know whether it is heap allocated or not.
+    pub flags: libc::size_t,
+    /// If not null, this is a pointer to a valid null-terminated string.
+    /// This is null if `flags` == 0.
+    pub err: *const c_char,
 }
+
+unsafe impl Send for ProfileStatus {}
+unsafe impl Sync for ProfileStatus {}
 
 impl<E: core::error::Error> From<Result<(), E>> for ProfileStatus {
     fn from(result: Result<(), E>) -> Self {
@@ -34,6 +41,12 @@ impl<E: core::error::Error> From<Result<(), E>> for ProfileStatus {
             Ok(_) => ProfileStatus::OK,
             Err(err) => ProfileStatus::from_error(err),
         }
+    }
+}
+
+impl From<&'static CStr> for ProfileStatus {
+    fn from(value: &'static CStr) -> Self {
+        Self { flags: FLAG_STATIC, err: value.as_ptr() }
     }
 }
 
@@ -55,10 +68,10 @@ impl TryFrom<ProfileStatus> for CString {
     }
 }
 
-impl TryFrom<ProfileStatus> for &'static CStr {
+impl TryFrom<&ProfileStatus> for &CStr {
     type Error = usize;
 
-    fn try_from(status: ProfileStatus) -> Result<Self, Self::Error> {
+    fn try_from(status: &ProfileStatus) -> Result<Self, Self::Error> {
         if status.flags != FLAG_OK {
             Ok(unsafe { CStr::from_ptr(status.err.cast_mut()) })
         } else {
@@ -73,7 +86,7 @@ impl From<ProfileStatus> for Result<(), Cow<'static, CStr>> {
         let is_error = (flags & MASK_IS_ERROR) != 0;
         let is_allocated = (flags & MASK_IS_ALLOCATED) != 0;
         if cfg!(debug_assertions) {
-            if MASK_UNUSED != 0 {
+            if (status.flags & MASK_UNUSED) != 0 {
                 panic!("invalid bit pattern: {flags:b}");
             }
         }
@@ -101,34 +114,74 @@ impl From<()> for ProfileStatus {
     }
 }
 
-fn try_shrink_to_fit_vec<T: Copy>(vec: Vec<T>) -> Result<Vec<T>, AllocError> {
-    if vec.capacity() > vec.len() {
-        // Unfortunately, there aren't APIs for try_into_boxed_slice, so we
-        // can't shrink in place without violating abstractions.
-        // So we force a copy.
-        let mut new = Vec::new();
-        new.try_reserve(vec.len()).map_err(|_| AllocError)?;
-        new.copy_from_slice(vec.as_slice());
-        Ok(new)
-    } else {
-        Ok(vec)
+/// Tries to shrink a vec to exactly fit its length.
+/// On success, the vector's capacity equals its length.
+/// Returns an allocation error if the allocator cannot shrink.
+fn vec_try_shrink_to_fit<T>(vec: &mut Vec<T>) -> Result<(), AllocError> {
+    let len = vec.len();
+    if vec.capacity() == len || core::mem::size_of::<T>() == 0 {
+        return Ok(());
+    }
+
+    // Take ownership temporarily to manipulate raw parts; put an empty vec
+    // in its place.
+    let mut md = ManuallyDrop::new(core::mem::take(vec));
+
+    // Avoid len=0 case for allocators by dropping the allocation and replacing
+    // it with a new empty vec.
+    if len == 0 {
+        // SAFETY: we have exclusive access, and we're not exposing the zombie
+        // bits to safe code since we're just returning (original vec was
+        // replaced by an empty vec).
+        unsafe { ManuallyDrop::drop(&mut md) };
+        return Ok(());
+    }
+
+    let ptr = md.as_mut_ptr();
+    let cap = md.capacity();
+
+    // SAFETY: Vec invariants ensure `cap >= len`, and capacity/len fit isize.
+    let old_layout = unsafe { Layout::array::<T>(cap).unwrap_unchecked() };
+    let new_layout = unsafe { Layout::array::<T>(len).unwrap_unchecked() };
+
+    // SAFETY: `ptr` is non-null and properly aligned for T (Vec invariant).
+    let old_ptr_u8 = unsafe { NonNull::new_unchecked(ptr.cast::<u8>()) };
+
+    match unsafe { Global.shrink(old_ptr_u8, old_layout, new_layout) } {
+        Ok(new_ptr_u8) => {
+            let new_ptr = new_ptr_u8.as_ptr().cast::<T>();
+            // SAFETY: new allocation valid for len Ts; capacity == len.
+            let new_vec = unsafe { Vec::from_raw_parts(new_ptr, len, len) };
+            *vec = new_vec;
+            Ok(())
+        }
+        Err(_) => {
+            // Reconstruct original and put it back; report OOM.
+            let orig = unsafe { Vec::from_raw_parts(ptr, len, cap) };
+            *vec = orig;
+            Err(AllocError)
+        }
     }
 }
 
-fn try_shrink_to_fit(string: String) -> Result<String, AllocError> {
-    let bytes = try_shrink_to_fit_vec(string.into_bytes())?;
-    unsafe { Ok(String::from_utf8_unchecked(bytes)) }
+fn string_try_shrink_to_fit(string: &mut String) -> Result<(), AllocError> {
+    // Take ownership to get access to the backing Vec<u8>.
+    let mut bytes = core::mem::take(string).into_bytes();
+    let res = vec_try_shrink_to_fit(&mut bytes);
+    // SAFETY: bytes came from a valid UTF-8 String and were not mutated.
+    *string = unsafe { String::from_utf8_unchecked(bytes) };
+    res
 }
 
 impl ProfileStatus {
     pub const OK: ProfileStatus =
         ProfileStatus { flags: FLAG_OK, err: std::ptr::null() };
 
-    pub const OUT_OF_MEMORY: ProfileStatus = ProfileStatus {
+    const OUT_OF_MEMORY: ProfileStatus = ProfileStatus {
         flags: FLAG_STATIC,
         err: c"out of memory while trying to display error".as_ptr(),
     };
-    pub const NULL_BYTE_IN_ERROR_MESSAGE: ProfileStatus = ProfileStatus {
+    const NULL_BYTE_IN_ERROR_MESSAGE: ProfileStatus = ProfileStatus {
         flags: FLAG_STATIC,
         err: c"another error occured, but cannot be displayed because it has interior null bytes".as_ptr(),
     };
@@ -140,34 +193,53 @@ impl ProfileStatus {
             return ProfileStatus::OUT_OF_MEMORY;
         }
 
-        // Terminate with null. We use exact because it's the last append and
-        // in some cases we may get the exact size and avoid a shrink.
-        if writer.try_reserve_exact(1).is_err() {
-            return ProfileStatus::OUT_OF_MEMORY;
-        }
-        // Cannot fail, we just reserved the memory.
-        _ = writer.write_str("\0");
+        let mut str = String::from(writer);
 
-        // For FFI, it has to be an exact fit. It may not fit exactly already
-        // such as if there was capacity for 8, len=4, and we append the null
-        // the length is still only 5 of 8.
-        let Ok(str) = try_shrink_to_fit(writer.into()) else {
-            return ProfileStatus::OUT_OF_MEMORY;
-        };
-        if CStr::from_bytes_with_nul(str.as_bytes()).is_err() {
+        // std doesn't expose memchr even though it has it, but fortunately
+        // libc has it, and we use the libc crate already in FFI.
+        let pos = unsafe { libc::memchr(str.as_ptr().cast(), 0, str.len()) };
+        if !pos.is_null() {
             return ProfileStatus::NULL_BYTE_IN_ERROR_MESSAGE;
         }
-        ProfileStatus::from(unsafe {
-            CString::from_vec_unchecked(str.into_bytes())
-        })
+
+        // Reserve memory exactly. We have to shrink later in order to turn
+        // it into a box, so we don't want any excess capacity.
+        if str.try_reserve_exact(1).is_err() {
+            return ProfileStatus::OUT_OF_MEMORY;
+        }
+        str.push('\0');
+
+        let mut str = str;
+        if string_try_shrink_to_fit(&mut str).is_err() {
+            return ProfileStatus::OUT_OF_MEMORY;
+        }
+
+        // Pop the null off because CString::from_vec_unchecked adds one.
+        _ = str.pop();
+
+        // And here's why we went through the pain of copy_shrink: this method
+        // will call shrink_to_fit, so to avoid an allocation failure here,
+        // we _must_
+        let cstring = unsafe { CString::from_vec_unchecked(str.into_bytes()) };
+        ProfileStatus::from(cstring)
     }
 }
 
-// handles okay, heap-allocated, and static so caller doesn't need to be
-// aware of which bit is for indicating heap allocation.
+/// Frees any error associated with the status, and replaces it with an OK.
+///
+/// # Safety
+///
+/// The pointer should point at a valid Status object, if it's not null.
+///
+/// The caller should not use the Status afterward, nor any should it use any
+/// copies it has made as their underlying memory has now been dropped. Other
+/// copies can be replaced with <code>{ 0, null }</code>.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_Status_drop(status: ProfileStatus) {
-    if let Ok(cstring) = CString::try_from(status) {
-        drop(cstring);
+pub unsafe extern "C" fn ddog_prof_Status_drop(status: *mut ProfileStatus) {
+    if status.is_null() {
+        return;
     }
+    // SAFETY: safe when the user respects ddog_prof_Status_drop's conditions.
+    let status = unsafe { core::ptr::replace(status, ProfileStatus::OK) };
+    drop(Result::from(status));
 }

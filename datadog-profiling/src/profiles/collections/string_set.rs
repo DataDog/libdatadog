@@ -5,7 +5,7 @@ use super::slice_set::SliceSet;
 use super::SetError;
 use super::ThinStr;
 use core::hash;
-
+use std::ffi::c_void;
 use std::hash::BuildHasher;
 use std::ops::Deref;
 use std::ptr::NonNull;
@@ -26,11 +26,11 @@ type Hasher = hash::BuildHasherDefault<rustc_hash::FxHasher>;
 pub struct StringId(pub ThinStr<'static>);
 
 impl StringId {
-    pub fn into_raw(self) -> NonNull<()> {
+    pub fn into_raw(self) -> NonNull<c_void> {
         self.0.into_raw()
     }
 
-    pub unsafe fn from_raw(this: NonNull<()>) -> Self {
+    pub unsafe fn from_raw(this: NonNull<c_void>) -> Self {
         Self(ThinStr::from_raw(this))
     }
 }

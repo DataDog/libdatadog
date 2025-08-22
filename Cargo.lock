@@ -1685,6 +1685,7 @@ dependencies = [
 name = "datadog-profiling-ffi"
 version = "20.0.0"
 dependencies = [
+ "allocator-api2",
  "anyhow",
  "build_common",
  "data-pipeline-ffi",
@@ -1977,6 +1978,7 @@ dependencies = [
 name = "ddcommon-ffi"
 version = "20.0.0"
 dependencies = [
+ "allocator-api2",
  "anyhow",
  "bolero",
  "build_common",

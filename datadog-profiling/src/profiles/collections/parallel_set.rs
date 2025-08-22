@@ -4,8 +4,10 @@
 use super::set::{Set, SetId, SET_MIN_CAPACITY};
 use super::{Arc, SetError, SetOps};
 use super::{SetHasher as Hasher, Sharded};
+use core::any::TypeId;
 use core::hash;
 use datadog_alloc::Global;
+use std::ffi::c_void;
 use std::hash::BuildHasher;
 use std::ptr;
 
@@ -27,6 +29,12 @@ impl<T: hash::Hash + Eq + 'static, const N: usize> ParallelSet<T, N> {
         let storage = Sharded::<Set<T>, N>::try_new_with_min_capacity(SET_MIN_CAPACITY)?;
         let storage = Arc::try_new(storage)?;
         Ok(Self { storage })
+    }
+
+    pub fn cast<U: hash::Hash + Eq + 'static>(self) -> ParallelSet<U, N> {
+        ParallelSet {
+            storage: unsafe { core::mem::transmute(self.storage) },
+        }
     }
 
     #[inline]
@@ -86,6 +94,11 @@ impl<T: hash::Hash + Eq + 'static, const N: usize> ParallelSet<T, N> {
         unsafe { guard.find_with_hash(hash, value) }
     }
 
+    #[inline]
+    pub fn element_type_id(&self) -> TypeId {
+        self.storage.type_id
+    }
+
     /// Returns a shared reference to the value for a given `SetId`.
     ///
     /// # Safety
@@ -97,11 +110,11 @@ impl<T: hash::Hash + Eq + 'static, const N: usize> ParallelSet<T, N> {
         unsafe { id.0.as_ref() }
     }
 
-    pub fn into_raw(self) -> ptr::NonNull<()> {
+    pub fn into_raw(self) -> ptr::NonNull<c_void> {
         Arc::into_raw(self.storage).cast()
     }
 
-    pub unsafe fn from_raw(this: ptr::NonNull<()>) -> Self {
+    pub unsafe fn from_raw(this: ptr::NonNull<c_void>) -> Self {
         let storage = unsafe { Arc::from_raw_in(this.cast(), Global) };
         Self { storage }
     }

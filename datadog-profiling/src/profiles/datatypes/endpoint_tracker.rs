@@ -83,4 +83,11 @@ impl EndpointTracker {
         }
         Ok(stats)
     }
+
+    /// Exposes the string table--use responsibly, it's only meant to hold
+    /// strings related to endpoints. Don't put unrelated strings in here.
+    /// Mostly exposed for FFI's sake.
+    pub fn strings(&self) -> &ParallelStringSet {
+        &self.strings
+    }
 }

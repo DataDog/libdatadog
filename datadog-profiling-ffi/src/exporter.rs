@@ -825,9 +825,9 @@ mod tests {
                 .unwrap_err()
                 .to_string();
             assert_eq!(
-                        "ddog_prof_Exporter_send failed: request: inner pointer was null, indicates use after free",
-                        error
-                    );
+                "ddog_prof_Exporter_send failed: request: handle's interior pointer is null, indicates use-after-free",
+                error
+            );
         }
     }
 }

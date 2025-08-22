@@ -6,15 +6,16 @@ use datadog_profiling::profiles::collections::{
     ParallelStringSet, StringId as RustStringId, StringId,
 };
 use datadog_profiling::profiles::ProfileError;
-use ddcommon_ffi::slice::ByteSlice;
+use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use std::borrow::Cow;
 use std::collections::TryReserveError;
+use std::ffi::c_void;
 use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
 
 /// Opaque handle type for a string set. Do not reach into this, it's only
 /// there for size and alignment and the detail may change.
-pub type StringSet = *mut ();
+pub type StringSet = *mut c_void;
 
 /// Tries to create a new string set.
 /// If the status is OK, then the `set` has been written with an actual set
@@ -34,7 +35,8 @@ pub unsafe extern "C" fn ddog_prof_StringSet_new(
 }
 
 /// Options for converting a ByteSlice to a UTF-8 string.
-#[repr(C)]
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Utf8Option {
     /// The string is assumed to be valid UTF-8. If it's not, the behavior
     /// is undefined.
@@ -44,6 +46,38 @@ pub enum Utf8Option {
     /// The string is validated to be UTF-8. If it's not, an error is
     /// returned.
     Validate,
+}
+
+impl Utf8Option {
+    /// Converts a byte slice to a UTF-8 string according to the option.
+    /// - Assume: Borrow without validation (caller guarantees UTF-8)
+    /// - ConvertLossy: Lossy conversion with fallible allocation
+    /// - Validate: Validate and borrow on success
+    pub unsafe fn convert(
+        self,
+        bytes: &[u8],
+    ) -> Result<Cow<'_, str>, ProfileError> {
+        Ok(match self {
+            Utf8Option::Assume => {
+                // SAFETY: caller asserts validity under Assume
+                Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(bytes) })
+            }
+            Utf8Option::ConvertLossy => try_from_utf8_lossy(bytes)
+                .map_err(|_| ProfileError::OutOfMemory)?,
+            Utf8Option::Validate => Cow::Borrowed(
+                std::str::from_utf8(bytes)
+                    .map_err(|_| ProfileError::InvalidInput)?,
+            ),
+        })
+    }
+
+    pub unsafe fn try_as_bytes_convert<'a, T: AsBytes<'a>>(
+        self,
+        t: T,
+    ) -> Result<Cow<'a, str>, ProfileError> {
+        let bytes = t.try_as_bytes().ok_or(ProfileError::InvalidInput)?;
+        self.convert(bytes)
+    }
 }
 
 /// Tries to convert a slice of bytes to a string. The input may have invalid
@@ -87,9 +121,29 @@ pub fn try_from_utf8_lossy(v: &[u8]) -> Result<Cow<'_, str>, TryReserveError> {
     Ok(Cow::Owned(res))
 }
 
+pub fn insert_str(
+    set: &ParallelStringSet,
+    str: CharSlice<'_>,
+    utf8_options: Utf8Option,
+) -> Result<StringId, ProfileError> {
+    let bytes = str.try_as_bytes().ok_or(ProfileError::InvalidInput)?;
+    let string = match utf8_options {
+        Utf8Option::Assume => {
+            // SAFETY: the caller is asserting the data is valid UTF-8.
+            Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(bytes) })
+        }
+        Utf8Option::ConvertLossy => try_from_utf8_lossy(bytes)?,
+        Utf8Option::Validate => Cow::Borrowed(
+            std::str::from_utf8(bytes)
+                .map_err(|_| ProfileError::InvalidInput)?,
+        ),
+    };
+    Ok(set.try_insert(string.as_ref())?)
+}
+
 fn stringset_insert(
     this: StringSet,
-    str: ByteSlice,
+    str: CharSlice,
     utf8_options: Utf8Option,
 ) -> Result<RustStringId, ProfileError> {
     let set = match NonNull::new(this) {
@@ -99,19 +153,7 @@ fn stringset_insert(
             ManuallyDrop::new(unsafe { ParallelStringSet::from_raw(raw) })
         }
     };
-    let slice = str.try_as_slice().ok_or(ProfileError::InvalidInput)?;
-    let string = match utf8_options {
-        Utf8Option::Assume => {
-            // SAFETY: the caller is asserting the data is valid UTF-8.
-            Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(slice) })
-        }
-        Utf8Option::ConvertLossy => try_from_utf8_lossy(slice)?,
-        Utf8Option::Validate => Cow::Borrowed(
-            std::str::from_utf8(slice)
-                .map_err(|_| ProfileError::InvalidInput)?,
-        ),
-    };
-    Ok(set.try_insert(string.as_ref())?)
+    insert_str(&set, str, utf8_options)
 }
 
 /// Tries to insert a string into the set.
@@ -122,7 +164,7 @@ fn stringset_insert(
 pub unsafe extern "C" fn ddog_prof_StringSet_insert(
     id: NonNull<StringId>,
     set: StringSet,
-    str: ByteSlice,
+    str: CharSlice,
     utf8_options: Utf8Option,
 ) -> ProfileStatus {
     match stringset_insert(set, str, utf8_options) {

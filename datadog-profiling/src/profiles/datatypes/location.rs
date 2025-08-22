@@ -1,8 +1,9 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profiles::collections::{ParallelSet, SetId};
-use crate::profiles::datatypes::{Function, FunctionId, Mapping, MappingId};
+use crate::profiles::collections::ParallelSet;
+use crate::profiles::datatypes::{FunctionId, MappingId};
+use std::ffi::c_void;
 
 /// A representation of a location that is an intersection of the Otel and
 /// Pprof representations. Omits some fields to save space because Datadog
@@ -16,7 +17,9 @@ pub struct Location {
     pub line: Line,
 }
 
-pub type LocationId = SetId<()>;
+// Avoid NonNull<()> in FFI; see PR:
+// https://github.com/mozilla/cbindgen/pull/1098
+pub type LocationId = std::ptr::NonNull<c_void>;
 
 /// A representation of a line plus function. It omits the column because it's
 /// not used by Datadog.

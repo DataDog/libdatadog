@@ -4,9 +4,10 @@
 use super::SetHasher as Hasher;
 use super::{SetError, SetOps};
 use core::hint::unreachable_unchecked;
-use core::{fmt, mem, ptr};
+use core::{any::TypeId, fmt, mem, ptr};
 use datadog_alloc::{Allocator, ChainAllocator, VirtualAllocator};
 use hashbrown::HashTable;
+use std::ffi::c_void;
 use std::hash::{BuildHasher, Hash};
 
 pub const SET_MIN_CAPACITY: usize = 14;
@@ -24,11 +25,11 @@ impl<T> SetId<T> {
         SetId(self.0.cast())
     }
 
-    pub fn into_raw(self) -> ptr::NonNull<()> {
+    pub fn into_raw(self) -> ptr::NonNull<c_void> {
         self.0.cast()
     }
 
-    pub unsafe fn from_raw(raw: ptr::NonNull<()>) -> Self {
+    pub unsafe fn from_raw(raw: ptr::NonNull<c_void>) -> Self {
         Self(raw.cast::<T>())
     }
 }
@@ -149,6 +150,10 @@ unsafe impl<T: Hash + Eq + 'static> SetOps for Set<T> {
 
     fn len(&self) -> usize {
         self.len()
+    }
+
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<T>()
     }
 
     unsafe fn find_with_hash(&self, hash: u64, key: Self::Lookup<'_>) -> Option<Self::Id> {

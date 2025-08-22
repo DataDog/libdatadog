@@ -15,6 +15,19 @@ impl<T> Handle<T> {
     pub fn empty() -> Self {
         Self { inner: null_mut() }
     }
+
+    /// Tries to create a new Handle from the provided value. Fails if memory
+    /// cannot be allocated.
+    pub fn try_new(t: T) -> Option<Handle<T>> {
+        let uninit = allocator_api2::boxed::Box::<T>::try_new(t).ok()?;
+        let inner = allocator_api2::boxed::Box::into_raw(uninit).cast();
+        Some(Self { inner })
+    }
+
+    pub fn as_inner(&self) -> Result<&T, HandleError> {
+        // SAFETY: the Handle owns the data.
+        unsafe { self.inner.as_ref() }.ok_or(HandleError::InnerNullPtr)
+    }
 }
 
 #[repr(C)]

@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::slice::AsBytes;
+use crate::Slice;
 use core::{marker, mem, ptr, slice};
 use serde::ser::Error;
 use serde::Serializer;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::os::raw::c_char;
+use std::ptr::NonNull;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -23,17 +25,24 @@ pub struct MutSlice<'a, T: 'a> {
     _marker: marker::PhantomData<&'a mut [T]>,
 }
 
-impl<'a, T: 'a> core::ops::Deref for MutSlice<'a, T> {
-    type Target = [T];
-
-    fn deref(&self) -> &Self::Target {
-        self.as_slice()
+impl<'a, T: 'a> From<MutSlice<'a, T>> for Slice<'a, T> {
+    fn from(value: MutSlice<'a, T>) -> Slice<'a, T> {
+        let ptr = value.ptr.map(NonNull::as_ptr).unwrap_or_default();
+        unsafe { Slice::from_raw_parts(ptr, value.len) }
     }
 }
 
 impl<T: Debug> Debug for MutSlice<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.as_slice().fmt(f)
+    }
+}
+
+impl<'a, T: 'a> core::ops::Deref for MutSlice<'a, T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
     }
 }
 
@@ -49,8 +58,8 @@ fn is_aligned<T>(ptr: ptr::NonNull<T>) -> bool {
 }
 
 impl<'a> AsBytes<'a> for MutSlice<'a, u8> {
-    fn as_bytes(&self) -> &'a [u8] {
-        self.as_slice()
+    fn try_as_bytes(&self) -> Option<&'a [u8]> {
+        Slice::from(*self).try_as_bytes()
     }
 }
 

@@ -4,6 +4,7 @@
 use datadog_alloc::{AllocError, Allocator};
 use std::alloc::Layout;
 use std::borrow::Borrow;
+use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ops::Deref;
@@ -40,11 +41,11 @@ pub struct ThinStr<'a> {
 }
 
 impl ThinStr<'_> {
-    pub fn into_raw(self) -> NonNull<()> {
+    pub fn into_raw(self) -> NonNull<c_void> {
         self.inner.thin_ptr.size_ptr.cast()
     }
 
-    pub unsafe fn from_raw(this: NonNull<()>) -> Self {
+    pub unsafe fn from_raw(this: NonNull<c_void>) -> Self {
         let thin_ptr = ThinPtr {
             size_ptr: this.cast(),
             _marker: PhantomData,

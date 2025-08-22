@@ -1,6 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use core::any::TypeId;
 use core::hash::Hash;
 use core::mem::MaybeUninit;
 use crossbeam_utils::CachePadded;
@@ -30,6 +31,9 @@ pub unsafe trait SetOps {
 
     type Id: Copy;
 
+    /// Returns the `TypeId` of the logical element type stored by this set.
+    fn type_id(&self) -> TypeId;
+
     fn try_with_capacity(capacity: usize) -> Result<Self, SetError>
     where
         Self: Sized;
@@ -55,11 +59,12 @@ pub unsafe trait SetOps {
 }
 
 #[derive(Debug)]
-pub struct Sharded<I: SetOps, const N: usize> {
-    pub(crate) shards: [CachePadded<RwLock<I>>; N],
+pub struct Sharded<S: SetOps, const N: usize> {
+    pub(crate) shards: [CachePadded<RwLock<S>>; N],
+    pub(crate) type_id: TypeId,
 }
 
-impl<I: SetOps, const N: usize> Sharded<I, N> {
+impl<S: SetOps, const N: usize> Sharded<S, N> {
     #[inline]
     pub const fn is_power_of_two_gt1() -> bool {
         N.is_power_of_two() && N > 1
@@ -71,11 +76,14 @@ impl<I: SetOps, const N: usize> Sharded<I, N> {
     }
 
     pub fn try_new_with_min_capacity(min_capacity: usize) -> Result<Self, SetError> {
-        let mut shards_uninit: [MaybeUninit<CachePadded<RwLock<I>>>; N] =
+        if !Self::is_power_of_two_gt1() {
+            return Err(SetError::InvalidArgument);
+        }
+        let mut shards_uninit: [MaybeUninit<CachePadded<RwLock<S>>>; N] =
             unsafe { MaybeUninit::uninit().assume_init() };
         let mut i = 0usize;
         while i < N {
-            match I::try_with_capacity(min_capacity) {
+            match S::try_with_capacity(min_capacity) {
                 Ok(inner) => {
                     shards_uninit[i].write(CachePadded::new(RwLock::new(inner)));
                     i += 1;
@@ -88,18 +96,21 @@ impl<I: SetOps, const N: usize> Sharded<I, N> {
                 }
             }
         }
-        let shards: [CachePadded<RwLock<I>>; N] =
+        let shards: [CachePadded<RwLock<S>>; N] =
             unsafe { core::mem::transmute_copy(&shards_uninit) };
-        Ok(Self { shards })
+        // If N=0, then we error at the very top of the function, so we know
+        // there's at least one.
+        let type_id = shards[0].read().type_id();
+        Ok(Self { shards, type_id })
     }
 
     pub fn try_insert_common<'a>(
         &self,
-        lookup: I::Lookup<'a>,
-        owned: I::Owned<'a>,
-    ) -> Result<I::Id, SetError>
+        lookup: S::Lookup<'a>,
+        owned: S::Owned<'a>,
+    ) -> Result<S::Id, SetError>
     where
-        I::Lookup<'a>: Hash + PartialEq,
+        S::Lookup<'a>: Hash + PartialEq,
     {
         use std::hash::BuildHasher;
         let hash = Hasher::default().hash_one(lookup);
@@ -123,8 +134,13 @@ impl<I: SetOps, const N: usize> Sharded<I, N> {
 
         unsafe { guard.insert_unique_uncontended_with_hash(hash, owned) }
     }
+
+    #[inline]
+    pub fn element_type_id(&self) -> TypeId {
+        self.type_id
+    }
 }
 
 // SAFETY: relies on safety requirements of `SetOps`.
-unsafe impl<I: SetOps, const N: usize> Send for Sharded<I, N> {}
-unsafe impl<I: SetOps, const N: usize> Sync for Sharded<I, N> {}
+unsafe impl<S: SetOps, const N: usize> Send for Sharded<S, N> {}
+unsafe impl<S: SetOps, const N: usize> Sync for Sharded<S, N> {}

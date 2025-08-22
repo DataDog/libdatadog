@@ -3,10 +3,10 @@
 
 use super::parallel_slice_set::ParallelSliceSet;
 use super::string_set::{StringId, WELL_KNOWN_STRING_IDS};
+use super::{Arc, ParallelSliceStorage};
 use super::{ArcOverflow, SetError};
 use core::ptr;
-
-use super::{Arc, ParallelSliceStorage};
+use std::ffi::c_void;
 use std::ops::Deref;
 
 /// A string set which can have parallel read and write operations.
@@ -29,7 +29,7 @@ impl ParallelStringSet {
     /// inner storage. This storage should not be mutated--it only exists to
     /// be passed across FFI boundaries, which is why its type has been erased.
     #[inline]
-    pub fn into_raw(self) -> ptr::NonNull<()> {
+    pub fn into_raw(self) -> ptr::NonNull<c_void> {
         Arc::into_raw(self.inner.arc).cast()
     }
 
@@ -41,7 +41,7 @@ impl ParallelStringSet {
     /// The pointer must have been produced by [`ParallelStringSet::into_raw`]
     /// and be returned unchanged.
     #[inline]
-    pub unsafe fn from_raw(raw: ptr::NonNull<()>) -> Self {
+    pub unsafe fn from_raw(raw: ptr::NonNull<c_void>) -> Self {
         let arc = Arc::from_raw(raw.cast::<ParallelSliceStorage<u8>>());
         Self {
             inner: ParallelSliceSet { arc },

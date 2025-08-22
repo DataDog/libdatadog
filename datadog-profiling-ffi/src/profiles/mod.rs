@@ -4,6 +4,49 @@
 // todo: do we need to expose compressor? Does FFI have any desire to expose
 //       a non-compressed serialized profile?
 // mod compressor;
+// mod parallel_set;
 
-mod mapping_set;
+mod profiling_dictionary;
+mod scratchpad;
 mod string_set;
+
+// pub use parallel_set::*;
+
+pub use profiling_dictionary::*;
+pub use scratchpad::*;
+pub use string_set::*;
+
+use std::ffi::CStr;
+
+// Shared error message helpers and null-check macros reused by FFI modules.
+pub const fn non_null_out_param_err() -> &'static CStr {
+    c"null pointer used as out parameter"
+}
+
+pub const fn non_null_insert_err() -> &'static CStr {
+    c"tried to insert a null pointer"
+}
+
+#[macro_export]
+macro_rules! ensure_non_null_out_parameter {
+    ($expr:expr) => {
+        if $expr.is_null() {
+            return $crate::ProfileStatus::from(
+                $crate::profiles::non_null_out_param_err(),
+            );
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! ensure_non_null_insert {
+    ($expr:expr) => {
+        if $expr.is_null() {
+            return $crate::ProfileStatus::from(
+                $crate::profiles::non_null_insert_err(),
+            );
+        }
+    };
+}
+
+pub(crate) use {ensure_non_null_insert, ensure_non_null_out_parameter};

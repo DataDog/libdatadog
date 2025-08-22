@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{SetError, SetOps, ThinSlice};
+use core::any::TypeId;
 use core::hash;
 use datadog_alloc::{ChainAllocator, VirtualAllocator};
 use hashbrown::HashTable;
@@ -142,6 +143,10 @@ unsafe impl<T: Copy + Hash + Eq + 'static> SetOps for SliceSet<T> {
 
     fn len(&self) -> usize {
         self.len()
+    }
+
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<T>()
     }
 
     unsafe fn find_with_hash(&self, hash: u64, key: Self::Lookup<'_>) -> Option<Self::Id> {

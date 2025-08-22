@@ -44,7 +44,7 @@ fn main() {
             ..Function::default()
         })
         .unwrap()
-        .cast();
+        .into_raw();
 
     let main_id = functions
         .try_insert(Function {
@@ -53,7 +53,7 @@ fn main() {
             ..Function::default()
         })
         .unwrap()
-        .cast();
+        .into_raw();
 
     let location_1 = locations
         .try_insert(Location {

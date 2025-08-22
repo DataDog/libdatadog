@@ -7,6 +7,7 @@
 
 use crate::profiles::collections::ParallelSet;
 use std::borrow::Cow;
+use std::ffi::c_void;
 
 /// Represents possible values of key value types. Note that otel supports
 /// more types than this.
@@ -23,3 +24,7 @@ pub struct KeyValue {
 }
 
 pub type AttributeSet = ParallelSet<KeyValue, 4>;
+
+// Avoid NonNull<()> in FFI; see PR:
+// https://github.com/mozilla/cbindgen/pull/1098
+pub type AttributeId = std::ptr::NonNull<c_void>;

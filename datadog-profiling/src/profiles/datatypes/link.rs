@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::profiles::collections::ParallelSet;
+use std::ffi::c_void;
 
 /// Represents a link to the active local root span and span. Note that in
 /// OpenTelemetry, this uses the trace id instead of the local root span id.
@@ -14,3 +15,7 @@ pub struct Link {
 }
 
 pub type LinkSet = ParallelSet<Link, 4>;
+
+// Avoid NonNull<()> in FFI; see PR:
+// https://github.com/mozilla/cbindgen/pull/1098
+pub type LinkId = std::ptr::NonNull<c_void>;
