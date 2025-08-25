@@ -72,5 +72,5 @@ pub enum SidecarAction {
     RegisterTelemetryMetric(MetricContext),
     AddTelemetryMetricPoint((String, f64, Vec<Tag>)),
     PhpComposerTelemetryFile(PathBuf),
-    ClearQueueId
+    ClearQueueId,
 }
