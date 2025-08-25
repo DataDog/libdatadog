@@ -111,6 +111,7 @@ impl TelemetryCachedClient {
             &self.config_sent,
             &self.buffered_integrations,
             &self.buffered_composer_paths,
+            &self.buffered_endpoints,
         )) {
             self.shm_writer.write(&buf);
         } else {
