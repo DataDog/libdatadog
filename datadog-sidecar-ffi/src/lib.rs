@@ -421,7 +421,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
     path: CharSlice,
     operation_name: CharSlice,
     resource_name: CharSlice,
-) {
+) -> MaybeError {
     let endpoint = TelemetryActions::AddEndpoint(ddtelemetry::data::Endpoint {
         r#type: Some(r#type.to_utf8_lossy().into_owned()),
         method: Some(method),
@@ -436,6 +436,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
         queue_id,
         vec![SidecarAction::Telemetry(endpoint)],
     ));
+    MaybeError::None
 }
 
 /// Reports a dependency to the telemetry.
