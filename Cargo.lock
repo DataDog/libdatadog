@@ -1459,6 +1459,7 @@ dependencies = [
  "blazesym",
  "cc",
  "chrono",
+ "criterion",
  "ddcommon",
  "ddtelemetry",
  "goblin",
