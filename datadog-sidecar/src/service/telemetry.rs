@@ -65,8 +65,9 @@ pub struct TelemetryCachedClient {
     pub config_sent: bool,
     pub buffered_integrations: HashSet<Integration>,
     pub buffered_composer_paths: HashSet<PathBuf>,
-    pub telemetry_metrics: HashMap<String, ContextKey>,
-    pub handle: Option<JoinHandle<()>>,
+    pub buffered_endpoints: HashSet<ddtelemetry::data::Endpoint>,
+    pub telemetry_metrics: Arc<Mutex<HashMap<String, ContextKey>>>,
+    pub handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl TelemetryCachedClient {
@@ -101,6 +102,7 @@ impl TelemetryCachedClient {
             config_sent: false,
             buffered_integrations: HashSet::new(),
             buffered_composer_paths: HashSet::new(),
+            buffered_endpoints: HashSet::new(),
             telemetry_metrics: Default::default(),
             handle: None,
         }
@@ -152,9 +154,6 @@ impl TelemetryCachedClient {
                 SidecarAction::RegisterTelemetryMetric(metric) => self.register_metric(metric),
                 SidecarAction::AddTelemetryMetricPoint(point) => {
                     actions.push(self.to_telemetry_point(point));
-                }
-                SidecarAction::AddEndpoint(endpoint) => {
-                    actions.push(TelemetryActions::AddEndpoint(endpoint));
                 }
                 SidecarAction::PhpComposerTelemetryFile(_) => {} // handled separately
                 SidecarAction::ClearQueueId => {}                // handled separately
