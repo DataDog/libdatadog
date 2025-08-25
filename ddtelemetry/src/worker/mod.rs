@@ -526,6 +526,7 @@ impl TelemetryWorker {
         if self.data.endpoints.flush_not_empty() {
             payloads.push(data::Payload::AppEndpointsChange(
                 data::AppEndpointsChange {
+                    is_first: true,
                     endpoints: self.data.endpoints.unflushed().cloned().collect(),
                 },
             ))
