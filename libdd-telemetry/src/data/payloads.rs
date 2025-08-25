@@ -65,6 +65,7 @@ pub struct AppClientConfigurationChange {
 
 #[derive(Debug, Serialize)]
 pub struct AppEndpointsChange {
+    pub is_first: bool,
     pub endpoints: Vec<Endpoint>,
 }
 
@@ -101,12 +102,6 @@ pub enum LogLevel {
     Error,
     Warn,
     Debug,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct EndpointsPayload {
-    pub is_first: Option<bool>,
-    pub endpoints: Vec<Endpoint>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
