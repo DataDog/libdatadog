@@ -448,7 +448,13 @@ impl SidecarInterface for SidecarServer {
                     }
                     SidecarAction::ClearQueueId => {
                         remove_entry = true;
-                    }
+                    },
+                    SidecarAction::Telemetry(TelemetryActions::AddEndpoint(ref endpoint)) => {
+                        if telemetry.buffered_endpoints.insert(endpoint.clone()) {
+                            buffered_info_changed = true;
+                            actions_to_process.push(action);
+                        }
+                    },
                     SidecarAction::Telemetry(TelemetryActions::Lifecycle(
                         LifecycleAction::Stop,
                     )) => {
