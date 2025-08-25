@@ -9,7 +9,9 @@ int my_function(void) {
 
 // The following code helps in generating a case where blazesym failed at
 // opening the file and we were failing at normalizing/symbolizing the
-// address. 
+// address.
+// The goal is to increase the size of the debug_XX sections and make sure
+// that at least one of them will be compressed (and not aligned)
 #define MAKE_FUNC(N) \
     void func##N(void) { \
         int arr[100]; \

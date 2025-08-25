@@ -274,6 +274,7 @@ fn byte_slice_as_hex(bv: &[u8]) -> String {
 
     let mut s = String::with_capacity(bv.len() * 2);
     for byte in bv {
+        // The backend requires (deobfuscation-api) requires lowercase
         let _ = write!(&mut s, "{byte:02x}");
     }
     s
@@ -331,12 +332,6 @@ impl super::test_utils::TestInstance for StackFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(unix)]
-    use libc::c_void;
-    #[cfg(unix)]
-    use std::ffi::CString;
-    #[cfg(unix)]
-    use std::path::Path;
 
     #[test]
     fn test_demangle_rust() {
@@ -393,13 +388,22 @@ mod tests {
         assert_eq!(frame.function, Some("invalid_mangled_name".to_string()));
         assert_eq!(frame.mangled_name, None);
     }
+}
 
-    #[cfg(unix)]
+// Tests are disabled on macos because we cannot generate the libs
+#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(test)]
+mod unix_test {
+    use super::*;
+    use libc::c_void;
+    use std::ffi::CString;
+    use std::path::Path;
+    use std::path::PathBuf;
+
     struct SharedLibrary {
         handle: *mut c_void,
     }
 
-    #[cfg(unix)]
     impl SharedLibrary {
         fn open(lib_path: &str) -> Result<Self, String> {
             let cstr = CString::new(lib_path).map_err(|e| e.to_string())?;
@@ -423,7 +427,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     impl Drop for SharedLibrary {
         fn drop(&mut self) {
             if !self.handle.is_null() {
@@ -432,12 +435,14 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
+    fn get_data_folder_path() -> PathBuf {
+        Path::new(&env!("CARGO_MANIFEST_DIR")).join("data")
+    }
+
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_normalize_ip() {
-        let test_so = Path::new(&env!("CARGO_MANIFEST_DIR"))
-            .join("data")
+        let test_so = get_data_folder_path()
             .join("libtest.so")
             .canonicalize()
             .unwrap();
@@ -462,17 +467,48 @@ mod tests {
         assert_eq!(frame.path, Some(test_so.to_string_lossy().to_string()));
         assert_eq!(
             frame.build_id,
-            Some("ac33885879e4d40850d3d0fd68a1ac8e0d799dee".to_string())
+            Some("aaaabbbbccccddddeeeeffff0011223344556677".to_string()) //define in the build.rs
         );
         assert!(frame.relative_address.is_some());
     }
 
-    #[cfg(unix)]
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_normalize_ip_cpp() {
+        let test_so = get_data_folder_path()
+            .join("libtest_cpp.so")
+            .canonicalize()
+            .unwrap();
+
+        let libtest_so =
+            SharedLibrary::open(test_so.to_str().unwrap()).expect("Failed to open library");
+        let address = libtest_so.get_symbol_address("_Z12cpp_functionv").unwrap();
+        let mut frame = StackFrame::new();
+        frame.ip = Some(address);
+
+        let normalizer = Normalizer::new();
+        frame
+            .normalize_ip(
+                &normalizer,
+                Pid::from(std::process::id()),
+                &mut CachedElfResolvers::default(),
+            )
+            .unwrap();
+
+        assert_eq!(frame.build_id_type, Some(BuildIdType::GNU));
+        assert_eq!(frame.file_type, Some(FileType::ELF));
+        assert_eq!(frame.path, Some(test_so.to_string_lossy().to_string()));
+        assert_eq!(
+            frame.build_id,
+            Some("0011223344556677aaaabbbbccccddddeeeeffff".to_string()) //define in the build.rs
+        );
+        assert!(frame.relative_address.is_some());
+    }
+
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_symbolization() {
-        let test_so = Path::new(&env!("CARGO_MANIFEST_DIR"))
-            .join("data")
+        let test_so = get_data_folder_path()
             .join("libtest.so")
             .canonicalize()
             .unwrap();
@@ -492,6 +528,41 @@ mod tests {
         assert_eq!(frame.function, Some("my_function".to_string()));
         let parent_dir = test_so.parent().unwrap();
         let c_file = parent_dir.join("libtest.c");
+        assert_eq!(frame.file, Some(c_file.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_symbolization_cpp() {
+        let test_so = get_data_folder_path()
+            .join("libtest_cpp.so")
+            .canonicalize()
+            .unwrap();
+
+        let libtest_so =
+            SharedLibrary::open(test_so.to_str().unwrap()).expect("Failed to open library");
+        let address = libtest_so
+            .get_symbol_address(
+                "_ZN11MyNamespace16ClassInNamespace21InnerClassInNamespace12InnerMethod1Ev",
+            )
+            .unwrap();
+        let mut frame = StackFrame::new();
+        frame.ip = Some(address);
+
+        let mut process = blazesym::symbolize::source::Process::new(std::process::id().into());
+        process.map_files = false;
+        let src = blazesym::symbolize::source::Source::Process(process);
+        let symbolizer = blazesym::symbolize::Symbolizer::new();
+        frame.resolve_names(&src, &symbolizer).unwrap();
+
+        assert_eq!(
+            frame.function,
+            Some(
+                "MyNamespace::ClassInNamespace::InnerClassInNamespace::InnerMethod1()".to_string()
+            )
+        );
+        let parent_dir = test_so.parent().unwrap();
+        let c_file = parent_dir.join("libtest_cpp.cpp");
         assert_eq!(frame.file, Some(c_file.to_string_lossy().to_string()));
     }
 }
