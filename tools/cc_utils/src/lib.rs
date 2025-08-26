@@ -168,6 +168,11 @@ impl ImprovedBuild {
         self.try_compile_any(output, OutputType::Shared)
     }
 
+    pub fn cpp(&mut self, is_cpp: bool) -> &mut Self {
+        self.cc_build.cpp(is_cpp);
+        self
+    }
+
     fn try_compile_any(&self, output: &str, output_type: OutputType) -> anyhow::Result<()> {
         if self.emit_rerun_if_env_changed {
             for file in self.files.iter() {
