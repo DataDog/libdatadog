@@ -129,7 +129,11 @@ fn test_crash_tracking_bin_prechain_sigabrt() {
     test_crash_tracking_bin(BuildProfile::Release, "prechain_abort", "null_deref");
 }
 
+// This test is disabled for now on x86_64 musl.
+// It seems that on aarch64 musl, libc has CFI which allows
+// unwinding passed the signal frame.
 #[test]
+#[cfg(not(all(target_arch = "x86_64", target_env = "musl")))]
 #[cfg_attr(miri, ignore)]
 fn test_crasht_tracking_validate_callstack() {
     test_crash_tracking_callstack()
@@ -190,14 +194,18 @@ fn test_crash_tracking_callstack() {
 
     // Note: in Release, we do not have the crate and module name prepended to the function name
     // Here we compile the crashing app in Debug.
-    let expected_functions: Vec<&str> = [
-        "crashing_test_app::unix::fn3",
+    let mut expected_functions = vec![
         "crashing_test_app::unix::fn2",
         "crashing_test_app::unix::fn1",
         "crashing_test_app::unix::main",
         "crashing_test_app::main",
-    ]
-    .to_vec();
+    ];
+    // It seems that on arm/arm64, fn3 is inlined in fn2, so not present.
+    // Add fn3 only for x86_64 arch
+    #[cfg(target_arch = "x86_64")]
+    {
+        expected_functions.insert(0, "crashing_test_app::unix::fn3");
+    }
 
     let crashing_callstack = &crash_payload["error"]["stack"]["frames"];
     assert!(
