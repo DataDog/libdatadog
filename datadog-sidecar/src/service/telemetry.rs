@@ -62,6 +62,7 @@ pub struct TelemetryCachedClient {
     pub config_sent: bool,
     pub buffered_integrations: HashSet<Integration>,
     pub buffered_composer_paths: HashSet<PathBuf>,
+    pub last_endpoints_push: SystemTime,
     pub telemetry_metrics: Arc<Mutex<HashMap<String, ContextKey>>>,
     pub handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
@@ -99,6 +100,7 @@ impl TelemetryCachedClient {
             config_sent: false,
             buffered_integrations: HashSet::new(),
             buffered_composer_paths: HashSet::new(),
+            last_endpoints_push: SystemTime::UNIX_EPOCH,
             telemetry_metrics: Default::default(),
             handle: Arc::new(Mutex::new(None)),
         }
@@ -109,6 +111,7 @@ impl TelemetryCachedClient {
             &self.config_sent,
             &self.buffered_integrations,
             &self.buffered_composer_paths,
+            &self.last_endpoints_push,
         )) {
             self.shm_writer.write(&buf);
         } else {

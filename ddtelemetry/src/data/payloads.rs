@@ -61,6 +61,12 @@ pub struct AppClientConfigurationChange {
     pub configuration: Vec<Configuration>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct AppEndpointsChange {
+    pub is_first: bool,
+    pub endpoints: Vec<Endpoint>,
+}
+
 #[derive(Serialize, Debug)]
 pub struct GenerateMetrics {
     pub series: Vec<metrics::Serie>,
@@ -94,4 +100,59 @@ pub enum LogLevel {
     Error,
     Warn,
     Debug,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
+#[serde(rename_all = "UPPERCASE")]
+#[repr(C)]
+pub enum Method {
+    Get = 0,
+    Post = 1,
+    Put = 2,
+    Delete = 3,
+    Patch = 4,
+    Head = 5,
+    Options = 6,
+    Trace = 7,
+    Connect = 8,
+    Other = 9, //This is specified as "*" in the OpenAPI spec
+}
+
+// #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
+// #[serde(rename_all = "UPPERCASE")]
+// #[repr(C)]
+// pub enum Authentication {
+//     Jwt = 0,
+//     Basic = 1,
+//     Oauth = 2,
+//     Oidc = 3,
+//     ApiKey = 4,
+//     Session = 5,
+//     Mtls = 6,
+//     Saml = 7,
+//     Ldap = 8,
+//     Form = 9,
+//     Other = 10,
+// }
+
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
+pub struct Endpoint {
+    #[serde(default)]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub method: Option<Method>,
+    #[serde(default)]
+    pub path: Option<String>,
+    pub operation_name: String,
+    pub resource_name: String,
+    // #[serde(default)]
+    // pub request_body_type: Option<Vec<String>>,
+    // #[serde(default)]
+    // pub response_body_type: Option<Vec<String>>,
+    // #[serde(default)]
+    // pub response_code: Option<Vec<i32>>,
+    // #[serde(default)]
+    // pub authentication: Option<Vec<Authentication>>,
+    // #[serde(default)]
+    // pub metadata: Option<serde_json::Value>,
 }
