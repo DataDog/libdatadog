@@ -410,10 +410,22 @@ struct LibraryConfigVal {
     config_id: Option<String>,
 }
 
-#[derive(Debug)]
 pub struct Configurator {
     debug_logs: bool,
     debug_messages: RefCell<Vec<String>>
+}
+
+impl std::fmt::Display for Configurator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Configurator {{ debug_logs: {} }}", self.debug_logs)
+    }
+}
+
+impl std::fmt::Debug for Configurator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Delegate to Display
+        std::fmt::Display::fmt(self, f)
+    }
 }
 
 pub enum Target {
@@ -474,34 +486,36 @@ impl Configurator {
 
     fn log_process_info(&self, process_info: &ProcessInfo, source: LibraryConfigSource) {
         if self.debug_logs {
-            let mut debug_mess = self.debug_messages.borrow_mut(); // Borrow once
-            debug_mess.push(format!("Called library_config_common_component:"));
-            debug_mess.push(format!("\tsource: {source:?}"));
-            debug_mess.push(format!("\tconfigurator: {self:?}"));
-            debug_mess.push(format!("\tprocess args:"));
+            let mut messages = vec![
+                "Called library_config_common_component:".to_string(),
+                format!("\tsource: {source:?}"),
+                format!("\tconfigurator: {self:?}"),
+                "\tprocess args:".to_string(),
+            ];
             
             for arg in &process_info.args {
                 let arg_str = String::from_utf8_lossy(arg);
-                debug_mess.push(format!("\t\t{:?}", arg_str.as_ref()));
+                messages.push(format!("\t\t{:?}", arg_str.as_ref()));
             }
             
-            debug_mess.push(format!(
+            messages.push(format!(
                 "\tprocess language: {:?}",
                 String::from_utf8_lossy(&process_info.language).as_ref()
             ));
-            // debug_mess is automatically dropped here, releasing the borrow
+
+            self.push_debug_messages(messages);
         }
     }
 
     fn parse_stable_config_slice(&self, buf: &[u8]) -> anyhow::Result<StableConfig> {
         if buf.is_empty() {
             let stable_config = StableConfig::default();
-            self.debug_messages.borrow_mut().push(format!("Read the following static config: {stable_config:?}"));
+            self.push_debug_message(format!("Read the following static config: {stable_config:?}"));
             return Ok(stable_config);
         }
         let stable_config = serde_yaml::from_slice(buf)?;
         if self.debug_logs {
-            self.debug_messages.borrow_mut().push(format!("Read the following static config: {stable_config:?}"));
+            self.push_debug_message(format!("Read the following static config: {stable_config:?}"));
         }
         Ok(stable_config)
     }
@@ -519,10 +533,11 @@ impl Configurator {
         process_info: &ProcessInfo,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
         if self.debug_logs {
-            let mut debug_mess = self.debug_messages.borrow_mut();
-            debug_mess.push(format!("Reading stable configuration from files:"));
-            debug_mess.push(format!("\tlocal: {path_local:?}"));
-            debug_mess.push(format!("\tfleet: {path_managed:?}"));
+            self.push_debug_messages(vec![
+                "Reading stable configuration from files:".to_string(),
+                format!("\tlocal: {path_local:?}"),
+                format!("\tfleet: {path_managed:?}"),
+            ]);
         }
         let local_config = match fs::File::open(path_local) {
             Ok(file) => self.parse_stable_config_file(file)?,
@@ -631,7 +646,7 @@ impl Configurator {
         let matcher = Matcher::new(process_info, &stable_config.tags);
         let Some(configs) = matcher.find_stable_config(&stable_config) else {
             if self.debug_logs {
-                self.debug_messages.borrow_mut().push(format!("No selector matched for source {source:?}"));
+                self.push_debug_message(format!("No selector matched for source {source:?}"));
             }
             return Ok(());
         };
@@ -649,9 +664,21 @@ impl Configurator {
         }
 
         if self.debug_logs {
-            self.debug_messages.borrow_mut().push(format!("Will apply the following configuration:\n\tsource {source:?}\n\t{library_config:?}"));
+            self.push_debug_message(format!("Will apply the following configuration:\n\tsource {source:?}\n\t{library_config:?}"));
         }
         Ok(())
+    }
+
+    fn push_debug_messages(&self, messages: Vec<String>) {
+        if let Ok(mut debug_mess) = self.debug_messages.try_borrow_mut() {
+            debug_mess.extend(messages);
+        }
+    }
+
+    fn push_debug_message(&self, message: String) {
+        if let Ok(mut debug_mess) = self.debug_messages.try_borrow_mut() {
+            debug_mess.push(message);
+        }
     }
 }
 
@@ -742,24 +769,24 @@ mod tests {
         assert_eq!(cfg, vec![]);
         let debug_messages = configurator.debug_messages.borrow().clone();
         assert_eq!(debug_messages, vec![
-    "Reading stable configuration from files:",
-    "\tlocal: \"/file/is/missing\"",
-    "\tfleet: \"/file/is/missing_too\"",
-    "Called library_config_common_component:",
-    "\tsource: LocalStableConfig",
-    "\tconfigurator: Configurator { debug_logs: true, debug_messages: RefCell { value: <borrowed> } }",
-    "\tprocess args:",
-    "\t\t\"-jar HelloWorld.jar\"",
-    "\tprocess language: \"java\"",
-    "No selector matched for source LocalStableConfig",
-    "Called library_config_common_component:",
-    "\tsource: FleetStableConfig", 
-    "\tconfigurator: Configurator { debug_logs: true, debug_messages: RefCell { value: <borrowed> } }",
-    "\tprocess args:",
-    "\t\t\"-jar HelloWorld.jar\"",
-    "\tprocess language: \"java\"",
-    "No selector matched for source FleetStableConfig"
-]);
+            "Reading stable configuration from files:",
+            "\tlocal: \"/file/is/missing\"",
+            "\tfleet: \"/file/is/missing_too\"",
+            "Called library_config_common_component:",
+            "\tsource: LocalStableConfig",
+            "\tconfigurator: Configurator { debug_logs: true }",
+            "\tprocess args:",
+            "\t\t\"-jar HelloWorld.jar\"",
+            "\tprocess language: \"java\"",
+            "No selector matched for source LocalStableConfig",
+            "Called library_config_common_component:",
+            "\tsource: FleetStableConfig",
+            "\tconfigurator: Configurator { debug_logs: true }",
+            "\tprocess args:",
+            "\t\t\"-jar HelloWorld.jar\"",
+            "\tprocess language: \"java\"",
+            "No selector matched for source FleetStableConfig"
+        ]);
     }
 
     #[test]
