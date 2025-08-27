@@ -412,7 +412,7 @@ struct LibraryConfigVal {
 
 pub struct Configurator {
     debug_logs: bool,
-    debug_messages: RefCell<Vec<String>>
+    debug_messages: RefCell<Vec<String>>,
 }
 
 impl std::fmt::Display for Configurator {
@@ -478,14 +478,15 @@ impl Configurator {
     }
 
     pub fn new(debug_logs: bool) -> Self {
-        Self { 
-            debug_logs, 
-            debug_messages: RefCell::new(Vec::new()) 
+        Self {
+            debug_logs,
+            debug_messages: RefCell::new(Vec::new()),
         }
     }
 
     pub fn get_debug_messages(&self) -> Vec<String> {
-        self.debug_messages.try_borrow()
+        self.debug_messages
+            .try_borrow()
             .map(|messages| messages.clone())
             .unwrap_or_else(|_| vec!["Debug messages unavailable (borrow conflict)".to_string()])
     }
@@ -498,12 +499,12 @@ impl Configurator {
                 format!("\tconfigurator: {self:?}"),
                 "\tprocess args:".to_string(),
             ];
-            
+
             for arg in &process_info.args {
                 let arg_str = String::from_utf8_lossy(arg);
                 messages.push(format!("\t\t{:?}", arg_str.as_ref()));
             }
-            
+
             messages.push(format!(
                 "\tprocess language: {:?}",
                 String::from_utf8_lossy(&process_info.language).as_ref()
@@ -516,12 +517,16 @@ impl Configurator {
     fn parse_stable_config_slice(&self, buf: &[u8]) -> anyhow::Result<StableConfig> {
         if buf.is_empty() {
             let stable_config = StableConfig::default();
-            self.push_debug_message(format!("Read the following static config: {stable_config:?}"));
+            self.push_debug_message(format!(
+                "Read the following static config: {stable_config:?}"
+            ));
             return Ok(stable_config);
         }
         let stable_config = serde_yaml::from_slice(buf)?;
         if self.debug_logs {
-            self.push_debug_message(format!("Read the following static config: {stable_config:?}"));
+            self.push_debug_message(format!(
+                "Read the following static config: {stable_config:?}"
+            ));
         }
         Ok(stable_config)
     }
@@ -774,25 +779,28 @@ mod tests {
             .unwrap();
         assert_eq!(cfg, vec![]);
         let debug_messages = configurator.debug_messages.borrow().clone();
-        assert_eq!(debug_messages, vec![
-            "Reading stable configuration from files:",
-            "\tlocal: \"/file/is/missing\"",
-            "\tfleet: \"/file/is/missing_too\"",
-            "Called library_config_common_component:",
-            "\tsource: LocalStableConfig",
-            "\tconfigurator: Configurator { debug_logs: true }",
-            "\tprocess args:",
-            "\t\t\"-jar HelloWorld.jar\"",
-            "\tprocess language: \"java\"",
-            "No selector matched for source LocalStableConfig",
-            "Called library_config_common_component:",
-            "\tsource: FleetStableConfig",
-            "\tconfigurator: Configurator { debug_logs: true }",
-            "\tprocess args:",
-            "\t\t\"-jar HelloWorld.jar\"",
-            "\tprocess language: \"java\"",
-            "No selector matched for source FleetStableConfig"
-        ]);
+        assert_eq!(
+            debug_messages,
+            vec![
+                "Reading stable configuration from files:",
+                "\tlocal: \"/file/is/missing\"",
+                "\tfleet: \"/file/is/missing_too\"",
+                "Called library_config_common_component:",
+                "\tsource: LocalStableConfig",
+                "\tconfigurator: Configurator { debug_logs: true }",
+                "\tprocess args:",
+                "\t\t\"-jar HelloWorld.jar\"",
+                "\tprocess language: \"java\"",
+                "No selector matched for source LocalStableConfig",
+                "Called library_config_common_component:",
+                "\tsource: FleetStableConfig",
+                "\tconfigurator: Configurator { debug_logs: true }",
+                "\tprocess args:",
+                "\t\t\"-jar HelloWorld.jar\"",
+                "\tprocess language: \"java\"",
+                "No selector matched for source FleetStableConfig"
+            ]
+        );
     }
 
     #[test]
