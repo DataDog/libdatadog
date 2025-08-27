@@ -231,6 +231,12 @@ impl TelemetryCachedClient {
     }
 }
 
+impl Drop for TelemetryCachedClient {
+    fn drop(&mut self) {
+        self.shm_writer.write(&[]);
+    }
+}
+
 type ServiceString = String;
 type EnvString = String;
 type TelemetryCachedClientKey = (ServiceString, EnvString);
