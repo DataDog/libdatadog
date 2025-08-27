@@ -3,3 +3,6 @@
 
 mod datatypes;
 mod interning_api;
+
+pub use datatypes::*;
+pub use interning_api::*;
