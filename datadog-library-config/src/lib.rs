@@ -484,6 +484,12 @@ impl Configurator {
         }
     }
 
+    pub fn get_debug_messages(&self) -> Vec<String> {
+        self.debug_messages.try_borrow()
+            .map(|messages| messages.clone())
+            .unwrap_or_else(|_| vec!["Debug messages unavailable (borrow conflict)".to_string()])
+    }
+
     fn log_process_info(&self, process_info: &ProcessInfo, source: LibraryConfigSource) {
         if self.debug_logs {
             let mut messages = vec![

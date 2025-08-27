@@ -190,4 +190,12 @@ pub extern "C" fn ddog_library_config_local_stable_config_path() -> ffi::CStr<'s
 }
 
 #[no_mangle]
+pub extern "C" fn ddog_library_configurator_get_debug_message(
+    configurator: &Configurator,
+) -> ffi::CString {
+    let messages = configurator.inner.get_debug_messages();
+    ffi::CString::from_std(std::ffi::CString::new(messages.join("\n")).unwrap())
+}
+
+#[no_mangle]
 pub extern "C" fn ddog_library_config_drop(_: ffi::Vec<LibraryConfig>) {}
