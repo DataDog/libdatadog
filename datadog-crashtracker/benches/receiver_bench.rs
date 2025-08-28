@@ -3,55 +3,13 @@
 
 use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
 use datadog_crashtracker::benchmark::receiver_entry_point;
-use libc::c_void;
-use std::ffi::CString;
+use datadog_crashtracker::{
+    default_signals, get_data_folder_path, CrashtrackerConfiguration, SharedLibrary,
+    StacktraceCollection,
+};
 use std::fmt::Write;
-use std::path::Path;
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::BufReader;
-
-struct SharedLibrary {
-    handle: *mut c_void,
-}
-
-impl SharedLibrary {
-    fn open(lib_path: &str) -> Result<Self, String> {
-        let cstr = CString::new(lib_path).map_err(|e| e.to_string())?;
-        // Use RTLD_NOW or another flag
-        let handle = unsafe { libc::dlopen(cstr.as_ptr(), libc::RTLD_NOW) };
-        if handle.is_null() {
-            Err("Failed to open library".to_string())
-        } else {
-            Ok(Self { handle })
-        }
-    }
-
-    fn get_symbol_address(&self, symbol: &str) -> Result<String, String> {
-        let cstr = CString::new(symbol).map_err(|e| e.to_string())?;
-        let sym = unsafe { libc::dlsym(self.handle, cstr.as_ptr()) };
-        if sym.is_null() {
-            Err(format!("Failed to find symbol: {}", symbol))
-        } else {
-            Ok(format!("{:p}", sym))
-        }
-    }
-}
-
-impl Drop for SharedLibrary {
-    fn drop(&mut self) {
-        if !self.handle.is_null() {
-            unsafe { libc::dlclose(self.handle) };
-        }
-    }
-}
-
-fn get_data_folder_path() -> PathBuf {
-    Path::new(&env!("CARGO_MANIFEST_DIR"))
-        .join("data")
-        .canonicalize()
-        .expect("Failed to canonicalize base path for libtest")
-}
 
 macro_rules! add_frame {
     ($report:expr, $fn:expr, $lib:expr) => {
@@ -68,19 +26,37 @@ macro_rules! add_frame {
 }
 
 fn add_proc_info(report: &mut String) {
-    report.push_str("DD_CRASHTRACK_BEGIN_PROCESSINFO\n");
+    writeln!(report, "DD_CRASHTRACK_BEGIN_PROCESSINFO")
+        .expect("Failed to write DD_CRASHTRACK_BEGIN_PROCESSINFO");
     writeln!(report, "{{ \"pid\": {} }}", std::process::id()).expect("Failed to write PID");
-    report.push_str("DD_CRASHTRACK_END_PROCESSINFO\n");
+    writeln!(report, "DD_CRASHTRACK_END_PROCESSINFO")
+        .expect("Failed to write DD_CRASHTRACK_END_PROCESSINFO");
 }
 
 fn add_config(report: &mut String) {
-    report.push_str("DD_CRASHTRACK_BEGIN_CONFIG\n");
-    report.push_str("{\"additional_files\":[],\"create_alt_stack\":true,\"demangle_names\":true,\"endpoint\":null,\"resolve_frames\":\"EnabledWithSymbolsInReceiver\",\"signals\":[4,6,7,11],\"timeout\":{\"secs\":10,\"nanos\":0},\"unix_socket_path\":\"\",\"use_alt_stack\":true}\n");
-    report.push_str("DD_CRASHTRACK_END_CONFIG\n");
+    writeln!(report, "DD_CRASHTRACK_BEGIN_CONFIG")
+        .expect("Failed to write DD_CRASHTRACK_BEGIN_CONFIG");
+    let config = CrashtrackerConfiguration::new(
+        vec![], // additional_files
+        true,   // create_alt_stack
+        true,   // use_alt_stack
+        None,
+        StacktraceCollection::EnabledWithSymbolsInReceiver,
+        default_signals(),
+        Some(Duration::from_secs(10)),
+        Some("".to_string()), // unix_socket_path
+        true,                 // demangle_names
+    )
+    .expect("Failed to create crashtracker configuration");
+    let config_str =
+        serde_json::to_string(&config).expect("Failed to serialize crashtracker configuration");
+    writeln!(report, "{}", config_str).expect("Failed to write crashtracker configuration");
+    writeln!(report, "DD_CRASHTRACK_END_CONFIG").expect("Failed to write DD_CRASHTRACK_END_CONFIG");
 }
 
 fn add_stacktrace(report: &mut String, test_cpp_so: &SharedLibrary, test_c_so: &SharedLibrary) {
-    report.push_str("DD_CRASHTRACK_BEGIN_STACKTRACE\n");
+    writeln!(report, "DD_CRASHTRACK_BEGIN_STACKTRACE")
+        .expect("Failed to write DD_CRASHTRACK_BEGIN_STACKTRACE");
 
     add_frame!(report, "my_function", test_c_so);
     add_frame!(report, "func1", test_c_so);
@@ -149,7 +125,8 @@ fn add_stacktrace(report: &mut String, test_cpp_so: &SharedLibrary, test_c_so: &
     add_frame!(report, "func10", test_c_so);
     add_frame!(report, "0x00");
 
-    report.push_str("DD_CRASHTRACK_END_STACKTRACE\n");
+    writeln!(report, "DD_CRASHTRACK_END_STACKTRACE")
+        .expect("Failed to write DD_CRASHTRACK_END_STACKTRACE");
 }
 
 fn create_crash_report(test_cpp_so: &SharedLibrary, test_c_so: &SharedLibrary) -> String {
@@ -158,7 +135,7 @@ fn create_crash_report(test_cpp_so: &SharedLibrary, test_c_so: &SharedLibrary) -
     add_proc_info(&mut report);
     add_config(&mut report);
     add_stacktrace(&mut report, test_cpp_so, test_c_so);
-    report.push_str("DD_CRASHTRACK_DONE\n");
+    writeln!(report, "DD_CRASHTRACK_DONE").expect("Failed to write DD_CRASHTRACK_DONE");
     report
 }
 
@@ -172,11 +149,13 @@ async fn bench_receiver_entry_point_from_str(data: &str) {
 
 fn load_test_libraries() -> (SharedLibrary, SharedLibrary) {
     let sofile_c_path = get_data_folder_path()
+        .expect("Failed to get the data folder path")
         .join("libtest.so")
         .canonicalize()
         .unwrap();
 
     let sofile_cpp_path = get_data_folder_path()
+        .expect("Failed to get the data folder path")
         .join("libtest_cpp.so")
         .canonicalize()
         .unwrap();
