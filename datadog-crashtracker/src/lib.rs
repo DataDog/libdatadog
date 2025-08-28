@@ -54,6 +54,8 @@
 mod collector;
 #[cfg(all(windows, feature = "collector_windows"))]
 mod collector_windows;
+#[cfg(unix)]
+mod common;
 mod crash_info;
 #[cfg(all(unix, feature = "receiver"))]
 mod receiver;
@@ -86,3 +88,6 @@ pub use shared::configuration::{
 
 #[cfg(all(unix, feature = "benchmarking"))]
 pub use receiver::benchmark;
+
+#[cfg(unix)]
+pub use common::{get_data_folder_path, SharedLibrary};
