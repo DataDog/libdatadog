@@ -121,7 +121,7 @@ mod tests {
             "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
         let create_alt_stack = true;
         let use_alt_stack = true;
-        let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
+        let resolve_frames = StacktraceCollection::WithSymbols;
         let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
         let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
         let timeout = Duration::from_secs(10);
@@ -184,7 +184,7 @@ mod tests {
 
         let create_alt_stack = true;
         let use_alt_stack = false;
-        let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
+        let resolve_frames = StacktraceCollection::WithSymbols;
         let timeout = Duration::from_secs(10);
 
         // This should return an error, because we're creating an altstack without using it
@@ -242,7 +242,7 @@ mod tests {
             "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
         let create_alt_stack = true;
         let use_alt_stack = true;
-        let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
+        let resolve_frames = StacktraceCollection::WithSymbols;
         let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
         let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
         let signals = default_signals();
@@ -364,7 +364,7 @@ mod tests {
             "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
         let create_alt_stack = false; // Use, but do _not_ create
         let use_alt_stack = true;
-        let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
+        let resolve_frames = StacktraceCollection::WithSymbols;
         let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
         let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
         let signals = default_signals();
@@ -492,7 +492,7 @@ mod tests {
             "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
         let create_alt_stack = false;
         let use_alt_stack = false;
-        let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
+        let resolve_frames = StacktraceCollection::WithSymbols;
         let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
         let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
         let signals = default_signals();
@@ -656,7 +656,7 @@ mod tests {
             "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver".to_string();
         let create_alt_stack = true; // doesn't matter, but most runtimes use it, so take it
         let use_alt_stack = true;
-        let resolve_frames = StacktraceCollection::EnabledWithInprocessSymbols;
+        let resolve_frames = StacktraceCollection::WithSymbols;
         let stderr_filename = Some(format!("{dir}/stderr_{time}.txt"));
         let stdout_filename = Some(format!("{dir}/stdout_{time}.txt"));
         let signals = default_signals();
