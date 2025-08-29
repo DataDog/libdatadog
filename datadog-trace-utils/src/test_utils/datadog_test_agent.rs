@@ -518,10 +518,7 @@ impl DatadogTestAgent {
 
     pub async fn set_remote_config_response(&self, data: &str, snapshot_token: Option<&str>) {
         let uri = self
-            .get_uri_for_endpoint(
-                SET_REMOTE_CONFIG_RESPONSE_PATH_ENDPOINT,
-                snapshot_token,
-            )
+            .get_uri_for_endpoint(SET_REMOTE_CONFIG_RESPONSE_PATH_ENDPOINT, snapshot_token)
             .await;
 
         let req = Request::builder()
