@@ -321,11 +321,7 @@ impl<'a> PprofBuilder<'a> {
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
-            let duration_ns = if end_ns >= start_ns {
-                end_ns - start_ns
-            } else {
-                0
-            };
+            let duration_ns = end_ns.saturating_sub(start_ns);
             let start_i64 = if start_ns > i64::MAX as u128 {
                 i64::MAX
             } else {
