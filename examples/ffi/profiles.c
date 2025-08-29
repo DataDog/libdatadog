@@ -87,8 +87,12 @@ int main(void) {
   check_ok(ddog_prof_SampleBuilder_new(&sb, scratch), "SampleBuilder_new");
   check_ok(ddog_prof_SampleBuilder_stack_id(sb, stack_id), "SampleBuilder_stack_id");
   check_ok(ddog_prof_SampleBuilder_value(sb, 10), "SampleBuilder_value");
+  // attribute key must be a StringId from the dictionary
+  ddog_prof_StringId attr_key = {0};
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&attr_key, dict, DDOG_CHARSLICE_C("unique_counter"), DDOG_PROF_UTF8_OPTION_VALIDATE),
+           "ProfilesDictionary_insert_str(attr key)");
   check_ok(ddog_prof_SampleBuilder_attribute_str(sb,
-                                                 DDOG_CHARSLICE_C("unique_counter"),
+                                                 attr_key,
                                                  DDOG_CHARSLICE_C("1"),
                                                  DDOG_PROF_UTF8_OPTION_VALIDATE),
            "SampleBuilder_attribute_str");
