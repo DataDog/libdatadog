@@ -230,7 +230,7 @@ pub fn decode_uri_path_in_authority(uri: &hyper::Uri) -> anyhow::Result<PathBuf>
 
 impl Endpoint {
     /// Default value for the timeout field in milliseconds.
-    pub const DEFAULT_TIMEOUT: u64 = 3_000;
+    pub const DEFAULT_TIMEOUT: u64 = 5_000;
 
     /// Return a request builder with the following headers:
     /// - User agent
