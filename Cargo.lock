@@ -1460,6 +1460,7 @@ dependencies = [
  "cc",
  "cc_utils",
  "chrono",
+ "criterion",
  "ddcommon",
  "ddtelemetry",
  "goblin",
