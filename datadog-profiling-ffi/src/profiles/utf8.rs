@@ -8,9 +8,7 @@ use ddcommon_ffi::CharSlice;
 use std::borrow::Cow;
 use std::collections::TryReserveError;
 
-// todo: look at the output in both common.h and profiling.h for Utf8Option.
-/// Options for converting a ByteSlice to a UTF-8 string.
-#[repr(u8)]
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Utf8Option {
     /// The string is assumed to be valid UTF-8. If it's not, the behavior
