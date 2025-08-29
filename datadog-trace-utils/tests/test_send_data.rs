@@ -351,7 +351,7 @@ mod tracing_integration_tests {
                 ]
             }
         }"##,
-                snapshot_name,
+                Some(snapshot_name),
             )
             .await;
 
