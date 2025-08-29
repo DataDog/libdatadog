@@ -10,7 +10,8 @@ mod tracing_integration_tests {
     use datadog_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
     #[cfg(target_os = "linux")]
     use ddcommon::connector::uds::socket_path_to_uri;
-    use ddcommon::Endpoint;
+    use ddcommon::{hyper_migration, Endpoint};
+    use http_body_util::BodyExt;
     #[cfg(target_os = "linux")]
     use hyper::Uri;
     use serde_json::json;
@@ -328,5 +329,66 @@ mod tracing_integration_tests {
         let _result = data.send().await;
 
         test_agent.assert_snapshot(snapshot_name).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_remote_set_remote_config_data() {
+        let snapshot_name = "test_remote_set_remote_config_data";
+        let test_agent = DatadogTestAgent::new(None, None, &[]).await;
+
+        test_agent
+            .set_remote_config_response(
+                r##"{
+            "path": "2/APM_TRACING/1234/config",
+            "msg": {
+                "tracing_sampling_rules": [
+                    {
+                        "service": "test-service",
+                        "name": "test-name",
+                        "sample_rate": 0.5
+                    }
+                ]
+            }
+        }"##,
+                snapshot_name,
+            )
+            .await;
+
+        let uri = test_agent
+            .get_uri_for_endpoint("v0.7/config", Some(snapshot_name))
+            .await;
+
+        let res = hyper_migration::new_default_client()
+            .get(uri)
+            .await
+            .expect("Failed to get remote config data from test agent");
+        assert_eq!(
+            res.status(),
+            200,
+            "Expected status 200 for remote config data, but got {}",
+            res.status()
+        );
+        let body = res
+            .into_body()
+            .collect()
+            .await
+            .expect("Failed to read body data")
+            .to_bytes();
+        let s = std::str::from_utf8(&body).expect("Failed to convert body to string");
+        let response = serde_json::de::from_str::<serde_json::Value>(s)
+            .expect("Failed to parse response as json");
+        assert_eq!(
+            response["client_configs"][0].as_str().unwrap(),
+            "2/APM_TRACING/1234/config"
+        );
+        assert_eq!(
+            response["target_files"][0]["path"].as_str().unwrap(),
+            "2/APM_TRACING/1234/config"
+        );
+        assert_eq!(
+            response["target_files"][0]["raw"].as_str().unwrap(),
+            "eyJ0cmFjaW5nX3NhbXBsaW5nX3J1bGVzIjogW3sic2VydmljZSI6ICJ0ZXN0LXNlcnZpY2UiLCAibmFtZSI6ICJ0ZXN0LW5hbWUiLCAic2FtcGxlX3JhdGUiOiAwLjV9XX0="
+        );
     }
 }

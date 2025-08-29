@@ -26,6 +26,7 @@ const TEST_AGENT_PORT: u16 = 8126;
 const SAMPLE_RATE_QUERY_PARAM_KEY: &str = "agent_sample_rate_by_service";
 const SESSION_TEST_TOKEN_QUERY_PARAM_KEY: &str = "test_session_token";
 const SESSION_START_ENDPOINT: &str = "test/session/start";
+const SET_REMOTE_CONFIG_RESPONSE_PATH_ENDPOINT: &str = "test/session/responses/config/path";
 
 #[derive(Debug)]
 struct DatadogTestAgentContainer {
@@ -513,5 +514,42 @@ impl DatadogTestAgent {
             delay_ms *= 2;
             attempts += 1;
         }
+    }
+
+    pub async fn set_remote_config_response(&self, data: &str, snapshot_token: &str) {
+        let uri = self
+            .get_uri_for_endpoint(
+                SET_REMOTE_CONFIG_RESPONSE_PATH_ENDPOINT,
+                Some(snapshot_token),
+            )
+            .await;
+
+        let req = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .body(Body::from(data.as_bytes().to_vec()))
+            .expect("Failed to create request");
+
+        let res = self
+            .agent_request_with_retry(req, 5)
+            .await
+            .expect("request failed");
+
+        let status = res.status();
+        let body = res
+            .into_body()
+            .collect()
+            .await
+            .expect("failed to read request body")
+            .to_bytes();
+
+        assert_eq!(
+            status.as_u16(),
+            202,
+            "Expected status 200 for test agent {}, but got {}: {:?}",
+            SET_REMOTE_CONFIG_RESPONSE_PATH_ENDPOINT,
+            status.as_u16(),
+            String::from_utf8_lossy(&body)
+        );
     }
 }
