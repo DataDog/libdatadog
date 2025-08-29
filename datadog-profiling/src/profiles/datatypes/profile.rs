@@ -10,7 +10,7 @@ pub const MAX_SAMPLE_TYPES: usize = 2;
 #[derive(Debug, Default)]
 pub struct Profile {
     pub sample_type: ArrayVec<ValueType, MAX_SAMPLE_TYPES>,
-    pub samples: Vec<Sample>,
+    pub samples: ArrayVec<Sample, MAX_SAMPLE_TYPES>,
     pub period_types: Option<ValueType>,
     pub period: Option<i64>,
 }
@@ -26,8 +26,7 @@ impl Profile {
     }
 
     pub fn add_sample(&mut self, sample: Sample) -> Result<(), ProfileError> {
-        self.samples.try_reserve(1)?;
-        self.samples.push(sample);
+        self.samples.try_push(sample)?;
         Ok(())
     }
 }

@@ -6,6 +6,7 @@ use crate::profiles::utf8::{insert_str, Utf8Option};
 use crate::profiles::{ensure_non_null_insert, ensure_non_null_out_parameter};
 use crate::{EmptyHandleError, ProfileStatus};
 use datadog_profiling::profiles::collections::StringId;
+use datadog_profiling::profiles::datatypes::ProfilesDictionary;
 use datadog_profiling::profiles::datatypes::{
     AttributeId, KeyValue, Link, LinkId, Location, LocationId, ScratchPad,
     StackId,
@@ -13,8 +14,6 @@ use datadog_profiling::profiles::datatypes::{
 use datadog_profiling::profiles::string_writer::FallibleStringWriter;
 use datadog_profiling::profiles::ProfileError;
 use ddcommon_ffi::CharSlice;
-use std::borrow::Cow;
-use datadog_profiling::profiles::datatypes::ProfilesDictionary;
 
 /// Allocates a new `ScratchPad` and returns a handle to it via the out
 /// parameter `handle`.
