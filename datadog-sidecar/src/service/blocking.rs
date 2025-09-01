@@ -126,6 +126,17 @@ impl SidecarTransport {
         self.with_retry(|t| t.call(&item))
     }
 
+    pub fn call_noretry(
+        &mut self,
+        item: SidecarInterfaceRequest,
+    ) -> io::Result<SidecarInterfaceResponse> {
+        let mut inner = match self.inner.lock() {
+            Ok(t) => t,
+            Err(e) => return Err(io::Error::other(e.to_string())),
+        };
+        inner.call(&item)
+    }
+
     pub fn send_garbage(&mut self) -> io::Result<()> {
         self.inner.lock_or_panic().send_garbage()
     }
@@ -527,7 +538,7 @@ pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
 ///
 /// An `io::Result<()>` indicating the result of the operation.
 pub fn flush_traces(transport: &mut SidecarTransport) -> io::Result<()> {
-    transport.call(SidecarInterfaceRequest::FlushTraces {})?;
+    transport.call_noretry(SidecarInterfaceRequest::FlushTraces {})?;
     Ok(())
 }
 
