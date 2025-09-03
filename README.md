@@ -29,19 +29,15 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 Build `libdatadog` as usual with `cargo build`.
 
 #### Builder crate
-To generate a release with the builder crate use `cargo build -p builder` this will trigger all the necessary steps to
-create the libraries, binaries, headers and package config files needed to use libdatadog in your project. The default
-build does not include any capability so in order to add them here is the list of allowed features:
-- profiling: includes the profiling ffi calls and headers to the package.
-- telemetry: adds the telemetry symbols and headers to the package.
-- data-pipeline: includes the data pipeline ffi calls to the library and headers to the package.
-- crashtracker: adds crashtracking capabilities to the package.
-- symbolizer: adds symbolizer capabilities to the package.
 
-In order to set an output directory there's the `LIBDD_OUTPUT_FOLDER` environment varibale. Here's an example to create
-a package with all the features and save the relese on `/opt/release` folder:
+You can generate a release using the builder crate. This will trigger all the necessary steps to create the libraries, binaries, headers and package config files needed to use a pre-built libdatadog binary in a (non-rust) project.
+The default build does not include any capability so you'll need to list all features you want to include. You can see a full, up-to-date list of features in the `builder/Cargo.toml` file.
+
+Here's one example of using the builder crate:
+
 ```bash
-LIBDD_OUTPUT_FOLDER=/opt/release cargo build -p builder --features profiling,telemetry,data-pipeline,crashtracker,symbolizer
+mkdir output-folder
+cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker,library-config,log,ddsketch -- --out output-folder
 ```
 
 #### Build dependencies
