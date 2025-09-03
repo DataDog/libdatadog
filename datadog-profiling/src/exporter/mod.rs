@@ -32,6 +32,9 @@ use crate::internal::EncodedProfile;
 
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 
+/// Default timeout for pprof uploads in milliseconds.
+const PROFILING_DEFAULT_TIMEOUT_MS: u64 = 5_000;
+
 pub struct Exporter {
     client: HttpClient,
     runtime: Runtime,
@@ -138,13 +141,14 @@ impl ProfileExporter {
         profiling_library_version: V,
         family: F,
         tags: Option<Vec<Tag>>,
-        endpoint: Endpoint,
+        mut endpoint: Endpoint,
     ) -> anyhow::Result<ProfileExporter>
     where
         F: Into<Cow<'static, str>>,
         N: Into<Cow<'static, str>>,
         V: Into<Cow<'static, str>>,
     {
+        endpoint.timeout_ms = PROFILING_DEFAULT_TIMEOUT_MS;
         Ok(Self {
             exporter: Exporter::new()?,
             endpoint,

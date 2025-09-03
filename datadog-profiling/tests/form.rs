@@ -37,6 +37,7 @@ fn multipart(
 mod tests {
     use crate::multipart;
     use datadog_profiling::exporter::*;
+    use datadog_profiling::internal::EncodedProfile;
     use ddcommon::tag;
     use http_body_util::BodyExt;
     use serde_json::json;
@@ -237,6 +238,66 @@ mod tests {
         assert_eq!(
             actual_headers.get("DD-EVP-ORIGIN-VERSION").unwrap(),
             profiling_library_version
+        );
+    }
+
+    #[test]
+    fn profiling_uses_5_second_default_timeout() {
+        // Test that ProfileExporter uses 5-second default timeout for pprof uploads
+
+        let profiling_library_name = "dd-trace-test";
+        let profiling_library_version = "1.2.3";
+        let api_key = "1234567890123456789012";
+        let endpoint = config::agentless("datadoghq.com", api_key).expect("endpoint to construct");
+
+        let exporter = ProfileExporter::new(
+            profiling_library_name,
+            profiling_library_version,
+            "php",
+            Some(default_tags()),
+            endpoint,
+        )
+        .expect("exporter to construct");
+
+        let profile = EncodedProfile::test_instance().expect("To get a profile");
+        let request = exporter
+            .build(profile, &[], &[], None, None, None)
+            .expect("request to be built");
+
+        let actual_timeout = request.timeout().expect("timeout to exist");
+        assert_eq!(actual_timeout, std::time::Duration::from_millis(5_000));
+    }
+
+    #[test]
+    fn user_can_override_profiling_timeout() {
+        // Test that ddog_prof_Exporter_set_timeout still works
+        let profiling_library_name = "dd-trace-test";
+        let profiling_library_version = "1.2.3";
+        let api_key = "1234567890123456789012";
+        let endpoint = config::agentless("datadoghq.com", api_key).expect("endpoint to construct");
+
+        let mut exporter = ProfileExporter::new(
+            profiling_library_name,
+            profiling_library_version,
+            "php",
+            Some(default_tags()),
+            endpoint,
+        )
+        .expect("exporter to construct");
+
+        // Override the default timeout
+        let custom_timeout = 15_000;
+        exporter.set_timeout(custom_timeout);
+
+        let profile = EncodedProfile::test_instance().expect("To get a profile");
+        let request = exporter
+            .build(profile, &[], &[], None, None, None)
+            .expect("request to be built");
+
+        let actual_timeout = request.timeout().expect("timeout to exist");
+        assert_eq!(
+            actual_timeout,
+            std::time::Duration::from_millis(custom_timeout)
         );
     }
 }

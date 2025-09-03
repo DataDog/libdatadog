@@ -11,9 +11,12 @@ use crate::enter_listener_loop;
 use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
 use nix::sys::socket::{shutdown, Shutdown};
 use std::io;
+use std::os::fd::RawFd;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::time::Instant;
 use tokio::net::{UnixListener, UnixStream};
+use tokio::select;
+use tokio::signal::unix::{signal, SignalKind};
 use tracing::{error, info};
 
 #[no_mangle]
@@ -43,15 +46,7 @@ pub extern "C" fn ddog_daemon_entry_point() {
             // while shutting down
             let cancel = {
                 let listener_fd = listener.as_raw_fd();
-                move || {
-                    // We need to drop O_NONBLOCK, as accept() on a shutdown socket will just give
-                    // EAGAIN instead of EINVAL
-                    #[allow(clippy::unwrap_used)]
-                    let flags =
-                        OFlag::from_bits_truncate(fcntl(listener_fd, F_GETFL).ok().unwrap());
-                    _ = fcntl(listener_fd, F_SETFL(flags & !OFlag::O_NONBLOCK));
-                    _ = shutdown(listener_fd, Shutdown::Both);
-                }
+                move || stop_listening(listener_fd)
             };
 
             Ok((|handler| accept_socket_loop(listener, handler), cancel))
@@ -72,12 +67,35 @@ pub extern "C" fn ddog_daemon_entry_point() {
     )
 }
 
+fn stop_listening(listener_fd: RawFd) {
+    // We need to drop O_NONBLOCK, as accept() on a shutdown socket will just give
+    // EAGAIN instead of EINVAL
+    #[allow(clippy::unwrap_used)]
+    let flags = OFlag::from_bits_truncate(fcntl(listener_fd, F_GETFL).ok().unwrap());
+    _ = fcntl(listener_fd, F_SETFL(flags & !OFlag::O_NONBLOCK));
+    _ = shutdown(listener_fd, Shutdown::Both);
+}
+
 async fn accept_socket_loop(
     listener: UnixListener,
     handler: Box<dyn Fn(UnixStream)>,
 ) -> io::Result<()> {
-    while let Ok((socket, _)) = listener.accept().await {
-        handler(socket);
+    #[allow(clippy::unwrap_used)]
+    let mut termsig = signal(SignalKind::terminate()).unwrap();
+    loop {
+        select! {
+            _ = termsig.recv() => {
+                stop_listening(listener.as_raw_fd());
+                break;
+            }
+            accept = listener.accept() => {
+                if let Ok((socket, _)) = accept {
+                    handler(socket);
+                } else {
+                    break;
+                }
+            }
+        }
     }
     Ok(())
 }
