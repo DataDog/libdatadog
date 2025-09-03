@@ -9,7 +9,7 @@ use std::ops::Deref;
 use std::path::Path;
 use std::{env, fs, io, mem};
 
-use anyhow::Context;
+
 
 /// This struct holds maps used to match and template configurations.
 ///
@@ -438,6 +438,39 @@ impl Target {
     }
 }
 
+#[derive(Debug)]
+pub enum LoggedResult<T, E> {
+    Ok(T, Vec<String>),
+    Err(E),
+}
+
+impl<T, E> LoggedResult<T, E> {
+    pub fn data(self) -> Result<T, E> {
+        match self {
+            LoggedResult::Ok(value, _) => Ok(value),
+            LoggedResult::Err(err) => Err(err),
+        }
+    }
+
+    pub fn logs(&self) -> &[String] {
+        match self {
+            LoggedResult::Ok(_, logs) => logs,
+            LoggedResult::Err(_) => &[],
+        }
+    }
+
+    pub fn into_logs(self) -> Vec<String> {
+        match self {
+            LoggedResult::Ok(_, logs) => logs,
+            LoggedResult::Err(_) => Vec::new(),
+        }
+    }
+
+    pub fn logs_as_string(&self) -> String {
+        self.logs().join("\n")
+    }
+}
+
 impl Configurator {
     #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     pub const FLEET_STABLE_CONFIGURATION_PATH: &'static str =
@@ -467,41 +500,31 @@ impl Configurator {
         Self { debug_logs }
     }
 
-    fn log_process_info(&self, process_info: &ProcessInfo, source: LibraryConfigSource) {
-        if self.debug_logs {
-            eprintln!("Called library_config_common_component:");
-            eprintln!("\tsource: {source:?}");
-            eprintln!("\tconfigurator: {self:?}");
-            eprintln!("\tprocess args:");
-            process_info
-                .args
-                .iter()
-                .map(|arg| String::from_utf8_lossy(arg))
-                .for_each(|e| eprintln!("\t\t{:?}", e.as_ref()));
+    fn parse_stable_config_slice(&self, buf: &[u8]) -> LoggedResult<StableConfig, anyhow::Error> {
+        let stable_config = if buf.is_empty() {
+            StableConfig::default()
+        } else {
+            match serde_yaml::from_slice(buf) {
+                Ok(config) => config,
+                Err(e) => return LoggedResult::Err(e.into()),
+            }
+        };
 
-            eprintln!(
-                "\tprocess language: {:?}",
-                String::from_utf8_lossy(&process_info.language).as_ref()
-            );
-        }
+        let messages = if self.debug_logs {
+            vec![format!("Read the following static config: {stable_config:?}")]
+        } else {
+            Vec::new()
+        };
+
+        LoggedResult::Ok(stable_config, messages)
     }
 
-    fn parse_stable_config_slice(&self, buf: &[u8]) -> anyhow::Result<StableConfig> {
-        if buf.is_empty() {
-            let stable_config = StableConfig::default();
-            eprintln!("Read the following static config: {stable_config:?}");
-            return Ok(stable_config);
-        }
-        let stable_config = serde_yaml::from_slice(buf)?;
-        if self.debug_logs {
-            eprintln!("Read the following static config: {stable_config:?}");
-        }
-        Ok(stable_config)
-    }
-
-    fn parse_stable_config_file<F: io::Read>(&self, mut f: F) -> anyhow::Result<StableConfig> {
+    fn parse_stable_config_file<F: io::Read>(&self, mut f: F) -> LoggedResult<StableConfig, anyhow::Error> {
         let mut buffer = Vec::new();
-        f.read_to_end(&mut buffer)?;
+        match f.read_to_end(&mut buffer) {
+            Ok(_) => {},
+            Err(e) => return LoggedResult::Err(e.into()),
+        }
         self.parse_stable_config_slice(utils::trim_bytes(&buffer))
     }
 
@@ -510,24 +533,43 @@ impl Configurator {
         path_local: &Path,
         path_managed: &Path,
         process_info: &ProcessInfo,
-    ) -> anyhow::Result<Vec<LibraryConfig>> {
+    ) -> LoggedResult<Vec<LibraryConfig>, anyhow::Error> {
+        let mut debug_messages = Vec::new();
         if self.debug_logs {
-            eprintln!("Reading stable configuration from files:");
-            eprintln!("\tlocal: {path_local:?}");
-            eprintln!("\tfleet: {path_managed:?}");
+            debug_messages.push("Reading stable configuration from files:".to_string());
+            debug_messages.push(format!("\tlocal: {path_local:?}"));
+            debug_messages.push(format!("\tfleet: {path_managed:?}"));
         }
         let local_config = match fs::File::open(path_local) {
-            Ok(file) => self.parse_stable_config_file(file)?,
+            Ok(file) => match self.parse_stable_config_file(file) {
+                LoggedResult::Ok(config, logs) => {
+                    debug_messages.extend(logs);
+                    config
+                },
+                LoggedResult::Err(e) => return LoggedResult::Err(e),
+            },
             Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
-            Err(e) => return Err(e).context("failed to open config file"),
+            Err(e) => return LoggedResult::Err(anyhow::Error::from(e).context("failed to open config file")),
         };
         let fleet_config = match fs::File::open(path_managed) {
-            Ok(file) => self.parse_stable_config_file(file)?,
+            Ok(file) => match self.parse_stable_config_file(file) {
+                LoggedResult::Ok(config, logs) => {
+                    debug_messages.extend(logs);
+                    config
+                },
+                LoggedResult::Err(e) => return LoggedResult::Err(e),
+            },
             Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
-            Err(e) => return Err(e).context("failed to open config file"),
+            Err(e) => return LoggedResult::Err(anyhow::Error::from(e).context("failed to open config file")),
         };
 
-        self.get_config(local_config, fleet_config, process_info)
+        match self.get_config(local_config, fleet_config, process_info) {
+            LoggedResult::Ok(configs, msgs) => {
+                debug_messages.extend(msgs);
+                LoggedResult::Ok(configs, debug_messages)
+            },
+            LoggedResult::Err(e) => LoggedResult::Err(e),
+        }
     }
 
     pub fn get_config_from_bytes(
@@ -536,10 +578,19 @@ impl Configurator {
         s_managed: &[u8],
         process_info: ProcessInfo,
     ) -> anyhow::Result<Vec<LibraryConfig>> {
-        let local_config: StableConfig = self.parse_stable_config_slice(s_local)?;
-        let fleet_config: StableConfig = self.parse_stable_config_slice(s_managed)?;
+        let local_config = match self.parse_stable_config_slice(s_local) {
+            LoggedResult::Ok(config, _) => config,
+            LoggedResult::Err(e) => return Err(e),
+        };
+        let fleet_config = match self.parse_stable_config_slice(s_managed) {
+            LoggedResult::Ok(config, _) => config,
+            LoggedResult::Err(e) => return Err(e),
+        };
 
-        self.get_config(local_config, fleet_config, &process_info)
+        match self.get_config(local_config, fleet_config, &process_info) {
+            LoggedResult::Ok(configs, _) => Ok(configs),
+            LoggedResult::Err(e) => Err(e),
+        }
     }
 
     fn get_config(
@@ -547,23 +598,58 @@ impl Configurator {
         local_config: StableConfig,
         fleet_config: StableConfig,
         process_info: &ProcessInfo,
-    ) -> anyhow::Result<Vec<LibraryConfig>> {
+    ) -> LoggedResult<Vec<LibraryConfig>, anyhow::Error> {
+        let mut debug_messages = Vec::new();
+        if self.debug_logs {
+            debug_messages.push("\tProcess args:".to_string());
+
+            for arg in &process_info.args {
+                let arg_str = String::from_utf8_lossy(arg);
+                debug_messages.push(format!("\t\t{:?}", arg_str.as_ref()));
+            }
+
+            debug_messages.push(format!(
+                "\tProcess language: {:?}",
+                String::from_utf8_lossy(&process_info.language).as_ref()
+            ));
+        }
+
         let mut cfg = HashMap::new();
         // First get local configuration
-        self.get_single_source_config(
+        match self.get_single_source_config(
             local_config,
             LibraryConfigSource::LocalStableConfig,
             process_info,
             &mut cfg,
-        )?;
+        ) {
+            LoggedResult::Ok(_, msgs) => debug_messages.extend(msgs),
+            LoggedResult::Err(e) => return LoggedResult::Err(e),
+        }
+
+        if self.debug_logs {
+            debug_messages.push("Called library_config_common_component:".to_string());
+            debug_messages.push(format!("\tsource: {:?}", LibraryConfigSource::LocalStableConfig));
+            debug_messages.push(format!("\tconfigurator: {self:?}"));
+        }
+
         // Merge with fleet config override
-        self.get_single_source_config(
+        match self.get_single_source_config(
             fleet_config,
             LibraryConfigSource::FleetStableConfig,
             process_info,
             &mut cfg,
-        )?;
-        Ok(cfg
+        ) {
+            LoggedResult::Ok(_, msgs) => debug_messages.extend(msgs),
+            LoggedResult::Err(e) => return LoggedResult::Err(e),
+        }
+
+        if self.debug_logs {
+            debug_messages.push("Called library_config_common_component:".to_string());
+            debug_messages.push(format!("\tsource: {:?}", LibraryConfigSource::FleetStableConfig));
+            debug_messages.push(format!("\tconfigurator: {self:?}"));
+        }
+
+        let configs = cfg
             .into_iter()
             .map(|(k, v)| LibraryConfig {
                 name: k,
@@ -571,7 +657,9 @@ impl Configurator {
                 source: v.source,
                 config_id: v.config_id,
             })
-            .collect())
+            .collect();
+
+        LoggedResult::Ok(configs, debug_messages)
     }
 
     /// Get config from a stable config file and associate them with the file origin
@@ -585,9 +673,7 @@ impl Configurator {
         source: LibraryConfigSource,
         process_info: &ProcessInfo,
         cfg: &mut HashMap<String, LibraryConfigVal>,
-    ) -> anyhow::Result<()> {
-        self.log_process_info(process_info, source);
-
+    ) -> LoggedResult<(), anyhow::Error> {
         // Phase 1: take host default config
         cfg.extend(
             mem::take(&mut stable_config.apm_configuration_default)
@@ -608,8 +694,7 @@ impl Configurator {
         );
 
         // Phase 2: process specific config
-        self.get_single_source_process_config(stable_config, source, process_info, cfg)?;
-        Ok(())
+        self.get_single_source_process_config(stable_config, source, process_info, cfg)
     }
 
     /// Get config from a stable config using process matching rules
@@ -619,17 +704,22 @@ impl Configurator {
         source: LibraryConfigSource,
         process_info: &ProcessInfo,
         library_config: &mut HashMap<String, LibraryConfigVal>,
-    ) -> anyhow::Result<()> {
+    ) -> LoggedResult<(), anyhow::Error> {
         let matcher = Matcher::new(process_info, &stable_config.tags);
         let Some(configs) = matcher.find_stable_config(&stable_config) else {
-            if self.debug_logs {
-                eprintln!("No selector matched for source {source:?}");
-            }
-            return Ok(());
+            let messages = if self.debug_logs {
+                vec![format!("No selector matched for source {source:?}")]
+            } else {
+                Vec::new()
+            };
+            return LoggedResult::Ok((), messages);
         };
 
         for (name, config_val) in configs.0.iter() {
-            let value = matcher.template_config(config_val)?;
+            let value = match matcher.template_config(config_val) {
+                Ok(v) => v,
+                Err(e) => return LoggedResult::Err(e),
+            };
             library_config.insert(
                 name.clone(),
                 LibraryConfigVal {
@@ -640,10 +730,13 @@ impl Configurator {
             );
         }
 
-        if self.debug_logs {
-            eprintln!("Will apply the following configuration:\n\tsource {source:?}\n\t{library_config:?}");
-        }
-        Ok(())
+        let messages = if self.debug_logs {
+            vec![format!("Will apply the following configuration:\n\tsource {source:?}\n\t{library_config:?}")]
+        } else {
+            Vec::new()
+        };
+
+        LoggedResult::Ok((), messages)
     }
 }
 
@@ -685,7 +778,7 @@ mod utils {
 mod tests {
     use std::{collections::HashMap, io::Write};
 
-    use super::{Configurator, ProcessInfo};
+    use super::{Configurator, ProcessInfo, LoggedResult};
     use crate::{
         ConfigMap, LibraryConfig, LibraryConfigSource, Matcher, Operator, Origin, Rule, Selector,
         StableConfig,
@@ -719,7 +812,7 @@ mod tests {
     #[test]
     fn test_missing_files() {
         let configurator = Configurator::new(true);
-        let cfg = configurator
+        let result = configurator
             .get_config_from_file(
                 "/file/is/missing".as_ref(),
                 "/file/is/missing_too".as_ref(),
@@ -728,9 +821,13 @@ mod tests {
                     envp: vec![b"ENV=VAR".to_vec()],
                     language: b"java".to_vec(),
                 },
-            )
-            .unwrap();
-        assert_eq!(cfg, vec![]);
+            );
+        match result {
+            LoggedResult::Ok(configs, _) => {
+                assert_eq!(configs, vec![]);
+            },
+            LoggedResult::Err(_) => panic!("Expected success"),
+        }
     }
 
     #[test]
@@ -1009,10 +1106,13 @@ rules:
             .unwrap();
         let configurator = Configurator::new(true);
         let cfg = configurator
-            .parse_stable_config_file(tmp.as_file_mut())
-            .unwrap();
+            .parse_stable_config_file(tmp.as_file_mut());
+        let config = match cfg {
+            LoggedResult::Ok(config, _) => config,
+            LoggedResult::Err(_) => panic!("Expected success"),
+        };
         assert_eq!(
-            cfg,
+            config,
             StableConfig {
                 config_id: None,
                 apm_configuration_default: ConfigMap::default(),
