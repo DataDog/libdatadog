@@ -69,7 +69,7 @@ impl ScratchPad {
     pub fn set_end_time(&mut self, end: SystemTime) -> Result<(), ProfileError> {
         if let Some(start) = self.start_time {
             if end < start {
-                return Err(ProfileError::Other("end time earlier than start time"));
+                return Err(ProfileError::other("end time earlier than start time"));
             }
         }
         self.end_time = Some(end);

@@ -4,7 +4,7 @@
 use crate::profiles::collections::StringId;
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ValueType {
     pub type_id: StringId,
     pub unit_id: StringId,

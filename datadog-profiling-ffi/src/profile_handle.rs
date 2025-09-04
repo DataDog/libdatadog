@@ -109,13 +109,13 @@ impl core::error::Error for AllocHandleError {}
 
 impl From<EmptyHandleError> for ProfileError {
     fn from(_: EmptyHandleError) -> ProfileError {
-        ProfileError::Other(EmptyHandleError::message_str())
+        ProfileError::other(EmptyHandleError::message_str())
     }
 }
 
 impl From<AllocHandleError> for ProfileError {
     fn from(_: AllocHandleError) -> ProfileError {
-        ProfileError::Other(AllocHandleError::message_str())
+        ProfileError::other(AllocHandleError::message_str())
     }
 }
 

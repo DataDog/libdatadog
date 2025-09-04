@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::profiles::collections::{ArcOverflow, SetError};
+use crate::profiles::FallibleStringWriter;
+use std::borrow::Cow;
 use std::collections::TryReserveError;
 use std::io;
 
@@ -41,7 +43,38 @@ pub enum ProfileError {
     /// Some other error. Try to categorize all the errors, but since some
     /// things use [`io::Error`], there may be uncategorized errors.
     #[error("`0`")]
-    Other(&'static str),
+    Other(Cow<'static, str>),
+}
+
+impl ProfileError {
+    pub fn other(error: impl Into<Cow<'static, str>>) -> Self {
+        Self::Other(error.into())
+    }
+
+    /// Create a formatted error string. If memory allocation fails, a less
+    /// helpful but statically known error is returned instead.
+    ///
+    /// # Example
+    ///
+    /// Use this with the `format_args!` macro:
+    ///
+    /// ```
+    /// use datadog_profiling::profiles::ProfileError;
+    /// use std::fmt;
+    /// let i = 32usize;
+    /// let _err = ProfileError::fmt(format_args!("out of bounds: {i}"));
+    /// // do whatever you want with the error.
+    /// ```
+    #[cold]
+    pub fn fmt(format_args: std::fmt::Arguments) -> Self {
+        let mut fmt = FallibleStringWriter::new();
+        let cow = if std::fmt::write(&mut fmt, format_args).is_ok() {
+            Cow::Owned(fmt.into())
+        } else {
+            Cow::Borrowed("memory allocation failed: failed to format an error string")
+        };
+        Self::Other(cow)
+    }
 }
 
 impl From<SetError> for ProfileError {

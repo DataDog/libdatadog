@@ -1,16 +1,23 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod upscaling;
+
+use function_name::named;
+pub use upscaling::UpscalingRule;
+
 use crate::profile_handle::ProfileHandle;
-use crate::profiles::ensure_non_null_out_parameter;
+use crate::profiles::{ensure_non_null_out_parameter, Utf8Option};
 use crate::{ArcHandle, ProfileStatus};
 use datadog_profiling::exporter::EncodedProfile;
+use datadog_profiling::profiles;
 use datadog_profiling::profiles::datatypes::{
     Profile, ProfilesDictionary, ScratchPad,
 };
 use datadog_profiling::profiles::{
     Compressor, PprofBuilder, ProfileError, SizeRestrictedBuffer,
 };
+use ddcommon_ffi::slice::Slice;
 use ddcommon_ffi::{Handle, Timespec};
 
 /// Creates a `PprofBuilder` handle.
@@ -41,7 +48,7 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_new(
     }())
 }
 
-/// Adds a profile to the builder.
+/// Adds a profile to the builder with the attached upscaling rules.
 ///
 /// # Safety
 ///
@@ -49,16 +56,40 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_new(
 ///   references to that builder may be active for the duration of the call.
 /// - `profile` must be non-null and point to a valid `Profile` that
 ///   remains alive for the duration of the call.
+#[must_use]
+#[named]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_PprofBuilder_try_add_profile(
-    mut handle: ProfileHandle<PprofBuilder<'static>>,
+pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile<'a>(
+    mut handle: ProfileHandle<PprofBuilder<'a>>,
     profile: *const Profile,
+    upscaling_rules: Slice<UpscalingRule<'a>>,
+    utf8_option: Utf8Option,
 ) -> ProfileStatus {
     crate::profiles::ensure_non_null_insert!(profile);
     ProfileStatus::from(|| -> Result<(), ProfileError> {
         let builder = unsafe { handle.as_inner_mut()? };
         let prof_ref = unsafe { &*profile };
-        builder.try_add_profile(prof_ref)
+
+        let upscaling_rules = upscaling_rules.try_as_slice().ok_or(
+            ProfileError::other(concat!(
+                function_name!(),
+                " failed: upscaling rules couldn't be converted to a Rust slice"
+            )),
+        )?;
+
+        builder.try_add_profile(
+            prof_ref,
+            upscaling_rules.iter().map(|rule| {
+                let key = utf8_option
+                    .try_as_bytes_convert(rule.group_by_label_key)?;
+                let value = utf8_option
+                    .try_as_bytes_convert(rule.group_by_label_value)?;
+                let group_by_label = (key, value);
+                let upscaling_info =
+                    profiles::UpscalingInfo::try_from(rule.upscaling_info)?;
+                Ok(profiles::UpscalingRule { group_by_label, upscaling_info })
+            }),
+        )
     }())
 }
 
@@ -116,7 +147,7 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_build_uncompressed(
 
 fn build_with_sink<Sink, Make, Finalize>(
     out_profile: *mut Handle<EncodedProfile>,
-    handle: ProfileHandle<PprofBuilder<'static>>,
+    mut handle: ProfileHandle<PprofBuilder<'static>>,
     size_hint: u32,
     start: Timespec,
     end: Timespec,
@@ -134,11 +165,11 @@ where
             || (start.seconds == end.seconds
                 && start.nanoseconds > end.nanoseconds)
         {
-            return Err(ProfileError::Other(
+            return Err(ProfileError::other(
                 "end time cannot be before start time",
             ));
         }
-        let builder = unsafe { handle.as_inner()? };
+        let builder = unsafe { handle.as_inner_mut()? };
         const MIB: usize = 1024 * 1024;
         // This is decoupled from the intake limit somewhat so that if the
         // limit is raised a little, clients don't need to be rebuilt. Of

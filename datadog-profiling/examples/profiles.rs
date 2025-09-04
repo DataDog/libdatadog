@@ -116,12 +116,15 @@ fn main() {
 
     profile.add_sample(sample).unwrap();
 
+    let mut compressor = Compressor::with_max_capacity(50 * 1024 * 1024);
+
     // Convert the in-memory profile into pprof using PprofBuilder and
     // stream to an LZ4 compressor, then write to stdout.
     let mut builder = PprofBuilder::new(&dictionary, &scratchpad);
-    builder.try_add_profile(&profile).unwrap();
+    builder
+        .try_add_profile(&mut compressor, &profile, Default::default())
+        .unwrap();
 
-    let mut compressor = Compressor::with_max_capacity(50 * 1024 * 1024);
     builder.build(&mut compressor).unwrap();
     let compressed = compressor.finish().unwrap();
     {

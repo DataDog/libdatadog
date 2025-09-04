@@ -91,7 +91,7 @@ int main(int argc, char **argv) {
   // Build EncodedProfile with PprofBuilder
   ddog_prof_PprofBuilderHandle pprof = NULL;
   check_ok(ddog_prof_PprofBuilder_new(&pprof, dict, scratch), "PprofBuilder_new");
-  check_ok(ddog_prof_PprofBuilder_try_add_profile(pprof, profile), "PprofBuilder_try_add_profile");
+  check_ok(ddog_prof_PprofBuilder_add_profile(pprof, profile), "PprofBuilder_add_profile");
   ddog_prof_EncodedProfile encoded = {0};
   ddog_Timespec start = {.seconds = 0, .nanoseconds = 0};
   ddog_Timespec end = {.seconds = 1, .nanoseconds = 0};

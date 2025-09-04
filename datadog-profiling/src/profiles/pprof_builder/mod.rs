@@ -11,55 +11,25 @@
 //! - Our stack abstractions (thin slices of `SetId<Location>`) do not exist in pprof; we expand
 //!   stacks into `Sample.location_id` arrays as they are encountered while streaming.
 
+mod string_table;
+mod upscaling;
+
+use std::borrow::Cow;
+pub use string_table::*;
+pub use upscaling::*;
+
+use crate::profiles::collections::{SetHasher, SetId};
+use crate::profiles::datatypes::{
+    self as dt, Profile, ProfilesDictionary, ScratchPad, MAX_SAMPLE_TYPES,
+};
+use crate::profiles::ProfileError;
+use arrayvec::ArrayVec;
+use datadog_profiling_protobuf::{self as pprof, Value};
+use ddcommon::vec::VecExt;
+use hashbrown::HashSet;
 use std::collections::{hash_map, HashMap};
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use crate::profiles::collections::{SetHasher, SetId};
-use crate::profiles::datatypes::{self as dt, Profile, ProfilesDictionary, ScratchPad};
-use crate::profiles::ProfileError;
-use datadog_profiling_protobuf::{self as pprof, Value};
-
-/// String table that interns &str to compact offsets and encodes into
-/// protobuf when a string is added to the map.
-struct StringTable<'a> {
-    map: HashMap<&'a str, pprof::StringOffset, SetHasher>,
-    next: u32,
-}
-
-impl<'a> StringTable<'a> {
-    fn with_capacity(cap: usize) -> Self {
-        Self {
-            map: HashMap::with_capacity_and_hasher(cap, Default::default()),
-            next: 0,
-        }
-    }
-
-    fn emit_empty<W: Write>(&mut self, writer: &mut W) -> Result<(), ProfileError> {
-        pprof::Record::<&str, 6, { pprof::NO_OPT_ZERO }>::from("").encode(writer)?;
-        self.map.insert("", pprof::StringOffset::from(self.next));
-        self.next += 1;
-        Ok(())
-    }
-
-    fn intern<W: Write>(
-        &mut self,
-        writer: &mut W,
-        s: &'a str,
-    ) -> Result<pprof::StringOffset, ProfileError> {
-        self.map.try_reserve(1)?;
-        match self.map.entry(s) {
-            hash_map::Entry::Occupied(o) => Ok(*o.get()),
-            hash_map::Entry::Vacant(v) => {
-                let off = pprof::StringOffset::from(self.next);
-                self.next = self.next.checked_add(1).ok_or(ProfileError::StorageFull)?;
-                v.insert(off);
-                pprof::Record::<&str, 6, { pprof::NO_OPT_ZERO }>::from(s).encode(writer)?;
-                Ok(off)
-            }
-        }
-    }
-}
 
 /// Compacts ids into "offsets" that begin at 1 since id=0 is reserved in
 /// pprof for these types. It serializes the K to protobuf when it first gets
@@ -126,91 +96,167 @@ impl Default for PprofOptions {
 /// entries are not emitted (except the empty string at
 /// string_table[0]).
 pub struct PprofBuilder<'a> {
-    options: PprofOptions,
     dictionary: &'a ProfilesDictionary,
     scratchpad: &'a ScratchPad,
-    profiles: Vec<&'a Profile>,
+    state: PprofBuilderState<'a>,
 }
+
+enum PprofBuilderState<'a> {
+    Initialized,
+    Configured {
+        options: PprofOptions,
+    },
+    AddingProfiles {
+        options: PprofOptions,
+        profiles: Vec<(&'a Profile, UpscalingRules)>,
+        string_table: StringTable<'a>,
+    },
+}
+use PprofBuilderState::*;
 
 impl<'a> PprofBuilder<'a> {
     /// Create a new builder bound to a shared dictionary and scratchpad
     /// that all added profiles will reference.
     pub fn new(dictionary: &'a ProfilesDictionary, scratchpad: &'a ScratchPad) -> Self {
-        Self {
-            options: PprofOptions::default(),
+        let state = Initialized;
+        PprofBuilder {
             dictionary,
             scratchpad,
-            profiles: Vec::new(),
+            state,
         }
     }
 
-    pub fn with_options(mut self, options: PprofOptions) -> Self {
-        self.options = options;
-        self
+    /// Customize the options. Should be done before adding upscaling rules
+    /// for profiles.
+    pub fn with_options(&mut self, options: PprofOptions) -> Result<(), ProfileError> {
+        match self.state {
+            Initialized | Configured { .. } => {
+                self.state = Configured { options };
+                Ok(())
+            }
+            AddingProfiles { .. } => Err(ProfileError::other(
+                "tried to configure pprof builder after configuration state",
+            )),
+        }
     }
 
-    /// Register one more profile to be included in the next build.
-    /// Performs a fallible capacity check to avoid panicking on
-    /// allocation failure.
-    pub fn try_add_profile(&mut self, profile: &'a Profile) -> Result<(), ProfileError> {
-        self.profiles.try_reserve(1)?;
-        self.profiles.push(profile);
-        Ok(())
+    pub fn try_add_profile<I>(
+        &mut self,
+        profile: &'a Profile,
+        upscaling_rules: I,
+    ) -> Result<(), ProfileError>
+    where
+        I: ExactSizeIterator<Item = Result<UpscalingRule<'a>, ProfileError>>,
+    {
+        if matches!(self.state, Initialized) {
+            let options = PprofOptions::default();
+            self.state = Configured { options };
+        }
+
+        if let Configured { options } = &mut self.state {
+            self.state = AddingProfiles {
+                options: *options,
+                profiles: Vec::new(),
+                string_table: StringTable::with_capacity(options.reserve_strings)?,
+            };
+        }
+
+        let AddingProfiles {
+            profiles,
+            string_table,
+            ..
+        } = &mut self.state
+        else {
+            // This should be unreachable. The intent is that that all
+            // previous states can be forwarded to adding profiles, and the
+            // above code is supposed to do that.
+            return Err(ProfileError::other(
+                "internal error: invalid pprof builder state",
+            ));
+        };
+
+        let item = (profile, new_upscaling_rules(string_table, upscaling_rules)?);
+        if profiles.try_push(item).is_err() {
+            Err(ProfileError::other(
+                "out of memory: pprof builder couldn't reserve memory for new profiles",
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     /// Produce a complete uncompressed pprof for all added profiles.
-    /// Strategy:
-    /// - Pass 1: union sample types across all inputs; compute global ordering
-    /// - Pass 2: stream strings/functions/mappings/locations/samples on first use
-    /// - Defaults (id 0): reserved, not emitted; empty string at offset 0 is emitted
-    pub fn build<'b, W: Write>(&'b self, writer: &mut W) -> Result<(), ProfileError>
-    where
-        'a: 'b,
-    {
-        // --- string table ---
-        let mut strings = StringTable::with_capacity(self.options.reserve_strings);
-        strings.emit_empty(writer)?;
+    /// todo: document strategy
+    pub fn build<W: Write>(&mut self, writer: &mut W) -> Result<(), ProfileError> {
+        let AddingProfiles {
+            options,
+            string_table,
+            profiles,
+        } = &mut self.state
+        else {
+            return Err(ProfileError::other(
+                "internal error: tried to build a pprof without adding any profiles",
+            ));
+        };
+
+        string_table.emit_existing(writer)?;
 
         // --- compact ids and first-use emission maps ---
-        let dict = self.dictionary;
-        let scratch = self.scratchpad;
+        let dict = &mut self.dictionary;
+        let scratch = &mut self.scratchpad;
         let mut func_ids: CompactIdMap<SetId<dt::Function>> =
-            CompactIdMap::with_capacity(self.options.reserve_functions);
+            CompactIdMap::with_capacity(options.reserve_functions);
         let mut map_ids: CompactIdMap<SetId<dt::Mapping>> =
-            CompactIdMap::with_capacity(self.options.reserve_mappings);
+            CompactIdMap::with_capacity(options.reserve_mappings);
         let mut loc_ids: CompactIdMap<SetId<dt::Location>> =
-            CompactIdMap::with_capacity(self.options.reserve_locations);
+            CompactIdMap::with_capacity(options.reserve_locations);
+
+        let dict_strings = dict.strings();
 
         // --- unify sample types across profiles and emit ---
-        let mut sample_type_index: HashMap<(&'a str, &'a str), usize> = HashMap::new();
-        let mut global_sample_types: Vec<(pprof::StringOffset, pprof::StringOffset)> = Vec::new();
-        let mut remaps: Vec<Vec<usize>> = Vec::with_capacity(self.profiles.len());
-        for prof in &self.profiles {
-            let mut remap = Vec::new();
+        let n_sample_types = profiles.iter().map(|(p, _)| p.sample_type.len()).sum();
+
+        // Used to track if we've seen a sample type before, which is a
+        // programmer error.
+        let mut seen_sample_types: HashSet<pprof::ValueType> = Default::default();
+        let mut global_sample_types: Vec<pprof::ValueType> = Vec::new();
+        seen_sample_types.try_reserve(n_sample_types)?;
+        global_sample_types.try_reserve_exact(n_sample_types)?;
+
+        let mut remaps: Vec<ArrayVec<usize, MAX_SAMPLE_TYPES>> = Vec::new();
+        remaps.try_reserve_exact(profiles.len())?;
+        for (prof, _upscaling_rules) in profiles.iter() {
+            let mut remap = ArrayVec::new();
+            if prof.sample_type.len() > remap.capacity() {
+                return Err(ProfileError::other(
+                    "internal error: pprof builder had mismatched capacities for sample types",
+                ));
+            }
             for vt in &prof.sample_type {
-                let t: &'a str = unsafe { dict.strings().get(vt.type_id) };
-                let u: &'a str = unsafe { dict.strings().get(vt.unit_id) };
-                let idx = if let Some(i) = sample_type_index.get(&(t, u)).copied() {
-                    i
-                } else {
-                    let toff = strings.intern(writer, t)?;
-                    let uoff = strings.intern(writer, u)?;
-                    let i = global_sample_types.len();
-                    global_sample_types.push((toff, uoff));
-                    sample_type_index.try_reserve(1)?;
-                    sample_type_index.insert((t, u), i);
-                    i
+                let idx = global_sample_types.len();
+
+                let t: &'a str = unsafe { dict_strings.get(vt.type_id) };
+                let u: &'a str = unsafe { dict_strings.get(vt.unit_id) };
+                let toff = string_table.intern(writer, t)?;
+                let uoff = string_table.intern(writer, u)?;
+                let interned_vt = pprof::ValueType {
+                    r#type: pprof::Record::from(toff),
+                    unit: pprof::Record::from(uoff),
                 };
-                remap.push(idx);
+
+                if !seen_sample_types.insert(interned_vt) {
+                    return Err(ProfileError::other(
+                        "internal error: pprof builder saw the same sample type twice",
+                    ));
+                }
+                remap.try_push(idx)?;
+                global_sample_types.push(interned_vt);
             }
             remaps.push(remap);
         }
-        for (t_off, u_off) in &global_sample_types {
-            let v = pprof::ValueType {
-                r#type: pprof::Record::from(*t_off),
-                unit: pprof::Record::from(*u_off),
-            };
-            pprof::Record::<pprof::ValueType, 1, { pprof::NO_OPT_ZERO }>::from(v).encode(writer)?;
+        for vt in global_sample_types.iter().copied() {
+            pprof::Record::<pprof::ValueType, 1, { pprof::NO_OPT_ZERO }>::from(vt)
+                .encode(writer)?;
         }
 
         // --- emit helpers ---
@@ -307,10 +353,6 @@ impl<'a> PprofBuilder<'a> {
         }
 
         // --- emit samples ---
-        let total_types = global_sample_types.len();
-        let mut values_buf: Vec<i64> = Vec::with_capacity(total_types);
-        let mut labels_buf: Vec<pprof::Record<pprof::Label, 3, { pprof::NO_OPT_ZERO }>> =
-            Vec::new();
         // Emit profile-level time_nanos and duration_nanos if available from ScratchPad interval
         if let Some((start, end)) = scratch.interval() {
             let start_ns = start
@@ -336,8 +378,12 @@ impl<'a> PprofBuilder<'a> {
             pprof::Record::<i64, 9, { pprof::OPT_ZERO }>::from(start_i64).encode(writer)?;
             pprof::Record::<i64, 10, { pprof::OPT_ZERO }>::from(duration_i64).encode(writer)?;
         }
-        for (pi, prof) in self.profiles.iter().enumerate() {
-            let remap = &remaps[pi];
+        let mut values_buf: Vec<i64> = Vec::new();
+        values_buf.try_reserve_exact(n_sample_types)?;
+        let mut labels_buf: Vec<pprof::Record<pprof::Label, 3, { pprof::NO_OPT_ZERO }>> =
+            Vec::new();
+        for (i, (prof, up)) in profiles.iter().enumerate() {
+            let remap = &remaps[i];
             for sample in &prof.samples {
                 // location ids from stack
                 let stack = sample.stack_id.as_slice();
@@ -348,7 +394,7 @@ impl<'a> PprofBuilder<'a> {
                         lid.cast(),
                         scratch,
                         dict,
-                        &mut strings,
+                        string_table,
                         &mut func_ids,
                         &mut map_ids,
                         &mut loc_ids,
@@ -358,35 +404,43 @@ impl<'a> PprofBuilder<'a> {
 
                 // labels from attributes and links/endpoints
                 labels_buf.clear();
-                if !sample.attributes.is_empty() {
-                    labels_buf.try_reserve(sample.attributes.len())?;
-                }
-                for &aid in &sample.attributes {
-                    let kv = unsafe { scratch.attributes().get(aid) };
-                    let key_str: &'a str = unsafe { dict.strings().get(kv.key) };
-                    let key_off = strings.intern(writer, key_str)?;
-                    let mut lbl = pprof::Label {
-                        key: pprof::Record::from(key_off),
-                        ..Default::default()
-                    };
-                    match &kv.value {
-                        dt::AnyValue::String(s) => {
-                            let off = strings.intern(writer, s.as_str())?;
-                            lbl.str = pprof::Record::from(off);
-                        }
-                        dt::AnyValue::Integer(n) => {
-                            lbl.num = pprof::Record::from(*n);
-                        }
-                    }
-                    labels_buf.push(pprof::Record::from(lbl));
-                }
+                let mut n_labels = sample.attributes.len();
 
-                // If the sample has a link, emit local root span id and span id
+                // 2 for "local root span id", "span id"; calculate + 1
+                // for "trace endpoint" is calculated in the body.
+                n_labels +=
+                    (sample.link_id.is_some() as usize) * 2 + (sample.timestamp.is_some() as usize);
+                // If the sample has a link, emit local root span id, span id,
+                // and optional endpoint info.
                 if let Some(link_id) = sample.link_id {
                     let link = unsafe { scratch.links().get(link_id) };
+
+                    // Add an endpoint if we have it.
+                    let lrs_id = link.local_root_span_id as i64;
+                    let endpoint_str = if let Some(endpoint_str) =
+                        scratch.endpoint_tracker().get_trace_endpoint_str(lrs_id)
+                    {
+                        n_labels += 1;
+                        endpoint_str
+                    } else {
+                        ""
+                    };
+
+                    labels_buf.try_reserve_exact(n_labels)?;
+
+                    if !endpoint_str.is_empty() {
+                        let val_off = string_table.intern(writer, endpoint_str)?;
+                        let key_off = string_table.intern(writer, "trace endpoint")?;
+                        let lbl = pprof::Label {
+                            key: pprof::Record::from(key_off),
+                            str: pprof::Record::from(val_off),
+                            ..Default::default()
+                        };
+                        labels_buf.push(pprof::Record::from(lbl));
+                    }
                     // local root span id
                     {
-                        let key_off = strings.intern(writer, "local root span id")?;
+                        let key_off = string_table.intern(writer, "local root span id")?;
                         let lbl = pprof::Label {
                             key: pprof::Record::from(key_off),
                             num: pprof::Record::from(link.local_root_span_id as i64),
@@ -396,7 +450,7 @@ impl<'a> PprofBuilder<'a> {
                     }
                     // span id
                     {
-                        let key_off = strings.intern(writer, "span id")?;
+                        let key_off = string_table.intern(writer, "span id")?;
                         let lbl = pprof::Label {
                             key: pprof::Record::from(key_off),
                             num: pprof::Record::from(link.span_id as i64),
@@ -404,27 +458,33 @@ impl<'a> PprofBuilder<'a> {
                         };
                         labels_buf.push(pprof::Record::from(lbl));
                     }
-
-                    // Add an endpoint if we have it.
-                    let lrs_id = link.local_root_span_id as i64;
-                    if let Some(endpoint_str) =
-                        scratch.endpoint_tracker().get_trace_endpoint_str(lrs_id)
-                    {
-                        let val_off = strings.intern(writer, endpoint_str)?;
-                        let key_off = strings.intern(writer, "trace endpoint")?;
-                        let lbl = pprof::Label {
-                            key: pprof::Record::from(key_off),
-                            str: pprof::Record::from(val_off),
-                            ..Default::default()
-                        };
-                        labels_buf.push(pprof::Record::from(lbl));
+                } else {
+                    labels_buf.try_reserve_exact(n_labels)?;
+                }
+                for &aid in &sample.attributes {
+                    let kv = unsafe { scratch.attributes().get(aid) };
+                    let key_str: &'a str = unsafe { dict_strings.get(kv.key) };
+                    let key_off = string_table.intern(writer, key_str)?;
+                    let mut lbl = pprof::Label {
+                        key: pprof::Record::from(key_off),
+                        ..Default::default()
+                    };
+                    match &kv.value {
+                        dt::AnyValue::String(s) => {
+                            let off = string_table.intern(writer, s.as_str())?;
+                            lbl.str = pprof::Record::from(off);
+                        }
+                        dt::AnyValue::Integer(n) => {
+                            lbl.num = pprof::Record::from(*n);
+                        }
                     }
+                    labels_buf.push(pprof::Record::from(lbl));
                 }
 
                 // align values to global types
                 values_buf.clear();
-                values_buf.try_reserve(total_types)?;
-                values_buf.resize(total_types, 0);
+                values_buf.try_reserve(n_sample_types)?;
+                values_buf.resize(n_sample_types, 0);
                 for (local_idx, &global_idx) in remap.iter().enumerate() {
                     if let Some(v) = sample.values.get(local_idx) {
                         values_buf[global_idx] = *v;
@@ -435,7 +495,7 @@ impl<'a> PprofBuilder<'a> {
                 // Errors in allocation and converting to nanoseconds
                 // since the Unix epoch cause the label to be skipped.
                 if let Some(ts) = sample.timestamp {
-                    let key = strings.intern(writer, "end_timestamp_ns")?;
+                    let key = string_table.intern(writer, "end_timestamp_ns")?;
                     Self::add_sample_timestamp_label(&mut labels_buf, ts, key);
                 }
 
@@ -457,9 +517,7 @@ impl<'a> PprofBuilder<'a> {
         ts: SystemTime,
         key: pprof::StringOffset,
     ) {
-        if labels_buf.try_reserve(1).is_err() {
-            return;
-        }
+        // already reserved memory, see  `n_labels`
         let Ok(dur) = ts.duration_since(UNIX_EPOCH) else {
             return;
         };
@@ -476,4 +534,43 @@ impl<'a> PprofBuilder<'a> {
         };
         labels_buf.push(pprof::Record::from(lbl));
     }
+}
+
+pub struct UpscalingRule<'a> {
+    /// Use ("", "") for no label.
+    pub group_by_label: (Cow<'a, str>, Cow<'a, str>),
+    pub upscaling_info: UpscalingInfo,
+}
+
+fn new_upscaling_rules<'a, I>(
+    string_table: &mut StringTable<'a>,
+    rules: I,
+) -> Result<UpscalingRules, ProfileError>
+where
+    I: ExactSizeIterator<Item = Result<UpscalingRule<'a>, ProfileError>>,
+{
+    let mut r = UpscalingRules::default();
+    // avoids ExactSizeIterator::len() here to avoid an assertion.
+    let (lower, upper) = rules.size_hint();
+    if Some(lower) != upper {
+        return Err(ProfileError::other(
+            "internal error: exact size iterator violated trait constraints",
+        ));
+    }
+    if r.try_reserve(lower).is_err() {
+        return Err(ProfileError::other(
+            "out of memory: pprof builder couldn't create a new upscaling rule",
+        ));
+    }
+    for item in rules {
+        let UpscalingRule {
+            group_by_label,
+            upscaling_info,
+        } = item?;
+        let key = string_table.intern_without_write(group_by_label.0)?;
+        let value = string_table.intern_without_write(group_by_label.1)?;
+        let group_by_label = GroupByLabel { key, value };
+        r.insert(group_by_label, upscaling_info);
+    }
+    Ok(r)
 }

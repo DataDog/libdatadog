@@ -25,7 +25,6 @@ const MASK_UNUSED: usize = !(MASK_IS_ERROR | MASK_IS_ALLOCATED);
 /// The OK status is guaranteed to have a representation of `{ 0, null }`.
 #[repr(C)]
 #[derive(Debug)]
-#[must_use]
 pub struct ProfileStatus {
     /// 0 means okay, everything else is opaque in C.
     /// In Rust, the bits help us know whether it is heap allocated or not.

@@ -31,7 +31,7 @@ unsafe impl Value for &str {
 /// A value of 0 means "no string" or "empty string" (they are synonymous).
 /// cbindgen:field-names=[offset]
 #[repr(C)]
-#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[cfg_attr(feature = "bolero", derive(bolero::generator::TypeGenerator))]
 pub struct StringOffset(u32);
 

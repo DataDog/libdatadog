@@ -21,13 +21,13 @@ int main(void) {
   // Create core handles
   ddog_prof_ProfilesDictionaryHandle dict = NULL;
   check_ok(ddog_prof_ProfilesDictionary_new(&dict), "ProfilesDictionary_new");
+  // ddog_prof_ProfilesDictionary_try_clone
 
   ddog_prof_ScratchPadHandle scratch = NULL;
   check_ok(ddog_prof_ScratchPad_new(&scratch), "ScratchPad_new");
 
   // Prepare StringIds for a ValueType (wall-time / nanoseconds)
-  ddog_prof_StringId vt_type = {0};
-  ddog_prof_StringId vt_unit = {0};
+  ddog_prof_StringId vt_type = {0}, vt_unit = {0};
   check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt_type, dict, DDOG_CHARSLICE_C("wall-time"), DDOG_PROF_UTF8_OPTION_VALIDATE),
            "ProfilesDictionary_insert_str(type)");
   check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt_unit, dict, DDOG_CHARSLICE_C("nanoseconds"), DDOG_PROF_UTF8_OPTION_VALIDATE),
@@ -101,12 +101,15 @@ int main(void) {
   // Build a pprof using PprofBuilder
   ddog_prof_PprofBuilderHandle pprof = NULL;
   check_ok(ddog_prof_PprofBuilder_new(&pprof, dict, scratch), "PprofBuilder_new");
-  check_ok(ddog_prof_PprofBuilder_try_add_profile(pprof, profile), "PprofBuilder_try_add_profile");
+
+  ddog_prof_Slice_UpscalingRule upscaling_rules = { .ptr = &((ddog_prof_UpscalingRule) {}), .len = 0 };
+  check_ok(ddog_prof_PprofBuilder_add_profile(pprof, profile, upscaling_rules), "PprofBuilder_add_profile");
 
   // Build an uncompressed pprof into an EncodedProfile handle
   ddog_prof_EncodedProfile encoded = {0};
   struct ddog_Timespec start = { .seconds = 0, .nanoseconds = 0 };
   struct ddog_Timespec end = { .seconds = 1, .nanoseconds = 0 };
+
   check_ok(ddog_prof_PprofBuilder_build_uncompressed(&encoded, pprof, 4096, start, end),
            "PprofBuilder_build_uncompressed");
 
