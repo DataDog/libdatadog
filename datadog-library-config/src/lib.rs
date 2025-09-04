@@ -511,7 +511,9 @@ impl Configurator {
         };
 
         let messages = if self.debug_logs {
-            vec![format!("Read the following static config: {stable_config:?}")]
+            vec![format!(
+                "Read the following static config: {stable_config:?}"
+            )]
         } else {
             Vec::new()
         };
@@ -519,10 +521,13 @@ impl Configurator {
         LoggedResult::Ok(stable_config, messages)
     }
 
-    fn parse_stable_config_file<F: io::Read>(&self, mut f: F) -> LoggedResult<StableConfig, anyhow::Error> {
+    fn parse_stable_config_file<F: io::Read>(
+        &self,
+        mut f: F,
+    ) -> LoggedResult<StableConfig, anyhow::Error> {
         let mut buffer = Vec::new();
         match f.read_to_end(&mut buffer) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) => return LoggedResult::Err(e.into()),
         }
         self.parse_stable_config_slice(utils::trim_bytes(&buffer))
@@ -545,29 +550,37 @@ impl Configurator {
                 LoggedResult::Ok(config, logs) => {
                     debug_messages.extend(logs);
                     config
-                },
+                }
                 LoggedResult::Err(e) => return LoggedResult::Err(e),
             },
             Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
-            Err(e) => return LoggedResult::Err(anyhow::Error::from(e).context("failed to open config file")),
+            Err(e) => {
+                return LoggedResult::Err(
+                    anyhow::Error::from(e).context("failed to open config file"),
+                )
+            }
         };
         let fleet_config = match fs::File::open(path_managed) {
             Ok(file) => match self.parse_stable_config_file(file) {
                 LoggedResult::Ok(config, logs) => {
                     debug_messages.extend(logs);
                     config
-                },
+                }
                 LoggedResult::Err(e) => return LoggedResult::Err(e),
             },
             Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
-            Err(e) => return LoggedResult::Err(anyhow::Error::from(e).context("failed to open config file")),
+            Err(e) => {
+                return LoggedResult::Err(
+                    anyhow::Error::from(e).context("failed to open config file"),
+                )
+            }
         };
 
         match self.get_config(local_config, fleet_config, process_info) {
             LoggedResult::Ok(configs, msgs) => {
                 debug_messages.extend(msgs);
                 LoggedResult::Ok(configs, debug_messages)
-            },
+            }
             LoggedResult::Err(e) => LoggedResult::Err(e),
         }
     }
@@ -628,7 +641,10 @@ impl Configurator {
 
         if self.debug_logs {
             debug_messages.push("Called library_config_common_component:".to_string());
-            debug_messages.push(format!("\tsource: {:?}", LibraryConfigSource::LocalStableConfig));
+            debug_messages.push(format!(
+                "\tsource: {:?}",
+                LibraryConfigSource::LocalStableConfig
+            ));
             debug_messages.push(format!("\tconfigurator: {self:?}"));
         }
 
@@ -645,7 +661,10 @@ impl Configurator {
 
         if self.debug_logs {
             debug_messages.push("Called library_config_common_component:".to_string());
-            debug_messages.push(format!("\tsource: {:?}", LibraryConfigSource::FleetStableConfig));
+            debug_messages.push(format!(
+                "\tsource: {:?}",
+                LibraryConfigSource::FleetStableConfig
+            ));
             debug_messages.push(format!("\tconfigurator: {self:?}"));
         }
 
@@ -778,7 +797,7 @@ mod utils {
 mod tests {
     use std::{collections::HashMap, io::Write};
 
-    use super::{Configurator, ProcessInfo, LoggedResult};
+    use super::{Configurator, LoggedResult, ProcessInfo};
     use crate::{
         ConfigMap, LibraryConfig, LibraryConfigSource, Matcher, Operator, Origin, Rule, Selector,
         StableConfig,
@@ -812,20 +831,38 @@ mod tests {
     #[test]
     fn test_missing_files() {
         let configurator = Configurator::new(true);
-        let result = configurator
-            .get_config_from_file(
-                "/file/is/missing".as_ref(),
-                "/file/is/missing_too".as_ref(),
-                &ProcessInfo {
-                    args: vec![b"-jar HelloWorld.jar".to_vec()],
-                    envp: vec![b"ENV=VAR".to_vec()],
-                    language: b"java".to_vec(),
-                },
-            );
-        match result {
-            LoggedResult::Ok(configs, _) => {
-                assert_eq!(configs, vec![]);
+        let result = configurator.get_config_from_file(
+            "/file/is/missing".as_ref(),
+            "/file/is/missing_too".as_ref(),
+            &ProcessInfo {
+                args: vec![b"-jar HelloWorld.jar".to_vec()],
+                envp: vec![b"ENV=VAR".to_vec()],
+                language: b"java".to_vec(),
             },
+        );
+        match result {
+            LoggedResult::Ok(configs, logs) => {
+                assert_eq!(configs, vec![]);
+                assert_eq!(
+                    logs,
+                    vec![
+                        "Reading stable configuration from files:",
+                        "\tlocal: \"/file/is/missing\"",
+                        "\tfleet: \"/file/is/missing_too\"",
+                        "\tProcess args:",
+                        "\t\t\"-jar HelloWorld.jar\"",
+                        "\tProcess language: \"java\"",
+                        "No selector matched for source LocalStableConfig",
+                        "Called library_config_common_component:",
+                        "\tsource: LocalStableConfig",
+                        "\tconfigurator: Configurator { debug_logs: true }",
+                        "No selector matched for source FleetStableConfig",
+                        "Called library_config_common_component:",
+                        "\tsource: FleetStableConfig",
+                        "\tconfigurator: Configurator { debug_logs: true }"
+                    ]
+                );
+            }
             LoggedResult::Err(_) => panic!("Expected success"),
         }
     }
@@ -1105,8 +1142,7 @@ rules:
             )
             .unwrap();
         let configurator = Configurator::new(true);
-        let cfg = configurator
-            .parse_stable_config_file(tmp.as_file_mut());
+        let cfg = configurator.parse_stable_config_file(tmp.as_file_mut());
         let config = match cfg {
             LoggedResult::Ok(config, _) => config,
             LoggedResult::Err(_) => panic!("Expected success"),
