@@ -89,5 +89,8 @@ pub use shared::configuration::{
 #[cfg(all(unix, feature = "benchmarking"))]
 pub use receiver::benchmark;
 
+#[cfg(all(unix, feature = "benchmarking", feature = "collector"))]
+pub use collector::benchmark as collector_benchmark;
+
 #[cfg(unix)]
 pub use common::{get_data_folder_path, SharedLibrary};

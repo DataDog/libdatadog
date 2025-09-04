@@ -154,6 +154,16 @@ pub(crate) fn emit_crashreport(
     Ok(())
 }
 
+#[cfg(feature = "benchmarking")]
+pub(crate) fn emit_config(w: &mut impl Write, config_str: &str) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_CONFIG}")?;
+    writeln!(w, "{config_str}")?;
+    writeln!(w, "{DD_CRASHTRACK_END_CONFIG}")?;
+    w.flush()?;
+    Ok(())
+}
+
+#[cfg(not(feature = "benchmarking"))]
 fn emit_config(w: &mut impl Write, config_str: &str) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_CONFIG}")?;
     writeln!(w, "{config_str}")?;
@@ -162,6 +172,16 @@ fn emit_config(w: &mut impl Write, config_str: &str) -> Result<(), EmitterError>
     Ok(())
 }
 
+#[cfg(feature = "benchmarking")]
+pub(crate) fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_METADATA}")?;
+    writeln!(w, "{metadata_str}")?;
+    writeln!(w, "{DD_CRASHTRACK_END_METADATA}")?;
+    w.flush()?;
+    Ok(())
+}
+
+#[cfg(not(feature = "benchmarking"))]
 fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_METADATA}")?;
     writeln!(w, "{metadata_str}")?;
@@ -170,6 +190,16 @@ fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> Result<(), EmitterEr
     Ok(())
 }
 
+#[cfg(feature = "benchmarking")]
+pub(crate) fn emit_procinfo(w: &mut impl Write, pid: i32) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
+    writeln!(w, "{{\"pid\": {pid} }}")?;
+    writeln!(w, "{DD_CRASHTRACK_END_PROCINFO}")?;
+    w.flush()?;
+    Ok(())
+}
+
+#[cfg(not(feature = "benchmarking"))]
 fn emit_procinfo(w: &mut impl Write, pid: i32) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
     writeln!(w, "{{\"pid\": {pid} }}")?;
@@ -186,7 +216,20 @@ fn emit_proc_self_maps(w: &mut impl Write) -> Result<(), EmitterError> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "benchmarking"))]
+pub(crate) fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), EmitterError> {
+    if ucontext.is_null() {
+        return Err(EmitterError::NullUcontext);
+    }
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_UCONTEXT}")?;
+    // SAFETY: the pointer is given to us by the signal handler, and is non-null.
+    writeln!(w, "{:?}", unsafe { *ucontext })?;
+    writeln!(w, "{DD_CRASHTRACK_END_UCONTEXT}")?;
+    w.flush()?;
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", not(feature = "benchmarking")))]
 fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), EmitterError> {
     if ucontext.is_null() {
         return Err(EmitterError::NullUcontext);
@@ -199,7 +242,28 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "benchmarking"))]
+pub(crate) fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), EmitterError> {
+    if ucontext.is_null() {
+        return Err(EmitterError::NullUcontext);
+    }
+    // On MacOS, the actual machine context is behind a second pointer.
+    // SAFETY: the pointer is given to us by the signal handler, and is non-null.
+    let mcontext = unsafe { *ucontext }.uc_mcontext;
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_UCONTEXT}")?;
+    // SAFETY: the pointer is given to us by the signal handler, and is non-null.
+    write!(w, "{:?}", unsafe { *ucontext })?;
+    if !mcontext.is_null() {
+        // SAFETY: the pointer is given to us by the signal handler, and is non-null.
+        write!(w, ", {:?}", unsafe { *mcontext })?;
+    }
+    writeln!(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_UCONTEXT}")?;
+    w.flush()?;
+    Ok(())
+}
+
+#[cfg(all(target_os = "macos", not(feature = "benchmarking")))]
 fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), EmitterError> {
     if ucontext.is_null() {
         return Err(EmitterError::NullUcontext);
@@ -220,6 +284,50 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
     Ok(())
 }
 
+#[cfg(feature = "benchmarking")]
+pub(crate) fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> Result<(), EmitterError> {
+    if sig_info.is_null() {
+        return Err(EmitterError::NullSiginfo);
+    }
+
+    let si_signo = unsafe { (*sig_info).si_signo };
+    let si_signo_human_readable: crate::SignalNames = si_signo.into();
+
+    // Derive the faulting address from `sig_info`
+    // https://man7.org/linux/man-pages/man2/sigaction.2.html
+    // SIGILL, SIGFPE, SIGSEGV, SIGBUS, and SIGTRAP fill in si_addr with the address of the fault.
+    let si_addr: Option<usize> = match si_signo {
+        libc::SIGILL | libc::SIGFPE | libc::SIGSEGV | libc::SIGBUS | libc::SIGTRAP => {
+            Some(unsafe { (*sig_info).si_addr() as usize })
+        }
+        _ => None,
+    };
+
+    let si_code = unsafe { (*sig_info).si_code };
+    let si_code_human_readable = crate::translate_si_code(si_signo, si_code);
+
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
+    write!(w, "{{")?;
+    write!(w, "\"si_code\": {si_code}")?;
+    write!(
+        w,
+        ", \"si_code_human_readable\": \"{si_code_human_readable:?}\""
+    )?;
+    write!(w, ", \"si_signo\": {si_signo}")?;
+    write!(
+        w,
+        ", \"si_signo_human_readable\": \"{si_signo_human_readable:?}\""
+    )?;
+    if let Some(si_addr) = si_addr {
+        write!(w, ", \"si_addr\": \"{si_addr:#018x}\"")?;
+    }
+    writeln!(w, "}}")?;
+    writeln!(w, "{DD_CRASHTRACK_END_SIGINFO}")?;
+    w.flush()?;
+    Ok(())
+}
+
+#[cfg(not(feature = "benchmarking"))]
 fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> Result<(), EmitterError> {
     if sig_info.is_null() {
         return Err(EmitterError::NullSiginfo);
