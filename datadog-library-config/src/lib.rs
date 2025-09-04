@@ -9,8 +9,6 @@ use std::ops::Deref;
 use std::path::Path;
 use std::{env, fs, io, mem};
 
-
-
 /// This struct holds maps used to match and template configurations.
 ///
 /// They are computed lazily so that if the templating feature is not necessary, we don't

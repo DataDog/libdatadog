@@ -222,4 +222,12 @@ pub extern "C" fn ddog_library_config_local_stable_config_path() -> ffi::CStr<'s
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_library_config_drop(_: LibraryConfigLoggedResult) {}
+pub extern "C" fn ddog_library_config_drop(mut config_result: LibraryConfigLoggedResult) {
+    match &mut config_result {
+        LibraryConfigLoggedResult::Ok(_) => {}
+        LibraryConfigLoggedResult::Err(err) => {
+            // Use the internal error clearing function for defensive cleanup
+            ddcommon_ffi::clear_error(err);
+        }
+    }
+}

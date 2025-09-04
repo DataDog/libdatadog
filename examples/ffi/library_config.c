@@ -97,10 +97,11 @@ int main(int argc, const char *const *argv) {
 
   if (config_result.tag == DDOG_LIBRARY_CONFIG_LOGGED_RESULT_ERR) {
     ddog_Error err = config_result.err;
-    fprintf(stderr, "An error occurred: %.*s", (int)err.message.len, err.message.ptr);
-    // NO: ddog_Error_drop(&err);
-    // do not free error, just free the result in any case
+    fprintf(stderr, "An error occurred: %.*s", (int)err.message.len, err.message.ptr);    
+
+    // only this one is needed, but calling ddog_Error_drop(&config_result.err) is not going to crash
     ddog_library_config_drop(config_result);
+    fprintf(stderr, "disposed twice");    
     exit(1);
   }
 
