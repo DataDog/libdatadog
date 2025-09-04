@@ -4,7 +4,20 @@
 pub mod tracer_metadata;
 
 use datadog_library_config::{self as lib_config, LibraryConfigSource};
-use ddcommon_ffi::{self as ffi, slice::AsBytes, CharSlice};
+use ddcommon_ffi::{self as ffi, slice::AsBytes, CString, CharSlice, Error};
+
+/// A result type that includes debug/log messages along with the data
+#[repr(C)]
+pub struct OkResult {
+    pub value: ffi::Vec<LibraryConfig>,
+    pub logs: CString,
+}
+
+#[repr(C)]
+pub enum LibraryConfigLoggedResult {
+    Ok(OkResult),
+    Err(Error),
+}
 
 // TODO: Centos 6 build
 // Trust me it works bro 😉😉😉
@@ -52,6 +65,29 @@ impl LibraryConfig {
             })
             .collect::<Result<Vec<_>, std::ffi::NulError>>()?;
         Ok(ffi::Vec::from_std(cfg))
+    }
+
+    fn logged_result_to_ffi_with_messages(
+        result: datadog_library_config::LoggedResult<Vec<lib_config::LibraryConfig>, anyhow::Error>,
+    ) -> LibraryConfigLoggedResult {
+        match result {
+            datadog_library_config::LoggedResult::Ok(configs, logs) => {
+                match Self::rs_vec_to_ffi(configs) {
+                    Ok(ffi_configs) => {
+                        let messages = logs.join("\n");
+                        let cstring_logs = CString::new_or_empty(messages);
+                        LibraryConfigLoggedResult::Ok(OkResult {
+                            value: ffi_configs,
+                            logs: cstring_logs,
+                        })
+                    }
+                    Err(err) => LibraryConfigLoggedResult::Err(err.into()),
+                }
+            }
+            datadog_library_config::LoggedResult::Err(err) => {
+                LibraryConfigLoggedResult::Err(err.into())
+            }
+        }
     }
 }
 
@@ -116,39 +152,35 @@ pub extern "C" fn ddog_library_configurator_drop(_: Box<Configurator>) {}
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_get(
     configurator: &Configurator,
-) -> ffi::Result<ffi::Vec<LibraryConfig>> {
-    (|| {
-        let local_path = configurator
-            .local_path
-            .as_ref()
-            .map(|p| p.into_std().to_str())
-            .transpose()?
-            .unwrap_or(lib_config::Configurator::LOCAL_STABLE_CONFIGURATION_PATH);
-        let fleet_path = configurator
-            .fleet_path
-            .as_ref()
-            .map(|p| p.into_std().to_str())
-            .transpose()?
-            .unwrap_or(lib_config::Configurator::FLEET_STABLE_CONFIGURATION_PATH);
-        let detected_process_info;
-        let process_info = match configurator.process_info {
-            Some(ref p) => p,
-            None => {
-                detected_process_info = lib_config::ProcessInfo::detect_global(
-                    configurator.language.to_utf8_lossy().into_owned(),
-                );
-                &detected_process_info
-            }
-        };
+) -> LibraryConfigLoggedResult {
+    let local_path = configurator
+        .local_path
+        .as_ref()
+        .and_then(|p| p.into_std().to_str().ok())
+        .unwrap_or(lib_config::Configurator::LOCAL_STABLE_CONFIGURATION_PATH);
+    let fleet_path = configurator
+        .fleet_path
+        .as_ref()
+        .and_then(|p| p.into_std().to_str().ok())
+        .unwrap_or(lib_config::Configurator::FLEET_STABLE_CONFIGURATION_PATH);
+    let detected_process_info;
+    let process_info = match configurator.process_info {
+        Some(ref p) => p,
+        None => {
+            detected_process_info = lib_config::ProcessInfo::detect_global(
+                configurator.language.to_utf8_lossy().into_owned(),
+            );
+            &detected_process_info
+        }
+    };
 
-        configurator.inner.get_config_from_file(
-            local_path.as_ref(),
-            fleet_path.as_ref(),
-            process_info,
-        )
-    })()
-    .and_then(LibraryConfig::rs_vec_to_ffi)
-    .into()
+    let result = configurator.inner.get_config_from_file(
+        local_path.as_ref(),
+        fleet_path.as_ref(),
+        process_info,
+    );
+
+    LibraryConfig::logged_result_to_ffi_with_messages(result)
 }
 
 #[no_mangle]
@@ -190,4 +222,4 @@ pub extern "C" fn ddog_library_config_local_stable_config_path() -> ffi::CStr<'s
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_library_config_drop(_: ffi::Vec<LibraryConfig>) {}
+pub extern "C" fn ddog_library_config_drop(_: LibraryConfigLoggedResult) {}
