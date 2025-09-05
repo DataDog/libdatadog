@@ -133,7 +133,7 @@ fn resolve_frames(
     config: &CrashtrackerConfiguration,
     crash_info: &mut CrashInfo,
 ) -> anyhow::Result<()> {
-    if config.resolve_frames() == StacktraceCollection::WithSymbols {
+    if config.resolve_frames() == StacktraceCollection::EnabledWithSymbolsInReceiver {
         let pid = crash_info
             .proc_info
             .as_ref()
