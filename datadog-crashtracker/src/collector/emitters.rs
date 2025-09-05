@@ -44,6 +44,7 @@ pub enum EmitterError {
 ///     sometimes crashes.
 unsafe fn emit_backtrace_by_frames(
     w: &mut impl Write,
+    resolve_frames: StacktraceCollection,
     fault_rsp: usize,
 ) -> Result<(), EmitterError> {
     // https://docs.rs/backtrace/latest/backtrace/index.html
@@ -68,17 +69,46 @@ unsafe fn emit_backtrace_by_frames(
         if !sp.is_null() && (sp as usize) < fault_rsp {
             return true;
         }
-
-        #[allow(clippy::unwrap_used)]
-        write!(w, "{{").unwrap();
-        #[allow(clippy::unwrap_used)]
-        emit_absolute_addresses(w, frame).unwrap();
-        #[allow(clippy::unwrap_used)]
-        writeln!(w, "}}").unwrap();
-        // Flush eagerly to ensure that each frame gets emitted even if the next one fails
-        #[allow(clippy::unwrap_used)]
-        w.flush().unwrap();
-
+        if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
+            backtrace::resolve_frame_unsynchronized(frame, |symbol| {
+                #[allow(clippy::unwrap_used)]
+                write!(w, "{{").unwrap();
+                #[allow(clippy::unwrap_used)]
+                emit_absolute_addresses(w, frame).unwrap();
+                if let Some(column) = symbol.colno() {
+                    #[allow(clippy::unwrap_used)]
+                    write!(w, ", \"column\": {column}").unwrap();
+                }
+                if let Some(file) = symbol.filename() {
+                    // The debug printer for path already wraps it in `"` marks.
+                    #[allow(clippy::unwrap_used)]
+                    write!(w, ", \"file\": {file:?}").unwrap();
+                }
+                if let Some(function) = symbol.name() {
+                    #[allow(clippy::unwrap_used)]
+                    write!(w, ", \"function\": \"{function}\"").unwrap();
+                }
+                if let Some(line) = symbol.lineno() {
+                    #[allow(clippy::unwrap_used)]
+                    write!(w, ", \"line\": {line}").unwrap();
+                }
+                #[allow(clippy::unwrap_used)]
+                writeln!(w, "}}").unwrap();
+                // Flush eagerly to ensure that each frame gets emitted even if the next one fails
+                #[allow(clippy::unwrap_used)]
+                w.flush().unwrap();
+            });
+        } else {
+            #[allow(clippy::unwrap_used)]
+            write!(w, "{{").unwrap();
+            #[allow(clippy::unwrap_used)]
+            emit_absolute_addresses(w, frame).unwrap();
+            #[allow(clippy::unwrap_used)]
+            writeln!(w, "}}").unwrap();
+            // Flush eagerly to ensure that each frame gets emitted even if the next one fails
+            #[allow(clippy::unwrap_used)]
+            w.flush().unwrap();
+        }
         true // keep going to the next frame
     });
     writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
@@ -110,9 +140,13 @@ pub(crate) fn emit_crashreport(
 
     // Getting a backtrace on rust is not guaranteed to be signal safe
     // https://github.com/rust-lang/backtrace-rs/issues/414
+    // let current_backtrace = backtrace::Backtrace::new();
+    // In fact, if we look into the code here, we see mallocs.
+    // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
+    // Do this last, so even if it crashes, we still get the other info.
     if config.resolve_frames() != StacktraceCollection::Disabled {
         let fault_rsp = extract_rsp(ucontext);
-        unsafe { emit_backtrace_by_frames(pipe, fault_rsp)? };
+        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_rsp)? };
     }
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
@@ -297,7 +331,8 @@ mod tests {
     fn test_emit_backtrace_disabled() {
         let mut buf = Vec::new();
         unsafe {
-            emit_backtrace_by_frames(&mut buf, 0).expect("to work ;-)");
+            emit_backtrace_by_frames(&mut buf, StacktraceCollection::Disabled, 0)
+                .expect("to work ;-)");
         }
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
         assert!(out.contains("BEGIN_STACKTRACE"));
@@ -313,5 +348,39 @@ mod tests {
             "'function' key must not be emitted"
         );
         assert!(!out.contains("\"line\":"), "'line' key must not be emitted");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_backtrace_with_symbols() {
+        let dummy = 0u8;
+        // retrieve stack pointer for this function
+        let sp_of_test_fn = &dummy as *const u8 as usize;
+        let mut buf = Vec::new();
+        unsafe {
+            emit_backtrace_by_frames(
+                &mut buf,
+                StacktraceCollection::EnabledWithInprocessSymbols,
+                sp_of_test_fn,
+            )
+            .expect("to work ;-)");
+        }
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(out.contains("BEGIN_STACKTRACE"));
+        assert!(out.contains("END_STACKTRACE"));
+        // basic structure assertions
+        assert!(out.contains("\"column\":"), "'column' key missing");
+        assert!(out.contains("\"file\":"), "'file' key missing");
+        assert!(out.contains("\"function\":"), "'function' key missing");
+        assert!(out.contains("\"line\":"), "'line' key missing");
+        // filter assertions
+        assert!(
+            !out.contains("emitters::emit_backtrace_by_frames"),
+            "crashtracker itself must be filtered, found 'backtrace::backtrace::libunwind'"
+        );
+        assert!(
+            !out.contains("backtrace::backtrace"),
+            "crashtracker itself must be filtered away, found 'backtrace::backtrace'"
+        );
     }
 }

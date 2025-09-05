@@ -62,7 +62,7 @@ int main(int argc, char **argv) {
   ddog_crasht_Config config = {
       .create_alt_stack = false,
       .endpoint = endpoint,
-      .resolve_frames = DDOG_CRASHT_STACKTRACE_COLLECTION_WITH_SYMBOLS,
+      .resolve_frames = DDOG_CRASHT_STACKTRACE_COLLECTION_ENABLED_WITH_INPROCESS_SYMBOLS,
       .signals = INIT_FROM_SLICE(signals),
   };
 
