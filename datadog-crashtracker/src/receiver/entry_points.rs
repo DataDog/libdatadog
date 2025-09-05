@@ -1,5 +1,5 @@
-// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+// Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 
 use super::receive_report::receive_report_from_stream;
 use crate::{crash_info::CrashInfo, CrashtrackerConfiguration, StacktraceCollection};
@@ -94,7 +94,7 @@ pub fn get_receiver_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<
 ///
 /// See comments in [datadog-crashtracker/lib.rs] for a full architecture
 /// description.
-async fn receiver_entry_point(
+pub(crate) async fn receiver_entry_point(
     timeout: Duration,
     stream: impl AsyncBufReadExt + std::marker::Unpin,
 ) -> anyhow::Result<()> {
