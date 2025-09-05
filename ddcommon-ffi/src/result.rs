@@ -42,6 +42,9 @@ pub enum Result<T> {
     Err(Error),
 }
 
+// Result<int> Result<bool>
+// RESULT_TAG_INT_OK, RESULT_TAG_BOOL_OK
+
 impl<T> Result<T> {
     pub fn unwrap(self) -> T {
         match self {

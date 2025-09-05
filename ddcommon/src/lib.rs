@@ -26,6 +26,7 @@ pub mod rate_limiter;
 pub mod tag;
 pub mod timeout;
 pub mod unix_utils;
+pub mod vec;
 pub mod worker;
 
 /// Extension trait for `Mutex` to provide a method that acquires a lock, panicking if the lock is

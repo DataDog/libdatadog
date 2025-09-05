@@ -24,35 +24,61 @@ prefix = "ddog_prof_"
 renaming_overrides_prefixing = true
 
 [export.rename]
+# Common
 "ByteSlice" = "ddog_ByteSlice"
 "CharSlice" = "ddog_CharSlice"
 "Endpoint" = "ddog_Endpoint"
 "Error" = "ddog_Error"
 "HttpStatus" = "ddog_HttpStatus"
+"Option_Slice_Label" = "ddog_Option_Slice_Label"
 "Slice_CChar" = "ddog_Slice_CChar"
+"Slice_CharSlice" = "ddog_Slice_CharSlice"
 "Slice_I64" = "ddog_Slice_I64"
+"Slice_U64" = "ddog_Slice_U64"
 "Slice_U8" = "ddog_Slice_U8"
+"StringWrapper" = "ddog_StringWrapper"
+"StringWrapperResult" = "ddog_StringWrapperResult"
 "Tag" = "ddog_Tag"
 "Timespec" = "ddog_Timespec"
 "Vec_Tag" = "ddog_Vec_Tag"
 "Vec_U8" = "ddog_Vec_U8"
+"VoidResult" = "ddog_VoidResult"
 
-"ProfilingEndpoint" = "ddog_prof_Endpoint"
+# Profiles
+"ArcHandle_ProfilesDictionary" = "ddog_prof_ProfilesDictionaryHandle"
+"ArcHandle_ScratchPad" = "ddog_prof_ScratchPadHandle"
+"ProfileHandle_PprofBuilder" = "ddog_prof_PprofBuilderHandle"
+"ProfileHandle_Profile" = "ddog_prof_ProfileHandle"
+"ProfileHandle_SampleBuilder" = "ddog_prof_SampleBuilderHandle"
+"ProfileStatus" = "ddog_prof_Status"
+
+# Exporter / Legacy
+"CompressorFinishResult" = "ddog_prof_Compressor_FinishResult"
 "ExporterNewResult" = "ddog_prof_Exporter_NewResult"
 "File" = "ddog_prof_Exporter_File"
+"LabelsSetLookupResult" = "ddog_prof_LabelsSet_LookupResult"
+"ManagedStringId" = "ddog_prof_ManagedStringId"
+"ManagedStringStorage" = "ddog_prof_ManagedStringStorage"
+"ManagedStringStorageInternResult" = "ddog_prof_ManagedStringStorage_InternResult"
+"ManagedStringStorageNewResult" = "ddog_prof_ManagedStringStorage_NewResult"
+"ProfileBuilderBuildResult" = "ddog_prof_ProfileBuilder_BuildResult"
+"ProfileBuilderNewResult" = "ddog_prof_ProfileBuilder_NewResult"
+"ProfileError" = "ddog_prof_Profile_Error"
 "ProfileExporter" = "ddog_prof_Exporter"
 "ProfileNewResult" = "ddog_prof_Profile_NewResult"
 "ProfileResult" = "ddog_prof_Profile_Result"
+"ProfileVoidResult" = "ddog_prof_Profile_VoidResult"
+"ProfilingEndpoint" = "ddog_prof_Endpoint"
 "Request" = "ddog_prof_Exporter_Request"
 "RequestBuildResult" = "ddog_prof_Exporter_Request_BuildResult"
 "SendResult" = "ddog_prof_Exporter_SendResult"
 "SerializeResult" = "ddog_prof_Profile_SerializeResult"
-"Slice_File" = "ddog_prof_Exporter_Slice_File"
-"ManagedStringStorage" = "ddog_prof_ManagedStringStorage"
-"ManagedStringId" = "ddog_prof_ManagedStringId"
-"StringWrapper" = "ddog_StringWrapper"
-"StringWrapperResult" = "ddog_StringWrapperResult"
-"VoidResult" = "ddog_VoidResult"
+"Slice_File" = "ddog_prof_Slice_Exporter_File"
+"SliceSetInsertResult" = "ddog_prof_LabelsSet_InsertResult"
+"StoreInsertResult" = "ddog_prof_Store_InsertResult"
+"StringTableInternResult" = "ddog_prof_StringTable_InternResult"
+"StringTableLookupResult" = "ddog_prof_StringTable_LookupResult"
+"StringTableNewResult" = "ddog_prof_StringTable_NewResult"
 
 "CbindgenIsDumbStringId" = "ddog_prof_StringId"
 
@@ -61,11 +87,9 @@ renaming_overrides_prefixing = true
 
 "GenerationalId_FunctionId" = "ddog_prof_FunctionId"
 "Result_GenerationalIdFunctionId" = "ddog_prof_FunctionId_Result"
-"FunctionId" = "OpaqueFunctionId"
 
 "GenerationalId_LabelId" = "ddog_prof_LabelId"
 "Result_GenerationalIdLabelId" = "ddog_prof_LabelId_Result"
-"LabelId" = "OpaqueLabelId"
 
 "GenerationalId_LabelSetId" = "ddog_prof_LabelSetId"
 "Result_GenerationalIdLabelSetId" = "ddog_prof_LabelSetId_Result"
@@ -73,23 +97,15 @@ renaming_overrides_prefixing = true
 
 "GenerationalId_LocationId" = "ddog_prof_LocationId"
 "Result_GenerationalIdLocationId" = "ddog_prof_LocationId_Result"
-"LocationId" = "OpaqueLocationId"
 
 "GenerationalId_MappingId" = "ddog_prof_MappingId"
 "Result_GenerationalIdMappingId" = "ddog_prof_MappingId_Result"
-"MappingId" = "OpaqueMappingId"
 
 "GenerationalId_StackTraceId" = "ddog_prof_StackTraceId"
 "Result_GenerationalIdStackTraceId" = "ddog_prof_StackTraceId_Result"
-"StackTraceId" = "OpaqueStackTraceId"
 
 "GenerationalId_StringId" = "ddog_prof_StringId"
 "Result_GenerationalIdStringId" = "ddog_prof_StringId_Result"
-
-# StringId is an alias of StringOffset, we need both to be `OpaqueStringId`
-# for the current interning API.
-"StringOffset" = "OpaqueStringId"
-"StringId" = "OpaqueStringId"
 
 "HandleProfileExporter" = "ddog_prof_ProfileExporter"
 "Handle_ProfileExporter" = "ddog_prof_ProfileExporter"
@@ -106,10 +122,26 @@ renaming_overrides_prefixing = true
 "CancellationToken" = "struct ddog_OpaqueCancellationToken"
 "Handle_TokioCancellationToken" = "ddog_CancellationToken"
 
+# Horrible cbindgen output on these >.<
+"Record_I64__2__OptZero" = "int64_t"
+"Record_I64__3__OptZero" = "int64_t"
+"Record_Line__4__OptZero" = "ddog_prof_Line"
+"Record_StringOffset__2__OptZero" = "ddog_pprof_StringOffset"
+"Record_StringOffset__3__OptZero" = "ddog_pprof_StringOffset"
+"Record_StringOffset__4__OptZero" = "ddog_pprof_StringOffset"
+"Record_StringOffset__5__OptZero" = "ddog_pprof_StringOffset"
+"Record_StringOffset__6__OptZero" = "ddog_pprof_StringOffset"
+"Record_U64__1__NoOptZero" = "uint64_t"
+"Record_U64__1__OptZero" = "uint64_t"
+"Record_U64__2__OptZero" = "uint64_t"
+"Record_U64__3__OptZero" = "uint64_t"
+"Record_U64__4__OptZero" = "uint64_t"
+
 [export.mangle]
 rename_types = "PascalCase"
 
 [enum]
+#merge_generic_tags = true
 prefix_with_name = true
 rename_variants = "ScreamingSnakeCase"
 

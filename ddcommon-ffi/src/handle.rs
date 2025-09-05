@@ -3,8 +3,6 @@
 
 use std::ptr::null_mut;
 
-use anyhow::Context;
-
 /// Represents an object that should only be referred to by its handle.
 /// Do not access its member for any reason, only use the C API functions on this struct.
 #[repr(C)]
@@ -17,42 +15,63 @@ impl<T> Handle<T> {
     pub fn empty() -> Self {
         Self { inner: null_mut() }
     }
+
+    /// Tries to create a new Handle from the provided value. Fails if memory
+    /// cannot be allocated.
+    pub fn try_new(t: T) -> Option<Handle<T>> {
+        let uninit = allocator_api2::boxed::Box::<T>::try_new(t).ok()?;
+        let inner = allocator_api2::boxed::Box::into_raw(uninit).cast();
+        Some(Self { inner })
+    }
+
+    pub fn as_inner(&self) -> Result<&T, HandleError> {
+        // SAFETY: the Handle owns the data.
+        unsafe { self.inner.as_ref() }.ok_or(HandleError::InnerNullPtr)
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, thiserror::Error)]
+pub enum HandleError {
+    #[error("handle is null")]
+    OuterNullPtr,
+    #[error("handle's interior pointer is null, indicates use-after-free")]
+    InnerNullPtr,
 }
 
 pub trait ToInner<T> {
     /// # Safety
     /// The Handle must hold a valid `inner` which has been allocated and not freed.
-    unsafe fn to_inner_mut(&mut self) -> anyhow::Result<&mut T>;
+    unsafe fn to_inner_mut(&mut self) -> Result<&mut T, HandleError>;
     /// # Safety
     /// The Handle must hold a valid `inner` [return OK(inner)], or null [returns Error].
-    unsafe fn take(&mut self) -> anyhow::Result<Box<T>>;
+    unsafe fn take(&mut self) -> Result<Box<T>, HandleError>;
 }
 
 impl<T> ToInner<T> for *mut Handle<T> {
-    unsafe fn to_inner_mut(&mut self) -> anyhow::Result<&mut T> {
-        self.as_mut().context("Null pointer")?.to_inner_mut()
+    unsafe fn to_inner_mut(&mut self) -> Result<&mut T, HandleError> {
+        self.as_mut()
+            .ok_or(HandleError::OuterNullPtr)?
+            .to_inner_mut()
     }
 
-    unsafe fn take(&mut self) -> anyhow::Result<Box<T>> {
-        self.as_mut().context("Null pointer")?.take()
+    unsafe fn take(&mut self) -> Result<Box<T>, HandleError> {
+        self.as_mut().ok_or(HandleError::OuterNullPtr)?.take()
     }
 }
 
 impl<T> ToInner<T> for Handle<T> {
-    unsafe fn to_inner_mut(&mut self) -> anyhow::Result<&mut T> {
-        self.inner
-            .as_mut()
-            .context("inner pointer was null, indicates use after free")
+    unsafe fn to_inner_mut(&mut self) -> Result<&mut T, HandleError> {
+        self.inner.as_mut().ok_or(HandleError::InnerNullPtr)
     }
 
-    unsafe fn take(&mut self) -> anyhow::Result<Box<T>> {
+    unsafe fn take(&mut self) -> Result<Box<T>, HandleError> {
         // Leaving a null will help with double-free issues that can arise in C.
         // Of course, it's best to never get there in the first place!
-        let raw = std::mem::replace(&mut self.inner, std::ptr::null_mut());
-        anyhow::ensure!(
-            !raw.is_null(),
-            "inner pointer was null, indicates use after free"
-        );
+        let raw = std::mem::replace(&mut self.inner, null_mut());
+        if raw.is_null() {
+            return Err(HandleError::InnerNullPtr);
+        }
         Ok(Box::from_raw(raw))
     }
 }

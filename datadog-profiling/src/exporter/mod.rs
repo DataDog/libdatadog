@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use anyhow::Context;
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
 pub use ddcommon::tag::Tag;
@@ -11,6 +12,7 @@ use serde_json::json;
 use std::borrow::Cow;
 use std::fmt::Debug;
 use std::io::{Cursor, Write};
+use std::time::{Duration, SystemTime};
 use std::{future, iter};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
@@ -20,7 +22,11 @@ use ddcommon::{
 };
 
 pub mod config;
+
+mod endpoint_stats;
 mod errors;
+
+pub use endpoint_stats::*;
 
 #[cfg(unix)]
 pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
@@ -28,9 +34,45 @@ pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
 #[cfg(windows)]
 pub use connector::named_pipe::{named_pipe_path_from_uri, named_pipe_path_to_uri};
 
-use crate::internal::EncodedProfile;
+pub struct EncodedProfile {
+    pub start: SystemTime,
+    pub end: SystemTime,
+    pub buffer: Vec<u8>,
+    pub endpoints_stats: ProfiledEndpointsStats,
+}
 
-const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
+impl EncodedProfile {
+    pub fn test_instance() -> anyhow::Result<Self> {
+        use std::io::Read;
+
+        fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+            let mut file = std::fs::File::open(path)?;
+            let metadata = file.metadata()?;
+            let mut buffer = Vec::with_capacity(metadata.len() as usize);
+            file.read_to_end(&mut buffer)?;
+
+            Ok(buffer)
+        }
+
+        let small_pprof_name = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/profile.pprof");
+        let buffer = open(small_pprof_name).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let start = SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_nanos(12000000034))
+            .context("Translating time failed")?;
+        let end = SystemTime::UNIX_EPOCH
+            .checked_add(Duration::from_nanos(56000000078))
+            .context("Translating time failed")?;
+        let endpoints_stats = ProfiledEndpointsStats::default();
+        Ok(EncodedProfile {
+            start,
+            end,
+            buffer,
+            endpoints_stats,
+        })
+    }
+}
+
+const DURATION_ZERO: Duration = Duration::from_millis(0);
 
 pub struct Exporter {
     client: HttpClient,
@@ -173,13 +215,13 @@ impl ProfileExporter {
     ///
     /// Consumes the `EncodedProfile`, which is unavailable for use after.
     ///
-    /// For details on the `internal_metadata` parameter, please reference the Datadog-internal
-    /// "RFC: Attaching internal metadata to pprof profiles".
-    /// If you use this parameter, please update the RFC with your use-case, so we can keep track of
-    /// how this is getting used.
+    /// For details on the `internal_metadata` parameter, please reference the
+    /// Datadog-internal "RFC: Attaching internal metadata to pprof
+    /// profiles". If you use this parameter, please update the RFC with
+    /// your use-case, so we can keep track of how this is getting used.
     ///
-    /// For details on the `info` parameter, please reference the Datadog-internal
-    /// "RFC: Pprof System Info Support".
+    /// For details on the `info` parameter, please reference the
+    /// Datadog-internal "RFC: Pprof System Info Support".
     pub fn build(
         &self,
         profile: EncodedProfile,
@@ -283,20 +325,22 @@ impl ProfileExporter {
             let mut encoder = FrameEncoder::new(buffer);
             encoder.write_all(file.bytes)?;
             let encoded = encoder.finish()?;
-            /* The Datadog RFC examples strip off the file extension, but the exact behavior
-             * isn't specified. This does the simple thing of using the filename
-             * without modification for the form name because intake does not care
-             * about these name of the form field for these attachments.
+            /* The Datadog RFC examples strip off the file extension, but the exact
+             * behavior isn't specified. This does the simple thing of using
+             * the filename without modification for the form name because
+             * intake does not care about these name of the form field for
+             * these attachments.
              */
             form.add_reader_file(file.name, Cursor::new(encoded), file.name);
         }
 
         for file in files_to_export_unmodified {
             let encoded = file.bytes.to_vec();
-            /* The Datadog RFC examples strip off the file extension, but the exact behavior
-             * isn't specified. This does the simple thing of using the filename
-             * without modification for the form name because intake does not care
-             * about these name of the form field for these attachments.
+            /* The Datadog RFC examples strip off the file extension, but the exact
+             * behavior isn't specified. This does the simple thing of using
+             * the filename without modification for the form name because
+             * intake does not care about these name of the form field for
+             * these attachments.
              */
             form.add_reader_file(file.name, Cursor::new(encoded), file.name)
         }

@@ -1,8 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_profiling::exporter::{ProfileExporter, Request};
-use datadog_profiling::internal::EncodedProfile;
+use datadog_profiling::exporter::{EncodedProfile, ProfileExporter, Request};
 
 fn multipart(
     exporter: &mut ProfileExporter,
@@ -46,10 +45,11 @@ mod tests {
     }
 
     fn parsed_event_json(request: Request) -> serde_json::Value {
-        // Really hacky way of getting the event.json file contents, because I didn't want to
-        // implement a full multipart parser and didn't find a particularly good
-        // alternative. If you do figure out a better way, there's another copy of this code
-        // in the profiling-ffi tests, please update there too :)
+        // Really hacky way of getting the event.json file contents, because I didn't
+        // want to implement a full multipart parser and didn't find a
+        // particularly good alternative. If you do figure out a better way,
+        // there's another copy of this code in the profiling-ffi tests, please
+        // update there too :)
         let body = request.body();
         let body_bytes: String = String::from_utf8_lossy(
             &futures::executor::block_on(body.collect())
