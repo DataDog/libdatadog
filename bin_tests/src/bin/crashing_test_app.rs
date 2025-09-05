@@ -66,7 +66,7 @@ mod unix {
             true,   // create_alt_stack
             true,   // use_alt_stack
             endpoint,
-            crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver,
+            crashtracker::StacktraceCollection::WithSymbols,
             crashtracker::default_signals(),
             Some(TEST_COLLECTOR_TIMEOUT),
             Some("".to_string()), // unix_socket_path
