@@ -161,7 +161,7 @@ impl Profile {
         if s.is_empty() {
             Ok(Self::INTERNED_EMPTY_STRING)
         } else {
-            Ok(GenerationalId::new(self.intern(s), self.generation))
+            Ok(GenerationalId::new(self.try_intern(s)?, self.generation))
         }
     }
 

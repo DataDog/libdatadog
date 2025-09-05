@@ -435,7 +435,7 @@ fn fuzz_add_sample<'a>(
     samples_with_timestamps: &mut Vec<&'a Sample>,
     samples_without_timestamps: &mut HashMap<(&'a [Location], &'a [Label]), Vec<i64>>,
 ) {
-    let r = profile.add_sample(sample.into(), *timestamp);
+    let r = profile.try_add_sample(sample.into(), *timestamp);
     if expected_sample_types.len() == sample.values.len() {
         assert!(r.is_ok());
         if timestamp.is_some() {

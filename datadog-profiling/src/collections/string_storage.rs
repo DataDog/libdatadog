@@ -176,7 +176,7 @@ impl ManagedStringStorage {
         match data.cached_seq_num.get() {
             Some((profile_id, seq_num)) if profile_id.id == cached_profile_id.id => Ok(seq_num),
             _ => {
-                let seq_num = profile_strings.intern(data.str.as_ref());
+                let seq_num = profile_strings.try_intern(data.str.as_ref())?;
                 data.cached_seq_num
                     .set(Some((cached_profile_id.into(), seq_num)));
                 Ok(seq_num)
