@@ -199,7 +199,7 @@ impl<'a> PprofBuilder<'a> {
             ));
         };
 
-        string_table.emit_existing(writer)?;
+        let mut string_table = StringTableWriter::from_string_table(writer, string_table)?;
 
         // --- compact ids and first-use emission maps ---
         let dict = &mut self.dictionary;
@@ -259,98 +259,7 @@ impl<'a> PprofBuilder<'a> {
                 .encode(writer)?;
         }
 
-        // --- emit helpers ---
-        fn ensure_function<'a, W: Write>(
-            w: &mut W,
-            sid: SetId<dt::Function>,
-            dict: &'a ProfilesDictionary,
-            strings: &mut StringTable<'a>,
-            func_ids: &mut CompactIdMap<SetId<dt::Function>>,
-        ) -> Result<u64, ProfileError> {
-            func_ids.ensure_with(sid, |id| {
-                let dict_strings = dict.strings();
-                let f = unsafe { dict.functions().get(sid) };
-                let name = strings.intern(w, unsafe { dict_strings.get(f.name) })?;
-                let sys = strings.intern(w, unsafe { dict_strings.get(f.system_name) })?;
-                let file = strings.intern(w, unsafe { dict_strings.get(f.file_name) })?;
-                let msg = pprof::Function {
-                    id: pprof::Record::from(id),
-                    name: pprof::Record::from(name),
-                    system_name: pprof::Record::from(sys),
-                    filename: pprof::Record::from(file),
-                };
-                pprof::Record::<pprof::Function, 5, { pprof::NO_OPT_ZERO }>::from(msg).encode(w)?;
-                Ok(())
-            })
-        }
-
-        fn ensure_mapping<'a, W: Write>(
-            w: &mut W,
-            sid: SetId<dt::Mapping>,
-            dict: &'a ProfilesDictionary,
-            strings: &mut StringTable<'a>,
-            map_ids: &mut CompactIdMap<SetId<dt::Mapping>>,
-        ) -> Result<u64, ProfileError> {
-            map_ids.ensure_with(sid, |id| {
-                let m = unsafe { dict.mappings().get(sid) };
-                let filename = strings.intern(w, unsafe { dict.strings().get(m.filename) })?;
-                let build_id = strings.intern(w, unsafe { dict.strings().get(m.build_id) })?;
-                let msg = pprof::Mapping {
-                    id: pprof::Record::from(id),
-                    memory_start: pprof::Record::from(m.memory_start),
-                    memory_limit: pprof::Record::from(m.memory_limit),
-                    file_offset: pprof::Record::from(m.file_offset),
-                    filename: pprof::Record::from(filename),
-                    build_id: pprof::Record::from(build_id),
-                };
-                pprof::Record::<pprof::Mapping, 3, { pprof::NO_OPT_ZERO }>::from(msg).encode(w)?;
-                Ok(())
-            })
-        }
-
-        #[allow(clippy::too_many_arguments)]
-        fn ensure_location<'a, W: Write>(
-            w: &mut W,
-            sid: SetId<dt::Location>,
-            scratch: &'a ScratchPad,
-            dict: &'a ProfilesDictionary,
-            strings: &mut StringTable<'a>,
-            func_ids: &mut CompactIdMap<SetId<dt::Function>>,
-            map_ids: &mut CompactIdMap<SetId<dt::Mapping>>,
-            loc_ids: &mut CompactIdMap<SetId<dt::Location>>,
-        ) -> Result<u64, ProfileError> {
-            loc_ids.ensure_with(sid, |id| {
-                let loc = unsafe { scratch.locations().get(sid) };
-                let mapping_id = match loc.mapping_id {
-                    Some(mid) => {
-                        let set_id = unsafe { SetId::from_raw(mid.cast()) };
-                        ensure_mapping(w, set_id, dict, strings, map_ids)?
-                    }
-                    None => 0,
-                };
-                let line = if let Some(fid) = loc.line.function_id {
-                    let function_id = unsafe { SetId::from_raw(fid) };
-                    let fid64 = ensure_function(w, function_id, dict, strings, func_ids)?;
-                    pprof::Line {
-                        function_id: pprof::Record::from(fid64),
-                        lineno: pprof::Record::from(loc.line.line_number),
-                    }
-                } else {
-                    pprof::Line {
-                        function_id: pprof::Record::from(0u64),
-                        lineno: pprof::Record::from(loc.line.line_number),
-                    }
-                };
-                let msg = pprof::Location {
-                    id: pprof::Record::from(id),
-                    mapping_id: pprof::Record::from(mapping_id),
-                    address: pprof::Record::from(loc.address),
-                    line: pprof::Record::from(line),
-                };
-                pprof::Record::<pprof::Location, 4, { pprof::NO_OPT_ZERO }>::from(msg).encode(w)?;
-                Ok(())
-            })
-        }
+        // --- emit helpers are defined on impl PprofBuilder below ---
 
         // --- emit samples ---
         // Emit profile-level time_nanos and duration_nanos if available from ScratchPad interval
@@ -379,22 +288,44 @@ impl<'a> PprofBuilder<'a> {
             pprof::Record::<i64, 10, { pprof::OPT_ZERO }>::from(duration_i64).encode(writer)?;
         }
         let mut values_buf: Vec<i64> = Vec::new();
-        values_buf.try_reserve_exact(n_sample_types)?;
         let mut labels_buf: Vec<pprof::Record<pprof::Label, 3, { pprof::NO_OPT_ZERO }>> =
             Vec::new();
         for (i, (prof, up)) in profiles.iter().enumerate() {
             let remap = &remaps[i];
+            // Determine upscaling plan for this profile: either global (default-only) or per-group
+            // (by-label only)
+            let mut group_scales: Option<HashMap<GroupByLabel, f64, SetHasher>> = None;
+            let mut profile_scale: Option<f64> = None;
+            if !up.is_empty() {
+                if up.len() > 1 && up.contains_key(&GroupByLabel::default()) {
+                    return Err(ProfileError::other(
+                        "invalid input: pprof builder saw both default and by-label upscaling rules attached to the same profile",
+                    ));
+                }
+                if up.contains_key(&GroupByLabel::default()) {
+                    profile_scale = Self::compute_profile_scale(up, prof)?;
+                } else {
+                    group_scales = Some(Self::compute_group_scales(
+                        writer,
+                        &mut string_table,
+                        scratch,
+                        dict,
+                        prof,
+                        up,
+                    )?);
+                }
+            }
             for sample in &prof.samples {
                 // location ids from stack
                 let stack = sample.stack_id.as_slice();
                 let mut locs_out: Vec<u64> = Vec::with_capacity(stack.len());
                 for &lid in stack {
-                    let id64 = ensure_location(
+                    let id64 = Self::ensure_location(
                         writer,
                         lid.cast(),
                         scratch,
                         dict,
-                        string_table,
+                        &mut string_table,
                         &mut func_ids,
                         &mut map_ids,
                         &mut loc_ids,
@@ -499,6 +430,37 @@ impl<'a> PprofBuilder<'a> {
                     Self::add_sample_timestamp_label(&mut labels_buf, ts, key);
                 }
 
+                // Apply upscaling
+                if let Some(scale) = profile_scale {
+                    if scale != 1.0 {
+                        for v in values_buf.iter_mut() {
+                            *v = ((*v as f64) * scale).round() as i64;
+                        }
+                    }
+                } else if let Some(scales) = &group_scales {
+                    // find first matching group for this sample and apply its scale
+                    let mut applied = false;
+                    for rec in &labels_buf {
+                        let lbl = &rec.value;
+                        let key = lbl.key.value;
+                        let value = lbl.str.value;
+                        if value.is_zero() {
+                            continue;
+                        }
+                        let g = GroupByLabel { key, value };
+                        if let Some(scale) = scales.get(&g).copied() {
+                            if scale != 1.0 {
+                                for v in values_buf.iter_mut() {
+                                    *v = ((*v as f64) * scale).round() as i64;
+                                }
+                            }
+                            applied = true;
+                            break;
+                        }
+                    }
+                    let _ = applied; // suppress unused in some configurations
+                }
+
                 let s_msg = pprof::Sample {
                     location_ids: pprof::Record::from(locs_out.as_slice()),
                     values: pprof::Record::from(values_buf.as_slice()),
@@ -512,8 +474,164 @@ impl<'a> PprofBuilder<'a> {
         Ok(())
     }
 
+    // Compute a single upscaling factor for the whole profile, using aggregated values.
+    fn compute_profile_scale(
+        rules: &UpscalingRules,
+        profile: &Profile,
+    ) -> Result<Option<f64>, ProfileError> {
+        if rules.is_empty() {
+            return Ok(None);
+        }
+        // Enforce rule constraints: if default plus any non-default exist, error for now
+        if rules.len() > 1 && rules.contains_key(&GroupByLabel::default()) {
+            return Err(ProfileError::other(
+                "invalid input: pprof builder saw both default and by-label upscaling rules attached to the same profile",
+            ));
+        }
+
+        // Select rule: default only or none
+        let info = match rules.get(&GroupByLabel::default()) {
+            Some(i) => i,
+            None => return Ok(None),
+        };
+
+        let scale = match *info {
+            UpscalingInfo::Proportional { scale } => scale,
+            UpscalingInfo::Poisson { sampling_distance } => {
+                if profile.sample_type.len() != 2 {
+                    return Err(ProfileError::other(
+                        "invalid input: Poisson upscaling attached to a profile with a single sample type; requires sum and count",
+                    ));
+                }
+                // Aggregate only what's needed: sum at index 0 and count at index 1
+                let mut sum: i64 = 0;
+                let mut count: i64 = 0;
+                for s in &profile.samples {
+                    if let Some(v) = s.values.get(0) {
+                        sum = sum.saturating_add(*v);
+                    }
+                    if let Some(v) = s.values.get(1) {
+                        count = count.saturating_add(*v);
+                    }
+                }
+                if sum == 0 || count == 0 {
+                    1.0
+                } else {
+                    let avg = sum as f64 / count as f64;
+                    let d = sampling_distance.get() as f64;
+                    1.0 / (1.0 - (-avg / d).exp())
+                }
+            }
+            UpscalingInfo::PoissonNonSampleTypeCount {
+                count_value,
+                sampling_distance,
+            } => {
+                // Aggregate only what's needed: sum at index 0
+                let mut sum: i64 = 0;
+                for s in &profile.samples {
+                    if let Some(v) = s.values.get(0) {
+                        sum = sum.saturating_add(*v);
+                    }
+                }
+                if sum == 0 {
+                    1.0
+                } else {
+                    let avg = sum as f64 / (count_value.get() as f64);
+                    let d = sampling_distance.get() as f64;
+                    1.0 / (1.0 - (-avg / d).exp())
+                }
+            }
+        };
+
+        Ok(Some(scale))
+    }
+
+    // Compute per-group upscaling factors from aggregated values by label group.
+    fn compute_group_scales<W: Write>(
+        writer: &mut W,
+        strings: &mut StringTableWriter<'a>,
+        scratch: &'a ScratchPad,
+        dict: &'a ProfilesDictionary,
+        profile: &Profile,
+        rules: &UpscalingRules,
+    ) -> Result<HashMap<GroupByLabel, f64, SetHasher>, ProfileError> {
+        // Aggregate sums per label group for this profile
+        let dict_strings = dict.strings();
+        let mut group_to_sum: HashMap<GroupByLabel, i64, SetHasher> =
+            HashMap::with_hasher(SetHasher::default());
+        let mut group_to_count: HashMap<GroupByLabel, i64, SetHasher> =
+            HashMap::with_hasher(SetHasher::default());
+
+        for s in &profile.samples {
+            // derive group label if any string label is present; accumulate for ALL string labels
+            // Note: if multiple string labels exist in a sample, we update all their groups
+            for &aid in &s.attributes {
+                let kv = unsafe { scratch.attributes().get(aid) };
+                let key_str: &str = unsafe { dict_strings.get(kv.key) };
+                if let dt::AnyValue::String(ref val_s) = kv.value {
+                    let group = {
+                        let key = strings.intern(writer, key_str)?;
+                        let value = strings.intern(writer, val_s)?;
+                        GroupByLabel { key, value }
+                    };
+                    let entry_sum = group_to_sum.entry(group).or_insert(0);
+                    if let Some(v) = s.values.get(0) {
+                        *entry_sum = entry_sum.saturating_add(*v);
+                    }
+                    if let Some(v) = s.values.get(1) {
+                        let entry_cnt = group_to_count.entry(group).or_insert(0);
+                        *entry_cnt = entry_cnt.saturating_add(*v);
+                    }
+                }
+            }
+        }
+
+        // Compute scale per group using corresponding rule
+        let mut out: HashMap<GroupByLabel, f64, SetHasher> =
+            HashMap::with_hasher(SetHasher::default());
+        out.try_reserve(rules.len())?;
+        for (group, info) in rules {
+            if *group == GroupByLabel::default() {
+                continue; // default not allowed here per pre-check
+            }
+            let sum = *group_to_sum.get(group).unwrap_or(&0);
+            let scale = match *info {
+                UpscalingInfo::Proportional { scale } => scale,
+                UpscalingInfo::Poisson { sampling_distance } => {
+                    if profile.sample_type.len() != 2 {
+                        return Err(ProfileError::other(
+                            "invalid input: Poisson upscaling attached to a profile with a single sample type; requires sum and count",
+                        ));
+                    }
+                    let count = *group_to_count.get(group).unwrap_or(&0);
+                    if sum == 0 || count == 0 {
+                        1.0
+                    } else {
+                        let avg = sum as f64 / count as f64;
+                        let d = sampling_distance.get() as f64;
+                        1.0 / (1.0 - (-avg / d).exp())
+                    }
+                }
+                UpscalingInfo::PoissonNonSampleTypeCount {
+                    count_value,
+                    sampling_distance,
+                } => {
+                    if sum == 0 {
+                        1.0
+                    } else {
+                        let avg = sum as f64 / (count_value.get() as f64);
+                        let d = sampling_distance.get() as f64;
+                        1.0 / (1.0 - (-avg / d).exp())
+                    }
+                }
+            };
+            out.insert(*group, scale);
+        }
+        Ok(out)
+    }
+
     fn add_sample_timestamp_label(
-        labels_buf: &mut Vec<pprof::Record<pprof::Label, 3, false>>,
+        labels_buf: &mut Vec<pprof::Record<pprof::Label, 3, { pprof::NO_OPT_ZERO }>>,
         ts: SystemTime,
         key: pprof::StringOffset,
     ) {
@@ -533,6 +651,98 @@ impl<'a> PprofBuilder<'a> {
             ..Default::default()
         };
         labels_buf.push(pprof::Record::from(lbl));
+    }
+
+    fn ensure_function<W: Write>(
+        w: &mut W,
+        sid: SetId<dt::Function>,
+        dict: &'a ProfilesDictionary,
+        strings: &mut StringTableWriter<'a>,
+        func_ids: &mut CompactIdMap<SetId<dt::Function>>,
+    ) -> Result<u64, ProfileError> {
+        func_ids.ensure_with(sid, |id| {
+            let dict_strings = dict.strings();
+            let f = unsafe { dict.functions().get(sid) };
+            let name = strings.intern(w, unsafe { dict_strings.get(f.name) })?;
+            let sys = strings.intern(w, unsafe { dict_strings.get(f.system_name) })?;
+            let file = strings.intern(w, unsafe { dict_strings.get(f.file_name) })?;
+            let msg = pprof::Function {
+                id: pprof::Record::from(id),
+                name: pprof::Record::from(name),
+                system_name: pprof::Record::from(sys),
+                filename: pprof::Record::from(file),
+            };
+            pprof::Record::<pprof::Function, 5, { pprof::NO_OPT_ZERO }>::from(msg).encode(w)?;
+            Ok(())
+        })
+    }
+
+    fn ensure_mapping<W: Write>(
+        w: &mut W,
+        sid: SetId<dt::Mapping>,
+        dict: &'a ProfilesDictionary,
+        strings: &mut StringTableWriter<'a>,
+        map_ids: &mut CompactIdMap<SetId<dt::Mapping>>,
+    ) -> Result<u64, ProfileError> {
+        map_ids.ensure_with(sid, |id| {
+            let m = unsafe { dict.mappings().get(sid) };
+            let filename = strings.intern(w, unsafe { dict.strings().get(m.filename) })?;
+            let build_id = strings.intern(w, unsafe { dict.strings().get(m.build_id) })?;
+            let msg = pprof::Mapping {
+                id: pprof::Record::from(id),
+                memory_start: pprof::Record::from(m.memory_start),
+                memory_limit: pprof::Record::from(m.memory_limit),
+                file_offset: pprof::Record::from(m.file_offset),
+                filename: pprof::Record::from(filename),
+                build_id: pprof::Record::from(build_id),
+            };
+            pprof::Record::<pprof::Mapping, 3, { pprof::NO_OPT_ZERO }>::from(msg).encode(w)?;
+            Ok(())
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ensure_location<W: Write>(
+        w: &mut W,
+        sid: SetId<dt::Location>,
+        scratch: &'a ScratchPad,
+        dict: &'a ProfilesDictionary,
+        strings: &mut StringTableWriter<'a>,
+        func_ids: &mut CompactIdMap<SetId<dt::Function>>,
+        map_ids: &mut CompactIdMap<SetId<dt::Mapping>>,
+        loc_ids: &mut CompactIdMap<SetId<dt::Location>>,
+    ) -> Result<u64, ProfileError> {
+        loc_ids.ensure_with(sid, |id| {
+            let loc = unsafe { scratch.locations().get(sid) };
+            let mapping_id = match loc.mapping_id {
+                Some(mid) => {
+                    let set_id = unsafe { SetId::from_raw(mid.cast()) };
+                    Self::ensure_mapping(w, set_id, dict, strings, map_ids)?
+                }
+                None => 0,
+            };
+            let line = if let Some(fid) = loc.line.function_id {
+                let function_id = unsafe { SetId::from_raw(fid) };
+                let fid64 = Self::ensure_function(w, function_id, dict, strings, func_ids)?;
+                pprof::Line {
+                    function_id: pprof::Record::from(fid64),
+                    lineno: pprof::Record::from(loc.line.line_number),
+                }
+            } else {
+                pprof::Line {
+                    function_id: pprof::Record::from(0u64),
+                    lineno: pprof::Record::from(loc.line.line_number),
+                }
+            };
+            let msg = pprof::Location {
+                id: pprof::Record::from(id),
+                mapping_id: pprof::Record::from(mapping_id),
+                address: pprof::Record::from(loc.address),
+                line: pprof::Record::from(line),
+            };
+            pprof::Record::<pprof::Location, 4, { pprof::NO_OPT_ZERO }>::from(msg).encode(w)?;
+            Ok(())
+        })
     }
 }
 
@@ -567,8 +777,8 @@ where
             group_by_label,
             upscaling_info,
         } = item?;
-        let key = string_table.intern_without_write(group_by_label.0)?;
-        let value = string_table.intern_without_write(group_by_label.1)?;
+        let key = string_table.intern(group_by_label.0)?;
+        let value = string_table.intern(group_by_label.1)?;
         let group_by_label = GroupByLabel { key, value };
         r.insert(group_by_label, upscaling_info);
     }

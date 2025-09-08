@@ -31,7 +31,7 @@ http = "1.0"
 hyper = { version = "1.6", features = ["http1", "client"] }
 http-body-util = "0.1"
 hyper-multipart-rfc7578 = "0.9.0"
-indexmap = "2.2"
+indexmap = "2.7"
 lz4_flex = { version = "0.9", default-features = false, features = ["std", "safe-encode", "frame"] }
 mime = "0.3.16"
 parking_lot = "0.12"

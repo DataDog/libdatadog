@@ -26,7 +26,7 @@ pub enum UpscalingInfo {
 ///  - `("exception type", "OutOfBoundsException")`
 ///  - `("exception type", "TimeoutException")`
 /// For rules which don't use label groups, use the default group `(0, 0)`.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct GroupByLabel {
     pub key: pprof::StringOffset,
     pub value: pprof::StringOffset,
