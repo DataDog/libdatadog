@@ -28,6 +28,7 @@ pub struct UpscalingPoissonNonSampleTypeCount {
 /// cbindgen:rename-all=ScreamingSnakeCase
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
+#[allow(clippy::enum_variant_names)] // doing this for FFI purposes
 pub enum UpscalingInfo {
     DdogPprofUpscalingProportional(UpscalingProportional),
     DdogPprofUpscalingPoisson(UpscalingPoisson),
