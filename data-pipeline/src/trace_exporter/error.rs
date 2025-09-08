@@ -171,7 +171,9 @@ pub enum ShutdownError {
 impl Display for ShutdownError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ShutdownError::TimedOut(dur) => write!(f, "Shutdown timed out after {}s", dur.as_secs_f32()),
+            ShutdownError::TimedOut(dur) => {
+                write!(f, "Shutdown timed out after {}s", dur.as_secs_f32())
+            }
         }
     }
 }
