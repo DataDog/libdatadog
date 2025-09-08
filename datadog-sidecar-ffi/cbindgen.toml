@@ -36,7 +36,6 @@ rename_types = "PascalCase"
 "FILE" = "FILE"
 
 [enum]
-#merge_generic_tags = true
 prefix_with_name = true
 rename_variants = "ScreamingSnakeCase"
 

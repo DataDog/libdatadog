@@ -33,41 +33,35 @@ renaming_overrides_prefixing = true
 
 [export.rename]
 "BOOL" = "BOOL"
-"HMODULE" = "HMODULE"
-"HRESULT" = "HRESULT"
-"WER_RUNTIME_EXCEPTION_INFORMATION" = "WER_RUNTIME_EXCEPTION_INFORMATION"
-
 "ByteSlice" = "ddog_ByteSlice"
 "CancellationToken" = "ddog_CancellationToken"
 "CharSlice" = "ddog_CharSlice"
 "Endpoint" = "ddog_Endpoint"
 "Error" = "ddog_Error"
+"HMODULE" = "HMODULE"
+"HRESULT" = "HRESULT"
 "HttpStatus" = "ddog_HttpStatus"
 "Option_U32" = "ddog_Option_U32"
 "Slice_CChar" = "ddog_Slice_CChar"
-"Slice_CharSlice" = "ddog_Slice_CharSlice"
-"Slice_CInt" = "ddog_Slice_CInt"
-"Slice_I32" = "ddog_Slice_I32"
 "Slice_I64" = "ddog_Slice_I64"
 "Slice_U8" = "ddog_Slice_U8"
-"StringWrapper" = "ddog_StringWrapper"
-"StringWrapperResult" = "ddog_StringWrapperResult"
 "Tag" = "ddog_Tag"
 "Timespec" = "ddog_Timespec"
 "Vec_Tag" = "ddog_Vec_Tag"
 "Vec_U8" = "ddog_Vec_U8"
 "VoidResult" = "ddog_VoidResult"
-
+"StringWrapper" = "ddog_StringWrapper"
+"StringWrapperResult" = "ddog_StringWrapperResult"
 "CrashInfoBuilderNewResult" = " ddog_crasht_CrashInfoBuilder_NewResult"
-"CrashInfoNewResult" = "ddog_crasht_CrashInfo_NewResult"
-"StackFrameNewResult" = "ddog_crasht_StackFrame_NewResult"
 "StackTraceNewResult" = " ddog_crasht_StackTrace_NewResult"
+"StackFrameNewResult" = "ddog_crasht_StackFrame_NewResult"
+"CrashInfoNewResult" = "ddog_crasht_CrashInfo_NewResult"
+"WER_RUNTIME_EXCEPTION_INFORMATION" = "WER_RUNTIME_EXCEPTION_INFORMATION"
 
 [export.mangle]
 rename_types = "PascalCase"
 
 [enum]
-#merge_generic_tags = true
 prefix_with_name = true
 rename_variants = "ScreamingSnakeCase"
 
