@@ -32,7 +32,7 @@ pub enum BuilderErrorKind {
     /// The associated `String` contains underlying error message.
     InvalidUri(String),
     /// Indicates that the telemetry configuration is invalid.
-    InvalidTelemetryConfig,
+    InvalidTelemetryConfig(String),
     /// Indicates any incompatible configuration
     InvalidConfiguration(String),
 }
@@ -41,8 +41,8 @@ impl Display for BuilderErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BuilderErrorKind::InvalidUri(msg) => write!(f, "Invalid URI: {msg}"),
-            BuilderErrorKind::InvalidTelemetryConfig => {
-                write!(f, "Invalid telemetry configuration")
+            BuilderErrorKind::InvalidTelemetryConfig(msg) => {
+                write!(f, "Invalid telemetry configuration: {msg}")
             }
             BuilderErrorKind::InvalidConfiguration(msg) => {
                 write!(f, "Invalid configuration: {msg}")
@@ -163,6 +163,19 @@ impl RequestError {
     }
 }
 
+#[derive(Debug)]
+pub enum ShutdownError {
+    TimedOut(std::time::Duration),
+}
+
+impl Display for ShutdownError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ShutdownError::TimedOut(dur) => write!(f, "Shutdown timed out after {}s", dur.as_secs_f32()),
+        }
+    }
+}
+
 /// TraceExporterError holds different types of errors that occur when handling traces.
 #[derive(Debug)]
 pub enum TraceExporterError {
@@ -176,12 +189,37 @@ pub enum TraceExporterError {
     Deserialization(DecodeError),
     /// Generic IO error.
     Io(std::io::Error),
+    // Shutdown as not succeeded after some time
+    Shutdown(ShutdownError),
+    /// Telemetry related error.
+    Telemetry(String),
     /// Network related error (i.e. hyper error).
     Network(NetworkError),
     /// Agent responded with an error code.
     Request(RequestError),
     /// Error in serialization of processed trace payload.
     Serialization(EncodeError),
+}
+
+impl Display for TraceExporterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TraceExporterError::Agent(e) => write!(f, "Agent response processing: {e}"),
+            TraceExporterError::Builder(e) => write!(f, "Invalid builder input: {e}"),
+            TraceExporterError::Internal(e) => write!(f, "Internal: {e}"),
+            TraceExporterError::Deserialization(e) => {
+                write!(f, "Deserialization of incoming payload: {e}")
+            }
+            TraceExporterError::Io(e) => write!(f, "IO: {e}"),
+            TraceExporterError::Shutdown(e) => write!(f, "Shutdown: {e}"),
+            TraceExporterError::Telemetry(e) => write!(f, "Telemetry: {e}"),
+            TraceExporterError::Network(e) => write!(f, "Network: {e}"),
+            TraceExporterError::Request(e) => write!(f, "Agent responded with an error code: {e}"),
+            TraceExporterError::Serialization(e) => {
+                write!(f, "Serialization of trace payload payload: {e}")
+            }
+        }
+    }
 }
 
 impl From<EncodeError> for TraceExporterError {
@@ -282,27 +320,10 @@ impl From<std::io::Error> for TraceExporterError {
 impl From<TelemetryError> for TraceExporterError {
     fn from(value: TelemetryError) -> Self {
         match value {
-            TelemetryError::Builder(_) => {
-                TraceExporterError::Builder(BuilderErrorKind::InvalidTelemetryConfig)
+            TelemetryError::Builder(e) => {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidTelemetryConfig(e))
             }
-            TelemetryError::Send(_) => {
-                TraceExporterError::Io(std::io::ErrorKind::WouldBlock.into())
-            }
-        }
-    }
-}
-
-impl Display for TraceExporterError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TraceExporterError::Agent(e) => std::fmt::Display::fmt(e, f),
-            TraceExporterError::Builder(e) => std::fmt::Display::fmt(e, f),
-            TraceExporterError::Internal(e) => std::fmt::Display::fmt(e, f),
-            TraceExporterError::Deserialization(e) => std::fmt::Display::fmt(e, f),
-            TraceExporterError::Io(e) => std::fmt::Display::fmt(e, f),
-            TraceExporterError::Network(e) => std::fmt::Display::fmt(e, f),
-            TraceExporterError::Request(e) => std::fmt::Display::fmt(e, f),
-            TraceExporterError::Serialization(e) => std::fmt::Display::fmt(e, f),
+            TelemetryError::Send(e) => TraceExporterError::Telemetry(e),
         }
     }
 }
