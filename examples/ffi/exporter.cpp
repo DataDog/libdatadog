@@ -6,7 +6,9 @@ extern "C" {
 #include <cstdlib>
 #include <cstring>
 
-static ddog_CharSlice to_slice_c_char(const char *s) { return ddog_CharSlice{.ptr = s, .len = strlen(s)}; }
+static ddog_CharSlice to_slice_c_char(const char *s) {
+  return ddog_CharSlice{.ptr = s, .len = strlen(s)};
+}
 
 static void check_ok(ddog_prof_Status status, const char *ctx) {
   if (status.flags != 0) {
@@ -32,28 +34,35 @@ int main(int argc, char **argv) {
 
   // ValueType: wall-time / nanoseconds
   ddog_prof_StringId vt_type = {0}, vt_unit = {0};
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt_type, dict, DDOG_CHARSLICE_C("wall-time"), DDOG_PROF_UTF8_OPTION_VALIDATE),
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt_type, dict, DDOG_CHARSLICE_C("wall-time"),
+                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(type)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt_unit, dict, DDOG_CHARSLICE_C("nanoseconds"), DDOG_PROF_UTF8_OPTION_VALIDATE),
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt_unit, dict, DDOG_CHARSLICE_C("nanoseconds"),
+                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(unit)");
   ddog_prof_ValueType vt = {.type_id = vt_type, .unit_id = vt_unit};
 
   // Insert a function and mapping in the dictionary
   ddog_prof_StringId fn_name = {0}, fn_sys = {0}, fn_file = {0};
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_name, dict, DDOG_CHARSLICE_C("root"), DDOG_PROF_UTF8_OPTION_VALIDATE),
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_name, dict, DDOG_CHARSLICE_C("root"),
+                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(fn name)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_sys, dict, DDOG_CHARSLICE_C("root"), DDOG_PROF_UTF8_OPTION_VALIDATE),
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_sys, dict, DDOG_CHARSLICE_C("root"),
+                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(fn system)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_file, dict, DDOG_CHARSLICE_C("root.cpp"), DDOG_PROF_UTF8_OPTION_VALIDATE),
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_file, dict, DDOG_CHARSLICE_C("root.cpp"),
+                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(fn file)");
   ddog_prof_Function func = {.name = fn_name, .system_name = fn_sys, .file_name = fn_file};
   ddog_prof_FunctionId func_id = NULL;
   check_ok(ddog_prof_ProfilesDictionary_insert_function(&func_id, dict, &func), "insert_function");
 
   ddog_prof_StringId map_file = {0}, map_build = {0};
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&map_file, dict, DDOG_CHARSLICE_C("/bin/example"), DDOG_PROF_UTF8_OPTION_VALIDATE),
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(
+               &map_file, dict, DDOG_CHARSLICE_C("/bin/example"), DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(map filename)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&map_build, dict, DDOG_CHARSLICE_C("deadbeef"), DDOG_PROF_UTF8_OPTION_VALIDATE),
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&map_build, dict, DDOG_CHARSLICE_C("deadbeef"),
+                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(map build)");
   ddog_prof_Mapping mapping = {.memory_start = 0,
                                .memory_limit = 0,
@@ -64,45 +73,54 @@ int main(int argc, char **argv) {
   check_ok(ddog_prof_ProfilesDictionary_insert_mapping(&map_id, dict, &mapping), "insert_mapping");
 
   // Insert a location and stack in the scratchpad
-  ddog_prof_Option_FunctionId opt_fn = {.tag = DDOG_PROF_OPTION_FUNCTION_ID_SOME_FUNCTION_ID, .some = func_id};
-  ddog_prof_Option_MappingId opt_map = {.tag = DDOG_PROF_OPTION_MAPPING_ID_SOME_MAPPING_ID, .some = map_id};
+  ddog_prof_Option_FunctionId opt_fn = {.tag = DDOG_PROF_OPTION_FUNCTION_ID_SOME_FUNCTION_ID,
+                                        .some = func_id};
+  ddog_prof_Option_MappingId opt_map = {.tag = DDOG_PROF_OPTION_MAPPING_ID_SOME_MAPPING_ID,
+                                        .some = map_id};
   ddog_prof_Line line = {.line_number = 42, .function_id = opt_fn};
   ddog_prof_Location loc = {.address = 0, .mapping_id = opt_map, .line = line};
   ddog_prof_LocationId loc_id = NULL;
-  check_ok(ddog_prof_ScratchPad_insert_location(&loc_id, scratch, &loc), "ScratchPad_insert_location");
+  check_ok(ddog_prof_ScratchPad_insert_location(&loc_id, scratch, &loc),
+           "ScratchPad_insert_location");
   ddog_prof_LocationId locs[1] = {loc_id};
   ddog_prof_Slice_LocationId loc_slice = {.ptr = locs, .len = 1};
   ddog_prof_StackId stack_id = {0};
-  check_ok(ddog_prof_ScratchPad_insert_stack(&stack_id, scratch, loc_slice), "ScratchPad_insert_stack");
+  check_ok(ddog_prof_ScratchPad_insert_stack(&stack_id, scratch, loc_slice),
+           "ScratchPad_insert_stack");
 
   // Create a profile and add sample type + period
   ddog_prof_ProfileHandle profile = NULL;
   check_ok(ddog_prof_Profile_new(&profile), "Profile_new");
   check_ok(ddog_prof_Profile_add_sample_type(profile, vt), "Profile_add_sample_type");
-  check_ok(ddog_prof_Profile_add_period(profile, 10'000'000LL, vt), "Profile_add_period"); // 10ms tick
+  check_ok(ddog_prof_Profile_add_period(profile, 10'000'000LL, vt),
+           "Profile_add_period"); // 10ms tick
 
   // Build one sample via SampleBuilder
   ddog_prof_SampleBuilderHandle sb = NULL;
   check_ok(ddog_prof_SampleBuilder_new(&sb, scratch), "SampleBuilder_new");
   check_ok(ddog_prof_SampleBuilder_stack_id(sb, stack_id), "SampleBuilder_stack_id");
   check_ok(ddog_prof_SampleBuilder_value(sb, 10'000'000LL), "SampleBuilder_value");
-  check_ok(ddog_prof_SampleBuilder_build_into_profile(&sb, profile), "SampleBuilder_build_into_profile");
+  check_ok(ddog_prof_SampleBuilder_build_into_profile(&sb, profile),
+           "SampleBuilder_build_into_profile");
 
   // Build EncodedProfile with PprofBuilder
   ddog_prof_PprofBuilderHandle pprof = NULL;
   check_ok(ddog_prof_PprofBuilder_new(&pprof, dict, scratch), "PprofBuilder_new");
   ddog_prof_UpscalingRule empty_rule;
-  ddog_prof_Slice_UpscalingRule empty_rules = { .ptr = &empty_rule, .len = 0 };
-  check_ok(ddog_prof_PprofBuilder_add_profile(pprof, profile, empty_rules, DDOG_PROF_UTF8_OPTION_VALIDATE),
+  ddog_prof_Slice_UpscalingRule empty_rules = {.ptr = &empty_rule, .len = 0};
+  check_ok(ddog_prof_PprofBuilder_add_profile(pprof, profile, empty_rules,
+                                              DDOG_PROF_UTF8_OPTION_VALIDATE),
            "PprofBuilder_add_profile");
   ddog_prof_EncodedProfile encoded = {0};
   ddog_Timespec start = {.seconds = 0, .nanoseconds = 0};
   ddog_Timespec end = {.seconds = 1, .nanoseconds = 0};
-  check_ok(ddog_prof_PprofBuilder_build_uncompressed(&encoded, pprof, 4096, start, end), "PprofBuilder_build_uncompressed");
+  check_ok(ddog_prof_PprofBuilder_build_uncompressed(&encoded, pprof, 4096, start, end),
+           "PprofBuilder_build_uncompressed");
 
   // Build and send exporter request
   ddog_Vec_Tag tags = ddog_Vec_Tag_new();
-  ddog_Vec_Tag_PushResult push_result = ddog_Vec_Tag_push(&tags, DDOG_CHARSLICE_C("service"), to_slice_c_char(argv[1]));
+  ddog_Vec_Tag_PushResult push_result =
+      ddog_Vec_Tag_push(&tags, DDOG_CHARSLICE_C("service"), to_slice_c_char(argv[1]));
   if (push_result.tag != DDOG_VEC_TAG_PUSH_RESULT_OK) {
     ddog_CharSlice message = ddog_Error_message(&push_result.err);
     fprintf(stderr, "Failed to push tag: %.*s\n", (int)message.len, message.ptr);
@@ -112,11 +130,9 @@ int main(int argc, char **argv) {
   }
 
   ddog_prof_Endpoint endpoint = ddog_prof_Endpoint_agent(DDOG_CHARSLICE_C("http://localhost:8126"));
-  auto exporter_result = ddog_prof_Exporter_new(DDOG_CHARSLICE_C("dd-trace-cpp"),
-                                                DDOG_CHARSLICE_C("1.0.0"),
-                                                DDOG_CHARSLICE_C("cpp"),
-                                                &tags,
-                                                endpoint);
+  auto exporter_result =
+      ddog_prof_Exporter_new(DDOG_CHARSLICE_C("dd-trace-cpp"), DDOG_CHARSLICE_C("1.0.0"),
+                             DDOG_CHARSLICE_C("cpp"), &tags, endpoint);
   if (exporter_result.tag != DDOG_PROF_PROFILE_EXPORTER_RESULT_OK_HANDLE_PROFILE_EXPORTER) {
     ddog_CharSlice message = ddog_Error_message(&exporter_result.err);
     fprintf(stderr, "Failed to create exporter: %.*s\n", (int)message.len, message.ptr);
@@ -128,7 +144,8 @@ int main(int argc, char **argv) {
 
   ddog_prof_Slice_Exporter_File files_to_compress = ddog_prof_Exporter_Slice_File_empty();
   ddog_prof_Slice_Exporter_File files_unmodified = ddog_prof_Exporter_Slice_File_empty();
-  auto request_result = ddog_prof_Exporter_Request_build(&exporter, &encoded, files_to_compress, files_unmodified, nullptr, nullptr, nullptr);
+  auto request_result = ddog_prof_Exporter_Request_build(
+      &exporter, &encoded, files_to_compress, files_unmodified, nullptr, nullptr, nullptr);
   if (request_result.tag != DDOG_PROF_REQUEST_RESULT_OK_HANDLE_REQUEST) {
     ddog_CharSlice message = ddog_Error_message(&request_result.err);
     fprintf(stderr, "Failed to build request: %.*s\n", (int)message.len, message.ptr);
