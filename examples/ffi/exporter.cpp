@@ -91,7 +91,10 @@ int main(int argc, char **argv) {
   // Build EncodedProfile with PprofBuilder
   ddog_prof_PprofBuilderHandle pprof = NULL;
   check_ok(ddog_prof_PprofBuilder_new(&pprof, dict, scratch), "PprofBuilder_new");
-  check_ok(ddog_prof_PprofBuilder_add_profile(pprof, profile), "PprofBuilder_add_profile");
+  ddog_prof_UpscalingRule empty_rule;
+  ddog_prof_Slice_UpscalingRule empty_rules = { .ptr = &empty_rule, .len = 0 };
+  check_ok(ddog_prof_PprofBuilder_add_profile(pprof, profile, empty_rules, DDOG_PROF_UTF8_OPTION_VALIDATE),
+           "PprofBuilder_add_profile");
   ddog_prof_EncodedProfile encoded = {0};
   ddog_Timespec start = {.seconds = 0, .nanoseconds = 0};
   ddog_Timespec end = {.seconds = 1, .nanoseconds = 0};
