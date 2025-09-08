@@ -606,9 +606,9 @@ checksum = "a1d084b0137aaa901caf9f1e8b21daa6aa24d41cd806e111335541eff9683bd6"
 
 [[package]]
 name = "blazesym"
-version = "0.2.0-rc.4"
+version = "0.2.0-rc.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29a810b7e5f883ad3c711208237841f051061bf59b6ee698ac4dc1fe12a3a5db"
+checksum = "95824d1dd4f20b4a4dfa63b72954e81914a718357231468180b30314e85057fa"
 dependencies = [
  "cpp_demangle",
  "gimli 0.32.0",
@@ -621,9 +621,9 @@ dependencies = [
 
 [[package]]
 name = "blazesym-c"
-version = "0.1.2"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c7e8e9e34e0aaa358f9dd047688b74dd109a55c2bdc618aea582fcc6cc02544"
+checksum = "5f42f124fb847f9a73ee25bbf040d09ca967348973cb633e6adb41aa62b6ad2c"
 dependencies = [
  "blazesym",
  "libc",

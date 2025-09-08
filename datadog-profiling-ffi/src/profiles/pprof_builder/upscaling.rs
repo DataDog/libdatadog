@@ -32,7 +32,9 @@ pub struct UpscalingPoissonNonSampleTypeCount {
 pub enum UpscalingInfo {
     DdogPprofUpscalingProportional(UpscalingProportional),
     DdogPprofUpscalingPoisson(UpscalingPoisson),
-    DdogPprofUpscalingPoissonNonSampleTypeCount(UpscalingPoissonNonSampleTypeCount),
+    DdogPprofUpscalingPoissonNonSampleTypeCount(
+        UpscalingPoissonNonSampleTypeCount,
+    ),
 }
 
 impl TryFrom<UpscalingInfo> for profiles::UpscalingInfo {

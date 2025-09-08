@@ -32,7 +32,7 @@ fn main() {
 
     let mut profile = Profile::default();
     for vt in sample_types {
-        profile.add_sample_type(vt).unwrap();
+        profile.try_add_sample(vt).unwrap();
     }
 
     profile.add_period(10000, wall_time_vt);
