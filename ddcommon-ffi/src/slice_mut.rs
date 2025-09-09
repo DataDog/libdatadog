@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::slice::AsBytes;
+use crate::slice::{AsBytes, SliceConversionError};
 use core::slice;
 use serde::ser::Error;
 use serde::Serializer;
@@ -45,14 +45,13 @@ pub type CharMutSlice<'a> = MutSlice<'a, c_char>;
 /// Use to represent bytes -- does not need to be valid UTF-8.
 pub type ByteMutSlice<'a> = MutSlice<'a, u8>;
 
-#[inline]
-fn is_aligned<T>(ptr: NonNull<T>) -> bool {
-    ptr.as_ptr() as usize % std::mem::align_of::<T>() == 0
-}
-
 impl<'a> AsBytes<'a> for MutSlice<'a, u8> {
     fn as_bytes(&self) -> &'a [u8] {
         self.as_slice()
+    }
+
+    fn try_as_bytes(&self) -> Result<&'a [u8], SliceConversionError> {
+        self.try_as_slice()
     }
 }
 
@@ -93,7 +92,7 @@ impl<'a, T: 'a> MutSlice<'a, T> {
     pub fn as_mut_slice(&mut self) -> &'a mut [T] {
         if let Some(ptr) = self.ptr {
             // Crashing immediately is likely better than ignoring these.
-            assert!(is_aligned(ptr));
+            assert!(ptr.is_aligned());
             assert!(self.len <= isize::MAX as usize);
             unsafe { slice::from_raw_parts_mut(ptr.as_ptr(), self.len) }
         } else {
@@ -104,15 +103,35 @@ impl<'a, T: 'a> MutSlice<'a, T> {
     }
 
     pub fn as_slice(&self) -> &'a [T] {
+        #[allow(clippy::expect_used)]
+        self.try_as_slice()
+            .expect("ffi MutSlice failed to convert to a Rust slice")
+    }
+
+    /// Tries to convert the FFI slice as a Rust slice of bytes.
+    ///
+    /// # Errors
+    ///
+    ///  - Returns [`SliceConversionError::NullPointer`] if the slice has a null pointer and a
+    ///    length other than zero. If pointer is null and length is zero, then return `Ok(&[])`
+    ///    instead.
+    ///  - Returns [`SliceConversionError::MisalignedPointer`] if the pointer is non-null and is not
+    ///    aligned correctly for the type.
+    ///  - Returns [`SliceConversionError::LargeLength`] if the length of the slice exceeds
+    ///    [`isize::MAX`].
+    pub fn try_as_slice(&self) -> Result<&'a [T], SliceConversionError> {
         if let Some(ptr) = self.ptr {
-            // Crashing immediately is likely better than ignoring these.
-            assert!(is_aligned(ptr));
-            assert!(self.len <= isize::MAX as usize);
-            unsafe { slice::from_raw_parts(ptr.as_ptr(), self.len) }
+            if self.len > isize::MAX as usize {
+                Err(SliceConversionError::LargeLength)
+            } else if !ptr.is_aligned() {
+                Err(SliceConversionError::MisalignedPointer)
+            } else {
+                Ok(unsafe { slice::from_raw_parts(ptr.as_ptr(), self.len) })
+            }
+        } else if self.len != 0 {
+            Err(SliceConversionError::NullPointer)
         } else {
-            // Crashing immediately is likely better than ignoring this.
-            assert_eq!(self.len, 0);
-            &[]
+            Ok(&[])
         }
     }
 
