@@ -686,12 +686,11 @@ pub unsafe extern "C" fn ddog_sidecar_enqueue_telemetry_log(
 }
 
 fn char_slice_to_string(slice: CharSlice) -> Result<String, String> {
-    let bytes = slice
-        .try_as_bytes()
-        .map_err(|e| format!("invalid input: failed to convert CharSlice to String: {e}"))?;
-    std::str::from_utf8(bytes)
-        .map(String::from)
-        .map_err(|e| format!("invalid input: failed to convert CharSlice to String: {e}"))
+    let cast_slice =
+        unsafe { slice::from_raw_parts(slice.as_slice().as_ptr() as *const u8, slice.len()) };
+    let slice = std::str::from_utf8(cast_slice)
+        .map_err(|e| format!("Failed to convert CharSlice to String: {e}"))?;
+    Ok(slice.to_string())
 }
 
 #[allow(clippy::too_many_arguments)]
