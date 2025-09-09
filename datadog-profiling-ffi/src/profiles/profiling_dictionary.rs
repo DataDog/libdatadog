@@ -12,10 +12,38 @@ use datadog_profiling::profiles::datatypes::{
 use datadog_profiling::profiles::ProfileError;
 use ddcommon_ffi::CharSlice;
 
-/// A StringId that represents the empty string. This is always available in
-/// every string set and can be used without needing to insert an empty string.
+/// A StringId that represents the empty string.
+/// This is always available in every string set and can be used without
+/// needing to insert it into a string set.
 #[no_mangle]
 pub static DDOG_PROF_STRINGID_EMPTY: StringId = StringId::EMPTY;
+
+/// A StringId that represents the string "end_timestamp_ns".
+/// This is always available in every string set and can be used without
+/// needing to insert it into a string set.
+#[no_mangle]
+pub static DDOG_PROF_STRINGID_END_TIMESTAMP_NS: StringId =
+    StringId::END_TIMESTAMP_NS;
+
+/// A StringId that represents the string "local root span id".
+/// This is always available in every string set and can be used without
+/// needing to insert it into a string set.
+#[no_mangle]
+pub static DDOG_PROF_STRINGID_LOCAL_ROOT_SPAN_ID: StringId =
+    StringId::LOCAL_ROOT_SPAN_ID;
+
+/// A StringId that represents the string "trace endpoint".
+/// This is always available in every string set and can be used without
+/// needing to insert it into a string set.
+#[no_mangle]
+pub static DDOG_PROF_STRINGID_TRACE_ENDPOINT: StringId =
+    StringId::TRACE_ENDPOINT;
+
+/// A StringId that represents the string "span id".
+/// This is always available in every string set and can be used without
+/// needing to insert it into a string set.
+#[no_mangle]
+pub static DDOG_PROF_STRINGID_SPAN_ID: StringId = StringId::SPAN_ID;
 
 /// Allocates a new `ProfilesDictionary` and writes a handle to it in `handle`.
 ///
