@@ -118,7 +118,7 @@ pub unsafe extern "C" fn ddog_prof_ScratchPad_insert_stack(
     ProfileStatus::from(|| -> Result<(), ProfileError> {
         let pad = handle.as_inner()?;
         let slice =
-            locations.try_as_slice().ok_or(ProfileError::InvalidInput)?;
+            locations.try_as_slice().map_err(ProfileError::from_thin_error)?;
         // SAFETY: re-interpreting LocationId as SetId<Location> is safe as
         // long as they were made from SetId::into_raw.
         let ids = unsafe {
@@ -336,7 +336,7 @@ pub unsafe extern "C" fn ddog_prof_ScratchPad_get_trace_endpoint_str(
 ) -> ProfileStatus {
     ensure_non_null_out_parameter!(result);
     let Ok(pad) = handle.as_inner() else {
-        return ProfileStatus::from(EmptyHandleError::message());
+        return ProfileStatus::from_thin_error(EmptyHandleError);
     };
     if let Some(s) =
         pad.endpoint_tracker().get_trace_endpoint_str(local_root_span_id)

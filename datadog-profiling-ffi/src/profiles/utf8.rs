@@ -3,8 +3,7 @@
 
 use datadog_profiling::profiles::collections::{ParallelStringSet, StringId};
 use datadog_profiling::profiles::ProfileError;
-use ddcommon_ffi::slice::AsBytes;
-use ddcommon_ffi::CharSlice;
+use ddcommon_ffi::slice::{AsBytes, CharSlice};
 use std::borrow::Cow;
 use std::collections::TryReserveError;
 
@@ -55,7 +54,7 @@ impl Utf8Option {
         self,
         t: T,
     ) -> Result<Cow<'a, str>, ProfileError> {
-        let bytes = t.try_as_bytes().ok_or(ProfileError::InvalidInput)?;
+        let bytes = t.try_as_bytes().map_err(ProfileError::from_thin_error)?;
         self.convert(bytes)
     }
 }
@@ -106,7 +105,7 @@ pub fn insert_str(
     str: CharSlice<'_>,
     utf8_options: Utf8Option,
 ) -> Result<StringId, ProfileError> {
-    let bytes = str.try_as_bytes().ok_or(ProfileError::InvalidInput)?;
+    let bytes = str.try_as_bytes().map_err(ProfileError::from_thin_error)?;
     let string = match utf8_options {
         Utf8Option::Assume => {
             // SAFETY: the caller is asserting the data is valid UTF-8.

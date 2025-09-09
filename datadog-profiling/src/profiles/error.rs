@@ -51,6 +51,10 @@ impl ProfileError {
         Self::Other(error.into())
     }
 
+    pub fn from_thin_error<E: ddcommon::ffi::ThinError>(error: E) -> Self {
+        Self::other(Cow::Borrowed(ddcommon::ffi::error_as_rust_str(&error)))
+    }
+
     /// Create a formatted error string. If memory allocation fails, a less
     /// helpful but statically known error is returned instead.
     ///

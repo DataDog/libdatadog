@@ -194,6 +194,10 @@ impl ProfileStatus {
         err: c"another error occured, but cannot be displayed because it has interior null bytes".as_ptr(),
     };
 
+    pub fn from_thin_error<E: ddcommon::ffi::ThinError>(err: E) -> Self {
+        ProfileStatus::from(err.as_ffi_str())
+    }
+
     pub fn from_error<E: core::error::Error>(err: E) -> Self {
         use core::fmt::Write;
         let mut writer = FallibleStringWriter::new();

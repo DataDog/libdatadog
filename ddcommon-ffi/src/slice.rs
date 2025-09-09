@@ -64,6 +64,34 @@ fn is_aligned<T>(ptr: *const T) -> bool {
     ptr as usize % std::mem::align_of::<T>() == 0
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub enum SliceConversionError {
+    LargeLength,
+    NullPointer,
+    MisalignedPointer,
+}
+
+/// # Safety
+/// All strings are valid UTF-8 (enforced by using c-str literals in Rust)
+unsafe impl ddcommon::ffi::ThinError for SliceConversionError {
+    fn as_ffi_str(&self) -> &'static std::ffi::CStr {
+        match self {
+            SliceConversionError::LargeLength => c"length was too large",
+            SliceConversionError::NullPointer => c"null pointer with non-zero length",
+            SliceConversionError::MisalignedPointer => c"pointer was not aligned for the type",
+        }
+    }
+}
+
+impl Display for SliceConversionError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(ddcommon::ffi::error_as_rust_str(self), f)
+    }
+}
+
+impl core::error::Error for SliceConversionError {}
+
 pub trait AsBytes<'a> {
     fn as_bytes(&self) -> &'a [u8] {
         {
@@ -72,7 +100,7 @@ pub trait AsBytes<'a> {
         }
     }
 
-    fn try_as_bytes(&self) -> Option<&'a [u8]>;
+    fn try_as_bytes(&self) -> Result<&'a [u8], SliceConversionError>;
 
     #[inline]
     fn try_to_utf8(&self) -> Result<&'a str, Utf8Error> {
@@ -102,13 +130,13 @@ pub trait AsBytes<'a> {
 }
 
 impl<'a> AsBytes<'a> for Slice<'a, u8> {
-    fn try_as_bytes(&self) -> Option<&'a [u8]> {
+    fn try_as_bytes(&self) -> Result<&'a [u8], SliceConversionError> {
         self.try_as_slice()
     }
 }
 
 impl<'a> AsBytes<'a> for Slice<'a, i8> {
-    fn try_as_bytes(&self) -> Option<&'a [u8]> {
+    fn try_as_bytes(&self) -> Result<&'a [u8], SliceConversionError> {
         self.try_as_slice().map(|i8_slice| {
             // SAFETY: we've gone through a successful try_as_slice, so the
             // enforceable characteristics such as fitting in isize::MAX are
@@ -122,16 +150,13 @@ impl<'a> AsBytes<'a> for Slice<'a, i8> {
 
 impl<'a> AsBytes<'a> for &'a [c_char] {
     fn as_bytes(&self) -> &'a [u8] {
-        // SAFETY: We're transmuting from &[c_char] to &[i8] which is safe since they have the same
-        // layout
-        let i8_slice: &[i8] = unsafe { std::mem::transmute(*self) };
-        // SAFETY: We're transmuting from &[i8] to &[u8] which is safe since they have the same
-        // layout
-        unsafe { std::mem::transmute(i8_slice) }
+        // SAFETY: We're converting from &[c_char] to &[u8] which is safe since
+        // they have the same layout and c_char has no unused bit patterns.
+        unsafe { slice::from_raw_parts(self.as_ptr().cast(), self.len()) }
     }
 
-    fn try_as_bytes(&self) -> Option<&'a [u8]> {
-        Some(self.as_bytes())
+    fn try_as_bytes(&self) -> Result<&'a [u8], SliceConversionError> {
+        Ok(self.as_bytes())
     }
 }
 
@@ -173,20 +198,10 @@ impl<'a, T> Slice<'a, T> {
         }
     }
 
+    #[inline]
     pub fn as_slice(&self) -> &'a [T] {
-        // Don't proxy to `try_as_slice` so that the assertion fails on the
-        // condition which was violated. The conditions between the two
-        // functions need to be synchronized.
-        if !self.ptr.is_null() {
-            // Crashing immediately is likely better than ignoring these.
-            assert!(is_aligned(self.ptr));
-            assert!(self.len <= isize::MAX as usize);
-            unsafe { slice::from_raw_parts(self.ptr, self.len) }
-        } else {
-            // Crashing immediately is likely better than ignoring this.
-            assert_eq!(self.len, 0);
-            &[]
-        }
+        #[allow(clippy::expect_used)]
+        self.try_as_slice().expect("ffi Slice wasn't a valid slice")
     }
 
     /// Tries to convert the FFI slice into a standard slice.
@@ -196,12 +211,19 @@ impl<'a, T> Slice<'a, T> {
     /// 1. Fails if `self.ptr` is null and `self.len` is not zero.
     /// 2. Fails if `self.ptr` is not null and is unaligned.
     /// 3. Fails if `self.len` is larger than [`isize::MAX`].
-    pub fn try_as_slice(&self) -> Option<&'a [T]> {
+    pub fn try_as_slice(&self) -> Result<&'a [T], SliceConversionError> {
         if !self.ptr.is_null() {
-            (self.ptr.is_aligned() && self.len <= isize::MAX as usize)
-                .then(|| unsafe { slice::from_raw_parts(self.ptr, self.len) })
+            if self.len() > isize::MAX as usize {
+                Err(SliceConversionError::LargeLength)
+            } else if self.ptr.is_aligned() {
+                Err(SliceConversionError::MisalignedPointer)
+            } else {
+                Ok(unsafe { slice::from_raw_parts(self.ptr, self.len) })
+            }
+        } else if self.len != 0 {
+            Err(SliceConversionError::NullPointer)
         } else {
-            (self.len == 0).then_some(&[])
+            Ok(&[])
         }
     }
 

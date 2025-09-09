@@ -43,8 +43,7 @@ impl<'a> StringTable<'a> {
             Entry::Occupied(o) => {
                 let result = pprof::StringOffset::try_from(o.index());
                 // SAFETY: if it's already interned it cannot be too large.
-                let offset = unsafe { result.unwrap_unchecked() };
-                offset
+                unsafe { result.unwrap_unchecked() }
             }
             Entry::Vacant(v) => {
                 let next_size =
@@ -97,12 +96,7 @@ impl<'a> StringTableWriter<'a> {
         let len = self.map.len();
         let cow: Cow<'a, str> = str.into();
         let off = match self.map.entry(cow) {
-            hash_map::Entry::Occupied(o) => {
-                let result = pprof::StringOffset::try_from(*o.get());
-                // SAFETY: if it's already interned it cannot be too large.
-                let offset = unsafe { result.unwrap_unchecked() };
-                offset
-            }
+            hash_map::Entry::Occupied(o) => *o.get(),
             hash_map::Entry::Vacant(v) => {
                 let next_size =
                     u32::try_from(len.wrapping_add(1))

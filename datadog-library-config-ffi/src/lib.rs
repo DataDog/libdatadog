@@ -4,7 +4,7 @@
 pub mod tracer_metadata;
 
 use datadog_library_config::{self as lib_config, LibraryConfigSource};
-use ddcommon_ffi::{self as ffi, slice::AsBytes, CString, CharSlice, Error};
+use ddcommon_ffi::{self as ffi, slice::AsBytes, Error};
 
 #[cfg(all(feature = "catch_panic", panic = "unwind"))]
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -42,7 +42,7 @@ macro_rules! catch_panic {
 #[repr(C)]
 pub struct OkResult {
     pub value: ffi::Vec<LibraryConfig>,
-    pub logs: CString,
+    pub logs: ffi::CString,
 }
 
 #[repr(C)]
@@ -107,7 +107,7 @@ impl LibraryConfig {
                 match Self::rs_vec_to_ffi(configs) {
                     Ok(ffi_configs) => {
                         let messages = logs.join("\n");
-                        let cstring_logs = CString::new_or_empty(messages);
+                        let cstring_logs = ffi::CString::new_or_empty(messages);
                         LibraryConfigLoggedResult::Ok(OkResult {
                             value: ffi_configs,
                             logs: cstring_logs,
@@ -125,7 +125,7 @@ impl LibraryConfig {
 
 pub struct Configurator<'a> {
     inner: lib_config::Configurator,
-    language: CharSlice<'a>,
+    language: ffi::CharSlice<'a>,
     fleet_path: Option<ffi::CStr<'a>>,
     local_path: Option<ffi::CStr<'a>>,
     process_info: Option<lib_config::ProcessInfo>,
@@ -136,7 +136,7 @@ pub struct Configurator<'a> {
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_new(
     debug_logs: bool,
-    language: CharSlice,
+    language: ffi::CharSlice,
 ) -> Box<Configurator> {
     Box::new(Configurator {
         inner: lib_config::Configurator::new(debug_logs),

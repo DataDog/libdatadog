@@ -70,12 +70,12 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile<'a>(
         let builder = unsafe { handle.as_inner_mut()? };
         let prof_ref = unsafe { &*profile };
 
-        let upscaling_rules = upscaling_rules.try_as_slice().ok_or(
-            ProfileError::other(concat!(
+        let upscaling_rules = upscaling_rules.try_as_slice().map_err(|e| {
+            ProfileError::fmt(format_args!(
+                "{} failed: upscaling rules couldn't be converted to a Rust slice: {e}",
                 function_name!(),
-                " failed: upscaling rules couldn't be converted to a Rust slice"
-            )),
-        )?;
+            ))
+        })?;
 
         builder.try_add_profile(
             prof_ref,

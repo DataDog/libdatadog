@@ -507,7 +507,7 @@ impl<'a> PprofBuilder<'a> {
                 let mut sum: i64 = 0;
                 let mut count: i64 = 0;
                 for s in &profile.samples {
-                    if let Some(v) = s.values.get(0) {
+                    if let Some(v) = s.values.first() {
                         sum = sum.saturating_add(*v);
                     }
                     if let Some(v) = s.values.get(1) {
@@ -529,7 +529,7 @@ impl<'a> PprofBuilder<'a> {
                 // Aggregate only what's needed: sum at index 0
                 let mut sum: i64 = 0;
                 for s in &profile.samples {
-                    if let Some(v) = s.values.get(0) {
+                    if let Some(v) = s.values.first() {
                         sum = sum.saturating_add(*v);
                     }
                 }
@@ -575,7 +575,7 @@ impl<'a> PprofBuilder<'a> {
                         GroupByLabel { key, value }
                     };
                     let entry_sum = group_to_sum.entry(group).or_insert(0);
-                    if let Some(v) = s.values.get(0) {
+                    if let Some(v) = s.values.first() {
                         *entry_sum = entry_sum.saturating_add(*v);
                     }
                     if let Some(v) = s.values.get(1) {

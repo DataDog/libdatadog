@@ -54,23 +54,18 @@ impl<T> Clone for ProfileHandle<T> {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct EmptyHandleError;
 
-impl EmptyHandleError {
-    /// Returns the error message as a static reference to a CStr, which means
-    /// it is null terminated.
-    /// This is also guaranteed to valid UTF-8.
-    pub const fn message() -> &'static CStr {
-        c"null pointer: handle used with an interior null pointer"
-    }
-
-    pub const fn message_str() -> &'static str {
-        // str::from_utf8_unchecked isn't stable until 1.87, so duplicate it.
-        "null pointer: handle used with an interior null pointer"
+/// # Safety
+///
+/// Uses c-str literal to ensure valid UTF-8 and null termination.
+unsafe impl ddcommon::ffi::ThinError for EmptyHandleError {
+    fn as_ffi_str(&self) -> &'static CStr {
+        c"handle used with an interior null pointer"
     }
 }
 
 impl fmt::Display for EmptyHandleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Self::message_str().fmt(f)
+        ddcommon::ffi::error_as_rust_str(self).fmt(f)
     }
 }
 
@@ -108,8 +103,8 @@ impl fmt::Display for AllocHandleError {
 impl core::error::Error for AllocHandleError {}
 
 impl From<EmptyHandleError> for ProfileError {
-    fn from(_: EmptyHandleError) -> ProfileError {
-        ProfileError::other(EmptyHandleError::message_str())
+    fn from(err: EmptyHandleError) -> ProfileError {
+        ProfileError::other(ddcommon::ffi::error_as_rust_str(&err))
     }
 }
 

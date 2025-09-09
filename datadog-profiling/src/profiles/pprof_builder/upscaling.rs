@@ -25,6 +25,7 @@ pub enum UpscalingInfo {
 /// course we're actually using offsets to refer to those strings):
 ///  - `("exception type", "OutOfBoundsException")`
 ///  - `("exception type", "TimeoutException")`
+///
 /// For rules which don't use label groups, use the default group `(0, 0)`.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct GroupByLabel {

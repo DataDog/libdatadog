@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::slice::AsBytes;
+use crate::slice::{AsBytes, SliceConversionError};
 use crate::Slice;
 use core::{marker, mem, ptr, slice};
 use serde::ser::Error;
@@ -57,7 +57,7 @@ fn is_aligned<T>(ptr: ptr::NonNull<T>) -> bool {
 }
 
 impl<'a> AsBytes<'a> for MutSlice<'a, u8> {
-    fn try_as_bytes(&self) -> Option<&'a [u8]> {
+    fn try_as_bytes(&self) -> Result<&'a [u8], SliceConversionError> {
         Slice::from(*self).try_as_bytes()
     }
 }
