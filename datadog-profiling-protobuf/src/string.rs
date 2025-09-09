@@ -2,12 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{varint, Value, WireType};
-use std::ops::Sub;
-use std::{
-    fmt,
-    io::{self, Write},
-    ops::{Add, Mul},
-};
+use std::fmt;
+use std::io::{self, Write};
 
 unsafe impl Value for &str {
     const WIRE_TYPE: WireType = WireType::LengthDelimited;
@@ -193,50 +189,5 @@ impl StringOffset {
     pub fn checked_add(self, rhs: usize) -> Option<Self> {
         let rhs_u32 = u32::try_from(rhs).ok()?;
         Some(Self(self.0.checked_add(rhs_u32)?))
-    }
-}
-
-impl Add<u32> for StringOffset {
-    type Output = StringOffset;
-
-    #[inline]
-    fn add(self, rhs: u32) -> Self::Output {
-        StringOffset::new(self.0 + rhs)
-    }
-}
-
-impl Sub<u32> for StringOffset {
-    type Output = StringOffset;
-
-    #[inline]
-    fn sub(self, rhs: u32) -> Self::Output {
-        StringOffset::new(self.0 - rhs)
-    }
-}
-
-impl Add<StringOffset> for u32 {
-    type Output = StringOffset;
-
-    #[inline]
-    fn add(self, rhs: StringOffset) -> Self::Output {
-        StringOffset::new(self + rhs.0)
-    }
-}
-
-impl Add<StringOffset> for StringOffset {
-    type Output = StringOffset;
-
-    #[inline]
-    fn add(self, rhs: StringOffset) -> Self::Output {
-        StringOffset::new(self.0 + rhs.0)
-    }
-}
-
-impl Mul<bool> for StringOffset {
-    type Output = StringOffset;
-
-    #[inline]
-    fn mul(self, rhs: bool) -> Self::Output {
-        StringOffset::new(self.0 * (rhs as u32))
     }
 }

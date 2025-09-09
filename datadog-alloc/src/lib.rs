@@ -19,4 +19,3 @@ pub use virtual_alloc::*;
 
 // Expose allocator_api2 for our users.
 pub use allocator_api2::alloc::*;
-
