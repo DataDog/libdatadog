@@ -18,18 +18,6 @@ async fn send_heartbeat(
     crash_uuid: &str,
     metadata: &crate::crash_info::Metadata,
 ) -> anyhow::Result<()> {
-    use std::fmt::Write;
-
-    // Create a simple heartbeat message
-    let mut heartbeat_message = String::new();
-    write!(
-        &mut heartbeat_message,
-        "{{\"type\":\"heartbeat\",\"uuid\":\"{}\",\"timestamp\":\"{}\"}}",
-        crash_uuid,
-        chrono::Utc::now().to_rfc3339()
-    )?;
-
-    // Create a minimal crash info for heartbeat that contains just the essential information
     let heartbeat_crash_info = crate::crash_info::CrashInfo {
         counters: std::collections::HashMap::new(),
         data_schema_version: crate::crash_info::CrashInfo::current_schema_version(),
@@ -56,14 +44,13 @@ async fn send_heartbeat(
         uuid: crash_uuid.to_string(),
     };
 
-    // Handle file endpoints separately to avoid JSON parsing conflicts in tests
+    // Handle file writes and telemetry uploads separately
     if let Some(endpoint) = config.endpoint() {
         if Some("file") == endpoint.url.scheme_str() {
-            // For file endpoints, write heartbeat to a separate file with .heartbeat suffix
             let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
                 .context("heartbeat file path was not correctly formatted")?;
             let heartbeat_path: String = format!("{}.heartbeat", path.display());
-            heartbeat_crash_info.to_file(&std::path::Path::new(&heartbeat_path))?;
+            heartbeat_crash_info.to_file(std::path::Path::new(&heartbeat_path))?;
         } else {
             let uploader = TelemetryCrashUploader::new(metadata, config.endpoint())?;
             uploader.upload_to_telemetry(&heartbeat_crash_info).await?;
