@@ -446,7 +446,7 @@ mod tests {
         });
 
         let crash_report = join_handle1.await??;
-        let (_config, crashinfo) = crash_report.expect("Expect a report");
+        let (_config, _crashinfo) = crash_report.expect("Expect a report");
         join_handle2.await??;
 
         // Read heartbeat file content
