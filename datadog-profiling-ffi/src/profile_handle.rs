@@ -11,6 +11,7 @@
 use allocator_api2::alloc::AllocError;
 use allocator_api2::boxed::Box;
 use datadog_profiling::profiles::ProfileError;
+use ddcommon::error::FfiSafeErrorMessage;
 use std::ffi::CStr;
 use std::fmt;
 use std::ptr::NonNull;
@@ -57,7 +58,7 @@ pub struct EmptyHandleError;
 /// # Safety
 ///
 /// Uses c-str literal to ensure valid UTF-8 and null termination.
-unsafe impl ddcommon::ffi::ThinError for EmptyHandleError {
+unsafe impl ddcommon::error::FfiSafeErrorMessage for EmptyHandleError {
     fn as_ffi_str(&self) -> &'static CStr {
         c"handle used with an interior null pointer"
     }
@@ -65,7 +66,7 @@ unsafe impl ddcommon::ffi::ThinError for EmptyHandleError {
 
 impl fmt::Display for EmptyHandleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        ddcommon::ffi::error_as_rust_str(self).fmt(f)
+        self.as_rust_str().fmt(f)
     }
 }
 
@@ -104,7 +105,7 @@ impl core::error::Error for AllocHandleError {}
 
 impl From<EmptyHandleError> for ProfileError {
     fn from(err: EmptyHandleError) -> ProfileError {
-        ProfileError::other(ddcommon::ffi::error_as_rust_str(&err))
+        ProfileError::other(err.as_rust_str())
     }
 }
 

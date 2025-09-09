@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use core::slice;
+use ddcommon::error::FfiSafeErrorMessage;
 use serde::ser::Error;
 use serde::Serializer;
 use std::borrow::Cow;
@@ -10,6 +11,14 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::os::raw::c_char;
 use std::str::Utf8Error;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub enum SliceConversionError {
+    LargeLength,
+    NullPointer,
+    MisalignedPointer,
+}
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -24,6 +33,25 @@ pub struct Slice<'a, T: 'a> {
     len: usize,
     _marker: PhantomData<&'a [T]>,
 }
+
+/// # Safety
+/// All strings are valid UTF-8 (enforced by using c-str literals in Rust).
+unsafe impl FfiSafeErrorMessage for SliceConversionError {
+    fn as_ffi_str(&self) -> &'static std::ffi::CStr {
+        match self {
+            SliceConversionError::LargeLength => c"length was too large",
+            SliceConversionError::NullPointer => c"null pointer with non-zero length",
+            SliceConversionError::MisalignedPointer => c"pointer was not aligned for the type",
+        }
+    }
+}
+impl Display for SliceConversionError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self.as_rust_str(), f)
+    }
+}
+
+impl core::error::Error for SliceConversionError {}
 
 impl<'a, T: 'a> core::ops::Deref for Slice<'a, T> {
     type Target = [T];
@@ -55,51 +83,25 @@ pub type ByteSlice<'a> = Slice<'a, u8>;
 
 /// This exists as an intrinsic, but it is private.
 pub fn is_aligned_and_not_null<T>(ptr: *const T) -> bool {
-    !ptr.is_null() && is_aligned(ptr)
+    !ptr.is_null() && ptr.is_aligned()
 }
-
-#[inline]
-fn is_aligned<T>(ptr: *const T) -> bool {
-    debug_assert!(!ptr.is_null());
-    ptr as usize % std::mem::align_of::<T>() == 0
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub enum SliceConversionError {
-    LargeLength,
-    NullPointer,
-    MisalignedPointer,
-}
-
-/// # Safety
-/// All strings are valid UTF-8 (enforced by using c-str literals in Rust)
-unsafe impl ddcommon::ffi::ThinError for SliceConversionError {
-    fn as_ffi_str(&self) -> &'static std::ffi::CStr {
-        match self {
-            SliceConversionError::LargeLength => c"length was too large",
-            SliceConversionError::NullPointer => c"null pointer with non-zero length",
-            SliceConversionError::MisalignedPointer => c"pointer was not aligned for the type",
-        }
-    }
-}
-
-impl Display for SliceConversionError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        Display::fmt(ddcommon::ffi::error_as_rust_str(self), f)
-    }
-}
-
-impl core::error::Error for SliceConversionError {}
 
 pub trait AsBytes<'a> {
-    fn as_bytes(&self) -> &'a [u8] {
-        {
-            #[allow(clippy::expect_used)]
-            self.try_as_bytes().expect("failed to interpret as bytes")
-        }
-    }
+    fn as_bytes(&self) -> &'a [u8];
 
+    /// Tries to interpret the structure as a slice of bytes.
+    ///
+    /// # Errors
+    ///
+    ///  - Returns [`SliceConversionError::NullPointer`] if the slice has a null pointer and a
+    ///    length other than zero. If pointer is null and length is zero, then return `Ok(&[])`
+    ///    instead.
+    ///  - Returns [`SliceConversionError::MisalignedPointer`] if the pointer is non-null and is not
+    ///    aligned correctly for the type (not generally possible with types which are inherently
+    ///    byte oriented, but is if the slice is of some other type which is being safely
+    ///    reinterpreted as bytes).
+    ///  - Returns [`SliceConversionError::LargeLength`] if the length of the slice exceeds
+    ///    [`isize::MAX`].
     fn try_as_bytes(&self) -> Result<&'a [u8], SliceConversionError>;
 
     #[inline]
@@ -130,20 +132,30 @@ pub trait AsBytes<'a> {
 }
 
 impl<'a> AsBytes<'a> for Slice<'a, u8> {
+    fn as_bytes(&self) -> &'a [u8] {
+        self.as_slice()
+    }
+
     fn try_as_bytes(&self) -> Result<&'a [u8], SliceConversionError> {
         self.try_as_slice()
     }
 }
 
 impl<'a> AsBytes<'a> for Slice<'a, i8> {
+    fn as_bytes(&self) -> &'a [u8] {
+        #[allow(clippy::expect_used)]
+        self.try_as_bytes()
+            .expect("AsBytes::as_bytes failed to convert to a Rust slice")
+    }
+
     fn try_as_bytes(&self) -> Result<&'a [u8], SliceConversionError> {
-        self.try_as_slice().map(|i8_slice| {
+        self.try_as_slice().map(|slice| {
             // SAFETY: we've gone through a successful try_as_slice, so the
             // enforceable characteristics such as fitting in isize::MAX are
             // all good. The rest is safe only if the consumer respects the
             // inherent safety requirements--doesn't give invalid length,
             // pointer to invalid memory, etc.
-            unsafe { slice::from_raw_parts(i8_slice.as_ptr().cast(), self.len) }
+            unsafe { slice::from_raw_parts(slice.as_ptr().cast(), self.len) }
         })
     }
 }
@@ -160,7 +172,7 @@ impl<'a> AsBytes<'a> for &'a [c_char] {
     }
 }
 
-impl<'a, T> Slice<'a, T> {
+impl<'a, T: 'a> Slice<'a, T> {
     /// Creates a valid empty slice (len=0, ptr is non-null).
     #[must_use]
     pub const fn empty() -> Self {
@@ -198,10 +210,10 @@ impl<'a, T> Slice<'a, T> {
         }
     }
 
-    #[inline]
     pub fn as_slice(&self) -> &'a [T] {
         #[allow(clippy::expect_used)]
-        self.try_as_slice().expect("ffi Slice wasn't a valid slice")
+        self.try_as_slice()
+            .expect("ffi Slice failed to convert to a Rust slice")
     }
 
     /// Tries to convert the FFI slice into a standard slice.
@@ -212,15 +224,16 @@ impl<'a, T> Slice<'a, T> {
     /// 2. Fails if `self.ptr` is not null and is unaligned.
     /// 3. Fails if `self.len` is larger than [`isize::MAX`].
     pub fn try_as_slice(&self) -> Result<&'a [T], SliceConversionError> {
-        if !self.ptr.is_null() {
-            if self.len() > isize::MAX as usize {
+        let (ptr, len) = self.as_raw_parts();
+        if !ptr.is_null() {
+            if len > isize::MAX as usize {
                 Err(SliceConversionError::LargeLength)
-            } else if self.ptr.is_aligned() {
+            } else if !ptr.is_aligned() {
                 Err(SliceConversionError::MisalignedPointer)
             } else {
-                Ok(unsafe { slice::from_raw_parts(self.ptr, self.len) })
+                Ok(unsafe { slice::from_raw_parts(ptr, len) })
             }
-        } else if self.len != 0 {
+        } else if len != 0 {
             Err(SliceConversionError::NullPointer)
         } else {
             Ok(&[])

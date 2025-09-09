@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::slice::{AsBytes, SliceConversionError};
-use crate::Slice;
-use core::{marker, mem, ptr, slice};
+use core::slice;
 use serde::ser::Error;
 use serde::Serializer;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 use std::os::raw::c_char;
+use std::ptr::NonNull;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -16,25 +17,12 @@ pub struct MutSlice<'a, T: 'a> {
     /// Should be non-null and suitably aligned for the underlying type. It is
     /// allowed but not recommended for the pointer to be null when the len is
     /// zero.
-    ptr: Option<ptr::NonNull<T>>,
+    ptr: Option<NonNull<T>>,
 
     /// The number of elements (not bytes) that `.ptr` points to. Must be less
     /// than or equal to [isize::MAX].
     len: usize,
-    _marker: marker::PhantomData<&'a mut [T]>,
-}
-
-impl<'a, T: 'a> From<MutSlice<'a, T>> for Slice<'a, T> {
-    fn from(value: MutSlice<'a, T>) -> Slice<'a, T> {
-        let ptr = value.ptr.unwrap_or(ptr::NonNull::dangling()).as_ptr();
-        unsafe { Slice::from_raw_parts(ptr, value.len) }
-    }
-}
-
-impl<T: Debug> Debug for MutSlice<'_, T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.as_slice().fmt(f)
-    }
+    _marker: PhantomData<&'a mut [T]>,
 }
 
 impl<'a, T: 'a> core::ops::Deref for MutSlice<'a, T> {
@@ -45,20 +33,25 @@ impl<'a, T: 'a> core::ops::Deref for MutSlice<'a, T> {
     }
 }
 
+impl<T: Debug> Debug for MutSlice<'_, T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.as_slice().fmt(f)
+    }
+}
+
 /// Use to represent strings -- should be valid UTF-8.
 pub type CharMutSlice<'a> = MutSlice<'a, c_char>;
 
 /// Use to represent bytes -- does not need to be valid UTF-8.
 pub type ByteMutSlice<'a> = MutSlice<'a, u8>;
 
-#[inline]
-fn is_aligned<T>(ptr: ptr::NonNull<T>) -> bool {
-    ptr.as_ptr() as usize % mem::align_of::<T>() == 0
-}
-
 impl<'a> AsBytes<'a> for MutSlice<'a, u8> {
+    fn as_bytes(&self) -> &'a [u8] {
+        self.as_slice()
+    }
+
     fn try_as_bytes(&self) -> Result<&'a [u8], SliceConversionError> {
-        Slice::from(*self).try_as_bytes()
+        self.try_as_slice()
     }
 }
 
@@ -68,38 +61,38 @@ impl<'a, T: 'a> MutSlice<'a, T> {
     #[must_use]
     pub fn empty() -> Self {
         Self {
-            ptr: Some(ptr::NonNull::dangling()),
+            ptr: Some(NonNull::dangling()),
             len: 0,
-            _marker: marker::PhantomData,
+            _marker: PhantomData,
         }
     }
 
     /// # Safety
-    /// Uphold the same safety requirements as [str::from_raw_parts].
+    /// Uphold the same safety requirements as [std::str::from_raw_parts].
     /// However, it is allowed but not recommended to provide a null pointer
     /// when the len is 0.
     // TODO, this can be const once MSRV >= 1.85
     pub unsafe fn from_raw_parts(ptr: *mut T, len: usize) -> Self {
         Self {
-            ptr: ptr::NonNull::new(ptr),
+            ptr: NonNull::new(ptr),
             len,
-            _marker: marker::PhantomData,
+            _marker: PhantomData,
         }
     }
 
     // TODO, this can be const once MSRV >= 1.85
     pub fn new(slice: &mut [T]) -> Self {
         Self {
-            ptr: ptr::NonNull::new(slice.as_mut_ptr()),
+            ptr: NonNull::new(slice.as_mut_ptr()),
             len: slice.len(),
-            _marker: marker::PhantomData,
+            _marker: PhantomData,
         }
     }
 
     pub fn as_mut_slice(&mut self) -> &'a mut [T] {
         if let Some(ptr) = self.ptr {
             // Crashing immediately is likely better than ignoring these.
-            assert!(is_aligned(ptr));
+            assert!(ptr.is_aligned());
             assert!(self.len <= isize::MAX as usize);
             unsafe { slice::from_raw_parts_mut(ptr.as_ptr(), self.len) }
         } else {
@@ -110,37 +103,36 @@ impl<'a, T: 'a> MutSlice<'a, T> {
     }
 
     pub fn as_slice(&self) -> &'a [T] {
-        if let Some(ptr) = self.ptr {
-            // Crashing immediately is likely better than ignoring these.
-            assert!(is_aligned(ptr));
-            assert!(self.len <= isize::MAX as usize);
-            unsafe { slice::from_raw_parts(ptr.as_ptr(), self.len) }
-        } else {
-            // Crashing immediately is likely better than ignoring this.
-            assert_eq!(self.len, 0);
-            &[]
-        }
+        #[allow(clippy::expect_used)]
+        self.try_as_slice()
+            .expect("ffi MutSlice failed to convert to a Rust slice")
     }
 
-    /// Tries to convert the FFI slice into a standard slice.
+    /// Tries to convert the FFI slice as a Rust slice of bytes.
     ///
     /// # Errors
     ///
-    ///  1. Fails if `self.ptr` is null and `self.len` is not zero.
-    ///  2. Fails if `self.ptr` is not null and is unaligned.
-    ///  3. Fails if `self.len` is larger than [`isize::MAX`].
-    ///
-    /// # Safety
-    ///
-    /// Although it checks for some errors, there are some that cannot be
-    /// checked but must be upheld:
-    ///  1. If `self.len` is more than 0, then `self.ptr` must be valid for `self.len` writes, which
-    ///     will not drop any existing values. It does not need to be valid for reads, which allows
-    ///     for uninitialized slices.
-    pub unsafe fn try_as_uninit(&self) -> Option<&'a mut [mem::MaybeUninit<T>]> {
-        let ptr = self.ptr?;
-        (ptr.is_aligned() && self.len <= isize::MAX as usize)
-            .then(|| unsafe { slice::from_raw_parts_mut(ptr.as_ptr().cast(), self.len) })
+    ///  - Returns [`SliceConversionError::NullPointer`] if the slice has a null pointer and a
+    ///    length other than zero. If pointer is null and length is zero, then return `Ok(&[])`
+    ///    instead.
+    ///  - Returns [`SliceConversionError::MisalignedPointer`] if the pointer is non-null and is not
+    ///    aligned correctly for the type.
+    ///  - Returns [`SliceConversionError::LargeLength`] if the length of the slice exceeds
+    ///    [`isize::MAX`].
+    pub fn try_as_slice(&self) -> Result<&'a [T], SliceConversionError> {
+        if let Some(ptr) = self.ptr {
+            if self.len > isize::MAX as usize {
+                Err(SliceConversionError::LargeLength)
+            } else if !ptr.is_aligned() {
+                Err(SliceConversionError::MisalignedPointer)
+            } else {
+                Ok(unsafe { slice::from_raw_parts(ptr.as_ptr(), self.len) })
+            }
+        } else if self.len != 0 {
+            Err(SliceConversionError::NullPointer)
+        } else {
+            Ok(&[])
+        }
     }
 
     pub fn into_slice(self) -> &'a [T] {
@@ -210,6 +202,7 @@ impl<'a> From<&'a mut str> for MutSlice<'a, c_char> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ptr;
 
     #[derive(Debug, Eq, PartialEq)]
     struct Foo(i64);
@@ -243,7 +236,7 @@ mod tests {
         let mut null_len0: MutSlice<u8> = MutSlice {
             ptr: None,
             len: 0,
-            _marker: marker::PhantomData,
+            _marker: PhantomData,
         };
         assert_eq!(null_len0.as_mut_slice(), &[]);
     }
@@ -254,7 +247,7 @@ mod tests {
         let mut null_len0: MutSlice<u8> = MutSlice {
             ptr: None,
             len: 1,
-            _marker: marker::PhantomData,
+            _marker: PhantomData,
         };
         _ = null_len0.as_mut_slice();
     }
@@ -265,7 +258,7 @@ mod tests {
         let mut dangerous: MutSlice<u8> = MutSlice {
             ptr: Some(ptr::NonNull::dangling()),
             len: isize::MAX as usize + 1,
-            _marker: marker::PhantomData,
+            _marker: PhantomData,
         };
         _ = dangerous.as_mut_slice();
     }
