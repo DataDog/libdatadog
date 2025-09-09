@@ -34,23 +34,27 @@ int main(int argc, char **argv) {
 
   // ValueType: wall-time / nanoseconds
   ddog_prof_StringId vt_type = {0}, vt_unit = {0};
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt_type, dict, DDOG_CHARSLICE_C("wall-time"),
+  const ddog_CharSlice wall_time = DDOG_CHARSLICE_C_BARE("wall-time");
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt_type, dict, wall_time,
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(type)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt_unit, dict, DDOG_CHARSLICE_C("nanoseconds"),
+  const ddog_CharSlice nanoseconds = DDOG_CHARSLICE_C_BARE("nanoseconds");
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt_unit, dict, nanoseconds,
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(unit)");
   ddog_prof_ValueType vt = {.type_id = vt_type, .unit_id = vt_unit};
 
   // Insert a function and mapping in the dictionary
   ddog_prof_StringId fn_name = {0}, fn_sys = {0}, fn_file = {0};
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_name, dict, DDOG_CHARSLICE_C("root"),
+  const ddog_CharSlice root_str = DDOG_CHARSLICE_C_BARE("root");
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_name, dict, root_str,
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(fn name)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_sys, dict, DDOG_CHARSLICE_C("root"),
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_sys, dict, root_str,
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(fn system)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_file, dict, DDOG_CHARSLICE_C("root.cpp"),
+  const ddog_CharSlice root_cpp = DDOG_CHARSLICE_C_BARE("root.cpp");
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_file, dict, root_cpp,
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(fn file)");
   ddog_prof_Function func = {.name = fn_name, .system_name = fn_sys, .file_name = fn_file};
@@ -58,10 +62,12 @@ int main(int argc, char **argv) {
   check_ok(ddog_prof_ProfilesDictionary_insert_function(&func_id, dict, &func), "insert_function");
 
   ddog_prof_StringId map_file = {0}, map_build = {0};
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(
-               &map_file, dict, DDOG_CHARSLICE_C("/bin/example"), DDOG_PROF_UTF8_OPTION_VALIDATE),
+  const ddog_CharSlice bin_example = DDOG_CHARSLICE_C_BARE("/bin/example");
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&map_file, dict, bin_example,
+                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(map filename)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&map_build, dict, DDOG_CHARSLICE_C("deadbeef"),
+  const ddog_CharSlice deadbeef = DDOG_CHARSLICE_C_BARE("deadbeef");
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&map_build, dict, deadbeef,
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(map build)");
   ddog_prof_Mapping mapping = {.memory_start = 0,
@@ -119,8 +125,9 @@ int main(int argc, char **argv) {
 
   // Build and send exporter request
   ddog_Vec_Tag tags = ddog_Vec_Tag_new();
+  const ddog_CharSlice service_key = DDOG_CHARSLICE_C_BARE("service");
   ddog_Vec_Tag_PushResult push_result =
-      ddog_Vec_Tag_push(&tags, DDOG_CHARSLICE_C("service"), to_slice_c_char(argv[1]));
+      ddog_Vec_Tag_push(&tags, service_key, to_slice_c_char(argv[1]));
   if (push_result.tag != DDOG_VEC_TAG_PUSH_RESULT_OK) {
     ddog_CharSlice message = ddog_Error_message(&push_result.err);
     fprintf(stderr, "Failed to push tag: %.*s\n", (int)message.len, message.ptr);
@@ -129,10 +136,11 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  ddog_prof_Endpoint endpoint = ddog_prof_Endpoint_agent(DDOG_CHARSLICE_C("http://localhost:8126"));
+  const ddog_CharSlice localhost_url = DDOG_CHARSLICE_C_BARE("http://localhost:8126");
+  ddog_prof_Endpoint endpoint = ddog_prof_Endpoint_agent(localhost_url);
   auto exporter_result =
-      ddog_prof_Exporter_new(DDOG_CHARSLICE_C("dd-trace-cpp"), DDOG_CHARSLICE_C("1.0.0"),
-                             DDOG_CHARSLICE_C("cpp"), &tags, endpoint);
+      ddog_prof_Exporter_new(DDOG_CHARSLICE_C_BARE("dd-trace-cpp"), DDOG_CHARSLICE_C_BARE("1.0.0"),
+                             DDOG_CHARSLICE_C_BARE("cpp"), &tags, endpoint);
   if (exporter_result.tag != DDOG_PROF_PROFILE_EXPORTER_RESULT_OK_HANDLE_PROFILE_EXPORTER) {
     ddog_CharSlice message = ddog_Error_message(&exporter_result.err);
     fprintf(stderr, "Failed to create exporter: %.*s\n", (int)message.len, message.ptr);
