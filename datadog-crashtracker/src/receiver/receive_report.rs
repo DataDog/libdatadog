@@ -2,13 +2,75 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, Span},
+    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, Span, TelemetryCrashUploader},
     shared::constants::*,
     CrashtrackerConfiguration,
 };
 use anyhow::Context;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
+use uuid::Uuid;
+
+/// Sends a heartbeat telemetry event to indicate that crash processing has started.
+/// This helps track cases where the crashtracker starts but fails to complete.
+async fn send_heartbeat(
+    config: &CrashtrackerConfiguration,
+    crash_uuid: &str,
+    metadata: &crate::crash_info::Metadata,
+) -> anyhow::Result<()> {
+    use std::fmt::Write;
+
+    // Create a simple heartbeat message
+    let mut heartbeat_message = String::new();
+    write!(
+        &mut heartbeat_message,
+        "{{\"type\":\"heartbeat\",\"uuid\":\"{}\",\"timestamp\":\"{}\"}}",
+        crash_uuid,
+        chrono::Utc::now().to_rfc3339()
+    )?;
+
+    // Create a minimal crash info for heartbeat that contains just the essential information
+    let heartbeat_crash_info = crate::crash_info::CrashInfo {
+        counters: std::collections::HashMap::new(),
+        data_schema_version: crate::crash_info::CrashInfo::current_schema_version(),
+        error: crate::crash_info::ErrorData {
+            is_crash: false, // This is a heartbeat, not the actual crash
+            kind: crate::crash_info::ErrorKind::UnixSignal,
+            message: Some("Crashtracker heartbeat".to_string()),
+            source_type: crate::crash_info::SourceType::Crashtracking,
+            stack: crate::crash_info::StackTrace::missing(),
+            threads: vec![],
+        },
+        experimental: None,
+        files: std::collections::HashMap::new(),
+        fingerprint: None,
+        incomplete: false,
+        log_messages: vec!["Heartbeat: crash processing started".to_string()],
+        metadata: metadata.clone(),
+        os_info: os_info::Info::unknown().into(),
+        proc_info: None,
+        sig_info: None,
+        span_ids: vec![],
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        trace_ids: vec![],
+        uuid: crash_uuid.to_string(),
+    };
+
+    // Handle file endpoints separately to avoid JSON parsing conflicts in tests
+    if let Some(endpoint) = config.endpoint() {
+        if Some("file") == endpoint.url.scheme_str() {
+            // For file endpoints, write heartbeat to a separate file with .heartbeat suffix
+            let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
+                .context("heartbeat file path was not correctly formatted")?;
+            let heartbeat_path: String = format!("{}.heartbeat", path.display());
+            heartbeat_crash_info.to_file(&std::path::Path::new(&heartbeat_path))?;
+        } else {
+            let uploader = TelemetryCrashUploader::new(metadata, config.endpoint())?;
+            uploader.upload_to_telemetry(&heartbeat_crash_info).await?;
+        }
+    }
+    Ok(())
+}
 
 /// The crashtracker collector sends data in blocks.
 /// This enum tracks which block we're currently in, and, for multi-line blocks,
@@ -212,6 +274,10 @@ pub(crate) async fn receive_report_from_stream(
     let mut stdin_state = StdinState::Waiting;
     let mut config = None;
 
+    // Generate UUID early so we can use it for both heartbeat and crash report
+    let crash_uuid = Uuid::new_v4().to_string();
+    let mut heartbeat_sent = false;
+
     let mut lines = stream.lines();
     let mut deadline = None;
     // Start the timeout counter when the deadline when the first crash message is recieved
@@ -246,6 +312,18 @@ pub(crate) async fn receive_report_from_stream(
                 break;
             }
         }
+
+        // Try to send heartbeat as soon as we have both config and metadata
+        if !heartbeat_sent {
+            if let (Some(config), Some(metadata)) = (config.as_ref(), builder.metadata.as_ref()) {
+                heartbeat_sent = true;
+                if let Err(e) = send_heartbeat(config, &crash_uuid, metadata).await {
+                    builder
+                        .with_log_message(format!("Failed to send crash heartbeat: {e}"), false)?;
+                }
+            }
+        }
+
         if let Some(deadline) = deadline {
             // The clock was already ticking, update the remaining time
             remaining_timeout = deadline - Instant::now()
@@ -262,6 +340,9 @@ pub(crate) async fn receive_report_from_stream(
 
     // For now, we only support Signal based crash detection in the receiver.
     builder.with_kind(ErrorKind::UnixSignal)?;
+
+    // Set the pre-generated UUID so both heartbeat and crash report use the same ID
+    builder.with_uuid(crash_uuid)?;
 
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
     let config = config.context("Missing crashtracker configuration")?;
