@@ -262,4 +262,104 @@ mod tests {
         };
         _ = dangerous.as_mut_slice();
     }
+
+    #[test]
+    fn test_try_as_slice_success() {
+        let mut data = vec![1u8, 2, 3, 4, 5];
+        let slice = MutSlice::from(data.as_mut_slice());
+
+        let result = slice.try_as_slice();
+        assert_eq!(result.unwrap(), &[1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_try_as_slice_null_zero_len() {
+        let null_zero_len: MutSlice<u8> = MutSlice {
+            ptr: None,
+            len: 0,
+            _marker: PhantomData,
+        };
+
+        let result = null_zero_len.try_as_slice();
+        assert_eq!(result.unwrap(), &[]);
+    }
+
+    #[test]
+    fn test_try_as_slice_null_nonzero_len() {
+        let null_nonzero: MutSlice<u8> = MutSlice {
+            ptr: None,
+            len: 5,
+            _marker: PhantomData,
+        };
+
+        let result = null_nonzero.try_as_slice();
+        assert!(matches!(
+            result.unwrap_err(),
+            SliceConversionError::NullPointer
+        ));
+    }
+
+    #[test]
+    fn test_try_as_slice_large_length() {
+        let large_len: MutSlice<u8> = MutSlice {
+            ptr: Some(ptr::NonNull::dangling()),
+            len: isize::MAX as usize + 1,
+            _marker: PhantomData,
+        };
+
+        let result = large_len.try_as_slice();
+        assert!(matches!(
+            result.unwrap_err(),
+            SliceConversionError::LargeLength
+        ));
+    }
+
+    #[test]
+    fn test_try_as_slice_misaligned_pointer() {
+        // Create a misaligned pointer for u64 by using a properly aligned
+        // array, then offset by 1 byte.
+        let mut data = [0u64; 2];
+        let base_ptr = data.as_mut_ptr().cast::<u8>();
+        let misaligned_ptr = unsafe { base_ptr.add(1).cast::<u64>() };
+
+        // Verify the pointer is actually misaligned
+        assert!(!misaligned_ptr.is_aligned());
+
+        let misaligned: MutSlice<u64> = MutSlice {
+            // SAFETY: the pointer is non-null, points into the `data` var.
+            ptr: Some(unsafe { NonNull::new_unchecked(misaligned_ptr) }),
+            len: 1,
+            _marker: PhantomData,
+        };
+
+        let result = misaligned.try_as_slice();
+        assert!(matches!(
+            result.unwrap_err(),
+            SliceConversionError::MisalignedPointer
+        ));
+    }
+
+    #[test]
+    fn test_try_as_bytes_success() {
+        let mut data = vec![65u8, 66, 67]; // "ABC"
+        let slice = MutSlice::from(data.as_mut_slice());
+
+        let result = slice.try_as_bytes();
+        assert_eq!(result.unwrap(), b"ABC");
+    }
+
+    #[test]
+    fn test_try_as_bytes_error_propagation() {
+        let null_nonzero: MutSlice<u8> = MutSlice {
+            ptr: None,
+            len: 3,
+            _marker: PhantomData,
+        };
+
+        let result = null_nonzero.try_as_bytes();
+        assert!(matches!(
+            result.unwrap_err(),
+            SliceConversionError::NullPointer
+        ));
+    }
 }
