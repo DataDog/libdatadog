@@ -29,6 +29,7 @@ use ddcommon::vec::VecExt;
 use hashbrown::HashSet;
 use std::collections::{hash_map, HashMap};
 use std::io::Write;
+use std::ptr::NonNull;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Compacts ids into "offsets" that begin at 1 since id=0 is reserved in
@@ -714,14 +715,14 @@ impl<'a> PprofBuilder<'a> {
     ) -> Result<u64, ProfileError> {
         loc_ids.ensure_with(sid, |id| {
             let loc = unsafe { scratch.locations().get(sid) };
-            let mapping_id = match loc.mapping_id {
+            let mapping_id = match NonNull::new(loc.mapping_id) {
                 Some(mid) => {
                     let set_id = unsafe { SetId::from_raw(mid.cast()) };
                     Self::ensure_mapping(w, set_id, dict, strings, map_ids)?
                 }
                 None => 0,
             };
-            let line = if let Some(fid) = loc.line.function_id {
+            let line = if let Some(fid) = NonNull::new(loc.line.function_id) {
                 let function_id = unsafe { SetId::from_raw(fid) };
                 let fid64 = Self::ensure_function(w, function_id, dict, strings, func_ids)?;
                 pprof::Line {

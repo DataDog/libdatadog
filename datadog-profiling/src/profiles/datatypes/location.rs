@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::profiles::collections::ParallelSet;
-use crate::profiles::datatypes::{FunctionId, MappingId};
+use crate::profiles::datatypes::{OptionalFunctionId, OptionalMappingId};
 use std::ffi::c_void;
 
 /// A representation of a location that is an intersection of the Otel and
@@ -13,7 +13,7 @@ use std::ffi::c_void;
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub struct Location {
     pub address: u64,
-    pub mapping_id: Option<MappingId>,
+    pub mapping_id: OptionalMappingId,
     pub line: Line,
 }
 
@@ -27,7 +27,7 @@ pub type LocationId = std::ptr::NonNull<c_void>;
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub struct Line {
     pub line_number: i64,
-    pub function_id: Option<FunctionId>,
+    pub function_id: OptionalFunctionId,
 }
 
 pub type LocationSet = ParallelSet<Location, 4>;

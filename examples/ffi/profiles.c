@@ -37,46 +37,29 @@ int main(void) {
   ddog_prof_ValueType vt = {.type_id = vt_type, .unit_id = vt_unit};
 
   // Insert function/mapping strings and create ids
-  ddog_prof_StringId fn_name = {0}, fn_sys = {0}, fn_file = {0};
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_name, dict, DDOG_CHARSLICE_C("{main}"),
+  ddog_prof_Function func = {.system_name = DDOG_PROF_STRINGID_EMPTY};
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&func.name, dict, DDOG_CHARSLICE_C("{main}"),
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(fn name)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_sys, dict, DDOG_CHARSLICE_C("{main}"),
-                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
-           "insert_str(fn system)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_file, dict,
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&func.file_name, dict,
                                                    DDOG_CHARSLICE_C("/srv/example/index.php"),
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(fn file)");
 
-  ddog_prof_Function func = {.name = fn_name, .system_name = fn_sys, .file_name = fn_file};
   ddog_prof_FunctionId func_id = NULL;
   check_ok(ddog_prof_ProfilesDictionary_insert_function(&func_id, dict, &func), "insert_function");
 
-  ddog_prof_StringId map_file = {0}, map_build = {0};
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(
-               &map_file, dict, DDOG_CHARSLICE_C("/bin/example"), DDOG_PROF_UTF8_OPTION_VALIDATE),
-           "insert_str(map filename)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&map_build, dict, DDOG_CHARSLICE_C("deadbeef"),
+  ddog_prof_Mapping mapping = {.build_id = DDOG_PROF_STRINGID_EMPTY};
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&mapping.filename, dict,
+                                                   DDOG_CHARSLICE_C("/bin/example"),
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
-           "insert_str(map build)");
-  ddog_prof_Mapping mapping = {
-      .memory_start = 0,
-      .memory_limit = 0,
-      .file_offset = 0,
-      .filename = map_file,
-      .build_id = map_build,
-  };
+           "insert_str(map filename)");
   ddog_prof_MappingId map_id = NULL;
   check_ok(ddog_prof_ProfilesDictionary_insert_mapping(&map_id, dict, &mapping), "insert_mapping");
 
   // Create a location in the scratchpad
-  ddog_prof_Option_FunctionId opt_fn = {.tag = DDOG_PROF_OPTION_FUNCTION_ID_SOME_FUNCTION_ID,
-                                        .some = func_id};
-  ddog_prof_Option_MappingId opt_map = {.tag = DDOG_PROF_OPTION_MAPPING_ID_SOME_MAPPING_ID,
-                                        .some = map_id};
-  ddog_prof_Line line = {.line_number = 0, .function_id = opt_fn};
-  ddog_prof_Location loc = {.address = 0, .mapping_id = opt_map, .line = line};
+  ddog_prof_Line line = {.line_number = 0, .function_id = func_id};
+  ddog_prof_Location loc = {.address = 0, .mapping_id = map_id, .line = line};
   ddog_prof_LocationId loc_id = NULL;
   check_ok(ddog_prof_ScratchPad_insert_location(&loc_id, scratch, &loc),
            "ScratchPad_insert_location");

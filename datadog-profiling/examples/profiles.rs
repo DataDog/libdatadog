@@ -7,6 +7,7 @@ use datadog_profiling::profiles::datatypes::{
 };
 use datadog_profiling::profiles::{Compressor, FallibleStringWriter, PprofBuilder};
 use std::io;
+use std::ptr::null_mut;
 
 // Keep this roughly in-sync with profiles.c
 fn main() {
@@ -58,20 +59,20 @@ fn main() {
     let location_1 = locations
         .try_insert(Location {
             address: 0,
-            mapping_id: None,
+            mapping_id: null_mut(),
             line: Line {
                 line_number: 3,
-                function_id: Some(phpinfo_id),
+                function_id: phpinfo_id.as_ptr(),
             },
         })
         .unwrap();
     let location_2 = locations
         .try_insert(Location {
             address: 0,
-            mapping_id: None,
+            mapping_id: null_mut(),
             line: Line {
                 line_number: 10,
-                function_id: Some(main_id),
+                function_id: main_id.as_ptr(),
             },
         })
         .unwrap();

@@ -21,4 +21,7 @@ pub struct Mapping {
 // https://github.com/mozilla/cbindgen/pull/1098
 pub type MappingId = std::ptr::NonNull<c_void>;
 
+// cbindgen didn't understand Option<MappingId> :'(
+pub type OptionalMappingId = *mut c_void;
+
 pub type MappingSet = ParallelSet<Mapping, 2>;

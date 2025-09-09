@@ -79,12 +79,8 @@ int main(int argc, char **argv) {
   check_ok(ddog_prof_ProfilesDictionary_insert_mapping(&map_id, dict, &mapping), "insert_mapping");
 
   // Insert a location and stack in the scratchpad
-  ddog_prof_Option_FunctionId opt_fn = {.tag = DDOG_PROF_OPTION_FUNCTION_ID_SOME_FUNCTION_ID,
-                                        .some = func_id};
-  ddog_prof_Option_MappingId opt_map = {.tag = DDOG_PROF_OPTION_MAPPING_ID_SOME_MAPPING_ID,
-                                        .some = map_id};
-  ddog_prof_Line line = {.line_number = 42, .function_id = opt_fn};
-  ddog_prof_Location loc = {.address = 0, .mapping_id = opt_map, .line = line};
+  ddog_prof_Line line = {.line_number = 42, .function_id = func_id};
+  ddog_prof_Location loc = {.address = 0, .mapping_id = map_id, .line = line};
   ddog_prof_LocationId loc_id = NULL;
   check_ok(ddog_prof_ScratchPad_insert_location(&loc_id, scratch, &loc),
            "ScratchPad_insert_location");

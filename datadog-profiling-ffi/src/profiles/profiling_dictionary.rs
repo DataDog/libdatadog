@@ -12,6 +12,11 @@ use datadog_profiling::profiles::datatypes::{
 use datadog_profiling::profiles::ProfileError;
 use ddcommon_ffi::CharSlice;
 
+/// A StringId that represents the empty string. This is always available in
+/// every string set and can be used without needing to insert an empty string.
+#[no_mangle]
+pub static DDOG_PROF_STRINGID_EMPTY: StringId = StringId::EMPTY;
+
 /// Allocates a new `ProfilesDictionary` and writes a handle to it in `handle`.
 ///
 /// # Safety

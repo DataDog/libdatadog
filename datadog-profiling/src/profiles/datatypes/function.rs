@@ -18,5 +18,6 @@ pub struct Function {
 // Avoid NonNull<()> in FFI; see PR:
 // https://github.com/mozilla/cbindgen/pull/1098
 pub type FunctionId = std::ptr::NonNull<c_void>;
+pub type OptionalFunctionId = *mut c_void;
 
 pub type FunctionSet = ParallelSet<Function, 4>;
