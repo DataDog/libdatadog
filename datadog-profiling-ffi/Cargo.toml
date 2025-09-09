@@ -38,7 +38,6 @@ build_common = { path = "../build-common" }
 allocator-api2 = { version = "0.2", features = ["alloc"] }
 anyhow = "1.0"
 data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
-datadog-alloc = { path = "../datadog-alloc", features = ["alloc"] }
 datadog-crashtracker-ffi = { path = "../datadog-crashtracker-ffi", default-features = false, optional = true}
 datadog-library-config-ffi = {  path = "../datadog-library-config-ffi", default-features = false, optional = true }
 datadog-profiling = { path = "../datadog-profiling" }

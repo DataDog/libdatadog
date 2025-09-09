@@ -1,8 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use allocator_api2::alloc::{Allocator, Global, Layout};
-use datadog_alloc::AllocError;
+use allocator_api2::alloc::{Allocator, AllocError, Global, Layout};
 use datadog_profiling::profiles::FallibleStringWriter;
 use std::borrow::Cow;
 use std::ffi::{c_char, CStr, CString};

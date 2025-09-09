@@ -89,8 +89,6 @@ incremental = false
 codegen-units = 1
 
 [patch.crates-io]
-# https://github.com/mozilla/cbindgen/pull/785
-# cbindgen = { git = "https://github.com/morrisonlevi/cbindgen.git", branch = "merge-generic-tags" }
 # proptest pulls in a dependency on libm, which changes the runtime of some math functions
 # so benchmarks are not measuring the same thing as the release build. This patch removes
 # the default dependency on libm. A PR will be opened to proptest to make this optional.

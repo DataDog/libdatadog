@@ -1452,7 +1452,6 @@ version = "20.0.0"
 dependencies = [
  "allocator-api2",
  "bolero",
- "datadog-alloc",
  "libc",
  "windows-sys 0.52.0",
 ]
@@ -1691,7 +1690,6 @@ dependencies = [
  "anyhow",
  "build_common",
  "data-pipeline-ffi",
- "datadog-alloc",
  "datadog-crashtracker-ffi",
  "datadog-library-config-ffi",
  "datadog-log-ffi",
