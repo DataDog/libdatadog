@@ -50,4 +50,6 @@ fn main() {
         "Time: {}",
         profiles_data.resource_profiles[0].scope_profiles[0].profiles[0].time_nanos
     );
+    let serialized = profiles_data.serialize_into_compressed_proto().unwrap();
+    println!("Serialized size: {} bytes", serialized.len());
 }
