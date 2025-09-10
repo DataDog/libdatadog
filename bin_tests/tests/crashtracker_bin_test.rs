@@ -129,13 +129,12 @@ fn test_crash_tracking_bin_prechain_sigabrt() {
     test_crash_tracking_bin(BuildProfile::Release, "prechain_abort", "null_deref");
 }
 
-
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_heartbeat_timing_and_content() {
     test_crash_tracking_bin(BuildProfile::Release, "donothing", "null_deref");
 }
-  
+
 // This test is disabled for now on x86_64 musl and macos
 // It seems that on aarch64 musl, libc has CFI which allows
 // unwinding passed the signal frame.
