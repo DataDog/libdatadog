@@ -2,18 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::collections::identifiable::Id;
-use crate::internal::Location as InternalLocation;
+use crate::internal;
 
 // For owned values - forward to reference version
-impl From<InternalLocation> for datadog_profiling_otel::Location {
-    fn from(internal_location: InternalLocation) -> Self {
+impl From<internal::Location> for datadog_profiling_otel::Location {
+    fn from(internal_location: internal::Location) -> Self {
         Self::from(&internal_location)
     }
 }
 
 // For references (existing implementation)
-impl From<&InternalLocation> for datadog_profiling_otel::Location {
-    fn from(internal_location: &InternalLocation) -> Self {
+impl From<&internal::Location> for datadog_profiling_otel::Location {
+    fn from(internal_location: &internal::Location) -> Self {
         Self {
             mapping_index: internal_location
                 .mapping_id
@@ -39,7 +39,7 @@ mod tests {
     #[test]
     fn test_from_internal_location() {
         // Create an internal location
-        let internal_location = InternalLocation {
+        let internal_location = internal::Location {
             mapping_id: Some(MappingId::from_offset(1)),
             function_id: FunctionId::from_offset(2),
             address: 0x1000,
@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn test_from_internal_location_no_mapping() {
         // Create an internal location without mapping
-        let internal_location = InternalLocation {
+        let internal_location = internal::Location {
             mapping_id: None,
             function_id: FunctionId::from_offset(5),
             address: 0x2000,
@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn test_into_otel_location() {
         // Create an internal location
-        let internal_location = InternalLocation {
+        let internal_location = internal::Location {
             mapping_id: Some(MappingId::from_offset(10)),
             function_id: FunctionId::from_offset(20),
             address: 0x3000,
@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn test_into_otel_location_owned() {
         // Create an internal location
-        let internal_location = InternalLocation {
+        let internal_location = internal::Location {
             mapping_id: Some(MappingId::from_offset(30)),
             function_id: FunctionId::from_offset(40),
             address: 0x4000,
