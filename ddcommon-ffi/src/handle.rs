@@ -1,6 +1,9 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use ddcommon::error::FfiSafeErrorMessage;
+use std::ffi::CStr;
+use std::fmt::{Display, Formatter};
 use std::ptr::null_mut;
 
 /// Represents an object that should only be referred to by its handle.
@@ -9,6 +12,13 @@ use std::ptr::null_mut;
 pub struct Handle<T> {
     // This may be null, but if not it will point to a valid <T>.
     inner: *mut T,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum HandleError {
+    OuterNullPtr,
+    InnerNullPtr,
 }
 
 impl<T> Handle<T> {
@@ -23,21 +33,28 @@ impl<T> Handle<T> {
         let inner = allocator_api2::boxed::Box::into_raw(uninit).cast();
         Some(Self { inner })
     }
+}
 
-    pub fn as_inner(&self) -> Result<&T, HandleError> {
-        // SAFETY: the Handle owns the data.
-        unsafe { self.inner.as_ref() }.ok_or(HandleError::InnerNullPtr)
+/// # Safety
+/// All cases use c-str literals to satisfy conditions.
+unsafe impl FfiSafeErrorMessage for HandleError {
+    fn as_ffi_str(&self) -> &'static CStr {
+        match self {
+            HandleError::OuterNullPtr => c"handle is null",
+            HandleError::InnerNullPtr => {
+                c"handle's interior pointer is null, indicates use-after-free"
+            }
+        }
     }
 }
 
-#[repr(C)]
-#[derive(Debug, thiserror::Error)]
-pub enum HandleError {
-    #[error("handle is null")]
-    OuterNullPtr,
-    #[error("handle's interior pointer is null, indicates use-after-free")]
-    InnerNullPtr,
+impl Display for HandleError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.as_rust_str().fmt(f)
+    }
 }
+
+impl core::error::Error for HandleError {}
 
 pub trait ToInner<T> {
     /// # Safety

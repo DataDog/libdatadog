@@ -26,7 +26,6 @@ crossbeam-queue = "0.3.11"
 ddcommon = { path = "../ddcommon" }
 hyper = { version = "1.6", features = ["http1", "client"] }
 serde = "1.0"
-thiserror = "1"
 
 [dev-dependencies]
 bolero = "0.13"

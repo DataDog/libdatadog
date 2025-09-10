@@ -1987,7 +1987,6 @@ dependencies = [
  "ddcommon",
  "hyper 1.6.0",
  "serde",
- "thiserror",
 ]
 
 [[package]]

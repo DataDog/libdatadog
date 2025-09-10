@@ -187,7 +187,10 @@ where
             buffer,
             endpoints_stats: Default::default(),
         };
-        unsafe { out_profile.write(Handle::from(encoded)) };
+        let h = Handle::try_new(encoded).ok_or(ProfileError::other(
+            "out of memory: failed to allocate handle for the EncodedProfile",
+        ))?;
+        unsafe { out_profile.write(h) };
         Ok(())
     }())
 }
