@@ -18,46 +18,37 @@ async fn send_heartbeat(
     crash_uuid: &str,
     metadata: &crate::crash_info::Metadata,
 ) -> anyhow::Result<()> {
-    let heartbeat_crash_info = crate::crash_info::CrashInfo {
-        counters: std::collections::HashMap::new(),
-        data_schema_version: crate::crash_info::CrashInfo::current_schema_version(),
-        error: crate::crash_info::ErrorData {
-            is_crash: false, // This is a heartbeat, not the actual crash
-            kind: crate::crash_info::ErrorKind::UnixSignal,
-            message: Some("Crashtracker heartbeat".to_string()),
-            source_type: crate::crash_info::SourceType::Crashtracking,
-            stack: crate::crash_info::StackTrace::missing(),
-            threads: vec![],
-        },
-        experimental: None,
-        files: std::collections::HashMap::new(),
-        fingerprint: None,
-        incomplete: false,
-        log_messages: vec!["Heartbeat: crash processing started".to_string()],
-        metadata: metadata.clone(),
-        os_info: os_info::Info::unknown().into(),
-        proc_info: None,
-        sig_info: None,
-        span_ids: vec![],
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        trace_ids: vec![],
-        uuid: crash_uuid.to_string(),
-    };
+    const HEARTBEAT_MESSAGE: &str = "Crashtracker heartbeat: crash processing started";
 
-    // For file endpoints
     if let Some(endpoint) = config.endpoint() {
         if Some("file") == endpoint.url.scheme_str() {
             let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
                 .context("heartbeat file path was not correctly formatted")?;
             let heartbeat_path: String = format!("{}.heartbeat", path.display());
-            heartbeat_crash_info.to_file(std::path::Path::new(&heartbeat_path))?;
+
+            let minimal_heartbeat = serde_json::json!({
+                "uuid": crash_uuid,
+                "error": {
+                    "is_crash": false,
+                    "message": HEARTBEAT_MESSAGE
+                },
+                "metadata": metadata,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "log_messages": [HEARTBEAT_MESSAGE]
+            });
+
+            std::fs::write(
+                &heartbeat_path,
+                serde_json::to_string_pretty(&minimal_heartbeat)?,
+            )?;
             return Ok(());
         }
     }
 
-    // For HTTP endpoints
     let uploader = TelemetryCrashUploader::new(metadata, config.endpoint())?;
-    uploader.upload_to_telemetry(&heartbeat_crash_info).await?;
+    uploader
+        .send_heartbeat(crash_uuid, HEARTBEAT_MESSAGE)
+        .await?;
     Ok(())
 }
 
@@ -266,6 +257,7 @@ pub(crate) async fn receive_report_from_stream(
     // Generate UUID early so we can use it for both heartbeat and crash report
     let crash_uuid = Uuid::new_v4().to_string();
     let mut heartbeat_sent = false;
+    let mut heartbeat_task: Option<tokio::task::JoinHandle<()>> = None;
 
     let mut lines = stream.lines();
     let mut deadline = None;
@@ -306,10 +298,17 @@ pub(crate) async fn receive_report_from_stream(
         if !heartbeat_sent {
             if let (Some(config), Some(metadata)) = (config.as_ref(), builder.metadata.as_ref()) {
                 heartbeat_sent = true;
-                if let Err(e) = send_heartbeat(config, &crash_uuid, metadata).await {
-                    builder
-                        .with_log_message(format!("Failed to send crash heartbeat: {e}"), false)?;
-                }
+                // Spawn heartbeat sending in a separate task
+                let config_clone = config.clone();
+                let metadata_clone = metadata.clone();
+                let crash_uuid_clone = crash_uuid.clone();
+                heartbeat_task = Some(tokio::task::spawn(async move {
+                    if let Err(e) =
+                        send_heartbeat(&config_clone, &crash_uuid_clone, &metadata_clone).await
+                    {
+                        eprintln!("Failed to send crash heartbeat: {e}");
+                    }
+                }));
             }
         }
 
@@ -321,6 +320,11 @@ pub(crate) async fn receive_report_from_stream(
             deadline = Some(Instant::now() + timeout);
             remaining_timeout = timeout;
         }
+    }
+
+    // We join the thread here so because in tests, the heartbeat task sometimes outlive the receiver.
+    if let Some(task) = heartbeat_task {
+        let _ = task.await;
     }
 
     if !builder.has_data() {
@@ -342,5 +346,6 @@ pub(crate) async fn receive_report_from_stream(
     }
 
     let crash_info = builder.build()?;
+
     Ok(Some((config, crash_info)))
 }

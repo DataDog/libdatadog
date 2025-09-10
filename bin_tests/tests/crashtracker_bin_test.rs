@@ -540,7 +540,7 @@ fn assert_heartbeat_file(fixtures: &TestFixtures, crash_payload: &Value) {
     );
 
     assert_eq!(
-        heartbeat_json["error"]["message"], "Crashtracker heartbeat",
+        heartbeat_json["error"]["message"], "Crashtracker heartbeat: crash processing started",
         "Heartbeat should have correct message"
     );
 
@@ -556,7 +556,7 @@ fn assert_heartbeat_file(fixtures: &TestFixtures, crash_payload: &Value) {
     assert!(
         log_messages.iter().any(|msg| {
             msg.as_str()
-                .map(|s| s.contains("Heartbeat: crash processing started"))
+                .map(|s| s.contains("Crashtracker heartbeat: crash processing started"))
                 .unwrap_or(false)
         }),
         "Heartbeat should contain expected log message"
@@ -653,7 +653,6 @@ fn validate_heartbeat_telemetry(body: &str) {
     let telemetry_payload: serde_json::Value =
         serde_json::from_str(body).expect("Heartbeat should be valid JSON");
 
-    // Verify this is a telemetry message
     assert_eq!(telemetry_payload["request_type"], "logs");
 
     let payload = &telemetry_payload["payload"];
@@ -662,18 +661,21 @@ fn validate_heartbeat_telemetry(body: &str) {
     let logs = payload.as_array().unwrap();
     assert!(!logs.is_empty(), "Should have at least one log entry");
 
-    // Strictly validate this is a heartbeat telemetry
     let log_entry = &logs[0];
     let tags = log_entry["tags"].as_str().unwrap_or("");
 
-    // Must contain is_crash:false to be a valid heartbeat
     assert!(
         tags.contains("is_crash:false"),
         "Expected heartbeat telemetry with is_crash:false, but got tags: {}",
         tags
     );
 
-    println!("✓ Validated heartbeat telemetry (is_crash:false)");
+    let message = log_entry["message"].as_str().unwrap_or("");
+    assert_eq!(
+        message, "Crashtracker heartbeat: crash processing started",
+        "Expected heartbeat message 'Crashtracker heartbeat: crash processing started', but got: {}",
+        message
+    );
 }
 
 struct TestFixtures<'a> {

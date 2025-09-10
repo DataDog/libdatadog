@@ -103,6 +103,40 @@ impl TelemetryCrashUploader {
         Ok(s)
     }
 
+    /// Sends a heartbeat message with just the crash UUID and a simple message.
+    pub async fn send_heartbeat(&self, crash_uuid: &str, message: &str) -> anyhow::Result<()> {
+        let metadata = &self.metadata;
+
+        let tracer_time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        // Create minimal tags with just the UUID and is_crash flag
+        let tags = format!("uuid:{},is_crash:false", crash_uuid);
+
+        let payload = data::Telemetry {
+            tracer_time,
+            api_version: ddtelemetry::data::ApiVersion::V2,
+            runtime_id: &metadata.runtime_id,
+            seq_id: 1,
+            application: &metadata.application,
+            host: &metadata.host,
+            payload: &data::Payload::Logs(vec![data::Log {
+                message: message.to_string(),
+                level: LogLevel::Error,
+                stack_trace: None,
+                tags,
+                is_sensitive: false,
+                count: 1,
+                is_crash: false,
+            }]),
+            origin: Some("Crashtracker"),
+        };
+
+        self.send_telemetry_payload(&payload).await
+    }
+
     pub async fn upload_to_telemetry(&self, crash_info: &CrashInfo) -> anyhow::Result<()> {
         let metadata = &self.metadata;
 
@@ -139,6 +173,11 @@ impl TelemetryCrashUploader {
             }]),
             origin: Some("Crashtracker"),
         };
+
+        self.send_telemetry_payload(&payload).await
+    }
+
+    async fn send_telemetry_payload(&self, payload: &data::Telemetry<'_>) -> anyhow::Result<()> {
         let client = ddtelemetry::worker::http_client::from_config(&self.cfg);
         let req = request_builder(&self.cfg)?
             .method(http::Method::POST)
@@ -299,6 +338,61 @@ mod tests {
             serde_json::from_str(payload["payload"][0]["message"].as_str().unwrap())?;
         assert_eq!(body, test_instance);
         assert_eq!(payload["payload"][0]["is_crash"], true);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_heartbeat_content() -> anyhow::Result<()> {
+        // This keeps alive for scope
+        let tmp = tempfile::tempdir().unwrap();
+        let output_filename = {
+            let mut p = tmp.into_path();
+            p.push("heartbeat_info");
+            p
+        };
+        let seed = 1;
+        let mut t = new_test_uploader(seed);
+
+        t.cfg
+            .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
+            .unwrap();
+
+        let crash_uuid = "test-uuid-12345";
+        let heartbeat_message = "Test heartbeat message";
+
+        t.send_heartbeat(crash_uuid, heartbeat_message)
+            .await
+            .unwrap();
+
+        let payload: serde_json::value::Value =
+            serde_json::de::from_str(&fs::read_to_string(&output_filename).unwrap()).unwrap();
+        assert_eq!(payload["api_version"], "v2");
+        assert_eq!(payload["application"]["language_name"], "native");
+        assert_eq!(payload["application"]["service_name"], "foo");
+        assert_eq!(payload["application"]["service_version"], "bar");
+        assert_eq!(payload["request_type"], "logs");
+        assert_eq!(payload["origin"], "Crashtracker");
+
+        assert_eq!(payload["payload"].as_array().unwrap().len(), 1);
+        let log_entry = &payload["payload"][0];
+
+        // Verify minimal heartbeat properties
+        assert_eq!(log_entry["message"], heartbeat_message);
+        assert_eq!(log_entry["is_crash"], false);
+        assert_eq!(log_entry["is_sensitive"], false);
+        assert_eq!(log_entry["level"], "ERROR");
+
+        // Verify minimal tags - should only contain uuid and is_crash
+        let tags = log_entry["tags"].as_str().unwrap();
+        assert!(tags.contains(&format!("uuid:{}", crash_uuid)));
+        assert!(tags.contains("is_crash:false"));
+
+        // Ensure we don't have unnecessary tags from full crash info
+        assert!(!tags.contains("data_schema_version"));
+        assert!(!tags.contains("si_signo"));
+        assert!(!tags.contains("si_addr"));
+
         Ok(())
     }
 }
