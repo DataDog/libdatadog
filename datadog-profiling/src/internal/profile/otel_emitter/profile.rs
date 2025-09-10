@@ -271,6 +271,49 @@ mod tests {
         }
     }
 
+    // Common assertion helpers
+    fn assert_duration_calculation(profiles: &[datadog_profiling_otel::Profile]) {
+        for profile in profiles {
+            // When no duration is provided, it should calculate from current time - start time
+            assert!(profile.duration_nanos > 0);
+        }
+    }
+
+    fn assert_basic_dictionary_structure(dictionary: &datadog_profiling_otel::ProfilesDictionary) {
+        assert_eq!(dictionary.mapping_table.len(), 0);
+        assert_eq!(dictionary.location_table.len(), 0);
+        assert_eq!(dictionary.function_table.len(), 0);
+        assert_eq!(dictionary.stack_table.len(), 0);
+        assert_eq!(dictionary.string_table.len(), 4); // Default strings: "", "local root span id", "trace endpoint", "end_timestamp_ns"
+        assert_eq!(dictionary.link_table.len(), 0);
+        assert_eq!(dictionary.attribute_table.len(), 0);
+        assert_eq!(dictionary.attribute_units.len(), 0);
+    }
+
+    fn assert_profile_has_correct_sample(
+        profile: &datadog_profiling_otel::Profile,
+        expected_values: Vec<i64>,
+        expected_stack_index: i32,
+        expected_attribute_count: usize,
+    ) {
+        assert_eq!(profile.sample.len(), 1);
+        let sample = &profile.sample[0];
+        assert_eq!(sample.values, expected_values);
+        assert_eq!(sample.stack_index, expected_stack_index);
+        assert_eq!(sample.attribute_indices.len(), expected_attribute_count);
+    }
+
+    fn assert_sample_has_timestamp(sample: &datadog_profiling_otel::Sample, expected_timestamp: u64) {
+        assert_eq!(sample.timestamps_unix_nano.len(), 1);
+        assert_eq!(sample.timestamps_unix_nano[0], expected_timestamp);
+    }
+
+    fn assert_profiles_data_structure(otel_profiles_data: &datadog_profiling_otel::ProfilesData) {
+        assert!(otel_profiles_data.dictionary.is_some());
+        assert_eq!(otel_profiles_data.resource_profiles.len(), 1);
+        assert_eq!(otel_profiles_data.resource_profiles[0].scope_profiles.len(), 1);
+    }
+
     #[test]
     fn test_from_internal_profile_empty() {
         // Create an empty internal profile
@@ -280,28 +323,14 @@ mod tests {
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
-        assert!(otel_profiles_data.dictionary.is_some());
+        assert_profiles_data_structure(&otel_profiles_data);
         let dictionary = otel_profiles_data.dictionary.unwrap();
-
-        assert_eq!(dictionary.mapping_table.len(), 0);
-        assert_eq!(dictionary.location_table.len(), 0);
-        assert_eq!(dictionary.function_table.len(), 0);
-        assert_eq!(dictionary.stack_table.len(), 0);
-        assert_eq!(dictionary.string_table.len(), 4); // Default strings: "", "local root span id", "trace endpoint", "end_timestamp_ns"
-        assert_eq!(dictionary.link_table.len(), 0);
-        assert_eq!(dictionary.attribute_table.len(), 0);
-        assert_eq!(dictionary.attribute_units.len(), 0);
-
-        assert_eq!(otel_profiles_data.resource_profiles.len(), 1);
+        assert_basic_dictionary_structure(&dictionary);
 
         // Check duration calculation - only if profiles exist
         let scope_profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0];
         if !scope_profile.profiles.is_empty() {
-            let profile = &scope_profile.profiles[0];
-            // When no duration is provided, it should calculate from current time - start time
-            // Since we're testing with None, None, the duration should be > 0 (current time - start
-            // time)
-            assert!(profile.duration_nanos > 0);
+            assert_duration_calculation(&scope_profile.profiles);
         }
     }
 
@@ -329,7 +358,7 @@ mod tests {
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
-        assert!(otel_profiles_data.dictionary.is_some());
+        assert_profiles_data_structure(&otel_profiles_data);
         let dictionary = otel_profiles_data.dictionary.unwrap();
 
         assert_eq!(dictionary.function_table.len(), 2);
@@ -350,9 +379,7 @@ mod tests {
         // Check duration calculation - only if profiles exist
         let scope_profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0];
         if !scope_profile.profiles.is_empty() {
-            let profile = &scope_profile.profiles[0];
-            // When no duration is provided, it should calculate from current time - start time
-            assert!(profile.duration_nanos > 0);
+            assert_duration_calculation(&scope_profile.profiles);
         }
     }
 
@@ -378,7 +405,7 @@ mod tests {
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
-        assert!(otel_profiles_data.dictionary.is_some());
+        assert_profiles_data_structure(&otel_profiles_data);
         let dictionary = otel_profiles_data.dictionary.unwrap();
 
         // Should have 2 labels converted to attributes
@@ -417,9 +444,7 @@ mod tests {
         // Check duration calculation - only if profiles exist
         let scope_profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0];
         if !scope_profile.profiles.is_empty() {
-            let profile = &scope_profile.profiles[0];
-            // When no duration is provided, it should calculate from current time - start time
-            assert!(profile.duration_nanos > 0);
+            assert_duration_calculation(&scope_profile.profiles);
         }
     }
 
@@ -436,10 +461,8 @@ mod tests {
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify that individual profiles are created for each sample type
-        assert_eq!(otel_profiles_data.resource_profiles.len(), 1);
-        let resource_profile = &otel_profiles_data.resource_profiles[0];
-        assert_eq!(resource_profile.scope_profiles.len(), 1);
-        let scope_profile = &resource_profile.scope_profiles[0];
+        assert_profiles_data_structure(&otel_profiles_data);
+        let scope_profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0];
 
         // Should have 2 profiles (one for each sample type)
         assert_eq!(scope_profile.profiles.len(), 2);
@@ -459,10 +482,7 @@ mod tests {
         assert_eq!(allocations_sample_type.unit_strindex, 7); // "count" string index
 
         // Check duration calculation for both profiles
-        for profile in &scope_profile.profiles {
-            // When no duration is provided, it should calculate from current time - start time
-            assert!(profile.duration_nanos > 0);
-        }
+        assert_duration_calculation(&scope_profile.profiles);
     }
 
     #[test]
@@ -487,38 +507,21 @@ mod tests {
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
-        assert!(otel_profiles_data.dictionary.is_some());
+        assert_profiles_data_structure(&otel_profiles_data);
         let _dictionary = otel_profiles_data.dictionary.unwrap();
 
+        let scope_profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0];
         // Should have 2 profiles (one for each sample type)
-        assert_eq!(
-            otel_profiles_data.resource_profiles[0].scope_profiles[0]
-                .profiles
-                .len(),
-            2
-        );
+        assert_eq!(scope_profile.profiles.len(), 2);
 
         // Verify the first profile (cpu profile) has the correct sample
-        let cpu_profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
-        assert_eq!(cpu_profile.sample.len(), 1);
-        let cpu_sample = &cpu_profile.sample[0];
-        assert_eq!(cpu_sample.values, vec![100]);
-        assert_eq!(cpu_sample.stack_index, 0); // First stack trace
-        assert_eq!(cpu_sample.attribute_indices.len(), 0); // No labels
+        assert_profile_has_correct_sample(&scope_profile.profiles[0], vec![100], 0, 0);
 
         // Verify the second profile (memory profile) has the correct sample
-        let memory_profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[1];
-        assert_eq!(memory_profile.sample.len(), 1);
-        let memory_sample = &memory_profile.sample[0];
-        assert_eq!(memory_sample.values, vec![2048]);
-        assert_eq!(memory_sample.stack_index, 0); // First stack trace
-        assert_eq!(memory_sample.attribute_indices.len(), 0); // No labels
+        assert_profile_has_correct_sample(&scope_profile.profiles[1], vec![2048], 0, 0);
 
         // Check duration calculation for both profiles
-        for profile in &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles {
-            // When no duration is provided, it should calculate from current time - start time
-            assert!(profile.duration_nanos > 0);
-        }
+        assert_duration_calculation(&scope_profile.profiles);
     }
 
     #[test]
@@ -543,26 +546,21 @@ mod tests {
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
+        assert_profiles_data_structure(&otel_profiles_data);
         let _dictionary = otel_profiles_data.dictionary.unwrap();
         let profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
 
-        // Should have 1 sample
-        assert_eq!(profile.sample.len(), 1);
-        let sample = &profile.sample[0];
-
-        // Verify the sample has the correct values
-        assert_eq!(sample.values, vec![150]);
-        assert_eq!(sample.stack_index, 0);
+        // Should have 1 sample with correct values and attributes
+        assert_profile_has_correct_sample(profile, vec![150], 0, 2);
 
         // Verify the sample has the correct attribute indices
-        assert_eq!(sample.attribute_indices.len(), 2);
+        let sample = &profile.sample[0];
         // The attribute indices should correspond to the labels in the attribute table
         assert!(sample.attribute_indices[0] >= 0);
+        assert!(sample.attribute_indices[1] >= 0);
 
         // Check duration calculation
-        // When no duration is provided, it should calculate from current time - start time
-        assert!(profile.duration_nanos > 0);
-        assert!(sample.attribute_indices[1] >= 0);
+        assert_duration_calculation(&[profile.clone()]);
 
         // Verify the attributes were converted correctly
         assert_eq!(_dictionary.attribute_table.len(), 2);
@@ -589,6 +587,7 @@ mod tests {
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
+        assert_profiles_data_structure(&otel_profiles_data);
         let profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
 
         // Should have 1 sample
@@ -596,12 +595,10 @@ mod tests {
         let sample = &profile.sample[0];
 
         // Verify the sample has the correct timestamp
-        assert_eq!(sample.timestamps_unix_nano.len(), 1);
-        assert_eq!(sample.timestamps_unix_nano[0], 1234567890);
+        assert_sample_has_timestamp(sample, 1234567890);
 
         // Check duration calculation
-        // When no duration is provided, it should calculate from current time - start time
-        assert!(profile.duration_nanos > 0);
+        assert_duration_calculation(&[profile.clone()]);
     }
 
     #[test]
@@ -626,22 +623,19 @@ mod tests {
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
-        let profile0 = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
-        let profile1 = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[1];
+        assert_profiles_data_structure(&otel_profiles_data);
+        let scope_profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0];
+        let profile0 = &scope_profile.profiles[0];
+        let profile1 = &scope_profile.profiles[1];
 
         // First profile (cpu) should have no samples since value is 0
         assert_eq!(profile0.sample.len(), 0);
 
         // Second profile (memory) should have 1 sample since value is non-zero
-        assert_eq!(profile1.sample.len(), 1);
-        let memory_sample = &profile1.sample[0];
-        assert_eq!(memory_sample.values, vec![1024]);
+        assert_profile_has_correct_sample(profile1, vec![1024], 0, 0);
 
         // Check duration calculation for both profiles
-        for profile in &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles {
-            // When no duration is provided, it should calculate from current time - start time
-            assert!(profile.duration_nanos > 0);
-        }
+        assert_duration_calculation(&scope_profile.profiles);
     }
 
     #[test]
@@ -676,6 +670,7 @@ mod tests {
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
         // Verify the conversion
+        assert_profiles_data_structure(&otel_profiles_data);
         let profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
 
         // Should have 1 aggregated sample (samples with same stack trace and labels get aggregated)
@@ -691,8 +686,7 @@ mod tests {
         }
 
         // Check duration calculation
-        // When no duration is provided, it should calculate from current time - start time
-        assert!(profile.duration_nanos > 0);
+        assert_duration_calculation(&[profile.clone()]);
     }
 
     #[test]
@@ -751,6 +745,7 @@ mod tests {
         // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
 
+        assert_profiles_data_structure(&otel_profiles_data);
         let profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
 
         // Should have period type information
@@ -772,6 +767,7 @@ mod tests {
             .convert_into_otel(None, None)
             .unwrap();
 
+        assert_profiles_data_structure(&otel_profiles_data_no_period);
         let profile_no_period =
             &otel_profiles_data_no_period.resource_profiles[0].scope_profiles[0].profiles[0];
 
