@@ -303,7 +303,10 @@ mod tests {
         assert_eq!(sample.attribute_indices.len(), expected_attribute_count);
     }
 
-    fn assert_sample_has_timestamp(sample: &datadog_profiling_otel::Sample, expected_timestamp: u64) {
+    fn assert_sample_has_timestamp(
+        sample: &datadog_profiling_otel::Sample,
+        expected_timestamp: u64,
+    ) {
         assert_eq!(sample.timestamps_unix_nano.len(), 1);
         assert_eq!(sample.timestamps_unix_nano[0], expected_timestamp);
     }
@@ -311,7 +314,10 @@ mod tests {
     fn assert_profiles_data_structure(otel_profiles_data: &datadog_profiling_otel::ProfilesData) {
         assert!(otel_profiles_data.dictionary.is_some());
         assert_eq!(otel_profiles_data.resource_profiles.len(), 1);
-        assert_eq!(otel_profiles_data.resource_profiles[0].scope_profiles.len(), 1);
+        assert_eq!(
+            otel_profiles_data.resource_profiles[0].scope_profiles.len(),
+            1
+        );
     }
 
     #[test]

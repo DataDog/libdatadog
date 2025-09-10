@@ -7,22 +7,18 @@
 fn main() {
     use datadog_profiling_otel::*;
 
-    // Create a simple profile with some basic data
     let mut profiles_dict = ProfilesDictionary::default();
 
-    // Add some strings to the string table
     profiles_dict.string_table.push("cpu".to_string());
     profiles_dict.string_table.push("nanoseconds".to_string());
     profiles_dict.string_table.push("main".to_string());
 
-    // Create a sample type
     let sample_type = ValueType {
         type_strindex: 0, // "cpu"
         unit_strindex: 1, // "nanoseconds"
         aggregation_temporality: AggregationTemporality::Delta.into(),
     };
 
-    // Create a profile
     let profile = Profile {
         sample_type: Some(sample_type),
         time_nanos: std::time::SystemTime::now()
@@ -32,7 +28,6 @@ fn main() {
         ..Default::default()
     };
 
-    // Create profiles data
     let mut profiles_data = ProfilesData {
         dictionary: Some(profiles_dict),
         ..Default::default()
