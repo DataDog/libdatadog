@@ -257,7 +257,7 @@ pub(crate) async fn receive_report_from_stream(
     // Generate UUID early so we can use it for both heartbeat and crash report
     let crash_uuid = Uuid::new_v4().to_string();
     let mut heartbeat_sent = false;
-    let mut heartbeat_task: Option<tokio::task::JoinHandle<()>> = None;
+    let mut heartbeat_task: Option<tokio::task::JoinHandle<Option<String>>> = None;
 
     let mut lines = stream.lines();
     let mut deadline = None;
@@ -306,7 +306,9 @@ pub(crate) async fn receive_report_from_stream(
                     if let Err(e) =
                         send_heartbeat(&config_clone, &crash_uuid_clone, &metadata_clone).await
                     {
-                        eprintln!("Failed to send crash heartbeat: {e}");
+                        Some(format!("Failed to send crash heartbeat: {e}"))
+                    } else {
+                        None
                     }
                 }));
             }
@@ -325,7 +327,9 @@ pub(crate) async fn receive_report_from_stream(
     // We join the thread here so because in tests, the heartbeat task sometimes outlive the
     // receiver.
     if let Some(task) = heartbeat_task {
-        let _ = task.await;
+        if let Ok(Some(error_msg)) = task.await {
+            let _ = builder.with_log_message(error_msg, false);
+        }
     }
 
     if !builder.has_data() {

@@ -276,7 +276,10 @@ mod tests {
 
         // Verify heartbeat properties
         assert_eq!(heartbeat_json["error"]["is_crash"], false);
-        assert_eq!(heartbeat_json["error"]["message"], "Crashtracker heartbeat");
+        assert_eq!(
+            heartbeat_json["error"]["message"],
+            "Crashtracker heartbeat: crash processing started"
+        );
         assert_eq!(heartbeat_json["uuid"], crashinfo.uuid);
         assert!(heartbeat_json["log_messages"]
             .as_array()
@@ -285,7 +288,7 @@ mod tests {
             .any(|msg| msg
                 .as_str()
                 .unwrap()
-                .contains("Heartbeat: crash processing started")));
+                .contains("Crashtracker heartbeat: crash processing started")));
 
         Ok(())
     }
