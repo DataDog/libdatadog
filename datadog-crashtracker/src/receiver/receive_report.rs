@@ -322,7 +322,8 @@ pub(crate) async fn receive_report_from_stream(
         }
     }
 
-    // We join the thread here so because in tests, the heartbeat task sometimes outlive the receiver.
+    // We join the thread here so because in tests, the heartbeat task sometimes outlive the
+    // receiver.
     if let Some(task) = heartbeat_task {
         let _ = task.await;
     }
