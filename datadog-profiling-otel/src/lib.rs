@@ -6,9 +6,7 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-pub mod proto {
-    include!(concat!(env!("OUT_DIR"), "/mod.rs"));
-}
+pub mod proto;
 
 pub use proto::*;
 

@@ -260,8 +260,8 @@ mod tests {
             filename: "test_file_2.rs",
         };
 
-        let _function1_id = internal_profile.add_function(&function1);
-        let _function2_id = internal_profile.add_function(&function2);
+        let _function1_id = internal_profile.try_add_function(&function1);
+        let _function2_id = internal_profile.try_add_function(&function2);
 
         // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
@@ -320,7 +320,7 @@ mod tests {
             labels: vec![label1, label2],
         };
 
-        let _ = internal_profile.add_sample(sample, None);
+        let _ = internal_profile.try_add_sample(sample, None);
 
         // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
@@ -428,7 +428,7 @@ mod tests {
             system_name: "test_system",
             filename: "test_file.rs",
         };
-        let _function_id = internal_profile.add_function(&function);
+        let _function_id = internal_profile.try_add_function(&function);
 
         // Add a mapping
         let mapping = crate::api::Mapping {
@@ -438,7 +438,7 @@ mod tests {
             filename: "test_binary",
             build_id: "test_build_id",
         };
-        let _mapping_id = internal_profile.add_mapping(&mapping);
+        let _mapping_id = internal_profile.try_add_mapping(&mapping);
 
         // Add a location
         let location = crate::api::Location {
@@ -447,10 +447,10 @@ mod tests {
             address: 0x1000,
             line: 42,
         };
-        let location_id = internal_profile.add_location(&location).unwrap();
+        let location_id = internal_profile.try_add_location(&location).unwrap();
 
         // Add a stack trace
-        let _stack_trace_id = internal_profile.add_stacktrace(vec![location_id]);
+        let _stack_trace_id = internal_profile.try_add_stacktrace(vec![location_id]);
 
         // Add a sample with values
         let sample = crate::api::Sample {
@@ -458,7 +458,7 @@ mod tests {
             values: &[100, 2048], // 100 nanoseconds, 2048 bytes
             labels: vec![],
         };
-        let _ = internal_profile.add_sample(sample, None);
+        let _ = internal_profile.try_add_sample(sample, None);
 
         // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
@@ -510,7 +510,7 @@ mod tests {
             system_name: "test_system",
             filename: "test_file.rs",
         };
-        let _function_id = internal_profile.add_function(&function);
+        let _function_id = internal_profile.try_add_function(&function);
 
         // Add a mapping
         let mapping = crate::api::Mapping {
@@ -520,7 +520,7 @@ mod tests {
             filename: "test_binary",
             build_id: "test_build_id",
         };
-        let _mapping_id = internal_profile.add_mapping(&mapping);
+        let _mapping_id = internal_profile.try_add_mapping(&mapping);
 
         let location = crate::api::Location {
             mapping,
@@ -528,9 +528,9 @@ mod tests {
             address: 0x1000,
             line: 42,
         };
-        let location_id = internal_profile.add_location(&location).unwrap();
+        let location_id = internal_profile.try_add_location(&location).unwrap();
 
-        let _stack_trace_id = internal_profile.add_stacktrace(vec![location_id]);
+        let _stack_trace_id = internal_profile.try_add_stacktrace(vec![location_id]);
 
         // Add a sample with labels
         let sample = crate::api::Sample {
@@ -551,7 +551,7 @@ mod tests {
                 },
             ],
         };
-        let _ = internal_profile.add_sample(sample, None);
+        let _ = internal_profile.try_add_sample(sample, None);
 
         // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
@@ -595,7 +595,7 @@ mod tests {
             system_name: "test_system",
             filename: "test_file.rs",
         };
-        let _function_id = internal_profile.add_function(&function);
+        let _function_id = internal_profile.try_add_function(&function);
 
         // Add a mapping
         let mapping = crate::api::Mapping {
@@ -605,7 +605,7 @@ mod tests {
             filename: "test_binary",
             build_id: "test_build_id",
         };
-        let _mapping_id = internal_profile.add_mapping(&mapping);
+        let _mapping_id = internal_profile.try_add_mapping(&mapping);
 
         let location = crate::api::Location {
             mapping,
@@ -613,9 +613,9 @@ mod tests {
             address: 0x1000,
             line: 42,
         };
-        let location_id = internal_profile.add_location(&location).unwrap();
+        let location_id = internal_profile.try_add_location(&location).unwrap();
 
-        let _stack_trace_id = internal_profile.add_stacktrace(vec![location_id]);
+        let _stack_trace_id = internal_profile.try_add_stacktrace(vec![location_id]);
 
         // Add a sample with timestamp
         let sample = crate::api::Sample {
@@ -624,7 +624,7 @@ mod tests {
             labels: vec![],
         };
         let timestamp = crate::internal::Timestamp::new(1234567890).unwrap();
-        let _ = internal_profile.add_sample(sample, Some(timestamp));
+        let _ = internal_profile.try_add_sample(sample, Some(timestamp));
 
         // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
@@ -660,7 +660,7 @@ mod tests {
             system_name: "test_system",
             filename: "test_file.rs",
         };
-        let _function_id = internal_profile.add_function(&function);
+        let _function_id = internal_profile.try_add_function(&function);
 
         // Add a mapping
         let mapping = crate::api::Mapping {
@@ -670,7 +670,7 @@ mod tests {
             filename: "test_binary",
             build_id: "test_build_id",
         };
-        let _mapping_id = internal_profile.add_mapping(&mapping);
+        let _mapping_id = internal_profile.try_add_mapping(&mapping);
 
         let location = crate::api::Location {
             mapping,
@@ -678,9 +678,9 @@ mod tests {
             address: 0x1000,
             line: 42,
         };
-        let location_id = internal_profile.add_location(&location).unwrap();
+        let location_id = internal_profile.try_add_location(&location).unwrap();
 
-        let _stack_trace_id = internal_profile.add_stacktrace(vec![location_id]);
+        let _stack_trace_id = internal_profile.try_add_stacktrace(vec![location_id]);
 
         // Add a sample with one zero value and one non-zero value
         let sample = crate::api::Sample {
@@ -688,7 +688,7 @@ mod tests {
             values: &[0, 1024], // 0 nanoseconds, 1024 bytes
             labels: vec![],
         };
-        let _ = internal_profile.add_sample(sample, None);
+        let _ = internal_profile.try_add_sample(sample, None);
 
         // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
@@ -724,7 +724,7 @@ mod tests {
             system_name: "test_system",
             filename: "test_file.rs",
         };
-        let _function_id = internal_profile.add_function(&function);
+        let _function_id = internal_profile.try_add_function(&function);
 
         // Add a mapping
         let mapping = crate::api::Mapping {
@@ -734,7 +734,7 @@ mod tests {
             filename: "test_binary",
             build_id: "test_build_id",
         };
-        let _mapping_id = internal_profile.add_mapping(&mapping);
+        let _mapping_id = internal_profile.try_add_mapping(&mapping);
 
         let location = crate::api::Location {
             mapping,
@@ -742,9 +742,9 @@ mod tests {
             address: 0x1000,
             line: 42,
         };
-        let location_id = internal_profile.add_location(&location).unwrap();
+        let location_id = internal_profile.try_add_location(&location).unwrap();
 
-        let _stack_trace_id = internal_profile.add_stacktrace(vec![location_id]);
+        let _stack_trace_id = internal_profile.try_add_stacktrace(vec![location_id]);
 
         // Add multiple samples
         let sample1 = crate::api::Sample {
@@ -763,9 +763,9 @@ mod tests {
             labels: vec![],
         };
 
-        let _ = internal_profile.add_sample(sample1, None);
-        let _ = internal_profile.add_sample(sample2, None);
-        let _ = internal_profile.add_sample(sample3, None);
+        let _ = internal_profile.try_add_sample(sample1, None);
+        let _ = internal_profile.try_add_sample(sample2, None);
+        let _ = internal_profile.try_add_sample(sample3, None);
 
         // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
@@ -889,7 +889,7 @@ mod tests {
             system_name: "test_system",
             filename: "test_file.rs",
         };
-        let _function_id = internal_profile.add_function(&function);
+        let _function_id = internal_profile.try_add_function(&function);
 
         // Add a mapping
         let mapping = crate::api::Mapping {
@@ -899,7 +899,7 @@ mod tests {
             filename: "test_binary",
             build_id: "test_build_id",
         };
-        let _mapping_id = internal_profile.add_mapping(&mapping);
+        let _mapping_id = internal_profile.try_add_mapping(&mapping);
 
         let location = crate::api::Location {
             mapping,
@@ -907,9 +907,9 @@ mod tests {
             address: 0x1000,
             line: 42,
         };
-        let location_id = internal_profile.add_location(&location).unwrap();
+        let location_id = internal_profile.try_add_location(&location).unwrap();
 
-        let _stack_trace_id = internal_profile.add_stacktrace(vec![location_id]);
+        let _stack_trace_id = internal_profile.try_add_stacktrace(vec![location_id]);
 
         // Add a sample
         let sample = crate::api::Sample {
@@ -917,7 +917,7 @@ mod tests {
             values: &[150],
             labels: vec![],
         };
-        let _ = internal_profile.add_sample(sample, None);
+        let _ = internal_profile.try_add_sample(sample, None);
 
         // Test serialization to compressed OpenTelemetry format
         let encoded_profile = internal_profile
