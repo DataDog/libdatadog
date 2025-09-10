@@ -13,7 +13,7 @@ use crate::api;
 use crate::api::ManagedStringId;
 use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
-use crate::collections::string_table::StringTable;
+use crate::collections::string_table::{self, StringTable};
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use anyhow::Context;
 use datadog_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
@@ -102,11 +102,11 @@ impl Profile {
         local_root_span_id: u64,
         endpoint: Cow<str>,
     ) -> anyhow::Result<()> {
-        let interned_endpoint = self.intern(endpoint.as_ref());
+        let interned_endpoint = self.try_intern(endpoint.as_ref())?;
 
-        self.endpoints
-            .mappings
-            .insert(local_root_span_id, interned_endpoint);
+        let mappings = &mut self.endpoints.mappings;
+        mappings.try_reserve(1)?;
+        mappings.insert(local_root_span_id, interned_endpoint);
         Ok(())
     }
 
@@ -117,7 +117,7 @@ impl Profile {
         Ok(())
     }
 
-    pub fn add_sample(
+    pub fn try_add_sample(
         &mut self,
         sample: api::Sample,
         timestamp: Option<Timestamp>,
@@ -127,30 +127,35 @@ impl Profile {
             self.validate_sample_labels(&sample)?;
         }
 
-        let labels: Box<_> = sample
-            .labels
-            .iter()
-            .map(|label| {
-                let key = self.intern(label.key);
+        let labels = {
+            let mut lbls = Vec::new();
+            lbls.try_reserve_exact(sample.labels.len())?;
+            for label in &sample.labels {
+                let key = self.try_intern(label.key)?;
                 let internal_label = if !label.str.is_empty() {
-                    let str = self.intern(label.str);
+                    let str = self.try_intern(label.str)?;
                     Label::str(key, str)
                 } else {
                     let num = label.num;
-                    let num_unit = self.intern(label.num_unit);
+                    let num_unit = self.try_intern(label.num_unit)?;
                     Label::num(key, num, num_unit)
                 };
 
-                self.labels.dedup(internal_label)
-            })
-            .collect();
+                let id = self.labels.try_dedup(internal_label)?;
+                lbls.push(id);
+            }
+            lbls.into_boxed_slice()
+        };
 
-        let mut locations = Vec::with_capacity(sample.locations.len());
+        let mut locations = Vec::new();
+        locations
+            .try_reserve_exact(sample.locations.len())
+            .context("failed to reserve memory for sample locations")?;
         for location in &sample.locations {
-            locations.push(self.add_location(location)?);
+            locations.push(self.try_add_location(location)?);
         }
 
-        self.add_sample_internal(sample.values, labels, locations, timestamp)
+        self.try_add_sample_internal(sample.values, labels, locations, timestamp)
     }
 
     pub fn add_string_id_sample(
@@ -179,19 +184,20 @@ impl Profile {
                     Label::num(key, num, num_unit)
                 };
 
-                Ok(self.labels.dedup(internal_label))
+                self.labels.try_dedup(internal_label)
             })
             .collect::<Result<Box<[_]>, _>>()?;
 
-        let mut locations = Vec::with_capacity(sample.locations.len());
+        let mut locations = Vec::new();
+        locations.try_reserve_exact(sample.locations.len())?;
         for location in &sample.locations {
             locations.push(self.add_string_id_location(location)?);
         }
 
-        self.add_sample_internal(sample.values, labels, locations, timestamp)
+        self.try_add_sample_internal(sample.values, labels, locations, timestamp)
     }
 
-    fn add_sample_internal(
+    fn try_add_sample_internal(
         &mut self,
         values: &[i64],
         labels: Box<[LabelId]>,
@@ -205,9 +211,9 @@ impl Profile {
             values.len(),
         );
 
-        let labels = self.label_sets.dedup(LabelSet::new(labels));
+        let labels = self.label_sets.try_dedup(LabelSet::new(labels))?;
 
-        let stacktrace = self.add_stacktrace(locations);
+        let stacktrace = self.try_add_stacktrace(locations)?;
         self.observations
             .add(Sample::new(labels, stacktrace), timestamp, values)?;
         Ok(())
@@ -220,8 +226,8 @@ impl Profile {
         label_value: &str,
         upscaling_info: UpscalingInfo,
     ) -> anyhow::Result<()> {
-        let label_name_id = self.intern(label_name);
-        let label_value_id = self.intern(label_value);
+        let label_name_id = self.try_intern(label_name)?;
+        let label_value_id = self.try_intern(label_value)?;
         self.upscaling_rules.add(
             offset_values,
             (label_name, label_name_id),
@@ -500,12 +506,12 @@ impl Profile {
 
 /// Private helper functions
 impl Profile {
-    fn add_function(&mut self, function: &api::Function) -> FunctionId {
-        let name = self.intern(function.name);
-        let system_name = self.intern(function.system_name);
-        let filename = self.intern(function.filename);
+    fn try_add_function(&mut self, function: &api::Function) -> anyhow::Result<FunctionId> {
+        let name = self.try_intern(function.name)?;
+        let system_name = self.try_intern(function.system_name)?;
+        let filename = self.try_intern(function.filename)?;
 
-        self.functions.dedup(Function {
+        self.functions.try_dedup(Function {
             name,
             system_name,
             filename,
@@ -520,16 +526,16 @@ impl Profile {
         let system_name = self.resolve(function.system_name)?;
         let filename = self.resolve(function.filename)?;
 
-        Ok(self.functions.dedup(Function {
+        self.functions.try_dedup(Function {
             name,
             system_name,
             filename,
-        }))
+        })
     }
 
-    fn add_location(&mut self, location: &api::Location) -> anyhow::Result<LocationId> {
-        let mapping_id = self.add_mapping(&location.mapping);
-        let function_id = self.add_function(&location.function);
+    fn try_add_location(&mut self, location: &api::Location) -> anyhow::Result<LocationId> {
+        let mapping_id = self.try_add_mapping(&location.mapping)?;
+        let function_id = self.try_add_function(&location.function)?;
         self.locations.checked_dedup(Location {
             mapping_id,
             function_id,
@@ -552,7 +558,7 @@ impl Profile {
         })
     }
 
-    fn add_mapping(&mut self, mapping: &api::Mapping) -> Option<MappingId> {
+    fn try_add_mapping(&mut self, mapping: &api::Mapping) -> anyhow::Result<Option<MappingId>> {
         #[inline]
         fn is_zero_mapping(mapping: &api::Mapping) -> bool {
             // - PHP, Python, and Ruby use a mapping only as required.
@@ -573,19 +579,20 @@ impl Profile {
         }
 
         if is_zero_mapping(mapping) {
-            return None;
+            return Ok(None);
         }
 
-        let filename = self.intern(mapping.filename);
-        let build_id = self.intern(mapping.build_id);
+        let filename = self.try_intern(mapping.filename)?;
+        let build_id = self.try_intern(mapping.build_id)?;
 
-        Some(self.mappings.dedup(Mapping {
+        let id = self.mappings.try_dedup(Mapping {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
             file_offset: mapping.file_offset,
             filename,
             build_id,
-        }))
+        })?;
+        Ok(Some(id))
     }
 
     fn add_string_id_mapping(
@@ -611,17 +618,18 @@ impl Profile {
         let filename = self.resolve(mapping.filename)?;
         let build_id = self.resolve(mapping.build_id)?;
 
-        Ok(Some(self.mappings.dedup(Mapping {
+        let id = self.mappings.try_dedup(Mapping {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
             file_offset: mapping.file_offset,
             filename,
             build_id,
-        })))
+        })?;
+        Ok(Some(id))
     }
 
-    fn add_stacktrace(&mut self, locations: Vec<LocationId>) -> StackTraceId {
-        self.stack_traces.dedup(StackTrace { locations })
+    fn try_add_stacktrace(&mut self, locations: Vec<LocationId>) -> anyhow::Result<StackTraceId> {
+        self.stack_traces.try_dedup(StackTrace { locations })
     }
 
     #[inline]
@@ -711,6 +719,13 @@ impl Profile {
     #[inline]
     fn intern(&mut self, item: &str) -> StringId {
         self.strings.intern(item)
+    }
+
+    /// Interns the `str` as a string, returning the id in the string table.
+    /// The empty string is guaranteed to have an id of [StringId::ZERO].
+    #[inline]
+    fn try_intern(&mut self, item: &str) -> Result<StringId, string_table::Error> {
+        self.strings.try_intern(item)
     }
 
     /// Creates a profile from the period, sample types, and start time using
@@ -933,7 +948,7 @@ mod api_tests {
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
         profile
-            .add_sample(
+            .try_add_sample(
                 api::Sample {
                     locations,
                     values: &[1, 10000],
@@ -1011,18 +1026,18 @@ mod api_tests {
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
 
         profile
-            .add_sample(main_sample, None)
+            .try_add_sample(main_sample, None)
             .expect("profile to not be full");
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
 
         profile
-            .add_sample(test_sample, None)
+            .try_add_sample(test_sample, None)
             .expect("profile to not be full");
         assert_eq!(profile.only_for_testing_num_aggregated_samples(), 2);
 
         assert_eq!(profile.only_for_testing_num_timestamped_samples(), 0);
         profile
-            .add_sample(timestamp_sample, Timestamp::new(42))
+            .try_add_sample(timestamp_sample, Timestamp::new(42))
             .expect("profile to not be full");
         assert_eq!(profile.only_for_testing_num_timestamped_samples(), 1);
         profile
@@ -1205,7 +1220,7 @@ mod api_tests {
             labels: vec![id_label],
         };
 
-        assert!(profile.add_sample(sample, None).is_err());
+        assert!(profile.try_add_sample(sample, None).is_err());
     }
 
     #[test]
@@ -1250,9 +1265,13 @@ mod api_tests {
             labels: vec![id2_label, other_label],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
 
-        profile.add_sample(sample2, None).expect("add to success");
+        profile
+            .try_add_sample(sample2, None)
+            .expect("add to success");
 
         profile.add_endpoint(10, Cow::from("my endpoint"))?;
 
@@ -1373,7 +1392,7 @@ mod api_tests {
             labels,
         };
 
-        profile.add_sample(sample, None).unwrap_err();
+        profile.try_add_sample(sample, None).unwrap_err();
     }
 
     #[test]
@@ -1398,7 +1417,9 @@ mod api_tests {
             labels: vec![id_label],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
@@ -1438,7 +1459,9 @@ mod api_tests {
             labels: vec![],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
         let values_offset = vec![0];
@@ -1466,7 +1489,9 @@ mod api_tests {
             labels: vec![],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.7 };
         let values_offset = vec![0];
@@ -1494,7 +1519,9 @@ mod api_tests {
             labels: vec![],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
 
         let upscaling_info = UpscalingInfo::Poisson {
             sum_value_offset: 1,
@@ -1526,7 +1553,9 @@ mod api_tests {
             labels: vec![],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
 
         let upscaling_info = UpscalingInfo::PoissonNonSampleTypeCount {
             sum_value_offset: 1,
@@ -1558,7 +1587,9 @@ mod api_tests {
             labels: vec![],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
 
         let upscaling_info = UpscalingInfo::Poisson {
             sum_value_offset: 1,
@@ -1590,7 +1621,9 @@ mod api_tests {
             labels: vec![],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
 
         // invalid sampling_distance value
         let upscaling_info = UpscalingInfo::Poisson {
@@ -1659,8 +1692,12 @@ mod api_tests {
             labels: vec![],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
-        profile.add_sample(sample2, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
+        profile
+            .try_add_sample(sample2, None)
+            .expect("add to success");
 
         // upscale the first value and the last one
         let values_offset: Vec<usize> = vec![0, 2];
@@ -1714,8 +1751,12 @@ mod api_tests {
             labels: vec![],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
-        profile.add_sample(sample2, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
+        profile
+            .try_add_sample(sample2, None)
+            .expect("add to success");
 
         let mut values_offset: Vec<usize> = vec![0];
 
@@ -1759,7 +1800,9 @@ mod api_tests {
             labels: vec![id_label],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
 
         let values_offset: Vec<usize> = vec![0];
 
@@ -1815,7 +1858,9 @@ mod api_tests {
             labels: vec![id_label],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
         let values_offset: Vec<usize> = vec![0];
@@ -1871,8 +1916,12 @@ mod api_tests {
             labels: vec![],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
-        profile.add_sample(sample2, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
+        profile
+            .try_add_sample(sample2, None)
+            .expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
         let values_offset: Vec<usize> = vec![0];
@@ -1941,8 +1990,12 @@ mod api_tests {
             labels: vec![id_no_match_label, id_label2],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
-        profile.add_sample(sample2, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
+        profile
+            .try_add_sample(sample2, None)
+            .expect("add to success");
 
         // add rule for the first sample on the 1st value
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
@@ -1994,7 +2047,9 @@ mod api_tests {
             labels: vec![id_label],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
 
         // upscale samples and wall-time values
         let values_offset: Vec<usize> = vec![0, 1];
@@ -2030,7 +2085,9 @@ mod api_tests {
             labels: vec![id_label],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
 
         let upscaling_info = UpscalingInfo::Proportional { scale: 2.0 };
         let mut value_offsets: Vec<usize> = vec![0];
@@ -2302,7 +2359,9 @@ mod api_tests {
             labels: vec![id_label],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
 
         let mut value_offsets: Vec<usize> = vec![0, 1];
         // Add by-label rule first
@@ -2375,8 +2434,12 @@ mod api_tests {
             labels: vec![id2_label],
         };
 
-        profile.add_sample(sample1, None).expect("add to success");
-        profile.add_sample(sample2, None).expect("add to success");
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
+        profile
+            .try_add_sample(sample2, None)
+            .expect("add to success");
 
         profile.add_endpoint(10, Cow::from("endpoint 10"))?;
         profile.add_endpoint(large_span_id, Cow::from("large endpoint"))?;

@@ -496,7 +496,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
         if uses_string_ids {
             profile.add_string_id_sample(sample.into(), timestamp)
         } else {
-            profile.add_sample(sample.try_into()?, timestamp)
+            profile.try_add_sample(sample.try_into()?, timestamp)
         }
     })()
     .context("ddog_prof_Profile_add failed")

@@ -8,8 +8,8 @@
 
 #define TRY(expr)                                                                                  \
   {                                                                                                \
-    struct ddsketch_VoidResult result = expr;                                                     \
-    if (result.tag == DDSKETCH_VOID_RESULT_ERR) {                                                \
+    struct ddog_VoidResult result = expr;                                                         \
+    if (result.tag == DDOG_VOID_RESULT_ERR) {                                                    \
       ddog_CharSlice message = ddog_Error_message((struct ddog_Error*)&result.err);             \
       fprintf(stderr, "ERROR: %.*s\n", (int)message.len, message.ptr);                          \
       ddog_Error_drop((struct ddog_Error*)&result.err);                                         \
@@ -44,7 +44,7 @@ int main(void) {
 
   // Encode the sketch to protobuf format
   printf("Encoding sketch to protobuf...\n");
-  struct ddsketch_Vec_u8 encoded = ddog_ddsketch_encode(&sketch);
+  struct ddog_Vec_U8 encoded = ddog_ddsketch_encode(&sketch);
   
   printf("Encoded sketch size: %zu bytes\n", encoded.len);
   

@@ -24,10 +24,11 @@ collector = []
 receiver = []
 # Enables the collection of crash-info on Windows
 collector_windows = []
+generate-unit-test-files = []
 
 [target.'cfg(unix)'.dependencies]
 # Should be kept in sync with the libdatadog symbolizer crate (also using blasesym)
-blazesym = "=0.2.0-rc.4"
+blazesym = "=0.2.0-rc.5"
 
 [dependencies]
 anyhow = "1.0"
@@ -63,3 +64,4 @@ tempfile = { version = "3.3" }
 [build-dependencies]
 # If we use a newer version of cc, CI fails on alpine.
 cc = "1.1.31"
+cc_utils = {path = "../tools/cc_utils"}

@@ -173,7 +173,7 @@ impl hyper::body::Body for Body {
             Body::Single(body) => body.is_end_stream(),
             Body::Empty(body) => body.is_end_stream(),
             Body::Boxed(body) => body.is_end_stream(),
-            Body::Channel(body) => body.is_closed(),
+            Body::Channel(body) => body.is_closed() && body.is_empty(),
             Body::Incoming(body) => body.is_end_stream(),
         }
     }
