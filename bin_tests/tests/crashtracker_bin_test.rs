@@ -139,6 +139,7 @@ fn test_crasht_tracking_validate_callstack() {
     test_crash_tracking_callstack()
 }
 
+#[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"), target_os = "macos")))]
 fn test_crash_tracking_callstack() {
     let (_, crashtracker_receiver) = setup_crashtracking_crates(BuildProfile::Release);
 

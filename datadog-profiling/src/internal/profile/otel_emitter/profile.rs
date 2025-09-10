@@ -209,6 +209,68 @@ impl InternalProfile {
 mod tests {
     use crate::internal::profile::Profile as InternalProfile;
 
+    // Helper functions for test setup
+    fn create_basic_function() -> crate::api::Function<'static> {
+        crate::api::Function {
+            name: "test_function",
+            system_name: "test_system",
+            filename: "test_file.rs",
+        }
+    }
+
+    fn create_basic_mapping() -> crate::api::Mapping<'static> {
+        crate::api::Mapping {
+            memory_start: 0x1000,
+            memory_limit: 0x2000,
+            file_offset: 0,
+            filename: "test_binary",
+            build_id: "test_build_id",
+        }
+    }
+
+    fn setup_profile_with_function_and_location(
+        sample_types: &[crate::api::ValueType<'static>],
+    ) -> (InternalProfile, crate::api::Location<'static>) {
+        let mut internal_profile = InternalProfile::new(sample_types, None);
+        let function = create_basic_function();
+        let mapping = create_basic_mapping();
+        let location = crate::api::Location {
+            mapping,
+            function,
+            address: 0x1000,
+            line: 42,
+        };
+
+        let _function_id = internal_profile.try_add_function(&function);
+        let _mapping_id = internal_profile.try_add_mapping(&mapping);
+        let location_id = internal_profile.try_add_location(&location).unwrap();
+        let _stack_trace_id = internal_profile.try_add_stacktrace(vec![location_id]);
+
+        (internal_profile, location)
+    }
+
+    fn create_string_label(key: &'static str, value: &'static str) -> crate::api::Label<'static> {
+        crate::api::Label {
+            key,
+            str: value,
+            num: 0,
+            num_unit: "",
+        }
+    }
+
+    fn create_numeric_label(
+        key: &'static str,
+        value: i64,
+        unit: &'static str,
+    ) -> crate::api::Label<'static> {
+        crate::api::Label {
+            key,
+            str: "",
+            num: value,
+            num_unit: unit,
+        }
+    }
+
     #[test]
     fn test_from_internal_profile_empty() {
         // Create an empty internal profile
@@ -300,18 +362,8 @@ mod tests {
         let mut internal_profile = InternalProfile::new(&[], None);
 
         // Add some labels using the API
-        let label1 = crate::api::Label {
-            key: "thread_id",
-            str: "main",
-            num: 0,
-            num_unit: "",
-        };
-        let label2 = crate::api::Label {
-            key: "memory_usage",
-            str: "",
-            num: 1024,
-            num_unit: "bytes",
-        };
+        let label1 = create_string_label("thread_id", "main");
+        let label2 = create_numeric_label("memory_usage", 1024, "bytes");
 
         // Add a sample with these labels
         let sample = crate::api::Sample {
@@ -420,37 +472,8 @@ mod tests {
             crate::api::ValueType::new("cpu", "nanoseconds"),
             crate::api::ValueType::new("memory", "bytes"),
         ];
-        let mut internal_profile = InternalProfile::new(&sample_types, None);
-
-        // Add a function to create a location
-        let function = crate::api::Function {
-            name: "test_function",
-            system_name: "test_system",
-            filename: "test_file.rs",
-        };
-        let _function_id = internal_profile.try_add_function(&function);
-
-        // Add a mapping
-        let mapping = crate::api::Mapping {
-            memory_start: 0x1000,
-            memory_limit: 0x2000,
-            file_offset: 0,
-            filename: "test_binary",
-            build_id: "test_build_id",
-        };
-        let _mapping_id = internal_profile.try_add_mapping(&mapping);
-
-        // Add a location
-        let location = crate::api::Location {
-            mapping,
-            function,
-            address: 0x1000,
-            line: 42,
-        };
-        let location_id = internal_profile.try_add_location(&location).unwrap();
-
-        // Add a stack trace
-        let _stack_trace_id = internal_profile.try_add_stacktrace(vec![location_id]);
+        let (mut internal_profile, location) =
+            setup_profile_with_function_and_location(&sample_types);
 
         // Add a sample with values
         let sample = crate::api::Sample {
@@ -502,53 +525,16 @@ mod tests {
     fn test_sample_conversion_with_labels() {
         // Create an internal profile with sample types
         let sample_types = [crate::api::ValueType::new("cpu", "nanoseconds")];
-        let mut internal_profile = InternalProfile::new(&sample_types, None);
-
-        // Add a function and location
-        let function = crate::api::Function {
-            name: "test_function",
-            system_name: "test_system",
-            filename: "test_file.rs",
-        };
-        let _function_id = internal_profile.try_add_function(&function);
-
-        // Add a mapping
-        let mapping = crate::api::Mapping {
-            memory_start: 0x1000,
-            memory_limit: 0x2000,
-            file_offset: 0,
-            filename: "test_binary",
-            build_id: "test_build_id",
-        };
-        let _mapping_id = internal_profile.try_add_mapping(&mapping);
-
-        let location = crate::api::Location {
-            mapping,
-            function,
-            address: 0x1000,
-            line: 42,
-        };
-        let location_id = internal_profile.try_add_location(&location).unwrap();
-
-        let _stack_trace_id = internal_profile.try_add_stacktrace(vec![location_id]);
+        let (mut internal_profile, location) =
+            setup_profile_with_function_and_location(&sample_types);
 
         // Add a sample with labels
         let sample = crate::api::Sample {
             locations: vec![location],
             values: &[150],
             labels: vec![
-                crate::api::Label {
-                    key: "thread_id",
-                    str: "main",
-                    num: 0,
-                    num_unit: "",
-                },
-                crate::api::Label {
-                    key: "cpu_usage",
-                    str: "",
-                    num: 75,
-                    num_unit: "percent",
-                },
+                create_string_label("thread_id", "main"),
+                create_numeric_label("cpu_usage", 75, "percent"),
             ],
         };
         let _ = internal_profile.try_add_sample(sample, None);
@@ -587,35 +573,8 @@ mod tests {
     fn test_sample_conversion_with_timestamps() {
         // Create an internal profile with sample types
         let sample_types = [crate::api::ValueType::new("cpu", "nanoseconds")];
-        let mut internal_profile = InternalProfile::new(&sample_types, None);
-
-        // Add a function and location
-        let function = crate::api::Function {
-            name: "test_function",
-            system_name: "test_system",
-            filename: "test_file.rs",
-        };
-        let _function_id = internal_profile.try_add_function(&function);
-
-        // Add a mapping
-        let mapping = crate::api::Mapping {
-            memory_start: 0x1000,
-            memory_limit: 0x2000,
-            file_offset: 0,
-            filename: "test_binary",
-            build_id: "test_build_id",
-        };
-        let _mapping_id = internal_profile.try_add_mapping(&mapping);
-
-        let location = crate::api::Location {
-            mapping,
-            function,
-            address: 0x1000,
-            line: 42,
-        };
-        let location_id = internal_profile.try_add_location(&location).unwrap();
-
-        let _stack_trace_id = internal_profile.try_add_stacktrace(vec![location_id]);
+        let (mut internal_profile, location) =
+            setup_profile_with_function_and_location(&sample_types);
 
         // Add a sample with timestamp
         let sample = crate::api::Sample {
@@ -652,35 +611,8 @@ mod tests {
             crate::api::ValueType::new("cpu", "nanoseconds"),
             crate::api::ValueType::new("memory", "bytes"),
         ];
-        let mut internal_profile = InternalProfile::new(&sample_types, None);
-
-        // Add a function and location
-        let function = crate::api::Function {
-            name: "test_function",
-            system_name: "test_system",
-            filename: "test_file.rs",
-        };
-        let _function_id = internal_profile.try_add_function(&function);
-
-        // Add a mapping
-        let mapping = crate::api::Mapping {
-            memory_start: 0x1000,
-            memory_limit: 0x2000,
-            file_offset: 0,
-            filename: "test_binary",
-            build_id: "test_build_id",
-        };
-        let _mapping_id = internal_profile.try_add_mapping(&mapping);
-
-        let location = crate::api::Location {
-            mapping,
-            function,
-            address: 0x1000,
-            line: 42,
-        };
-        let location_id = internal_profile.try_add_location(&location).unwrap();
-
-        let _stack_trace_id = internal_profile.try_add_stacktrace(vec![location_id]);
+        let (mut internal_profile, location) =
+            setup_profile_with_function_and_location(&sample_types);
 
         // Add a sample with one zero value and one non-zero value
         let sample = crate::api::Sample {
@@ -716,35 +648,8 @@ mod tests {
     fn test_sample_conversion_multiple_samples() {
         // Create an internal profile with sample types
         let sample_types = [crate::api::ValueType::new("cpu", "nanoseconds")];
-        let mut internal_profile = InternalProfile::new(&sample_types, None);
-
-        // Add a function and location
-        let function = crate::api::Function {
-            name: "test_function",
-            system_name: "test_system",
-            filename: "test_file.rs",
-        };
-        let _function_id = internal_profile.try_add_function(&function);
-
-        // Add a mapping
-        let mapping = crate::api::Mapping {
-            memory_start: 0x1000,
-            memory_limit: 0x2000,
-            file_offset: 0,
-            filename: "test_binary",
-            build_id: "test_build_id",
-        };
-        let _mapping_id = internal_profile.try_add_mapping(&mapping);
-
-        let location = crate::api::Location {
-            mapping,
-            function,
-            address: 0x1000,
-            line: 42,
-        };
-        let location_id = internal_profile.try_add_location(&location).unwrap();
-
-        let _stack_trace_id = internal_profile.try_add_stacktrace(vec![location_id]);
+        let (mut internal_profile, location) =
+            setup_profile_with_function_and_location(&sample_types);
 
         // Add multiple samples
         let sample1 = crate::api::Sample {
@@ -881,35 +786,8 @@ mod tests {
     fn test_serialize_into_compressed_otel() {
         // Create an internal profile with sample types
         let sample_types = [crate::api::ValueType::new("cpu", "nanoseconds")];
-        let mut internal_profile = InternalProfile::new(&sample_types, None);
-
-        // Add a function and location
-        let function = crate::api::Function {
-            name: "test_function",
-            system_name: "test_system",
-            filename: "test_file.rs",
-        };
-        let _function_id = internal_profile.try_add_function(&function);
-
-        // Add a mapping
-        let mapping = crate::api::Mapping {
-            memory_start: 0x1000,
-            memory_limit: 0x2000,
-            file_offset: 0,
-            filename: "test_binary",
-            build_id: "test_build_id",
-        };
-        let _mapping_id = internal_profile.try_add_mapping(&mapping);
-
-        let location = crate::api::Location {
-            mapping,
-            function,
-            address: 0x1000,
-            line: 42,
-        };
-        let location_id = internal_profile.try_add_location(&location).unwrap();
-
-        let _stack_trace_id = internal_profile.try_add_stacktrace(vec![location_id]);
+        let (mut internal_profile, location) =
+            setup_profile_with_function_and_location(&sample_types);
 
         // Add a sample
         let sample = crate::api::Sample {
