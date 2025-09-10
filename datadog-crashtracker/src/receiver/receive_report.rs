@@ -44,18 +44,20 @@ async fn send_heartbeat(
         uuid: crash_uuid.to_string(),
     };
 
-    // Handle file writes and telemetry uploads separately
+    // For file endpoints
     if let Some(endpoint) = config.endpoint() {
         if Some("file") == endpoint.url.scheme_str() {
             let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
                 .context("heartbeat file path was not correctly formatted")?;
             let heartbeat_path: String = format!("{}.heartbeat", path.display());
             heartbeat_crash_info.to_file(std::path::Path::new(&heartbeat_path))?;
-        } else {
-            let uploader = TelemetryCrashUploader::new(metadata, config.endpoint())?;
-            uploader.upload_to_telemetry(&heartbeat_crash_info).await?;
+            return Ok(());
         }
     }
+
+    // For HTTP endpoints
+    let uploader = TelemetryCrashUploader::new(metadata, config.endpoint())?;
+    uploader.upload_to_telemetry(&heartbeat_crash_info).await?;
     Ok(())
 }
 

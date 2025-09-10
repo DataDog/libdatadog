@@ -129,6 +129,12 @@ fn test_crash_tracking_bin_prechain_sigabrt() {
     test_crash_tracking_bin(BuildProfile::Release, "prechain_abort", "null_deref");
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_heartbeat_timing_and_content() {
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "null_deref");
+}
+
 fn test_crash_tracking_bin(
     crash_tracking_receiver_profile: BuildProfile,
     mode: &str,
@@ -185,7 +191,7 @@ fn test_crash_tracking_bin(
     assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
 
     // Check the crash data
-    let crash_profile = fs::read(fixtures.crash_profile_path)
+    let crash_profile = fs::read(&fixtures.crash_profile_path)
         .context("reading crashtracker profiling payload")
         .unwrap();
     let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
@@ -206,10 +212,11 @@ fn test_crash_tracking_bin(
     let error = &crash_payload["error"];
     assert_error_message(&error["message"], sig_info);
 
-    let crash_telemetry = fs::read(fixtures.crash_telemetry_path)
+    let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
     assert_telemetry_message(&crash_telemetry, crash_typ);
+    assert_heartbeat_file(&fixtures, &crash_payload);
 
     // Crashtracking signal handler chaining tests, as well as other tests, might only be able to
     // influence system state after the main application has crashed, and has therefore lost the
@@ -413,6 +420,51 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
     assert_eq!(telemetry_payload["payload"][0]["is_sensitive"], true);
 }
 
+fn assert_heartbeat_file(fixtures: &TestFixtures, crash_payload: &Value) {
+    let heartbeat_file = format!("{}.heartbeat", fixtures.crash_profile_path.display());
+    assert!(
+        Path::new(&heartbeat_file).exists(),
+        "Heartbeat file should exist at {}",
+        heartbeat_file
+    );
+
+    let heartbeat_content = fs::read_to_string(&heartbeat_file)
+        .context("reading heartbeat file")
+        .unwrap();
+    let heartbeat_json: Value = serde_json::from_str(&heartbeat_content)
+        .context("parsing heartbeat JSON")
+        .unwrap();
+
+    // Verify heartbeat properties
+    assert_eq!(
+        heartbeat_json["error"]["is_crash"], false,
+        "Heartbeat should have is_crash=false"
+    );
+
+    assert_eq!(
+        heartbeat_json["error"]["message"], "Crashtracker heartbeat",
+        "Heartbeat should have correct message"
+    );
+
+    // Verify heartbeat and crash report share the same UUID
+    assert_eq!(
+        heartbeat_json["uuid"], crash_payload["uuid"],
+        "Heartbeat UUID should match crash report UUID"
+    );
+
+    let log_messages = heartbeat_json["log_messages"]
+        .as_array()
+        .expect("log_messages should be an array");
+    assert!(
+        log_messages.iter().any(|msg| {
+            msg.as_str()
+                .map(|s| s.contains("Heartbeat: crash processing started"))
+                .unwrap_or(false)
+        }),
+        "Heartbeat should contain expected log message"
+    );
+}
+
 #[test]
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
@@ -440,8 +492,31 @@ fn crash_tracking_empty_endpoint() {
         .spawn()
         .unwrap();
 
-    let (mut stream, _) = listener.accept().unwrap();
+    // First request should be the heartbeat
+    let (mut stream1, _) = listener.accept().unwrap();
+    let heartbeat_body = read_http_request_body(&mut stream1);
 
+    // Send 200 OK response to heartbeat to keep connection open
+    stream1
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        .unwrap();
+
+    validate_heartbeat_telemetry(&heartbeat_body);
+
+    // Second request should be the crash report
+    let (mut stream2, _) = listener.accept().unwrap();
+    let crash_report_body = read_http_request_body(&mut stream2);
+
+    // Send 404 response to close connection
+    stream2
+        .write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n")
+        .unwrap();
+
+    // Validate crash report telemetry
+    assert_telemetry_message(crash_report_body.as_bytes(), "null_deref");
+}
+
+fn read_http_request_body(stream: &mut impl Read) -> String {
     // The read call is not guaranteed to collect all available data.  On OSX it appears to grab
     // data in 8192 byte chunks.  This was not an issue when the size of a crashreport was below
     // there, but is a problem when the size is greater.
@@ -456,7 +531,7 @@ fn crash_tracking_empty_endpoint() {
     //    available and deadlock.
     // 2: The read call decides not to return some but not all of the available bytes.  We exit
     //    early with a malformed string.
-    // Since this is a test, the risk of those are low, but if this test spuriously fails, that
+    // Since this is for testing, the risk of those are low, but if tests spuriously fails, that
     // is a good place to look.
     let mut out = vec![0; 65536];
     let blocksize = 8192;
@@ -471,17 +546,36 @@ fn crash_tracking_empty_endpoint() {
         left += blocksize;
         right += blocksize;
     }
-    // We write a 404 back to the client to finish the handshake and have them end their
-    // transmission.  Its not clear to me that we should unwrap here: if the client timed out, it
-    // won't receive the message, but is that an error in the test, or should the test still
-    // continue and succeed if the message itself was received by the agent?
-    stream
-        .write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n")
-        .unwrap();
     let resp = String::from_utf8_lossy(&out[..total_read]);
     let pos = resp.find("\r\n\r\n").unwrap();
-    let body = &resp[pos + 4..];
-    assert_telemetry_message(body.as_bytes(), "null_deref");
+    resp[pos + 4..].to_string()
+}
+
+fn validate_heartbeat_telemetry(body: &str) {
+    let telemetry_payload: serde_json::Value =
+        serde_json::from_str(body).expect("Heartbeat should be valid JSON");
+
+    // Verify this is a telemetry message
+    assert_eq!(telemetry_payload["request_type"], "logs");
+
+    let payload = &telemetry_payload["payload"];
+    assert!(payload.is_array(), "Payload should be an array");
+
+    let logs = payload.as_array().unwrap();
+    assert!(!logs.is_empty(), "Should have at least one log entry");
+
+    // Strictly validate this is a heartbeat telemetry
+    let log_entry = &logs[0];
+    let tags = log_entry["tags"].as_str().unwrap_or("");
+
+    // Must contain is_crash:false to be a valid heartbeat
+    assert!(
+        tags.contains("is_crash:false"),
+        "Expected heartbeat telemetry with is_crash:false, but got tags: {}",
+        tags
+    );
+
+    println!("✓ Validated heartbeat telemetry (is_crash:false)");
 }
 
 struct TestFixtures<'a> {
