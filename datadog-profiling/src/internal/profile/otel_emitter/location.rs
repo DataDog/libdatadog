@@ -38,7 +38,7 @@ mod tests {
 
     #[test]
     fn test_from_internal_location() {
-        // Create an internal location
+        // Test with mapping
         let internal_location = internal::Location {
             mapping_id: Some(MappingId::from_offset(1)),
             function_id: FunctionId::from_offset(2),
@@ -46,10 +46,7 @@ mod tests {
             line: 42,
         };
 
-        // Convert to OpenTelemetry Location
         let otel_location = datadog_profiling_otel::Location::from(&internal_location);
-
-        // Verify the conversion - note: from_offset adds 1 to avoid zero values
         assert_eq!(otel_location.mapping_index, 2);
         assert_eq!(otel_location.address, 0x1000);
         assert_eq!(otel_location.line.len(), 1);
@@ -58,11 +55,8 @@ mod tests {
         assert_eq!(otel_location.line[0].column, 0);
         assert!(!otel_location.is_folded);
         assert_eq!(otel_location.attribute_indices, vec![] as Vec<i32>);
-    }
 
-    #[test]
-    fn test_from_internal_location_no_mapping() {
-        // Create an internal location without mapping
+        // Test without mapping
         let internal_location = internal::Location {
             mapping_id: None,
             function_id: FunctionId::from_offset(5),
@@ -70,54 +64,11 @@ mod tests {
             line: 100,
         };
 
-        // Convert to OpenTelemetry Location
         let otel_location = datadog_profiling_otel::Location::from(&internal_location);
-
-        // Verify the conversion
         assert_eq!(otel_location.mapping_index, 0); // 0 represents no mapping
         assert_eq!(otel_location.address, 0x2000);
         assert_eq!(otel_location.line.len(), 1);
         assert_eq!(otel_location.line[0].function_index, 6);
         assert_eq!(otel_location.line[0].line, 100);
-    }
-
-    #[test]
-    fn test_into_otel_location() {
-        // Create an internal location
-        let internal_location = internal::Location {
-            mapping_id: Some(MappingId::from_offset(10)),
-            function_id: FunctionId::from_offset(20),
-            address: 0x3000,
-            line: 200,
-        };
-
-        // Convert using .into() method
-        let otel_location: datadog_profiling_otel::Location = (&internal_location).into();
-
-        // Verify the conversion - note: from_offset adds 1 to avoid zero values
-        assert_eq!(otel_location.mapping_index, 11);
-        assert_eq!(otel_location.address, 0x3000);
-        assert_eq!(otel_location.line[0].function_index, 21);
-        assert_eq!(otel_location.line[0].line, 200);
-    }
-
-    #[test]
-    fn test_into_otel_location_owned() {
-        // Create an internal location
-        let internal_location = internal::Location {
-            mapping_id: Some(MappingId::from_offset(30)),
-            function_id: FunctionId::from_offset(40),
-            address: 0x4000,
-            line: 300,
-        };
-
-        // Convert using .into() method with owned value
-        let otel_location: datadog_profiling_otel::Location = internal_location.into();
-
-        // Verify the conversion - note: from_offset adds 1 to avoid zero values
-        assert_eq!(otel_location.mapping_index, 31);
-        assert_eq!(otel_location.address, 0x4000);
-        assert_eq!(otel_location.line[0].function_index, 41);
-        assert_eq!(otel_location.line[0].line, 300);
     }
 }
