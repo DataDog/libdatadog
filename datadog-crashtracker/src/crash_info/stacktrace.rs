@@ -195,7 +195,7 @@ impl StackFrame {
             let (file_offset, meta_idx) = normed.outputs[0];
             let meta = &normed.meta[meta_idx];
             let elf = meta.as_elf().context("Not elf")?;
-            let resolver = elf_resolvers.get(&elf.path)?;
+            let resolver = elf_resolvers.get_or_insert(&elf.path)?;
             let virt_address = resolver
                 .file_offset_to_virt_offset(file_offset)?
                 .context("No matching segment found")?;
