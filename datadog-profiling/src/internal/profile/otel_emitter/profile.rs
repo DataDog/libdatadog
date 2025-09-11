@@ -164,7 +164,7 @@ impl InternalProfile {
         let resource_profiles = vec![datadog_profiling_otel::ResourceProfiles {
             resource: None, // TODO: Implement when we handle resources
             scope_profiles: vec![datadog_profiling_otel::ScopeProfiles {
-                scope: None,               // TODO: Implement when we handle scopes
+                scope: None,               // It is legal to leave this unset according to the spec
                 profiles,                  // Now contains the individual profiles
                 schema_url: String::new(), // TODO: Implement when we handle schema URLs
                 default_sample_type: None, // TODO: Implement when we handle sample types

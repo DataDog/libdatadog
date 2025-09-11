@@ -61,12 +61,11 @@ pub fn convert_label_to_key_value(
         crate::internal::LabelValue::Num { num, num_unit } => {
             // Note: OpenTelemetry KeyValue doesn't support units, so we only store the numeric
             // value But we track the mapping for building the attribute_units table
-            let key_index = label.get_key().to_raw_id() as usize;
             let unit_index = num_unit.to_raw_id() as usize;
 
             // Only add to the map if the unit is not the default empty string (index 0)
             if unit_index > 0 {
-                key_to_unit_map.insert(key_index, unit_index);
+                key_to_unit_map.insert(key_id, unit_index);
             }
 
             Ok(datadog_profiling_otel::KeyValue {
