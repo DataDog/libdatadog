@@ -336,7 +336,7 @@ pub unsafe extern "C" fn ddog_prof_ScratchPad_get_trace_endpoint_str(
 ) -> ProfileStatus {
     ensure_non_null_out_parameter!(result);
     let Ok(pad) = handle.as_inner() else {
-        return ProfileStatus::from_thin_error(EmptyHandleError);
+        return ProfileStatus::from_ffi_safe_error_message(EmptyHandleError);
     };
     if let Some(s) =
         pad.endpoint_tracker().get_trace_endpoint_str(local_root_span_id)

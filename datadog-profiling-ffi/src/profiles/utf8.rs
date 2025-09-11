@@ -3,9 +3,12 @@
 
 use datadog_profiling::profiles::collections::{ParallelStringSet, StringId};
 use datadog_profiling::profiles::ProfileError;
-use ddcommon_ffi::slice::{AsBytes, CharSlice};
+use ddcommon::error::FfiSafeErrorMessage;
+use ddcommon_ffi::slice::{AsBytes, CharSlice, SliceConversionError};
 use std::borrow::Cow;
 use std::collections::TryReserveError;
+use std::ffi::CStr;
+use std::str::Utf8Error;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -20,6 +23,57 @@ pub enum Utf8Option {
     Validate,
 }
 
+pub enum Utf8ConversionError {
+    OutOfMemory(TryReserveError),
+    SliceConversionError(SliceConversionError),
+    Utf8Error(Utf8Error),
+}
+
+impl From<TryReserveError> for Utf8ConversionError {
+    fn from(e: TryReserveError) -> Self {
+        Self::OutOfMemory(e)
+    }
+}
+
+impl From<SliceConversionError> for Utf8ConversionError {
+    fn from(e: SliceConversionError) -> Self {
+        Self::SliceConversionError(e)
+    }
+}
+
+impl From<Utf8Error> for Utf8ConversionError {
+    fn from(e: Utf8Error) -> Self {
+        Self::Utf8Error(e)
+    }
+}
+
+impl From<Utf8ConversionError> for ProfileError {
+    fn from(err: Utf8ConversionError) -> ProfileError {
+        match err {
+            Utf8ConversionError::OutOfMemory(_) => ProfileError::OutOfMemory,
+            Utf8ConversionError::SliceConversionError(_) => {
+                ProfileError::InvalidInput
+            }
+            Utf8ConversionError::Utf8Error(_) => ProfileError::InvalidInput,
+        }
+    }
+}
+
+// SAFETY: all cases are c-str literals, or delegate to the same trait.
+unsafe impl FfiSafeErrorMessage for Utf8ConversionError {
+    fn as_ffi_str(&self) -> &'static CStr {
+        match self {
+            Utf8ConversionError::OutOfMemory(_) => {
+                c"out of memory: utf8 conversion failed"
+            }
+            Utf8ConversionError::SliceConversionError(err) => err.as_ffi_str(),
+            Utf8ConversionError::Utf8Error(_) => {
+                c"invalid input: string was not utf-8"
+            }
+        }
+    }
+}
+
 impl Utf8Option {
     /// Converts a byte slice to a UTF-8 string according to the option.
     /// - Assume: Borrow without validation (caller guarantees UTF-8)
@@ -32,18 +86,14 @@ impl Utf8Option {
     pub unsafe fn convert(
         self,
         bytes: &[u8],
-    ) -> Result<Cow<'_, str>, ProfileError> {
+    ) -> Result<Cow<'_, str>, Utf8ConversionError> {
+        // SAFETY: caller asserts validity under Assume
         Ok(match self {
             Utf8Option::Assume => {
-                // SAFETY: caller asserts validity under Assume
                 Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(bytes) })
             }
-            Utf8Option::ConvertLossy => try_from_utf8_lossy(bytes)
-                .map_err(|_| ProfileError::OutOfMemory)?,
-            Utf8Option::Validate => Cow::Borrowed(
-                std::str::from_utf8(bytes)
-                    .map_err(|_| ProfileError::InvalidInput)?,
-            ),
+            Utf8Option::ConvertLossy => try_from_utf8_lossy(bytes)?,
+            Utf8Option::Validate => Cow::Borrowed(std::str::from_utf8(bytes)?),
         })
     }
 
@@ -53,8 +103,8 @@ impl Utf8Option {
     pub unsafe fn try_as_bytes_convert<'a, T: AsBytes<'a>>(
         self,
         t: T,
-    ) -> Result<Cow<'a, str>, ProfileError> {
-        let bytes = t.try_as_bytes().map_err(ProfileError::from_thin_error)?;
+    ) -> Result<Cow<'a, str>, Utf8ConversionError> {
+        let bytes = t.try_as_bytes()?;
         self.convert(bytes)
     }
 }

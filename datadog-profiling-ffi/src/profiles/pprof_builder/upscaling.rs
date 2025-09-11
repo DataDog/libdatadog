@@ -1,73 +1,87 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_profiling::profiles;
-use datadog_profiling::profiles::ProfileError;
+use datadog_profiling::profiles::collections::StringId;
+use datadog_profiling::profiles::datatypes::MAX_SAMPLE_TYPES;
+use ddcommon::error::FfiSafeErrorMessage;
 use ddcommon_ffi::slice::CharSlice;
+use std::ffi::CStr;
+use std::num::NonZeroU64;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub struct UpscalingProportional {
-    scale: f64,
+pub struct GroupByLabel<'a> {
+    pub key: StringId,
+    pub value: CharSlice<'a>,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub struct UpscalingPoisson {
+pub struct ProportionalUpscalingRule<'a> {
+    /// The labels to group the sample values by. If it should apply to all
+    /// samples and not group by label, then use the empty StringId and empty
+    /// CharSlice.
+    pub group_by_label: GroupByLabel<'a>,
+    pub sampled: u64,
+    pub real: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct PoissonUpscalingRule {
+    /// Which offset in the profile's sample is the sum. Must be disjoint from
+    /// `count_offset`.
+    sum_offset: u32,
+    /// Which offset in the profile's sample is the count. Must be disjoint
+    /// from `sum_offset`.
+    count_offset: u32,
     sampling_distance: u64,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct UpscalingPoissonNonSampleTypeCount {
-    count_value: u64,
-    sampling_distance: u64,
+#[derive(Debug)]
+pub enum PoissonUpscalingConversionError {
+    SamplingDistance,
+    SumOffset,
+    CountOffset,
 }
 
-/// cbindgen:prefix-with-name=false
-/// cbindgen:rename-all=ScreamingSnakeCase
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-#[allow(clippy::enum_variant_names)] // doing this for FFI purposes
-pub enum UpscalingInfo {
-    DdogPprofUpscalingProportional(UpscalingProportional),
-    DdogPprofUpscalingPoisson(UpscalingPoisson),
-    DdogPprofUpscalingPoissonNonSampleTypeCount(
-        UpscalingPoissonNonSampleTypeCount,
-    ),
-}
-
-impl TryFrom<UpscalingInfo> for profiles::UpscalingInfo {
-    type Error = ProfileError;
-
-    fn try_from(info: UpscalingInfo) -> Result<Self, Self::Error> {
-        Ok(match info {
-            UpscalingInfo::DdogPprofUpscalingProportional(UpscalingProportional { scale }) => {
-                profiles::UpscalingInfo::Proportional { scale }
-            }
-            UpscalingInfo::DdogPprofUpscalingPoisson(UpscalingPoisson { sampling_distance }) => {
-                profiles::UpscalingInfo::Poisson {
-                    sampling_distance: sampling_distance
-                        .try_into()
-                        .map_err(|_| ProfileError::other("invalid input: upscaling Poisson sampling distance was zero"))?,
-                }
-            }
-            UpscalingInfo::DdogPprofUpscalingPoissonNonSampleTypeCount(UpscalingPoissonNonSampleTypeCount{
-                count_value,
-                sampling_distance,
-            }) => profiles::UpscalingInfo::PoissonNonSampleTypeCount {
-                count_value: count_value.try_into()
-                    .map_err(|_| ProfileError::other("invalid input: upscaling PoissonNonSampleTypeCount count value was zero"))?,
-                sampling_distance: sampling_distance.try_into()
-                    .map_err(|_| ProfileError::other("invalid input: upscaling PoissonNonSampleTypeCount sampling distance was zero"))?,
-            },
-        })
+// SAFETY: all cases use Rust c-str literals.
+unsafe impl FfiSafeErrorMessage for PoissonUpscalingConversionError {
+    fn as_ffi_str(&self) -> &'static CStr {
+        match self {
+            PoissonUpscalingConversionError::SamplingDistance => c"PoissonUpscalingRule.sampling_distance cannot be zero",
+            PoissonUpscalingConversionError::SumOffset => c"PoissonUpscalingRule.sum_offset must be less than MAX_SAMPLE_TYPES",
+            PoissonUpscalingConversionError::CountOffset => c"PoissonUpscalingRule.count_offset must be less than MAX_SAMPLE_TYPES",
+        }
     }
 }
 
-#[repr(C)]
-pub struct UpscalingRule<'a> {
-    pub group_by_label_key: CharSlice<'a>, // todo: this one is interned already
-    pub group_by_label_value: CharSlice<'a>, // "OutOfBoundsException", "0 - 9ms"
-    pub upscaling_info: UpscalingInfo,
+impl core::fmt::Display for PoissonUpscalingConversionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.as_rust_str().fmt(f)
+    }
+}
+
+impl core::error::Error for PoissonUpscalingConversionError {}
+
+impl TryFrom<PoissonUpscalingRule>
+    for datadog_profiling::profiles::PoissonUpscalingRule
+{
+    type Error = PoissonUpscalingConversionError;
+
+    fn try_from(value: PoissonUpscalingRule) -> Result<Self, Self::Error> {
+        let Some(sampling_distance) = NonZeroU64::new(value.sampling_distance)
+        else {
+            return Err(PoissonUpscalingConversionError::SamplingDistance);
+        };
+        let sum_offset = value.count_offset as usize;
+        let count_offset = value.count_offset as usize;
+        if sum_offset >= MAX_SAMPLE_TYPES {
+            return Err(PoissonUpscalingConversionError::SumOffset);
+        }
+        if count_offset >= MAX_SAMPLE_TYPES {
+            return Err(PoissonUpscalingConversionError::CountOffset);
+        }
+        Ok(Self { sum_offset, count_offset, sampling_distance })
+    }
 }

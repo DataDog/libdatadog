@@ -122,9 +122,7 @@ fn main() {
     // Convert the in-memory profile into pprof using PprofBuilder and
     // stream to an LZ4 compressor, then write to stdout.
     let mut builder = PprofBuilder::new(&dictionary, &scratchpad);
-    builder
-        .try_add_profile(&profile, std::iter::empty())
-        .unwrap();
+    builder.try_add_profile(&profile).unwrap();
 
     builder.build(&mut compressor).unwrap();
     let compressed = compressor.finish().unwrap();

@@ -3,14 +3,15 @@
 
 mod upscaling;
 
-use function_name::named;
-pub use upscaling::UpscalingRule;
+pub use upscaling::ProportionalUpscalingRule;
 
 use crate::profile_handle::ProfileHandle;
-use crate::profiles::{ensure_non_null_out_parameter, Utf8Option};
+use crate::profiles::pprof_builder::upscaling::PoissonUpscalingRule;
+use crate::profiles::{
+    ensure_non_null_out_parameter, Utf8ConversionError, Utf8Option,
+};
 use crate::{ArcHandle, ProfileStatus};
 use datadog_profiling::exporter::EncodedProfile;
-use datadog_profiling::profiles;
 use datadog_profiling::profiles::datatypes::{
     Profile, ProfilesDictionary, ScratchPad,
 };
@@ -48,49 +49,127 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_new(
     }())
 }
 
-/// Adds a profile to the builder with the attached upscaling rules.
+/// Adds a profile to the builder without upscaling rules.
 ///
 /// # Safety
 ///
 /// - `handle` must refer to a live builder, and no other mutable
 ///   references to that builder may be active for the duration of the call.
 /// - `profile` must be non-null and point to a valid `Profile` that
-///   remains alive for the duration of the call.
+///   remains alive until the pprof builder is done.
+/// TODO: finish safety
 #[must_use]
-#[named]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile<'a>(
+pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile(
+    mut handle: ProfileHandle<PprofBuilder>,
+    profile: *const Profile,
+) -> ProfileStatus {
+    crate::profiles::ensure_non_null_insert!(profile);
+    let result = || -> Result<(), ProfileStatus> {
+        let builder = unsafe {
+            handle
+                .as_inner_mut()
+                .map_err(|e| ProfileStatus::from_ffi_safe_error_message(e))?
+        };
+        let prof_ref = unsafe { &*profile };
+        builder
+            .try_add_profile(prof_ref)
+            .map_err(ProfileStatus::from_ffi_safe_error_message)
+    }();
+    match result {
+        Ok(_) => ProfileStatus::OK,
+        Err(err) => err,
+    }
+}
+
+/// Adds a profile to the builder with the attached poisson upscaling rule.
+///
+/// # Safety
+///
+/// - `handle` must refer to a live builder, and no other mutable
+///   references to that builder may be active for the duration of the call.
+/// - `profile` must be non-null and point to a valid `Profile` that
+///   remains alive until the pprof builder is done.
+/// TODO: finish safety
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile_with_poisson_upscaling(
+    mut handle: ProfileHandle<PprofBuilder>,
+    profile: *const Profile,
+    upscaling_rule: PoissonUpscalingRule,
+) -> ProfileStatus {
+    crate::profiles::ensure_non_null_insert!(profile);
+    let result = || -> Result<(), ProfileStatus> {
+        let builder = unsafe {
+            handle
+                .as_inner_mut()
+                .map_err(|e| ProfileStatus::from_ffi_safe_error_message(e))?
+        };
+        let prof_ref = unsafe { &*profile };
+
+        let upscaling_rule = upscaling_rule
+            .try_into()
+            .map_err(ProfileStatus::from_ffi_safe_error_message)?;
+        builder
+            .try_add_profile_with_poisson_upscaling(prof_ref, upscaling_rule)
+            .map_err(ProfileStatus::from_ffi_safe_error_message)
+    }();
+    match result {
+        Ok(_) => ProfileStatus::OK,
+        Err(status) => status,
+    }
+}
+
+/// Adds a profile to the builder with the attached proportional rule.
+///
+/// # Safety
+///
+/// - `handle` must refer to a live builder, and no other mutable
+///   references to that builder may be active for the duration of the call.
+/// - `profile` must be non-null and point to a valid `Profile` that
+///   remains alive until the pprof builder is done.
+/// TODO: finish safety
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile_with_proportional_upscaling<
+    'a,
+>(
     mut handle: ProfileHandle<PprofBuilder<'a>>,
     profile: *const Profile,
-    upscaling_rules: Slice<UpscalingRule<'a>>,
+    upscaling_rules: Slice<ProportionalUpscalingRule<'a>>,
     utf8_option: Utf8Option,
 ) -> ProfileStatus {
     crate::profiles::ensure_non_null_insert!(profile);
-    ProfileStatus::from(|| -> Result<(), ProfileError> {
-        let builder = unsafe { handle.as_inner_mut()? };
+    let result = || -> Result<(), ProfileStatus> {
+        let builder = unsafe { handle.as_inner_mut() }
+            .map_err(ProfileStatus::from_ffi_safe_error_message)?;
         let prof_ref = unsafe { &*profile };
 
-        let upscaling_rules = upscaling_rules.try_as_slice().map_err(|e| {
-            ProfileError::fmt(format_args!(
-                "{} failed: upscaling rules couldn't be converted to a Rust slice: {e}",
-                function_name!(),
-            ))
-        })?;
+        let upscaling_rules = upscaling_rules
+            .try_as_slice()
+            .map_err(ProfileStatus::from_ffi_safe_error_message)?;
 
-        builder.try_add_profile(
-            prof_ref,
-            upscaling_rules.iter().map(|rule| {
-                let key = utf8_option
-                    .try_as_bytes_convert(rule.group_by_label_key)?;
-                let value = utf8_option
-                    .try_as_bytes_convert(rule.group_by_label_value)?;
-                let group_by_label = (key, value);
-                let upscaling_info =
-                    profiles::UpscalingInfo::try_from(rule.upscaling_info)?;
-                Ok(profiles::UpscalingRule { group_by_label, upscaling_info })
-            }),
-        )
-    }())
+        builder
+            .try_add_profile_with_proportional_upscaling(
+                prof_ref,
+                upscaling_rules.iter().map(
+                    |rule| -> Result<_, Utf8ConversionError> {
+                        let key = rule.group_by_label.key;
+                        let value = utf8_option
+                            .try_as_bytes_convert(rule.group_by_label.value)?;
+                        Ok((
+                            (key, value),
+                            rule.sampled as f64 / rule.real as f64,
+                        ))
+                    },
+                ),
+            )
+            .map_err(ProfileStatus::from_ffi_safe_error_message)
+    }();
+    match result {
+        Ok(_) => ProfileStatus::OK,
+        Err(status) => status,
+    }
 }
 
 /// Builds and returns a compressed `EncodedProfile` via `out_profile`.

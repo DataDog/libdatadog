@@ -11,6 +11,7 @@
 //! - Our stack abstractions (thin slices of `SetId<Location>`) do not exist in pprof; we expand
 //!   stacks into `Sample.location_id` arrays as they are encountered while streaming.
 
+mod remapper;
 mod string_table;
 mod upscaling;
 
@@ -18,16 +19,17 @@ use std::borrow::Cow;
 pub use string_table::*;
 pub use upscaling::*;
 
-use crate::profiles::collections::{SetHasher, SetId};
+use crate::profiles::collections::{SetHasher, SetId, StringId};
 use crate::profiles::datatypes::{
     self as dt, Profile, ProfilesDictionary, ScratchPad, MAX_SAMPLE_TYPES,
 };
 use crate::profiles::ProfileError;
 use arrayvec::ArrayVec;
 use datadog_profiling_protobuf::{self as pprof, Value};
+use ddcommon::error::FfiSafeErrorMessage;
 use ddcommon::vec::VecExt;
-use hashbrown::HashSet;
 use std::collections::{hash_map, HashMap};
+use std::ffi::CStr;
 use std::io::Write;
 use std::ptr::NonNull;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -109,11 +111,44 @@ enum PprofBuilderState<'a> {
     },
     AddingProfiles {
         options: PprofOptions,
-        profiles: Vec<(&'a Profile, UpscalingRules)>,
+        profiles: Vec<(&'a Profile, Vec<UpscalingRule>)>,
         string_table: StringTable<'a>,
     },
 }
+use crate::profiles::pprof_builder::remapper::Remapper;
 use PprofBuilderState::*;
+
+#[derive(Debug)]
+pub enum TryAddProfileError {
+    InternalError,
+    StorageFullLabelIntern,
+    OutOfMemoryLabelIntern,
+    OutOfMemoryPoissonUpscaling,
+    OutOfMemoryProportionalUpscaling,
+    OutOfMemoryStringTableNew,
+    OutOfMemoryWithoutUpscaling,
+    WrongSampleTypeCountForPoisson,
+
+    // Make sure this is an FFI-safe CStr!
+    Other(&'static CStr),
+}
+
+// SAFETY: we ensure c-str literals here or i
+unsafe impl FfiSafeErrorMessage for TryAddProfileError {
+    fn as_ffi_str(&self) -> &'static CStr {
+        match self {
+            TryAddProfileError::InternalError => c"internal error: pprof builder is in an invalid state",
+            TryAddProfileError::StorageFullLabelIntern => c"storage full: pprof builder couldn't intern a label string because the string table was full",
+            TryAddProfileError::OutOfMemoryLabelIntern => c"out of memory: pprof builder couldn't intern a label string",
+            TryAddProfileError::OutOfMemoryPoissonUpscaling => c"out of memory: pprof builder couldn't allocate a new profile with poisson upscaling",
+            TryAddProfileError::OutOfMemoryWithoutUpscaling => c"out of memory: pprof builder couldn't allocate a new profile without upscaling rules",
+            TryAddProfileError::OutOfMemoryProportionalUpscaling => c"out of memory: pprof builder couldn't allocate a new profile with proportional upscaling",
+            TryAddProfileError::OutOfMemoryStringTableNew => c"out of memory: pprof builder couldn't allocate a new string table",
+            TryAddProfileError::WrongSampleTypeCountForPoisson => c"invalid input: profile's sample type count must be at least 2 for poisson upscaling",
+            TryAddProfileError::Other(e) => e,
+        }
+    }
+}
 
 impl<'a> PprofBuilder<'a> {
     /// Create a new builder bound to a shared dictionary and scratchpad
@@ -141,14 +176,97 @@ impl<'a> PprofBuilder<'a> {
         }
     }
 
-    pub fn try_add_profile<I>(
+    pub fn try_add_profile_with_proportional_upscaling<I, E>(
         &mut self,
         profile: &'a Profile,
         upscaling_rules: I,
-    ) -> Result<(), ProfileError>
+    ) -> Result<(), TryAddProfileError>
     where
-        I: ExactSizeIterator<Item = Result<UpscalingRule<'a>, ProfileError>>,
+        E: FfiSafeErrorMessage,
+        I: ExactSizeIterator<Item = Result<((StringId, Cow<'a, str>), f64), E>>,
     {
+        let string_set = self.dictionary.strings();
+        let (profiles, string_table) = self.transition_to_adding_profiles()?;
+
+        let mut new_rules = Vec::new();
+        new_rules
+            .try_reserve_exact(upscaling_rules.len())
+            .map_err(|_| TryAddProfileError::OutOfMemoryProportionalUpscaling)?;
+        for result in upscaling_rules {
+            let ((label_key, label_value), scale) =
+                result.map_err(|e| TryAddProfileError::Other(e.as_ffi_str()))?;
+
+            // SAFETY: dictionary is supposed to hold all these interned strings.
+            let key = string_table
+                .intern(unsafe { string_set.get(label_key) })
+                .map_err(|e| match e {
+                    StringTableInternError::StorageFull(_) => {
+                        TryAddProfileError::StorageFullLabelIntern
+                    }
+                    StringTableInternError::TryReserveError(_) => {
+                        TryAddProfileError::OutOfMemoryLabelIntern
+                    }
+                })?;
+            let value = string_table.intern(label_value).map_err(|e| match e {
+                StringTableInternError::StorageFull(_) => {
+                    TryAddProfileError::StorageFullLabelIntern
+                }
+                StringTableInternError::TryReserveError(_) => {
+                    TryAddProfileError::OutOfMemoryLabelIntern
+                }
+            })?;
+            let group_by_label = GroupByLabel { key, value };
+            let rule = ProportionalUpscalingRule {
+                group_by_label,
+                scale,
+            };
+            new_rules.push(UpscalingRule::ProportionalUpscalingRule(rule));
+        }
+
+        profiles
+            .try_push((profile, new_rules))
+            .map_err(|_| TryAddProfileError::OutOfMemoryProportionalUpscaling)
+    }
+
+    pub fn try_add_profile_with_poisson_upscaling(
+        &mut self,
+        profile: &'a Profile,
+        upscaling_rule: PoissonUpscalingRule,
+    ) -> Result<(), TryAddProfileError> {
+        let (profiles, _) = self.transition_to_adding_profiles()?;
+
+        if profile.sample_type.len() < 2 {
+            return Err(TryAddProfileError::WrongSampleTypeCountForPoisson);
+        }
+
+        let mut new_rules = Vec::new();
+        new_rules
+            .try_reserve_exact(1)
+            .map_err(|_| TryAddProfileError::OutOfMemoryPoissonUpscaling)?;
+        new_rules.push(UpscalingRule::PoissonUpscalingRule(upscaling_rule));
+
+        profiles
+            .try_push((profile, new_rules))
+            .map_err(|_| TryAddProfileError::OutOfMemoryPoissonUpscaling)
+    }
+
+    pub fn try_add_profile(&mut self, profile: &'a Profile) -> Result<(), TryAddProfileError> {
+        let (profiles, _) = self.transition_to_adding_profiles()?;
+
+        profiles
+            .try_push((profile, Vec::new()))
+            .map_err(|_| TryAddProfileError::OutOfMemoryWithoutUpscaling)
+    }
+
+    fn transition_to_adding_profiles(
+        &mut self,
+    ) -> Result<
+        (
+            &mut Vec<(&'a Profile, Vec<UpscalingRule>)>,
+            &mut StringTable<'a>,
+        ),
+        TryAddProfileError,
+    > {
         if matches!(self.state, Initialized) {
             let options = PprofOptions::default();
             self.state = Configured { options };
@@ -158,7 +276,8 @@ impl<'a> PprofBuilder<'a> {
             self.state = AddingProfiles {
                 options: *options,
                 profiles: Vec::new(),
-                string_table: StringTable::with_capacity(options.reserve_strings)?,
+                string_table: StringTable::with_capacity(options.reserve_strings)
+                    .map_err(|_| TryAddProfileError::OutOfMemoryStringTableNew)?,
             };
         }
 
@@ -171,19 +290,9 @@ impl<'a> PprofBuilder<'a> {
             // This should be unreachable. The intent is that that all
             // previous states can be forwarded to adding profiles, and the
             // above code is supposed to do that.
-            return Err(ProfileError::other(
-                "internal error: invalid pprof builder state",
-            ));
+            return Err(TryAddProfileError::InternalError);
         };
-
-        let item = (profile, new_upscaling_rules(string_table, upscaling_rules)?);
-        if profiles.try_push(item).is_err() {
-            Err(ProfileError::other(
-                "out of memory: pprof builder couldn't reserve memory for new profiles",
-            ))
-        } else {
-            Ok(())
-        }
+        Ok((profiles, string_table))
     }
 
     /// Produce a complete uncompressed pprof for all added profiles.
@@ -191,8 +300,8 @@ impl<'a> PprofBuilder<'a> {
     pub fn build<W: Write>(&mut self, writer: &mut W) -> Result<(), ProfileError> {
         let AddingProfiles {
             options,
-            string_table,
             profiles,
+            string_table,
         } = &mut self.state
         else {
             return Err(ProfileError::other(
@@ -216,51 +325,29 @@ impl<'a> PprofBuilder<'a> {
 
         // --- unify sample types across profiles and emit ---
         let n_sample_types = profiles.iter().map(|(p, _)| p.sample_type.len()).sum();
-
-        // Used to track if we've seen a sample type before, which is a
-        // programmer error.
-        let mut seen_sample_types: HashSet<pprof::ValueType> = Default::default();
-        let mut global_sample_types: Vec<pprof::ValueType> = Vec::new();
-        seen_sample_types.try_reserve(n_sample_types)?;
-        global_sample_types.try_reserve_exact(n_sample_types)?;
+        let n_profiles = profiles.len();
 
         let mut remaps: Vec<ArrayVec<usize, MAX_SAMPLE_TYPES>> = Vec::new();
-        remaps.try_reserve_exact(profiles.len())?;
-        for (prof, _upscaling_rules) in profiles.iter() {
-            let mut remap = ArrayVec::new();
-            if prof.sample_type.len() > remap.capacity() {
-                return Err(ProfileError::other(
-                    "internal error: pprof builder had mismatched capacities for sample types",
-                ));
-            }
-            for vt in &prof.sample_type {
-                let idx = global_sample_types.len();
-
-                let t: &'a str = unsafe { dict_strings.get(vt.type_id) };
-                let u: &'a str = unsafe { dict_strings.get(vt.unit_id) };
-                let toff = string_table.intern(writer, t)?;
-                let uoff = string_table.intern(writer, u)?;
-                let interned_vt = pprof::ValueType {
-                    r#type: pprof::Record::from(toff),
-                    unit: pprof::Record::from(uoff),
-                };
-
-                if !seen_sample_types.insert(interned_vt) {
+        {
+            let mut remapper = Remapper::new(dict_strings, &mut string_table, n_sample_types)?;
+            remaps.try_reserve_exact(n_profiles)?;
+            for profile in profiles.iter().map(|(p, _)| p) {
+                let mut offsets = ArrayVec::new();
+                for sample_type in profile.sample_type.iter() {
+                    if offsets
+                        .try_push(remapper.remap(writer, *sample_type)?)
+                        .is_err()
+                    {
+                        return Err(ProfileError::other("internal error: pprof builder had mismatched capacities for sample types"));
+                    }
+                }
+                if remaps.try_push(offsets).is_err() {
                     return Err(ProfileError::other(
-                        "internal error: pprof builder saw the same sample type twice",
+                        "out of memory: pprof builder couldn't remap sample types",
                     ));
                 }
-                remap.try_push(idx)?;
-                global_sample_types.push(interned_vt);
             }
-            remaps.push(remap);
         }
-        for vt in global_sample_types.iter().copied() {
-            pprof::Record::<pprof::ValueType, 1, { pprof::NO_OPT_ZERO }>::from(vt)
-                .encode(writer)?;
-        }
-
-        // --- emit helpers are defined on impl PprofBuilder below ---
 
         // --- emit samples ---
         // Emit profile-level time_nanos and duration_nanos if available from ScratchPad interval
@@ -291,31 +378,8 @@ impl<'a> PprofBuilder<'a> {
         let mut values_buf: Vec<i64> = Vec::new();
         let mut labels_buf: Vec<pprof::Record<pprof::Label, 3, { pprof::NO_OPT_ZERO }>> =
             Vec::new();
-        for (i, (prof, up)) in profiles.iter().enumerate() {
+        for (i, (prof, upscaling_rules)) in profiles.iter().enumerate() {
             let remap = &remaps[i];
-            // Determine upscaling plan for this profile: either global (default-only) or per-group
-            // (by-label only)
-            let mut group_scales: Option<HashMap<GroupByLabel, f64, SetHasher>> = None;
-            let mut profile_scale: Option<f64> = None;
-            if !up.is_empty() {
-                if up.len() > 1 && up.contains_key(&GroupByLabel::default()) {
-                    return Err(ProfileError::other(
-                        "invalid input: pprof builder saw both default and by-label upscaling rules attached to the same profile",
-                    ));
-                }
-                if up.contains_key(&GroupByLabel::default()) {
-                    profile_scale = Self::compute_profile_scale(up, prof)?;
-                } else {
-                    group_scales = Some(Self::compute_group_scales(
-                        writer,
-                        &mut string_table,
-                        scratch,
-                        dict,
-                        prof,
-                        up,
-                    )?);
-                }
-            }
             for sample in &prof.samples {
                 // location ids from stack
                 let stack = sample.stack_id.as_slice();
@@ -432,34 +496,8 @@ impl<'a> PprofBuilder<'a> {
                 }
 
                 // Apply upscaling
-                if let Some(scale) = profile_scale {
-                    if scale != 1.0 {
-                        for v in values_buf.iter_mut() {
-                            *v = ((*v as f64) * scale).round() as i64;
-                        }
-                    }
-                } else if let Some(scales) = &group_scales {
-                    // find first matching group for this sample and apply its scale
-                    let mut applied = false;
-                    for rec in &labels_buf {
-                        let lbl = &rec.value;
-                        let key = lbl.key.value;
-                        let value = lbl.str.value;
-                        if value.is_zero() {
-                            continue;
-                        }
-                        let g = GroupByLabel { key, value };
-                        if let Some(scale) = scales.get(&g).copied() {
-                            if scale != 1.0 {
-                                for v in values_buf.iter_mut() {
-                                    *v = ((*v as f64) * scale).round() as i64;
-                                }
-                            }
-                            applied = true;
-                            break;
-                        }
-                    }
-                    let _ = applied; // suppress unused in some configurations
+                for rule in upscaling_rules {
+                    rule.scale(&mut values_buf, &labels_buf);
                 }
 
                 let s_msg = pprof::Sample {
@@ -473,162 +511,6 @@ impl<'a> PprofBuilder<'a> {
         }
 
         Ok(())
-    }
-
-    // Compute a single upscaling factor for the whole profile, using aggregated values.
-    fn compute_profile_scale(
-        rules: &UpscalingRules,
-        profile: &Profile,
-    ) -> Result<Option<f64>, ProfileError> {
-        if rules.is_empty() {
-            return Ok(None);
-        }
-        // Enforce rule constraints: if default plus any non-default exist, error for now
-        if rules.len() > 1 && rules.contains_key(&GroupByLabel::default()) {
-            return Err(ProfileError::other(
-                "invalid input: pprof builder saw both default and by-label upscaling rules attached to the same profile",
-            ));
-        }
-
-        // Select rule: default only or none
-        let info = match rules.get(&GroupByLabel::default()) {
-            Some(i) => i,
-            None => return Ok(None),
-        };
-
-        let scale = match *info {
-            UpscalingInfo::Proportional { scale } => scale,
-            UpscalingInfo::Poisson { sampling_distance } => {
-                if profile.sample_type.len() != 2 {
-                    return Err(ProfileError::other(
-                        "invalid input: Poisson upscaling attached to a profile with a single sample type; requires sum and count",
-                    ));
-                }
-                // Aggregate only what's needed: sum at index 0 and count at index 1
-                let mut sum: i64 = 0;
-                let mut count: i64 = 0;
-                for s in &profile.samples {
-                    if let Some(v) = s.values.first() {
-                        sum = sum.saturating_add(*v);
-                    }
-                    if let Some(v) = s.values.get(1) {
-                        count = count.saturating_add(*v);
-                    }
-                }
-                if sum == 0 || count == 0 {
-                    1.0
-                } else {
-                    let avg = sum as f64 / count as f64;
-                    let d = sampling_distance.get() as f64;
-                    1.0 / (1.0 - (-avg / d).exp())
-                }
-            }
-            UpscalingInfo::PoissonNonSampleTypeCount {
-                count_value,
-                sampling_distance,
-            } => {
-                // Aggregate only what's needed: sum at index 0
-                let mut sum: i64 = 0;
-                for s in &profile.samples {
-                    if let Some(v) = s.values.first() {
-                        sum = sum.saturating_add(*v);
-                    }
-                }
-                if sum == 0 {
-                    1.0
-                } else {
-                    let avg = sum as f64 / (count_value.get() as f64);
-                    let d = sampling_distance.get() as f64;
-                    1.0 / (1.0 - (-avg / d).exp())
-                }
-            }
-        };
-
-        Ok(Some(scale))
-    }
-
-    // Compute per-group upscaling factors from aggregated values by label group.
-    fn compute_group_scales<W: Write>(
-        writer: &mut W,
-        strings: &mut StringTableWriter<'a>,
-        scratch: &'a ScratchPad,
-        dict: &'a ProfilesDictionary,
-        profile: &Profile,
-        rules: &UpscalingRules,
-    ) -> Result<HashMap<GroupByLabel, f64, SetHasher>, ProfileError> {
-        // Aggregate sums per label group for this profile
-        let dict_strings = dict.strings();
-        let mut group_to_sum: HashMap<GroupByLabel, i64, SetHasher> =
-            HashMap::with_hasher(SetHasher::default());
-        let mut group_to_count: HashMap<GroupByLabel, i64, SetHasher> =
-            HashMap::with_hasher(SetHasher::default());
-
-        for s in &profile.samples {
-            // derive group label if any string label is present; accumulate for ALL string labels
-            // Note: if multiple string labels exist in a sample, we update all their groups
-            for &aid in &s.attributes {
-                let kv = unsafe { scratch.attributes().get(aid) };
-                let key_str: &str = unsafe { dict_strings.get(kv.key) };
-                if let dt::AnyValue::String(ref val_s) = kv.value {
-                    let group = {
-                        let key = strings.intern(writer, key_str)?;
-                        let value = strings.intern(writer, val_s)?;
-                        GroupByLabel { key, value }
-                    };
-                    let entry_sum = group_to_sum.entry(group).or_insert(0);
-                    if let Some(v) = s.values.first() {
-                        *entry_sum = entry_sum.saturating_add(*v);
-                    }
-                    if let Some(v) = s.values.get(1) {
-                        let entry_cnt = group_to_count.entry(group).or_insert(0);
-                        *entry_cnt = entry_cnt.saturating_add(*v);
-                    }
-                }
-            }
-        }
-
-        // Compute scale per group using corresponding rule
-        let mut out: HashMap<GroupByLabel, f64, SetHasher> =
-            HashMap::with_hasher(SetHasher::default());
-        out.try_reserve(rules.len())?;
-        for (group, info) in rules {
-            if *group == GroupByLabel::default() {
-                continue; // default not allowed here per pre-check
-            }
-            let sum = *group_to_sum.get(group).unwrap_or(&0);
-            let scale = match *info {
-                UpscalingInfo::Proportional { scale } => scale,
-                UpscalingInfo::Poisson { sampling_distance } => {
-                    if profile.sample_type.len() != 2 {
-                        return Err(ProfileError::other(
-                            "invalid input: Poisson upscaling attached to a profile with a single sample type; requires sum and count",
-                        ));
-                    }
-                    let count = *group_to_count.get(group).unwrap_or(&0);
-                    if sum == 0 || count == 0 {
-                        1.0
-                    } else {
-                        let avg = sum as f64 / count as f64;
-                        let d = sampling_distance.get() as f64;
-                        1.0 / (1.0 - (-avg / d).exp())
-                    }
-                }
-                UpscalingInfo::PoissonNonSampleTypeCount {
-                    count_value,
-                    sampling_distance,
-                } => {
-                    if sum == 0 {
-                        1.0
-                    } else {
-                        let avg = sum as f64 / (count_value.get() as f64);
-                        let d = sampling_distance.get() as f64;
-                        1.0 / (1.0 - (-avg / d).exp())
-                    }
-                }
-            };
-            out.insert(*group, scale);
-        }
-        Ok(out)
     }
 
     fn add_sample_timestamp_label(
@@ -745,43 +627,4 @@ impl<'a> PprofBuilder<'a> {
             Ok(())
         })
     }
-}
-
-pub struct UpscalingRule<'a> {
-    /// Use ("", "") for no label.
-    pub group_by_label: (Cow<'a, str>, Cow<'a, str>),
-    pub upscaling_info: UpscalingInfo,
-}
-
-fn new_upscaling_rules<'a, I>(
-    string_table: &mut StringTable<'a>,
-    rules: I,
-) -> Result<UpscalingRules, ProfileError>
-where
-    I: ExactSizeIterator<Item = Result<UpscalingRule<'a>, ProfileError>>,
-{
-    let mut r = UpscalingRules::default();
-    // avoids ExactSizeIterator::len() here to avoid an assertion.
-    let (lower, upper) = rules.size_hint();
-    if Some(lower) != upper {
-        return Err(ProfileError::other(
-            "internal error: exact size iterator violated trait constraints",
-        ));
-    }
-    if r.try_reserve(lower).is_err() {
-        return Err(ProfileError::other(
-            "out of memory: pprof builder couldn't create a new upscaling rule",
-        ));
-    }
-    for item in rules {
-        let UpscalingRule {
-            group_by_label,
-            upscaling_info,
-        } = item?;
-        let key = string_table.intern(group_by_label.0)?;
-        let value = string_table.intern(group_by_label.1)?;
-        let group_by_label = GroupByLabel { key, value };
-        r.insert(group_by_label, upscaling_info);
-    }
-    Ok(r)
 }
