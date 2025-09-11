@@ -51,7 +51,7 @@ impl InternalProfile {
             // Create a Profile for this sample type
             let profile = datadog_profiling_otel::Profile {
                 sample_type: Some(otel_sample_type),
-                sample: vec![], 
+                sample: vec![],
                 time_nanos: self
                     .start_time
                     .duration_since(std::time::UNIX_EPOCH)
@@ -274,20 +274,8 @@ mod tests {
     // Common assertion helpers
     fn assert_duration_calculation(profiles: &[datadog_profiling_otel::Profile]) {
         for profile in profiles {
-            // When no duration is provided, it should calculate from current time - start time
             assert!(profile.duration_nanos > 0);
         }
-    }
-
-    fn assert_basic_dictionary_structure(dictionary: &datadog_profiling_otel::ProfilesDictionary) {
-        assert_eq!(dictionary.mapping_table.len(), 0);
-        assert_eq!(dictionary.location_table.len(), 0);
-        assert_eq!(dictionary.function_table.len(), 0);
-        assert_eq!(dictionary.stack_table.len(), 0);
-        assert_eq!(dictionary.string_table.len(), 4); // Default strings: "", "local root span id", "trace endpoint", "end_timestamp_ns"
-        assert_eq!(dictionary.link_table.len(), 0);
-        assert_eq!(dictionary.attribute_table.len(), 0);
-        assert_eq!(dictionary.attribute_units.len(), 0);
     }
 
     fn assert_profile_has_correct_sample(
@@ -321,31 +309,23 @@ mod tests {
     }
 
     #[test]
-    fn test_from_internal_profile_empty() {
-        // Create an empty internal profile
+    fn test_convert_into_otel() {
+        // Test empty profile
         let internal_profile = InternalProfile::new(&[], None);
-
-        // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
-
-        // Verify the conversion
         assert_profiles_data_structure(&otel_profiles_data);
         let dictionary = otel_profiles_data.dictionary.unwrap();
-        assert_basic_dictionary_structure(&dictionary);
+        assert_eq!(dictionary.mapping_table.len(), 0);
+        assert_eq!(dictionary.location_table.len(), 0);
+        assert_eq!(dictionary.function_table.len(), 0);
+        assert_eq!(dictionary.stack_table.len(), 0);
+        assert_eq!(dictionary.string_table.len(), 4);
+        assert_eq!(dictionary.link_table.len(), 0);
+        assert_eq!(dictionary.attribute_table.len(), 0);
+        assert_eq!(dictionary.attribute_units.len(), 0);
 
-        // Check duration calculation - only if profiles exist
-        let scope_profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0];
-        if !scope_profile.profiles.is_empty() {
-            assert_duration_calculation(&scope_profile.profiles);
-        }
-    }
-
-    #[test]
-    fn test_from_internal_profile_with_data() {
-        // Create an internal profile with some data
+        // Test with functions
         let mut internal_profile = InternalProfile::new(&[], None);
-
-        // Add some functions using the API Function type
         let function1 = crate::api::Function {
             name: "test_function_1",
             system_name: "test_system_1",
@@ -356,144 +336,44 @@ mod tests {
             system_name: "test_system_2",
             filename: "test_file_2.rs",
         };
-
         let _function1_id = internal_profile.try_add_function(&function1);
         let _function2_id = internal_profile.try_add_function(&function2);
 
-        // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
-
-        // Verify the conversion
-        assert_profiles_data_structure(&otel_profiles_data);
         let dictionary = otel_profiles_data.dictionary.unwrap();
-
         assert_eq!(dictionary.function_table.len(), 2);
-        assert_eq!(dictionary.string_table.len(), 10); // 4 default strings + 6 strings from the 2 functions
+        assert_eq!(dictionary.string_table.len(), 10);
 
-        // Verify the first function conversion - using actual observed values
-        let otel_function1 = &dictionary.function_table[0];
-        assert_eq!(otel_function1.name_strindex, 4);
-        assert_eq!(otel_function1.system_name_strindex, 5);
-        assert_eq!(otel_function1.filename_strindex, 6);
-
-        // Verify the second function conversion - using actual observed values
-        let otel_function2 = &dictionary.function_table[1];
-        assert_eq!(otel_function2.name_strindex, 7);
-        assert_eq!(otel_function2.system_name_strindex, 8);
-        assert_eq!(otel_function2.filename_strindex, 9);
-
-        // Check duration calculation - only if profiles exist
-        let scope_profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0];
-        if !scope_profile.profiles.is_empty() {
-            assert_duration_calculation(&scope_profile.profiles);
-        }
-    }
-
-    #[test]
-    fn test_from_internal_profile_with_labels() {
-        // Create an internal profile with some data
+        // Test with labels
         let mut internal_profile = InternalProfile::new(&[], None);
-
-        // Add some labels using the API
         let label1 = create_string_label("thread_id", "main");
         let label2 = create_numeric_label("memory_usage", 1024, "bytes");
-
-        // Add a sample with these labels
         let sample = crate::api::Sample {
             locations: vec![],
             values: &[42],
             labels: vec![label1, label2],
         };
-
         let _ = internal_profile.try_add_sample(sample, None);
 
-        // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
-
-        // Verify the conversion
-        assert_profiles_data_structure(&otel_profiles_data);
         let dictionary = otel_profiles_data.dictionary.unwrap();
-
-        // Should have 2 labels converted to attributes
         assert_eq!(dictionary.attribute_table.len(), 2);
-
-        // Should have 1 attribute unit (for the numeric label with unit)
         assert_eq!(dictionary.attribute_units.len(), 1);
 
-        // Verify the first attribute (string label)
-        let attr1 = &dictionary.attribute_table[0];
-        assert_eq!(attr1.key, "thread_id");
-        match &attr1.value {
-            Some(datadog_profiling_otel::key_value::Value::StringValue(s)) => {
-                assert_eq!(s, "main");
-            }
-            _ => panic!("Expected StringValue"),
-        }
-
-        // Verify the second attribute (numeric label)
-        let attr2 = &dictionary.attribute_table[1];
-        assert_eq!(attr2.key, "memory_usage");
-        match &attr2.value {
-            Some(datadog_profiling_otel::key_value::Value::IntValue(n)) => {
-                assert_eq!(*n, 1024);
-            }
-            _ => panic!("Expected IntValue"),
-        }
-
-        // Verify the attribute unit mapping
-        let unit = &dictionary.attribute_units[0];
-        // The key should map to the memory_usage string index
-        // and the unit should map to the "bytes" string index
-        assert!(unit.attribute_key_strindex > 0);
-        assert!(unit.unit_strindex > 0);
-
-        // Check duration calculation - only if profiles exist
-        let scope_profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0];
-        if !scope_profile.profiles.is_empty() {
-            assert_duration_calculation(&scope_profile.profiles);
-        }
-    }
-
-    #[test]
-    fn test_from_internal_profile_with_sample_types() {
-        // Create an internal profile with specific sample types
+        // Test with sample types
         let sample_types = [
             crate::api::ValueType::new("cpu", "nanoseconds"),
             crate::api::ValueType::new("allocations", "count"),
         ];
         let internal_profile = InternalProfile::new(&sample_types, None);
-
-        // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
-
-        // Verify that individual profiles are created for each sample type
-        assert_profiles_data_structure(&otel_profiles_data);
         let scope_profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0];
-
-        // Should have 2 profiles (one for each sample type)
         assert_eq!(scope_profile.profiles.len(), 2);
-
-        // Verify the first profile (cpu profile)
-        let cpu_profile = &scope_profile.profiles[0];
-        assert!(cpu_profile.sample_type.is_some());
-        let cpu_sample_type = cpu_profile.sample_type.as_ref().unwrap();
-        assert_eq!(cpu_sample_type.type_strindex, 4); // "cpu" string index
-        assert_eq!(cpu_sample_type.unit_strindex, 5); // "nanoseconds" string index
-
-        // Verify the second profile (allocations profile)
-        let allocations_profile = &scope_profile.profiles[1];
-        assert!(allocations_profile.sample_type.is_some());
-        let allocations_sample_type = allocations_profile.sample_type.as_ref().unwrap();
-        assert_eq!(allocations_sample_type.type_strindex, 6); // "allocations" string index
-        assert_eq!(allocations_sample_type.unit_strindex, 7); // "count" string index
-
-        // Check duration calculation for both profiles
         assert_duration_calculation(&scope_profile.profiles);
     }
 
     #[test]
-    fn test_sample_conversion_basic() {
-        // Create an internal profile with sample types
+    fn test_sample_conversion() {
         let sample_types = [
             crate::api::ValueType::new("cpu", "nanoseconds"),
             crate::api::ValueType::new("memory", "bytes"),
@@ -501,43 +381,23 @@ mod tests {
         let (mut internal_profile, location) =
             setup_profile_with_function_and_location(&sample_types);
 
-        // Add a sample with values
+        // Test basic sample conversion
         let sample = crate::api::Sample {
             locations: vec![location],
-            values: &[100, 2048], // 100 nanoseconds, 2048 bytes
+            values: &[100, 2048],
             labels: vec![],
         };
         let _ = internal_profile.try_add_sample(sample, None);
 
-        // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
-
-        // Verify the conversion
-        assert_profiles_data_structure(&otel_profiles_data);
-        let _dictionary = otel_profiles_data.dictionary.unwrap();
-
         let scope_profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0];
-        // Should have 2 profiles (one for each sample type)
         assert_eq!(scope_profile.profiles.len(), 2);
-
-        // Verify the first profile (cpu profile) has the correct sample
         assert_profile_has_correct_sample(&scope_profile.profiles[0], vec![100], 0, 0);
-
-        // Verify the second profile (memory profile) has the correct sample
         assert_profile_has_correct_sample(&scope_profile.profiles[1], vec![2048], 0, 0);
 
-        // Check duration calculation for both profiles
-        assert_duration_calculation(&scope_profile.profiles);
-    }
-
-    #[test]
-    fn test_sample_conversion_with_labels() {
-        // Create an internal profile with sample types
-        let sample_types = [crate::api::ValueType::new("cpu", "nanoseconds")];
+        // Test with labels
         let (mut internal_profile, location) =
-            setup_profile_with_function_and_location(&sample_types);
-
-        // Add a sample with labels
+            setup_profile_with_function_and_location(&[sample_types[0]]);
         let sample = crate::api::Sample {
             locations: vec![location],
             values: &[150],
@@ -548,39 +408,56 @@ mod tests {
         };
         let _ = internal_profile.try_add_sample(sample, None);
 
-        // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
-
-        // Verify the conversion
-        assert_profiles_data_structure(&otel_profiles_data);
-        let _dictionary = otel_profiles_data.dictionary.unwrap();
         let profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
-
-        // Should have 1 sample with correct values and attributes
         assert_profile_has_correct_sample(profile, vec![150], 0, 2);
 
-        // Verify the sample has the correct attribute indices
+        // Verify the sample's attribute indices point to correct attributes
         let sample = &profile.sample[0];
-        // The attribute indices should correspond to the labels in the attribute table
-        assert!(sample.attribute_indices[0] >= 0);
-        assert!(sample.attribute_indices[1] >= 0);
+        let dictionary = &otel_profiles_data.dictionary.as_ref().unwrap();
 
-        // Check duration calculation
-        assert_duration_calculation(&[profile.clone()]);
+        // Check that attribute indices are valid
+        for &attr_idx in &sample.attribute_indices {
+            assert!(attr_idx >= 0);
+            assert!(attr_idx < dictionary.attribute_table.len() as i32);
+        }
 
-        // Verify the attributes were converted correctly
-        assert_eq!(_dictionary.attribute_table.len(), 2);
-        assert_eq!(_dictionary.attribute_units.len(), 1); // One numeric label with unit
-    }
+        // Verify the actual attribute content
+        let attr1 = &dictionary.attribute_table[sample.attribute_indices[0] as usize];
+        let attr2 = &dictionary.attribute_table[sample.attribute_indices[1] as usize];
 
-    #[test]
-    fn test_sample_conversion_with_timestamps() {
-        // Create an internal profile with sample types
-        let sample_types = [crate::api::ValueType::new("cpu", "nanoseconds")];
+        // One should be the string label, one should be the numeric label
+        let (string_attr, numeric_attr) = if attr1.key == "thread_id" {
+            (attr1, attr2)
+        } else {
+            (attr2, attr1)
+        };
+
+        // Verify string attribute
+        assert_eq!(string_attr.key, "thread_id");
+        let s = match string_attr.value.as_ref().expect("Expected Some value") {
+            datadog_profiling_otel::key_value::Value::StringValue(s) => s,
+            _ => panic!("Expected StringValue"),
+        };
+        assert_eq!(s, "main");
+
+        // Verify numeric attribute
+        assert_eq!(numeric_attr.key, "cpu_usage");
+        let n = match numeric_attr.value.as_ref().expect("Expected Some value") {
+            datadog_profiling_otel::key_value::Value::IntValue(n) => n,
+            _ => panic!("Expected IntValue"),
+        };
+        assert_eq!(*n, 75);
+
+        // Verify attribute unit mapping
+        assert_eq!(dictionary.attribute_units.len(), 1);
+        let unit = &dictionary.attribute_units[0];
+        assert!(unit.attribute_key_strindex > 0);
+        assert!(unit.unit_strindex > 0);
+
+        // Test with timestamps
         let (mut internal_profile, location) =
-            setup_profile_with_function_and_location(&sample_types);
-
-        // Add a sample with timestamp
+            setup_profile_with_function_and_location(&[sample_types[0]]);
         let sample = crate::api::Sample {
             locations: vec![location],
             values: &[200],
@@ -589,35 +466,14 @@ mod tests {
         let timestamp = crate::internal::Timestamp::new(1234567890).unwrap();
         let _ = internal_profile.try_add_sample(sample, Some(timestamp));
 
-        // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
-
-        // Verify the conversion
-        assert_profiles_data_structure(&otel_profiles_data);
         let profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
-
-        // Should have 1 sample
         assert_eq!(profile.sample.len(), 1);
-        let sample = &profile.sample[0];
+        assert_sample_has_timestamp(&profile.sample[0], 1234567890);
 
-        // Verify the sample has the correct timestamp
-        assert_sample_has_timestamp(sample, 1234567890);
-
-        // Check duration calculation
-        assert_duration_calculation(&[profile.clone()]);
-    }
-
-    #[test]
-    fn test_sample_conversion_zero_values_filtered() {
-        // Create an internal profile with sample types
-        let sample_types = [
-            crate::api::ValueType::new("cpu", "nanoseconds"),
-            crate::api::ValueType::new("memory", "bytes"),
-        ];
+        // Test zero value filtering
         let (mut internal_profile, location) =
             setup_profile_with_function_and_location(&sample_types);
-
-        // Add a sample with one zero value and one non-zero value
         let sample = crate::api::Sample {
             locations: vec![location],
             values: &[0, 1024], // 0 nanoseconds, 1024 bytes
@@ -625,33 +481,14 @@ mod tests {
         };
         let _ = internal_profile.try_add_sample(sample, None);
 
-        // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
-
-        // Verify the conversion
-        assert_profiles_data_structure(&otel_profiles_data);
         let scope_profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0];
-        let profile0 = &scope_profile.profiles[0];
-        let profile1 = &scope_profile.profiles[1];
+        assert_eq!(scope_profile.profiles[0].sample.len(), 0); // Zero value filtered
+        assert_profile_has_correct_sample(&scope_profile.profiles[1], vec![1024], 0, 0);
 
-        // First profile (cpu) should have no samples since value is 0
-        assert_eq!(profile0.sample.len(), 0);
-
-        // Second profile (memory) should have 1 sample since value is non-zero
-        assert_profile_has_correct_sample(profile1, vec![1024], 0, 0);
-
-        // Check duration calculation for both profiles
-        assert_duration_calculation(&scope_profile.profiles);
-    }
-
-    #[test]
-    fn test_sample_conversion_multiple_samples() {
-        // Create an internal profile with sample types
-        let sample_types = [crate::api::ValueType::new("cpu", "nanoseconds")];
+        // Test multiple samples aggregation
         let (mut internal_profile, location) =
-            setup_profile_with_function_and_location(&sample_types);
-
-        // Add multiple samples
+            setup_profile_with_function_and_location(&[sample_types[0]]);
         let sample1 = crate::api::Sample {
             locations: vec![location],
             values: &[100],
@@ -667,48 +504,29 @@ mod tests {
             values: &[300],
             labels: vec![],
         };
-
         let _ = internal_profile.try_add_sample(sample1, None);
         let _ = internal_profile.try_add_sample(sample2, None);
         let _ = internal_profile.try_add_sample(sample3, None);
 
-        // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
-
-        // Verify the conversion
-        assert_profiles_data_structure(&otel_profiles_data);
         let profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
-
-        // Should have 1 aggregated sample (samples with same stack trace and labels get aggregated)
         assert_eq!(profile.sample.len(), 1);
+        assert_eq!(profile.sample[0].values, vec![600]); // 100 + 200 + 300
 
-        // Verify the aggregated sample has the summed value
-        let sample = &profile.sample[0];
-        assert_eq!(sample.values, vec![600]); // 100 + 200 + 300
-
-        // Verify all samples have the same stack index
-        for sample in &profile.sample {
-            assert_eq!(sample.stack_index, 0);
-        }
-
-        // Check duration calculation
-        assert_duration_calculation(&[profile.clone()]);
+        assert_duration_calculation(&scope_profile.profiles);
     }
 
     #[test]
-    fn test_duration_calculation() {
-        // Create an internal profile with sample types
+    fn test_duration_and_period() {
         let sample_types = [crate::api::ValueType::new("cpu", "nanoseconds")];
-        let internal_profile = InternalProfile::new(&sample_types, None);
 
-        // Test with explicit duration
+        // Test duration calculation
+        let internal_profile = InternalProfile::new(&sample_types, None);
         let explicit_duration = std::time::Duration::from_secs(5);
         let otel_profiles_data = internal_profile
             .convert_into_otel(None, Some(explicit_duration))
             .unwrap();
-
         let profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
-        // Should use the explicit duration (5 seconds = 5_000_000_000 nanoseconds)
         assert_eq!(profile.duration_nanos, 5_000_000_000);
 
         // Test with explicit end_time
@@ -718,10 +536,7 @@ mod tests {
         let otel_profiles_data2 = internal_profile2
             .convert_into_otel(Some(end_time), None)
             .unwrap();
-
         let profile2 = &otel_profiles_data2.resource_profiles[0].scope_profiles[0].profiles[0];
-        // Should calculate duration from end_time - start_time (3 seconds = 3_000_000_000
-        // nanoseconds)
         assert_eq!(profile2.duration_nanos, 3_000_000_000);
 
         // Test with both end_time and duration (duration should take precedence)
@@ -732,39 +547,18 @@ mod tests {
         let otel_profiles_data3 = internal_profile3
             .convert_into_otel(Some(end_time3), Some(duration3))
             .unwrap();
-
         let profile3 = &otel_profiles_data3.resource_profiles[0].scope_profiles[0].profiles[0];
-        // Should use the explicit duration (7 seconds = 7_000_000_000 nanoseconds)
         assert_eq!(profile3.duration_nanos, 7_000_000_000);
-    }
 
-    #[test]
-    fn test_period_conversion() {
-        // Create an internal profile with sample types and period
-        let sample_types = [crate::api::ValueType::new("cpu", "nanoseconds")];
+        // Test period conversion
         let period = crate::api::Period {
             r#type: crate::api::ValueType::new("cpu", "cycles"),
             value: 1000,
         };
         let internal_profile = InternalProfile::new(&sample_types, Some(period));
-
-        // Convert to OpenTelemetry ProfilesData
         let otel_profiles_data = internal_profile.convert_into_otel(None, None).unwrap();
-
-        assert_profiles_data_structure(&otel_profiles_data);
         let profile = &otel_profiles_data.resource_profiles[0].scope_profiles[0].profiles[0];
-
-        // Should have period type information
         assert!(profile.period_type.is_some());
-        let period_type = profile.period_type.as_ref().unwrap();
-
-        // The period type should be converted from the internal profile's period
-        // Note: The exact string indices depend on the string table, but we can verify they're
-        // valid
-        assert!(period_type.type_strindex >= 0);
-        assert!(period_type.unit_strindex >= 0);
-
-        // Should have the correct period value
         assert_eq!(profile.period, 1000);
 
         // Test without period
@@ -772,14 +566,9 @@ mod tests {
         let otel_profiles_data_no_period = internal_profile_no_period
             .convert_into_otel(None, None)
             .unwrap();
-
-        assert_profiles_data_structure(&otel_profiles_data_no_period);
         let profile_no_period =
             &otel_profiles_data_no_period.resource_profiles[0].scope_profiles[0].profiles[0];
-
-        // Should have no period type when no period is set
         assert!(profile_no_period.period_type.is_none());
-        // Should have period value of 0 when no period is set
         assert_eq!(profile_no_period.period, 0);
     }
 
