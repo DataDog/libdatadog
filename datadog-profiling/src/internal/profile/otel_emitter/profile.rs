@@ -320,6 +320,10 @@ mod tests {
         assert_eq!(dictionary.function_table.len(), 0);
         assert_eq!(dictionary.stack_table.len(), 0);
         assert_eq!(dictionary.string_table.len(), 4);
+        assert_eq!(dictionary.string_table[0], ""); // Empty string
+        assert_eq!(dictionary.string_table[1], "local root span id");
+        assert_eq!(dictionary.string_table[2], "trace endpoint");
+        assert_eq!(dictionary.string_table[3], "end_timestamp_ns");
         assert_eq!(dictionary.link_table.len(), 0);
         assert_eq!(dictionary.attribute_table.len(), 0);
         assert_eq!(dictionary.attribute_units.len(), 0);
