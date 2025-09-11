@@ -31,10 +31,7 @@ async fn send_heartbeat_to_url(
     }
 
     // Create heartbeat message with essential info
-    let heartbeat_message = format!(
-        "Crashtracker heartbeat: crash processing started - {}",
-        metadata.library_name
-    );
+    let heartbeat_message = "Crashtracker heartbeat: crash processing started";
 
     let uploader = TelemetryCrashUploader::new(metadata, config.endpoint())?;
     uploader
