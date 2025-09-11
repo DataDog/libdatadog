@@ -124,8 +124,15 @@ impl<'a> AggregationKey<'a> {
         } else {
             vec![]
         };
+
+        // use the span resource, or http.endpoint if available
+        let resource_name = span
+            .meta
+            .get("http.endpoint")
+            .map_or(span.resource.borrow(), |s| s.borrow());
+
         Self {
-            resource_name: span.resource.borrow().into(),
+            resource_name: resource_name.into(),
             service_name: span.service.borrow().into(),
             operation_name: span.name.borrow().into(),
             span_type: span.r#type.borrow().into(),
