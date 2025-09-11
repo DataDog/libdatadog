@@ -58,7 +58,7 @@ pub struct EmptyHandleError;
 /// # Safety
 ///
 /// Uses c-str literal to ensure valid UTF-8 and null termination.
-unsafe impl ddcommon::error::FfiSafeErrorMessage for EmptyHandleError {
+unsafe impl FfiSafeErrorMessage for EmptyHandleError {
     fn as_ffi_str(&self) -> &'static CStr {
         c"handle used with an interior null pointer"
     }

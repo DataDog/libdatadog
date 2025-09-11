@@ -57,6 +57,7 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_new(
 ///   references to that builder may be active for the duration of the call.
 /// - `profile` must be non-null and point to a valid `Profile` that
 ///   remains alive until the pprof builder is done.
+///
 /// TODO: finish safety
 #[must_use]
 #[no_mangle]
@@ -69,7 +70,7 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile(
         let builder = unsafe {
             handle
                 .as_inner_mut()
-                .map_err(|e| ProfileStatus::from_ffi_safe_error_message(e))?
+                .map_err(ProfileStatus::from_ffi_safe_error_message)?
         };
         let prof_ref = unsafe { &*profile };
         builder
@@ -90,6 +91,7 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile(
 ///   references to that builder may be active for the duration of the call.
 /// - `profile` must be non-null and point to a valid `Profile` that
 ///   remains alive until the pprof builder is done.
+///
 /// TODO: finish safety
 #[must_use]
 #[no_mangle]
@@ -103,7 +105,7 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile_with_poisson_upscali
         let builder = unsafe {
             handle
                 .as_inner_mut()
-                .map_err(|e| ProfileStatus::from_ffi_safe_error_message(e))?
+                .map_err(ProfileStatus::from_ffi_safe_error_message)?
         };
         let prof_ref = unsafe { &*profile };
 
@@ -128,6 +130,7 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile_with_poisson_upscali
 ///   references to that builder may be active for the duration of the call.
 /// - `profile` must be non-null and point to a valid `Profile` that
 ///   remains alive until the pprof builder is done.
+///
 /// TODO: finish safety
 #[must_use]
 #[no_mangle]

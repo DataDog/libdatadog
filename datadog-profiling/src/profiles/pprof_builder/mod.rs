@@ -104,6 +104,11 @@ pub struct PprofBuilder<'a> {
     state: PprofBuilderState<'a>,
 }
 
+struct ProfileWithUpscaling<'a> {
+    profile: &'a Profile,
+    upscalings: Vec<UpscalingRule>,
+}
+
 enum PprofBuilderState<'a> {
     Initialized,
     Configured {
@@ -111,7 +116,7 @@ enum PprofBuilderState<'a> {
     },
     AddingProfiles {
         options: PprofOptions,
-        profiles: Vec<(&'a Profile, Vec<UpscalingRule>)>,
+        profiles: Vec<ProfileWithUpscaling<'a>>,
         string_table: StringTable<'a>,
     },
 }
@@ -222,9 +227,11 @@ impl<'a> PprofBuilder<'a> {
             };
             new_rules.push(UpscalingRule::ProportionalUpscalingRule(rule));
         }
-
         profiles
-            .try_push((profile, new_rules))
+            .try_push(ProfileWithUpscaling {
+                profile,
+                upscalings: new_rules,
+            })
             .map_err(|_| TryAddProfileError::OutOfMemoryProportionalUpscaling)
     }
 
@@ -239,34 +246,34 @@ impl<'a> PprofBuilder<'a> {
             return Err(TryAddProfileError::WrongSampleTypeCountForPoisson);
         }
 
-        let mut new_rules = Vec::new();
-        new_rules
+        let mut upscaling_rules = Vec::new();
+        upscaling_rules
             .try_reserve_exact(1)
             .map_err(|_| TryAddProfileError::OutOfMemoryPoissonUpscaling)?;
-        new_rules.push(UpscalingRule::PoissonUpscalingRule(upscaling_rule));
+        upscaling_rules.push(UpscalingRule::PoissonUpscalingRule(upscaling_rule));
 
         profiles
-            .try_push((profile, new_rules))
+            .try_push(ProfileWithUpscaling {
+                profile,
+                upscalings: upscaling_rules,
+            })
             .map_err(|_| TryAddProfileError::OutOfMemoryPoissonUpscaling)
     }
 
     pub fn try_add_profile(&mut self, profile: &'a Profile) -> Result<(), TryAddProfileError> {
         let (profiles, _) = self.transition_to_adding_profiles()?;
-
         profiles
-            .try_push((profile, Vec::new()))
+            .try_push(ProfileWithUpscaling {
+                profile,
+                upscalings: Vec::new(),
+            })
             .map_err(|_| TryAddProfileError::OutOfMemoryWithoutUpscaling)
     }
 
     fn transition_to_adding_profiles(
         &mut self,
-    ) -> Result<
-        (
-            &mut Vec<(&'a Profile, Vec<UpscalingRule>)>,
-            &mut StringTable<'a>,
-        ),
-        TryAddProfileError,
-    > {
+    ) -> Result<(&mut Vec<ProfileWithUpscaling<'a>>, &mut StringTable<'a>), TryAddProfileError>
+    {
         if matches!(self.state, Initialized) {
             let options = PprofOptions::default();
             self.state = Configured { options };
@@ -324,14 +331,17 @@ impl<'a> PprofBuilder<'a> {
         let dict_strings = dict.strings();
 
         // --- unify sample types across profiles and emit ---
-        let n_sample_types = profiles.iter().map(|(p, _)| p.sample_type.len()).sum();
+        let n_sample_types = profiles
+            .iter()
+            .map(|pwu| pwu.profile.sample_type.len())
+            .sum();
         let n_profiles = profiles.len();
 
         let mut remaps: Vec<ArrayVec<usize, MAX_SAMPLE_TYPES>> = Vec::new();
         {
             let mut remapper = Remapper::new(dict_strings, &mut string_table, n_sample_types)?;
             remaps.try_reserve_exact(n_profiles)?;
-            for profile in profiles.iter().map(|(p, _)| p) {
+            for profile in profiles.iter().map(|pwu| pwu.profile) {
                 let mut offsets = ArrayVec::new();
                 for sample_type in profile.sample_type.iter() {
                     if offsets
@@ -378,9 +388,9 @@ impl<'a> PprofBuilder<'a> {
         let mut values_buf: Vec<i64> = Vec::new();
         let mut labels_buf: Vec<pprof::Record<pprof::Label, 3, { pprof::NO_OPT_ZERO }>> =
             Vec::new();
-        for (i, (prof, upscaling_rules)) in profiles.iter().enumerate() {
+        for (i, pwu) in profiles.iter().enumerate() {
             let remap = &remaps[i];
-            for sample in &prof.samples {
+            for sample in &pwu.profile.samples {
                 // location ids from stack
                 let stack = sample.stack_id.as_slice();
                 let mut locs_out: Vec<u64> = Vec::with_capacity(stack.len());
@@ -496,7 +506,7 @@ impl<'a> PprofBuilder<'a> {
                 }
 
                 // Apply upscaling
-                for rule in upscaling_rules {
+                for rule in &pwu.upscalings {
                     rule.scale(&mut values_buf, &labels_buf);
                 }
 

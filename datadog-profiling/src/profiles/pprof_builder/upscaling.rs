@@ -40,14 +40,10 @@ impl ProportionalUpscalingRule {
             if group_by_label.key.is_zero() && group_by_label.value.is_zero() {
                 scale_values(values, scale);
             } else {
-                let matched = labels
-                    .iter()
-                    .find(|label| {
-                        let label = &label.value;
-                        label.key.value == group_by_label.key
-                            && label.str.value == group_by_label.value
-                    })
-                    .is_some();
+                let matched = labels.iter().any(|label| {
+                    let label = &label.value;
+                    label.key.value == group_by_label.key && label.str.value == group_by_label.value
+                });
                 if matched {
                     scale_values(values, scale);
                 }
@@ -65,8 +61,8 @@ pub struct PoissonUpscalingRule {
 
 impl PoissonUpscalingRule {
     pub fn compute_scale(&self, values: &[i64]) -> f64 {
-        let sum_offset = self.sum_offset as usize;
-        let count_offset = self.count_offset as usize;
+        let sum_offset = self.sum_offset;
+        let count_offset = self.count_offset;
         let sum = values[sum_offset];
         let count = values[count_offset];
         let sampling_distance = self.sampling_distance.get() as f64;
