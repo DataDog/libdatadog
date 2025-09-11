@@ -27,7 +27,7 @@ pub struct Location {
     pub line: Record<Line, 4, OPT_ZERO>,
 }
 
-/// Represents function and line number information. Omits column.  
+/// Represents function and line number information. Omits column.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[cfg_attr(feature = "bolero", derive(bolero::generator::TypeGenerator))]
