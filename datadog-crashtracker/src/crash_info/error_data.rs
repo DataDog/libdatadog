@@ -39,24 +39,35 @@ impl<'a> CachedElfResolvers<'a> {
         }
     }
 
-    pub fn get(&mut self, file_path: &PathBuf) -> anyhow::Result<Rc<ElfResolver>> {
+    pub fn get_or_insert(&mut self, file_path: &PathBuf) -> anyhow::Result<Rc<ElfResolver>> {
         use anyhow::Context;
-        if !self.elf_resolvers.contains_key(file_path.as_path()) {
-            let resolver = Rc::new(ElfResolver::open(file_path).with_context(|| {
-                format!(
-                    "ElfResolver::open failed for '{}'",
-                    file_path.to_string_lossy()
-                )
-            })?);
-            let _ = self
-                .symbolizer
-                .register_elf_resolver(file_path.as_path(), Rc::clone(&resolver));
-            self.elf_resolvers.insert(file_path.clone(), resolver);
+        let entry = self.elf_resolvers.entry(file_path.clone());
+
+        match entry {
+            std::collections::hash_map::Entry::Occupied(o) => Ok(o.get().clone()),
+            std::collections::hash_map::Entry::Vacant(v) => {
+                let resolver = ElfResolver::open(file_path).with_context(|| {
+                    format!(
+                        "ElfResolver::open failed for '{}'",
+                        file_path.to_string_lossy()
+                    )
+                });
+
+                match resolver {
+                    Ok(resolver) => {
+                        let resolver = Rc::new(resolver);
+                        // even if the symbolizer failed at registering the elf resolver, we still
+                        // cache it to avoid trying to open it again
+                        let _ = self
+                            .symbolizer
+                            .register_elf_resolver(file_path.as_path(), Rc::clone(&resolver));
+                        v.insert(Rc::clone(&resolver));
+                        Ok(resolver)
+                    }
+                    Err(e) => Err(e),
+                }
+            }
         }
-        self.elf_resolvers
-            .get(file_path.as_path())
-            .with_context(|| "key '{}' not found in ElfResolver cache")
-            .cloned()
     }
 }
 
@@ -80,14 +91,15 @@ impl ErrorData {
         elf_resolvers: &mut CachedElfResolvers,
     ) -> anyhow::Result<()> {
         let mut errors = 0;
+        let pid = pid.into();
         self.stack
-            .normalize_ips(normalizer, pid.into(), elf_resolvers)
+            .normalize_ips(normalizer, pid, elf_resolvers)
             .unwrap_or_else(|_| errors += 1);
 
         for thread in &mut self.threads {
             thread
                 .stack
-                .normalize_ips(normalizer, pid.into(), elf_resolvers)
+                .normalize_ips(normalizer, pid, elf_resolvers)
                 .unwrap_or_else(|_| errors += 1);
         }
         anyhow::ensure!(
