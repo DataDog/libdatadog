@@ -130,9 +130,9 @@ int main(int argc, char **argv) {
 
   const ddog_CharSlice localhost_url = DDOG_CHARSLICE_C_BARE("http://localhost:8126");
   ddog_prof_Endpoint endpoint = ddog_prof_Endpoint_agent(localhost_url);
-  auto exporter_result =
-      ddog_prof_Exporter_new(DDOG_CHARSLICE_C_BARE("dd-trace-cpp"), DDOG_CHARSLICE_C_BARE("1.0.0"),
-                             DDOG_CHARSLICE_C_BARE("cpp"), &tags, endpoint);
+  auto exporter_result = ddog_prof_Exporter_new(DDOG_CHARSLICE_C_BARE("exporter-example"),
+                                                DDOG_CHARSLICE_C_BARE("1.2.3"),
+                                                DDOG_CHARSLICE_C_BARE("native"), &tags, endpoint);
   if (exporter_result.tag != DDOG_PROF_PROFILE_EXPORTER_RESULT_OK_HANDLE_PROFILE_EXPORTER) {
     ddog_CharSlice message = ddog_Error_message(&exporter_result.err);
     fprintf(stderr, "Failed to create exporter: %.*s\n", (int)message.len, message.ptr);
