@@ -2015,6 +2015,7 @@ dependencies = [
  "ddcommon",
  "ddcommon-ffi",
  "ddtelemetry",
+ "function_name",
  "libc",
  "paste",
  "tempfile",
