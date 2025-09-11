@@ -134,6 +134,7 @@ RUN echo \
     datadog-profiling-replayer/src/main.rs \
     datadog-profiling/benches/interning_strings.rs \
     datadog-profiling/benches/main.rs \
+    datadog-profiling-validator/src/bin/datadog-profiling-validator.rs \
     tools/sidecar_mockgen/src/bin/sidecar_mockgen.rs \
     tools/src/bin/dedup_headers.rs \
     datadog-trace-normalization/benches/normalization_utils.rs \
