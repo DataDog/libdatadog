@@ -428,4 +428,112 @@ mod tests {
         };
         _ = dangerous.as_slice();
     }
+
+    #[test]
+    fn test_try_as_slice_success() {
+        let data: &[u8] = b"hello world";
+        let slice = Slice::from(data);
+
+        let result = slice.try_as_slice();
+        assert_eq!(result.unwrap(), data);
+    }
+
+    #[test]
+    fn test_try_as_slice_null_zero_len() {
+        let null_zero_len: Slice<u8> = Slice {
+            ptr: ptr::null(),
+            len: 0,
+            _marker: PhantomData,
+        };
+
+        let result = null_zero_len.try_as_slice();
+        assert_eq!(result.unwrap(), &[]);
+    }
+
+    #[test]
+    fn test_try_as_slice_null_nonzero_len() {
+        let null_nonzero: Slice<u8> = Slice {
+            ptr: ptr::null(),
+            len: 5,
+            _marker: PhantomData,
+        };
+
+        let result = null_nonzero.try_as_slice();
+        assert!(matches!(
+            result.unwrap_err(),
+            SliceConversionError::NullPointer
+        ));
+    }
+
+    #[test]
+    fn test_try_as_slice_large_length() {
+        let large_len: Slice<u8> = Slice {
+            ptr: ptr::NonNull::dangling().as_ptr(),
+            len: isize::MAX as usize + 1,
+            _marker: PhantomData,
+        };
+
+        let result = large_len.try_as_slice();
+        assert!(matches!(
+            result.unwrap_err(),
+            SliceConversionError::LargeLength
+        ));
+    }
+
+    #[test]
+    fn test_try_as_slice_misaligned_pointer() {
+        // Create a misaligned pointer for u64 by using a properly aligned
+        // array, then offset by 1 byte.
+        let data = [0u64; 2];
+        let base_ptr = data.as_ptr().cast::<u8>();
+        let misaligned_ptr = unsafe { base_ptr.add(1).cast::<u64>() };
+
+        // Verify the pointer is actually misaligned
+        assert!(!misaligned_ptr.is_aligned());
+
+        let misaligned: Slice<u64> = Slice {
+            ptr: misaligned_ptr,
+            len: 1,
+            _marker: PhantomData,
+        };
+
+        let result = misaligned.try_as_slice();
+        assert!(matches!(
+            result.unwrap_err(),
+            SliceConversionError::MisalignedPointer
+        ));
+    }
+
+    #[test]
+    fn test_try_as_bytes_u8_slice() {
+        let data: &[u8] = b"test data";
+        let slice = Slice::from(data);
+
+        let result = slice.try_as_bytes();
+        assert_eq!(result.unwrap(), data);
+    }
+
+    #[test]
+    fn test_try_as_bytes_i8_slice() {
+        let data: &[i8] = &[72, 101, 108, 108, 111]; // "Hello" in i8
+        let slice = Slice::from(data);
+
+        let result = slice.try_as_bytes();
+        assert_eq!(result.unwrap(), b"Hello");
+    }
+
+    #[test]
+    fn test_try_as_bytes_char_slice_error_propagation() {
+        let null_nonzero: Slice<c_char> = Slice {
+            ptr: ptr::null(),
+            len: 3,
+            _marker: PhantomData,
+        };
+
+        let result = null_nonzero.try_as_bytes();
+        assert!(matches!(
+            result.unwrap_err(),
+            SliceConversionError::NullPointer
+        ));
+    }
 }

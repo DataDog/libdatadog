@@ -4,4 +4,9 @@
 //! This module holds constants/structures that are shared between the collector and receiver
 
 pub(crate) mod configuration;
+
+#[cfg(not(feature = "benchmarking"))]
 pub(crate) mod constants;
+
+#[cfg(feature = "benchmarking")]
+pub mod constants;
