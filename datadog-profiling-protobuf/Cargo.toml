@@ -12,11 +12,13 @@ license.workspace = true
 bench = false
 
 [features]
+bolero = ["dep:bolero"]
 prost_impls = ["dep:prost"]
 
 [dependencies]
 prost = { version = "0.13", optional = true }
+bolero = { version = "0.13", default-features = false, optional = true }
 
 [dev-dependencies]
 bolero = "0.13"
-datadog-profiling-protobuf = { path = ".", features = ["prost_impls"] }
+datadog-profiling-protobuf = { path = ".", features = ["bolero", "prost_impls"] }
