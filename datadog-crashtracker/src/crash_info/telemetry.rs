@@ -347,9 +347,6 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_heartbeat_content() -> anyhow::Result<()> {
-        use crate::crash_info::{test_utils::TestInstance, Metadata};
-        use crate::shared::configuration::{CrashtrackerConfiguration, StacktraceCollection};
-
         // This keeps alive for scope
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
