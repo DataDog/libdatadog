@@ -97,11 +97,7 @@ int main(void) {
   ddog_prof_PprofBuilderHandle pprof = NULL;
   check_ok(ddog_prof_PprofBuilder_new(&pprof, dict, scratch), "PprofBuilder_new");
 
-  ddog_prof_UpscalingRule empty_upscaling;
-  ddog_prof_Slice_UpscalingRule upscaling_rules = {.ptr = &empty_upscaling, .len = 0};
-  check_ok(ddog_prof_PprofBuilder_add_profile(pprof, profile, upscaling_rules,
-                                              DDOG_PROF_UTF8_OPTION_VALIDATE),
-           "PprofBuilder_add_profile");
+  check_ok(ddog_prof_PprofBuilder_add_profile(pprof, profile), "PprofBuilder_add_profile");
 
   // Build an uncompressed pprof into an EncodedProfile handle
   ddog_prof_EncodedProfile encoded = {0};
