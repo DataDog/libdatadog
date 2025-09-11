@@ -103,7 +103,7 @@ impl TelemetryCrashUploader {
         Ok(s)
     }
 
-    /// Sends a heartbeat message with just the crash UUID and a simple message.
+    /// Sends heartbeat message with customer application and runtime information.
     pub async fn send_heartbeat(&self, crash_uuid: &str, message: &str) -> anyhow::Result<()> {
         let metadata = &self.metadata;
 
@@ -112,8 +112,11 @@ impl TelemetryCrashUploader {
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        // Create minimal tags with just the UUID and is_crash flag
-        let tags = format!("uuid:{},is_crash:false,is_heartbeat:true", crash_uuid);
+        // Create tags with essential customer application and runtime information
+        let tags = format!(
+            "uuid:{},is_crash:false,is_heartbeat:true,service:{},runtime_id:{}",
+            crash_uuid, metadata.application.service_name, metadata.runtime_id
+        );
 
         let payload = data::Telemetry {
             tracer_time,
@@ -344,6 +347,9 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_heartbeat_content() -> anyhow::Result<()> {
+        use crate::crash_info::{test_utils::TestInstance, Metadata};
+        use crate::shared::configuration::{CrashtrackerConfiguration, StacktraceCollection};
+
         // This keeps alive for scope
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
@@ -361,6 +367,20 @@ mod tests {
         let crash_uuid = "test-uuid-12345";
         let heartbeat_message = "Test heartbeat message";
 
+        // Create test metadata and config for new signature
+        let metadata = Metadata::test_instance(seed);
+        let config = CrashtrackerConfiguration::new(
+            vec![],
+            false,
+            false,
+            None,
+            StacktraceCollection::Disabled,
+            vec![],
+            None,
+            None,
+            false,
+        )?;
+
         t.send_heartbeat(crash_uuid, heartbeat_message)
             .await
             .unwrap();
@@ -377,16 +397,72 @@ mod tests {
         assert_eq!(payload["payload"].as_array().unwrap().len(), 1);
         let log_entry = &payload["payload"][0];
 
-        // Verify minimal heartbeat properties
+        // Verify heartbeat properties
         assert_eq!(log_entry["message"], heartbeat_message);
         assert_eq!(log_entry["is_crash"], false);
         assert_eq!(log_entry["is_sensitive"], false);
         assert_eq!(log_entry["level"], "ERROR");
 
-        // Verify minimal tags - should only contain uuid and is_crash
+        // Verify enhanced tags include customer application and runtime information
         let tags = log_entry["tags"].as_str().unwrap();
         assert!(tags.contains(&format!("uuid:{}", crash_uuid)));
         assert!(tags.contains("is_crash:false"));
+        assert!(tags.contains("is_heartbeat:true"));
+        assert!(tags.contains("service:foo")); // Service name from application metadata
+        assert!(tags.contains("runtime_id:")); // Runtime ID is present
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_heartbeat_with_different_config() -> anyhow::Result<()> {
+        // This keeps alive for scope
+        let tmp = tempfile::tempdir().unwrap();
+        let output_filename = {
+            let mut p = tmp.into_path();
+            p.push("enhanced_heartbeat_info");
+            p
+        };
+        let seed = 1;
+        let mut t = new_test_uploader(seed);
+
+        t.cfg
+            .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
+            .unwrap();
+
+        let crash_uuid = "test-enhanced-uuid-67890";
+        let heartbeat_message = "Heartbeat test message with config";
+
+        t.send_heartbeat(crash_uuid, heartbeat_message)
+            .await
+            .unwrap();
+
+        let payload: serde_json::value::Value =
+            serde_json::de::from_str(&fs::read_to_string(&output_filename).unwrap()).unwrap();
+        assert_eq!(payload["api_version"], "v2");
+        assert_eq!(payload["application"]["language_name"], "native");
+        assert_eq!(payload["application"]["service_name"], "foo");
+        assert_eq!(payload["application"]["service_version"], "bar");
+        assert_eq!(payload["request_type"], "logs");
+        assert_eq!(payload["origin"], "Crashtracker");
+
+        assert_eq!(payload["payload"].as_array().unwrap().len(), 1);
+        let log_entry = &payload["payload"][0];
+
+        // Verify heartbeat properties
+        assert_eq!(log_entry["message"], heartbeat_message);
+        assert_eq!(log_entry["is_crash"], false);
+        assert_eq!(log_entry["is_sensitive"], false);
+        assert_eq!(log_entry["level"], "ERROR");
+
+        // Verify tags include essential customer application and runtime information
+        let tags = log_entry["tags"].as_str().unwrap();
+        assert!(tags.contains(&format!("uuid:{}", crash_uuid)));
+        assert!(tags.contains("is_crash:false"));
+        assert!(tags.contains("is_heartbeat:true"));
+        assert!(tags.contains("service:foo")); // Service name from application metadata
+        assert!(tags.contains("runtime_id:")); // Runtime ID is present
 
         Ok(())
     }

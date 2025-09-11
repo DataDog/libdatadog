@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 /// Sends a heartbeat telemetry event to indicate that crash processing has started.
 /// For file endpoints, this function does nothing (returns early).
-/// For HTTP endpoints, it sends a minimal heartbeat telemetry.
+/// For HTTP endpoints, it sends a heartbeat telemetry with metadata and config info.
 async fn send_heartbeat_to_url(
     config: &CrashtrackerConfiguration,
     crash_uuid: &str,
@@ -30,11 +30,15 @@ async fn send_heartbeat_to_url(
         return Ok(());
     }
 
-    // Send heartbeat for HTTP endpoints
-    let heartbeat_message = "Crashtracker heartbeat: crash processing started";
+    // Create heartbeat message with essential info
+    let heartbeat_message = format!(
+        "Crashtracker heartbeat: crash processing started - {}",
+        metadata.library_name
+    );
+
     let uploader = TelemetryCrashUploader::new(metadata, config.endpoint())?;
     uploader
-        .send_heartbeat(crash_uuid, heartbeat_message)
+        .send_heartbeat(crash_uuid, &heartbeat_message)
         .await?;
     Ok(())
 }
