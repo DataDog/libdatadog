@@ -35,7 +35,7 @@ async fn send_heartbeat_to_url(
 
     let uploader = TelemetryCrashUploader::new(metadata, config.endpoint())?;
     uploader
-        .send_heartbeat(crash_uuid, &heartbeat_message)
+        .send_heartbeat(crash_uuid, heartbeat_message)
         .await?;
     Ok(())
 }
