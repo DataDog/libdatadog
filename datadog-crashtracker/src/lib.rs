@@ -59,8 +59,16 @@ mod common;
 mod crash_info;
 #[cfg(all(unix, feature = "receiver"))]
 mod receiver;
+
+// Keep this module private to avoid exposing blazesym to users of the crate
 #[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
+#[cfg(not(feature = "benchmarking"))]
 mod shared;
+
+// Make this module public when benchmarking is enabled to allow access to constants
+#[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
+#[cfg(feature = "benchmarking")]
+pub mod shared;
 
 #[cfg(all(unix, feature = "collector"))]
 pub use collector::{

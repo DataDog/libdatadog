@@ -3,6 +3,7 @@
 
 use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
 use datadog_crashtracker::benchmark::receiver_entry_point;
+use datadog_crashtracker::shared::constants::*;
 use datadog_crashtracker::{
     default_signals, get_data_folder_path, CrashtrackerConfiguration, SharedLibrary,
     StacktraceCollection,
@@ -26,15 +27,15 @@ macro_rules! add_frame {
 }
 
 fn add_proc_info(report: &mut String) {
-    writeln!(report, "DD_CRASHTRACK_BEGIN_PROCESSINFO")
-        .expect("Failed to write DD_CRASHTRACK_BEGIN_PROCESSINFO");
+    writeln!(report, "{DD_CRASHTRACK_BEGIN_PROCINFO}")
+        .expect("Failed to write DD_CRASHTRACK_BEGIN_PROCINFO");
     writeln!(report, "{{ \"pid\": {} }}", std::process::id()).expect("Failed to write PID");
-    writeln!(report, "DD_CRASHTRACK_END_PROCESSINFO")
-        .expect("Failed to write DD_CRASHTRACK_END_PROCESSINFO");
+    writeln!(report, "{DD_CRASHTRACK_END_PROCINFO}")
+        .expect("Failed to write DD_CRASHTRACK_END_PROCINFO");
 }
 
 fn add_config(report: &mut String) {
-    writeln!(report, "DD_CRASHTRACK_BEGIN_CONFIG")
+    writeln!(report, "{DD_CRASHTRACK_BEGIN_CONFIG}")
         .expect("Failed to write DD_CRASHTRACK_BEGIN_CONFIG");
     let config = CrashtrackerConfiguration::new(
         vec![], // additional_files
@@ -51,11 +52,12 @@ fn add_config(report: &mut String) {
     let config_str =
         serde_json::to_string(&config).expect("Failed to serialize crashtracker configuration");
     writeln!(report, "{}", config_str).expect("Failed to write crashtracker configuration");
-    writeln!(report, "DD_CRASHTRACK_END_CONFIG").expect("Failed to write DD_CRASHTRACK_END_CONFIG");
+    writeln!(report, "{DD_CRASHTRACK_END_CONFIG}")
+        .expect("Failed to write DD_CRASHTRACK_END_CONFIG");
 }
 
 fn add_stacktrace(report: &mut String, test_cpp_so: &SharedLibrary, test_c_so: &SharedLibrary) {
-    writeln!(report, "DD_CRASHTRACK_BEGIN_STACKTRACE")
+    writeln!(report, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")
         .expect("Failed to write DD_CRASHTRACK_BEGIN_STACKTRACE");
 
     add_frame!(report, "my_function", test_c_so);
@@ -125,7 +127,7 @@ fn add_stacktrace(report: &mut String, test_cpp_so: &SharedLibrary, test_c_so: &
     add_frame!(report, "func10", test_c_so);
     add_frame!(report, "0x00");
 
-    writeln!(report, "DD_CRASHTRACK_END_STACKTRACE")
+    writeln!(report, "{DD_CRASHTRACK_END_STACKTRACE}")
         .expect("Failed to write DD_CRASHTRACK_END_STACKTRACE");
 }
 
@@ -135,7 +137,7 @@ fn create_crash_report(test_cpp_so: &SharedLibrary, test_c_so: &SharedLibrary) -
     add_proc_info(&mut report);
     add_config(&mut report);
     add_stacktrace(&mut report, test_cpp_so, test_c_so);
-    writeln!(report, "DD_CRASHTRACK_DONE").expect("Failed to write DD_CRASHTRACK_DONE");
+    writeln!(report, "{DD_CRASHTRACK_DONE}").expect("Failed to write DD_CRASHTRACK_DONE");
     report
 }
 
