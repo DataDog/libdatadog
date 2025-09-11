@@ -183,11 +183,4 @@ impl StringOffset {
     pub const fn is_zero(&self) -> bool {
         self.0 == 0
     }
-
-    /// Checked addition that returns None on overflow
-    #[inline]
-    pub fn checked_add(self, rhs: usize) -> Option<Self> {
-        let rhs_u32 = u32::try_from(rhs).ok()?;
-        Some(Self(self.0.checked_add(rhs_u32)?))
-    }
 }
