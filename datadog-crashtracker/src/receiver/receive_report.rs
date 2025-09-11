@@ -304,9 +304,6 @@ pub(crate) async fn receive_report_from_stream(
         }
     }
 
-    // Let heartbeat run independently - don't wait for it to complete
-    // This ensures crash processing isn't blocked by slow heartbeat operations
-
     if !builder.has_data() {
         return Ok(None);
     }
