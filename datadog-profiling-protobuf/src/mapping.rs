@@ -8,7 +8,7 @@ use std::io::{self, Write};
 /// save bytes/CPU since they are unused in Datadog.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
+#[cfg_attr(feature = "bolero", derive(bolero::generator::TypeGenerator))]
 pub struct Mapping {
     /// Unique nonzero id for the mapping.
     pub id: Record<u64, 1, NO_OPT_ZERO>,
