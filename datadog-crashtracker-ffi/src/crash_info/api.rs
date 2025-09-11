@@ -74,7 +74,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_resolve_names(
 // is tailored for performance. It makes sure that required resources between normalize_ips and
 // resolve_names are shared and reused, which is not the case when calling the two functions
 // separately.
-// While this is more efficient, it means that you are force to do both operations, and you are not
+// While this is more efficient, it means that you are forced to do both operations, and you are not
 // able to do only one of them.
 #[no_mangle]
 #[must_use]
