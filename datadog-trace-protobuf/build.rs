@@ -115,6 +115,33 @@ fn generate_protobuf() {
         ".pb.Span.error",
         "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")] #[serde(skip_serializing_if = \"crate::deserializers::is_default\")]",
     );
+    config.field_attribute(
+        ".pb.Span.spanEvents",
+        "#[serde(default)] #[serde(deserialize_with = \"crate::deserializers::deserialize_null_into_default\")] #[serde(skip_serializing_if = \"::prost::alloc::vec::Vec::is_empty\")]",
+    );
+
+    config.type_attribute("SpanEvent", "#[derive(Deserialize, Serialize)]");
+    config.field_attribute(".pb.SpanEvent.time_unix_nano", "#[serde(default)]");
+    config.field_attribute(".pb.SpanEvent.name", "#[serde(default)]");
+    config.field_attribute(".pb.SpanEvent.attributes", "#[serde(default)]");
+
+    config.type_attribute("AttributeAnyValue", "#[derive(Deserialize, Serialize)]");
+    config.field_attribute(".pb.AttributeAnyValue.type", "#[serde(default)]");
+    config.field_attribute(".pb.AttributeAnyValue.string_value", "#[serde(default)]");
+    config.field_attribute(".pb.AttributeAnyValue.bool_value", "#[serde(default)]");
+    config.field_attribute(".pb.AttributeAnyValue.int_value", "#[serde(default)]");
+    config.field_attribute(".pb.AttributeAnyValue.double_value", "#[serde(default)]");
+    config.field_attribute(".pb.AttributeAnyValue.array_value", "#[serde(default)]");
+
+    config.type_attribute("AttributeArray", "#[derive(Deserialize, Serialize)]");
+    config.field_attribute(".pb.AttributeArray.values", "#[serde(default)]");
+
+    config.type_attribute("AttributeArrayValue", "#[derive(Deserialize, Serialize)]");
+    config.field_attribute(".pb.AttributeArrayValue.type", "#[serde(default)]");
+    config.field_attribute(".pb.AttributeArrayValue.string_value", "#[serde(default)]");
+    config.field_attribute(".pb.AttributeArrayValue.bool_value", "#[serde(default)]");
+    config.field_attribute(".pb.AttributeArrayValue.int_value", "#[serde(default)]");
+    config.field_attribute(".pb.AttributeArrayValue.double_value", "#[serde(default)]");
 
     config.type_attribute("StatsPayload", "#[derive(Deserialize, Serialize)]");
     config.type_attribute("StatsPayload", "#[serde(rename_all = \"PascalCase\")]");
@@ -140,6 +167,9 @@ fn generate_protobuf() {
     config.field_attribute("ClientGroupedStats.span_kind", "#[serde(default)]");
     config.field_attribute("ClientGroupedStats.peer_tags", "#[serde(default)]");
     config.field_attribute("ClientGroupedStats.is_trace_root", "#[serde(default)]");
+    config.field_attribute("ClientGroupedStats.GRPC_status_code", "#[serde(default)]");
+    config.field_attribute("ClientGroupedStats.HTTP_method", "#[serde(default)]");
+    config.field_attribute("ClientGroupedStats.HTTP_endpoint", "#[serde(default)]");
 
     config.field_attribute(
         "ClientGroupedStats.okSummary",
@@ -166,6 +196,16 @@ fn generate_protobuf() {
         "ClientGroupedStats.DB_type",
         "#[serde(rename = \"DBType\")]",
     );
+
+    // idx module type attributes
+    config.type_attribute("pb.idx.AnyValue", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "pb.idx.AnyValue.value",
+        "#[derive(serde::Deserialize, serde::Serialize)]",
+    );
+    config.type_attribute("pb.idx.KeyValue", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("pb.idx.ArrayValue", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("pb.idx.KeyValueList", "#[derive(Deserialize, Serialize)]");
 
     config.type_attribute(
         "ClientGetConfigsResponse",
@@ -213,6 +253,8 @@ fn generate_protobuf() {
                 "src/pb/span.proto",
                 "src/pb/stats.proto",
                 "src/pb/remoteconfig.proto",
+                "src/pb/idx/tracer_payload.proto",
+                "src/pb/idx/span.proto",
             ],
             &["src/pb/"],
         )
@@ -236,6 +278,9 @@ fn generate_protobuf() {
 
     prepend_to_file(serde_uses, &output_path.join("pb.rs"));
     prepend_to_file(serde_uses, &output_path.join("remoteconfig.rs"));
+
+    // Add license header to pb.idx.rs (no serde imports needed due to lib.rs)
+    prepend_to_file(license, &output_path.join("pb.idx.rs"));
 }
 
 #[cfg(feature = "generate-protobuf")]

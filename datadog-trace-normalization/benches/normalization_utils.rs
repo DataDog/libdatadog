@@ -105,6 +105,7 @@ fn normalize_span_bench(c: &mut Criterion) {
             r#type: "http".to_string(),
             meta_struct: HashMap::new(),
             span_links: vec![],
+            span_events: vec![],
         },
         pb::Span {
             duration: 12000000,
@@ -124,6 +125,7 @@ fn normalize_span_bench(c: &mut Criterion) {
             r#type: "http".to_string(),
             meta_struct: HashMap::new(),
             span_links: vec![],
+            span_events: vec![],
         },
     ];
 

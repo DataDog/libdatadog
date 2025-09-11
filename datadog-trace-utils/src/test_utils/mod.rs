@@ -112,6 +112,7 @@ pub fn create_test_span(
         r#type: "".to_string(),
         meta_struct: HashMap::new(),
         span_links: vec![],
+        span_events: vec![],
     };
     if is_top_level {
         span.metrics.insert("_top_level".to_string(), 1.0);
@@ -156,6 +157,7 @@ pub fn create_test_gcp_span(
         r#type: "".to_string(),
         meta_struct: HashMap::new(),
         span_links: vec![],
+        span_events: vec![],
     };
     span.meta.insert(
         "_dd.serverless_compat_version".to_string(),

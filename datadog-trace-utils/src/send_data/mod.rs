@@ -414,6 +414,7 @@ fn construct_agent_payload(tracer_payloads: Vec<TracerPayload>) -> AgentPayload 
         tags: HashMap::new(),
         tracer_payloads,
         rare_sampler_enabled: false,
+        idx_tracer_payloads: Vec::new(),
     }
 }
 
@@ -477,6 +478,7 @@ mod tests {
             meta_struct: HashMap::new(),
             r#type: "".to_string(),
             span_links: vec![],
+            span_events: vec![],
         }]);
 
         construct_tracer_payload(vec![chunk], header_tags, root_tags)

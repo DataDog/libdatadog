@@ -855,6 +855,7 @@ mod tests {
             meta_struct: HashMap::default(),
             r#type: "sql".to_string(),
             span_links: vec![],
+            span_events: vec![],
         };
         assert_eq!(span, test_span);
     }
@@ -892,6 +893,7 @@ mod tests {
                     meta_struct: HashMap::new(),
                     r#type: "".to_string(),
                     span_links: vec![],
+                    span_events: vec![],
                 }]],
             ),
             (
@@ -919,6 +921,7 @@ mod tests {
                     meta_struct: HashMap::new(),
                     r#type: "".to_string(),
                     span_links: vec![],
+                    span_events: vec![],
                 }]],
             ),
         ];
@@ -981,6 +984,7 @@ mod tests {
                 tracestate: "vendor=value".to_string(),
                 flags: 0, // Should default to 0 when omitted
             }],
+            span_events: vec![],
         }]];
 
         let bytes = rmp_serde::to_vec(&trace_input).unwrap();
