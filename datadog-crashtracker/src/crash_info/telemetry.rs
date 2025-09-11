@@ -367,20 +367,6 @@ mod tests {
         let crash_uuid = "test-uuid-12345";
         let heartbeat_message = "Test heartbeat message";
 
-        // Create test metadata and config for new signature
-        let metadata = Metadata::test_instance(seed);
-        let config = CrashtrackerConfiguration::new(
-            vec![],
-            false,
-            false,
-            None,
-            StacktraceCollection::Disabled,
-            vec![],
-            None,
-            None,
-            false,
-        )?;
-
         t.send_heartbeat(crash_uuid, heartbeat_message)
             .await
             .unwrap();
