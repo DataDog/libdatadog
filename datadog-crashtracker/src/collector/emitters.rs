@@ -4,6 +4,7 @@
 use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::{emit_spans, emit_traces};
+use crate::runtime_callback::invoke_runtime_callback_with_writer;
 use crate::shared::constants::*;
 use crate::{translate_si_code, CrashtrackerConfiguration, SignalNames, StacktraceCollection};
 use backtrace::Frame;
@@ -134,6 +135,7 @@ pub(crate) fn emit_crashreport(
     emit_spans(pipe)?;
     consume_and_emit_additional_tags(pipe)?;
     emit_traces(pipe)?;
+    emit_runtime_stack(pipe)?;
 
     #[cfg(target_os = "linux")]
     emit_proc_self_maps(pipe)?;
@@ -319,6 +321,35 @@ fn extract_rsp(ucontext: *const ucontext_t) -> usize {
         #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
         return (*ucontext).uc_mcontext.sp as usize;
     }
+}
+
+/// Emit runtime stack frames collected from registered runtime callback
+///
+/// This function invokes any registered runtime callback to collect runtime-specific
+/// stack traces and emits them to the output stream in JSON format.
+///
+/// SAFETY:
+///     Crash-tracking functions are not reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// SIGNAL SAFETY:
+///     This function attempts to be signal safe by only invoking user-registered
+///     callbacks and writing to the provided stream. The runtime callback itself
+///     must be signal safe.
+fn emit_runtime_stack(w: &mut impl Write) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK}")?;
+
+    // Start JSON array
+    write!(w, "[")?;
+
+    // Invoke the runtime callback, passing the writer so frames are emitted directly
+    let _frame_count = unsafe { invoke_runtime_callback_with_writer(w)? };
+
+    // Close JSON array
+    write!(w, "]")?;
+    writeln!(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK}")?;
+    w.flush()?;
+    Ok(())
 }
 
 #[cfg(test)]

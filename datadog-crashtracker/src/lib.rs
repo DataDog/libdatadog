@@ -57,6 +57,7 @@ mod collector_windows;
 mod crash_info;
 #[cfg(all(unix, feature = "receiver"))]
 mod receiver;
+mod runtime_callback;
 #[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
 mod shared;
 
@@ -72,6 +73,7 @@ pub use collector::{
 pub use collector_windows::api::{exception_event_callback, init_crashtracking_windows};
 
 pub use crash_info::*;
+pub use runtime_callback::*;
 
 #[cfg(all(unix, feature = "receiver"))]
 pub use receiver::{

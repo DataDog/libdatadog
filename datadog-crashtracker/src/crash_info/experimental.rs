@@ -4,6 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::unknown_value::UnknownValue;
+use crate::runtime_callback::RuntimeStack;
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Experimental {
@@ -11,6 +12,8 @@ pub struct Experimental {
     pub additional_tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ucontext: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_stack: Option<RuntimeStack>,
 }
 
 impl Experimental {
@@ -27,6 +30,11 @@ impl Experimental {
         self.ucontext = Some(ucontext);
         self
     }
+
+    pub fn with_runtime_stack(mut self, runtime_stack: RuntimeStack) -> Self {
+        self.runtime_stack = Some(runtime_stack);
+        self
+    }
 }
 
 impl UnknownValue for Experimental {
@@ -34,6 +42,7 @@ impl UnknownValue for Experimental {
         Self {
             additional_tags: vec![],
             ucontext: None,
+            runtime_stack: None,
         }
     }
 }

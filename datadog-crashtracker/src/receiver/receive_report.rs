@@ -23,6 +23,7 @@ pub(crate) enum StdinState {
     File(String, Vec<String>),
     Metadata,
     ProcInfo,
+    RuntimeStack,
     SigInfo,
     SpanIds,
     StackTrace,
@@ -106,6 +107,23 @@ fn process_line(
             StdinState::ProcInfo
         }
 
+        StdinState::RuntimeStack if line.starts_with(DD_CRASHTRACK_END_RUNTIME_STACK) => {
+            StdinState::Waiting
+        }
+        StdinState::RuntimeStack => {
+            let runtime_frames: Vec<crate::runtime_callback::RuntimeFrame> =
+                serde_json::from_str(line)?;
+            if !runtime_frames.is_empty() {
+                let runtime_stack = crate::runtime_callback::RuntimeStack {
+                    format: "Datadog Runtime Callback 1.0".to_string(),
+                    frames: runtime_frames,
+                    runtime_type: "unknown".to_string(), // Could be enhanced to detect runtime type
+                };
+                builder.with_experimental_runtime_stack(runtime_stack)?;
+            }
+            StdinState::RuntimeStack
+        }
+
         StdinState::SigInfo if line.starts_with(DD_CRASHTRACK_END_SIGINFO) => StdinState::Waiting,
         StdinState::SigInfo => {
             let sig_info: crate::SigInfo = serde_json::from_str(line)?;
@@ -170,6 +188,9 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_PROCINFO) => {
             StdinState::ProcInfo
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_RUNTIME_STACK) => {
+            StdinState::RuntimeStack
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SIGINFO) => StdinState::SigInfo,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_SPAN_IDS) => {

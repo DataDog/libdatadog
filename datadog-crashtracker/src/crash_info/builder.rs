@@ -195,6 +195,18 @@ impl CrashInfoBuilder {
         Ok(self)
     }
 
+    pub fn with_experimental_runtime_stack(
+        &mut self,
+        runtime_stack: crate::runtime_callback::RuntimeStack,
+    ) -> anyhow::Result<&mut Self> {
+        if let Some(experimental) = &mut self.experimental {
+            experimental.runtime_stack = Some(runtime_stack);
+        } else {
+            self.experimental = Some(Experimental::new().with_runtime_stack(runtime_stack));
+        }
+        Ok(self)
+    }
+
     pub fn with_kind(&mut self, kind: ErrorKind) -> anyhow::Result<&mut Self> {
         self.error.with_kind(kind)?;
         Ok(self)

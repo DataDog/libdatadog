@@ -129,6 +129,16 @@ fn test_crash_tracking_bin_prechain_sigabrt() {
     test_crash_tracking_bin(BuildProfile::Release, "prechain_abort", "null_deref");
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_runtime_callback() {
+    test_crash_tracking_bin_with_runtime_callback(
+        BuildProfile::Release,
+        "donothing",
+        "runtime_callback_test",
+    );
+}
+
 fn test_crash_tracking_bin(
     crash_tracking_receiver_profile: BuildProfile,
     mode: &str,
@@ -161,6 +171,10 @@ fn test_crash_tracking_bin(
         }
         "kill_sigbus" | "kill_sigsegv" | "raise_sigbus" | "raise_sigsegv" => {
             assert!(exit_status.success())
+        }
+        "runtime_callback_test" => {
+            // Runtime callback test behaves like null_deref (should not succeed)
+            assert!(!exit_status.success())
         }
         _ => unreachable!("{crash_typ} shouldn't happen"),
     }
@@ -219,6 +233,171 @@ fn test_crash_tracking_bin(
     // - Likewise, if the file does not exist, the test passes
     // - Tests are free to output additional information in the file in case of a failure; it'll be
     //   read here
+    let invalid_path = format!("{0}/INVALID", fixtures.output_dir.display());
+    if let Ok(invalid) = fs::read(invalid_path) {
+        assert_eq!(invalid, b"O");
+    }
+}
+
+fn test_crash_tracking_bin_with_runtime_callback(
+    crash_tracking_receiver_profile: BuildProfile,
+    mode: &str,
+    crash_typ: &str,
+) {
+    let (crashtracker_bin, crashtracker_receiver) =
+        setup_crashtracking_crates(crash_tracking_receiver_profile);
+    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
+
+    let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
+        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
+        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
+        .arg(&fixtures.output_dir)
+        .arg(mode)
+        .arg(crash_typ)
+        .spawn()
+        .unwrap();
+    let exit_status = bin_tests::timeit!("exit after signal", {
+        eprintln!("Waiting for exit");
+        p.wait().unwrap()
+    });
+
+    // Runtime callback test should behave like null_deref (should not succeed)
+    assert!(
+        !exit_status.success(),
+        "Expected crash to terminate process"
+    );
+
+    let stderr_path = format!("{0}/out.stderr", fixtures.output_dir.display());
+    let stderr = fs::read(stderr_path)
+        .context("reading crashtracker stderr")
+        .unwrap();
+    let stdout_path = format!("{0}/out.stdout", fixtures.output_dir.display());
+    let stdout = fs::read(stdout_path)
+        .context("reading crashtracker stdout")
+        .unwrap();
+    let s = String::from_utf8(stderr);
+    assert!(
+        matches!(
+            s.as_deref(),
+            Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n")
+            | Ok("Failed to fully receive crash.  Exit state was: InternalError(\"{\\\"ip\\\": \\\"\")\n")
+            | Ok("Runtime callback registered successfully\n"),
+        ),
+        "got {s:?}"
+    );
+    assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
+
+    // Check the crash data
+    let crash_profile = fs::read(fixtures.crash_profile_path)
+        .context("reading crashtracker profiling payload")
+        .unwrap();
+    let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
+        .context("deserializing crashtracker profiling payload to json")
+        .unwrap();
+
+    // Validate counters
+    assert_eq!(
+        serde_json::json!({
+          "profiler_collecting_sample": 1,
+          "profiler_inactive": 0,
+          "profiler_serializing": 0,
+          "profiler_unwinding": 0
+        }),
+        crash_payload["counters"],
+    );
+
+    // Validate signal info
+    let sig_info = &crash_payload["sig_info"];
+    assert_siginfo_message(sig_info, crash_typ);
+
+    // Validate error message
+    let error = &crash_payload["error"];
+    assert_error_message(&error["message"], sig_info);
+
+    // **NEW: Validate runtime stack in experimental field**
+    let experimental = &crash_payload["experimental"];
+    assert!(
+        experimental.is_object(),
+        "Expected experimental field to be an object: {experimental:?}"
+    );
+
+    let runtime_stack = &experimental["runtime_stack"];
+    assert!(
+        runtime_stack.is_object(),
+        "Expected runtime_stack field to be an object: {runtime_stack:?}"
+    );
+
+    // Validate runtime stack format and type
+    assert_eq!(
+        runtime_stack["format"].as_str(),
+        Some("Datadog Runtime Callback 1.0"),
+        "Unexpected runtime stack format: {runtime_stack:?}"
+    );
+    assert_eq!(
+        runtime_stack["runtime_type"].as_str(),
+        Some("unknown"),
+        "Unexpected runtime type: {runtime_stack:?}"
+    );
+
+    // Validate frames array
+    let frames = runtime_stack["frames"]
+        .as_array()
+        .expect("Expected frames to be an array");
+    assert_eq!(frames.len(), 4, "Expected 4 runtime frames");
+
+    // Validate specific frame content
+    let app_frame = &frames[0];
+    assert_eq!(app_frame["function"].as_str(), Some("handle_request"));
+    assert_eq!(app_frame["file"].as_str(), Some("app.py"));
+    assert_eq!(app_frame["line"].as_u64(), Some(45));
+    assert_eq!(app_frame["column"].as_u64(), Some(12));
+    assert_eq!(app_frame["class_name"].as_str(), Some("RequestHandler"));
+    assert_eq!(app_frame["module_name"].as_str(), Some("myapp"));
+
+    let framework_frame = &frames[1];
+    assert_eq!(
+        framework_frame["function"].as_str(),
+        Some("process_request")
+    );
+    assert_eq!(framework_frame["file"].as_str(), Some("framework/web.py"));
+    assert_eq!(framework_frame["line"].as_u64(), Some(123));
+    assert_eq!(framework_frame["column"].as_u64(), Some(8));
+    assert_eq!(framework_frame["class_name"].as_str(), Some("WebFramework"));
+    assert_eq!(framework_frame["module_name"].as_str(), Some("framework"));
+
+    let db_frame = &frames[2];
+    assert_eq!(db_frame["function"].as_str(), Some("db_query"));
+    assert_eq!(db_frame["file"].as_str(), Some("lib/database.py"));
+    assert_eq!(db_frame["line"].as_u64(), Some(67));
+    assert_eq!(db_frame["column"].as_u64(), Some(15));
+    assert_eq!(db_frame["class_name"].as_str(), Some("DatabaseConnection"));
+    assert_eq!(db_frame["module_name"].as_str(), Some("database"));
+
+    let runtime_frame = &frames[3];
+    assert_eq!(
+        runtime_frame["function"].as_str(),
+        Some("_execute_bytecode")
+    );
+    assert_eq!(runtime_frame["file"].as_str(), Some("python/eval.c"));
+    assert_eq!(runtime_frame["line"].as_u64(), Some(2341));
+    // Column is 0, so it might not be included in JSON (our implementation skips 0 values)
+    assert!(runtime_frame.get("column").is_none() || runtime_frame["column"].as_u64() == Some(0));
+    // No class_name or module_name for C runtime code
+    assert!(runtime_frame.get("class_name").is_none());
+    assert!(runtime_frame.get("module_name").is_none());
+
+    eprintln!(
+        "✅ Runtime callback test passed! Found {} frames in experimental.runtime_stack",
+        frames.len()
+    );
+
+    // Validate telemetry
+    let crash_telemetry = fs::read(fixtures.crash_telemetry_path)
+        .context("reading crashtracker telemetry payload")
+        .unwrap();
+    assert_telemetry_message(&crash_telemetry, crash_typ);
+
+    // Check for INVALID file (chaining tests)
     let invalid_path = format!("{0}/INVALID", fixtures.output_dir.display());
     if let Ok(invalid) = fs::read(invalid_path) {
         assert_eq!(invalid, b"O");
@@ -302,6 +481,21 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
         "raise_sigill" => {
             assert_eq!(sig_info["si_signo"], libc::SIGILL);
             assert_eq!(sig_info["si_signo_human_readable"], "SIGILL");
+        }
+        "runtime_callback_test" => {
+            // Runtime callback test should trigger a segfault just like null_deref
+            assert_eq!(sig_info["si_addr"], "0x0000000000000000");
+            assert!(
+                sig_info["si_code"] == 2 || sig_info["si_code"] == 1,
+                "{sig_info:?}"
+            );
+            assert!(
+                sig_info["si_code_human_readable"] == "SEGV_ACCERR"
+                    || sig_info["si_code_human_readable"] == "SEGV_MAPERR",
+                "{sig_info:?}"
+            );
+            assert_eq!(sig_info["si_signo"], libc::SIGSEGV);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGSEGV");
         }
         _ => panic!("unexpected crash_typ {crash_typ}"),
     }
@@ -406,6 +600,22 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
             assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
             assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
             assert!(tags.contains("si_signo:11"), "{tags:?}");
+        }
+        "runtime_callback_test" => {
+            // Runtime callback test behaves like null_deref (causes segfault)
+            assert!(base_expected_tags.is_subset(&tags), "{tags:?}");
+            assert!(tags.contains("si_addr:0x0000000000000000"), "{tags:?}");
+            assert!(
+                tags.contains("si_code_human_readable:SEGV_ACCERR")
+                    || tags.contains("si_code_human_readable:SEGV_MAPERR"),
+                "{tags:?}"
+            );
+            assert!(tags.contains("si_signo_human_readable:SIGSEGV"), "{tags:?}");
+            assert!(tags.contains("si_signo:11"), "{tags:?}");
+            assert!(
+                tags.contains("si_code:1") || tags.contains("si_code:2"),
+                "{tags:?}"
+            );
         }
         _ => panic!("{crash_typ}"),
     }
