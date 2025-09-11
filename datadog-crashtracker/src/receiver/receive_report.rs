@@ -12,14 +12,13 @@ use tokio::io::AsyncBufReadExt;
 use uuid::Uuid;
 
 /// Sends a heartbeat telemetry event to indicate that crash processing has started.
-/// For file endpoints, this function does nothing (returns early).
-/// For HTTP endpoints, it sends a heartbeat telemetry with metadata and config info.
+/// We no-op on file endpoints because unlike production environments, we know if
+/// a crash report failed to send when file debugging.
 async fn send_heartbeat_to_url(
     config: &CrashtrackerConfiguration,
     crash_uuid: &str,
     metadata: &crate::crash_info::Metadata,
 ) -> anyhow::Result<()> {
-    // File endpoints don't need a heartbeat
     let is_file_endpoint = config
         .endpoint()
         .as_ref()
@@ -30,13 +29,8 @@ async fn send_heartbeat_to_url(
         return Ok(());
     }
 
-    // Create heartbeat message with essential info
-    let heartbeat_message = "Crashtracker heartbeat: crash processing started";
-
     let uploader = TelemetryCrashUploader::new(metadata, config.endpoint())?;
-    uploader
-        .send_heartbeat(crash_uuid, heartbeat_message)
-        .await?;
+    uploader.send_heartbeat(crash_uuid).await?;
     Ok(())
 }
 

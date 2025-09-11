@@ -11,11 +11,18 @@ use ddtelemetry::{
     data::{self, Application, LogLevel},
     worker::http_client::request_builder,
 };
+use serde::Serialize;
 
 struct TelemetryMetadata {
     application: ddtelemetry::data::Application,
     host: ddtelemetry::data::Host,
     runtime_id: String,
+}
+
+#[derive(Serialize)]
+struct HeartbeatMessage {
+    crash_uuid: String,
+    message: String,
 }
 
 macro_rules! parse_tags {
@@ -104,7 +111,7 @@ impl TelemetryCrashUploader {
     }
 
     /// Sends heartbeat message with customer application and runtime information.
-    pub async fn send_heartbeat(&self, crash_uuid: &str, message: &str) -> anyhow::Result<()> {
+    pub async fn send_heartbeat(&self, crash_uuid: &str) -> anyhow::Result<()> {
         let metadata = &self.metadata;
 
         let tracer_time = SystemTime::now()
@@ -112,11 +119,29 @@ impl TelemetryCrashUploader {
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        // Create tags with essential customer application and runtime information
-        let tags = format!(
-            "uuid:{},is_crash:false,is_heartbeat:true,service:{},runtime_id:{}",
-            crash_uuid, metadata.application.service_name, metadata.runtime_id
+        let mut tags = format!(
+            "uuid:{},is_heartbeat:true,service:{},language_name:{},language_version:{},tracer_version:{}",
+            crash_uuid,
+            metadata.application.service_name,
+            metadata.application.language_name,
+            metadata.application.language_version,
+            metadata.application.tracer_version
         );
+
+        if let Some(env) = &metadata.application.env {
+            tags.push_str(&format!(",env:{}", env));
+        }
+        if let Some(runtime_name) = &metadata.application.runtime_name {
+            tags.push_str(&format!(",runtime_name:{}", runtime_name));
+        }
+        if let Some(runtime_version) = &metadata.application.runtime_version {
+            tags.push_str(&format!(",runtime_version:{}", runtime_version));
+        }
+
+        let heartbeat_msg = HeartbeatMessage {
+            crash_uuid: crash_uuid.to_string(),
+            message: "Crashtracker heartbeat: crash processing started".to_string(),
+        };
 
         let payload = data::Telemetry {
             tracer_time,
@@ -126,8 +151,8 @@ impl TelemetryCrashUploader {
             application: &metadata.application,
             host: &metadata.host,
             payload: &data::Payload::Logs(vec![data::Log {
-                message: message.to_string(),
-                level: LogLevel::Error,
+                message: serde_json::to_string(&heartbeat_msg)?,
+                level: LogLevel::Warn,
                 stack_trace: None,
                 tags,
                 is_sensitive: false,
@@ -362,11 +387,8 @@ mod tests {
             .unwrap();
 
         let crash_uuid = "test-uuid-12345";
-        let heartbeat_message = "Test heartbeat message";
 
-        t.send_heartbeat(crash_uuid, heartbeat_message)
-            .await
-            .unwrap();
+        t.send_heartbeat(crash_uuid).await.unwrap();
 
         let payload: serde_json::value::Value =
             serde_json::de::from_str(&fs::read_to_string(&output_filename).unwrap()).unwrap();
@@ -380,19 +402,27 @@ mod tests {
         assert_eq!(payload["payload"].as_array().unwrap().len(), 1);
         let log_entry = &payload["payload"][0];
 
-        // Verify heartbeat properties
-        assert_eq!(log_entry["message"], heartbeat_message);
-        assert_eq!(log_entry["is_crash"], false);
+        // Heartbeat properties
         assert_eq!(log_entry["is_sensitive"], false);
-        assert_eq!(log_entry["level"], "ERROR");
+        assert_eq!(log_entry["level"], "WARN");
 
-        // Verify enhanced tags include customer application and runtime information
+        // Structured message format
+        let message_json: serde_json::Value =
+            serde_json::from_str(log_entry["message"].as_str().unwrap())?;
+        assert_eq!(message_json["crash_uuid"], crash_uuid);
+        assert_eq!(
+            message_json["message"],
+            "Crashtracker heartbeat: crash processing started"
+        );
+
+        // Customer application and runtime information tags
         let tags = log_entry["tags"].as_str().unwrap();
         assert!(tags.contains(&format!("uuid:{}", crash_uuid)));
-        assert!(tags.contains("is_crash:false"));
         assert!(tags.contains("is_heartbeat:true"));
-        assert!(tags.contains("service:foo")); // Service name from application metadata
-        assert!(tags.contains("runtime_id:")); // Runtime ID is present
+        assert!(tags.contains("service:foo"));
+        assert!(tags.contains("language_name:native"));
+        assert!(tags.contains("language_version:"));
+        assert!(tags.contains("tracer_version:"));
 
         Ok(())
     }
@@ -415,11 +445,8 @@ mod tests {
             .unwrap();
 
         let crash_uuid = "test-enhanced-uuid-67890";
-        let heartbeat_message = "Heartbeat test message with config";
 
-        t.send_heartbeat(crash_uuid, heartbeat_message)
-            .await
-            .unwrap();
+        t.send_heartbeat(crash_uuid).await.unwrap();
 
         let payload: serde_json::value::Value =
             serde_json::de::from_str(&fs::read_to_string(&output_filename).unwrap()).unwrap();
@@ -433,19 +460,28 @@ mod tests {
         assert_eq!(payload["payload"].as_array().unwrap().len(), 1);
         let log_entry = &payload["payload"][0];
 
-        // Verify heartbeat properties
-        assert_eq!(log_entry["message"], heartbeat_message);
+        // Heartbeat properties
         assert_eq!(log_entry["is_crash"], false);
         assert_eq!(log_entry["is_sensitive"], false);
-        assert_eq!(log_entry["level"], "ERROR");
+        assert_eq!(log_entry["level"], "WARN");
 
-        // Verify tags include essential customer application and runtime information
+        // Structured message format
+        let message_json: serde_json::Value =
+            serde_json::from_str(log_entry["message"].as_str().unwrap())?;
+        assert_eq!(message_json["crash_uuid"], crash_uuid);
+        assert_eq!(
+            message_json["message"],
+            "Crashtracker heartbeat: crash processing started"
+        );
+
+        // Customer application and runtime information tags
         let tags = log_entry["tags"].as_str().unwrap();
         assert!(tags.contains(&format!("uuid:{}", crash_uuid)));
-        assert!(tags.contains("is_crash:false"));
         assert!(tags.contains("is_heartbeat:true"));
-        assert!(tags.contains("service:foo")); // Service name from application metadata
-        assert!(tags.contains("runtime_id:")); // Runtime ID is present
+        assert!(tags.contains("service:foo"));
+        assert!(tags.contains("language_name:native"));
+        assert!(tags.contains("language_version:"));
+        assert!(tags.contains("tracer_version:"));
 
         Ok(())
     }
