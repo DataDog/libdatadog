@@ -629,7 +629,7 @@ fn validate_heartbeat_telemetry(body: &str) {
     let tags = log_entry["tags"].as_str().unwrap_or("");
 
     assert!(
-        tags.contains("is_crash:false"),
+        tags.contains("is_crash:false,is_heartbeat:true"),
         "Expected heartbeat telemetry with is_crash:false, but got tags: {}",
         tags
     );

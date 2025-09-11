@@ -113,7 +113,7 @@ impl TelemetryCrashUploader {
             .unwrap_or(0);
 
         // Create minimal tags with just the UUID and is_crash flag
-        let tags = format!("uuid:{},is_crash:false", crash_uuid);
+        let tags = format!("uuid:{},is_crash:false,is_heartbeat:true", crash_uuid);
 
         let payload = data::Telemetry {
             tracer_time,

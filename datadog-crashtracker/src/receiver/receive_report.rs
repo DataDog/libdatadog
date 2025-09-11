@@ -12,42 +12,29 @@ use tokio::io::AsyncBufReadExt;
 use uuid::Uuid;
 
 /// Sends a heartbeat telemetry event to indicate that crash processing has started.
-/// This helps track cases where the crashtracker starts but fails to complete.
-async fn send_heartbeat(
+/// For file endpoints, this function does nothing (returns early).
+/// For HTTP endpoints, it sends a minimal heartbeat telemetry.
+async fn send_heartbeat_to_url(
     config: &CrashtrackerConfiguration,
     crash_uuid: &str,
     metadata: &crate::crash_info::Metadata,
 ) -> anyhow::Result<()> {
-    const HEARTBEAT_MESSAGE: &str = "Crashtracker heartbeat: crash processing started";
+    // File endpoints don't need a heartbeat
+    let is_file_endpoint = config
+        .endpoint()
+        .as_ref()
+        .map(|e| e.url.scheme_str() == Some("file"))
+        .unwrap_or(false);
 
-    if let Some(endpoint) = config.endpoint() {
-        if Some("file") == endpoint.url.scheme_str() {
-            let path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
-                .context("heartbeat file path was not correctly formatted")?;
-            let heartbeat_path: String = format!("{}.heartbeat", path.display());
-
-            let minimal_heartbeat = serde_json::json!({
-                "uuid": crash_uuid,
-                "error": {
-                    "is_crash": false,
-                    "message": HEARTBEAT_MESSAGE
-                },
-                "metadata": metadata,
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-                "log_messages": [HEARTBEAT_MESSAGE]
-            });
-
-            std::fs::write(
-                &heartbeat_path,
-                serde_json::to_string_pretty(&minimal_heartbeat)?,
-            )?;
-            return Ok(());
-        }
+    if is_file_endpoint {
+        return Ok(());
     }
 
+    // Send heartbeat for HTTP endpoints
+    let heartbeat_message = "Crashtracker heartbeat: crash processing started";
     let uploader = TelemetryCrashUploader::new(metadata, config.endpoint())?;
     uploader
-        .send_heartbeat(crash_uuid, HEARTBEAT_MESSAGE)
+        .send_heartbeat(crash_uuid, heartbeat_message)
         .await?;
     Ok(())
 }
@@ -301,22 +288,15 @@ pub(crate) async fn receive_report_from_stream(
                 let config_clone = config.clone();
                 let metadata_clone = metadata.clone();
                 let crash_uuid_clone = crash_uuid.clone();
-                // No need to send heartbeat for file endpoints
-                let is_file_endpoint = config_clone
-                    .endpoint()
-                    .as_ref()
-                    .map(|e| e.url.scheme_str() == Some("file"))
-                    .unwrap_or(false);
-
-                if !is_file_endpoint {
-                    tokio::task::spawn(async move {
-                        if let Err(e) =
-                            send_heartbeat(&config_clone, &crash_uuid_clone, &metadata_clone).await
-                        {
-                            eprintln!("Failed to send crash heartbeat: {e}");
-                        }
-                    });
-                }
+                // Send heartbeat for all endpoint types (function handles file vs HTTP logic)
+                tokio::task::spawn(async move {
+                    if let Err(e) =
+                        send_heartbeat_to_url(&config_clone, &crash_uuid_clone, &metadata_clone)
+                            .await
+                    {
+                        eprintln!("Failed to send crash heartbeat: {e}");
+                    }
+                });
             }
         }
 
