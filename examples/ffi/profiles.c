@@ -1,7 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-// Basic FFI example using the revamped profiling APIs
 #include <datadog/common.h>
 #include <datadog/profiling.h>
 #include <stdio.h>
@@ -109,6 +108,9 @@ int main(void) {
 
   // Normally, you would now build an Exporter Request that consumes `encoded`.
   // For this example, we stop here after exercising the core APIs.
+
+  //  printf("Press any key to reset and drop...");
+  //  getchar();
 
   // Cleanup
   ddog_prof_PprofBuilder_drop(&pprof);

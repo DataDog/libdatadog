@@ -1,3 +1,6 @@
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0this example weights in a loop
+
 extern "C" {
 #include <datadog/common.h>
 #include <datadog/profiling.h>
@@ -15,6 +18,7 @@ static void check_ok(ddog_prof_Status status, const char *ctx) {
     const char *msg = status.err ? status.err : "(unknown)";
     fprintf(stderr, "%s: %s\n", ctx, msg);
     ddog_prof_Status_drop(&status);
+    // this will cause leaks but this is just an example.
     exit(EXIT_FAILURE);
   }
 }
@@ -128,8 +132,8 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  const ddog_CharSlice localhost_url = DDOG_CHARSLICE_C_BARE("http://localhost:8126");
-  ddog_prof_Endpoint endpoint = ddog_prof_Endpoint_agent(localhost_url);
+  auto endpoint =
+      ddog_prof_Endpoint_agentless(DDOG_CHARSLICE_C_BARE("datad0g.com"), to_slice_c_char(api_key));
   auto exporter_result = ddog_prof_Exporter_new(DDOG_CHARSLICE_C_BARE("exporter-example"),
                                                 DDOG_CHARSLICE_C_BARE("1.2.3"),
                                                 DDOG_CHARSLICE_C_BARE("native"), &tags, endpoint);
