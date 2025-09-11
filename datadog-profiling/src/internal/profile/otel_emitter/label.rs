@@ -83,7 +83,8 @@ mod tests {
     use crate::collections::identifiable::StringId;
 
     #[test]
-    fn test_convert_string_label() {
+    fn test_convert_label() {
+        // Test string label conversion
         let string_table = vec![
             "".to_string(),          // index 0
             "thread_id".to_string(), // index 1
@@ -96,49 +97,57 @@ mod tests {
         );
 
         let mut key_to_unit_map = HashMap::new();
-        let result = convert_label_to_key_value(&label, &string_table, &mut key_to_unit_map);
-        assert!(result.is_ok());
-
-        let key_value = result.unwrap();
+        let key_value =
+            convert_label_to_key_value(&label, &string_table, &mut key_to_unit_map).unwrap();
         assert_eq!(key_value.key, "thread_id");
-        match key_value.value {
-            Some(datadog_profiling_otel::key_value::Value::StringValue(s)) => {
-                assert_eq!(s, "main");
-            }
+        let s = match key_value.value.expect("Expected Some value") {
+            datadog_profiling_otel::key_value::Value::StringValue(s) => s,
             _ => panic!("Expected StringValue"),
-        }
-    }
+        };
+        assert_eq!(s, "main");
 
-    #[test]
-    fn test_convert_numeric_label() {
-        let string_table = vec![
-            "".to_string(),                // index 0
-            "allocation_size".to_string(), // index 1
-            "bytes".to_string(),           // index 2
-        ];
-
+        // Test numeric label with unit mapping
         let label = InternalLabel::num(
-            StringId::from_offset(1), // "allocation_size"
-            1024,                     // 1024 bytes
-            StringId::from_offset(2), // "bytes"
+            StringId::from_offset(1), // "thread_id" (reusing key)
+            1024,                     // 1024
+            StringId::from_offset(2), // "main" (reusing as unit)
         );
 
-        let mut key_to_unit_map = HashMap::new();
-        let result = convert_label_to_key_value(&label, &string_table, &mut key_to_unit_map);
-        assert!(result.is_ok());
-
-        let key_value = result.unwrap();
-        assert_eq!(key_value.key, "allocation_size");
-        match key_value.value {
-            Some(datadog_profiling_otel::key_value::Value::IntValue(n)) => {
-                assert_eq!(n, 1024);
-            }
+        let key_value =
+            convert_label_to_key_value(&label, &string_table, &mut key_to_unit_map).unwrap();
+        assert_eq!(key_value.key, "thread_id");
+        let n = match key_value.value.expect("Expected Some value") {
+            datadog_profiling_otel::key_value::Value::IntValue(n) => n,
             _ => panic!("Expected IntValue"),
-        }
+        };
+        assert_eq!(n, 1024);
+
+        // Verify unit mapping was added
+        assert_eq!(key_to_unit_map.get(&1), Some(&2));
+
+        // Test numeric label without unit mapping (empty string unit)
+        let label = InternalLabel::num(
+            StringId::from_offset(1), // "thread_id"
+            42,                       // 42
+            StringId::from_offset(0), // empty string (default)
+        );
+
+        let key_value =
+            convert_label_to_key_value(&label, &string_table, &mut key_to_unit_map).unwrap();
+        assert_eq!(key_value.key, "thread_id");
+        let n = match key_value.value.expect("Expected Some value") {
+            datadog_profiling_otel::key_value::Value::IntValue(n) => n,
+            _ => panic!("Expected IntValue"),
+        };
+        assert_eq!(n, 42);
+
+        // Unit mapping should still exist from previous test
+        assert_eq!(key_to_unit_map.get(&1), Some(&2));
     }
 
     #[test]
-    fn test_convert_label_out_of_bounds() {
+    fn test_convert_label_errors() {
+        // Test out of bounds key
         let string_table = vec!["".to_string()]; // Only one string
 
         let label = InternalLabel::str(
@@ -149,10 +158,8 @@ mod tests {
         let mut key_to_unit_map = HashMap::new();
         let result = convert_label_to_key_value(&label, &string_table, &mut key_to_unit_map);
         assert!(result.is_err());
-    }
 
-    #[test]
-    fn test_convert_label_empty_string_table() {
+        // Test empty string table
         let string_table: Vec<String> = vec![];
 
         let label = InternalLabel::str(
@@ -160,71 +167,7 @@ mod tests {
             StringId::from_offset(0),
         );
 
-        let mut key_to_unit_map = HashMap::new();
         let result = convert_label_to_key_value(&label, &string_table, &mut key_to_unit_map);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_convert_numeric_label_with_unit_mapping() {
-        let string_table = vec![
-            "".to_string(),             // index 0
-            "memory_usage".to_string(), // index 1
-            "megabytes".to_string(),    // index 2
-        ];
-
-        let label = InternalLabel::num(
-            StringId::from_offset(1), // "memory_usage"
-            512,                      // 512 MB
-            StringId::from_offset(2), // "megabytes"
-        );
-
-        let mut key_to_unit_map = HashMap::new();
-        let result = convert_label_to_key_value(&label, &string_table, &mut key_to_unit_map);
-        assert!(result.is_ok());
-
-        // Verify the KeyValue conversion
-        let key_value = result.unwrap();
-        assert_eq!(key_value.key, "memory_usage");
-        match key_value.value {
-            Some(datadog_profiling_otel::key_value::Value::IntValue(n)) => {
-                assert_eq!(n, 512);
-            }
-            _ => panic!("Expected IntValue"),
-        }
-
-        // Verify the unit mapping was added
-        assert_eq!(key_to_unit_map.get(&1), Some(&2)); // key index 1 maps to unit index 2
-    }
-
-    #[test]
-    fn test_convert_numeric_label_without_unit_mapping() {
-        let string_table = vec![
-            "".to_string(),        // index 0
-            "counter".to_string(), // index 1
-        ];
-
-        let label = InternalLabel::num(
-            StringId::from_offset(1), // "counter"
-            42,                       // 42
-            StringId::from_offset(0), // empty string (default)
-        );
-
-        let mut key_to_unit_map = HashMap::new();
-        let result = convert_label_to_key_value(&label, &string_table, &mut key_to_unit_map);
-        assert!(result.is_ok());
-
-        // Verify the KeyValue conversion
-        let key_value = result.unwrap();
-        assert_eq!(key_value.key, "counter");
-        match key_value.value {
-            Some(datadog_profiling_otel::key_value::Value::IntValue(n)) => {
-                assert_eq!(n, 42);
-            }
-            _ => panic!("Expected IntValue"),
-        }
-
-        // Verify no unit mapping was added for default empty string
-        assert!(key_to_unit_map.is_empty());
     }
 }

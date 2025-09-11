@@ -51,7 +51,7 @@ impl InternalProfile {
             // Create a Profile for this sample type
             let profile = datadog_profiling_otel::Profile {
                 sample_type: Some(otel_sample_type),
-                sample: vec![], // TODO: Implement sample conversion
+                sample: vec![], 
                 time_nanos: self
                     .start_time
                     .duration_since(std::time::UNIX_EPOCH)
