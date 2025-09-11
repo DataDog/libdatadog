@@ -412,12 +412,13 @@ mod unix_test {
         let mut frame = StackFrame::new();
         frame.ip = Some(address);
 
+        let mut symbolizer = Symbolizer::new();
         let normalizer = Normalizer::new();
         frame
             .normalize_ip(
                 &normalizer,
                 Pid::from(std::process::id()),
-                &mut CachedElfResolvers::default(),
+                &mut CachedElfResolvers::new(&mut symbolizer),
             )
             .unwrap();
 
@@ -446,12 +447,13 @@ mod unix_test {
         let mut frame = StackFrame::new();
         frame.ip = Some(address);
 
+        let mut symbolizer = blazesym::symbolize::Symbolizer::new();
         let normalizer = Normalizer::new();
         frame
             .normalize_ip(
                 &normalizer,
                 Pid::from(std::process::id()),
-                &mut CachedElfResolvers::default(),
+                &mut CachedElfResolvers::new(&mut symbolizer),
             )
             .unwrap();
 
