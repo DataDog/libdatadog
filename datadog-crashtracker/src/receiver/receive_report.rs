@@ -288,7 +288,6 @@ pub(crate) async fn receive_report_from_stream(
                 let config_clone = config.clone();
                 let metadata_clone = metadata.clone();
                 let crash_uuid_clone = crash_uuid.clone();
-                // Send heartbeat for all endpoint types (function handles file vs HTTP logic)
                 tokio::task::spawn(async move {
                     if let Err(e) =
                         send_heartbeat_to_url(&config_clone, &crash_uuid_clone, &metadata_clone)
