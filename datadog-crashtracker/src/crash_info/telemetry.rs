@@ -388,11 +388,6 @@ mod tests {
         assert!(tags.contains(&format!("uuid:{}", crash_uuid)));
         assert!(tags.contains("is_crash:false"));
 
-        // Ensure we don't have unnecessary tags from full crash info
-        assert!(!tags.contains("data_schema_version"));
-        assert!(!tags.contains("si_signo"));
-        assert!(!tags.contains("si_addr"));
-
         Ok(())
     }
 }

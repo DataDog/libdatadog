@@ -314,7 +314,6 @@ fn test_crash_tracking_bin(
         .context("reading crashtracker telemetry payload")
         .unwrap();
     assert_telemetry_message(&crash_telemetry, crash_typ);
-    assert_heartbeat_file(&fixtures, &crash_payload);
 
     // Crashtracking signal handler chaining tests, as well as other tests, might only be able to
     // influence system state after the main application has crashed, and has therefore lost the
@@ -518,51 +517,6 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
     assert_eq!(telemetry_payload["payload"][0]["is_sensitive"], true);
 }
 
-fn assert_heartbeat_file(fixtures: &TestFixtures, crash_payload: &Value) {
-    let heartbeat_file = format!("{}.heartbeat", fixtures.crash_profile_path.display());
-    assert!(
-        Path::new(&heartbeat_file).exists(),
-        "Heartbeat file should exist at {}",
-        heartbeat_file
-    );
-
-    let heartbeat_content = fs::read_to_string(&heartbeat_file)
-        .context("reading heartbeat file")
-        .unwrap();
-    let heartbeat_json: Value = serde_json::from_str(&heartbeat_content)
-        .context("parsing heartbeat JSON")
-        .unwrap();
-
-    // Verify heartbeat properties
-    assert_eq!(
-        heartbeat_json["error"]["is_crash"], false,
-        "Heartbeat should have is_crash=false"
-    );
-
-    assert_eq!(
-        heartbeat_json["error"]["message"], "Crashtracker heartbeat: crash processing started",
-        "Heartbeat should have correct message"
-    );
-
-    // Verify heartbeat and crash report share the same UUID
-    assert_eq!(
-        heartbeat_json["uuid"], crash_payload["uuid"],
-        "Heartbeat UUID should match crash report UUID"
-    );
-
-    let log_messages = heartbeat_json["log_messages"]
-        .as_array()
-        .expect("log_messages should be an array");
-    assert!(
-        log_messages.iter().any(|msg| {
-            msg.as_str()
-                .map(|s| s.contains("Crashtracker heartbeat: crash processing started"))
-                .unwrap_or(false)
-        }),
-        "Heartbeat should contain expected log message"
-    );
-}
-
 #[test]
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
@@ -590,28 +544,38 @@ fn crash_tracking_empty_endpoint() {
         .spawn()
         .unwrap();
 
-    // First request should be the heartbeat
+    // With parallel heartbeat, we might receive requests in either order
     let (mut stream1, _) = listener.accept().unwrap();
-    let heartbeat_body = read_http_request_body(&mut stream1);
+    let body1 = read_http_request_body(&mut stream1);
 
-    // Send 200 OK response to heartbeat to keep connection open
+    // Send 200 OK response to keep connection open
     stream1
         .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
         .unwrap();
 
-    validate_heartbeat_telemetry(&heartbeat_body);
-
-    // Second request should be the crash report
     let (mut stream2, _) = listener.accept().unwrap();
-    let crash_report_body = read_http_request_body(&mut stream2);
+    let body2 = read_http_request_body(&mut stream2);
 
     // Send 404 response to close connection
     stream2
         .write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n")
         .unwrap();
 
-    // Validate crash report telemetry
-    assert_telemetry_message(crash_report_body.as_bytes(), "null_deref");
+    // Determine which is heartbeat vs crash report based on content
+    let is_body1_heartbeat = body1.contains("is_crash:false");
+    let is_body2_heartbeat = body2.contains("is_crash:false");
+
+    if is_body1_heartbeat && !is_body2_heartbeat {
+        // body1 = heartbeat, body2 = crash report
+        validate_heartbeat_telemetry(&body1);
+        assert_telemetry_message(body2.as_bytes(), "null_deref");
+    } else if is_body2_heartbeat && !is_body1_heartbeat {
+        // body1 = crash report, body2 = heartbeat
+        assert_telemetry_message(body1.as_bytes(), "null_deref");
+        validate_heartbeat_telemetry(&body2);
+    } else {
+        panic!("Expected one heartbeat and one crash report, but got: body1_heartbeat={}, body2_heartbeat={}", is_body1_heartbeat, is_body2_heartbeat);
+    }
 }
 
 fn read_http_request_body(stream: &mut impl Read) -> String {

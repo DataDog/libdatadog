@@ -257,7 +257,6 @@ pub(crate) async fn receive_report_from_stream(
     // Generate UUID early so we can use it for both heartbeat and crash report
     let crash_uuid = Uuid::new_v4().to_string();
     let mut heartbeat_sent = false;
-    let mut heartbeat_task: Option<tokio::task::JoinHandle<Option<String>>> = None;
 
     let mut lines = stream.lines();
     let mut deadline = None;
@@ -302,15 +301,22 @@ pub(crate) async fn receive_report_from_stream(
                 let config_clone = config.clone();
                 let metadata_clone = metadata.clone();
                 let crash_uuid_clone = crash_uuid.clone();
-                heartbeat_task = Some(tokio::task::spawn(async move {
-                    if let Err(e) =
-                        send_heartbeat(&config_clone, &crash_uuid_clone, &metadata_clone).await
-                    {
-                        Some(format!("Failed to send crash heartbeat: {e}"))
-                    } else {
-                        None
-                    }
-                }));
+                // No need to send heartbeat for file endpoints
+                let is_file_endpoint = config_clone
+                    .endpoint()
+                    .as_ref()
+                    .map(|e| e.url.scheme_str() == Some("file"))
+                    .unwrap_or(false);
+
+                if !is_file_endpoint {
+                    tokio::task::spawn(async move {
+                        if let Err(e) =
+                            send_heartbeat(&config_clone, &crash_uuid_clone, &metadata_clone).await
+                        {
+                            eprintln!("Failed to send crash heartbeat: {e}");
+                        }
+                    });
+                }
             }
         }
 
@@ -324,13 +330,8 @@ pub(crate) async fn receive_report_from_stream(
         }
     }
 
-    // We join the thread here so because in tests, the heartbeat task sometimes outlive the
-    // receiver.
-    if let Some(task) = heartbeat_task {
-        if let Ok(Some(error_msg)) = task.await {
-            let _ = builder.with_log_message(error_msg, false);
-        }
-    }
+    // Let heartbeat run independently - don't wait for it to complete
+    // This ensures crash processing isn't blocked by slow heartbeat operations
 
     if !builder.has_data() {
         return Ok(None);
