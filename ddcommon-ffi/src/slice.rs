@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use core::slice;
+use ddcommon::error::FfiSafeErrorMessage;
 use serde::ser::Error;
 use serde::Serializer;
 use std::borrow::Cow;
@@ -10,6 +11,14 @@ use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::os::raw::c_char;
 use std::str::Utf8Error;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub enum SliceConversionError {
+    LargeLength,
+    NullPointer,
+    MisalignedPointer,
+}
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -24,6 +33,25 @@ pub struct Slice<'a, T: 'a> {
     len: usize,
     _marker: PhantomData<&'a [T]>,
 }
+
+/// # Safety
+/// All strings are valid UTF-8 (enforced by using c-str literals in Rust).
+unsafe impl FfiSafeErrorMessage for SliceConversionError {
+    fn as_ffi_str(&self) -> &'static std::ffi::CStr {
+        match self {
+            SliceConversionError::LargeLength => c"length was too large",
+            SliceConversionError::NullPointer => c"null pointer with non-zero length",
+            SliceConversionError::MisalignedPointer => c"pointer was not aligned for the type",
+        }
+    }
+}
+impl Display for SliceConversionError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self.as_rust_str(), f)
+    }
+}
+
+impl core::error::Error for SliceConversionError {}
 
 impl<'a, T: 'a> core::ops::Deref for Slice<'a, T> {
     type Target = [T];
@@ -55,17 +83,26 @@ pub type ByteSlice<'a> = Slice<'a, u8>;
 
 /// This exists as an intrinsic, but it is private.
 pub fn is_aligned_and_not_null<T>(ptr: *const T) -> bool {
-    !ptr.is_null() && is_aligned(ptr)
-}
-
-#[inline]
-fn is_aligned<T>(ptr: *const T) -> bool {
-    debug_assert!(!ptr.is_null());
-    ptr as usize % std::mem::align_of::<T>() == 0
+    !ptr.is_null() && ptr.is_aligned()
 }
 
 pub trait AsBytes<'a> {
     fn as_bytes(&self) -> &'a [u8];
+
+    /// Tries to interpret the structure as a slice of bytes.
+    ///
+    /// # Errors
+    ///
+    ///  - Returns [`SliceConversionError::NullPointer`] if the slice has a null pointer and a
+    ///    length other than zero. If pointer is null and length is zero, then return `Ok(&[])`
+    ///    instead.
+    ///  - Returns [`SliceConversionError::MisalignedPointer`] if the pointer is non-null and is not
+    ///    aligned correctly for the type (not generally possible with types which are inherently
+    ///    byte oriented, but is if the slice is of some other type which is being safely
+    ///    reinterpreted as bytes).
+    ///  - Returns [`SliceConversionError::LargeLength`] if the length of the slice exceeds
+    ///    [`isize::MAX`].
+    fn try_as_bytes(&self) -> Result<&'a [u8], SliceConversionError>;
 
     #[inline]
     fn try_to_utf8(&self) -> Result<&'a str, Utf8Error> {
@@ -98,12 +135,40 @@ impl<'a> AsBytes<'a> for Slice<'a, u8> {
     fn as_bytes(&self) -> &'a [u8] {
         self.as_slice()
     }
+
+    fn try_as_bytes(&self) -> Result<&'a [u8], SliceConversionError> {
+        self.try_as_slice()
+    }
 }
 
 impl<'a> AsBytes<'a> for Slice<'a, i8> {
     fn as_bytes(&self) -> &'a [u8] {
-        // SAFETY: safe to convert *i8 to *u8 and then read it... I think.
-        unsafe { Slice::from_raw_parts(self.ptr.cast(), self.len) }.as_slice()
+        #[allow(clippy::expect_used)]
+        self.try_as_bytes()
+            .expect("AsBytes::as_bytes failed to convert to a Rust slice")
+    }
+
+    fn try_as_bytes(&self) -> Result<&'a [u8], SliceConversionError> {
+        self.try_as_slice().map(|slice| {
+            // SAFETY: we've gone through a successful try_as_slice, so the
+            // enforceable characteristics such as fitting in isize::MAX are
+            // all good. The rest is safe only if the consumer respects the
+            // inherent safety requirements--doesn't give invalid length,
+            // pointer to invalid memory, etc.
+            unsafe { slice::from_raw_parts(slice.as_ptr().cast(), self.len) }
+        })
+    }
+}
+
+impl<'a> AsBytes<'a> for &'a [c_char] {
+    fn as_bytes(&self) -> &'a [u8] {
+        // SAFETY: We're converting from &[c_char] to &[u8] which is safe since
+        // they have the same layout and c_char has no unused bit patterns.
+        unsafe { slice::from_raw_parts(self.as_ptr().cast(), self.len()) }
+    }
+
+    fn try_as_bytes(&self) -> Result<&'a [u8], SliceConversionError> {
+        Ok(self.as_bytes())
     }
 }
 
@@ -146,15 +211,32 @@ impl<'a, T: 'a> Slice<'a, T> {
     }
 
     pub fn as_slice(&self) -> &'a [T] {
-        if !self.ptr.is_null() {
-            // Crashing immediately is likely better than ignoring these.
-            assert!(is_aligned(self.ptr));
-            assert!(self.len <= isize::MAX as usize);
-            unsafe { slice::from_raw_parts(self.ptr, self.len) }
+        #[allow(clippy::expect_used)]
+        self.try_as_slice()
+            .expect("ffi Slice failed to convert to a Rust slice")
+    }
+
+    /// Tries to convert the FFI slice into a standard slice.
+    ///
+    /// # Errors
+    ///
+    /// 1. Fails if `self.ptr` is null and `self.len` is not zero.
+    /// 2. Fails if `self.ptr` is not null and is unaligned.
+    /// 3. Fails if `self.len` is larger than [`isize::MAX`].
+    pub fn try_as_slice(&self) -> Result<&'a [T], SliceConversionError> {
+        let (ptr, len) = self.as_raw_parts();
+        if !ptr.is_null() {
+            if len > isize::MAX as usize {
+                Err(SliceConversionError::LargeLength)
+            } else if !ptr.is_aligned() {
+                Err(SliceConversionError::MisalignedPointer)
+            } else {
+                Ok(unsafe { slice::from_raw_parts(ptr, len) })
+            }
+        } else if len != 0 {
+            Err(SliceConversionError::NullPointer)
         } else {
-            // Crashing immediately is likely better than ignoring this.
-            assert_eq!(self.len, 0);
-            &[]
+            Ok(&[])
         }
     }
 
@@ -345,5 +427,113 @@ mod tests {
             _marker: PhantomData,
         };
         _ = dangerous.as_slice();
+    }
+
+    #[test]
+    fn test_try_as_slice_success() {
+        let data: &[u8] = b"hello world";
+        let slice = Slice::from(data);
+
+        let result = slice.try_as_slice();
+        assert_eq!(result.unwrap(), data);
+    }
+
+    #[test]
+    fn test_try_as_slice_null_zero_len() {
+        let null_zero_len: Slice<u8> = Slice {
+            ptr: ptr::null(),
+            len: 0,
+            _marker: PhantomData,
+        };
+
+        let result = null_zero_len.try_as_slice();
+        assert_eq!(result.unwrap(), &[]);
+    }
+
+    #[test]
+    fn test_try_as_slice_null_nonzero_len() {
+        let null_nonzero: Slice<u8> = Slice {
+            ptr: ptr::null(),
+            len: 5,
+            _marker: PhantomData,
+        };
+
+        let result = null_nonzero.try_as_slice();
+        assert!(matches!(
+            result.unwrap_err(),
+            SliceConversionError::NullPointer
+        ));
+    }
+
+    #[test]
+    fn test_try_as_slice_large_length() {
+        let large_len: Slice<u8> = Slice {
+            ptr: ptr::NonNull::dangling().as_ptr(),
+            len: isize::MAX as usize + 1,
+            _marker: PhantomData,
+        };
+
+        let result = large_len.try_as_slice();
+        assert!(matches!(
+            result.unwrap_err(),
+            SliceConversionError::LargeLength
+        ));
+    }
+
+    #[test]
+    fn test_try_as_slice_misaligned_pointer() {
+        // Create a misaligned pointer for u64 by using a properly aligned
+        // array, then offset by 1 byte.
+        let data = [0u64; 2];
+        let base_ptr = data.as_ptr().cast::<u8>();
+        let misaligned_ptr = unsafe { base_ptr.add(1).cast::<u64>() };
+
+        // Verify the pointer is actually misaligned
+        assert!(!misaligned_ptr.is_aligned());
+
+        let misaligned: Slice<u64> = Slice {
+            ptr: misaligned_ptr,
+            len: 1,
+            _marker: PhantomData,
+        };
+
+        let result = misaligned.try_as_slice();
+        assert!(matches!(
+            result.unwrap_err(),
+            SliceConversionError::MisalignedPointer
+        ));
+    }
+
+    #[test]
+    fn test_try_as_bytes_u8_slice() {
+        let data: &[u8] = b"test data";
+        let slice = Slice::from(data);
+
+        let result = slice.try_as_bytes();
+        assert_eq!(result.unwrap(), data);
+    }
+
+    #[test]
+    fn test_try_as_bytes_i8_slice() {
+        let data: &[i8] = &[72, 101, 108, 108, 111]; // "Hello" in i8
+        let slice = Slice::from(data);
+
+        let result = slice.try_as_bytes();
+        assert_eq!(result.unwrap(), b"Hello");
+    }
+
+    #[test]
+    fn test_try_as_bytes_char_slice_error_propagation() {
+        let null_nonzero: Slice<c_char> = Slice {
+            ptr: ptr::null(),
+            len: 3,
+            _marker: PhantomData,
+        };
+
+        let result = null_nonzero.try_as_bytes();
+        assert!(matches!(
+            result.unwrap_err(),
+            SliceConversionError::NullPointer
+        ));
     }
 }
