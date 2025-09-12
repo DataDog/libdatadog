@@ -29,6 +29,12 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  const char *api_key = getenv("DD_API_KEY");
+  if (!api_key) {
+    printf("DD_API_KEY environment variable is no set\n");
+    return 1;
+  }
+
   // Core handles
   ddog_prof_ProfilesDictionaryHandle dict = NULL;
   check_ok(ddog_prof_ProfilesDictionary_new(&dict), "ProfilesDictionary_new");
