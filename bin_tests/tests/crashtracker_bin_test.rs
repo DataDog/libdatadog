@@ -131,7 +131,7 @@ fn test_crash_tracking_bin_prechain_sigabrt() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn test_crash_init_signal_timing_and_content() {
+fn test_crash_ping_timing_and_content() {
     test_crash_tracking_bin(BuildProfile::Release, "donothing", "null_deref");
 }
 
@@ -544,7 +544,7 @@ fn crash_tracking_empty_endpoint() {
         .spawn()
         .unwrap();
 
-    // With parallel crash init signal, we might receive requests in either order
+    // With parallel crash ping, we might receive requests in either order
     let (mut stream1, _) = listener.accept().unwrap();
     let body1 = read_http_request_body(&mut stream1);
 
@@ -561,20 +561,20 @@ fn crash_tracking_empty_endpoint() {
         .write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n")
         .unwrap();
 
-    // Determine which is crash init signal vs crash report based on content
-    let is_body1_crash_init_signal = body1.contains("is_crash_init_signal:true");
-    let is_body2_crash_init_signal = body2.contains("is_crash_init_signal:true");
+    // Determine which is crash ping vs crash report based on content
+    let is_body1_crash_ping = body1.contains("is_crash_ping:true");
+    let is_body2_crash_ping = body2.contains("is_crash_ping:true");
 
-    if is_body1_crash_init_signal && !is_body2_crash_init_signal {
-        // body1 = crash init signal, body2 = crash report
-        validate_crash_init_signal_telemetry(&body1);
+    if is_body1_crash_ping && !is_body2_crash_ping {
+        // body1 = crash ping, body2 = crash report
+        validate_crash_ping_telemetry(&body1);
         assert_telemetry_message(body2.as_bytes(), "null_deref");
-    } else if is_body2_crash_init_signal && !is_body1_crash_init_signal {
-        // body1 = crash report, body2 = crash init signal
+    } else if is_body2_crash_ping && !is_body1_crash_ping {
+        // body1 = crash report, body2 = crash ping
         assert_telemetry_message(body1.as_bytes(), "null_deref");
-        validate_crash_init_signal_telemetry(&body2);
+        validate_crash_ping_telemetry(&body2);
     } else {
-        panic!("Expected one crash init signal and one crash report, but got: body1_crash_init_signal={}, body2_crash_init_signal={}", is_body1_crash_init_signal, is_body2_crash_init_signal);
+        panic!("Expected one crash ping and one crash report, but got: body1_crash_ping={}, body2_crash_ping={}", is_body1_crash_ping, is_body2_crash_ping);
     }
 }
 
@@ -613,9 +613,9 @@ fn read_http_request_body(stream: &mut impl Read) -> String {
     resp[pos + 4..].to_string()
 }
 
-fn validate_crash_init_signal_telemetry(body: &str) {
+fn validate_crash_ping_telemetry(body: &str) {
     let telemetry_payload: serde_json::Value =
-        serde_json::from_str(body).expect("Crash init signal should be valid JSON");
+        serde_json::from_str(body).expect("Crash ping should be valid JSON");
 
     assert_eq!(telemetry_payload["request_type"], "logs");
 
@@ -629,8 +629,8 @@ fn validate_crash_init_signal_telemetry(body: &str) {
     let tags = log_entry["tags"].as_str().unwrap_or("");
 
     assert!(
-        tags.contains("is_crash_init_signal:true"),
-        "Expected crash init signal telemetry with is_crash_init_signal:true, but got tags: {}",
+        tags.contains("is_crash_ping:true"),
+        "Expected crash ping telemetry with is_crash_ping:true, but got tags: {}",
         tags
     );
 
@@ -641,8 +641,8 @@ fn validate_crash_init_signal_telemetry(body: &str) {
 
     let actual_message = message_json["message"].as_str().unwrap_or("");
     assert_eq!(
-        actual_message, "Crashtracker crash init signal: crash processing started",
-        "Expected crash init signal message 'Crashtracker crash init signal: crash processing started', but got: {}",
+        actual_message, "Crashtracker crash ping: crash processing started",
+        "Expected crash ping message 'Crashtracker crash ping: crash processing started', but got: {}",
         actual_message
     );
 

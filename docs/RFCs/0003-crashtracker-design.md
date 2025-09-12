@@ -177,7 +177,7 @@ The receiver interacts with the system in the following ways:
     - Signal content
       - Contains structured telemetry data including crash UUID, application metadata (service name, environment, language, runtime versions), and processing status.
       - Uses WARN log level to indicate informational status rather than an error condition.
-      - Tagged as `is_crash_init_signal:true` to distinguish from actual crash reports.
+      - Tagged as `is_crash_ping:true` to distinguish from actual crash reports.
     - Risks to normal operation
       - NA
     - Risks during a crash
