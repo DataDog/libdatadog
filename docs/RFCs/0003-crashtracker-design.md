@@ -176,8 +176,17 @@ The receiver interacts with the system in the following ways:
         make downstream assumptions based on that.
     - Signal content
       - Contains structured telemetry data including crash UUID, application metadata (service name, environment, language, runtime versions), and processing status.
-      - Uses WARN log level to indicate informational status rather than an error condition.
+      - Uses DEBUG log level to indicate informational status rather than an error condition.
       - Tagged as `is_crash_ping:true` to distinguish from actual crash reports.
+    - **V1 CrashPingMessage Structure**: The crash ping message is JSON-encoded with the following structure:
+      ```json
+      {
+        "crash_uuid": "string",
+        "message": "Crashtracker crash ping: crash processing started - Process terminated with {si_code_human_readable} ({si_signo_human_readable})",
+        "version": "1.0",
+        "type": "Crash ping"
+      }
+      ```
     - Risks to normal operation
       - NA
     - Risks during a crash
@@ -240,6 +249,8 @@ Although we make every effort to only upload non-sensitive data, it is possible 
 - **Added**: Initialization signal functionality to the Receiver (section 4)
   - Sends a crash confirmation signal when processing begins
   - Contains structured telemetry data with crash UUID and application metadata
-  - Uses WARN log level and is tagged as `is_crash_ping:true`
+  - Uses DEBUG log level and is tagged as `is_crash_ping:true`
   - Includes risk analysis for both normal operation and crash scenarios
   - Provides mitigation strategies for endpoint accessibility and transmission timeouts
+- **Added**: V1 CrashPingMessage structure specification (section 4)
+  - JSON message structure with crash UUID, enhanced message format including signal information, version, and type fields

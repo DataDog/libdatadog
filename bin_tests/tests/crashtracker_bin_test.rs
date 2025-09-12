@@ -671,7 +671,7 @@ fn validate_crash_ping_telemetry(body: &str) {
         "crash_uuid should be present and non-empty"
     );
 
-    assert_eq!(message_json["version"].as_str(), Some("1"));
+    assert_eq!(message_json["version"].as_str(), Some("1.0"));
 
     assert_eq!(message_json["kind"].as_str(), Some("Crash ping"));
 }

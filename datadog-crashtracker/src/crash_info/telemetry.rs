@@ -162,7 +162,7 @@ impl TelemetryCrashUploader {
                 "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
                 sig_info.si_code_human_readable, sig_info.si_signo_human_readable
             ),
-            version: 1.to_string(),
+            version: "1.0".to_string(),
             kind: "Crash ping".to_string(),
         };
 
@@ -175,7 +175,7 @@ impl TelemetryCrashUploader {
             host: &metadata.host,
             payload: &data::Payload::Logs(vec![data::Log {
                 message: serde_json::to_string(&crash_ping_msg)?,
-                level: LogLevel::Warn,
+                level: LogLevel::Debug,
                 stack_trace: None,
                 tags,
                 is_sensitive: false,
@@ -428,7 +428,7 @@ mod tests {
 
         // Crash ping properties
         assert_eq!(log_entry["is_sensitive"], false);
-        assert_eq!(log_entry["level"], "WARN");
+        assert_eq!(log_entry["level"], "DEBUG");
 
         // Structured message format
         let message_json: serde_json::Value =
@@ -436,10 +436,13 @@ mod tests {
         assert_eq!(message_json["crash_uuid"], crash_uuid);
         assert_eq!(
             message_json["message"],
-            "Crashtracker crash ping: crash processing started"
+            format!(
+                "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
+                sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+            )
         );
-        assert_eq!(message_json["version"], "1");
-        assert_eq!(message_json["type"], "Crash ping");
+        assert_eq!(message_json["version"], "1.0");
+        assert_eq!(message_json["kind"], "Crash ping");
 
         // Customer application and runtime information tags
         let tags = log_entry["tags"].as_str().unwrap();
@@ -490,7 +493,7 @@ mod tests {
         // Crash ping properties
         assert_eq!(log_entry["is_crash"], false);
         assert_eq!(log_entry["is_sensitive"], false);
-        assert_eq!(log_entry["level"], "WARN");
+        assert_eq!(log_entry["level"], "DEBUG");
 
         // Structured message format
         let message_json: serde_json::Value =
@@ -498,7 +501,10 @@ mod tests {
         assert_eq!(message_json["crash_uuid"], crash_uuid);
         assert_eq!(
             message_json["message"],
-            "Crashtracker crash ping: crash processing started"
+            format!(
+                "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
+                sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+            )
         );
 
         // Customer application and runtime information tags
