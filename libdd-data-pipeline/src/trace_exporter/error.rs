@@ -10,6 +10,49 @@ use rmp_serde::encode::Error as EncodeError;
 use std::error::Error;
 use std::fmt::{Debug, Display};
 
+/// Context data for structured error information.
+/// Contains key-value pairs that can be safely used for logging or debugging.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ErrorContext {
+    fields: Vec<(String, String)>,
+}
+
+impl ErrorContext {
+    /// Creates a new empty context.
+    pub fn new() -> Self {
+        Self { fields: Vec::new() }
+    }
+
+    /// Adds a key-value pair to the context.
+    pub fn with_field(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.fields.push((key.into(), value.into()));
+        self
+    }
+
+    /// Returns all context fields as key-value pairs.
+    pub fn fields(&self) -> &[(String, String)] {
+        &self.fields
+    }
+
+    /// Checks if the context is empty.
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+}
+
+/// Trait for errors that can provide template-based error messages.
+pub trait ErrorTemplate {
+    /// Returns a static error message template.
+    /// May contain placeholders like {field_name} for structured data.
+    fn template(&self) -> &'static str;
+
+    /// Returns structured context data that can be used to populate templates.
+    /// Default implementation returns empty context.
+    fn context(&self) -> ErrorContext {
+        ErrorContext::new()
+    }
+}
+
 /// Represents different kinds of errors that can occur when interacting with the agent.
 #[derive(Debug, PartialEq)]
 pub enum AgentErrorKind {
@@ -17,11 +60,21 @@ pub enum AgentErrorKind {
     EmptyResponse,
 }
 
+impl AgentErrorKind {
+    const EMPTY_RESPONSE_TEMPLATE: &'static str = "Agent returned empty response";
+}
+
 impl Display for AgentErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AgentErrorKind::EmptyResponse => write!(f, "Agent empty response"),
         }
+    }
+}
+
+impl ErrorTemplate for AgentErrorKind {
+    fn template(&self) -> &'static str {
+        Self::EMPTY_RESPONSE_TEMPLATE
     }
 }
 
@@ -35,6 +88,12 @@ pub enum BuilderErrorKind {
     InvalidTelemetryConfig(String),
     /// Indicates any incompatible configuration
     InvalidConfiguration(String),
+}
+
+impl BuilderErrorKind {
+    const INVALID_URI_TEMPLATE: &'static str = "Invalid URI provided";
+    const INVALID_TELEMETRY_CONFIG_TEMPLATE: &'static str = "Invalid telemetry configuration";
+    const INVALID_CONFIGURATION_TEMPLATE: &'static str = "Invalid configuration";
 }
 
 impl Display for BuilderErrorKind {
@@ -51,6 +110,30 @@ impl Display for BuilderErrorKind {
     }
 }
 
+impl ErrorTemplate for BuilderErrorKind {
+    fn template(&self) -> &'static str {
+        match self {
+            BuilderErrorKind::InvalidUri(_) => Self::INVALID_URI_TEMPLATE,
+            BuilderErrorKind::InvalidTelemetryConfig(_) => Self::INVALID_TELEMETRY_CONFIG_TEMPLATE,
+            BuilderErrorKind::InvalidConfiguration(_) => Self::INVALID_CONFIGURATION_TEMPLATE,
+        }
+    }
+
+    fn context(&self) -> ErrorContext {
+        match self {
+            BuilderErrorKind::InvalidUri(details) => {
+                ErrorContext::new().with_field("details", details)
+            }
+            BuilderErrorKind::InvalidTelemetryConfig(details) => {
+                ErrorContext::new().with_field("details", details)
+            }
+            BuilderErrorKind::InvalidConfiguration(details) => {
+                ErrorContext::new().with_field("details", details)
+            }
+        }
+    }
+}
+
 /// Represents different kinds of internal errors.
 #[derive(Debug, PartialEq)]
 pub enum InternalErrorKind {
@@ -59,11 +142,29 @@ pub enum InternalErrorKind {
     InvalidWorkerState(String),
 }
 
+impl InternalErrorKind {
+    const INVALID_WORKER_STATE_TEMPLATE: &'static str = "Background worker in invalid state";
+}
+
 impl Display for InternalErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             InternalErrorKind::InvalidWorkerState(msg) => {
                 write!(f, "Invalid worker state: {msg}")
+            }
+        }
+    }
+}
+
+impl ErrorTemplate for InternalErrorKind {
+    fn template(&self) -> &'static str {
+        Self::INVALID_WORKER_STATE_TEMPLATE
+    }
+
+    fn context(&self) -> ErrorContext {
+        match self {
+            InternalErrorKind::InvalidWorkerState(details) => {
+                ErrorContext::new().with_field("details", details)
             }
         }
     }
@@ -88,6 +189,32 @@ pub enum NetworkErrorKind {
     Unknown,
     /// Indicates that the status code is incorrect.
     WrongStatus,
+}
+
+impl NetworkErrorKind {
+    const BODY_TEMPLATE: &'static str = "Error processing request/response body";
+    const CANCELED_TEMPLATE: &'static str = "Request was canceled";
+    const CONNECTION_CLOSED_TEMPLATE: &'static str = "Connection was closed";
+    const MESSAGE_TOO_LARGE_TEMPLATE: &'static str = "Message size exceeds limit";
+    const PARSE_TEMPLATE: &'static str = "Error parsing network response";
+    const TIMED_OUT_TEMPLATE: &'static str = "Request timed out";
+    const UNKNOWN_TEMPLATE: &'static str = "Unknown network error";
+    const WRONG_STATUS_TEMPLATE: &'static str = "Unexpected status code received";
+}
+
+impl ErrorTemplate for NetworkErrorKind {
+    fn template(&self) -> &'static str {
+        match self {
+            NetworkErrorKind::Body => Self::BODY_TEMPLATE,
+            NetworkErrorKind::Canceled => Self::CANCELED_TEMPLATE,
+            NetworkErrorKind::ConnectionClosed => Self::CONNECTION_CLOSED_TEMPLATE,
+            NetworkErrorKind::MessageTooLarge => Self::MESSAGE_TOO_LARGE_TEMPLATE,
+            NetworkErrorKind::Parse => Self::PARSE_TEMPLATE,
+            NetworkErrorKind::TimedOut => Self::TIMED_OUT_TEMPLATE,
+            NetworkErrorKind::Unknown => Self::UNKNOWN_TEMPLATE,
+            NetworkErrorKind::WrongStatus => Self::WRONG_STATUS_TEMPLATE,
+        }
+    }
 }
 
 /// Represents a network error, containing the kind of error and the source error.
@@ -130,10 +257,24 @@ impl Display for NetworkError {
     }
 }
 
+impl ErrorTemplate for NetworkError {
+    fn template(&self) -> &'static str {
+        self.kind.template()
+    }
+
+    fn context(&self) -> ErrorContext {
+        self.kind.context()
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct RequestError {
     code: StatusCode,
     msg: String,
+}
+
+impl RequestError {
+    const REQUEST_ERROR_TEMPLATE: &'static str = "Agent responded with error status";
 }
 
 impl Display for RequestError {
@@ -163,9 +304,25 @@ impl RequestError {
     }
 }
 
+impl ErrorTemplate for RequestError {
+    fn template(&self) -> &'static str {
+        Self::REQUEST_ERROR_TEMPLATE
+    }
+
+    fn context(&self) -> ErrorContext {
+        ErrorContext::new()
+            .with_field("status_code", self.code.as_u16().to_string())
+            .with_field("response", &self.msg)
+    }
+}
+
 #[derive(Debug)]
 pub enum ShutdownError {
     TimedOut(std::time::Duration),
+}
+
+impl ShutdownError {
+    const TIMED_OUT_TEMPLATE: &'static str = "Shutdown operation timed out";
 }
 
 impl Display for ShutdownError {
@@ -174,6 +331,46 @@ impl Display for ShutdownError {
             ShutdownError::TimedOut(dur) => {
                 write!(f, "Shutdown timed out after {}s", dur.as_secs_f32())
             }
+        }
+    }
+}
+
+impl ErrorTemplate for ShutdownError {
+    fn template(&self) -> &'static str {
+        Self::TIMED_OUT_TEMPLATE
+    }
+
+    fn context(&self) -> ErrorContext {
+        match self {
+            ShutdownError::TimedOut(duration) => ErrorContext::new()
+                .with_field("timeout_seconds", duration.as_secs_f32().to_string()),
+        }
+    }
+}
+
+/// Local ErrorTemplate implementation for DecodeError to avoid dependency on trace-utils.
+impl ErrorTemplate for DecodeError {
+    fn template(&self) -> &'static str {
+        match self {
+            DecodeError::InvalidConversion(_) => "Failed to convert decoded value",
+            DecodeError::InvalidType(_) => "Invalid type in trace payload",
+            DecodeError::InvalidFormat(_) => "Invalid msgpack format",
+            DecodeError::IOError => "Failed to read from buffer",
+            DecodeError::Utf8Error(_) => "Failed to decode UTF-8 string",
+        }
+    }
+
+    fn context(&self) -> ErrorContext {
+        match self {
+            DecodeError::InvalidConversion(details) => {
+                ErrorContext::new().with_field("details", details)
+            }
+            DecodeError::InvalidType(details) => ErrorContext::new().with_field("details", details),
+            DecodeError::InvalidFormat(details) => {
+                ErrorContext::new().with_field("details", details)
+            }
+            DecodeError::IOError => ErrorContext::new(),
+            DecodeError::Utf8Error(details) => ErrorContext::new().with_field("details", details),
         }
     }
 }
@@ -205,22 +402,26 @@ pub enum TraceExporterError {
 
 impl Display for TraceExporterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TraceExporterError::Agent(e) => write!(f, "Agent response processing: {e}"),
-            TraceExporterError::Builder(e) => write!(f, "Invalid builder input: {e}"),
-            TraceExporterError::Internal(e) => write!(f, "Internal: {e}"),
-            TraceExporterError::Deserialization(e) => {
-                write!(f, "Deserialization of incoming payload: {e}")
+        // Use template + context pattern for consistent formatting across all variants
+        let template = self.template();
+        let context = self.context();
+
+        // Start with the template
+        write!(f, "{}", template)?;
+
+        // Add context data if available
+        if !context.fields().is_empty() {
+            write!(f, " (")?;
+            for (i, (key, value)) in context.fields().iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}: {}", key, value)?;
             }
-            TraceExporterError::Io(e) => write!(f, "IO: {e}"),
-            TraceExporterError::Shutdown(e) => write!(f, "Shutdown: {e}"),
-            TraceExporterError::Telemetry(e) => write!(f, "Telemetry: {e}"),
-            TraceExporterError::Network(e) => write!(f, "Network: {e}"),
-            TraceExporterError::Request(e) => write!(f, "Agent responded with an error code: {e}"),
-            TraceExporterError::Serialization(e) => {
-                write!(f, "Serialization of trace payload payload: {e}")
-            }
+            write!(f, ")")?;
         }
+
+        Ok(())
     }
 }
 
@@ -331,6 +532,86 @@ impl From<TelemetryError> for TraceExporterError {
     }
 }
 
+impl TraceExporterError {
+    fn io_error_template(io_error: &std::io::Error) -> &'static str {
+        match io_error.kind() {
+            std::io::ErrorKind::NotFound => "File or resource not found",
+            std::io::ErrorKind::PermissionDenied => "Permission denied",
+            std::io::ErrorKind::ConnectionRefused => "Connection refused",
+            std::io::ErrorKind::ConnectionReset => "Connection reset by peer",
+            std::io::ErrorKind::ConnectionAborted => "Connection aborted",
+            std::io::ErrorKind::TimedOut => "Operation timed out",
+            std::io::ErrorKind::AddrInUse => "Address already in use",
+            _ => "Input/Output error occurred",
+        }
+    }
+
+    fn io_error_context(io_error: &std::io::Error) -> ErrorContext {
+        let mut context = ErrorContext::new();
+
+        // Add the raw OS error code if available
+        if let Some(raw_os_error) = io_error.raw_os_error() {
+            context = context.with_field("os_error_code", raw_os_error.to_string());
+        }
+
+        // Add the inner error message if it provides additional details
+        let error_msg = io_error.to_string();
+        if !error_msg.is_empty() && error_msg != io_error.kind().to_string() {
+            context = context.with_field("details", &error_msg);
+        }
+
+        context
+    }
+}
+
+impl ErrorTemplate for TraceExporterError {
+    fn template(&self) -> &'static str {
+        match self {
+            TraceExporterError::Agent(e) => e.template(),
+            TraceExporterError::Builder(e) => e.template(),
+            TraceExporterError::Internal(e) => e.template(),
+            TraceExporterError::Network(e) => e.template(),
+            TraceExporterError::Request(e) => e.template(),
+            TraceExporterError::Shutdown(e) => e.template(),
+            TraceExporterError::Deserialization(e) => e.template(),
+            TraceExporterError::Io(io_error) => Self::io_error_template(io_error),
+            TraceExporterError::Telemetry(_) => "Telemetry operation failed",
+            TraceExporterError::Serialization(_) => "Failed to serialize data",
+        }
+    }
+
+    fn context(&self) -> ErrorContext {
+        match self {
+            TraceExporterError::Agent(e) => e.context(),
+            TraceExporterError::Builder(e) => e.context(),
+            TraceExporterError::Internal(e) => e.context(),
+            TraceExporterError::Network(e) => e.context(),
+            TraceExporterError::Request(e) => e.context(),
+            TraceExporterError::Shutdown(e) => e.context(),
+            TraceExporterError::Deserialization(e) => e.context(),
+            TraceExporterError::Io(io_error) => Self::io_error_context(io_error),
+            TraceExporterError::Telemetry(msg) => {
+                ErrorContext::new().with_field("details", msg.as_str())
+            }
+            TraceExporterError::Serialization(encode_error) => {
+                ErrorContext::new().with_field("details", encode_error.to_string())
+            }
+        }
+    }
+}
+
+impl TraceExporterError {
+    /// Returns the static error message template.
+    pub fn template(&self) -> &'static str {
+        ErrorTemplate::template(self)
+    }
+
+    /// Returns structured context data for the error.
+    pub fn context(&self) -> ErrorContext {
+        ErrorTemplate::context(self)
+    }
+}
+
 impl Error for TraceExporterError {}
 
 #[cfg(test)]
@@ -342,5 +623,190 @@ mod tests {
         let error = RequestError::new(StatusCode::NOT_FOUND, "Not found");
         assert_eq!(error.status(), StatusCode::NOT_FOUND);
         assert_eq!(error.msg(), "Not found")
+    }
+
+    #[test]
+    fn test_error_context() {
+        let context = ErrorContext::new();
+        assert!(context.is_empty());
+        assert_eq!(context.fields().len(), 0);
+
+        let context = ErrorContext::new()
+            .with_field("key1", "value1")
+            .with_field("key2", "value2");
+
+        assert!(!context.is_empty());
+        assert_eq!(context.fields().len(), 2);
+        assert_eq!(
+            context.fields()[0],
+            ("key1".to_string(), "value1".to_string())
+        );
+        assert_eq!(
+            context.fields()[1],
+            ("key2".to_string(), "value2".to_string())
+        );
+    }
+
+    #[test]
+    fn test_agent_error_template() {
+        let error = AgentErrorKind::EmptyResponse;
+        assert_eq!(error.template(), "Agent returned empty response");
+        assert!(error.context().is_empty());
+    }
+
+    #[test]
+    fn test_builder_error_template() {
+        let error = BuilderErrorKind::InvalidUri("invalid://url".to_string());
+        assert_eq!(error.template(), "Invalid URI provided");
+        let context = error.context();
+        assert_eq!(context.fields().len(), 1);
+        assert_eq!(
+            context.fields()[0],
+            ("details".to_string(), "invalid://url".to_string())
+        );
+
+        let error = BuilderErrorKind::InvalidTelemetryConfig("missing field".to_string());
+        assert_eq!(error.template(), "Invalid telemetry configuration");
+        let context = error.context();
+        assert_eq!(context.fields().len(), 1);
+        assert_eq!(
+            context.fields()[0],
+            ("details".to_string(), "missing field".to_string())
+        );
+
+        let error = BuilderErrorKind::InvalidConfiguration("bad setting".to_string());
+        assert_eq!(error.template(), "Invalid configuration");
+        let context = error.context();
+        assert_eq!(context.fields().len(), 1);
+        assert_eq!(
+            context.fields()[0],
+            ("details".to_string(), "bad setting".to_string())
+        );
+    }
+
+    #[test]
+    fn test_internal_error_template() {
+        let error = InternalErrorKind::InvalidWorkerState("worker crashed".to_string());
+        assert_eq!(error.template(), "Background worker in invalid state");
+        let context = error.context();
+        assert_eq!(context.fields().len(), 1);
+        assert_eq!(
+            context.fields()[0],
+            ("details".to_string(), "worker crashed".to_string())
+        );
+    }
+
+    #[test]
+    fn test_network_error_kind_templates() {
+        assert_eq!(
+            NetworkErrorKind::Body.template(),
+            "Error processing request/response body"
+        );
+        assert_eq!(
+            NetworkErrorKind::Canceled.template(),
+            "Request was canceled"
+        );
+        assert_eq!(
+            NetworkErrorKind::ConnectionClosed.template(),
+            "Connection was closed"
+        );
+        assert_eq!(
+            NetworkErrorKind::MessageTooLarge.template(),
+            "Message size exceeds limit"
+        );
+        assert_eq!(
+            NetworkErrorKind::Parse.template(),
+            "Error parsing network response"
+        );
+        assert_eq!(NetworkErrorKind::TimedOut.template(), "Request timed out");
+        assert_eq!(
+            NetworkErrorKind::Unknown.template(),
+            "Unknown network error"
+        );
+        assert_eq!(
+            NetworkErrorKind::WrongStatus.template(),
+            "Unexpected status code received"
+        );
+
+        // All network error kinds should have empty context by default
+        assert!(NetworkErrorKind::Body.context().is_empty());
+        assert!(NetworkErrorKind::Canceled.context().is_empty());
+        assert!(NetworkErrorKind::ConnectionClosed.context().is_empty());
+        assert!(NetworkErrorKind::MessageTooLarge.context().is_empty());
+        assert!(NetworkErrorKind::Parse.context().is_empty());
+        assert!(NetworkErrorKind::TimedOut.context().is_empty());
+        assert!(NetworkErrorKind::Unknown.context().is_empty());
+        assert!(NetworkErrorKind::WrongStatus.context().is_empty());
+    }
+
+    #[test]
+    fn test_error_context_chaining() {
+        let context = ErrorContext::new()
+            .with_field("host", "example.com")
+            .with_field("port", "443")
+            .with_field("timeout", "5000");
+
+        assert_eq!(context.fields().len(), 3);
+        assert_eq!(
+            context.fields()[0],
+            ("host".to_string(), "example.com".to_string())
+        );
+        assert_eq!(context.fields()[1], ("port".to_string(), "443".to_string()));
+        assert_eq!(
+            context.fields()[2],
+            ("timeout".to_string(), "5000".to_string())
+        );
+    }
+
+    #[test]
+    fn test_request_error_template() {
+        let error = RequestError::new(StatusCode::NOT_FOUND, "Resource not found");
+        assert_eq!(error.template(), "Agent responded with error status");
+        let context = error.context();
+        assert_eq!(context.fields().len(), 2);
+        assert_eq!(
+            context.fields()[0],
+            ("status_code".to_string(), "404".to_string())
+        );
+        assert_eq!(
+            context.fields()[1],
+            ("response".to_string(), "Resource not found".to_string())
+        );
+
+        let error = RequestError::new(StatusCode::INTERNAL_SERVER_ERROR, "Server error");
+        assert_eq!(error.template(), "Agent responded with error status");
+        let context = error.context();
+        assert_eq!(context.fields().len(), 2);
+        assert_eq!(
+            context.fields()[0],
+            ("status_code".to_string(), "500".to_string())
+        );
+        assert_eq!(
+            context.fields()[1],
+            ("response".to_string(), "Server error".to_string())
+        );
+    }
+
+    #[test]
+    fn test_shutdown_error_template() {
+        use std::time::Duration;
+
+        let error = ShutdownError::TimedOut(Duration::from_secs(5));
+        assert_eq!(error.template(), "Shutdown operation timed out");
+        let context = error.context();
+        assert_eq!(context.fields().len(), 1);
+        assert_eq!(
+            context.fields()[0],
+            ("timeout_seconds".to_string(), "5".to_string())
+        );
+
+        let error = ShutdownError::TimedOut(Duration::from_millis(2500));
+        assert_eq!(error.template(), "Shutdown operation timed out");
+        let context = error.context();
+        assert_eq!(context.fields().len(), 1);
+        assert_eq!(
+            context.fields()[0],
+            ("timeout_seconds".to_string(), "2.5".to_string())
+        );
     }
 }

@@ -16,9 +16,22 @@ use tracing::{debug, error};
 #[cfg(all(feature = "catch_panic", panic = "unwind"))]
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
+const INVALID_ARGUMENT_TEMPLATE: &str = "Invalid argument provided";
+const PANIC_TEMPLATE: &str = "Operation panicked";
+const INVALID_INPUT_TEMPLATE: &str = "Invalid input";
+const FFI_ERROR_TEMPLATE: &str = "FFI error";
+
 macro_rules! gen_error {
     ($l:expr) => {
-        Some(Box::new(ExporterError::new($l, &$l.to_string())))
+        Some(Box::new(ExporterError::new(
+            $l,
+            match $l {
+                ErrorCode::InvalidArgument => INVALID_ARGUMENT_TEMPLATE,
+                #[cfg(feature = "catch_panic")]
+                ErrorCode::Panic => PANIC_TEMPLATE,
+                _ => FFI_ERROR_TEMPLATE,
+            },
+        )))
     };
 }
 
@@ -54,7 +67,7 @@ fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
         Ok(s) => Ok(s.to_string()),
         Err(_) => Err(Box::new(ExporterError::new(
             ErrorCode::InvalidInput,
-            &ErrorCode::InvalidInput.to_string(),
+            INVALID_INPUT_TEMPLATE,
         ))),
     }
 }
@@ -593,7 +606,7 @@ mod tests {
                 CharSlice::from("http://localhost"),
             );
 
-            assert_eq!(error, None);
+            assert!(error.is_none());
 
             let cfg = config.unwrap();
             assert_eq!(cfg.url.as_ref().unwrap(), "http://localhost");
@@ -613,7 +626,7 @@ mod tests {
                 config.as_mut(),
                 CharSlice::from("1.0"),
             );
-            assert_eq!(error, None);
+            assert!(error.is_none());
 
             let cfg = config.unwrap();
             assert_eq!(cfg.tracer_version.as_ref().unwrap(), "1.0");
@@ -632,7 +645,7 @@ mod tests {
             let error =
                 ddog_trace_exporter_config_set_language(config.as_mut(), CharSlice::from("lang"));
 
-            assert_eq!(error, None);
+            assert!(error.is_none());
 
             let cfg = config.unwrap();
             assert_eq!(cfg.language.as_ref().unwrap(), "lang");
@@ -653,7 +666,7 @@ mod tests {
                 CharSlice::from("0.1"),
             );
 
-            assert_eq!(error, None);
+            assert!(error.is_none());
 
             let cfg = config.unwrap();
             assert_eq!(cfg.language_version.as_ref().unwrap(), "0.1");
@@ -675,7 +688,7 @@ mod tests {
                 CharSlice::from("foo"),
             );
 
-            assert_eq!(error, None);
+            assert!(error.is_none());
 
             let cfg = config.unwrap();
             assert_eq!(cfg.language_interpreter.as_ref().unwrap(), "foo");
@@ -696,7 +709,7 @@ mod tests {
                 CharSlice::from("hostname"),
             );
 
-            assert_eq!(error, None);
+            assert!(error.is_none());
 
             let cfg = config.unwrap();
             assert_eq!(cfg.hostname.as_ref().unwrap(), "hostname");
@@ -715,7 +728,7 @@ mod tests {
             let error =
                 ddog_trace_exporter_config_set_env(config.as_mut(), CharSlice::from("env-test"));
 
-            assert_eq!(error, None);
+            assert!(error.is_none());
 
             let cfg = config.unwrap();
             assert_eq!(cfg.env.as_ref().unwrap(), "env-test");
@@ -734,7 +747,7 @@ mod tests {
             let error =
                 ddog_trace_exporter_config_set_version(config.as_mut(), CharSlice::from("1.2"));
 
-            assert_eq!(error, None);
+            assert!(error.is_none());
 
             let cfg = config.unwrap();
             assert_eq!(cfg.version.as_ref().unwrap(), "1.2");
@@ -753,7 +766,7 @@ mod tests {
             let error =
                 ddog_trace_exporter_config_set_service(config.as_mut(), CharSlice::from("service"));
 
-            assert_eq!(error, None);
+            assert!(error.is_none());
 
             let cfg = config.unwrap();
             assert_eq!(cfg.service.as_ref().unwrap(), "service");
@@ -771,7 +784,7 @@ mod tests {
             let mut config = Some(TraceExporterConfig::default());
             let error = ddog_trace_exporter_config_set_client_computed_stats(config.as_mut(), true);
 
-            assert_eq!(error, None);
+            assert!(error.is_none());
 
             let cfg = config.unwrap();
             assert!(cfg.client_computed_stats);
@@ -845,7 +858,7 @@ mod tests {
                 Some(cfg.as_mut()),
                 CharSlice::from("http://localhost"),
             );
-            assert_eq!(error, None);
+            assert!(error.is_none());
 
             let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
 
@@ -855,7 +868,7 @@ mod tests {
             );
             let exporter = ptr.assume_init();
 
-            assert_eq!(ret, None);
+            assert!(ret.is_none());
 
             ddog_trace_exporter_free(exporter);
             ddog_trace_exporter_config_free(cfg);
@@ -874,7 +887,7 @@ mod tests {
                 Some(cfg.as_mut()),
                 CharSlice::from("service"),
             );
-            assert_eq!(error, None);
+            assert!(error.is_none());
 
             ddog_trace_exporter_error_free(error);
 
@@ -966,7 +979,7 @@ mod tests {
 
             let exporter = ptr.assume_init();
 
-            assert_eq!(ret, None);
+            assert!(ret.is_none());
 
             let data = rmp_serde::to_vec_named::<Vec<Vec<SpanSlice>>>(&vec![vec![]]).unwrap();
             let traces = ByteSlice::new(&data);
@@ -976,7 +989,7 @@ mod tests {
                 0,
                 Some(NonNull::new_unchecked(&mut response).cast()),
             );
-            assert_eq!(ret, None);
+            assert!(ret.is_none());
             assert_eq!(
                 String::from_utf8_lossy(&response.assume_init().body.unwrap()),
                 r#"{
@@ -1033,7 +1046,7 @@ mod tests {
 
             let exporter = ptr.assume_init();
 
-            assert_eq!(ret, None);
+            assert!(ret.is_none());
 
             let data = vec![0x90];
             let traces = ByteSlice::new(&data);
@@ -1046,7 +1059,7 @@ mod tests {
                 Some(NonNull::new_unchecked(&mut response).cast()),
             );
             mock_traces.assert();
-            assert_eq!(ret, None);
+            assert!(ret.is_none());
             assert_eq!(
                 String::from_utf8_lossy(&response.assume_init().body.unwrap()),
                 response_body
@@ -1112,7 +1125,7 @@ mod tests {
 
             let exporter = ptr.assume_init();
 
-            assert_eq!(ret, None);
+            assert!(ret.is_none());
 
             let data = vec![0x90];
             let traces = ByteSlice::new(&data);
@@ -1125,7 +1138,7 @@ mod tests {
                 Some(NonNull::new_unchecked(&mut response).cast()),
             );
             mock_traces.assert();
-            assert_eq!(ret, None);
+            assert!(ret.is_none());
             assert_eq!(
                 String::from_utf8_lossy(&response.assume_init().body.unwrap()),
                 response_body
@@ -1158,7 +1171,7 @@ mod tests {
             assert!(!config.as_ref().unwrap().health_metrics_enabled);
 
             let error = ddog_trace_exporter_config_enable_health_metrics(config.as_mut(), true);
-            assert_eq!(error, None);
+            assert!(error.is_none());
 
             let cfg = config.unwrap();
             assert!(cfg.health_metrics_enabled);
