@@ -233,3 +233,13 @@ Although we make every effort to only upload non-sensitive data, it is possible 
 - As a future task, investigate using a sensitive-data redaction tool, either client side or on the backend, as an additional mitigation.
 - Limit the data we upload by doing client-side preprocessing.
   For example, instead of sending `/proc/self/maps`, send normalized addresses as discussed [here](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819293109).
+
+## Changelog
+
+### 2025-09-12
+- **Added**: Initialization signal functionality to the Receiver (section 4)
+  - Sends a crash confirmation signal when processing begins
+  - Contains structured telemetry data with crash UUID and application metadata
+  - Uses WARN log level and is tagged as `is_crash_ping:true`
+  - Includes risk analysis for both normal operation and crash scenarios
+  - Provides mitigation strategies for endpoint accessibility and transmission timeouts

@@ -23,6 +23,9 @@ struct TelemetryMetadata {
 struct CrashPingMessage {
     crash_uuid: String,
     message: String,
+    version: String,
+    #[serde(rename = "type")]
+    r#type: String,
 }
 
 macro_rules! parse_tags {
@@ -141,6 +144,8 @@ impl TelemetryCrashUploader {
         let crash_ping_msg = CrashPingMessage {
             crash_uuid: crash_uuid.to_string(),
             message: "Crashtracker crash ping: crash processing started".to_string(),
+            version: 1.to_string(),
+            r#type: "Crash ping".to_string(),
         };
 
         let payload = data::Telemetry {
@@ -414,6 +419,8 @@ mod tests {
             message_json["message"],
             "Crashtracker crash ping: crash processing started"
         );
+        assert_eq!(message_json["version"], "1");
+        assert_eq!(message_json["type"], "Crash ping");
 
         // Customer application and runtime information tags
         let tags = log_entry["tags"].as_str().unwrap();
