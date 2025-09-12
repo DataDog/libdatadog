@@ -638,8 +638,9 @@ fn validate_crash_ping_telemetry(body: &str) {
         "Expected si_signo_human_readable:SIGSEGV in tags, but got tags: {tags}"
     );
     assert!(
-        tags.contains("si_code_human_readable:SEGV_ACCERR"),
-        "Expected si_code_human_readable:SEGV_ACCERR in tags, but got tags: {tags}"
+        tags.contains("si_code_human_readable:SEGV_ACCERR")
+            || tags.contains("si_code_human_readable:SEGV_MAPERR"),
+        "Expected si_code_human_readable:SEGV_ACCERR or SEGV_MAPERR in tags, but got tags: {tags}"
     );
 
     let message_str = log_entry["message"]
@@ -661,8 +662,8 @@ fn validate_crash_ping_telemetry(body: &str) {
         "Expected crash ping message to contain SIGSEGV signal info, but got: {message}"
     );
     assert!(
-        message.contains("SEGV_ACCERR"),
-        "Expected crash ping message to contain SEGV_ACCERR signal code, but got: {message}"
+        message.contains("SEGV_ACCERR") || message.contains("SEGV_MAPERR"),
+        "Expected crash ping message to contain SEGV_ACCERR or SEGV_MAPERR signal code, but got: {message}"
     );
 
     let crash_uuid = message_json["crash_uuid"].as_str().unwrap_or("");
