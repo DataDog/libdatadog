@@ -20,7 +20,7 @@ struct TelemetryMetadata {
 }
 
 #[derive(Serialize)]
-struct HeartbeatMessage {
+struct CrashInitSignalMessage {
     crash_uuid: String,
     message: String,
 }
@@ -110,8 +110,8 @@ impl TelemetryCrashUploader {
         Ok(s)
     }
 
-    /// Sends heartbeat message with customer application and runtime information.
-    pub async fn send_heartbeat(&self, crash_uuid: &str) -> anyhow::Result<()> {
+    /// Sends crash init signal message with customer application and runtime information.
+    pub async fn send_crash_init_signal(&self, crash_uuid: &str) -> anyhow::Result<()> {
         let metadata = &self.metadata;
 
         let tracer_time = SystemTime::now()
@@ -120,7 +120,7 @@ impl TelemetryCrashUploader {
             .unwrap_or(0);
 
         let mut tags = format!(
-            "uuid:{},is_heartbeat:true,service:{},language_name:{},language_version:{},tracer_version:{}",
+            "uuid:{},is_crash_init_signal:true,service:{},language_name:{},language_version:{},tracer_version:{}",
             crash_uuid,
             metadata.application.service_name,
             metadata.application.language_name,
@@ -138,9 +138,9 @@ impl TelemetryCrashUploader {
             tags.push_str(&format!(",runtime_version:{}", runtime_version));
         }
 
-        let heartbeat_msg = HeartbeatMessage {
+        let crash_init_signal_msg = CrashInitSignalMessage {
             crash_uuid: crash_uuid.to_string(),
-            message: "Crashtracker heartbeat: crash processing started".to_string(),
+            message: "Crashtracker crash init signal: crash processing started".to_string(),
         };
 
         let payload = data::Telemetry {
@@ -151,7 +151,7 @@ impl TelemetryCrashUploader {
             application: &metadata.application,
             host: &metadata.host,
             payload: &data::Payload::Logs(vec![data::Log {
-                message: serde_json::to_string(&heartbeat_msg)?,
+                message: serde_json::to_string(&crash_init_signal_msg)?,
                 level: LogLevel::Warn,
                 stack_trace: None,
                 tags,
@@ -371,12 +371,12 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_heartbeat_content() -> anyhow::Result<()> {
+    async fn test_crash_init_signal_content() -> anyhow::Result<()> {
         // This keeps alive for scope
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
             let mut p = tmp.into_path();
-            p.push("heartbeat_info");
+            p.push("crash_init_signal_info");
             p
         };
         let seed = 1;
@@ -388,7 +388,7 @@ mod tests {
 
         let crash_uuid = "test-uuid-12345";
 
-        t.send_heartbeat(crash_uuid).await.unwrap();
+        t.send_crash_init_signal(crash_uuid).await.unwrap();
 
         let payload: serde_json::value::Value =
             serde_json::de::from_str(&fs::read_to_string(&output_filename).unwrap()).unwrap();
@@ -402,7 +402,7 @@ mod tests {
         assert_eq!(payload["payload"].as_array().unwrap().len(), 1);
         let log_entry = &payload["payload"][0];
 
-        // Heartbeat properties
+        // Crash init signal properties
         assert_eq!(log_entry["is_sensitive"], false);
         assert_eq!(log_entry["level"], "WARN");
 
@@ -412,13 +412,13 @@ mod tests {
         assert_eq!(message_json["crash_uuid"], crash_uuid);
         assert_eq!(
             message_json["message"],
-            "Crashtracker heartbeat: crash processing started"
+            "Crashtracker crash init signal: crash processing started"
         );
 
         // Customer application and runtime information tags
         let tags = log_entry["tags"].as_str().unwrap();
         assert!(tags.contains(&format!("uuid:{}", crash_uuid)));
-        assert!(tags.contains("is_heartbeat:true"));
+        assert!(tags.contains("is_crash_init_signal:true"));
         assert!(tags.contains("service:foo"));
         assert!(tags.contains("language_name:native"));
         assert!(tags.contains("language_version:"));
@@ -429,12 +429,12 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn test_heartbeat_with_different_config() -> anyhow::Result<()> {
+    async fn test_crash_init_signal_with_different_config() -> anyhow::Result<()> {
         // This keeps alive for scope
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
             let mut p = tmp.into_path();
-            p.push("enhanced_heartbeat_info");
+            p.push("enhanced_crash_init_signal_info");
             p
         };
         let seed = 1;
@@ -446,7 +446,7 @@ mod tests {
 
         let crash_uuid = "test-enhanced-uuid-67890";
 
-        t.send_heartbeat(crash_uuid).await.unwrap();
+        t.send_crash_init_signal(crash_uuid).await.unwrap();
 
         let payload: serde_json::value::Value =
             serde_json::de::from_str(&fs::read_to_string(&output_filename).unwrap()).unwrap();
@@ -460,7 +460,7 @@ mod tests {
         assert_eq!(payload["payload"].as_array().unwrap().len(), 1);
         let log_entry = &payload["payload"][0];
 
-        // Heartbeat properties
+        // Crash init signal properties
         assert_eq!(log_entry["is_crash"], false);
         assert_eq!(log_entry["is_sensitive"], false);
         assert_eq!(log_entry["level"], "WARN");
@@ -471,13 +471,13 @@ mod tests {
         assert_eq!(message_json["crash_uuid"], crash_uuid);
         assert_eq!(
             message_json["message"],
-            "Crashtracker heartbeat: crash processing started"
+            "Crashtracker crash init signal: crash processing started"
         );
 
         // Customer application and runtime information tags
         let tags = log_entry["tags"].as_str().unwrap();
         assert!(tags.contains(&format!("uuid:{}", crash_uuid)));
-        assert!(tags.contains("is_heartbeat:true"));
+        assert!(tags.contains("is_crash_init_signal:true"));
         assert!(tags.contains("service:foo"));
         assert!(tags.contains("language_name:native"));
         assert!(tags.contains("language_version:"));

@@ -11,10 +11,10 @@ use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
 use uuid::Uuid;
 
-/// Sends a heartbeat telemetry event to indicate that crash processing has started.
+/// Sends a crash init signal telemetry event to indicate that crash processing has started.
 /// We no-op on file endpoints because unlike production environments, we know if
 /// a crash report failed to send when file debugging.
-async fn send_heartbeat_to_url(
+async fn send_crash_init_signal_to_url(
     config: &CrashtrackerConfiguration,
     crash_uuid: &str,
     metadata: &crate::crash_info::Metadata,
@@ -30,7 +30,7 @@ async fn send_heartbeat_to_url(
     }
 
     let uploader = TelemetryCrashUploader::new(metadata, config.endpoint())?;
-    uploader.send_heartbeat(crash_uuid).await?;
+    uploader.send_crash_init_signal(crash_uuid).await?;
     Ok(())
 }
 
@@ -236,9 +236,9 @@ pub(crate) async fn receive_report_from_stream(
     let mut stdin_state = StdinState::Waiting;
     let mut config = None;
 
-    // Generate UUID early so we can use it for both heartbeat and crash report
+    // Generate UUID early so we can use it for both crash init signal and crash report
     let crash_uuid = Uuid::new_v4().to_string();
-    let mut heartbeat_sent = false;
+    let mut crash_init_signal_sent = false;
 
     let mut lines = stream.lines();
     let mut deadline = None;
@@ -275,20 +275,23 @@ pub(crate) async fn receive_report_from_stream(
             }
         }
 
-        // Try to send heartbeat as soon as we have both config and metadata
-        if !heartbeat_sent {
+        // Try to send crash init signal as soon as we have both config and metadata
+        if !crash_init_signal_sent {
             if let (Some(config), Some(metadata)) = (config.as_ref(), builder.metadata.as_ref()) {
-                heartbeat_sent = true;
-                // Spawn heartbeat sending in a separate task
+                crash_init_signal_sent = true;
+                // Spawn crash init signal sending in a separate task
                 let config_clone = config.clone();
                 let metadata_clone = metadata.clone();
                 let crash_uuid_clone = crash_uuid.clone();
                 tokio::task::spawn(async move {
-                    if let Err(e) =
-                        send_heartbeat_to_url(&config_clone, &crash_uuid_clone, &metadata_clone)
-                            .await
+                    if let Err(e) = send_crash_init_signal_to_url(
+                        &config_clone,
+                        &crash_uuid_clone,
+                        &metadata_clone,
+                    )
+                    .await
                     {
-                        eprintln!("Failed to send crash heartbeat: {e}");
+                        eprintln!("Failed to send crash init signal: {e}");
                     }
                 });
             }
@@ -311,7 +314,7 @@ pub(crate) async fn receive_report_from_stream(
     // For now, we only support Signal based crash detection in the receiver.
     builder.with_kind(ErrorKind::UnixSignal)?;
 
-    // Set the pre-generated UUID so both heartbeat and crash report use the same ID
+    // Set the pre-generated UUID so both crash init signal and crash report use the same ID
     builder.with_uuid(crash_uuid)?;
 
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
