@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::{fmt::Write, time::SystemTime};
 
+use crate::SigInfo;
+
 use super::{CrashInfo, Metadata};
 use anyhow::{Context, Ok};
 use chrono::{DateTime, Utc};
@@ -24,8 +26,7 @@ struct CrashPingMessage {
     crash_uuid: String,
     message: String,
     version: String,
-    #[serde(rename = "type")]
-    r#type: String,
+    kind: String,
 }
 
 macro_rules! parse_tags {
@@ -113,7 +114,11 @@ impl TelemetryCrashUploader {
         Ok(s)
     }
 
-    pub async fn send_crash_ping(&self, crash_uuid: &str) -> anyhow::Result<()> {
+    pub async fn send_crash_ping(
+        &self,
+        crash_uuid: &str,
+        sig_info: &SigInfo,
+    ) -> anyhow::Result<()> {
         let metadata = &self.metadata;
 
         let tracer_time = SystemTime::now()
@@ -140,11 +145,25 @@ impl TelemetryCrashUploader {
             tags.push_str(&format!(",runtime_version:{}", runtime_version));
         }
 
+        // Add signal information to tags
+        tags.push_str(&format!(
+            ",si_code_human_readable:{:?}",
+            sig_info.si_code_human_readable
+        ));
+        tags.push_str(&format!(",si_signo:{}", sig_info.si_signo));
+        tags.push_str(&format!(
+            ",si_signo_human_readable:{:?}",
+            sig_info.si_signo_human_readable
+        ));
+
         let crash_ping_msg = CrashPingMessage {
             crash_uuid: crash_uuid.to_string(),
-            message: "Crashtracker crash ping: crash processing started".to_string(),
+            message: format!(
+                "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
+                sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+            ),
             version: 1.to_string(),
-            r#type: "Crash ping".to_string(),
+            kind: "Crash ping".to_string(),
         };
 
         let payload = data::Telemetry {
@@ -391,8 +410,9 @@ mod tests {
             .unwrap();
 
         let crash_uuid = "test-uuid-12345";
+        let sig_info = crate::SigInfo::test_instance(42);
 
-        t.send_crash_ping(crash_uuid).await.unwrap();
+        t.send_crash_ping(crash_uuid, &sig_info).await.unwrap();
 
         let payload: serde_json::value::Value =
             serde_json::de::from_str(&fs::read_to_string(&output_filename).unwrap()).unwrap();
@@ -451,8 +471,9 @@ mod tests {
             .unwrap();
 
         let crash_uuid = "test-enhanced-uuid-67890";
+        let sig_info = crate::SigInfo::test_instance(123);
 
-        t.send_crash_ping(crash_uuid).await.unwrap();
+        t.send_crash_ping(crash_uuid, &sig_info).await.unwrap();
 
         let payload: serde_json::value::Value =
             serde_json::de::from_str(&fs::read_to_string(&output_filename).unwrap()).unwrap();

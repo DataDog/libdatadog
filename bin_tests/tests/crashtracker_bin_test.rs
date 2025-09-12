@@ -216,9 +216,9 @@ fn test_crash_tracking_callstack() {
     let crashing_callstack = &crash_payload["error"]["stack"]["frames"];
     assert!(
         crashing_callstack.as_array().unwrap().len() >= expected_functions.len(),
-        "crashing thread callstacks does have less frames than expected. Current: {}, Expected: {}",
-        crashing_callstack.as_array().unwrap().len(),
-        expected_functions.len()
+        "crashing thread callstacks does have less frames than expected. Current: {current_len}, Expected: {expected_len}",
+        current_len = crashing_callstack.as_array().unwrap().len(),
+        expected_len = expected_functions.len()
     );
 
     let function_names: Vec<&str> = crashing_callstack
@@ -574,7 +574,7 @@ fn crash_tracking_empty_endpoint() {
         assert_telemetry_message(body1.as_bytes(), "null_deref");
         validate_crash_ping_telemetry(&body2);
     } else {
-        panic!("Expected one crash ping and one crash report, but got: body1_crash_ping={}, body2_crash_ping={}", is_body1_crash_ping, is_body2_crash_ping);
+        panic!("Expected one crash ping and one crash report, but got: body1_crash_ping={is_body1_crash_ping}, body2_crash_ping={is_body2_crash_ping}");
     }
 }
 
@@ -618,32 +618,51 @@ fn validate_crash_ping_telemetry(body: &str) {
         serde_json::from_str(body).expect("Crash ping should be valid JSON");
 
     assert_eq!(telemetry_payload["request_type"], "logs");
+    assert_eq!(telemetry_payload["payload"].as_array().unwrap().len(), 1);
 
-    let payload = &telemetry_payload["payload"];
-    assert!(payload.is_array(), "Payload should be an array");
+    let log_entry = &telemetry_payload["payload"][0];
 
-    let logs = payload.as_array().unwrap();
-    assert!(!logs.is_empty(), "Should have at least one log entry");
-
-    let log_entry = &logs[0];
-    let tags = log_entry["tags"].as_str().unwrap_or("");
-
+    let tags = log_entry["tags"].as_str().unwrap();
     assert!(
         tags.contains("is_crash_ping:true"),
-        "Expected crash ping telemetry with is_crash_ping:true, but got tags: {}",
-        tags
+        "Expected crash ping telemetry with is_crash_ping:true, but got tags: {tags}"
     );
 
-    let message_str = log_entry["message"].as_str().unwrap_or("");
+    // Check for specific signal information in tags (for null_deref crash type)
+    assert!(
+        tags.contains("si_signo:11"),
+        "Expected si_signo:11 (SIGSEGV) in tags, but got tags: {tags}"
+    );
+    assert!(
+        tags.contains("si_signo_human_readable:SIGSEGV"),
+        "Expected si_signo_human_readable:SIGSEGV in tags, but got tags: {tags}"
+    );
+    assert!(
+        tags.contains("si_code_human_readable:SEGV_ACCERR"),
+        "Expected si_code_human_readable:SEGV_ACCERR in tags, but got tags: {tags}"
+    );
 
+    let message_str = log_entry["message"]
+        .as_str()
+        .expect("Message field should exist as a string");
     let message_json: serde_json::Value =
         serde_json::from_str(message_str).expect("Message should be valid JSON");
 
-    let actual_message = message_json["message"].as_str().unwrap_or("");
-    assert_eq!(
-        actual_message, "Crashtracker crash ping: crash processing started",
-        "Expected crash ping message 'Crashtracker crash ping: crash processing started', but got: {}",
-        actual_message
+    // Check that the message contains the expected signal info for null_deref crash type
+    let message = message_json["message"].as_str().unwrap();
+    assert!(
+        message.starts_with(
+            "Crashtracker crash ping: crash processing started - Process terminated with"
+        ),
+        "Expected crash ping message to start with prefix, but got: {message}"
+    );
+    assert!(
+        message.contains("SIGSEGV"),
+        "Expected crash ping message to contain SIGSEGV signal info, but got: {message}"
+    );
+    assert!(
+        message.contains("SEGV_ACCERR"),
+        "Expected crash ping message to contain SEGV_ACCERR signal code, but got: {message}"
     );
 
     let crash_uuid = message_json["crash_uuid"].as_str().unwrap_or("");
@@ -651,6 +670,10 @@ fn validate_crash_ping_telemetry(body: &str) {
         !crash_uuid.is_empty(),
         "crash_uuid should be present and non-empty"
     );
+
+    assert_eq!(message_json["version"].as_str(), Some("1"));
+
+    assert_eq!(message_json["kind"].as_str(), Some("Crash ping"));
 }
 
 struct TestFixtures<'a> {

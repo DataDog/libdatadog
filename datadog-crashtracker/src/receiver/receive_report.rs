@@ -18,6 +18,7 @@ async fn send_crash_ping_to_url(
     config: &CrashtrackerConfiguration,
     crash_uuid: &str,
     metadata: &crate::crash_info::Metadata,
+    sig_info: &crate::crash_info::SigInfo,
 ) -> anyhow::Result<()> {
     let is_file_endpoint = config
         .endpoint()
@@ -30,7 +31,7 @@ async fn send_crash_ping_to_url(
     }
 
     let uploader = TelemetryCrashUploader::new(metadata, config.endpoint())?;
-    uploader.send_crash_ping(crash_uuid).await?;
+    uploader.send_crash_ping(crash_uuid, sig_info).await?;
     Ok(())
 }
 
@@ -234,7 +235,7 @@ pub(crate) async fn receive_report_from_stream(
 ) -> anyhow::Result<Option<(CrashtrackerConfiguration, CrashInfo)>> {
     let mut builder = CrashInfoBuilder::new();
     let mut stdin_state = StdinState::Waiting;
-    let mut config = None;
+    let mut config: Option<CrashtrackerConfiguration> = None;
 
     // Generate UUID early so we can use it for both crash ping and crash report
     let crash_uuid = Uuid::new_v4().to_string();
@@ -247,6 +248,32 @@ pub(crate) async fn receive_report_from_stream(
 
     //TODO: This assumes that the input is valid UTF-8.
     loop {
+        if !crash_ping_sent {
+            if let (Some(config), Some(metadata), Some(sig_info)) = (
+                config.as_ref(),
+                builder.metadata.as_ref(),
+                builder.sig_info.as_ref(),
+            ) {
+                crash_ping_sent = true;
+                // Spawn crash ping sending in a separate task
+                let config_clone = config.clone();
+                let metadata_clone = metadata.clone();
+                let crash_uuid_clone = crash_uuid.clone();
+                let sig_info_clone = sig_info.clone();
+                tokio::task::spawn(async move {
+                    if let Err(e) = send_crash_ping_to_url(
+                        &config_clone,
+                        &crash_uuid_clone,
+                        &metadata_clone,
+                        &sig_info_clone,
+                    )
+                    .await
+                    {
+                        eprintln!("Failed to send crash ping: {e}");
+                    }
+                });
+            }
+        }
         let next_line = tokio::time::timeout(remaining_timeout, lines.next_line()).await;
         let Ok(next_line) = next_line else {
             builder.with_log_message(format!("Timeout: {next_line:?}"), true)?;
@@ -272,25 +299,6 @@ pub(crate) async fn receive_report_from_stream(
                     true,
                 )?;
                 break;
-            }
-        }
-
-        // Try to send crash ping as soon as we have both config and metadata
-        if !crash_ping_sent {
-            if let (Some(config), Some(metadata)) = (config.as_ref(), builder.metadata.as_ref()) {
-                crash_ping_sent = true;
-                // Spawn crash ping sending in a separate task
-                let config_clone = config.clone();
-                let metadata_clone = metadata.clone();
-                let crash_uuid_clone = crash_uuid.clone();
-                tokio::task::spawn(async move {
-                    if let Err(e) =
-                        send_crash_ping_to_url(&config_clone, &crash_uuid_clone, &metadata_clone)
-                            .await
-                    {
-                        eprintln!("Failed to send crash ping: {e}");
-                    }
-                });
             }
         }
 
