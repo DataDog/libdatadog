@@ -193,8 +193,6 @@ The receiver interacts with the system in the following ways:
       - The telemetry endpoint may be inaccessible.
         Mitigation: drop the signal and continue with crash processing.
         The crash report itself will still be transmitted if possible.
-      - It may take time to transmit the initialization signal.
-        Mitigation: a configurable timeout on transmission, same as crash reports.
 
 ## Potential future improvements.
 

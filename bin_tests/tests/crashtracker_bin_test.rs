@@ -216,9 +216,9 @@ fn test_crash_tracking_callstack() {
     let crashing_callstack = &crash_payload["error"]["stack"]["frames"];
     assert!(
         crashing_callstack.as_array().unwrap().len() >= expected_functions.len(),
-        "crashing thread callstacks does have less frames than expected. Current: {current_len}, Expected: {expected_len}",
-        current_len = crashing_callstack.as_array().unwrap().len(),
-        expected_len = expected_functions.len()
+        "crashing thread callstacks does have less frames than expected. Current: {}, Expected: {}",
+        crashing_callstack.as_array().unwrap().len(),
+        expected_functions.len()
     );
 
     let function_names: Vec<&str> = crashing_callstack
