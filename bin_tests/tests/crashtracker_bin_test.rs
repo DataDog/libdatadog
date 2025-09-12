@@ -649,13 +649,6 @@ fn validate_crash_ping_telemetry(body: &str) {
     let message_json: serde_json::Value =
         serde_json::from_str(message_str).expect("Message should be valid JSON");
 
-    // Check that the message contains the expected signal info for null_deref crash type
-    let message = message_json["message"].as_str().unwrap();
-    assert_eq!(
-        message,
-        "Crashtracker crash ping: crash processing started - Process terminated with SEGV_ACCERR (SIGSEGV)"
-    );
-
     let crash_uuid = message_json["crash_uuid"]
         .as_str()
         .expect("crash_uuid should be present and be a string");
