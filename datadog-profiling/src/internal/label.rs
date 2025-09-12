@@ -140,7 +140,7 @@ impl LabelSet {
     }
 
     pub fn labels(&self) -> &[LabelId] {
-        &*self.labels
+        &self.labels
     }
 
     pub fn len(&self) -> usize {
