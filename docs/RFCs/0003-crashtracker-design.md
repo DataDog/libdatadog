@@ -167,12 +167,12 @@ The receiver interacts with the system in the following ways:
       - It may take a significant amount of time to transmit the crash report.
         This could cause the user process to hang.
         Mitigation: a configurable timeout on transmission (default 3s).
-4.  Sends an initialization signal when processing begins. This signal is sent when the receiver successfully receives configuration and metadata from the crashing process, confirming that a crash has definitely occurred and processing has begun.
+4.  Sends an initialization signal when processing begins. This signal is sent when the receiver successfully receives configuration and metadata and siginfo from the crashing process, confirming that a crash has definitely occurred and processing has begun.
     - Crash confirmation semantics
-      - **Design decision**: The initialization signal is sent in the `Receiver`, after the metadata and config is
+      - **Design decision**: The initialization signal is sent in the `Receiver`, after the metadata, config, and siginfo is
         recevied. This is because want to send the init signal as early as possible, but we cannot do so until we receive
         enough information about the crashing system and where to emit init telemetry. This also mean's that from an
-        external view, a crash has happened when the `Receiver` receives metadata and config from the Collector and will
+        external view, a crash has happened when the `Receiver` receives metadata, config, and siginfo from the Collector and will
         make downstream assumptions based on that.
     - Signal content
       - Contains structured telemetry data including crash UUID, application metadata (service name, environment, language, runtime versions), and processing status.
