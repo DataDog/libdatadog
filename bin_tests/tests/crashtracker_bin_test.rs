@@ -652,9 +652,8 @@ fn validate_crash_ping_telemetry(body: &str) {
     // Check that the message contains the expected signal info for null_deref crash type
     let message = message_json["message"].as_str().unwrap();
     assert_eq!(
-        message, format!(
-                "Crashtracker crash ping: crash processing started - Process terminated with SEGV_ACCERR (SIGSEGV)"
-            ),
+        message,
+        "Crashtracker crash ping: crash processing started - Process terminated with SEGV_ACCERR (SIGSEGV)"
     );
 
     let crash_uuid = message_json["crash_uuid"]

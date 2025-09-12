@@ -181,7 +181,8 @@ The receiver interacts with the system in the following ways:
     - **V1 CrashPingMessage Structure**: The crash ping message is JSON-encoded with the following structure:
       ```json
       {
-        "crash_uuid": "string",
+        "crash_uuid": string,
+        "sig_info": SigInfo,
         "message": "Crashtracker crash ping: crash processing started - Process terminated with {si_code_human_readable} ({si_signo_human_readable})",
         "version": "1.0",
         "type": "Crash ping"

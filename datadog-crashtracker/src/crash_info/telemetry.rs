@@ -24,15 +24,17 @@ struct TelemetryMetadata {
 #[derive(Serialize)]
 struct CrashPingMessage {
     crash_uuid: String,
+    siginfo: SigInfo,
     message: String,
     version: String,
     kind: String,
 }
 
 impl CrashPingMessage {
-    fn new(crash_uuid: String, message: String) -> Self {
+    fn new(crash_uuid: String, message: String, siginfo: SigInfo) -> Self {
         Self {
             crash_uuid,
+            siginfo,
             message,
             version: Self::current_schema_version(),
             kind: "Crash ping".to_string(),
@@ -177,6 +179,7 @@ impl TelemetryCrashUploader {
                 "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
                 sig_info.si_code_human_readable, sig_info.si_signo_human_readable
             ),
+            sig_info.clone(),
         );
 
         let payload = data::Telemetry {
@@ -446,14 +449,9 @@ mod tests {
         // Structured message format
         let message_json: serde_json::Value =
             serde_json::from_str(log_entry["message"].as_str().unwrap())?;
+        assert_eq!(message_json["siginfo"], serde_json::to_value(sig_info)?);
         assert_eq!(message_json["crash_uuid"], crash_uuid);
-        assert_eq!(
-            message_json["message"],
-            format!(
-                "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
-                sig_info.si_code_human_readable, sig_info.si_signo_human_readable
-            )
-        );
+
         assert_eq!(message_json["version"], "1.0");
         assert_eq!(message_json["kind"], "Crash ping");
 
