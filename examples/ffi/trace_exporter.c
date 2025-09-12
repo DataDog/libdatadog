@@ -15,7 +15,35 @@ enum {
 };
 
 void handle_error(ddog_TraceExporterError *err) {
-    fprintf(stderr, "Operation failed with error: %d, reason: %s\n", err->code, err->msg);
+    fprintf(stderr, "Operation failed with error: %d\n", err->code);
+    
+    // Example: Use the template for external logging (safe, no sensitive data)
+    if (err->msg_template) {
+        fprintf(stderr, "Safe template message: %s\n", err->msg_template);
+    }
+    
+    // Example: Use context fields for internal debugging (may contain sensitive data)
+    if (err->context_fields && err->context_count > 0) {
+        fprintf(stderr, "Debug context (%zu fields):\n", err->context_count);
+        for (size_t i = 0; i < err->context_count; i++) {
+            fprintf(stderr, "  %s: %s\n", err->context_fields[i].key, err->context_fields[i].value);
+        }
+    }
+    
+    // Example: Consumer can combine template + context for full message if needed
+    if (err->msg_template) {
+        fprintf(stderr, "Combined message: %s", err->msg_template);
+        if (err->context_fields && err->context_count > 0) {
+            fprintf(stderr, " (");
+            for (size_t i = 0; i < err->context_count; i++) {
+                if (i > 0) fprintf(stderr, ", ");
+                fprintf(stderr, "%s: %s", err->context_fields[i].key, err->context_fields[i].value);
+            }
+            fprintf(stderr, ")");
+        }
+        fprintf(stderr, "\n");
+    }
+    
     ddog_trace_exporter_error_free(err);
 }
 
@@ -102,7 +130,7 @@ int main(int argc, char** argv)
 
     ret = ddog_trace_exporter_send(trace_exporter, buffer, 0, &response);
 
-    assert(ret->code == DDOG_TRACE_EXPORTER_ERROR_CODE_SERDE);
+    assert(ret->code == DDOG_TRACE_EXPORTER_ERROR_CODE_INVALID_DATA);
     if (ret) {
         error = ERROR_SEND;
         handle_error(ret);
