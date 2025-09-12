@@ -30,13 +30,17 @@ struct CrashPingMessage {
 }
 
 impl CrashPingMessage {
-    fn new_v1_0(crash_uuid: String, message: String) -> Self {
+    fn new(crash_uuid: String, message: String) -> Self {
         Self {
             crash_uuid,
             message,
-            version: "1.0".to_string(),
+            version: Self::current_schema_version(),
             kind: "Crash ping".to_string(),
         }
+    }
+
+    fn current_schema_version() -> String {
+        "1.0".to_string()
     }
 }
 
@@ -167,7 +171,7 @@ impl TelemetryCrashUploader {
             sig_info.si_signo_human_readable
         ));
 
-        let crash_ping_msg = CrashPingMessage::new_v1_0(
+        let crash_ping_msg = CrashPingMessage::new(
             crash_uuid.to_string(),
             format!(
                 "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
