@@ -372,8 +372,25 @@ impl Profile {
             .as_nanos()
             .min(i64::MAX as u128) as i64;
 
+        let mut extended_label_sets: Vec<Vec<Label>> = Vec::with_capacity(self.label_sets.len());
+
+        for label_set in std::mem::take(&mut self.label_sets) {
+            let endpoint_label = self.get_endpoint_for_label_set(&label_set)?;
+            // Leave one space for the timestamp if needed
+            let mut labels = Vec::with_capacity(
+                label_set.len() + 1 + if endpoint_label.is_some() { 1 } else { 0 },
+            );
+            for l in label_set.iter() {
+                labels.push(*self.get_label(*l)?);
+            }
+            if let Some(endpoint_label) = endpoint_label {
+                labels.push(endpoint_label);
+            }
+            extended_label_sets.push(labels);
+        }
+
         for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
-            let labels = self.enrich_sample_labels(sample, timestamp)?;
+            let labels = &mut extended_label_sets[sample.labels.to_raw_id()];
             let location_ids: Vec<_> = self
                 .get_stacktrace(sample.stacktrace)?
                 .locations
@@ -381,16 +398,24 @@ impl Profile {
                 .map(Id::to_raw_id)
                 .collect();
             self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
-            self.upscaling_rules.upscale_values(&mut values, &labels)?;
+            self.upscaling_rules.upscale_values(&mut values, labels)?;
 
-            let labels: Vec<_> = labels.into_iter().map(protobuf::Label::from).collect();
+            // Use the extra slot in the labels vector to store the timestamp without any reallocs.
+            if let Some(ts) = timestamp {
+                labels.push(Label::num(self.timestamp_key, ts.get(), StringId::ZERO))
+            }
+            let pprof_labels: Vec<_> = labels.iter().map(protobuf::Label::from).collect();
+            if timestamp.is_some() {
+                labels.pop();
+            }
+
             let item = protobuf::Sample {
                 location_ids: Record::from(location_ids.as_slice()),
                 values: Record::from(values.as_slice()),
                 // SAFETY: converting &[Label] to &[Field<Label,..>] which is
                 // safe, because Field is repr(transparent).
                 labels: unsafe {
-                    &*(labels.as_slice() as *const [protobuf::Label]
+                    &*(pprof_labels.as_slice() as *const [protobuf::Label]
                         as *const [Record<protobuf::Label, 3, NO_OPT_ZERO>])
                 },
             };
@@ -680,16 +705,15 @@ impl Profile {
             .map(|v| Label::str(self.endpoints.endpoint_label, *v)))
     }
 
-    fn get_endpoint_for_labels(&self, label_set_id: LabelSetId) -> anyhow::Result<Option<Label>> {
-        let label = self.get_label_set(label_set_id)?.iter().find_map(|id| {
+    fn get_endpoint_for_label_set(&self, label_set: &LabelSet) -> anyhow::Result<Option<Label>> {
+        if let Some(label) = label_set.iter().find_map(|id| {
             if let Ok(label) = self.get_label(*id) {
                 if label.get_key() == self.endpoints.local_root_span_id_label {
                     return Some(label);
                 }
             }
             None
-        });
-        if let Some(label) = label {
+        }) {
             self.get_endpoint_for_label(label)
         } else {
             Ok(None)
@@ -702,6 +726,7 @@ impl Profile {
             .context("LabelId to have a valid interned index")
     }
 
+    #[allow(dead_code)]
     fn get_label_set(&self, id: LabelSetId) -> anyhow::Result<&LabelSet> {
         self.label_sets
             .get_index(id.to_offset())
@@ -799,19 +824,6 @@ impl Profile {
 
         profile.observations = Observations::new(profile.sample_types.len());
         profile
-    }
-
-    fn enrich_sample_labels(
-        &self,
-        sample: Sample,
-        timestamp: Option<Timestamp>,
-    ) -> anyhow::Result<Vec<Label>> {
-        self.get_label_set(sample.labels)?
-            .iter()
-            .map(|l| self.get_label(*l).copied())
-            .chain(self.get_endpoint_for_labels(sample.labels).transpose())
-            .chain(timestamp.map(|ts| Ok(Label::num(self.timestamp_key, ts.get(), StringId::ZERO))))
-            .collect()
     }
 
     #[cfg(debug_assertions)]
