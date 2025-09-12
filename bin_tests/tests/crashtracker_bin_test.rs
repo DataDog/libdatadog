@@ -651,26 +651,16 @@ fn validate_crash_ping_telemetry(body: &str) {
 
     // Check that the message contains the expected signal info for null_deref crash type
     let message = message_json["message"].as_str().unwrap();
-    assert!(
-        message.starts_with(
-            "Crashtracker crash ping: crash processing started - Process terminated with"
-        ),
-        "Expected crash ping message to start with prefix, but got: {message}"
-    );
-    assert!(
-        message.contains("SIGSEGV"),
-        "Expected crash ping message to contain SIGSEGV signal info, but got: {message}"
-    );
-    assert!(
-        message.contains("SEGV_ACCERR") || message.contains("SEGV_MAPERR"),
-        "Expected crash ping message to contain SEGV_ACCERR or SEGV_MAPERR signal code, but got: {message}"
+    assert_eq!(
+        message, format!(
+                "Crashtracker crash ping: crash processing started - Process terminated with SEGV_ACCERR (SIGSEGV)"
+            ),
     );
 
-    let crash_uuid = message_json["crash_uuid"].as_str().unwrap_or("");
-    assert!(
-        !crash_uuid.is_empty(),
-        "crash_uuid should be present and non-empty"
-    );
+    let crash_uuid = message_json["crash_uuid"]
+        .as_str()
+        .expect("crash_uuid should be present and be a string");
+    assert!(!crash_uuid.is_empty(), "crash_uuid should be non-empty");
 
     assert_eq!(message_json["version"].as_str(), Some("1.0"));
 
