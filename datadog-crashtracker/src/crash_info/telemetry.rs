@@ -113,7 +113,6 @@ impl TelemetryCrashUploader {
         Ok(s)
     }
 
-    /// Sends crash ping message with customer application and runtime information.
     pub async fn send_crash_ping(&self, crash_uuid: &str) -> anyhow::Result<()> {
         let metadata = &self.metadata;
 
