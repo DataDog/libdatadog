@@ -29,6 +29,17 @@ struct CrashPingMessage {
     kind: String,
 }
 
+impl CrashPingMessage {
+    fn new_v1_0(crash_uuid: String, message: String) -> Self {
+        Self {
+            crash_uuid,
+            message,
+            version: "1.0".to_string(),
+            kind: "Crash ping".to_string(),
+        }
+    }
+}
+
 macro_rules! parse_tags {
     (   $tag_iterator:expr,
         $($tag_name:literal => $var:ident),* $(,)?)  => {
@@ -156,15 +167,13 @@ impl TelemetryCrashUploader {
             sig_info.si_signo_human_readable
         ));
 
-        let crash_ping_msg = CrashPingMessage {
-            crash_uuid: crash_uuid.to_string(),
-            message: format!(
+        let crash_ping_msg = CrashPingMessage::new_v1_0(
+            crash_uuid.to_string(),
+            format!(
                 "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
                 sig_info.si_code_human_readable, sig_info.si_signo_human_readable
             ),
-            version: "1.0".to_string(),
-            kind: "Crash ping".to_string(),
-        };
+        );
 
         let payload = data::Telemetry {
             tracer_time,
