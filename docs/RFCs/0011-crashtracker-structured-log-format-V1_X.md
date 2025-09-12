@@ -1,4 +1,4 @@
-# RFC 0011: Crashtracker Structured Log Format (Consolidated Specification)
+# RFC 0011: v1.X Crashtracker Structured Log Format
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in [IETF RFC 2119](https://datatracker.ietf.org/doc/html/rfc2119).
 
