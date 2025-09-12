@@ -51,7 +51,7 @@ fn add_config(report: &mut String) {
     .expect("Failed to create crashtracker configuration");
     let config_str =
         serde_json::to_string(&config).expect("Failed to serialize crashtracker configuration");
-    writeln!(report, "{}", config_str).expect("Failed to write crashtracker configuration");
+    writeln!(report, "{config_str}").expect("Failed to write crashtracker configuration");
     writeln!(report, "{DD_CRASHTRACK_END_CONFIG}")
         .expect("Failed to write DD_CRASHTRACK_END_CONFIG");
 }
