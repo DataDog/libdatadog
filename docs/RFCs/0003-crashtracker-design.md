@@ -119,7 +119,7 @@ The collector interacts with the system in the following ways:
 ### Receiver
 
 A signal handler is fundamentally limited in what operations it can perform (see [signal-safety(7) \- Linux manual page](https://man7.org/linux/man-pages/man7/signal-safety.7.html)).
-This is made worse by the fact that the collector operates in the context of a crashing process whose state may be corrupted, causing even seemingly safe operations to crash/  
+This is made worse by the fact that the collector operates in the context of a crashing process whose state may be corrupted, causing even seemingly safe operations to crash/
 The receiver interacts with the system in the following ways:
 
 1.  Forks a new process
@@ -167,6 +167,33 @@ The receiver interacts with the system in the following ways:
       - It may take a significant amount of time to transmit the crash report.
         This could cause the user process to hang.
         Mitigation: a configurable timeout on transmission (default 3s).
+4.  Sends an initialization signal when processing begins. This signal is sent when the receiver successfully receives configuration and metadata and siginfo from the crashing process, confirming that a crash has definitely occurred and processing has begun.
+    - Crash confirmation semantics
+      - **Design decision**: The initialization signal is sent in the `Receiver`, after the metadata, config, and siginfo is
+        recevied. This is because want to send the init signal as early as possible, but we cannot do so until we receive
+        enough information about the crashing system and where to emit init telemetry. This also mean's that from an
+        external view, a crash has happened when the `Receiver` receives metadata, config, and siginfo from the Collector and will
+        make downstream assumptions based on that.
+    - Signal content
+      - Contains structured telemetry data including crash UUID, application metadata (service name, environment, language, runtime versions), and processing status.
+      - Uses DEBUG log level to indicate informational status rather than an error condition.
+      - Tagged as `is_crash_ping:true` to distinguish from actual crash reports.
+    - **V1 CrashPingMessage Structure**: The crash ping message is JSON-encoded with the following structure:
+      ```json
+      {
+        "crash_uuid": string,
+        "sig_info": SigInfo,
+        "message": "Crashtracker crash ping: crash processing started - Process terminated with {si_code_human_readable} ({si_signo_human_readable})",
+        "version": "1.0",
+        "type": "Crash ping"
+      }
+      ```
+    - Risks to normal operation
+      - NA
+    - Risks during a crash
+      - The telemetry endpoint may be inaccessible.
+        Mitigation: drop the signal and continue with crash processing.
+        The crash report itself will still be transmitted if possible.
 
 ## Potential future improvements.
 
@@ -191,7 +218,7 @@ Options include:
 
 POSIX lacks a proper mechanism to chain signal handlers.
 We currently make a best-effort attempt to do so by storing the return value of `sigaction` in a global variable, and then chaining a call to the old handler at the end of the crashtracker handler.
-This is a best effort attempt, which is not guaranteed to work.  
+This is a best effort attempt, which is not guaranteed to work.
 Conversely, if the user attempts to set a new signal handler after the crashtracker is registered, there is currently no notification of this fact to the crashtracker, and hence no way for the crashtracker to control what happens in this situation.
 One proposal, discussed [here](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819265900) and [here](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819192232), is to inject our own wrapper for `sigaction`, giving the crashtracker full knowledge of what signal handlers are registered, and allowing it to programmatically take action.
 
@@ -214,3 +241,15 @@ Although we make every effort to only upload non-sensitive data, it is possible 
 - As a future task, investigate using a sensitive-data redaction tool, either client side or on the backend, as an additional mitigation.
 - Limit the data we upload by doing client-side preprocessing.
   For example, instead of sending `/proc/self/maps`, send normalized addresses as discussed [here](https://github.com/DataDog/libdatadog/pull/696#discussion_r1819293109).
+
+## Changelog
+
+### 2025-09-12
+- **Added**: Initialization signal functionality to the Receiver (section 4)
+  - Sends a crash confirmation signal when processing begins
+  - Contains structured telemetry data with crash UUID and application metadata
+  - Uses DEBUG log level and is tagged as `is_crash_ping:true`
+  - Includes risk analysis for both normal operation and crash scenarios
+  - Provides mitigation strategies for endpoint accessibility and transmission timeouts
+- **Added**: V1 CrashPingMessage structure specification (section 4)
+  - JSON message structure with crash UUID, enhanced message format including signal information, version, and type fields

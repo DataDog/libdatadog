@@ -129,6 +129,12 @@ fn test_crash_tracking_bin_prechain_sigabrt() {
     test_crash_tracking_bin(BuildProfile::Release, "prechain_abort", "null_deref");
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_ping_timing_and_content() {
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "null_deref");
+}
+
 // This test is disabled for now on x86_64 musl and macos
 // It seems that on aarch64 musl, libc has CFI which allows
 // unwinding passed the signal frame.
@@ -283,7 +289,7 @@ fn test_crash_tracking_bin(
     assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
 
     // Check the crash data
-    let crash_profile = fs::read(fixtures.crash_profile_path)
+    let crash_profile = fs::read(&fixtures.crash_profile_path)
         .context("reading crashtracker profiling payload")
         .unwrap();
     let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
@@ -304,7 +310,7 @@ fn test_crash_tracking_bin(
     let error = &crash_payload["error"];
     assert_error_message(&error["message"], sig_info);
 
-    let crash_telemetry = fs::read(fixtures.crash_telemetry_path)
+    let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
     assert_telemetry_message(&crash_telemetry, crash_typ);
@@ -538,8 +544,41 @@ fn crash_tracking_empty_endpoint() {
         .spawn()
         .unwrap();
 
-    let (mut stream, _) = listener.accept().unwrap();
+    // With parallel crash ping, we might receive requests in either order
+    let (mut stream1, _) = listener.accept().unwrap();
+    let body1 = read_http_request_body(&mut stream1);
 
+    // Send 200 OK response to keep connection open
+    stream1
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        .unwrap();
+
+    let (mut stream2, _) = listener.accept().unwrap();
+    let body2 = read_http_request_body(&mut stream2);
+
+    // Send 404 response to close connection
+    stream2
+        .write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n")
+        .unwrap();
+
+    // Determine which is crash ping vs crash report based on content
+    let is_body1_crash_ping = body1.contains("is_crash_ping:true");
+    let is_body2_crash_ping = body2.contains("is_crash_ping:true");
+
+    if is_body1_crash_ping && !is_body2_crash_ping {
+        // body1 = crash ping, body2 = crash report
+        validate_crash_ping_telemetry(&body1);
+        assert_telemetry_message(body2.as_bytes(), "null_deref");
+    } else if is_body2_crash_ping && !is_body1_crash_ping {
+        // body1 = crash report, body2 = crash ping
+        assert_telemetry_message(body1.as_bytes(), "null_deref");
+        validate_crash_ping_telemetry(&body2);
+    } else {
+        panic!("Expected one crash ping and one crash report, but got: body1_crash_ping={is_body1_crash_ping}, body2_crash_ping={is_body2_crash_ping}");
+    }
+}
+
+fn read_http_request_body(stream: &mut impl Read) -> String {
     // The read call is not guaranteed to collect all available data.  On OSX it appears to grab
     // data in 8192 byte chunks.  This was not an issue when the size of a crashreport was below
     // there, but is a problem when the size is greater.
@@ -554,7 +593,7 @@ fn crash_tracking_empty_endpoint() {
     //    available and deadlock.
     // 2: The read call decides not to return some but not all of the available bytes.  We exit
     //    early with a malformed string.
-    // Since this is a test, the risk of those are low, but if this test spuriously fails, that
+    // Since this is for testing, the risk of those are low, but if tests spuriously fails, that
     // is a good place to look.
     let mut out = vec![0; 65536];
     let blocksize = 8192;
@@ -569,17 +608,55 @@ fn crash_tracking_empty_endpoint() {
         left += blocksize;
         right += blocksize;
     }
-    // We write a 404 back to the client to finish the handshake and have them end their
-    // transmission.  Its not clear to me that we should unwrap here: if the client timed out, it
-    // won't receive the message, but is that an error in the test, or should the test still
-    // continue and succeed if the message itself was received by the agent?
-    stream
-        .write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n")
-        .unwrap();
     let resp = String::from_utf8_lossy(&out[..total_read]);
     let pos = resp.find("\r\n\r\n").unwrap();
-    let body = &resp[pos + 4..];
-    assert_telemetry_message(body.as_bytes(), "null_deref");
+    resp[pos + 4..].to_string()
+}
+
+fn validate_crash_ping_telemetry(body: &str) {
+    let telemetry_payload: serde_json::Value =
+        serde_json::from_str(body).expect("Crash ping should be valid JSON");
+
+    assert_eq!(telemetry_payload["request_type"], "logs");
+    assert_eq!(telemetry_payload["payload"].as_array().unwrap().len(), 1);
+
+    let log_entry = &telemetry_payload["payload"][0];
+
+    let tags = log_entry["tags"].as_str().unwrap();
+    assert!(
+        tags.contains("is_crash_ping:true"),
+        "Expected crash ping telemetry with is_crash_ping:true, but got tags: {tags}"
+    );
+
+    // Check for specific signal information in tags (for null_deref crash type)
+    assert!(
+        tags.contains("si_signo:11"),
+        "Expected si_signo:11 (SIGSEGV) in tags, but got tags: {tags}"
+    );
+    assert!(
+        tags.contains("si_signo_human_readable:SIGSEGV"),
+        "Expected si_signo_human_readable:SIGSEGV in tags, but got tags: {tags}"
+    );
+    assert!(
+        tags.contains("si_code_human_readable:SEGV_ACCERR")
+            || tags.contains("si_code_human_readable:SEGV_MAPERR"),
+        "Expected si_code_human_readable:SEGV_ACCERR or SEGV_MAPERR in tags, but got tags: {tags}"
+    );
+
+    let message_str = log_entry["message"]
+        .as_str()
+        .expect("Message field should exist as a string");
+    let message_json: serde_json::Value =
+        serde_json::from_str(message_str).expect("Message should be valid JSON");
+
+    let crash_uuid = message_json["crash_uuid"]
+        .as_str()
+        .expect("crash_uuid should be present and be a string");
+    assert!(!crash_uuid.is_empty(), "crash_uuid should be non-empty");
+
+    assert_eq!(message_json["version"].as_str(), Some("1.0"));
+
+    assert_eq!(message_json["kind"].as_str(), Some("Crash ping"));
 }
 
 struct TestFixtures<'a> {
