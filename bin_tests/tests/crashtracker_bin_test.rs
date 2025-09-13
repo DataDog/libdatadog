@@ -145,6 +145,7 @@ fn test_crasht_tracking_validate_callstack() {
     test_crash_tracking_callstack()
 }
 
+#[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"), target_os = "macos")))]
 fn test_crash_tracking_callstack() {
     let (_, crashtracker_receiver) = setup_crashtracking_crates(BuildProfile::Release);
 
@@ -200,7 +201,7 @@ fn test_crash_tracking_callstack() {
 
     // Note: in Release, we do not have the crate and module name prepended to the function name
     // Here we compile the crashing app in Debug.
-    let mut expected_functions = vec![
+    let expected_functions = [
         "crashing_test_app::unix::fn2",
         "crashing_test_app::unix::fn1",
         "crashing_test_app::unix::main",
