@@ -5,6 +5,7 @@
 mod fuzz_tests;
 
 pub mod interning_api;
+pub mod otel_emitter;
 
 use self::api::UpscalingInfo;
 use super::*;

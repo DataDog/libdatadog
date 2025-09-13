@@ -24,6 +24,7 @@ byteorder = { version = "1.5", features = ["std"] }
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
 datadog-alloc = { path = "../datadog-alloc" }
+datadog-profiling-otel = { path = "../datadog-profiling-otel" }
 datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["prost_impls"] }
 ddcommon = {path = "../ddcommon" }
 futures = { version = "0.3", default-features = false }
