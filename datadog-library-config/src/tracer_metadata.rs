@@ -26,6 +26,12 @@ pub struct TracerMetadata {
     /// Version of the service being instrumented.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_version: Option<String>,
+    /// Process tags of the application being instrumented.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_tags: Option<String>,
+    /// Container id seen by the application.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_id: Option<String>,
 }
 
 pub enum AnonymousFileHandle {

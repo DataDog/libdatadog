@@ -29,6 +29,8 @@ pub unsafe extern "C" fn ddog_store_tracer_metadata(
     service_name: CharSlice,
     service_env: CharSlice,
     service_version: CharSlice,
+    process_tags: CharSlice,
+    container_id: CharSlice,
 ) -> Result<TracerMemfdHandle> {
     // Convert C strings to Rust types
     let metadata = TracerMetadata {
@@ -55,6 +57,16 @@ pub unsafe extern "C" fn ddog_store_tracer_metadata(
             None
         } else {
             Some(service_version.to_string())
+        },
+        process_tags: if process_tags.is_empty() {
+            None
+        } else {
+            Some(process_tags.to_string())
+        },
+        container_id: if container_id.is_empty() {
+            None
+        } else {
+            Some(container_id.to_string())
         },
     };
 
