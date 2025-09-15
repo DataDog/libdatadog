@@ -82,22 +82,27 @@ impl InternalProfile {
         }
 
         // If we have span labels, figure out the corresponding endpoint labels
-        // Do this into a temporary map to avoid mutating the map we're iterating over
-        let mut endpoint_labels = HashMap::new();
-        for (idx, label) in self.labels.iter().enumerate() {
-            if label.get_key() == self.endpoints.local_root_span_id_label {
-                if let Some(endpoint_label) = self.get_endpoint_for_label(label)? {
-                    endpoint_labels.insert(idx, endpoint_label);
-                }
-            }
-        }
+        // Split into two steps to avoid mutating the map we're iterating over
+        let endpoint_labels: Vec<_> = self
+            .labels
+            .iter()
+            .enumerate()
+            .filter(|(_, label)| label.get_key() == self.endpoints.local_root_span_id_label)
+            .filter_map(|(idx, label)| {
+                self.get_endpoint_for_label(label)
+                    .ok()
+                    .flatten()
+                    .map(|endpoint_label| (idx, endpoint_label))
+            })
+            .collect();
 
-        // Put the values from the temporary map back into the original labels map
-        let mut endpoint_labels_idx = HashMap::new();
-        for (idx, label) in endpoint_labels {
-            let endpoint_idx = self.labels.dedup(label);
-            endpoint_labels_idx.insert(idx, endpoint_idx);
-        }
+        let endpoint_labels_idx: HashMap<usize, _> = endpoint_labels
+            .into_iter()
+            .map(|(idx, endpoint_label)| {
+                let endpoint_idx = self.labels.dedup(endpoint_label);
+                (idx, endpoint_idx)
+            })
+            .collect();
 
         for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
             let stack_index = sample.stacktrace.to_raw_id() as i32;
