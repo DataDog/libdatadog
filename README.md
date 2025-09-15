@@ -64,16 +64,27 @@ cargo install --locked 'cargo-nextest@0.9.96'
 
 #### Dev Containers
 
+Dev Containers allow you to use a Docker container as a full-featured development environment with VS Code.
+
 ##### Prerequisites
 
 - Install the [Dev Containers Extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) in VS Code.
+- Docker must be installed and running on your host machine.
+
+##### Available Containers
+
+We provide two Dev Container configurations:
+- **Ubuntu**: Full-featured development environment with all dependencies installed
+- **Alpine**: Lightweight alternative with minimal dependencies
 
 ##### Steps
 
 1. Open a local VS Code window on the cloned repository.
 2. Open the command palette (`Ctrl+Shift+P` or `Cmd+Shift+P` on macOS) and select **"Dev Containers: Reopen in Container"**.
-3. Choose the **Rust Container**.
-4. VS Code will open a new window connected to the selected container.
+3. Choose either **Ubuntu** or **Alpine** configuration when prompted.
+4. VS Code will build and connect to the selected container environment.
+
+The container includes all necessary dependencies for building and testing `libdatadog`.
 
 #### Docker container
 A dockerfile is provided to run tests in a Ubuntu linux environment. This is particularly useful for running and debugging linux-only tests on macOS.

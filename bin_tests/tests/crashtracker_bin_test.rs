@@ -138,6 +138,109 @@ fn test_crash_tracking_bin_runtime_callback() {
         "runtime_callback_test",
     );
 }
+  
+  
+fn test_crash_ping_timing_and_content() {
+    test_crash_tracking_bin(BuildProfile::Release, "donothing", "null_deref");
+}
+
+// This test is disabled for now on x86_64 musl and macos
+// It seems that on aarch64 musl, libc has CFI which allows
+// unwinding passed the signal frame.
+#[test]
+#[cfg(not(any(all(target_arch = "x86_64", target_env = "musl"), target_os = "macos")))]
+#[cfg_attr(miri, ignore)]
+fn test_crasht_tracking_validate_callstack() {
+    test_crash_tracking_callstack()
+}
+
+fn test_crash_tracking_callstack() {
+    let (_, crashtracker_receiver) = setup_crashtracking_crates(BuildProfile::Release);
+
+    let crashing_app = ArtifactsBuild {
+        name: "crashing_test_app".to_owned(),
+        // compile in debug so we avoid inlining
+        // and can check the callchain
+        build_profile: BuildProfile::Debug,
+        artifact_type: ArtifactType::Bin,
+        triple_target: None,
+    };
+
+    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashing_app]);
+
+    let mut p = process::Command::new(&fixtures.artifacts[&crashing_app])
+        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
+        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
+        .arg(&fixtures.output_dir)
+        .spawn()
+        .unwrap();
+
+    let exit_status = bin_tests::timeit!("exit after signal", {
+        eprintln!("Waiting for exit");
+        p.wait().unwrap()
+    });
+    assert!(!exit_status.success());
+
+    let stderr_path = format!("{0}/out.stderr", fixtures.output_dir.display());
+    let stderr = fs::read(stderr_path)
+        .context("reading crashtracker stderr")
+        .unwrap();
+    let stdout_path = format!("{0}/out.stdout", fixtures.output_dir.display());
+    let stdout = fs::read(stdout_path)
+        .context("reading crashtracker stdout")
+        .unwrap();
+    let s = String::from_utf8(stderr);
+    assert!(
+        matches!(
+            s.as_deref(),
+            Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n")
+            | Ok("Failed to fully receive crash.  Exit state was: InternalError(\"{\\\"ip\\\": \\\"\")\n"),
+        ),
+        "got {s:?}"
+    );
+    assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
+
+    let crash_profile = fs::read(fixtures.crash_profile_path)
+        .context("reading crashtracker profiling payload")
+        .unwrap();
+    let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
+        .context("deserializing crashtracker profiling payload to json")
+        .unwrap();
+
+    // Note: in Release, we do not have the crate and module name prepended to the function name
+    // Here we compile the crashing app in Debug.
+    let mut expected_functions = vec![
+        "crashing_test_app::unix::fn2",
+        "crashing_test_app::unix::fn1",
+        "crashing_test_app::unix::main",
+        "crashing_test_app::main",
+    ];
+    // It seems that on arm/arm64, fn3 is inlined in fn2, so not present.
+    // Add fn3 only for x86_64 arch
+    #[cfg(target_arch = "x86_64")]
+    {
+        expected_functions.insert(0, "crashing_test_app::unix::fn3");
+    }
+
+    let crashing_callstack = &crash_payload["error"]["stack"]["frames"];
+    assert!(
+        crashing_callstack.as_array().unwrap().len() >= expected_functions.len(),
+        "crashing thread callstacks does have less frames than expected. Current: {}, Expected: {}",
+        crashing_callstack.as_array().unwrap().len(),
+        expected_functions.len()
+    );
+
+    let function_names: Vec<&str> = crashing_callstack
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["function"].as_str().unwrap_or(""))
+        .collect();
+
+    for (expected, actual) in expected_functions.iter().zip(function_names.iter()) {
+        assert_eq!(expected, actual);
+    }
+}
 
 fn test_crash_tracking_bin(
     crash_tracking_receiver_profile: BuildProfile,
@@ -199,7 +302,7 @@ fn test_crash_tracking_bin(
     assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
 
     // Check the crash data
-    let crash_profile = fs::read(fixtures.crash_profile_path)
+    let crash_profile = fs::read(&fixtures.crash_profile_path)
         .context("reading crashtracker profiling payload")
         .unwrap();
     let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
@@ -220,7 +323,7 @@ fn test_crash_tracking_bin(
     let error = &crash_payload["error"];
     assert_error_message(&error["message"], sig_info);
 
-    let crash_telemetry = fs::read(fixtures.crash_telemetry_path)
+    let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
     assert_telemetry_message(&crash_telemetry, crash_typ);
@@ -650,8 +753,41 @@ fn crash_tracking_empty_endpoint() {
         .spawn()
         .unwrap();
 
-    let (mut stream, _) = listener.accept().unwrap();
+    // With parallel crash ping, we might receive requests in either order
+    let (mut stream1, _) = listener.accept().unwrap();
+    let body1 = read_http_request_body(&mut stream1);
 
+    // Send 200 OK response to keep connection open
+    stream1
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        .unwrap();
+
+    let (mut stream2, _) = listener.accept().unwrap();
+    let body2 = read_http_request_body(&mut stream2);
+
+    // Send 404 response to close connection
+    stream2
+        .write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n")
+        .unwrap();
+
+    // Determine which is crash ping vs crash report based on content
+    let is_body1_crash_ping = body1.contains("is_crash_ping:true");
+    let is_body2_crash_ping = body2.contains("is_crash_ping:true");
+
+    if is_body1_crash_ping && !is_body2_crash_ping {
+        // body1 = crash ping, body2 = crash report
+        validate_crash_ping_telemetry(&body1);
+        assert_telemetry_message(body2.as_bytes(), "null_deref");
+    } else if is_body2_crash_ping && !is_body1_crash_ping {
+        // body1 = crash report, body2 = crash ping
+        assert_telemetry_message(body1.as_bytes(), "null_deref");
+        validate_crash_ping_telemetry(&body2);
+    } else {
+        panic!("Expected one crash ping and one crash report, but got: body1_crash_ping={is_body1_crash_ping}, body2_crash_ping={is_body2_crash_ping}");
+    }
+}
+
+fn read_http_request_body(stream: &mut impl Read) -> String {
     // The read call is not guaranteed to collect all available data.  On OSX it appears to grab
     // data in 8192 byte chunks.  This was not an issue when the size of a crashreport was below
     // there, but is a problem when the size is greater.
@@ -666,7 +802,7 @@ fn crash_tracking_empty_endpoint() {
     //    available and deadlock.
     // 2: The read call decides not to return some but not all of the available bytes.  We exit
     //    early with a malformed string.
-    // Since this is a test, the risk of those are low, but if this test spuriously fails, that
+    // Since this is for testing, the risk of those are low, but if tests spuriously fails, that
     // is a good place to look.
     let mut out = vec![0; 65536];
     let blocksize = 8192;
@@ -681,17 +817,55 @@ fn crash_tracking_empty_endpoint() {
         left += blocksize;
         right += blocksize;
     }
-    // We write a 404 back to the client to finish the handshake and have them end their
-    // transmission.  Its not clear to me that we should unwrap here: if the client timed out, it
-    // won't receive the message, but is that an error in the test, or should the test still
-    // continue and succeed if the message itself was received by the agent?
-    stream
-        .write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n")
-        .unwrap();
     let resp = String::from_utf8_lossy(&out[..total_read]);
     let pos = resp.find("\r\n\r\n").unwrap();
-    let body = &resp[pos + 4..];
-    assert_telemetry_message(body.as_bytes(), "null_deref");
+    resp[pos + 4..].to_string()
+}
+
+fn validate_crash_ping_telemetry(body: &str) {
+    let telemetry_payload: serde_json::Value =
+        serde_json::from_str(body).expect("Crash ping should be valid JSON");
+
+    assert_eq!(telemetry_payload["request_type"], "logs");
+    assert_eq!(telemetry_payload["payload"].as_array().unwrap().len(), 1);
+
+    let log_entry = &telemetry_payload["payload"][0];
+
+    let tags = log_entry["tags"].as_str().unwrap();
+    assert!(
+        tags.contains("is_crash_ping:true"),
+        "Expected crash ping telemetry with is_crash_ping:true, but got tags: {tags}"
+    );
+
+    // Check for specific signal information in tags (for null_deref crash type)
+    assert!(
+        tags.contains("si_signo:11"),
+        "Expected si_signo:11 (SIGSEGV) in tags, but got tags: {tags}"
+    );
+    assert!(
+        tags.contains("si_signo_human_readable:SIGSEGV"),
+        "Expected si_signo_human_readable:SIGSEGV in tags, but got tags: {tags}"
+    );
+    assert!(
+        tags.contains("si_code_human_readable:SEGV_ACCERR")
+            || tags.contains("si_code_human_readable:SEGV_MAPERR"),
+        "Expected si_code_human_readable:SEGV_ACCERR or SEGV_MAPERR in tags, but got tags: {tags}"
+    );
+
+    let message_str = log_entry["message"]
+        .as_str()
+        .expect("Message field should exist as a string");
+    let message_json: serde_json::Value =
+        serde_json::from_str(message_str).expect("Message should be valid JSON");
+
+    let crash_uuid = message_json["crash_uuid"]
+        .as_str()
+        .expect("crash_uuid should be present and be a string");
+    assert!(!crash_uuid.is_empty(), "crash_uuid should be non-empty");
+
+    assert_eq!(message_json["version"].as_str(), Some("1.0"));
+
+    assert_eq!(message_json["kind"].as_str(), Some("Crash ping"));
 }
 
 struct TestFixtures<'a> {
