@@ -353,7 +353,7 @@ mod tests {
         assert_eq!(ffi_error.code, ExporterErrorCode::InvalidUrl);
         assert!(!ffi_error.msg_template.is_null());
         let template_str = unsafe { CStr::from_ptr(ffi_error.msg_template).to_string_lossy() };
-        assert_eq!(template_str, "Invalid URI provided");
+        assert_eq!(template_str, "Invalid URI provided: {details}");
         assert!(!ffi_error.context_fields.is_null());
         assert_eq!(ffi_error.context_count, 1);
 
