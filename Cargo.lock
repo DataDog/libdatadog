@@ -1697,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-otel"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "bolero",

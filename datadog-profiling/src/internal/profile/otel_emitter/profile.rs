@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::collections::identifiable::Id;
+use crate::collections::identifiable::{Dedup, Id};
 use crate::internal::profile::otel_emitter::label::convert_label_to_key_value;
 use crate::internal::profile::{EncodedProfile, Profile as InternalProfile};
 use crate::iter::{IntoLendingIterator, LendingIterator};
@@ -81,11 +81,37 @@ impl InternalProfile {
             profiles.push(profile);
         }
 
+        // If we have span labels, figure out the corresponding endpoint labels
+        // Do this into a temporary map to avoid mutating the map we're iterating over
+        let mut endpoint_labels = HashMap::new();
+        for (idx, label) in self.labels.iter().enumerate() {
+            if label.get_key() == self.endpoints.local_root_span_id_label {
+                if let Some(endpoint_label) = self.get_endpoint_for_label(label)? {
+                    endpoint_labels.insert(idx, endpoint_label);
+                }
+            }
+        }
+
+        // Put the values from the temporary map back into the original labels map
+        let mut endpoint_labels_idx = HashMap::new();
+        for (idx, label) in endpoint_labels {
+            let endpoint_idx = self.labels.dedup(label);
+            endpoint_labels_idx.insert(idx, endpoint_idx);
+        }
+
         for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
             let stack_index = sample.stacktrace.to_raw_id() as i32;
             let label_set = self.get_label_set(sample.labels)?;
-            let attribute_indicies: Vec<_> =
-                label_set.iter().map(|x| x.to_raw_id() as i32).collect();
+            let attribute_indicies: Vec<_> = label_set
+                .iter()
+                .map(|x| x.to_raw_id() as i32)
+                .chain(
+                    label_set
+                        .iter()
+                        .find_map(|k| endpoint_labels_idx.get(&(k.to_raw_id() as usize)))
+                        .map(|label| label.to_raw_id() as i32),
+                )
+                .collect();
             let labels = label_set
                 .iter()
                 .map(|l| self.get_label(*l).copied())
