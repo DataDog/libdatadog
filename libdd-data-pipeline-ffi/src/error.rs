@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use libdd_data_pipeline::trace_exporter::error::{
-    AgentErrorKind, BuilderErrorKind, InternalErrorKind, NetworkErrorKind, TraceExporterError,
+    AgentErrorKind, BuilderErrorKind, NetworkErrorKind, TraceExporterError,
 };
 use std::ffi::{c_char, CString};
 use std::fmt::Display;
@@ -164,35 +164,35 @@ impl From<TraceExporterError> for ExporterError {
         let code = match &value {
             TraceExporterError::Agent(_) => ExporterErrorCode::HttpEmptyBody,
             TraceExporterError::Builder(builder_error) => match builder_error {
-                data_pipeline::trace_exporter::error::BuilderErrorKind::InvalidUri(_) => {
+                BuilderErrorKind::InvalidUri(_) => {
                     ExporterErrorCode::InvalidUrl
                 }
                 _ => ExporterErrorCode::InvalidArgument,
             },
             TraceExporterError::Internal(_) => ExporterErrorCode::Internal,
             TraceExporterError::Network(network_error) => match network_error.kind() {
-                data_pipeline::trace_exporter::error::NetworkErrorKind::Body => {
+                NetworkErrorKind::Body => {
                     ExporterErrorCode::HttpBodyFormat
                 }
-                data_pipeline::trace_exporter::error::NetworkErrorKind::Parse => {
+                NetworkErrorKind::Parse => {
                     ExporterErrorCode::HttpParse
                 }
-                data_pipeline::trace_exporter::error::NetworkErrorKind::TimedOut => {
+                NetworkErrorKind::TimedOut => {
                     ExporterErrorCode::TimedOut
                 }
-                data_pipeline::trace_exporter::error::NetworkErrorKind::WrongStatus => {
+                NetworkErrorKind::WrongStatus => {
                     ExporterErrorCode::HttpWrongStatus
                 }
-                data_pipeline::trace_exporter::error::NetworkErrorKind::ConnectionClosed => {
+                NetworkErrorKind::ConnectionClosed => {
                     ExporterErrorCode::ConnectionReset
                 }
-                data_pipeline::trace_exporter::error::NetworkErrorKind::MessageTooLarge => {
+                NetworkErrorKind::MessageTooLarge => {
                     ExporterErrorCode::HttpBodyTooLong
                 }
-                data_pipeline::trace_exporter::error::NetworkErrorKind::Canceled => {
+                NetworkErrorKind::Canceled => {
                     ExporterErrorCode::HttpClient
                 }
-                data_pipeline::trace_exporter::error::NetworkErrorKind::Unknown => {
+                NetworkErrorKind::Unknown => {
                     ExporterErrorCode::NetworkUnknown
                 }
             },
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn from_trace_exporter_error_builder_test() {
-        use data_pipeline::trace_exporter::error::{BuilderErrorKind, TraceExporterError};
+        use libdd_data_pipeline::trace_exporter::error::{BuilderErrorKind, TraceExporterError};
 
         let builder_error =
             TraceExporterError::Builder(BuilderErrorKind::InvalidUri("bad://url".to_string()));
@@ -355,7 +355,7 @@ mod tests {
         assert_eq!(ffi_error.code, ExporterErrorCode::InvalidUrl);
         assert!(!ffi_error.msg_template.is_null());
         let template_str = unsafe { CStr::from_ptr(ffi_error.msg_template).to_string_lossy() };
-        assert_eq!(template_str, "Invalid URI provided");
+        assert_eq!(template_str, "Invalid URI provided: {details}");
         assert!(!ffi_error.context_fields.is_null());
         assert_eq!(ffi_error.context_count, 1);
 
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn from_trace_exporter_error_network_test() {
-        use data_pipeline::trace_exporter::error::TraceExporterError;
+        use libdd_data_pipeline::trace_exporter::error::TraceExporterError;
         use std::io::{Error as IoError, ErrorKind};
 
         // Create a network error by wrapping an IO error
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn from_trace_exporter_error_agent_test() {
-        use data_pipeline::trace_exporter::error::{AgentErrorKind, TraceExporterError};
+        use libdd_data_pipeline::trace_exporter::error::{AgentErrorKind, TraceExporterError};
 
         let agent_error = TraceExporterError::Agent(AgentErrorKind::EmptyResponse);
         let ffi_error = ExporterError::from(agent_error);
@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn from_trace_exporter_error_without_template_test() {
-        use data_pipeline::trace_exporter::error::TraceExporterError;
+        use libdd_data_pipeline::trace_exporter::error::TraceExporterError;
         use std::io::{Error as IoError, ErrorKind};
 
         let io_error =
@@ -419,7 +419,7 @@ mod tests {
 
     #[test]
     fn from_trace_exporter_error_memory_safety_test() {
-        use data_pipeline::trace_exporter::error::{BuilderErrorKind, TraceExporterError};
+        use libdd_data_pipeline::trace_exporter::error::{BuilderErrorKind, TraceExporterError};
 
         // Create error with context
         let builder_error = TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(

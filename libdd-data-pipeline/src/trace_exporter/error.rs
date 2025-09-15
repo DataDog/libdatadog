@@ -91,9 +91,10 @@ pub enum BuilderErrorKind {
 }
 
 impl BuilderErrorKind {
-    const INVALID_URI_TEMPLATE: &'static str = "Invalid URI provided";
-    const INVALID_TELEMETRY_CONFIG_TEMPLATE: &'static str = "Invalid telemetry configuration";
-    const INVALID_CONFIGURATION_TEMPLATE: &'static str = "Invalid configuration";
+    const INVALID_URI_TEMPLATE: &'static str = "Invalid URI provided: {details}";
+    const INVALID_TELEMETRY_CONFIG_TEMPLATE: &'static str =
+        "Invalid telemetry configuration: {details}";
+    const INVALID_CONFIGURATION_TEMPLATE: &'static str = "Invalid configuration: {details}";
 }
 
 impl Display for BuilderErrorKind {
@@ -143,7 +144,8 @@ pub enum InternalErrorKind {
 }
 
 impl InternalErrorKind {
-    const INVALID_WORKER_STATE_TEMPLATE: &'static str = "Background worker in invalid state";
+    const INVALID_WORKER_STATE_TEMPLATE: &'static str =
+        "Background worker in invalid state: {details}";
 }
 
 impl Display for InternalErrorKind {
@@ -274,7 +276,8 @@ pub struct RequestError {
 }
 
 impl RequestError {
-    const REQUEST_ERROR_TEMPLATE: &'static str = "Agent responded with error status";
+    const REQUEST_ERROR_TEMPLATE: &'static str =
+        "Agent responded with error status {status_code}: {response}";
 }
 
 impl Display for RequestError {
@@ -322,7 +325,8 @@ pub enum ShutdownError {
 }
 
 impl ShutdownError {
-    const TIMED_OUT_TEMPLATE: &'static str = "Shutdown operation timed out";
+    const TIMED_OUT_TEMPLATE: &'static str =
+        "Shutdown operation timed out after {timeout_seconds} seconds";
 }
 
 impl Display for ShutdownError {
@@ -352,11 +356,11 @@ impl ErrorTemplate for ShutdownError {
 impl ErrorTemplate for DecodeError {
     fn template(&self) -> &'static str {
         match self {
-            DecodeError::InvalidConversion(_) => "Failed to convert decoded value",
-            DecodeError::InvalidType(_) => "Invalid type in trace payload",
-            DecodeError::InvalidFormat(_) => "Invalid msgpack format",
+            DecodeError::InvalidConversion(_) => "Failed to convert decoded value: {details}",
+            DecodeError::InvalidType(_) => "Invalid type in trace payload: {details}",
+            DecodeError::InvalidFormat(_) => "Invalid msgpack format: {details}",
             DecodeError::IOError => "Failed to read from buffer",
-            DecodeError::Utf8Error(_) => "Failed to decode UTF-8 string",
+            DecodeError::Utf8Error(_) => "Failed to decode UTF-8 string: {details}",
         }
     }
 
@@ -575,8 +579,8 @@ impl ErrorTemplate for TraceExporterError {
             TraceExporterError::Shutdown(e) => e.template(),
             TraceExporterError::Deserialization(e) => e.template(),
             TraceExporterError::Io(io_error) => Self::io_error_template(io_error),
-            TraceExporterError::Telemetry(_) => "Telemetry operation failed",
-            TraceExporterError::Serialization(_) => "Failed to serialize data",
+            TraceExporterError::Telemetry(_) => "Telemetry operation failed: {details}",
+            TraceExporterError::Serialization(_) => "Failed to serialize data: {details}",
         }
     }
 
@@ -657,7 +661,7 @@ mod tests {
     #[test]
     fn test_builder_error_template() {
         let error = BuilderErrorKind::InvalidUri("invalid://url".to_string());
-        assert_eq!(error.template(), "Invalid URI provided");
+        assert_eq!(error.template(), "Invalid URI provided: {details}");
         let context = error.context();
         assert_eq!(context.fields().len(), 1);
         assert_eq!(
@@ -666,7 +670,10 @@ mod tests {
         );
 
         let error = BuilderErrorKind::InvalidTelemetryConfig("missing field".to_string());
-        assert_eq!(error.template(), "Invalid telemetry configuration");
+        assert_eq!(
+            error.template(),
+            "Invalid telemetry configuration: {details}"
+        );
         let context = error.context();
         assert_eq!(context.fields().len(), 1);
         assert_eq!(
@@ -675,7 +682,7 @@ mod tests {
         );
 
         let error = BuilderErrorKind::InvalidConfiguration("bad setting".to_string());
-        assert_eq!(error.template(), "Invalid configuration");
+        assert_eq!(error.template(), "Invalid configuration: {details}");
         let context = error.context();
         assert_eq!(context.fields().len(), 1);
         assert_eq!(
@@ -687,7 +694,10 @@ mod tests {
     #[test]
     fn test_internal_error_template() {
         let error = InternalErrorKind::InvalidWorkerState("worker crashed".to_string());
-        assert_eq!(error.template(), "Background worker in invalid state");
+        assert_eq!(
+            error.template(),
+            "Background worker in invalid state: {details}"
+        );
         let context = error.context();
         assert_eq!(context.fields().len(), 1);
         assert_eq!(
@@ -761,7 +771,10 @@ mod tests {
     #[test]
     fn test_request_error_template() {
         let error = RequestError::new(StatusCode::NOT_FOUND, "Resource not found");
-        assert_eq!(error.template(), "Agent responded with error status");
+        assert_eq!(
+            error.template(),
+            "Agent responded with error status {status_code}: {response}"
+        );
         let context = error.context();
         assert_eq!(context.fields().len(), 2);
         assert_eq!(
@@ -774,7 +787,10 @@ mod tests {
         );
 
         let error = RequestError::new(StatusCode::INTERNAL_SERVER_ERROR, "Server error");
-        assert_eq!(error.template(), "Agent responded with error status");
+        assert_eq!(
+            error.template(),
+            "Agent responded with error status {status_code}: {response}"
+        );
         let context = error.context();
         assert_eq!(context.fields().len(), 2);
         assert_eq!(
@@ -792,7 +808,10 @@ mod tests {
         use std::time::Duration;
 
         let error = ShutdownError::TimedOut(Duration::from_secs(5));
-        assert_eq!(error.template(), "Shutdown operation timed out");
+        assert_eq!(
+            error.template(),
+            "Shutdown operation timed out after {timeout_seconds} seconds"
+        );
         let context = error.context();
         assert_eq!(context.fields().len(), 1);
         assert_eq!(
@@ -801,7 +820,10 @@ mod tests {
         );
 
         let error = ShutdownError::TimedOut(Duration::from_millis(2500));
-        assert_eq!(error.template(), "Shutdown operation timed out");
+        assert_eq!(
+            error.template(),
+            "Shutdown operation timed out after {timeout_seconds} seconds"
+        );
         let context = error.context();
         assert_eq!(context.fields().len(), 1);
         assert_eq!(
