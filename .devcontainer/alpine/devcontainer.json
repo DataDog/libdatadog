@@ -1,9 +1,9 @@
 // For format details, see https://aka.ms/devcontainer.json. For config options, see the
 // README at: https://github.com/devcontainers/templates/tree/main/src/rust
 {
-    "name": "Rust",
+    "name": "Rust (Alpine)",
     // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-    "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    "image": "mcr.microsoft.com/devcontainers/base:alpine", // more images at  // more images at https://hub.docker.com/r/microsoft/devcontainers-base
 
     // Allow access to host machine
     "runArgs": ["--network=host"],
@@ -11,28 +11,20 @@
     // Use 'mounts' to make the cargo cache persistent in a Docker Volume.
     "mounts": [
         {
-            "source": "devcontainer-cargo-cache-${devcontainerId}",
+            "source": "devcontainer-cargo-cache-alpine-${devcontainerId}",
             "target": "/usr/local/cargo",
             "type": "volume"
         }
     ],
 
-    // Features to add to the dev container. More info: https://containers.dev/features.
-    "features": {
-        "ghcr.io/devcontainers/features/rust:1": {},
-        "ghcr.io/devcontainers-extra/features/cmake:1": {},
-        "ghcr.io/devcontainers/features/go:1": {}
-    },
+    "onCreateCommand": "sudo apk add --no-cache build-base rust cargo cargo-zsh-completion rust-src rustfmt cbindgen patchelf cmake",
 
-    // Use 'postCreateCommand' to run commands after the container is created.
-    "postCreateCommand": "cargo install cbindgen",
-
-    // Configure tool-specific properties.
     "customizations": {
         "vscode": {
             "extensions": [
                 "rust-lang.rust-analyzer",
-                "vadimcn.vscode-lldb"
+                "vadimcn.vscode-lldb",
+                "tamasfe.even-better-toml"
             ]
         }
     }

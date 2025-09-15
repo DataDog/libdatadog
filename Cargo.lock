@@ -794,7 +794,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -803,7 +803,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1394,7 +1394,7 @@ checksum = "575f75dfd25738df5b91b8e43e14d44bda14637a58fae779fd2b064f8bf3e010"
 
 [[package]]
 name = "data-pipeline"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1428,7 +1428,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline-ffi"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "build_common",
  "data-pipeline",
@@ -1442,7 +1442,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-alloc"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "allocator-api2",
  "bolero",
@@ -1452,7 +1452,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -1487,7 +1487,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker-ffi"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1506,7 +1506,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ddsketch"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -1619,7 +1619,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-log"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "chrono",
  "ddcommon-ffi",
@@ -1631,7 +1631,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-log-ffi"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "build_common",
  "datadog-log",
@@ -1640,7 +1640,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -1672,7 +1672,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1710,7 +1710,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-protobuf"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "bolero",
  "datadog-profiling-protobuf",
@@ -1719,7 +1719,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1847,7 +1847,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1858,7 +1858,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1876,7 +1876,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -1889,7 +1889,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1925,7 +1925,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-tracer-flare"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "datadog-remote-config",
@@ -1941,7 +1941,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -1976,7 +1976,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1990,7 +1990,7 @@ dependencies = [
 
 [[package]]
 name = "ddsketch-ffi"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "build_common",
  "datadog-ddsketch",
@@ -1999,7 +1999,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2023,7 +2023,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "build_common",
  "ddcommon",
@@ -2154,7 +2154,7 @@ dependencies = [
 
 [[package]]
 name = "dogstatsd-client"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "anyhow",
  "cadence",
@@ -5303,7 +5303,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5626,7 +5626,7 @@ dependencies = [
 
 [[package]]
 name = "tinybytes"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "once_cell",
  "pretty_assertions",
@@ -5841,7 +5841,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "20.0.0"
+version = "21.0.0"
 dependencies = [
  "regex",
 ]
