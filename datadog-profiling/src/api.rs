@@ -5,7 +5,7 @@ use datadog_profiling_protobuf::prost_impls;
 use std::ops::{Add, Sub};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ValueType<'a> {
     pub r#type: &'a str,
     pub unit: &'a str,
@@ -13,7 +13,7 @@ pub struct ValueType<'a> {
 
 impl<'a> ValueType<'a> {
     #[inline(always)]
-    pub fn new(r#type: &'a str, unit: &'a str) -> Self {
+    pub const fn new(r#type: &'a str, unit: &'a str) -> Self {
         Self { r#type, unit }
     }
 }
