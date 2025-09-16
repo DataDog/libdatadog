@@ -153,13 +153,13 @@ impl TelemetryCrashUploader {
         );
 
         if let Some(env) = &metadata.application.env {
-            tags.push_str(&format!(",env:{}", env));
+            tags.push_str(&format!(",env:{env}"));
         }
         if let Some(runtime_name) = &metadata.application.runtime_name {
-            tags.push_str(&format!(",runtime_name:{}", runtime_name));
+            tags.push_str(&format!(",runtime_name:{runtime_name}"));
         }
         if let Some(runtime_version) = &metadata.application.runtime_version {
-            tags.push_str(&format!(",runtime_version:{}", runtime_version));
+            tags.push_str(&format!(",runtime_version:{runtime_version}"));
         }
 
         // Add signal information to tags
@@ -457,7 +457,7 @@ mod tests {
 
         // Customer application and runtime information tags
         let tags = log_entry["tags"].as_str().unwrap();
-        assert!(tags.contains(&format!("uuid:{}", crash_uuid)));
+        assert!(tags.contains(&format!("uuid:{crash_uuid}")));
         assert!(tags.contains("is_crash_ping:true"));
         assert!(tags.contains("service:foo"));
         assert!(tags.contains("language_name:native"));
@@ -520,7 +520,7 @@ mod tests {
 
         // Customer application and runtime information tags
         let tags = log_entry["tags"].as_str().unwrap();
-        assert!(tags.contains(&format!("uuid:{}", crash_uuid)));
+        assert!(tags.contains(&format!("uuid:{crash_uuid}")));
         assert!(tags.contains("is_crash_ping:true"));
         assert!(tags.contains("service:foo"));
         assert!(tags.contains("language_name:native"));
