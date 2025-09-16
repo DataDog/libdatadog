@@ -13,3 +13,8 @@ pub mod location;
 pub mod mapping;
 pub mod profile;
 pub mod stack_trace;
+
+#[cfg(test)]
+mod tests {
+    include!("profile/tests.rs");
+}
