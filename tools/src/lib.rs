@@ -168,9 +168,7 @@ pub mod headers {
             assert_eq!(
                 matches.len(),
                 expected.len(),
-                "Expected:\n{:#?}\nActual:\n{:#?}",
-                expected,
-                matches
+                "Expected:\n{expected:#?}\nActual:\n{matches:#?}",
             );
             for (i, m) in matches.iter().enumerate() {
                 assert_eq!(m.str, expected[i]);

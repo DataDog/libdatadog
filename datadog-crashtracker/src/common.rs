@@ -32,9 +32,9 @@ impl SharedLibrary {
         let cstr = CString::new(symbol).map_err(|e| e.to_string())?;
         let sym = unsafe { libc::dlsym(self.handle, cstr.as_ptr()) };
         if sym.is_null() {
-            Err(format!("Failed to find symbol: {}", symbol))
+            Err(format!("Failed to find symbol: {symbol}"))
         } else {
-            Ok(format!("{:p}", sym))
+            Ok(format!("{sym:p}"))
         }
     }
 }
