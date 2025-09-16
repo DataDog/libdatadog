@@ -10,7 +10,8 @@ pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 use bytes::Bytes;
 use ddcommon::{hyper_migration, Endpoint, HttpRequestBuilder};
 use hyper::Method;
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 pub type Attempts = u32;
@@ -74,6 +75,85 @@ impl std::fmt::Display for RequestError {
 }
 
 impl std::error::Error for RequestError {}
+
+type ClientCache = Arc<
+    RwLock<
+        HashMap<
+            Option<String>,
+            Arc<
+                dyn Fn(hyper_migration::HttpRequest) -> hyper_migration::ResponseFuture
+                    + Send
+                    + Sync,
+            >,
+        >,
+    >,
+>;
+
+fn get_global_client_cache() -> &'static ClientCache {
+    static CLIENT_CACHE: std::sync::OnceLock<ClientCache> = std::sync::OnceLock::new();
+    CLIENT_CACHE.get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
+}
+
+async fn get_or_create_client(
+    proxy_url: Option<&str>,
+) -> Result<
+    Arc<dyn Fn(hyper_migration::HttpRequest) -> hyper_migration::ResponseFuture + Send + Sync>,
+    RequestError,
+> {
+    let cache_key = proxy_url.map(|s| s.to_string());
+    let cache = get_global_client_cache();
+
+    {
+        let clients = cache.read().await;
+        if let Some(client) = clients.get(&cache_key) {
+            return Ok(client.clone());
+        }
+    }
+
+    let mut clients = cache.write().await;
+
+    if let Some(client) = clients.get(&cache_key) {
+        return Ok(client.clone());
+    }
+
+    #[cfg(feature = "proxy")]
+    let client: Arc<
+        dyn Fn(hyper_migration::HttpRequest) -> hyper_migration::ResponseFuture + Send + Sync,
+    > = {
+        if let Some(url) = proxy_url {
+            let proxy_uri = url.parse().map_err(|_| RequestError::Build)?;
+            let proxy = hyper_http_proxy::Proxy::new(hyper_http_proxy::Intercept::Https, proxy_uri);
+            let proxy_connector = hyper_http_proxy::ProxyConnector::from_proxy(
+                ddcommon::connector::Connector::default(),
+                proxy,
+            )
+            .map_err(|_| RequestError::Build)?;
+            let client = hyper_migration::client_builder().build(proxy_connector);
+            Arc::new(move |req| client.request(req))
+        } else {
+            let client = hyper_migration::new_default_client();
+            Arc::new(move |req| client.request(req))
+        }
+    };
+
+    #[cfg(not(feature = "proxy"))]
+    let client: Arc<
+        dyn Fn(hyper_migration::HttpRequest) -> hyper_migration::ResponseFuture + Send + Sync,
+    > = {
+        let _ = proxy_url;
+        let client = hyper_migration::new_default_client();
+        Arc::new(move |req| client.request(req))
+    };
+
+    clients.insert(cache_key, client.clone());
+    Ok(client)
+}
+
+pub async fn clear_client_cache() {
+    let cache = get_global_client_cache();
+    let mut clients = cache.write().await;
+    clients.clear();
+}
 
 /// Send the `payload` with a POST request to `target` using the provided `retry_strategy` if the
 /// request fails.
@@ -232,32 +312,8 @@ async fn send_request(
         .body(hyper_migration::Body::from_bytes(payload))
         .or(Err(RequestError::Build))?;
 
-    #[cfg(feature = "proxy")]
-    #[allow(clippy::unwrap_used)]
-    let req_future = {
-        if let Some(proxy) = http_proxy {
-            let proxy = hyper_http_proxy::Proxy::new(
-                hyper_http_proxy::Intercept::Https,
-                proxy.parse().unwrap(),
-            );
-            let proxy_connector = hyper_http_proxy::ProxyConnector::from_proxy(
-                ddcommon::connector::Connector::default(),
-                proxy,
-            )
-            .unwrap();
-            hyper_migration::client_builder()
-                .build(proxy_connector)
-                .request(req)
-        } else {
-            hyper_migration::new_default_client().request(req)
-        }
-    };
-
-    #[cfg(not(feature = "proxy"))]
-    let req_future = {
-        let _ = http_proxy;
-        hyper_migration::new_default_client().request(req)
-    };
+    let client = get_or_create_client(http_proxy).await?;
+    let req_future = client(req);
 
     match tokio::time::timeout(timeout, req_future).await {
         Ok(resp) => match resp {
@@ -277,6 +333,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_zero_retries_on_error() {
+        clear_client_cache().await;
         let server = MockServer::start();
 
         let mut mock_503 = server
@@ -327,6 +384,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_retry_logic_error_then_success() {
+        clear_client_cache().await;
         let server = MockServer::start();
 
         let mut mock_503 = server
@@ -378,6 +436,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_retry_logic_max_errors() {
+        clear_client_cache().await;
         let server = MockServer::start();
         let expected_retry_attempts = 3;
         let mut mock_503 = server
@@ -432,6 +491,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_retry_logic_no_errors() {
+        clear_client_cache().await;
         let server = MockServer::start();
         let mut mock_202 = server
             .mock_async(|_when, then| {
@@ -468,5 +528,61 @@ mod tests {
             poll_for_mock_hit(&mut mock_202, 10, 250, 1, true).await,
             "Expected only one request attempt"
         );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_client_caching() {
+        clear_client_cache().await;
+
+        // Test that the same client is reused for the same proxy configuration
+        let _client1 = get_or_create_client(None).await.unwrap();
+        let _client2 = get_or_create_client(None).await.unwrap();
+
+        // Check cache has one entry for no proxy
+        let cache = get_global_client_cache().read().await;
+        assert_eq!(cache.len(), 1, "Should have one cached client");
+        assert!(
+            cache.contains_key(&None),
+            "Should have cached client for no proxy"
+        );
+        drop(cache);
+
+        #[cfg(feature = "proxy")]
+        {
+            let _proxy_client1 = get_or_create_client(Some("http://proxy.example.com:8080"))
+                .await
+                .unwrap();
+            let _proxy_client2 = get_or_create_client(Some("http://proxy.example.com:8080"))
+                .await
+                .unwrap();
+
+            // Check cache now has two entries
+            let cache = get_global_client_cache().read().await;
+            assert_eq!(cache.len(), 2, "Should have two cached clients");
+            assert!(
+                cache.contains_key(&Some("http://proxy.example.com:8080".to_string())),
+                "Should have cached client for proxy"
+            );
+            drop(cache);
+
+            // Different proxy URL should create a different client
+            let _different_proxy = get_or_create_client(Some("http://other.proxy.com:8080"))
+                .await
+                .unwrap();
+
+            let cache = get_global_client_cache().read().await;
+            assert_eq!(cache.len(), 3, "Should have three cached clients");
+            drop(cache);
+        }
+
+        // Test cache clearing
+        let cache_before_clear = get_global_client_cache().read().await.len();
+        assert!(cache_before_clear > 0, "Cache should have entries");
+
+        clear_client_cache().await;
+
+        let cache_after_clear = get_global_client_cache().read().await.len();
+        assert_eq!(cache_after_clear, 0, "Cache should be empty after clearing");
     }
 }
