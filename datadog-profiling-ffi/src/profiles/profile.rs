@@ -39,7 +39,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_sample_type(
 ) -> ProfileStatus {
     ProfileStatus::from(|| -> Result<(), ProfileError> {
         let prof = unsafe { handle.as_inner_mut()? };
-        prof.try_add_sample(vt)
+        prof.try_add_sample_type(vt)
     }())
 }
 

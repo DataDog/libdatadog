@@ -17,7 +17,7 @@ pub struct Profile {
 }
 
 impl Profile {
-    pub fn try_add_sample(&mut self, vt: ValueType) -> Result<(), ProfileError> {
+    pub fn try_add_sample_type(&mut self, vt: ValueType) -> Result<(), ProfileError> {
         Ok(self.sample_type.try_push(vt)?)
     }
 
