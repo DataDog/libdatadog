@@ -5,7 +5,7 @@ use regex::Regex;
 use std::env;
 use std::sync::LazyLock;
 
-const WEBSITE_ONWER_NAME: &str = "WEBSITE_OWNER_NAME";
+const WEBSITE_OWNER_NAME: &str = "WEBSITE_OWNER_NAME";
 const WEBSITE_SITE_NAME: &str = "WEBSITE_SITE_NAME";
 const WEBSITE_RESOURCE_GROUP: &str = "WEBSITE_RESOURCE_GROUP";
 const SITE_EXTENSION_VERSION: &str = "DD_AAS_DOTNET_EXTENSION_VERSION";
@@ -131,7 +131,7 @@ impl AzureMetadata {
 
     fn build_metadata<T: QueryEnv>(query: T) -> Option<Self> {
         let subscription_id =
-            AzureMetadata::extract_subscription_id(query.get_var(WEBSITE_ONWER_NAME));
+            AzureMetadata::extract_subscription_id(query.get_var(WEBSITE_OWNER_NAME));
         let site_name = query.get_var(WEBSITE_SITE_NAME);
 
         let (site_kind, site_type) = match AzureMetadata::get_azure_context(&query) {
@@ -141,7 +141,7 @@ impl AzureMetadata {
 
         let resource_group = query
             .get_var(WEBSITE_RESOURCE_GROUP)
-            .or_else(|| AzureMetadata::extract_resource_group(query.get_var(WEBSITE_ONWER_NAME)));
+            .or_else(|| AzureMetadata::extract_resource_group(query.get_var(WEBSITE_OWNER_NAME)));
         let resource_id = AzureMetadata::build_resource_id(
             subscription_id.as_ref(),
             site_name.as_ref(),
@@ -262,7 +262,7 @@ mod tests {
 
     use indexmap::IndexMap;
 
-    use crate::azure_app_services::{QueryEnv, WEBSITE_ONWER_NAME};
+    use crate::azure_app_services::{QueryEnv, WEBSITE_OWNER_NAME};
 
     use super::*;
 
@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn test_extract_subscription_without_plus_sign() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "foo"), (SERVICE_CONTEXT, "1")]);
+        let mocked_env = MockEnv::new(&[(WEBSITE_OWNER_NAME, "foo"), (SERVICE_CONTEXT, "1")]);
 
         let metadata = AzureMetadata::new(mocked_env).unwrap();
 
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn test_extract_subscription_with_plus_sign() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "foo+bar"), (SERVICE_CONTEXT, "1")]);
+        let mocked_env = MockEnv::new(&[(WEBSITE_OWNER_NAME, "foo+bar"), (SERVICE_CONTEXT, "1")]);
 
         let metadata = AzureMetadata::new(mocked_env).unwrap();
 
@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_extract_subscription_with_empty_string() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, ""), (SERVICE_CONTEXT, "1")]);
+        let mocked_env = MockEnv::new(&[(WEBSITE_OWNER_NAME, ""), (SERVICE_CONTEXT, "1")]);
 
         let metadata = AzureMetadata::new(mocked_env).unwrap();
 
@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn test_extract_subscription_with_only_whitespaces() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "    "), (SERVICE_CONTEXT, "1")]);
+        let mocked_env = MockEnv::new(&[(WEBSITE_OWNER_NAME, "    "), (SERVICE_CONTEXT, "1")]);
 
         let metadata = AzureMetadata::new(mocked_env).unwrap();
 
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn test_extract_subscription_with_only_plus_sign() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "+"), (SERVICE_CONTEXT, "1")]);
+        let mocked_env = MockEnv::new(&[(WEBSITE_OWNER_NAME, "+"), (SERVICE_CONTEXT, "1")]);
 
         let metadata = AzureMetadata::new(mocked_env).unwrap();
 
@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn test_extract_subscription_with_whitespaces_separated_by_plus() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "   + "), (SERVICE_CONTEXT, "1")]);
+        let mocked_env = MockEnv::new(&[(WEBSITE_OWNER_NAME, "   + "), (SERVICE_CONTEXT, "1")]);
 
         let metadata = AzureMetadata::new(mocked_env).unwrap();
 
@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn test_extract_subscription_plus_sign_and_other_string() {
-        let mocked_env = MockEnv::new(&[(WEBSITE_ONWER_NAME, "+other"), (SERVICE_CONTEXT, "1")]);
+        let mocked_env = MockEnv::new(&[(WEBSITE_OWNER_NAME, "+other"), (SERVICE_CONTEXT, "1")]);
 
         let metadata = AzureMetadata::new(mocked_env).unwrap();
 
@@ -421,7 +421,7 @@ mod tests {
     fn test_extract_resource_group_pattern_match_linux() {
         let mocked_env = MockEnv::new(&[
             (
-                WEBSITE_ONWER_NAME,
+                WEBSITE_OWNER_NAME,
                 "00000000-0000-0000-0000-000000000000+test-rg-EastUSwebspace-Linux",
             ),
             ("FUNCTIONS_WORKER_RUNTIME", "node"),
@@ -439,7 +439,7 @@ mod tests {
     fn test_extract_resource_group_pattern_match_windows() {
         let mocked_env = MockEnv::new(&[
             (
-                WEBSITE_ONWER_NAME,
+                WEBSITE_OWNER_NAME,
                 "00000000-0000-0000-0000-000000000000+test-rg-EastUSwebspace",
             ),
             ("FUNCTIONS_WORKER_RUNTIME", "node"),
@@ -456,7 +456,7 @@ mod tests {
     #[test]
     fn test_extract_resource_group_no_pattern_match() {
         let mocked_env = MockEnv::new(&[
-            (WEBSITE_ONWER_NAME, "foo"),
+            (WEBSITE_OWNER_NAME, "foo"),
             (FUNCTIONS_WORKER_RUNTIME, "node"),
             (FUNCTIONS_EXTENSION_VERSION, "~4"),
         ]);
@@ -471,7 +471,7 @@ mod tests {
         let mocked_env = MockEnv::new(&[
             (WEBSITE_RESOURCE_GROUP, "test-rg-env-var"),
             (
-                WEBSITE_ONWER_NAME,
+                WEBSITE_OWNER_NAME,
                 "00000000-0000-0000-0000-000000000000+test-rg-EastUSwebspace-Linux",
             ),
             (SERVICE_CONTEXT, "1"),
@@ -487,7 +487,7 @@ mod tests {
     #[test]
     fn test_build_resource_id() {
         let mocked_env = MockEnv::new(&[
-            (WEBSITE_ONWER_NAME, "foo"),
+            (WEBSITE_OWNER_NAME, "foo"),
             (WEBSITE_SITE_NAME, "my_website"),
             (WEBSITE_RESOURCE_GROUP, "resource_group"),
             (SERVICE_CONTEXT, "1"),
@@ -517,7 +517,7 @@ mod tests {
     #[test]
     fn test_build_resource_id_with_missing_site_name() {
         let mocked_env = MockEnv::new(&[
-            (WEBSITE_ONWER_NAME, "foo"),
+            (WEBSITE_OWNER_NAME, "foo"),
             (WEBSITE_RESOURCE_GROUP, "resource_group"),
             (SERVICE_CONTEXT, "1"),
         ]);
@@ -530,7 +530,7 @@ mod tests {
     #[test]
     fn test_build_resource_id_with_missing_resource_group() {
         let mocked_env = MockEnv::new(&[
-            (WEBSITE_ONWER_NAME, "foo"),
+            (WEBSITE_OWNER_NAME, "foo"),
             (WEBSITE_SITE_NAME, "my_website"),
             (SERVICE_CONTEXT, "1"),
         ]);
