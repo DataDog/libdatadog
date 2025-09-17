@@ -344,10 +344,10 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        while telemetry_srv.hits_async().await == 0 {
+        while telemetry_srv.calls_async().await == 0 {
             sleep(Duration::from_millis(10)).await;
         }
-        telemetry_srv.assert_hits_async(1).await;
+        telemetry_srv.assert_calls_async(1).await;
     }
 
     #[cfg_attr(miri, ignore)]
@@ -373,10 +373,10 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        while telemetry_srv.hits_async().await == 0 {
+        while telemetry_srv.calls_async().await == 0 {
             sleep(Duration::from_millis(10)).await;
         }
-        telemetry_srv.assert_hits_async(1).await;
+        telemetry_srv.assert_calls_async(1).await;
     }
 
     #[cfg_attr(miri, ignore)]
@@ -402,10 +402,10 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        while telemetry_srv.hits_async().await == 0 {
+        while telemetry_srv.calls_async().await == 0 {
             sleep(Duration::from_millis(10)).await;
         }
-        telemetry_srv.assert_hits_async(1).await;
+        telemetry_srv.assert_calls_async(1).await;
     }
 
     #[cfg_attr(miri, ignore)]
@@ -431,10 +431,10 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        while telemetry_srv.hits_async().await == 0 {
+        while telemetry_srv.calls_async().await == 0 {
             sleep(Duration::from_millis(10)).await;
         }
-        telemetry_srv.assert_hits_async(1).await;
+        telemetry_srv.assert_calls_async(1).await;
     }
 
     #[cfg_attr(miri, ignore)]
@@ -460,10 +460,10 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        while telemetry_srv.hits_async().await == 0 {
+        while telemetry_srv.calls_async().await == 0 {
             sleep(Duration::from_millis(10)).await;
         }
-        telemetry_srv.assert_hits_async(1).await;
+        telemetry_srv.assert_calls_async(1).await;
     }
 
     #[cfg_attr(miri, ignore)]
@@ -489,10 +489,10 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        while telemetry_srv.hits_async().await == 0 {
+        while telemetry_srv.calls_async().await == 0 {
             sleep(Duration::from_millis(10)).await;
         }
-        telemetry_srv.assert_hits_async(1).await;
+        telemetry_srv.assert_calls_async(1).await;
     }
 
     #[cfg_attr(miri, ignore)]
@@ -518,10 +518,10 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        while telemetry_srv.hits_async().await == 0 {
+        while telemetry_srv.calls_async().await == 0 {
             sleep(Duration::from_millis(10)).await;
         }
-        telemetry_srv.assert_hits_async(1).await;
+        telemetry_srv.assert_calls_async(1).await;
     }
 
     #[cfg_attr(miri, ignore)]
@@ -547,10 +547,10 @@ mod tests {
         client.start().await;
         let _ = client.send(&data);
         client.shutdown().await;
-        while telemetry_srv.hits_async().await == 0 {
+        while telemetry_srv.calls_async().await == 0 {
             sleep(Duration::from_millis(10)).await;
         }
-        telemetry_srv.assert_hits_async(1).await;
+        telemetry_srv.assert_calls_async(1).await;
     }
 
     #[test]
@@ -674,7 +674,7 @@ mod tests {
 
         let telemetry_srv = server
             .mock_async(|when, then| {
-                when.method(POST).body_contains(r#""runtime_id":"foo""#);
+                when.method(POST).body_includes(r#""runtime_id":"foo""#);
                 then.status(200).body("");
             })
             .await;
@@ -698,10 +698,10 @@ mod tests {
             })
             .unwrap();
         client.shutdown().await;
-        while telemetry_srv.hits_async().await == 0 {
+        while telemetry_srv.calls_async().await == 0 {
             sleep(Duration::from_millis(10)).await;
         }
         // One payload generate-metrics
-        telemetry_srv.assert_hits_async(1).await;
+        telemetry_srv.assert_calls_async(1).await;
     }
 }

@@ -28,7 +28,7 @@ datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features 
 ddcommon = {path = "../ddcommon" }
 futures = { version = "0.3", default-features = false }
 http = "1.0"
-hyper = { version = "1.6", features = ["http1", "client"] }
+hyper = { workspace = true}
 http-body-util = "0.1"
 hyper-multipart-rfc7578 = "0.9.0"
 indexmap = "2.2"
