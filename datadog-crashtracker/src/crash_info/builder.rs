@@ -178,20 +178,20 @@ impl CrashInfoBuilder {
         &mut self,
         additional_tags: Vec<String>,
     ) -> anyhow::Result<&mut Self> {
-        if let Some(experimental) = &mut self.experimental {
-            experimental.additional_tags = additional_tags;
-        } else {
-            self.experimental = Some(Experimental::new().with_additional_tags(additional_tags));
-        }
+        // if let Some(experimental) = &mut self.experimental {
+        //     experimental.additional_tags = additional_tags;
+        // } else {
+        //     self.experimental = Some(Experimental::new().with_additional_tags(additional_tags));
+        // }
         Ok(self)
     }
 
     pub fn with_experimental_ucontext(&mut self, ucontext: String) -> anyhow::Result<&mut Self> {
-        if let Some(experimental) = &mut self.experimental {
-            experimental.ucontext = Some(ucontext);
-        } else {
-            self.experimental = Some(Experimental::new().with_ucontext(ucontext));
-        }
+        // if let Some(experimental) = &mut self.experimental {
+        //     experimental.ucontext = Some(ucontext);
+        // } else {
+        //     self.experimental = Some(Experimental::new().with_ucontext(ucontext));
+        // }
         Ok(self)
     }
 

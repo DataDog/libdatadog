@@ -135,7 +135,6 @@ pub(crate) fn emit_crashreport(
     emit_spans(pipe)?;
     consume_and_emit_additional_tags(pipe)?;
     emit_traces(pipe)?;
-    emit_runtime_stack(pipe)?;
 
     #[cfg(target_os = "linux")]
     emit_proc_self_maps(pipe)?;
@@ -150,6 +149,9 @@ pub(crate) fn emit_crashreport(
         let fault_rsp = extract_rsp(ucontext);
         unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_rsp)? };
     }
+
+    emit_runtime_stack(pipe)?;
+
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
 
