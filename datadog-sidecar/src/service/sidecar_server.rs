@@ -297,12 +297,12 @@ impl SidecarServer {
 
             let futures = clients
                 .values()
-                .filter_map(|client| client.client.stats().ok())
+                .filter_map(|client| client.client.lock_or_panic().worker.stats().ok())
                 .collect::<Vec<_>>();
 
             let metric_counts = clients
                 .values()
-                .map(|client| client.telemetry_metrics.lock_or_panic().len() as u32)
+                .map(|client| client.client.lock_or_panic().telemetry_metrics.len() as u32)
                 .collect::<Vec<_>>();
 
             (futures, metric_counts)
@@ -403,7 +403,7 @@ impl SidecarInterface for SidecarServer {
             let env = entry.get().env.as_deref().unwrap_or("none");
 
             // Lock telemetry client
-            let mut telemetry = self.telemetry_clients.get_or_create(
+            let telemetry_mutex = self.telemetry_clients.get_or_create(
                 service,
                 env,
                 &instance_id,
@@ -420,6 +420,7 @@ impl SidecarInterface for SidecarServer {
                         })
                 },
             );
+            let mut telemetry = telemetry_mutex.lock_or_panic();
 
             let mut actions_to_process = vec![];
             let mut composer_paths_to_process = vec![];
@@ -462,24 +463,25 @@ impl SidecarInterface for SidecarServer {
             }
 
             if !actions_to_process.is_empty() {
-                let client_clone = telemetry.clone();
-                let mut handle = telemetry.handle.lock_or_panic();
-                let last_handle = handle.take();
-                *handle = Some(tokio::spawn(async move {
+                let telemetry_mutex_clone = telemetry_mutex.clone();
+                let worker = telemetry.worker.clone();
+                let last_handle = telemetry.handle.take();
+                telemetry.handle = Some(tokio::spawn(async move {
                     if let Some(last_handle) = last_handle {
                         last_handle.await.ok();
                     };
-                    let processed = client_clone.process_actions(actions_to_process);
+                    let processed = telemetry_mutex_clone
+                        .lock_or_panic()
+                        .process_actions(actions_to_process);
                     debug!("Sending Processed Actions :{processed:?}");
-                    client_clone.client.send_msgs(processed).await.ok();
+                    worker.send_msgs(processed).await.ok();
                 }));
             }
 
             if !composer_paths_to_process.is_empty() {
-                let client_clone = telemetry.clone();
-                let mut handle = telemetry.handle.lock_or_panic();
-                let last_handle = handle.take();
-                *handle = Some(tokio::spawn(async move {
+                let worker = telemetry.worker.clone();
+                let last_handle = telemetry.handle.take();
+                telemetry.handle = Some(tokio::spawn(async move {
                     if let Some(last_handle) = last_handle {
                         last_handle.await.ok();
                     };
@@ -487,7 +489,7 @@ impl SidecarInterface for SidecarServer {
                         TelemetryCachedClient::process_composer_paths(composer_paths_to_process)
                             .await;
                     debug!("Sending Composer Paths :{composer_actions:?}");
-                    client_clone.client.send_msgs(composer_actions).await.ok();
+                    worker.send_msgs(composer_actions).await.ok();
                 }));
             }
 
