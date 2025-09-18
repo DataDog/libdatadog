@@ -66,8 +66,8 @@ pub struct TelemetryCachedClient {
     pub buffered_integrations: HashSet<Integration>,
     pub buffered_composer_paths: HashSet<PathBuf>,
     pub last_endpoints_push: SystemTime,
-    pub telemetry_metrics: Arc<Mutex<HashMap<String, ContextKey>>>,
-    pub handle: Arc<Mutex<Option<JoinHandle<()>>>>,
+    pub telemetry_metrics: HashMap<String, ContextKey>,
+    pub handle: Option<JoinHandle<()>>,
 }
 
 impl TelemetryCachedClient {
