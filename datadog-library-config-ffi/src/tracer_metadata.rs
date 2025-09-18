@@ -126,7 +126,7 @@ pub unsafe extern "C" fn ddog_tracer_metadata_store(
 
     let metadata = &mut *ptr;
     let result: anyhow::Result<TracerMemfdHandle> =
-        match tracer_metadata::store_tracer_metadata(&metadata) {
+        match tracer_metadata::store_tracer_metadata(metadata) {
             #[cfg(target_os = "linux")]
             Ok(handle) => {
                 use std::os::fd::{IntoRawFd, OwnedFd};
