@@ -8,7 +8,8 @@ use crate::profiles::{
 use crate::{ensure_non_null_out_parameter, ArcHandle, ProfileStatus};
 use core::mem;
 use datadog_profiling::profiles::datatypes::{
-    Profile, SampleBuilder, ScratchPad, ValueType, MAX_SAMPLE_TYPES,
+    Profile, ProfilesDictionary, SampleBuilder, ScratchPad, ValueType,
+    MAX_SAMPLE_TYPES,
 };
 use datadog_profiling::profiles::ProfileError;
 use ddcommon_ffi::Slice;
@@ -95,12 +96,14 @@ pub unsafe extern "C" fn ddog_prof_Profile_drop(
 /// An adapter from the offset-based pprof format to the separate profiles
 /// format that sort of mirrors the otel format.
 ///
-/// Treat this as opaque. Its definition is available for layout reasons, but
-/// it should only be created and modified through the profile adapter FFI
-/// functions. Otherwise, you could corrupt the adapter and crash.
+/// Don't mutate this directly. Its definition is available for FFI layout
+/// reasons and you can use it to iterate over the profiles, but it should
+/// only be created and modified through the profile adapter FFI functions.
+/// Otherwise, you could corrupt the adapter and crash.
 #[derive(Default)]
 #[repr(C)]
 pub struct ProfileAdapter {
+    dictionary: ArcHandle<ProfilesDictionary>,
     profiles: ddcommon_ffi::vec::Vec<ProfileHandle<Profile>>,
     // An indirection used like `self.profiles[self.mapping[i]]`. There are
     // at least as many mappings as profiles.
@@ -116,6 +119,8 @@ impl Drop for ProfileAdapter {
         }
         let mappings = mem::take(&mut self.mappings);
         drop(mappings);
+
+        self.dictionary.drop_resource();
     }
 }
 
@@ -139,6 +144,8 @@ impl Drop for ProfileAdapter {
 /// Here is a partial C example using some PHP profiles.
 ///
 /// ```c
+/// ddog_prof_ProfilesDictionaryHandle dictionary = /* ... */;
+///
 /// // Assume these ValueType entries were populated using your string table
 /// // (type/unit ids). Order corresponds to the legacy offsets:
 /// //   [wall-time, wall-samples, cpu-time, alloc-bytes, alloc-count]
@@ -147,10 +154,10 @@ impl Drop for ProfileAdapter {
 /// };
 /// int64_t groupings[5] = { 0, 0, 1, 0, 0 };
 ///
-///
 /// ddog_prof_ProfileAdapterHandle adapter;
 /// ddog_prof_ProfileStatus st = ddog_prof_ProfileAdapter_new(
 ///     &adapter,
+///     dictionary,
 ///     (ddog_Slice_ValueType){ .ptr = value_types, .len = 5 },
 ///     (ddog_Slice_I64){ .ptr = groupings, .len = 5 }
 /// );
@@ -186,12 +193,16 @@ impl Drop for ProfileAdapter {
 ///
 /// // ...later...
 ///
+/// // order of these doesn't matter, the adapter keeps a refcount
+/// // alive on the dictionary.
+/// ddog_prof_ProfilesDictionaryHandle_drop(&dictionary);
 /// ddog_prof_ProfileAdapter_drop(&adapter);
 /// ```
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_ProfileAdapter_new(
     out: *mut ProfileAdapter,
+    dictionary: ArcHandle<ProfilesDictionary>,
     value_types: Slice<'_, ValueType>,
     groupings: Slice<'_, i64>,
 ) -> ProfileStatus {
@@ -214,6 +225,10 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_new(
     if value_types.is_empty() {
         return ProfileStatus::from(c"invalid input: arguments value_types and groupings to ddog_prof_ProfileAdapter_new must not be empty");
     }
+
+    let Ok(dictionary) = dictionary.try_clone() else {
+        return ProfileStatus::from(c"reference count overflow: profile adapter could not clone the profiles dictionary");
+    };
 
     // Build profiles (one per contiguous run) and a mapping per offset.
     let mut mappings = ddcommon_ffi::vec::Vec::new();
@@ -256,7 +271,7 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_new(
         }
     }
 
-    unsafe { out.write(ProfileAdapter { profiles, mappings }) };
+    unsafe { out.write(ProfileAdapter { dictionary, profiles, mappings }) };
     ProfileStatus::OK
 }
 
@@ -265,52 +280,6 @@ fn count_runs_and_longest_run(groupings: &[i64]) -> (usize, usize) {
     RunsIter::new(groupings).fold((0, 0), |(n_runs, longest), run| {
         (n_runs + 1, longest.max(run.len()))
     })
-}
-
-/// Iterator over contiguous runs, returning the range for the run rather than
-/// a slice of the data. This allows it to be used for element-wise arrays
-/// like groupings and values.
-///
-/// # Examples
-///
-/// ```
-/// let groupings = &[0, 0, 1, 0, 0, 1, 0];
-///            // run 1,    2, 3,    4, 5
-/// let iter = datadog_profiling_ffi::profiles::RunsIter::new(groupings);
-/// let runs = iter.collect::<Vec<_>>();
-/// assert_eq!(runs.as_slice(), &[0..2, 2..3, 3..5, 5..6, 6..7]);
-/// ```
-pub struct RunsIter<'a> {
-    slice: &'a [i64],
-    start: usize,
-}
-
-impl<'a> RunsIter<'a> {
-    #[inline]
-    pub fn new(slice: &'a [i64]) -> Self {
-        Self { slice, start: 0 }
-    }
-
-    #[inline]
-    fn run_len(&self, start: usize) -> usize {
-        let id = self.slice[start];
-        self.slice[start..].iter().copied().take_while(|&i| i == id).count()
-    }
-}
-
-impl<'a> Iterator for RunsIter<'a> {
-    type Item = Range<usize>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.start < self.slice.len() {
-            let start = self.start;
-            let end = start + self.run_len(start);
-            self.start = end; // The new run starts at the end of the previous.
-            Some(start..end)
-        } else {
-            None
-        }
-    }
 }
 
 /// Maps the non-zero values to a profile, and returns using out parameters
@@ -405,27 +374,71 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_drop(
     drop(adapter);
 }
 
+/// Iterator over contiguous runs, returning the range for the run rather than
+/// a slice of the data. This allows it to be used for element-wise arrays
+/// like groupings and values.
+///
+/// # Examples
+///
+/// ```
+/// let groupings = &[0, 0, 1, 0, 0, 1, 0];
+///            // run 1,    2, 3,    4, 5
+/// let iter = datadog_profiling_ffi::profiles::RunsIter::new(groupings);
+/// let runs = iter.collect::<Vec<_>>();
+/// assert_eq!(runs.as_slice(), &[0..2, 2..3, 3..5, 5..6, 6..7]);
+/// ```
+pub struct RunsIter<'a> {
+    slice: &'a [i64],
+    start: usize,
+}
+
+impl<'a> RunsIter<'a> {
+    #[inline]
+    pub fn new(slice: &'a [i64]) -> Self {
+        Self { slice, start: 0 }
+    }
+
+    #[inline]
+    fn run_len(&self, start: usize) -> usize {
+        let id = self.slice[start];
+        self.slice[start..].iter().copied().take_while(|&i| i == id).count()
+    }
+}
+
+impl<'a> Iterator for RunsIter<'a> {
+    type Item = Range<usize>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.start < self.slice.len() {
+            let start = self.start;
+            let end = start + self.run_len(start);
+            self.start = end; // The new run starts at the end of the previous.
+            Some(start..end)
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::profiles::ddog_prof_ProfilesDictionary_drop;
     use datadog_profiling::profiles::collections::StringId;
     use proptest::prelude::*;
     use proptest::test_runner::Config as ProptestConfig;
 
     // Tighter limits under Miri
     #[cfg(miri)]
-    const PROPTEST_CASES: u32 = 8;
+    const PROPTEST_CASES: u32 = 32;
     #[cfg(not(miri))]
     const PROPTEST_CASES: u32 = 64;
 
-    #[cfg(miri)]
-    const MAX_SHRINK_ITERS: u32 = 0;
-    #[cfg(not(miri))]
     const MAX_SHRINK_ITERS: u32 = 100;
 
     // Bound the number of runs to keep input small under Miri
     #[cfg(miri)]
-    const MAX_RUNS: usize = 3;
+    const MAX_RUNS: usize = 4;
     #[cfg(not(miri))]
     const MAX_RUNS: usize = 8;
 
@@ -476,12 +489,13 @@ mod tests {
         #![proptest_config(ProptestConfig { cases: PROPTEST_CASES, max_shrink_iters: MAX_SHRINK_ITERS, .. ProptestConfig::default() })]
         #[test]
         fn adapter_new_ok_on_valid_inputs((groupings, value_types) in groupings_and_value_types()) {
-
+            let mut dict = ArcHandle::new(ProfilesDictionary::try_new().unwrap()).unwrap();
             // Construct adapter
             let mut adapter = ProfileAdapter::default();
             let status = unsafe {
                 ddog_prof_ProfileAdapter_new(
                     &mut adapter,
+                    dict,
                     ddcommon_ffi::Slice::from(value_types.as_slice()),
                     ddcommon_ffi::Slice::from(groupings.as_slice()),
                 )
@@ -492,6 +506,8 @@ mod tests {
             unsafe { ddog_prof_ProfileAdapter_drop(&mut adapter) };
             // Double-drop is a no-op
             unsafe { ddog_prof_ProfileAdapter_drop(&mut adapter) };
+
+            unsafe { ddog_prof_ProfilesDictionary_drop(&mut dict) };
         }
 
         #[test]
@@ -502,21 +518,24 @@ mod tests {
                 groupings.insert(idx, groupings[idx]);
                 // Now first run is length >= 2; insert again to make it 3
                 groupings.insert(idx, groupings[idx]);
-            let len = groupings.len();
-            let vt = ValueType::new(StringId::EMPTY, StringId::EMPTY);
-            let value_types = vec![vt; len];
+                let len = groupings.len();
+                let vt = ValueType::new(StringId::EMPTY, StringId::EMPTY);
+                let value_types = vec![vt; len];
 
-            let mut adapter = ProfileAdapter::default();
-            let status = unsafe {
-                ddog_prof_ProfileAdapter_new(
-                    &mut adapter,
-                    ddcommon_ffi::Slice::from(value_types.as_slice()),
-                    ddcommon_ffi::Slice::from(groupings.as_slice()),
-                )
-            };
+                let mut adapter = ProfileAdapter::default();
+                let mut dict = ArcHandle::new(ProfilesDictionary::try_new().unwrap()).unwrap();
+                let status = unsafe {
+                    ddog_prof_ProfileAdapter_new(
+                        &mut adapter,
+                        dict,
+                        ddcommon_ffi::Slice::from(value_types.as_slice()),
+                        ddcommon_ffi::Slice::from(groupings.as_slice()),
+                    )
+                };
                 // Today: may succeed; this property documents future intended failure. Accept either OK or Err for now.
                 let _ = Result::<(), std::borrow::Cow<'static, std::ffi::CStr>>::from(status);
-            unsafe { ddog_prof_ProfileAdapter_drop(&mut adapter) };
+                unsafe { ddog_prof_ProfileAdapter_drop(&mut adapter) };
+                unsafe { ddog_prof_ProfilesDictionary_drop(&mut dict) };
             }
         }
     }
