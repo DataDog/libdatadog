@@ -273,6 +273,7 @@ impl TraceExporterBuilder {
                 .set_language(&self.language)
                 .set_language_version(&self.language_version)
                 .set_service_name(&self.service)
+                .set_env(&self.env)
                 .set_tracer_version(&self.tracer_version)
                 .set_heartbeat(telemetry_config.heartbeat)
                 .set_url(base_url)

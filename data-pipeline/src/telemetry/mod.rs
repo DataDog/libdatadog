@@ -25,6 +25,7 @@ use tokio::runtime::Handle;
 #[derive(Default)]
 pub struct TelemetryClientBuilder {
     service_name: Option<String>,
+    env: Option<String>,
     language: Option<String>,
     language_version: Option<String>,
     tracer_version: Option<String>,
@@ -36,6 +37,12 @@ impl TelemetryClientBuilder {
     /// Sets the service name for the telemetry client
     pub fn set_service_name(mut self, name: &str) -> Self {
         self.service_name = Some(name.to_string());
+        self
+    }
+
+    /// Sets the env name for the telemetry client
+    pub fn set_env(mut self, name: &str) -> Self {
+        self.env = Some(name.to_string());
         self
     }
 
@@ -97,6 +104,7 @@ impl TelemetryClientBuilder {
         builder.config = self.config;
         // Send only metrics and logs and drop lifecycle events
         builder.flavor = TelemetryWorkerFlavor::MetricsLogs;
+        builder.application.env = self.env;
 
         if let Some(id) = self.runtime_id {
             builder.runtime_id = Some(id);
@@ -273,6 +281,7 @@ mod tests {
     async fn get_test_client(url: &str) -> TelemetryClient {
         let (client, mut worker) = TelemetryClientBuilder::default()
             .set_service_name("test_service")
+            .set_env("test_env")
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
@@ -288,6 +297,7 @@ mod tests {
     fn builder_test() {
         let builder = TelemetryClientBuilder::default()
             .set_service_name("test_service")
+            .set_env("test_env")
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
@@ -296,6 +306,7 @@ mod tests {
             .set_heartbeat(30);
 
         assert_eq!(&builder.service_name.unwrap(), "test_service");
+        assert_eq!(&builder.env.unwrap(), "test_env");
         assert_eq!(&builder.language.unwrap(), "test_language");
         assert_eq!(&builder.language_version.unwrap(), "test_language_version");
         assert_eq!(&builder.tracer_version.unwrap(), "test_tracer_version");
@@ -315,6 +326,7 @@ mod tests {
     async fn spawn_test() {
         let _ = TelemetryClientBuilder::default()
             .set_service_name("test_service")
+            .set_env("test_env")
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
@@ -681,6 +693,7 @@ mod tests {
 
         let (client, mut worker) = TelemetryClientBuilder::default()
             .set_service_name("test_service")
+            .set_env("test_env")
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
