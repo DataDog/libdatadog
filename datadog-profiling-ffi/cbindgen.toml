@@ -51,6 +51,8 @@ renaming_overrides_prefixing = true
 "ProfileHandle_Profile" = "ddog_prof_ProfileHandle"
 "ProfileHandle_SampleBuilder" = "ddog_prof_SampleBuilderHandle"
 "ProfileStatus" = "ddog_prof_Status"
+"Vec_ProfileHandleProfile" = "ddog_prof_Vec_ProfileHandle"
+"Vec_Usize" = "ddog_Vec_Usize"
 
 # Exporter / Legacy
 "CompressorFinishResult" = "ddog_prof_Compressor_FinishResult"

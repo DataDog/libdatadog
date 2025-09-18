@@ -24,7 +24,7 @@ impl<T> Clone for ArcHandle<T> {
 }
 impl<T> Default for ArcHandle<T> {
     fn default() -> Self {
-        Self(std::ptr::null_mut())
+        Self(null_mut())
     }
 }
 

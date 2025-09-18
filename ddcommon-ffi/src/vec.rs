@@ -94,7 +94,6 @@ impl<T> Vec<T> {
     }
 
     pub fn push(&mut self, value: T) {
-        // todo: I'm never sure when to propagate unsafe upwards
         let mut vec = ManuallyDrop::new(unsafe {
             alloc::vec::Vec::from_raw_parts(self.ptr as *mut T, self.len, self.capacity)
         });
@@ -113,6 +112,40 @@ impl<T> Vec<T> {
             capacity: 0,
             _marker: PhantomData,
         }
+    }
+
+    /// Tries to reserve capacity for at least additional more elements to be
+    /// inserted in the given `Vec<T>`.
+    ///
+    /// See [`std::vec::Vec::try_reserve`] for more information.
+    pub fn try_reserve(
+        &mut self,
+        additional: usize,
+    ) -> Result<(), std::collections::TryReserveError> {
+        let mut vec = ManuallyDrop::new(unsafe {
+            alloc::vec::Vec::from_raw_parts(self.ptr as *mut T, self.len, self.capacity)
+        });
+        let result = vec.try_reserve(additional);
+        self.replace(vec);
+        result
+    }
+
+    /// Tries to reserve the minimum capacity for at least additional elements
+    /// to be inserted in the given `Vec<T>`. Unlike `try_reserve`, this will
+    /// not deliberately over-allocate to speculatively avoid frequent
+    /// allocations.
+    ///
+    /// See [`std::vec::Vec::try_reserve_exact`] for more information.
+    pub fn try_reserve_exact(
+        &mut self,
+        additional: usize,
+    ) -> Result<(), std::collections::TryReserveError> {
+        let mut vec = ManuallyDrop::new(unsafe {
+            alloc::vec::Vec::from_raw_parts(self.ptr as *mut T, self.len, self.capacity)
+        });
+        let result = vec.try_reserve_exact(additional);
+        self.replace(vec);
+        result
     }
 }
 

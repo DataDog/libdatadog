@@ -60,3 +60,4 @@ tokio-util = "0.7.1"
 
 [dev-dependencies]
 datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["bolero", "prost_impls"] }
+proptest = "1"

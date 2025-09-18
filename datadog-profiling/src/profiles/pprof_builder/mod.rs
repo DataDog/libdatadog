@@ -242,7 +242,7 @@ impl<'a> PprofBuilder<'a> {
     ) -> Result<(), TryAddProfileError> {
         let (profiles, _) = self.transition_to_adding_profiles()?;
 
-        if profile.sample_type.len() < 2 {
+        if profile.sample_types.len() < 2 {
             return Err(TryAddProfileError::WrongSampleTypeCountForPoisson);
         }
 
@@ -333,7 +333,7 @@ impl<'a> PprofBuilder<'a> {
         // --- unify sample types across profiles and emit ---
         let n_sample_types = profiles
             .iter()
-            .map(|pwu| pwu.profile.sample_type.len())
+            .map(|pwu| pwu.profile.sample_types.len())
             .sum();
         let n_profiles = profiles.len();
 
@@ -343,7 +343,7 @@ impl<'a> PprofBuilder<'a> {
             remaps.try_reserve_exact(n_profiles)?;
             for profile in profiles.iter().map(|pwu| pwu.profile) {
                 let mut offsets = ArrayVec::new();
-                for sample_type in profile.sample_type.iter() {
+                for sample_type in profile.sample_types.iter() {
                     if offsets
                         .try_push(remapper.remap(writer, *sample_type)?)
                         .is_err()

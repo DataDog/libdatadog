@@ -10,15 +10,19 @@ pub const MAX_SAMPLE_TYPES: usize = 2;
 
 #[derive(Debug, Default)]
 pub struct Profile {
-    pub sample_type: ArrayVec<ValueType, MAX_SAMPLE_TYPES>,
+    pub sample_types: ArrayVec<ValueType, MAX_SAMPLE_TYPES>,
     pub samples: Vec<Sample>,
     pub period_types: Option<ValueType>,
     pub period: Option<i64>,
 }
 
 impl Profile {
+    pub fn sample_types(&self) -> &[ValueType] {
+        self.sample_types.as_slice()
+    }
+
     pub fn try_add_sample_type(&mut self, vt: ValueType) -> Result<(), ProfileError> {
-        Ok(self.sample_type.try_push(vt)?)
+        Ok(self.sample_types.try_push(vt)?)
     }
 
     pub fn add_period(&mut self, period: i64, vt: ValueType) {
@@ -27,7 +31,7 @@ impl Profile {
     }
 
     pub fn add_sample(&mut self, sample: Sample) -> Result<(), ProfileError> {
-        if self.sample_type.len() != sample.values.len() {
+        if self.sample_types.len() != sample.values.len() {
             return Err(self.sample_values_mismatch_error(sample.values.as_slice()));
         }
         self.samples.try_push(sample).map_err(|_| {
@@ -39,7 +43,7 @@ impl Profile {
     #[cold]
     #[inline(never)]
     fn sample_values_mismatch_error(&self, values: &[i64]) -> ProfileError {
-        let sample_types = self.sample_type.len();
+        let sample_types = self.sample_types.len();
         let values_len = values.len();
         // todo: wire up string table so we can print out the sample type?
         ProfileError::fmt(format_args!(

@@ -136,7 +136,9 @@ impl<T> ProfileHandle<T> {
     ///
     /// Taking from the same handle multiple times is supported and safe.
     pub unsafe fn take(&mut self) -> Option<Box<T>> {
-        (!self.ptr.is_null()).then(|| unsafe { Box::from_raw(self.ptr.cast()) })
+        // todo: MSRV 1.88 replace with core::mem::take.
+        let ptr = core::mem::replace(&mut self.ptr, std::ptr::null_mut());
+        (!ptr.is_null()).then(|| unsafe { Box::from_raw(ptr.cast()) })
     }
 
     /// Tries to return a reference to the underlying value.

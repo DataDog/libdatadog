@@ -24,6 +24,7 @@ use std::time::SystemTime;
 /// - `out` must be non-null and valid for writes of `SampleBuilderHandle`.
 /// - `scratchpad` must be a live handle; its resource must outlive all uses of
 ///   the returned builder handle.
+#[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_SampleBuilder_new(
     out: *mut ProfileHandle<SampleBuilder>,
@@ -65,6 +66,7 @@ pub unsafe extern "C" fn ddog_prof_SampleBuilder_stack_id(
 ///
 /// - `handle` must refer to a live builder and is treated as a unique mutable
 ///   reference for the duration of the call.
+#[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_SampleBuilder_value(
     mut handle: ProfileHandle<SampleBuilder>,
@@ -127,6 +129,7 @@ pub unsafe extern "C" fn ddog_prof_SampleBuilder_attribute_int(
 ///   reference for the duration of the call.
 /// - `link` must be non-null and point to a valid `Link` for the duration of
 ///   the call.
+#[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_SampleBuilder_link(
     mut handle: ProfileHandle<SampleBuilder>,
