@@ -90,16 +90,16 @@ where
     }
 }
 
-impl Eq for (dyn BorrowableAggregationKey + '_) {}
+impl Eq for dyn BorrowableAggregationKey + '_ {}
 
-impl PartialEq for (dyn BorrowableAggregationKey + '_) {
+impl PartialEq for dyn BorrowableAggregationKey + '_ {
     fn eq(&self, other: &dyn BorrowableAggregationKey) -> bool {
         self.borrowed_aggregation_key()
             .eq(&other.borrowed_aggregation_key())
     }
 }
 
-impl std::hash::Hash for (dyn BorrowableAggregationKey + '_) {
+impl std::hash::Hash for dyn BorrowableAggregationKey + '_ {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.borrowed_aggregation_key().hash(state)
     }
