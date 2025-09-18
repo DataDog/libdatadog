@@ -118,9 +118,10 @@ pub unsafe extern "C" fn ddog_tracer_metadata_store(
     ptr: *mut TracerMetadata,
 ) -> Result<TracerMemfdHandle> {
     if ptr.is_null() {
-        Err(anyhow::anyhow!(
+        return Err::<TracerMemfdHandle, _>(anyhow::anyhow!(
             "Failed to store tracer metadata: received a null pointer"
-        ));
+        ))
+        .into();
     }
 
     let metadata = &mut *ptr;
