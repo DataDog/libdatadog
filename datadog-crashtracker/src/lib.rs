@@ -54,11 +54,21 @@
 mod collector;
 #[cfg(all(windows, feature = "collector_windows"))]
 mod collector_windows;
+#[cfg(unix)]
+mod common;
 mod crash_info;
 #[cfg(all(unix, feature = "receiver"))]
 mod receiver;
+
+// Keep this module private to avoid exposing blazesym to users of the crate
 #[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
+#[cfg(not(feature = "benchmarking"))]
 mod shared;
+
+// Make this module public when benchmarking is enabled to allow access to constants
+#[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
+#[cfg(feature = "benchmarking")]
+pub mod shared;
 
 #[cfg(all(unix, feature = "collector"))]
 pub use collector::{
@@ -83,3 +93,9 @@ pub use receiver::{
 pub use shared::configuration::{
     CrashtrackerConfiguration, CrashtrackerReceiverConfig, StacktraceCollection,
 };
+
+#[cfg(all(unix, feature = "benchmarking"))]
+pub use receiver::benchmark;
+
+#[cfg(unix)]
+pub use common::{get_data_folder_path, SharedLibrary};

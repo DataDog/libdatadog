@@ -35,3 +35,7 @@ bench = false
 [[bin]]
 name = "crashtracker_receiver"
 bench = false
+
+[[bin]]
+name = "crashing_test_app"
+bench = false

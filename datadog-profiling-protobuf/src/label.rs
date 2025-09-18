@@ -4,11 +4,11 @@
 use super::{Record, StringOffset, Value, WireType, OPT_ZERO};
 use std::io::{self, Write};
 
-/// Label includes additional context for this sample. It can include things
+/// A label includes additional context for this sample. It can include things
 /// like a thread id, allocation size, etc.
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "bolero", derive(bolero::generator::TypeGenerator))]
 pub struct Label {
     /// An annotation for a sample, e.g. "allocation_size".
     pub key: Record<StringOffset, 1, OPT_ZERO>,

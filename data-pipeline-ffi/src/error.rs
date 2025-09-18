@@ -31,7 +31,9 @@ pub enum ExporterErrorCode {
     IoError,
     NetworkUnknown,
     Serde,
+    Shutdown,
     TimedOut,
+    Telemetry,
     Internal,
     #[cfg(feature = "catch_panic")]
     Panic,
@@ -59,7 +61,9 @@ impl Display for ExporterErrorCode {
             Self::IoError => write!(f, "Input/Output error"),
             Self::NetworkUnknown => write!(f, "Unknown network error"),
             Self::Serde => write!(f, "Serialization/Deserialization error"),
+            Self::Shutdown => write!(f, "Shutdown timed out"),
             Self::TimedOut => write!(f, "Operation timed out"),
+            Self::Telemetry => write!(f, "Telemetry error"),
             Self::Internal => write!(f, "Internal error"),
             #[cfg(feature = "catch_panic")]
             Self::Panic => write!(f, "Operation panicked"),
@@ -92,7 +96,7 @@ impl From<TraceExporterError> for ExporterError {
             },
             TraceExporterError::Builder(e) => match e {
                 BuilderErrorKind::InvalidUri(_) => ExporterErrorCode::InvalidUrl,
-                BuilderErrorKind::InvalidTelemetryConfig => ExporterErrorCode::InvalidArgument,
+                BuilderErrorKind::InvalidTelemetryConfig(_) => ExporterErrorCode::InvalidArgument,
                 BuilderErrorKind::InvalidConfiguration(_) => ExporterErrorCode::InvalidArgument,
             },
             TraceExporterError::Internal(e) => match e {
@@ -129,6 +133,8 @@ impl From<TraceExporterError> for ExporterError {
                     ExporterErrorCode::HttpUnknown
                 }
             }
+            TraceExporterError::Shutdown(_) => ExporterErrorCode::Shutdown,
+            TraceExporterError::Telemetry(_) => ExporterErrorCode::Telemetry,
             TraceExporterError::Serialization(_) => ExporterErrorCode::Serde,
         };
         ExporterError::new(code, &value.to_string())

@@ -29,30 +29,15 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 Build `libdatadog` as usual with `cargo build`.
 
 #### Builder crate
-To generate a release with the builder crate use `cargo build -p builder` this will trigger all the necessary steps to
-create the libraries, binaries, headers and package config files needed to use libdatadog in your project. The default
-build does not include any capability so in order to add them here is the list of allowed features:
-- profiling: includes the profiling ffi calls and headers to the package.
-- telemetry: adds the telemetry symbols and headers to the package.
-- data-pipeline: includes the data pipeline ffi calls to the library and headers to the package.
-- crashtracker: adds crashtracking capabilities to the package.
-- symbolizer: adds symbolizer capabilities to the package.
 
-In order to set an output directory there's the `LIBDD_OUTPUT_FOLDER` environment varibale. Here's an example to create
-a package with all the features and save the relese on `/opt/release` folder:
-```bash
-LIBDD_OUTPUT_FOLDER=/opt/release cargo build -p builder --features profiling,telemetry,data-pipeline,crashtracker,symbolizer
-```
+You can generate a release using the builder crate. This will trigger all the necessary steps to create the libraries, binaries, headers and package config files needed to use a pre-built libdatadog binary in a (non-rust) project.
+The default build does not include any capability so you'll need to list all features you want to include. You can see a full, up-to-date list of features in the `builder/Cargo.toml` file.
 
-#### Build scripts
-This is the non-prefered way of building a release, it's use is discouraged and it will be soon deprecated in favour of
-using the builder crate.
-
-To package a release with the generated ffi header and CMake module, use the `build-profiling-ffi.sh` / `build-telemetry-ffi.sh` helper scripts.
-Here's an example of using on of these scripts, placing the output inside `/opt/libdatadog`:
+Here's one example of using the builder crate:
 
 ```bash
-bash build-profiling-ffi.sh /opt/libdatadog
+mkdir output-folder
+cargo run --bin release --features profiling,telemetry,data-pipeline,symbolizer,crashtracker,library-config,log,ddsketch -- --out output-folder
 ```
 
 #### Build dependencies
@@ -79,16 +64,27 @@ cargo install --locked 'cargo-nextest@0.9.96'
 
 #### Dev Containers
 
+Dev Containers allow you to use a Docker container as a full-featured development environment with VS Code.
+
 ##### Prerequisites
 
 - Install the [Dev Containers Extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) in VS Code.
+- Docker must be installed and running on your host machine.
+
+##### Available Containers
+
+We provide two Dev Container configurations:
+- **Ubuntu**: Full-featured development environment with all dependencies installed
+- **Alpine**: Lightweight alternative with minimal dependencies
 
 ##### Steps
 
 1. Open a local VS Code window on the cloned repository.
 2. Open the command palette (`Ctrl+Shift+P` or `Cmd+Shift+P` on macOS) and select **"Dev Containers: Reopen in Container"**.
-3. Choose the **Rust Container**.
-4. VS Code will open a new window connected to the selected container.
+3. Choose either **Ubuntu** or **Alpine** configuration when prompted.
+4. VS Code will build and connect to the selected container environment.
+
+The container includes all necessary dependencies for building and testing `libdatadog`.
 
 #### Docker container
 A dockerfile is provided to run tests in a Ubuntu linux environment. This is particularly useful for running and debugging linux-only tests on macOS.

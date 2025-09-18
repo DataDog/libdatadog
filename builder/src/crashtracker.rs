@@ -31,8 +31,11 @@ impl CrashTracker {
             let config = config
                 .define("Datadog_ROOT", datadog_root.to_str().unwrap())
                 .define("CMAKE_INSTALL_PREFIX", self.target_dir.to_string());
-
             let config = if self.arch.as_ref() == "x86_64-apple-darwin" {
+                // Set environment variables for target OS and arch
+                std::env::set_var("CARGO_CFG_TARGET_OS", "macos");
+                std::env::set_var("CARGO_CFG_TARGET_ARCH", "x86_64");
+
                 config.define("CMAKE_OSX_ARCHITECTURES", "x86_64")
             } else {
                 config

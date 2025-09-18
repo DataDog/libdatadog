@@ -360,7 +360,9 @@ impl TraceExporter {
                 .block_on(async { tokio::time::timeout(timeout, self.shutdown_async()).await })
             {
                 Ok(()) => Ok(()),
-                Err(e) => Err(TraceExporterError::Io(e.into())),
+                Err(_e) => Err(TraceExporterError::Shutdown(
+                    error::ShutdownError::TimedOut(timeout),
+                )),
             }
         } else {
             runtime.block_on(self.shutdown_async());

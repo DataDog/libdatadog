@@ -1,10 +1,13 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod error;
 #[allow(unused)]
 pub mod wordpress_test_data;
 
-use crate::collections::identifiable::{Id, StringId};
+pub use error::*;
+
+use crate::collections::identifiable::StringId;
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use datadog_alloc::{AllocError, Allocator, ChainAllocator, VirtualAllocator};
 use std::alloc::Layout;
@@ -122,27 +125,34 @@ impl StringTable {
     /// was originally inserted.
     ///
     /// # Panics
-    /// This panics if the allocator fails to allocate a new chunk/node.
+    ///
+    /// Panics if an allocator fails, or if the number of strings would exceed
+    /// [`u32::MAX`].
     pub fn intern(&mut self, str: &str) -> StringId {
+        #[allow(clippy::expect_used)]
+        self.try_intern(str).expect("failed to intern string")
+    }
+
+    /// Adds the string to the string table if it isn't present already, and
+    /// returns a [`StringId`] that corresponds to the order that this string
+    /// was originally inserted.
+    ///
+    /// Fails if an allocator fails, or if the number of strings would exceed
+    /// [`u32::MAX`].
+    pub fn try_intern(&mut self, str: &str) -> Result<StringId, Error> {
         let set = &mut self.strings;
         match set.get_index_of(str) {
-            Some(offset) => StringId::from_offset(offset),
+            // SAFETY: if it already exists, it must fit in the range.
+            Some(offset) => Ok(unsafe { StringId::try_from(offset).unwrap_unchecked() }),
             None => {
                 // No match. Get the current size of the table, which
                 // corresponds to the StringId it will have when inserted.
-                let string_id = StringId::from_offset(set.len());
+                let string_id = StringId::try_from(set.len()).map_err(|_| Error::StorageFull)?;
 
                 // Make a new string in the arena, and fudge its lifetime
                 // to appease the borrow checker.
                 let new_str = {
-                    // PANIC: the intern API doesn't allow for failure, so if
-                    // this allocation fails, panic. The current
-                    // implementation of `ChainAllocator` will fail if the
-                    // underlying allocator fails when asking for a new chunk.
-                    // This is expected to be rare.
-                    #[allow(clippy::expect_used)]
-                    let s = ArenaAllocator::allocate(&self.bytes, str)
-                        .expect("allocator for StringTable::intern to succeed");
+                    let s = ArenaAllocator::allocate(&self.bytes, str)?;
 
                     // SAFETY: all references to this value get re-narrowed to
                     // the lifetime of the string table or iterator when
@@ -152,9 +162,10 @@ impl StringTable {
                 };
 
                 // Add it to the set.
+                self.strings.try_reserve(1)?;
                 self.strings.insert(new_str);
 
-                string_id
+                Ok(string_id)
             }
         }
     }
@@ -210,6 +221,7 @@ impl IntoLendingIterator for StringTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collections::identifiable::Id;
 
     #[test]
     fn fuzz_arena_allocator() {

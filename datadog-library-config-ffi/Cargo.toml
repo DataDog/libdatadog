@@ -18,8 +18,9 @@ anyhow = "1.0"
 constcat = "0.4.1"
 
 [features]
-default = ["cbindgen"]
+default = ["cbindgen", "catch_panic"]
 cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+catch_panic = []
 
 [build-dependencies]
 build_common = { path = "../build-common" }

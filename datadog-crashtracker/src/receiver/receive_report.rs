@@ -2,13 +2,38 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, Span},
+    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, Span, TelemetryCrashUploader},
     shared::constants::*,
     CrashtrackerConfiguration,
 };
 use anyhow::Context;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
+use uuid::Uuid;
+
+/// Sends a crash ping telemetry event to indicate that crash processing has started.
+/// We no-op on file endpoints because unlike production environments, we know if
+/// a crash report failed to send when file debugging.
+async fn send_crash_ping_to_url(
+    config: &CrashtrackerConfiguration,
+    crash_uuid: &str,
+    metadata: &crate::crash_info::Metadata,
+    sig_info: &crate::crash_info::SigInfo,
+) -> anyhow::Result<()> {
+    let is_file_endpoint = config
+        .endpoint()
+        .as_ref()
+        .map(|e| e.url.scheme_str() == Some("file"))
+        .unwrap_or(false);
+
+    if is_file_endpoint {
+        return Ok(());
+    }
+
+    let uploader = TelemetryCrashUploader::new(metadata, config.endpoint())?;
+    uploader.send_crash_ping(crash_uuid, sig_info).await?;
+    Ok(())
+}
 
 /// The crashtracker collector sends data in blocks.
 /// This enum tracks which block we're currently in, and, for multi-line blocks,
@@ -210,7 +235,11 @@ pub(crate) async fn receive_report_from_stream(
 ) -> anyhow::Result<Option<(CrashtrackerConfiguration, CrashInfo)>> {
     let mut builder = CrashInfoBuilder::new();
     let mut stdin_state = StdinState::Waiting;
-    let mut config = None;
+    let mut config: Option<CrashtrackerConfiguration> = None;
+
+    // Generate UUID early so we can use it for both crash ping and crash report
+    let crash_uuid = Uuid::new_v4().to_string();
+    let mut crash_ping_sent = false;
 
     let mut lines = stream.lines();
     let mut deadline = None;
@@ -219,6 +248,32 @@ pub(crate) async fn receive_report_from_stream(
 
     //TODO: This assumes that the input is valid UTF-8.
     loop {
+        if !crash_ping_sent {
+            if let (Some(config), Some(metadata), Some(sig_info)) = (
+                config.as_ref(),
+                builder.metadata.as_ref(),
+                builder.sig_info.as_ref(),
+            ) {
+                crash_ping_sent = true;
+                // Spawn crash ping sending in a separate task
+                let config_clone = config.clone();
+                let metadata_clone = metadata.clone();
+                let crash_uuid_clone = crash_uuid.clone();
+                let sig_info_clone = sig_info.clone();
+                tokio::task::spawn(async move {
+                    if let Err(e) = send_crash_ping_to_url(
+                        &config_clone,
+                        &crash_uuid_clone,
+                        &metadata_clone,
+                        &sig_info_clone,
+                    )
+                    .await
+                    {
+                        eprintln!("Failed to send crash ping: {e}");
+                    }
+                });
+            }
+        }
         let next_line = tokio::time::timeout(remaining_timeout, lines.next_line()).await;
         let Ok(next_line) = next_line else {
             builder.with_log_message(format!("Timeout: {next_line:?}"), true)?;
@@ -246,6 +301,7 @@ pub(crate) async fn receive_report_from_stream(
                 break;
             }
         }
+
         if let Some(deadline) = deadline {
             // The clock was already ticking, update the remaining time
             remaining_timeout = deadline - Instant::now()
@@ -263,6 +319,9 @@ pub(crate) async fn receive_report_from_stream(
     // For now, we only support Signal based crash detection in the receiver.
     builder.with_kind(ErrorKind::UnixSignal)?;
 
+    // Set the pre-generated UUID so both crash ping and crash report use the same ID
+    builder.with_uuid(crash_uuid)?;
+
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
     let config = config.context("Missing crashtracker configuration")?;
     for filename in config.additional_files() {
@@ -272,5 +331,6 @@ pub(crate) async fn receive_report_from_stream(
     }
 
     let crash_info = builder.build()?;
+
     Ok(Some((config, crash_info)))
 }

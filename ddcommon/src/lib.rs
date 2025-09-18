@@ -21,6 +21,7 @@ pub mod entity_id;
 #[macro_use]
 pub mod cstr;
 pub mod config;
+pub mod error;
 pub mod hyper_migration;
 pub mod rate_limiter;
 pub mod tag;

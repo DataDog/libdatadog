@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{varint, Value, WireType};
+use std::fmt;
 use std::io::{self, Write};
 
 unsafe impl Value for &str {
@@ -16,6 +17,7 @@ unsafe impl Value for &str {
     }
 }
 
+// todo: for OTEL, needs to be i32::MAX rather than u32::MAX.
 /// Represents an offset into the Profile's string table. Note that it cannot
 /// exceed u32 because an entire protobuf message must not be larger than or
 /// equal to 2 GiB. By the time you encode the tag and length prefix for each
@@ -23,10 +25,17 @@ unsafe impl Value for &str {
 /// exceeding the protobuf 2 GiB limit.
 ///
 /// A value of 0 means "no string" or "empty string" (they are synonymous).
+/// cbindgen:field-names=[offset]
 #[repr(C)]
-#[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
-#[cfg_attr(test, derive(bolero::generator::TypeGenerator))]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(feature = "bolero", derive(bolero::generator::TypeGenerator))]
 pub struct StringOffset(u32);
+
+impl fmt::Display for StringOffset {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// # Safety
 /// The Default implementation will return all zero-representations.

@@ -10,6 +10,7 @@ use ddtelemetry::{
 };
 use ffi::slice::AsBytes;
 use ffi::MaybeError;
+use function_name::named;
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
@@ -52,6 +53,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_integration(
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]
+#[named]
 /// * indentifier: identifies a logging location uniquely. This can for instance be the template
 ///   using for the log message or the concatenated file + line of the origin of the log
 /// * stack_trace: stack trace associated with the log. If no stack trace is available, an empty
@@ -63,8 +65,12 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_log(
     level: ddtelemetry::data::LogLevel,
     stack_trace: ffi::CharSlice,
 ) -> MaybeError {
+    let id = crate::try_c!(indentifier.try_as_bytes().map_err(|e| {
+        let func = function_name!();
+        format!("{func} failed: identifier failed to convert to a byte slice: {e}")
+    }));
     crate::try_c!(handle.add_log(
-        indentifier.as_bytes(),
+        id,
         message.to_utf8_lossy().into_owned(),
         level,
         stack_trace

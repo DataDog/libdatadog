@@ -93,16 +93,17 @@ int main(int argc, const char *const *argv) {
     ddog_library_configurator_with_fleet_path(configurator, args.fleet_path);
   }
 
-  ddog_Result_VecLibraryConfig config_result = ddog_library_configurator_get(configurator);
+  ddog_LibraryConfigLoggedResult config_result = ddog_library_configurator_get(configurator);
 
-  if (config_result.tag == DDOG_RESULT_VEC_LIBRARY_CONFIG_ERR_VEC_LIBRARY_CONFIG) {
+  if (config_result.tag == DDOG_LIBRARY_CONFIG_LOGGED_RESULT_ERR) {
     ddog_Error err = config_result.err;
-    fprintf(stderr, "%.*s", (int)err.message.len, err.message.ptr);
-    ddog_Error_drop(&err);
+    fprintf(stderr, "An error occurred: %.*s", (int)err.message.len, err.message.ptr);    
+    // only this one is needed now, the whole result is dropped by ddog_library_config_drop
+    ddog_library_config_drop(config_result);
     exit(1);
   }
 
-  ddog_Vec_LibraryConfig configs = config_result.ok;
+  ddog_Vec_LibraryConfig configs = config_result.ok.value;
   for (int i = 0; i < configs.len; i++) {
     const ddog_LibraryConfig *cfg = &configs.ptr[i];
 
@@ -110,4 +111,9 @@ int main(int argc, const char *const *argv) {
            ddog_library_config_source_to_string(cfg->source).ptr);
     setenv(cfg->name.ptr, cfg->value.ptr, 1);
   }
+  ddog_CString logs = config_result.ok.logs;
+  printf("Logs are: %s\n", logs.ptr);
+  
+  ddog_library_config_drop(config_result);
+  ddog_library_configurator_drop(configurator);
 }

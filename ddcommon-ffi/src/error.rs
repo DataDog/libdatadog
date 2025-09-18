@@ -73,6 +73,15 @@ impl From<Box<&dyn std::error::Error>> for Error {
     }
 }
 
+/// Internal function to safely clear an error's contents
+pub fn clear_error(err: &mut Error) {
+    // Replacing the contents will drop the old message, freeing its
+    // resources. The new one requires no allocations, so there's nothing
+    // that needs dropped, but it's safe to be dropped.
+    let message = Vec::new();
+    *err = Error { message };
+}
+
 /// Drops the error. It should not be used after this, though the
 /// implementation tries to limit the damage in the case of use-after-free and
 /// double-free scenarios.
@@ -83,11 +92,7 @@ impl From<Box<&dyn std::error::Error>> for Error {
 #[no_mangle]
 pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
     if let Some(err) = error {
-        // Replacing the contents will drop the old message, freeing its
-        // resources. The new one requires no allocations, so there's nothing
-        // that needs dropped, but it's safe to be dropped.
-        let message = Vec::new();
-        *err = Error { message };
+        clear_error(err);
     }
 }
 
