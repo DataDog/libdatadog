@@ -25,6 +25,8 @@ use tokio::runtime::Handle;
 #[derive(Default)]
 pub struct TelemetryClientBuilder {
     service_name: Option<String>,
+    service_version: Option<String>,
+    env: Option<String>,
     language: Option<String>,
     language_version: Option<String>,
     tracer_version: Option<String>,
@@ -36,6 +38,18 @@ impl TelemetryClientBuilder {
     /// Sets the service name for the telemetry client
     pub fn set_service_name(mut self, name: &str) -> Self {
         self.service_name = Some(name.to_string());
+        self
+    }
+
+    /// Sets the service version for the telemetry client
+    pub fn set_service_version(mut self, version: &str) -> Self {
+        self.service_version = Some(version.to_string());
+        self
+    }
+
+    /// Sets the env name for the telemetry client
+    pub fn set_env(mut self, name: &str) -> Self {
+        self.env = Some(name.to_string());
         self
     }
 
@@ -97,6 +111,8 @@ impl TelemetryClientBuilder {
         builder.config = self.config;
         // Send only metrics and logs and drop lifecycle events
         builder.flavor = TelemetryWorkerFlavor::MetricsLogs;
+        builder.application.env = self.env;
+        builder.application.service_version = self.service_version;
 
         if let Some(id) = self.runtime_id {
             builder.runtime_id = Some(id);
@@ -273,6 +289,8 @@ mod tests {
     async fn get_test_client(url: &str) -> TelemetryClient {
         let (client, mut worker) = TelemetryClientBuilder::default()
             .set_service_name("test_service")
+            .set_service_version("test_version")
+            .set_env("test_env")
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
@@ -288,6 +306,8 @@ mod tests {
     fn builder_test() {
         let builder = TelemetryClientBuilder::default()
             .set_service_name("test_service")
+            .set_service_version("test_version")
+            .set_env("test_env")
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
@@ -296,6 +316,8 @@ mod tests {
             .set_heartbeat(30);
 
         assert_eq!(&builder.service_name.unwrap(), "test_service");
+        assert_eq!(&builder.service_version.unwrap(), "test_version");
+        assert_eq!(&builder.env.unwrap(), "test_env");
         assert_eq!(&builder.language.unwrap(), "test_language");
         assert_eq!(&builder.language_version.unwrap(), "test_language_version");
         assert_eq!(&builder.tracer_version.unwrap(), "test_tracer_version");
@@ -315,6 +337,8 @@ mod tests {
     async fn spawn_test() {
         let _ = TelemetryClientBuilder::default()
             .set_service_name("test_service")
+            .set_service_version("test_version")
+            .set_env("test_env")
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
@@ -681,6 +705,49 @@ mod tests {
 
         let (client, mut worker) = TelemetryClientBuilder::default()
             .set_service_name("test_service")
+            .set_service_version("test_version")
+            .set_env("test_env")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_url(&server.url("/"))
+            .set_heartbeat(100)
+            .set_runtime_id("foo")
+            .build(Handle::current());
+        tokio::spawn(async move { worker.run().await });
+
+        client.start().await;
+        client
+            .send(&SendPayloadTelemetry {
+                requests_count: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        client.shutdown().await;
+        while telemetry_srv.hits_async().await == 0 {
+            sleep(Duration::from_millis(10)).await;
+        }
+        // One payload generate-metrics
+        telemetry_srv.assert_hits_async(1).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn application_metadata_test() {
+        let server = MockServer::start_async().await;
+
+        let telemetry_srv = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .body_contains(r#""application":{"service_name":"test_service","service_version":"test_version","env":"test_env","language_name":"test_language","language_version":"test_language_version","tracer_version":"test_tracer_version"}"#);
+                then.status(200).body("");
+            })
+            .await;
+
+        let (client, mut worker) = TelemetryClientBuilder::default()
+            .set_service_name("test_service")
+            .set_service_version("test_version")
+            .set_env("test_env")
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
