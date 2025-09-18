@@ -5,8 +5,8 @@
 use datadog_library_config::tracer_metadata::AnonymousFileHandle;
 use datadog_library_config::tracer_metadata::{self, TracerMetadata};
 use ddcommon_ffi::Result;
-use std::os::raw::{c_int, c_char};
 use std::ffi::CStr;
+use std::os::raw::{c_char, c_int};
 
 /// C-compatible representation of an anonymous file handle
 #[repr(C)]
@@ -69,7 +69,11 @@ pub unsafe extern "C" fn ddog_tracer_metadata_free(ptr: *mut TracerMetadata) {
 /// - `value` must point to a valid UTF-8 null-terminated string.
 /// - If the string is not valid UTF-8, the function does nothing.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_tracer_metadata_set(ptr: *mut TracerMetadata, kind: MetadataKind, value: *const c_char) {
+pub unsafe extern "C" fn ddog_tracer_metadata_set(
+    ptr: *mut TracerMetadata,
+    kind: MetadataKind,
+    value: *const c_char,
+) {
     if ptr.is_null() || value.is_null() {
         return;
     }
@@ -110,9 +114,13 @@ pub unsafe extern "C" fn ddog_tracer_metadata_set(ptr: *mut TracerMetadata, kind
 /// This function currently only supports Linux via `memfd`. On other platforms,
 /// it will return an error.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_tracer_metadata_store(ptr: *mut TracerMetadata) -> Result<TracerMemfdHandle> {
+pub unsafe extern "C" fn ddog_tracer_metadata_store(
+    ptr: *mut TracerMetadata,
+) -> Result<TracerMemfdHandle> {
     if ptr.is_null() {
-        Err(anyhow::anyhow!("Failed to store tracer metadata: received a null pointer"));
+        Err(anyhow::anyhow!(
+            "Failed to store tracer metadata: received a null pointer"
+        ));
     }
 
     let metadata = &mut *ptr;
