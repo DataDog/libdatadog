@@ -382,7 +382,7 @@ mod single_threaded_tests {
             .await
             .unwrap();
 
-        mock.assert_hits(2);
+        mock.assert_calls(2);
         assert!(
             matches!(new_state_info_status, FetchInfoStatus::NewState(info) if *info == AgentInfo {
                         state_hash: TEST_INFO_HASH.to_string(),
@@ -466,7 +466,7 @@ mod single_threaded_tests {
             .await;
 
         // Wait for second fetch
-        while mock_v2.hits_async().await == 0 {
+        while mock_v2.calls_async().await == 0 {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
@@ -533,13 +533,13 @@ mod single_threaded_tests {
         const SLEEP_DURATION_MS: u64 = 10;
 
         let mut attempts = 0;
-        while mock.hits_async().await == 0 && attempts < MAX_ATTEMPTS {
+        while mock.calls_async().await == 0 && attempts < MAX_ATTEMPTS {
             attempts += 1;
             tokio::time::sleep(Duration::from_millis(SLEEP_DURATION_MS)).await;
         }
 
         // Should trigger a fetch since the state is different
-        mock.assert_hits_async(1).await;
+        mock.assert_calls_async(1).await;
 
         // Wait for the cache to be updated with proper timeout
         let mut attempts = 0;
@@ -616,6 +616,6 @@ mod single_threaded_tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Should not trigger a fetch since the state is the same
-        mock.assert_hits_async(0).await;
+        mock.assert_calls_async(0).await;
     }
 }

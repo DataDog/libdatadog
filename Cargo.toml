@@ -43,7 +43,7 @@ members = [
   "tinybytes",
   "dogstatsd-client",
   "datadog-log",
-  "datadog-log-ffi"
+  "datadog-log-ffi",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html
@@ -64,6 +64,17 @@ rust-version = "1.84.1"
 edition = "2021"
 version = "21.0.0"
 license = "Apache-2.0"
+
+[workspace.dependencies]
+hyper = { version = "1.6", features = [
+  "http1",
+  "client",
+], default-features = false }
+hyper-util = { version = "0.1.10", features = [
+  "http1",
+  "client",
+  "client-legacy",
+] }
 
 [profile.dev]
 debug = 2 # full debug info
