@@ -245,6 +245,8 @@ fn generate_protobuf() {
         "#[serde(default)]",
     );
 
+    config.include_file("_includes.rs");
+
     config
         .compile_protos(
             &[
@@ -276,11 +278,10 @@ fn generate_protobuf() {
     ]
     .concat();
 
+    prepend_to_file(license, &output_path.join("_includes.rs"));
     prepend_to_file(serde_uses, &output_path.join("pb.rs"));
     prepend_to_file(serde_uses, &output_path.join("remoteconfig.rs"));
-
-    // Add license header to pb.idx.rs (no serde imports needed due to lib.rs)
-    prepend_to_file(license, &output_path.join("pb.idx.rs"));
+    prepend_to_file(serde_uses, &output_path.join("pb.idx.rs"));
 }
 
 #[cfg(feature = "generate-protobuf")]
