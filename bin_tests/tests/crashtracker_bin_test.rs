@@ -201,16 +201,16 @@ fn test_crash_tracking_callstack() {
     // Note: in Release, we do not have the crate and module name prepended to the function name
     // Here we compile the crashing app in Debug.
     let mut expected_functions = Vec::new();
+    // It seems that on arm/arm64, fn3 is inlined in fn2, so not present.
+    // Add fn3 only for x86_64 arch
+    #[cfg(target_arch = "x86_64")]
+    expected_functions.push("crashing_test_app::unix::fn3");
     expected_functions.extend_from_slice(&[
         "crashing_test_app::unix::fn2",
         "crashing_test_app::unix::fn1",
         "crashing_test_app::unix::main",
         "crashing_test_app::main",
     ]);
-    // It seems that on arm/arm64, fn3 is inlined in fn2, so not present.
-    // Add fn3 only for x86_64 arch
-    #[cfg(target_arch = "x86_64")]
-    expected_functions.push("crashing_test_app::unix::fn3");
 
     let crashing_callstack = &crash_payload["error"]["stack"]["frames"];
     assert!(
