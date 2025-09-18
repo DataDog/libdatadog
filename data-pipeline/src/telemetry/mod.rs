@@ -705,6 +705,48 @@ mod tests {
 
         let (client, mut worker) = TelemetryClientBuilder::default()
             .set_service_name("test_service")
+            .set_service_version("test_version")
+            .set_env("test_env")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_url(&server.url("/"))
+            .set_heartbeat(100)
+            .set_runtime_id("foo")
+            .build(Handle::current());
+        tokio::spawn(async move { worker.run().await });
+
+        client.start().await;
+        client
+            .send(&SendPayloadTelemetry {
+                requests_count: 1,
+                ..Default::default()
+            })
+            .unwrap();
+        client.shutdown().await;
+        while telemetry_srv.hits_async().await == 0 {
+            sleep(Duration::from_millis(10)).await;
+        }
+        // One payload generate-metrics
+        telemetry_srv.assert_hits_async(1).await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn application_metadata_test() {
+        let server = MockServer::start_async().await;
+
+        let telemetry_srv = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .body_contains(r#""application":{"service_name":"test_service","service_version":"test_version","env":"test_env","language_name":"test_language","language_version":"test_language_version","tracer_version":"test_tracer_version"}"#);
+                then.status(200).body("");
+            })
+            .await;
+
+        let (client, mut worker) = TelemetryClientBuilder::default()
+            .set_service_name("test_service")
+            .set_service_version("test_version")
             .set_env("test_env")
             .set_language("test_language")
             .set_language_version("test_language_version")
