@@ -724,11 +724,11 @@ mod tests {
             })
             .unwrap();
         client.shutdown().await;
-        while telemetry_srv.hits_async().await == 0 {
+        while telemetry_srv.calls_async().await == 0 {
             sleep(Duration::from_millis(10)).await;
         }
         // One payload generate-metrics
-        telemetry_srv.assert_hits_async(1).await;
+        telemetry_srv.assert_calls_async(1).await;
     }
 
     #[cfg_attr(miri, ignore)]
@@ -739,7 +739,7 @@ mod tests {
         let telemetry_srv = server
             .mock_async(|when, then| {
                 when.method(POST)
-                    .body_contains(r#""application":{"service_name":"test_service","service_version":"test_version","env":"test_env","language_name":"test_language","language_version":"test_language_version","tracer_version":"test_tracer_version"}"#);
+                    .body_includes(r#""application":{"service_name":"test_service","service_version":"test_version","env":"test_env","language_name":"test_language","language_version":"test_language_version","tracer_version":"test_tracer_version"}"#);
                 then.status(200).body("");
             })
             .await;
@@ -765,7 +765,12 @@ mod tests {
             })
             .unwrap();
         client.shutdown().await;
+        // Wait for the server to receive at least one call, but don't hang forever.
+        let start = std::time::Instant::now();
         while telemetry_srv.calls_async().await == 0 {
+            if start.elapsed() > Duration::from_secs(180) {
+                panic!("telemetry server did not receive calls within timeout");
+            }
             sleep(Duration::from_millis(10)).await;
         }
         // One payload generate-metrics
