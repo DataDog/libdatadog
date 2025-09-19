@@ -16,9 +16,9 @@ use crate::modes::behavior::{
 use datadog_crashtracker::CrashtrackerConfiguration;
 use libc;
 use nix::sys::socket;
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicPtr;
-use std::os::unix::io::AsRawFd;
 
 pub struct Test;
 
@@ -82,13 +82,8 @@ fn inner(output_dir: &Path, filename: &str) -> anyhow::Result<()> {
 
     // Use raw write() syscall instead of Rust's write_all() to avoid MSG_NOSIGNAL
     let writer_raw_fd = writer_fd.as_raw_fd();
-    let write_result = unsafe {
-        libc::write(
-            writer_raw_fd,
-            b"Hello".as_ptr() as *const libc::c_void,
-            5,
-        )
-    };
+    let write_result =
+        unsafe { libc::write(writer_raw_fd, b"Hello".as_ptr() as *const libc::c_void, 5) };
 
     if write_result != -1 {
         anyhow::bail!("Expected write to fail with SIGPIPE, but it succeeded");
