@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_trace_protobuf::pb;
-use regex::Regex;
+use regex_lite::Regex;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -27,7 +27,7 @@ pub struct ReplaceRule {
     name: String,
 
     // re holds the regex pattern for matching.
-    re: regex::Regex,
+    re: regex_lite::Regex,
 
     // repl specifies the replacement string to be used when Pattern matches.
     repl: String,
@@ -97,7 +97,7 @@ pub fn parse_rules_from_string(
                 anyhow::bail!("Obfuscator Error: Error while parsing rule: {}", err)
             }
         };
-        let no_expansion = regex::Replacer::no_expansion(&mut &raw_rule.repl).is_some();
+        let no_expansion = regex_lite::Replacer::no_expansion(&mut &raw_rule.repl).is_some();
         vec.push(ReplaceRule {
             name: raw_rule.name,
             re: compiled_regex,
@@ -155,7 +155,7 @@ fn replace_all(
             #[allow(clippy::unwrap_used)]
             let m = cap.get(0).unwrap();
             scratch_space.push_str(&haystack[last_match..m.start()]);
-            regex::Replacer::replace_append(&mut replace, &cap, scratch_space);
+            regex_lite::Replacer::replace_append(&mut replace, &cap, scratch_space);
             last_match = m.end();
         }
         scratch_space.push_str(&haystack[last_match..]);
@@ -286,13 +286,13 @@ mod tests {
     fn test_replace_rule_eq() {
         let rule1 = replacer::ReplaceRule {
             name: "http.url".to_string(),
-            re: regex::Regex::new("(token/)([^/]*)").unwrap(),
+            re: regex_lite::Regex::new("(token/)([^/]*)").unwrap(),
             repl: "${1}?".to_string(),
             no_expansion: false,
         };
         let rule2 = replacer::ReplaceRule {
             name: "http.url".to_string(),
-            re: regex::Regex::new("(token/)([^/]*)").unwrap(),
+            re: regex_lite::Regex::new("(token/)([^/]*)").unwrap(),
             repl: "${1}?".to_string(),
             no_expansion: false,
         };
@@ -304,13 +304,13 @@ mod tests {
     fn test_replace_rule_neq() {
         let rule1 = replacer::ReplaceRule {
             name: "http.url".to_string(),
-            re: regex::Regex::new("(token/)([^/]*)").unwrap(),
+            re: regex_lite::Regex::new("(token/)([^/]*)").unwrap(),
             repl: "${1}?".to_string(),
             no_expansion: false,
         };
         let rule2 = replacer::ReplaceRule {
             name: "http.url".to_string(),
-            re: regex::Regex::new("(broken/)([^/]*)").unwrap(),
+            re: regex_lite::Regex::new("(broken/)([^/]*)").unwrap(),
             repl: "${1}?".to_string(),
             no_expansion: false,
         };

@@ -1753,7 +1753,7 @@ dependencies = [
  "duplicate",
  "log",
  "percent-encoding",
- "regex",
+ "regex-lite",
  "serde",
  "serde_json",
  "url",
