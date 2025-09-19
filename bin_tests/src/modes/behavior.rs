@@ -143,26 +143,18 @@ mod tests {
     fn test_trigger_sigpipe() {
         SIGPIPE_HANDLER_CALLED.store(false, Ordering::SeqCst);
 
-        let mut sigset: libc::sigset_t = unsafe { std::mem::zeroed() };
-        unsafe {
-            libc::sigemptyset(&mut sigset);
-        }
+        // Create a SigAction using the nix crate for cross-platform compatibility
+        let sigpipe_action = nix::sys::signal::SigAction::new(
+            nix::sys::signal::SigHandler::Handler(test_sigpipe_handler),
+            nix::sys::signal::SaFlags::SA_RESTART,
+            nix::sys::signal::SigSet::empty(),
+        );
 
-        let sigpipe_action = libc::sigaction {
-            sa_sigaction: test_sigpipe_handler as usize,
-            sa_mask: sigset,
-            sa_flags: libc::SA_RESTART | libc::SA_SIGINFO,
-            #[cfg(target_os = "linux")]
-            sa_restorer: None,
+        // Set up the SIGPIPE handler using nix::sigaction
+        let old_action = unsafe {
+            nix::sys::signal::sigaction(nix::sys::signal::Signal::SIGPIPE, &sigpipe_action)
+                .expect("Failed to set up SIGPIPE handler")
         };
-
-        unsafe {
-            assert_eq!(
-                libc::sigaction(libc::SIGPIPE, &sigpipe_action, std::ptr::null_mut()),
-                0,
-                "Failed to set up SIGPIPE handler"
-            );
-        }
 
         let result = trigger_sigpipe();
         assert!(
@@ -176,8 +168,9 @@ mod tests {
             "SIGPIPE handler should have been called"
         );
 
+        // Restore the old handler using nix
         unsafe {
-            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+            let _ = nix::sys::signal::sigaction(nix::sys::signal::Signal::SIGPIPE, &old_action);
         }
     }
 }
