@@ -4,14 +4,14 @@
 #![cfg(unix)]
 use anyhow::{Context, Result};
 use datadog_crashtracker::CrashtrackerConfiguration;
-use nix::sys::socket;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::modes::unix::*;
+use nix::sys::socket;
+use std::os::unix::io::AsRawFd;
 
 /// Defines the additional behavior for a given crashtracking test
 pub trait Behavior {
@@ -91,8 +91,6 @@ pub fn remove_permissive(filepath: &Path) {
     let _ = std::fs::remove_file(filepath);
 }
 
-/// Triggers a SIGPIPE by creating a socketpair, closing the reader, and writing to the writer.
-/// Returns an error if the write unexpectedly succeeds (which would indicate SIGPIPE wasn't triggered).
 pub fn trigger_sigpipe() -> Result<()> {
     let (reader_fd, writer_fd) = socket::socketpair(
         socket::AddressFamily::Unix,
@@ -101,6 +99,7 @@ pub fn trigger_sigpipe() -> Result<()> {
         socket::SockFlag::empty(),
     )?;
     drop(reader_fd);
+
     let writer_raw_fd = writer_fd.as_raw_fd();
     let write_result =
         unsafe { libc::write(writer_raw_fd, b"Hello".as_ptr() as *const libc::c_void, 5) };
@@ -108,9 +107,9 @@ pub fn trigger_sigpipe() -> Result<()> {
     if write_result != -1 {
         anyhow::bail!("Expected write to fail with SIGPIPE, but it succeeded");
     }
+
     Ok(())
 }
-
 
 pub fn get_behavior(mode_str: &str) -> Box<dyn Behavior> {
     match mode_str {
@@ -140,10 +139,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_trigger_sigpipe() {
         SIGPIPE_HANDLER_CALLED.store(false, Ordering::SeqCst);
 
-        // Set up a SIGPIPE handler
         let mut sigset: libc::sigset_t = unsafe { std::mem::zeroed() };
         unsafe {
             libc::sigemptyset(&mut sigset);
@@ -165,13 +164,16 @@ mod tests {
             );
         }
 
-        // Trigger SIGPIPE using our helper function
-        trigger_sigpipe().expect("trigger_sigpipe should succeed");
+        let result = trigger_sigpipe();
+        assert!(result.is_ok(), "trigger_sigpipe should succeed: {:?}", result);
 
-        // Verify the handler was called
         assert!(
             SIGPIPE_HANDLER_CALLED.load(Ordering::SeqCst),
             "SIGPIPE handler should have been called"
         );
+
+        unsafe {
+            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        }
     }
 }

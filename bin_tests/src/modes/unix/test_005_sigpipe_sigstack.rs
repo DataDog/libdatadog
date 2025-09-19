@@ -68,7 +68,6 @@ fn inner(output_dir: &Path, filename: &str) -> anyhow::Result<()> {
     set_atomic(&OUTPUT_FILE, output_dir.join(filename));
     let ofile = atom_to_clone(&OUTPUT_FILE)?;
 
-    // Cause a SIGPIPE to occur
     trigger_sigpipe()?;
 
     // Now check the output file.  Strongly assumes that nothing happened to change the value of
