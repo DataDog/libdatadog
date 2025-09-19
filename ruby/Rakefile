@@ -44,7 +44,7 @@ LIB_GITHUB_RELEASES = [
 
 task default: [
   :spec,
-  (:"standard:fix" unless RUBY_VERSION < "2.6")
+  (:standard unless RUBY_VERSION < "2.6")
 ].compact
 
 desc "Download lib release from github"
@@ -181,20 +181,18 @@ module Helpers
       next unless File.file?(path)
 
       filename = File.basename(path)
-      current_permissions = File.stat(path).mode & 0777
+      current_permissions = File.stat(path).mode & 0o777
 
       if EXECUTABLE_FILES.include?(filename)
         # Should be executable (755), fix if not
-        if current_permissions != 0755
+        if current_permissions != 0o755
           puts "Fixing permissions for #{filename}: #{current_permissions.to_s(8)} -> 755"
-          FileUtils.chmod(0755, path)
+          FileUtils.chmod(0o755, path)
         end
-      else
+      elsif current_permissions != 0o644
         # Should be non-executable (644), fix if not
-        if current_permissions != 0644
-          puts "Fixing permissions for #{filename}: #{current_permissions.to_s(8)} -> 644"
-          FileUtils.chmod(0644, path)
-        end
+        puts "Fixing permissions for #{filename}: #{current_permissions.to_s(8)} -> 644"
+        FileUtils.chmod(0o644, path)
       end
     end
   end
