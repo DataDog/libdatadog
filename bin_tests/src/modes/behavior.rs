@@ -4,8 +4,10 @@
 #![cfg(unix)]
 use anyhow::{Context, Result};
 use datadog_crashtracker::CrashtrackerConfiguration;
+use nix::sys::socket;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
@@ -89,6 +91,27 @@ pub fn remove_permissive(filepath: &Path) {
     let _ = std::fs::remove_file(filepath);
 }
 
+/// Triggers a SIGPIPE by creating a socketpair, closing the reader, and writing to the writer.
+/// Returns an error if the write unexpectedly succeeds (which would indicate SIGPIPE wasn't triggered).
+pub fn trigger_sigpipe() -> Result<()> {
+    let (reader_fd, writer_fd) = socket::socketpair(
+        socket::AddressFamily::Unix,
+        socket::SockType::Stream,
+        None,
+        socket::SockFlag::empty(),
+    )?;
+    drop(reader_fd);
+    let writer_raw_fd = writer_fd.as_raw_fd();
+    let write_result =
+        unsafe { libc::write(writer_raw_fd, b"Hello".as_ptr() as *const libc::c_void, 5) };
+
+    if write_result != -1 {
+        anyhow::bail!("Expected write to fail with SIGPIPE, but it succeeded");
+    }
+    Ok(())
+}
+
+
 pub fn get_behavior(mode_str: &str) -> Box<dyn Behavior> {
     match mode_str {
         "donothing" => Box::new(test_000_donothing::Test),
@@ -102,5 +125,53 @@ pub fn get_behavior(mode_str: &str) -> Box<dyn Behavior> {
         "fork" => Box::new(test_008_fork::Test),
         "prechain_abort" => Box::new(test_009_prechain_with_abort::Test),
         _ => panic!("Unknown mode: {mode_str}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static SIGPIPE_HANDLER_CALLED: AtomicBool = AtomicBool::new(false);
+
+    extern "C" fn test_sigpipe_handler(_: libc::c_int) {
+        SIGPIPE_HANDLER_CALLED.store(true, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_trigger_sigpipe() {
+        SIGPIPE_HANDLER_CALLED.store(false, Ordering::SeqCst);
+
+        // Set up a SIGPIPE handler
+        let mut sigset: libc::sigset_t = unsafe { std::mem::zeroed() };
+        unsafe {
+            libc::sigemptyset(&mut sigset);
+        }
+
+        let sigpipe_action = libc::sigaction {
+            sa_sigaction: test_sigpipe_handler as usize,
+            sa_mask: sigset,
+            sa_flags: libc::SA_RESTART | libc::SA_SIGINFO,
+            #[cfg(target_os = "linux")]
+            sa_restorer: None,
+        };
+
+        unsafe {
+            assert_eq!(
+                libc::sigaction(libc::SIGPIPE, &sigpipe_action, std::ptr::null_mut()),
+                0,
+                "Failed to set up SIGPIPE handler"
+            );
+        }
+
+        // Trigger SIGPIPE using our helper function
+        trigger_sigpipe().expect("trigger_sigpipe should succeed");
+
+        // Verify the handler was called
+        assert!(
+            SIGPIPE_HANDLER_CALLED.load(Ordering::SeqCst),
+            "SIGPIPE handler should have been called"
+        );
     }
 }
