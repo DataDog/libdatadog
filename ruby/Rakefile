@@ -84,6 +84,10 @@ task extract: [:fetch] do
     File.open(target_file, "rb") do |file|
       Gem::Package.new("").extract_tar_gz(file, target_directory)
     end
+
+    # Fix file permissions after extraction
+    puts "Fixing file permissions in #{target_directory}"
+    Helpers.fix_file_permissions(target_directory)
   end
 end
 
@@ -140,6 +144,9 @@ task push_to_rubygems: [
 end
 
 module Helpers
+  # Files that should have executable permissions (755) in the gem
+  EXECUTABLE_FILES = ["libdatadog-crashtracking-receiver", "libdatadog_profiling.so"].freeze
+
   def self.each_github_release_variant
     LIB_GITHUB_RELEASES.each do |variant|
       file = variant.fetch(:file)
@@ -167,6 +174,29 @@ module Helpers
     package = Gem::Package.build(target_gemspec)
     FileUtils.mv(package, "pkg")
     puts("-" * 80)
+  end
+
+  def self.fix_file_permissions(directory)
+    Dir.glob("#{directory}/**/*").each do |path|
+      next unless File.file?(path)
+
+      filename = File.basename(path)
+      current_permissions = File.stat(path).mode & 0777
+
+      if EXECUTABLE_FILES.include?(filename)
+        # Should be executable (755), fix if not
+        if current_permissions != 0755
+          puts "Fixing permissions for #{filename}: #{current_permissions.to_s(8)} -> 755"
+          FileUtils.chmod(0755, path)
+        end
+      else
+        # Should be non-executable (644), fix if not
+        if current_permissions != 0644
+          puts "Fixing permissions for #{filename}: #{current_permissions.to_s(8)} -> 644"
+          FileUtils.chmod(0644, path)
+        end
+      end
+    end
   end
 
   def self.files_for(

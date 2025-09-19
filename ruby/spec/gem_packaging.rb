@@ -9,7 +9,6 @@ require "zlib"
 RSpec.describe "gem release process (after packaging)" do
   let(:gem_version) { Libdatadog::VERSION }
   let(:packaged_gem_file) { "pkg/libdatadog-#{gem_version}.gem" }
-  let(:executable_permissions) { ["libdatadog-crashtracking-receiver", "libdatadog_profiling.so"] }
 
   it "sets the right permissions on the .gem files" do
     gem_files = Dir.glob("pkg/*.gem")
@@ -24,7 +23,7 @@ RSpec.describe "gem release process (after packaging)" do
             filename = entry.header.name.split("/").last
             octal_permissions = entry.header.mode.to_s(8)[-3..-1]
 
-            expected_permissions = executable_permissions.include?(filename) ? "755" : "644"
+            expected_permissions = Helpers::EXECUTABLE_FILES.include?(filename) ? "755" : "644"
 
             expect(octal_permissions).to eq(expected_permissions),
               "Unexpected permissions for #{filename} inside #{gem_file} (got #{octal_permissions}, " \
