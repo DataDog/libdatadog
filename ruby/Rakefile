@@ -44,7 +44,7 @@ LIB_GITHUB_RELEASES = [
 
 task default: [
   :spec,
-  (:"standard:fix" unless RUBY_VERSION < "2.6")
+  (:standard unless RUBY_VERSION < "2.6")
 ].compact
 
 desc "Download lib release from github"
