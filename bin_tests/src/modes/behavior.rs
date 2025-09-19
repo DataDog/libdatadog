@@ -142,47 +142,64 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_trigger_sigpipe() {
         use std::mem;
+        use std::thread;
 
-        // Reset the signal caught flag
-        SIGPIPE_CAUGHT.store(false, Ordering::SeqCst);
+        // Run the actual test in a separate thread to avoid test framework signal interference
+        let result = thread::spawn(|| {
+            // Reset the signal caught flag
+            SIGPIPE_CAUGHT.store(false, Ordering::SeqCst);
 
-        // Set up the sigaction struct with sa_sigaction and sa_flags
-        let mut sigset: libc::sigset_t = unsafe { mem::zeroed() };
-        unsafe {
-            libc::sigemptyset(&mut sigset);
+            // Set up the sigaction struct with sa_sigaction and sa_flags
+            let mut sigset: libc::sigset_t = unsafe { mem::zeroed() };
+            unsafe {
+                libc::sigemptyset(&mut sigset);
+            }
+
+            let sigpipe_action = libc::sigaction {
+                sa_sigaction: sigpipe_handler as usize,
+                sa_mask: sigset,
+                sa_flags: libc::SA_RESTART | libc::SA_SIGINFO,
+                #[cfg(target_os = "linux")]
+                sa_restorer: None,
+            };
+
+            let mut old_action: libc::sigaction = unsafe { mem::zeroed() };
+            let install_result =
+                unsafe { libc::sigaction(libc::SIGPIPE, &sigpipe_action, &mut old_action) };
+
+            if install_result != 0 {
+                return Err("Failed to set up SIGPIPE handler".to_string());
+            }
+
+            let trigger_result = trigger_sigpipe();
+
+            thread::sleep(std::time::Duration::from_millis(10));
+
+            let handler_called = SIGPIPE_CAUGHT.load(Ordering::SeqCst);
+
+            unsafe {
+                libc::sigaction(libc::SIGPIPE, &old_action, std::ptr::null_mut());
+            }
+
+            if trigger_result.is_err() {
+                return Err(format!(
+                    "trigger_sigpipe should succeed: {:?}",
+                    trigger_result
+                ));
+            }
+
+            if !handler_called {
+                return Err("SIGPIPE handler should have been called".to_string());
+            }
+
+            Ok(())
+        })
+        .join();
+
+        match result {
+            Ok(Ok(())) => {} // Test passed
+            Ok(Err(e)) => panic!("{}", e),
+            Err(_) => panic!("Thread panicked during SIGPIPE test"),
         }
-
-        let sigpipe_action = libc::sigaction {
-            sa_sigaction: sigpipe_handler as usize,
-            sa_mask: sigset,
-            sa_flags: libc::SA_RESTART | libc::SA_SIGINFO,
-            #[cfg(target_os = "linux")]
-            sa_restorer: None,
-        };
-
-        // Install the signal handler
-        let mut old_action: libc::sigaction = unsafe { mem::zeroed() };
-        let result = unsafe { libc::sigaction(libc::SIGPIPE, &sigpipe_action, &mut old_action) };
-
-        assert_eq!(result, 0, "Failed to set up SIGPIPE handler");
-
-        // Trigger SIGPIPE
-        let trigger_result = trigger_sigpipe();
-
-        // Check if the signal handler was called
-        let handler_called = SIGPIPE_CAUGHT.load(Ordering::SeqCst);
-
-        // Restore the old handler
-        unsafe {
-            libc::sigaction(libc::SIGPIPE, &old_action, std::ptr::null_mut());
-        }
-
-        assert!(
-            trigger_result.is_ok(),
-            "trigger_sigpipe should succeed: {:?}",
-            trigger_result
-        );
-
-        assert!(handler_called, "SIGPIPE handler should have been called");
     }
 }
