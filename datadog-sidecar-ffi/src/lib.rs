@@ -35,15 +35,14 @@ use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigRea
 use datadog_trace_utils::msgpack_encoder;
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
-use ddcommon_ffi as ffi;
-use ddcommon_ffi::{CharSlice, MaybeError};
+use ddcommon_ffi::slice::{AsBytes, CharSlice};
+use ddcommon_ffi::{self as ffi, MaybeError};
 use ddtelemetry::{
     data::{self, Dependency, Integration},
     worker::{LifecycleAction, LogIdentifier, TelemetryActions},
 };
 use ddtelemetry_ffi::try_c;
 use dogstatsd_client::DogStatsDActionOwned;
-use ffi::slice::AsBytes;
 use libc::c_char;
 use std::ffi::{c_void, CStr, CString};
 use std::fs::File;
@@ -686,11 +685,9 @@ pub unsafe extern "C" fn ddog_sidecar_enqueue_telemetry_log(
 }
 
 fn char_slice_to_string(slice: CharSlice) -> Result<String, String> {
-    let cast_slice =
-        unsafe { slice::from_raw_parts(slice.as_slice().as_ptr() as *const u8, slice.len()) };
-    let slice = std::str::from_utf8(cast_slice)
-        .map_err(|e| format!("Failed to convert CharSlice to String: {e}"))?;
-    Ok(slice.to_string())
+    slice
+        .try_to_string()
+        .map_err(|e| format!("Failed to convert CharSlice to String: {e}"))
 }
 
 #[allow(clippy::too_many_arguments)]
