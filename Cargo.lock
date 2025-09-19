@@ -1306,6 +1306,7 @@ dependencies = [
  "ddtelemetry",
  "dogstatsd-client",
  "either",
+ "hashbrown 0.15.1",
  "http",
  "http-body-util",
  "httpmock",
