@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use regex::Regex;
+use regex_lite::Regex;
 use std::{borrow::Cow, collections::HashSet, net::Ipv6Addr, sync::LazyLock};
 
 const ALLOWED_IP_ADDRESSES: [&str; 4] = [
