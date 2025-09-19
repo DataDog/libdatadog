@@ -165,7 +165,11 @@ mod tests {
         }
 
         let result = trigger_sigpipe();
-        assert!(result.is_ok(), "trigger_sigpipe should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "trigger_sigpipe should succeed: {:?}",
+            result
+        );
 
         assert!(
             SIGPIPE_HANDLER_CALLED.load(Ordering::SeqCst),
