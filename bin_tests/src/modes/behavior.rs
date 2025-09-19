@@ -138,7 +138,6 @@ mod tests {
         SIGPIPE_CAUGHT.store(true, Ordering::SeqCst);
     }
 
-
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_trigger_sigpipe() {
@@ -163,9 +162,7 @@ mod tests {
 
         // Install the signal handler
         let mut old_action: libc::sigaction = unsafe { mem::zeroed() };
-        let result = unsafe {
-            libc::sigaction(libc::SIGPIPE, &sigpipe_action, &mut old_action)
-        };
+        let result = unsafe { libc::sigaction(libc::SIGPIPE, &sigpipe_action, &mut old_action) };
 
         assert_eq!(result, 0, "Failed to set up SIGPIPE handler");
 
@@ -186,9 +183,6 @@ mod tests {
             trigger_result
         );
 
-        assert!(
-            handler_called,
-            "SIGPIPE handler should have been called"
-        );
+        assert!(handler_called, "SIGPIPE handler should have been called");
     }
 }
