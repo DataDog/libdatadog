@@ -14,7 +14,7 @@ license.workspace = true
 bench = false
 
 [dependencies]
-regex = "1"
+regex-lite = "^0.1"
 
 [[bin]]
 name = "dedup_headers"
