@@ -125,7 +125,10 @@ mod mini_agent_tests {
                                 0,
                                 0,
                                 0
-                            ]
+                            ],
+                            "GrpcStatusCode": "0",
+                            "HttpMethod": "GET",
+                            "HttpEndpoint": "/test"
                         }
                     ]
                 }
@@ -174,6 +177,9 @@ mod mini_agent_tests {
                     span_kind: "".to_string(),
                     peer_tags: vec![],
                     is_trace_root: NotSet.into(),
+                    grpc_status_code: "0".to_string(),
+                    http_endpoint: "/test".to_string(),
+                    http_method: "GET".to_string(),
                 }],
                 agent_time_shift: 0,
             }],
@@ -187,6 +193,8 @@ mod mini_agent_tests {
             tags: vec![],
             git_commit_sha: "".to_string(),
             image_tag: "".to_string(),
+            process_tags_hash: 0,
+            process_tags: "".to_string(),
         };
 
         assert!(
@@ -239,6 +247,8 @@ mod mini_agent_tests {
             tags: vec![],
             git_commit_sha: "".to_string(),
             image_tag: "".to_string(),
+            process_tags_hash: 0,
+            process_tags: "".to_string(),
         };
 
         assert!(
@@ -267,6 +277,8 @@ mod mini_agent_tests {
             tags: vec![],
             git_commit_sha: "".to_string(),
             image_tag: "".to_string(),
+            process_tags_hash: 0,
+            process_tags: "".to_string(),
         };
 
         let client_stats_payload_without_inner_stats = ClientStatsPayload {
@@ -289,6 +301,8 @@ mod mini_agent_tests {
             tags: vec![],
             git_commit_sha: "".to_string(),
             image_tag: "".to_string(),
+            process_tags_hash: 0,
+            process_tags: "".to_string(),
         };
 
         let res = stats_utils::serialize_stats_payload(stats_utils::construct_stats_payload(vec![

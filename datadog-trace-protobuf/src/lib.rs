@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[rustfmt::skip]
-pub mod pb;
+include!("_includes.rs");
 mod deserializers;
-pub mod remoteconfig;
 mod serde;
 
 #[cfg(test)]

@@ -138,6 +138,7 @@ mod tests {
             r#type: "http".to_string(),
             meta_struct: HashMap::new(),
             span_links: vec![],
+            span_events: vec![],
         }
     }
 
