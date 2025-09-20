@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use clap::Parser;
 use data_pipeline::trace_exporter::{
     TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
@@ -29,10 +30,24 @@ fn get_span(now: i64, trace_id: u64, span_id: u64) -> pb::Span {
     }
 }
 
+#[derive(Parser)]
+#[command(name = "send-traces-with-stats")]
+#[command(about = "A data pipeline example for sending traces with statistics")]
+struct Args {
+    #[arg(
+        short = 'u',
+        long = "url",
+        default_value = "http://localhost:8126",
+        help = "Set the trace agent URL\n\nExamples:\n  http://localhost:8126 (default)\n  windows://./pipe/dd-apm-test-agent (Windows named pipe)\n  https://trace.agent.datadoghq.com:443 (custom endpoint)"
+    )]
+    url: String,
+}
+
 fn main() {
+    let args = Args::parse();
     let mut builder = TraceExporter::builder();
     builder
-        .set_url("http://localhost:8126")
+        .set_url(&args.url)
         .set_hostname("test")
         .set_env("testing")
         .set_app_version(env!("CARGO_PKG_VERSION"))
