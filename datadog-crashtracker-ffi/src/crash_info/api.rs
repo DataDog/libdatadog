@@ -67,6 +67,31 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_resolve_names(
 /// # Safety
 /// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
+/// This function will:
+// - resolve frame names
+// - normalize IPs
+// Difference between this function and the two functions above is that this function
+// is tailored for performance. It makes sure that required resources between normalize_ips and
+// resolve_names are shared and reused, which is not the case when calling the two functions
+// separately.
+// While this is more efficient, it means that you are forced to do both operations, and you are not
+// able to do only one of them.
+#[no_mangle]
+#[must_use]
+#[named]
+#[cfg(unix)]
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_enrich_callstacks(
+    mut crash_info: *mut Handle<CrashInfo>,
+    pid: u32,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        crash_info.to_inner_mut()?.enrich_callstacks(pid)?;
+    })
+}
+
+/// # Safety
+/// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,
+/// which has not previously been dropped.
 /// The CharSlice must be valid.
 #[no_mangle]
 #[must_use]
