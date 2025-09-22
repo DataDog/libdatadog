@@ -148,7 +148,7 @@ impl AzureMetadata {
                 Some("flex") => {
                     match query.get_var(DD_AZURE_RESOURCE_GROUP) {
                         Some(rg) => Some(rg),
-                        None => panic!("ERROR: Resource group not found. If you are using Azure Functions on Flex Consumption plan, please add your resource group name as an environment variable called `DD_AZURE_RESOURCE_GROUP` in Azure app settings."),
+                        None => panic!("ERROR: Resource group not found. If you are using Azure Functions on the Flex Consumption plan, please add your resource group name as an environment variable called `DD_AZURE_RESOURCE_GROUP` in Azure app settings."),
                     }
                 }
                 _ => extracted,
@@ -499,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "ERROR: Resource group not found. If you are using Azure Functions on Flex Consumption plan, please add your resource group name as an environment variable called `DD_AZURE_RESOURCE_GROUP` in Azure app settings.")]
+    #[should_panic(expected = "ERROR: Resource group not found. If you are using Azure Functions on the Flex Consumption plan, please add your resource group name as an environment variable called `DD_AZURE_RESOURCE_GROUP` in Azure app settings.")]
     fn test_flex_consumption_panics_without_dd_azure_resource_group() {
         let mocked_env = MockEnv::new(&[
             (
