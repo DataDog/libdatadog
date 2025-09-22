@@ -4,7 +4,6 @@ use std::default::Default;
 
 /// This struct MUST be backward compatible.
 #[derive(serde::Serialize, Debug)]
-#[repr(C)]
 pub struct TracerMetadata {
     /// Version of the schema.
     pub schema_version: u8,
