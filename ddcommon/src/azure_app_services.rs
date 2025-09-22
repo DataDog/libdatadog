@@ -141,19 +141,16 @@ impl AzureMetadata {
         };
 
         let resource_group = query
-        .get_var(WEBSITE_RESOURCE_GROUP)
-        .or_else(|| {
-            let extracted = AzureMetadata::extract_resource_group(query.get_var(WEBSITE_OWNER_NAME));
-            match extracted.as_deref() {
-                Some("flex") => {
-                    match query.get_var(DD_AZURE_RESOURCE_GROUP) {
-                        Some(rg) => Some(rg),
-                        None => panic!("ERROR: Resource group not found. If you are using Azure Functions on the Flex Consumption plan, please add your resource group name as an environment variable called `DD_AZURE_RESOURCE_GROUP` in Azure app settings."),
-                    }
+            .get_var(DD_AZURE_RESOURCE_GROUP)
+            .or_else(|| query.get_var(WEBSITE_RESOURCE_GROUP))
+            .or_else(|| {
+                let extracted = AzureMetadata::extract_resource_group(query.get_var(WEBSITE_OWNER_NAME));
+                match extracted.as_deref() {
+                    Some("flex") => panic!("ERROR: Resource group not found. If you are using Azure Functions on the Flex Consumption plan, please add your resource group name as an environment variable called `DD_AZURE_RESOURCE_GROUP` in Azure app settings."),
+                    _ => extracted,
                 }
-                _ => extracted,
-            }
-        });
+            });
+
         let resource_id = AzureMetadata::build_resource_id(
             subscription_id.as_ref(),
             site_name.as_ref(),
@@ -486,13 +483,11 @@ mod tests {
                 WEBSITE_OWNER_NAME,
                 "00000000-0000-0000-0000-000000000000+test-rg-EastUSwebspace-Linux",
             ),
-            (DD_AZURE_RESOURCE_GROUP, "different-test-rg"),
             (SERVICE_CONTEXT, "1"),
         ]);
 
         let metadata = AzureMetadata::new(mocked_env).unwrap();
 
-        // Should use WEBSITE_RESOURCE_GROUP env var over WEBSITE_OWNER_NAME and DD_AZURE_RESOURCE_GROUP
         let expected_resource_group = "test-rg-env-var";
 
         assert_eq!(metadata.get_resource_group(), expected_resource_group);
@@ -527,8 +522,30 @@ mod tests {
 
         let metadata = AzureMetadata::new(mocked_env).unwrap();
 
-        // Should use the DD_AZURE_RESOURCE_GROUP value instead of extracting from WEBSITE_OWNER_NAME
+        // Should use the DD_AZURE_RESOURCE_GROUP value instead of extracting from
+        // WEBSITE_OWNER_NAME
         assert_eq!(metadata.get_resource_group(), "test-flex-rg");
+    }
+
+    #[test]
+    fn test_dd_azure_resource_group_has_highest_priority() {
+        let mocked_env = MockEnv::new(&[
+            (WEBSITE_RESOURCE_GROUP, "test-rg-env-var"),
+            (
+                WEBSITE_OWNER_NAME,
+                "00000000-0000-0000-0000-000000000000+test-rg-EastUSwebspace-Linux",
+            ),
+            (DD_AZURE_RESOURCE_GROUP, "dd-azure-rg-override"),
+            (SERVICE_CONTEXT, "1"),
+        ]);
+
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
+
+        // DD_AZURE_RESOURCE_GROUP should have highest priority over WEBSITE_RESOURCE_GROUP and
+        // WEBSITE_OWNER_NAME
+        let expected_resource_group = "dd-azure-rg-override";
+
+        assert_eq!(metadata.get_resource_group(), expected_resource_group);
     }
 
     #[test]
