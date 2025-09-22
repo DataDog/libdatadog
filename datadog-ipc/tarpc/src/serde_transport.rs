@@ -461,11 +461,11 @@ pub mod unix {
 
         #[test]
         fn temp_path_buf_non_random() {
-            let sock = TempPathBuf::new("test");
+            let sock = TempPathBuf::new("test_non_random");
             let mut good = std::env::temp_dir();
-            good.push("test");
+            good.push("test_non_random");
             assert_eq!(sock.as_ref(), good);
-            assert_eq!(sock.as_ref().file_name().unwrap(), "test");
+            assert_eq!(sock.as_ref().file_name().unwrap(), "test_non_random");
         }
 
         #[test]
@@ -510,9 +510,9 @@ pub mod unix {
         #[test]
         fn temp_path_buf_preexisting_file() {
             let mut pre_existing = std::env::temp_dir();
-            pre_existing.push("test");
+            pre_existing.push("test_preexisting");
             let _file = std::fs::File::create(&pre_existing).unwrap();
-            let sock = TempPathBuf::new("test");
+            let sock = TempPathBuf::new("test_preexisting");
             let sock_path = std::path::PathBuf::from(sock.as_ref());
             assert!(sock_path.exists());
             std::mem::drop(sock);
