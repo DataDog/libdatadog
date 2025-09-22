@@ -1845,7 +1845,7 @@ dependencies = [
  "maplit",
  "nix",
  "pin-project",
- "regex",
+ "regex-lite",
  "rustls",
  "rustls-native-certs",
  "serde",
