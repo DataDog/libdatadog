@@ -16,6 +16,7 @@ const SERVICE_CONTEXT: &str = "DD_AZURE_APP_SERVICES";
 const FUNCTIONS_WORKER_RUNTIME: &str = "FUNCTIONS_WORKER_RUNTIME";
 const FUNCTIONS_WORKER_RUNTIME_VERSION: &str = "FUNCTIONS_WORKER_RUNTIME_VERSION";
 const FUNCTIONS_EXTENSION_VERSION: &str = "FUNCTIONS_EXTENSION_VERSION";
+const DD_AZURE_RESOURCE_GROUP: &str = "DD_AZURE_RESOURCE_GROUP";
 
 const UNKNOWN_VALUE: &str = "unknown";
 
@@ -140,8 +141,19 @@ impl AzureMetadata {
         };
 
         let resource_group = query
-            .get_var(WEBSITE_RESOURCE_GROUP)
-            .or_else(|| AzureMetadata::extract_resource_group(query.get_var(WEBSITE_OWNER_NAME)));
+        .get_var(WEBSITE_RESOURCE_GROUP)
+        .or_else(|| {
+            let extracted = AzureMetadata::extract_resource_group(query.get_var(WEBSITE_OWNER_NAME));
+            match extracted.as_deref() {
+                Some("flex") => {
+                    match query.get_var(DD_AZURE_RESOURCE_GROUP) {
+                        Some(rg) => Some(rg),
+                        None => panic!("ERROR: Resource group not found. If you are using Azure Functions on Flex Consumption plan, please add your resource group name as an environment variable called `DD_AZURE_RESOURCE_GROUP` in Azure app settings."),
+                    }
+                }
+                _ => extracted,
+            }
+        });
         let resource_id = AzureMetadata::build_resource_id(
             subscription_id.as_ref(),
             site_name.as_ref(),
@@ -474,14 +486,47 @@ mod tests {
                 WEBSITE_OWNER_NAME,
                 "00000000-0000-0000-0000-000000000000+test-rg-EastUSwebspace-Linux",
             ),
+            (DD_AZURE_RESOURCE_GROUP, "different-test-rg"),
             (SERVICE_CONTEXT, "1"),
         ]);
 
         let metadata = AzureMetadata::new(mocked_env).unwrap();
 
+        // Should use WEBSITE_RESOURCE_GROUP env var over WEBSITE_OWNER_NAME and DD_AZURE_RESOURCE_GROUP
         let expected_resource_group = "test-rg-env-var";
 
         assert_eq!(metadata.get_resource_group(), expected_resource_group);
+    }
+
+    #[test]
+    #[should_panic(expected = "ERROR: Resource group not found. If you are using Azure Functions on Flex Consumption plan, please add your resource group name as an environment variable called `DD_AZURE_RESOURCE_GROUP` in Azure app settings.")]
+    fn test_flex_consumption_panics_without_dd_azure_resource_group() {
+        let mocked_env = MockEnv::new(&[
+            (
+                WEBSITE_OWNER_NAME,
+                "00000000-0000-0000-0000-000000000000+flex-EastUSwebspace-Linux",
+            ),
+            (SERVICE_CONTEXT, "1"),
+        ]);
+
+        AzureMetadata::new(mocked_env);
+    }
+
+    #[test]
+    fn test_flex_consumption_uses_dd_azure_resource_group() {
+        let mocked_env = MockEnv::new(&[
+            (
+                WEBSITE_OWNER_NAME,
+                "00000000-0000-0000-0000-000000000000+flex-EastUSwebspace-Linux",
+            ),
+            (DD_AZURE_RESOURCE_GROUP, "test-flex-rg"),
+            (SERVICE_CONTEXT, "1"),
+        ]);
+
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
+
+        // Should use the DD_AZURE_RESOURCE_GROUP value instead of extracting from WEBSITE_OWNER_NAME
+        assert_eq!(metadata.get_resource_group(), "test-flex-rg");
     }
 
     #[test]
