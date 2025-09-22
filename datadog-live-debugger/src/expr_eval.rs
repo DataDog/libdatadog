@@ -6,7 +6,7 @@ use crate::expr_defs::{
     BinaryComparison, CollectionMatch, CollectionSource, Condition, DslPart, NumberSource,
     Reference, StringComparison, StringSource, Value,
 };
-use regex::Regex;
+use regex_lite::Regex;
 use std::borrow::Cow;
 use std::cmp::min;
 use std::fmt::{Display, Formatter};
