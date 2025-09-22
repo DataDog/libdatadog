@@ -10,13 +10,11 @@
 use crate::modes::behavior::Behavior;
 use crate::modes::behavior::{
     atom_to_clone, file_append_msg, file_content_equals, fileat_content_equals, remove_permissive,
-    removeat_permissive, set_atomic,
+    removeat_permissive, set_atomic, trigger_sigpipe,
 };
 
 use datadog_crashtracker::CrashtrackerConfiguration;
 use libc;
-use nix::sys::socket;
-use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicPtr;
 
@@ -70,24 +68,7 @@ fn inner(output_dir: &Path, filename: &str) -> anyhow::Result<()> {
     set_atomic(&OUTPUT_FILE, output_dir.join(filename));
     let ofile = atom_to_clone(&OUTPUT_FILE)?;
 
-    // Cause a SIGPIPE to occur by opening a socketpair, closing the read side, and writing into
-    // the write side. Use raw write() syscall to bypass Rust's MSG_NOSIGNAL protection.
-    let (reader_fd, writer_fd) = socket::socketpair(
-        socket::AddressFamily::Unix,
-        socket::SockType::Stream,
-        None,
-        socket::SockFlag::empty(),
-    )?;
-    drop(reader_fd);
-
-    // Use raw write() syscall instead of Rust's write_all() to avoid MSG_NOSIGNAL
-    let writer_raw_fd = writer_fd.as_raw_fd();
-    let write_result =
-        unsafe { libc::write(writer_raw_fd, b"Hello".as_ptr() as *const libc::c_void, 5) };
-
-    if write_result != -1 {
-        anyhow::bail!("Expected write to fail with SIGPIPE, but it succeeded");
-    }
+    trigger_sigpipe()?;
 
     // Now check the output file.  Strongly assumes that nothing happened to change the value of
     // OUTPUT_FILE within the handler.
