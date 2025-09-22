@@ -33,6 +33,7 @@ impl<'a> From<&'a datadog_live_debugger::IntermediateValue<'a, c_void>> for Inte
     }
 }
 
+#[allow(clippy::zero_ptr)] // written this way for cbindgen's sake
 pub const EVALUATOR_RESULT_UNDEFINED: *const c_void = 0isize as *const c_void;
 pub const EVALUATOR_RESULT_INVALID: *const c_void = -1isize as *const c_void;
 pub const EVALUATOR_RESULT_REDACTED: *const c_void = -2isize as *const c_void;

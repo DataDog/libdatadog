@@ -798,7 +798,7 @@ mod tests {
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
         let res = data.send().await;
 
-        mock.assert_hits_async(2).await;
+        mock.assert_calls_async(2).await;
 
         assert_eq!(res.last_result.unwrap().status(), 200);
         assert_eq!(res.errors_timeout, 0);
@@ -839,7 +839,7 @@ mod tests {
 
         let res = data.send().await;
 
-        mock.assert_hits_async(5).await;
+        mock.assert_calls_async(5).await;
 
         assert!(res.last_result.is_ok());
         assert_eq!(res.last_result.unwrap().status(), 500);
@@ -938,7 +938,7 @@ mod tests {
 
         let res = data.send().await;
 
-        mock.assert_hits_async(5).await;
+        mock.assert_calls_async(5).await;
 
         assert_eq!(res.errors_timeout, 1);
         assert_eq!(res.errors_network, 0);
@@ -980,7 +980,7 @@ mod tests {
 
         let res = data.send().await;
 
-        mock.assert_hits_async(10).await;
+        mock.assert_calls_async(10).await;
 
         assert_eq!(res.errors_timeout, 1);
         assert_eq!(res.errors_network, 0);

@@ -25,12 +25,6 @@ pub enum CompressedMessage<T> {
     },
 }
 
-#[derive(Deserialize, Serialize)]
-enum CompressionType {
-    Uncompressed,
-    Compressed,
-}
-
 async fn compress<T>(message: T) -> io::Result<CompressedMessage<T>>
 where
     T: Serialize,

@@ -7,7 +7,7 @@ version = "0.0.1"
 [dependencies]
 anyhow = "1.0"
 ddcommon = { path = "../ddcommon" }
-hyper = { version = "1.6", features = ["http1", "client"] }
+hyper = { workspace = true}
 http-body-util = "0.1"
 
 regex = "1.9.3"
