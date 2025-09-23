@@ -118,22 +118,22 @@ pub enum Method {
     Other = 9, //This is specified as "*" in the OpenAPI spec
 }
 
-// #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
-// #[serde(rename_all = "UPPERCASE")]
-// #[repr(C)]
-// pub enum Authentication {
-//     Jwt = 0,
-//     Basic = 1,
-//     Oauth = 2,
-//     Oidc = 3,
-//     ApiKey = 4,
-//     Session = 5,
-//     Mtls = 6,
-//     Saml = 7,
-//     Ldap = 8,
-//     Form = 9,
-//     Other = 10,
-// }
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
+#[serde(rename_all = "UPPERCASE")]
+#[repr(C)]
+pub enum Authentication {
+    Jwt = 0,
+    Basic = 1,
+    Oauth = 2,
+    Oidc = 3,
+    ApiKey = 4,
+    Session = 5,
+    Mtls = 6,
+    Saml = 7,
+    Ldap = 8,
+    Form = 9,
+    Other = 10,
+}
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
 pub struct Endpoint {
@@ -145,14 +145,14 @@ pub struct Endpoint {
     pub path: Option<String>,
     pub operation_name: String,
     pub resource_name: String,
-    // #[serde(default)]
-    // pub request_body_type: Option<Vec<String>>,
-    // #[serde(default)]
-    // pub response_body_type: Option<Vec<String>>,
-    // #[serde(default)]
-    // pub response_code: Option<Vec<i32>>,
-    // #[serde(default)]
-    // pub authentication: Option<Vec<Authentication>>,
+    #[serde(default)]
+    pub request_body_type: Option<Vec<String>>,
+    #[serde(default)]
+    pub response_body_type: Option<Vec<String>>,
+    #[serde(default)]
+    pub response_code: Option<Vec<i32>>,
+    #[serde(default)]
+    pub authentication: Option<Vec<Authentication>>,
     // #[serde(default)]
     // pub metadata: Option<serde_json::Value>,
 }
