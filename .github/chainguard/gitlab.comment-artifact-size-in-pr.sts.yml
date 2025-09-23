@@ -1,0 +1,21 @@
+# Runner on gitlab so issuer is the gitlab
+issuer: https://gitlab.ddbuild.io
+
+# We are on the target repo, so we ok things coming from there :downarrow:
+subject: project_path:DataDog/apm-reliability/ddprof-build:ref_type:branch:ref:main
+
+# When exactly are we allowing to get touched (?)
+claim_pattern:
+  project_path: DataDag/apm-reliability/ddprof-build
+  ref: main
+  ref_type: branch
+  ref_path: refs/heads/main
+  job_workflow_ref: gitlab.ddbuild.io/DataDog/apm-reliability/ddprof-build/.gitlab-ci.yml
+
+# What can be done to us (?)
+permission:
+  pull_requests: write
+
+# I don't know what this does, I've seen it done somewhere
+repositories:
+  - libdatadog
