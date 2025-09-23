@@ -1,21 +1,16 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use anyhow::Context;
 use cargo_metadata::MetadataCommand;
 use ddcommon::hyper_migration::{self, Body};
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::{Request, Response, Uri};
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
-use testcontainers::{
-    core::{wait::HttpWaitStrategy, AccessMode, ContainerPort, Mount, WaitFor},
-    runners::AsyncRunner,
-    *,
-};
 
 const TEST_AGENT_IMAGE_NAME: &str = "ghcr.io/datadog/dd-apm-test-agent/ddapm-test-agent";
 const TEST_AGENT_IMAGE_TAG: &str = "v1.31.1";
@@ -28,83 +23,143 @@ const SESSION_TEST_TOKEN_QUERY_PARAM_KEY: &str = "test_session_token";
 const SESSION_START_ENDPOINT: &str = "test/session/start";
 const SET_REMOTE_CONFIG_RESPONSE_PATH_ENDPOINT: &str = "test/session/responses/config/path";
 
-#[derive(Debug)]
-struct DatadogTestAgentContainer {
-    mounts: Vec<Mount>,
-    env_vars: HashMap<String, String>,
+struct DatadogAgentContainerBuilder {
+    mounts: Vec<(String, String)>,
+    env_vars: Vec<(String, String)>,
+    exposed_port: u16,
 }
 
-impl Image for DatadogTestAgentContainer {
-    fn name(&self) -> &str {
-        TEST_AGENT_IMAGE_NAME
-    }
+struct DatadogTestAgentContainer {
+    container_id: String,
+    container_port: u16,
+}
 
-    fn tag(&self) -> &str {
-        TEST_AGENT_IMAGE_TAG
+/// Run the command passed and returns an error if the return code is not
+/// a success
+fn run_command(c: &mut std::process::Command) -> anyhow::Result<std::process::Output> {
+    let output = c.output()?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "Running command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
     }
-
-    fn ready_conditions(&self) -> Vec<WaitFor> {
-        vec![
-            WaitFor::message_on_stderr(TEST_AGENT_READY_MSG),
-            // Add HTTP wait strategy for the /info endpoint
-            WaitFor::Http(
-                HttpWaitStrategy::new("/info") // Endpoint to check
-                    .with_port(ContainerPort::Tcp(TEST_AGENT_PORT)) // Port to use (8126)
-                    .with_expected_status_code(200u16) // Expected status code
-                    .with_poll_interval(Duration::from_secs(1)),
-            ),
-        ]
-    }
-
-    fn mounts(&self) -> impl IntoIterator<Item = &Mount> {
-        Box::new(self.mounts.iter())
-    }
-
-    fn expose_ports(&self) -> &[ContainerPort] {
-        &[ContainerPort::Tcp(TEST_AGENT_PORT)]
-    }
-
-    fn env_vars(
-        &self,
-    ) -> impl IntoIterator<Item = (impl Into<Cow<'_, str>>, impl Into<Cow<'_, str>>)> {
-        Box::new(self.env_vars.iter())
-    }
+    Ok(output)
 }
 
 impl DatadogTestAgentContainer {
+    fn stderr(&self) -> anyhow::Result<String> {
+        use std::process::*;
+        let output = run_command(Command::new("docker").arg("logs").arg(&self.container_id))
+            .context("docker logs")?;
+        Ok(String::from_utf8(output.stderr)?)
+    }
+
+    fn wait_ready(&self) -> anyhow::Result<()> {
+        for _ in 0..100 {
+            if self
+                .stderr()
+                .context("reading container logs")?
+                .contains(TEST_AGENT_READY_MSG)
+            {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        anyhow::bail!("waiting for test container timed out")
+    }
+
+    fn host_port(&self) -> anyhow::Result<String> {
+        use std::process::*;
+        let output = run_command(
+            Command::new("docker")
+                .args(["inspect", "--format"])
+                .arg(format!(
+                    r##"{{{{(index (index .NetworkSettings.Ports  "{}/tcp") 0).HostPort}}}}"##,
+                    self.container_port
+                ))
+                .arg(&self.container_id),
+        )
+        .context("docker inspect mapped host port")?;
+        Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+    }
+
+    fn base_uri(&self) -> anyhow::Result<String> {
+        Ok(format!("http://localhost:{}", self.host_port()?))
+    }
+}
+
+impl Drop for DatadogTestAgentContainer {
+    fn drop(&mut self) {
+        use std::process::*;
+        if let Err(e) = (|| -> anyhow::Result<()> {
+            run_command(Command::new("docker").arg("stop").arg(&self.container_id))
+                .context("docker stop container")?;
+            Ok(())
+        })() {
+            eprintln!("error stopping test agent container: {e}");
+        };
+    }
+}
+
+impl DatadogAgentContainerBuilder {
+    fn start(&self) -> anyhow::Result<DatadogTestAgentContainer> {
+        use std::process::*;
+        let mounts = self.mounts.iter().flat_map(|(host_path, container_path)| {
+            ["-v".to_owned(), format!("{host_path}:{container_path}")]
+        });
+        let envs = self
+            .env_vars
+            .iter()
+            .flat_map(|(e, v)| ["-e".to_owned(), format!("{e}={v}")]);
+
+        let output = run_command(
+            Command::new("docker")
+                .args(["run", "--rm", "-d"])
+                .args(mounts)
+                .args(envs)
+                .args(["-p".to_owned(), format!("{}", self.exposed_port)])
+                .arg(format!("{TEST_AGENT_IMAGE_NAME}:{TEST_AGENT_IMAGE_TAG}",)),
+        )
+        .context("docker run container")?;
+        let container_id = String::from_utf8(output.stdout)?.trim().to_owned();
+        let container = DatadogTestAgentContainer {
+            container_id,
+            container_port: self.exposed_port,
+        };
+        container.wait_ready()?;
+        Ok(container)
+    }
+
     fn new(relative_snapshot_path: Option<&str>, absolute_socket_path: Option<&str>) -> Self {
-        let mut env_vars = HashMap::new();
+        let mut env_vars = Vec::new();
         let mut mounts = Vec::new();
 
         if let Some(absolute_socket_path) = absolute_socket_path {
-            env_vars.insert(
+            env_vars.push((
                 "DD_APM_RECEIVER_SOCKET".to_string(),
                 "/tmp/ddsockets/apm.socket".to_owned(),
-            );
+            ));
 
-            mounts.push(
-                Mount::bind_mount(absolute_socket_path, "/tmp/ddsockets")
-                    .with_access_mode(AccessMode::ReadWrite),
-            );
+            mounts.push((absolute_socket_path.to_owned(), "/tmp/ddsockets".to_owned()));
         }
 
         if let Some(relative_snapshot_path) = relative_snapshot_path {
-            mounts.push(
-                Mount::bind_mount(
-                    DatadogTestAgentContainer::calculate_volume_absolute_path(
-                        relative_snapshot_path,
-                    ),
-                    "/snapshots",
-                )
-                .with_access_mode(AccessMode::ReadWrite),
-            );
+            mounts.push((
+                Self::calculate_volume_absolute_path(relative_snapshot_path),
+                "/snapshots".to_owned(),
+            ));
         }
 
-        DatadogTestAgentContainer { mounts, env_vars }
+        DatadogAgentContainerBuilder {
+            mounts,
+            env_vars,
+            exposed_port: TEST_AGENT_PORT,
+        }
     }
 
     pub fn with_env(mut self, key: &str, value: &str) -> Self {
-        self.env_vars.insert(key.to_string(), value.to_string());
+        self.env_vars.push((key.to_string(), value.to_string()));
         self
     }
 
@@ -173,7 +228,7 @@ impl DatadogTestAgentContainer {
 /// }
 /// ```
 pub struct DatadogTestAgent {
-    container: ContainerAsync<DatadogTestAgentContainer>,
+    container: DatadogTestAgentContainer,
 }
 
 impl DatadogTestAgent {
@@ -202,7 +257,7 @@ impl DatadogTestAgent {
         test_agent_extra_env: &[(&str, &str)],
     ) -> Self {
         let mut container =
-            DatadogTestAgentContainer::new(relative_snapshot_path, absolute_socket_path);
+            DatadogAgentContainerBuilder::new(relative_snapshot_path, absolute_socket_path);
         for (key, value) in test_agent_extra_env {
             container = container.with_env(key, value);
         }
@@ -210,20 +265,12 @@ impl DatadogTestAgent {
         DatadogTestAgent {
             container: container
                 .start()
-                .await
                 .expect("Unable to start DatadogTestAgent, is the Docker Daemon running?"),
         }
     }
 
     async fn get_base_uri_string(&self) -> String {
-        let container_host = self.container.get_host().await.unwrap().to_string();
-        let container_port = self
-            .container
-            .get_host_port_ipv4(TEST_AGENT_PORT)
-            .await
-            .unwrap();
-
-        format!("http://{container_host}:{container_port}")
+        self.container.base_uri().unwrap()
     }
 
     /// Constructs the URI for a provided endpoint of the Datadog Test Agent by concatenating the

@@ -10,14 +10,11 @@
 use crate::modes::behavior::Behavior;
 use crate::modes::behavior::{
     atom_to_clone, file_append_msg, file_content_equals, fileat_content_equals, remove_permissive,
-    removeat_permissive, set_atomic,
+    removeat_permissive, set_atomic, trigger_sigpipe,
 };
 
 use datadog_crashtracker::CrashtrackerConfiguration;
 use libc;
-use nix::sys::socket;
-use std::io::prelude::*;
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicPtr;
 
@@ -71,19 +68,7 @@ fn inner(output_dir: &Path, filename: &str) -> anyhow::Result<()> {
     set_atomic(&OUTPUT_FILE, output_dir.join(filename));
     let ofile = atom_to_clone(&OUTPUT_FILE)?;
 
-    // Cause a SIGPIPE to occur by opening a socketpair, closing the read side, and writing into
-    // the write side.
-    let (reader_fd, writer_fd) = socket::socketpair(
-        socket::AddressFamily::Unix,
-        socket::SockType::Stream,
-        None,
-        socket::SockFlag::empty(),
-    )?;
-    drop(reader_fd);
-    let mut writer = UnixStream::from(writer_fd);
-    if writer.write_all(b"Hello").is_ok() {
-        anyhow::bail!("Expected write to fail, but it succeeded");
-    }
+    trigger_sigpipe()?;
 
     // Now check the output file.  Strongly assumes that nothing happened to change the value of
     // OUTPUT_FILE within the handler.

@@ -1080,8 +1080,8 @@ mod tests {
             let mock_metrics = server.mock(|when, then| {
                 when.method(POST)
                     .path("/telemetry/proxy/api/v2/apmtelemetry")
-                    .body_contains(r#""runtime_id":"foo""#)
-                    .body_contains(r#""metric":"trace_api."#);
+                    .body_includes(r#""runtime_id":"foo""#)
+                    .body_includes(r#""metric":"trace_api."#);
                 then.status(200)
                     .header("content-type", "application/json")
                     .body("");
@@ -1134,7 +1134,7 @@ mod tests {
 
             ddog_trace_exporter_free(exporter);
             // It should receive 1 metrics payload (excluding heartbeats)
-            mock_metrics.assert_hits(1);
+            mock_metrics.assert_calls(1);
         }
     }
 
