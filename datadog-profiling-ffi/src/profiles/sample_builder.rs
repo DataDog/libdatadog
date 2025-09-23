@@ -13,10 +13,9 @@ use datadog_profiling::profiles::datatypes::{
 };
 use datadog_profiling::profiles::ProfileError;
 use ddcommon_ffi::{CharSlice, Timespec};
-use std::hash::Hasher;
 use std::time::SystemTime;
 
-struct SampleBuilder {
+pub struct SampleBuilder {
     builder: datatypes::SampleBuilder,
     profile: ProfileHandle<Profile>, // borrowed
 }

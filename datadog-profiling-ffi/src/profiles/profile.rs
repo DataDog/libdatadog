@@ -3,16 +3,14 @@
 
 use crate::profile_handle::ProfileHandle;
 use crate::profiles::{
-    ddog_prof_SampleBuilder_new, ddog_prof_SampleBuilder_value,
-    ProportionalUpscalingRule, Utf8Option,
+    ddog_prof_SampleBuilder_new, ddog_prof_SampleBuilder_value, SampleBuilder,
 };
 use crate::{ensure_non_null_out_parameter, ArcHandle, ProfileStatus};
 use core::mem;
 use datadog_profiling::profiles::datatypes::{
-    Profile, ProfilesDictionary, SampleBuilder, ScratchPad, ValueType,
-    MAX_SAMPLE_TYPES,
+    Profile, ProfilesDictionary, ScratchPad, ValueType, MAX_SAMPLE_TYPES,
 };
-use datadog_profiling::profiles::{PprofBuilder, ProfileError};
+use datadog_profiling::profiles::ProfileError;
 use ddcommon_ffi::Slice;
 use std::ops::Range;
 
@@ -411,7 +409,7 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_build_sample(
     let handle = adapter.profiles[first_offset];
 
     let mut builder = ProfileHandle::default();
-    let status = ddog_prof_SampleBuilder_new(&mut builder, scratchpad);
+    let status = ddog_prof_SampleBuilder_new(&mut builder, handle, scratchpad);
     if status.flags != 0 {
         return status;
     }
