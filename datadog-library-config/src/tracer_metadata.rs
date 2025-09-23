@@ -1,9 +1,9 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+use std::default::Default;
 
 /// This struct MUST be backward compatible.
 #[derive(serde::Serialize, Debug)]
-#[repr(C)]
 pub struct TracerMetadata {
     /// Version of the schema.
     pub schema_version: u8,
@@ -26,6 +26,29 @@ pub struct TracerMetadata {
     /// Version of the service being instrumented.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_version: Option<String>,
+    /// Process tags of the application being instrumented.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_tags: Option<String>,
+    /// Container id seen by the application.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_id: Option<String>,
+}
+
+impl Default for TracerMetadata {
+    fn default() -> Self {
+        TracerMetadata {
+            schema_version: 2,
+            runtime_id: None,
+            tracer_language: String::new(),
+            tracer_version: String::new(),
+            hostname: String::new(),
+            service_name: None,
+            service_env: None,
+            service_version: None,
+            process_tags: None,
+            container_id: None,
+        }
+    }
 }
 
 pub enum AnonymousFileHandle {
