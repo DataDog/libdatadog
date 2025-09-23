@@ -12,8 +12,8 @@ autobenches = false
 [dependencies]
 anyhow = { version = "1.0" }
 arc-swap = "1.7.1"
-hyper = { version = "1.6", features = ["http1", "client"] }
-hyper-util = { version = "0.1", features = ["client", "client-legacy"] }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
 http = "1.0"
 http-body-util = "0.1"
 tracing = { version = "0.1", default-features = false }
@@ -51,11 +51,12 @@ harness = false
 path = "benches/main.rs"
 
 [dev-dependencies]
+clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5.1"
 datadog-trace-utils = { path = "../datadog-trace-utils", features = [
     "test-utils",
 ] }
-httpmock = "0.7.0"
+httpmock = "0.8.0-alpha.1"
 rand = "0.8.5"
 regex = "1.5"
 tempfile = "3.3.0"

@@ -50,7 +50,7 @@ ddsketch-ffi = { path = "../ddsketch-ffi", default-features = false, optional = 
 function_name = "0.3.0"
 futures = { version = "0.3", default-features = false }
 http-body-util = "0.1"
-hyper = { version = "1.6", features = ["http1", "client"] }
+hyper = { workspace = true}
 libc = "0.2"
 rustc-hash = { version = "1", default-features = false }
 serde_json = { version = "1.0" }

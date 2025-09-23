@@ -415,11 +415,11 @@ pub async fn poll_for_mock_hit(
         sleep(Duration::from_millis(sleep_interval_ms)).await;
         mock_observations_remaining -= 1;
         mock_hit = if expected_hits > 0 {
-            mock.hits_async().await == expected_hits
+            mock.calls_async().await == expected_hits
         } else {
             // If we are polling for 0 hits, we need to ensure we do all observations, otherwise
             // this will always be true
-            mock.hits_async().await == 0 && mock_observations_remaining == 0
+            mock.calls_async().await == 0 && mock_observations_remaining == 0
         };
 
         if mock_observations_remaining == 0 || mock_hit {

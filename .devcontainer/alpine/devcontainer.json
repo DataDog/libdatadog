@@ -1,0 +1,31 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/rust
+{
+    "name": "Rust (Alpine)",
+    // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+    "image": "mcr.microsoft.com/devcontainers/base:alpine", // more images at  // more images at https://hub.docker.com/r/microsoft/devcontainers-base
+
+    // Allow access to host machine
+    "runArgs": ["--network=host"],
+
+    // Use 'mounts' to make the cargo cache persistent in a Docker Volume.
+    "mounts": [
+        {
+            "source": "devcontainer-cargo-cache-alpine-${devcontainerId}",
+            "target": "/usr/local/cargo",
+            "type": "volume"
+        }
+    ],
+
+    "onCreateCommand": "sudo apk add --no-cache build-base rust cargo cargo-zsh-completion rust-src rustfmt cbindgen patchelf cmake",
+
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "rust-lang.rust-analyzer",
+                "vadimcn.vscode-lldb",
+                "tamasfe.even-better-toml"
+            ]
+        }
+    }
+}

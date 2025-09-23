@@ -1606,7 +1606,7 @@ mod tests {
 
         let metrics_endpoint = server.mock(|when, then| {
             when.method(POST)
-                .body_contains("\"metric\":\"trace_api.bytes\"")
+                .body_includes("\"metric\":\"trace_api.bytes\"")
                 .path("/telemetry/proxy/api/v2/apmtelemetry");
             then.status(200)
                 .header("content-type", "application/json")
@@ -1635,8 +1635,8 @@ mod tests {
         };
         assert_eq!(body, response_body);
 
-        traces_endpoint.assert_hits(1);
-        while metrics_endpoint.hits() == 0 {
+        traces_endpoint.assert_calls(1);
+        while metrics_endpoint.calls() == 0 {
             exporter
                 .runtime
                 .lock()
@@ -1647,7 +1647,7 @@ mod tests {
                     sleep(Duration::from_millis(100)).await;
                 })
         }
-        metrics_endpoint.assert_hits(1);
+        metrics_endpoint.assert_calls(1);
     }
 
     #[test]
@@ -1669,7 +1669,7 @@ mod tests {
 
         let metrics_endpoint = server.mock(|when, then| {
             when.method(POST)
-                .body_contains("\"metric\":\"trace_api.bytes\"")
+                .body_includes("\"metric\":\"trace_api.bytes\"")
                 .path("/telemetry/proxy/api/v2/apmtelemetry");
             then.status(200)
                 .header("content-type", "application/json")
@@ -1693,8 +1693,8 @@ mod tests {
         };
         assert_eq!(body, response_body);
 
-        traces_endpoint.assert_hits(1);
-        while metrics_endpoint.hits() == 0 {
+        traces_endpoint.assert_calls(1);
+        while metrics_endpoint.calls() == 0 {
             exporter
                 .runtime
                 .lock()
@@ -1705,7 +1705,7 @@ mod tests {
                     sleep(Duration::from_millis(100)).await;
                 })
         }
-        metrics_endpoint.assert_hits(1);
+        metrics_endpoint.assert_calls(1);
     }
 
     #[test]
@@ -1719,8 +1719,8 @@ mod tests {
                         }
                     }"#;
         let traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path("/v0.5/traces").matches(|req| {
-                let bytes = tinybytes::Bytes::copy_from_slice(req.body.as_ref().unwrap());
+            when.method(POST).path("/v0.5/traces").is_true(|req| {
+                let bytes = tinybytes::Bytes::copy_from_slice(req.body_ref());
                 bytes.to_vec() == V5_EMPTY
             });
             then.status(200)
@@ -1730,7 +1730,7 @@ mod tests {
 
         let metrics_endpoint = server.mock(|when, then| {
             when.method(POST)
-                .body_contains("\"metric\":\"trace_api.bytes\"")
+                .body_includes("\"metric\":\"trace_api.bytes\"")
                 .path("/telemetry/proxy/api/v2/apmtelemetry");
             then.status(200)
                 .header("content-type", "application/json")
@@ -1762,8 +1762,8 @@ mod tests {
         };
         assert_eq!(body, response_body);
 
-        traces_endpoint.assert_hits(1);
-        while metrics_endpoint.hits() == 0 {
+        traces_endpoint.assert_calls(1);
+        while metrics_endpoint.calls() == 0 {
             exporter
                 .runtime
                 .lock()
@@ -1774,7 +1774,7 @@ mod tests {
                     sleep(Duration::from_millis(100)).await;
                 })
         }
-        metrics_endpoint.assert_hits(1);
+        metrics_endpoint.assert_calls(1);
     }
 
     #[test]
@@ -1808,7 +1808,7 @@ mod tests {
             };
             assert_eq!(body, response_body);
         }
-        traces_endpoint.assert_hits(2);
+        traces_endpoint.assert_calls(2);
     }
 
     #[test]
@@ -1848,7 +1848,7 @@ mod tests {
         let AgentResponse::Unchanged = result else {
             panic!("Expected Unchanged response");
         };
-        traces_endpoint.assert_hits(2);
+        traces_endpoint.assert_calls(2);
         traces_endpoint.delete();
 
         let traces_endpoint = server.mock(|when, then| {
@@ -1868,7 +1868,7 @@ mod tests {
         let AgentResponse::Unchanged = result else {
             panic!("Expected Unchanged response");
         };
-        traces_endpoint.assert_hits(2);
+        traces_endpoint.assert_calls(2);
     }
 
     #[test]
@@ -1946,7 +1946,7 @@ mod tests {
         let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
 
         // Wait for the info fetcher to get the config
-        while mock_info.hits() == 0 {
+        while mock_info.calls() == 0 {
             exporter
                 .runtime
                 .lock()
@@ -2083,7 +2083,7 @@ mod single_threaded_tests {
 
         // Wait for the mock server to process the stats
         for _ in 0..1000 {
-            if mock_traces.hits() > 0 && mock_stats.hits() > 0 {
+            if mock_traces.calls() > 0 && mock_stats.calls() > 0 {
                 break;
             } else {
                 std::thread::sleep(Duration::from_millis(10));

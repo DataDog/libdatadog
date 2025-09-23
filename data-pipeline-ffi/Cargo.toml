@@ -23,7 +23,7 @@ cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 build_common = { path = "../build-common" }
 
 [dev-dependencies]
-httpmock = "0.7.0"
+httpmock = "0.8.0-alpha.1"
 rmp-serde = "1.1.1"
 datadog-trace-utils = { path = "../datadog-trace-utils" }
 
