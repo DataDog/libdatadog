@@ -103,73 +103,23 @@ pub unsafe extern "C" fn ddog_prof_Profile_drop(
 #[repr(C)]
 pub struct ProfileAdapter {
     dictionary: ArcHandle<ProfilesDictionary>,
-    profiles: ddcommon_ffi::vec::Vec<ProfileHandle<Profile>>,
-    // An indirection used like `self.profiles[self.mapping[i]]`. There are
-    // at least as many mappings as profiles.
-    mappings: ddcommon_ffi::vec::Vec<usize>,
+    mappings: ddcommon_ffi::vec::Vec<ProfileAdapterMapping>,
 }
 
-// struct Index { val: size_t }
-// struct Exception { index: Index, count }
-// struct CpuSample { nanoseconds: i64, count }
-// struct AllocSample { nanoseconds: i64, count: i64 }
-
-// [     0,            1,        2]
-// [CPU[2], Exception[1], Alloc[2]]
-// Profile_new(
-//     [
-//      (0, (Cpu-count, cpu-dur)),
-//      (1,  (Exception))
-//      (2, (Alloc-bytes, alloc-count)),
-//     ]
-//
-// )
-// Adapter_new(
-//     [Cpu-count, cpu-dur, Exception, Alloc-bytes, alloc-count]
-//     [        0,       0,         1,           2,           2]
-//
-// )
-//
-// struct GenericSample {
-//     either a profile index, or sample/value ranges
-//     index: 1, // profile vs sample-type
-//     values: [ 0, 0, 1, 0, 0]
-//     labels: Vec<Tag>,
-// }
-
-// struct SampleValue {
-//    index: Index,
-//    union: {
-//         wall: WallSample,
-//         cpu: CpuSample,
-//         cpu: AllocSample,
-//    };
-// }
-
-// rs:
-// pub enum SampleValue {
-//     Wall { duration:,  count: }
-//     CPU { duration }
-//     Alloc { bytes:, count}
-//}
-
-// -----
-// [   exception,  cpu-count, cpu-duration,   wall-dur,]
-// [ ValueType{}, ValueType{}, ValueType{}, ValueType{}]
-// [            0,          1,           1,           2, ...]
-// [          i64,        i64,         i64,         i64]
-
-// [            0,          1,        1000,           0]
+#[repr(C)]
+pub struct ProfileAdapterMapping {
+    profile: ProfileHandle<Profile>,
+    /// This is the range in the sample types/values array in the legacy API
+    /// that corresponds to this mapping.
+    range: Range<usize>,
+}
 
 impl Drop for ProfileAdapter {
     fn drop(&mut self) {
-        let profiles = mem::take(&mut self.profiles);
-        let iter = profiles.into_std().into_iter();
-        for mut handle in iter {
-            unsafe { drop(handle.take()) }
+        let mut mappings = mem::take(&mut self.mappings).into_std();
+        for mut mapping in mappings.drain(..) {
+            drop(unsafe { mapping.profile.take() })
         }
-        let mappings = mem::take(&mut self.mappings);
-        drop(mappings);
 
         self.dictionary.drop_resource();
     }
@@ -296,10 +246,6 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_new(
         return ProfileStatus::from(c"reference count overflow: profile adapter could not clone the profiles dictionary");
     };
 
-    // Build profiles (one per contiguous run) and a mapping per offset.
-    let mut mappings = ddcommon_ffi::vec::Vec::new();
-    mappings.try_reserve_exact(value_types.len()).unwrap();
-
     // Count runs and validate max run length.
     let (n_runs, longest_run) = count_runs_and_longest_run(groupings);
     if longest_run > MAX_SAMPLE_TYPES {
@@ -308,36 +254,37 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_new(
         );
     }
 
-    let mut profiles = ddcommon_ffi::vec::Vec::new();
-    profiles.try_reserve_exact(n_runs).unwrap();
+    // Build mapping of profiles (one per contiguous run).
+    let mut mappings = ddcommon_ffi::vec::Vec::new();
+    mappings.try_reserve_exact(n_runs).unwrap();
 
     for run in RunsIter::new(groupings) {
         // Create a profile for this run
-        let mut handle = ProfileHandle::default();
-        let result = ddog_prof_Profile_new(&mut handle);
+        let mut mapping = ProfileAdapterMapping {
+            profile: Default::default(),
+            range: Default::default(),
+        };
+        let result = ddog_prof_Profile_new(&mut mapping.profile);
         if result.flags != 0 {
             return result;
         }
-
-        let profile_offset = profiles.len();
-        profiles.push(handle);
-
+        mapping.range = run.clone();
+        let profile = mapping.profile;
+        mappings.push(mapping);
         // Add sample types for the run. The run length was previously
         // validated to be <= MAX_SAMPLE_TYPES.
         for value_idx in run {
             let status = ddog_prof_Profile_add_sample_type(
-                profiles[profile_offset],
+                profile,
                 value_types[value_idx],
             );
             if status.flags != 0 {
                 return status;
             }
-            // Add a profile_offset for each item of the run too.
-            mappings.push(profile_offset);
         }
     }
 
-    unsafe { out.write(ProfileAdapter { dictionary, profiles, mappings }) };
+    unsafe { out.write(ProfileAdapter { dictionary, mappings }) };
     ProfileStatus::OK
 }
 
@@ -363,57 +310,23 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_build_sample(
     scratchpad: ArcHandle<ScratchPad>,
 ) -> ProfileStatus {
     assert!(!sample_builder.is_null());
-    assert!(profile_grouping < adapter.profiles.len());
-    if adapter.profiles.is_empty() || adapter.mappings.is_empty() {
-        return ProfileStatus::from(c"invalid input: ddog_prof_ProfileAdapter_adapt was called on an empty adapter");
+    assert!(profile_grouping < adapter.mappings.len());
+    if adapter.mappings.is_empty() {
+        return ProfileStatus::from(c"invalid input: ddog_prof_ProfileAdapter_build_sample was called on an empty adapter");
     }
     let values = values.try_as_slice().unwrap();
-    assert_eq!(values.len(), adapter.mappings.len());
 
-    let Some(idx) = values.iter().position(|&v| v != 0) else {
-        return ProfileStatus::from(
-            c"invalid input: no non-zero sample value found",
-        );
+    let Some(mapping) = adapter.mappings.get(profile_grouping) else {
+        return ProfileStatus::from(c"invalid input: grouping passed to ddog_prof_ProfileAdapter_build_sample was out of range");
     };
 
-    // Determine the window [start, end) for this profile/run (len 1 or 2)
-    let first_offset = adapter.mappings[idx];
-    let mut start = idx;
-    if idx > 0 && adapter.mappings[idx - 1] == first_offset {
-        start = idx - 1;
-    }
-    let mut end = start + 1;
-    if end < values.len() && adapter.mappings[end] == first_offset {
-        end += 1;
-    }
-
-    // Ensure the window maps to the same profile and grouping
-    let same_profile =
-        adapter.mappings[start..end].iter().all(|&off| off == first_offset);
-    if !same_profile {
-        return ProfileStatus::from(
-            c"invalid input: tried to add samples from different profiles",
-        );
-    }
-
-    // Ensure values outside the window are zero
-    if values[..start].iter().any(|&v| v != 0)
-        || values[end..].iter().any(|&v| v != 0)
-    {
-        return ProfileStatus::from(
-            c"invalid input: multiple samples present in the same row",
-        );
-    }
-
-    // Determine the target profile handle
-    let handle = adapter.profiles[first_offset];
-
     let mut builder = ProfileHandle::default();
-    let status = ddog_prof_SampleBuilder_new(&mut builder, handle, scratchpad);
+    let status =
+        ddog_prof_SampleBuilder_new(&mut builder, mapping.profile, scratchpad);
     if status.flags != 0 {
         return status;
     }
-    for val in values[start..end].iter().copied() {
+    for val in values[mapping.range.clone()].iter().copied() {
         let status = ddog_prof_SampleBuilder_value(builder, val);
         if status.flags != 0 {
             return status;
@@ -424,17 +337,6 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_build_sample(
 
     ProfileStatus::OK
 }
-
-// #[must_use]
-// #[no_mangle]
-// pub unsafe extern "C" fn ddog_prof_ProfileAdapter_add_proportional_upscaling(
-//     mut handle: *mut ProfileAdapter,
-//     index: usize,
-//     upscaling_rules: Slice<ProportionalUpscalingRule<'_>,
-//         utf8_option: Utf8Option,
-// ) -> ProfileStatus {
-//
-// }
 
 /// Frees the resources associated to the profile adapter handle, leaving an
 /// empty adapter in its place. This is safe to call with null, and it's also
@@ -457,8 +359,7 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_drop(
 /// # Examples
 ///
 /// ```
-/// let groupings = &[0, 0, 1, 0, 0, 1, 0];
-///            // run 1,    2, 3,    4, 5
+/// let groupings = &[0, 0, 1, 2, 2, 3, 4];
 /// let iter = datadog_profiling_ffi::profiles::RunsIter::new(groupings);
 /// let runs = iter.collect::<Vec<_>>();
 /// assert_eq!(runs.as_slice(), &[0..2, 2..3, 3..5, 5..6, 6..7]);
