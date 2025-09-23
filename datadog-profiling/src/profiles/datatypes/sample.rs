@@ -12,6 +12,7 @@ use arrayvec::ArrayVec;
 use core::fmt::Write;
 use std::time::SystemTime;
 
+// struct ddog_prof_sample{}
 #[derive(Debug)]
 pub struct Sample {
     pub stack_id: StackId,

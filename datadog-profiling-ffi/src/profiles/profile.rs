@@ -4,6 +4,7 @@
 use crate::profile_handle::ProfileHandle;
 use crate::profiles::{
     ddog_prof_SampleBuilder_new, ddog_prof_SampleBuilder_value,
+    ProportionalUpscalingRule, Utf8Option,
 };
 use crate::{ensure_non_null_out_parameter, ArcHandle, ProfileStatus};
 use core::mem;
@@ -11,7 +12,7 @@ use datadog_profiling::profiles::datatypes::{
     Profile, ProfilesDictionary, SampleBuilder, ScratchPad, ValueType,
     MAX_SAMPLE_TYPES,
 };
-use datadog_profiling::profiles::ProfileError;
+use datadog_profiling::profiles::{PprofBuilder, ProfileError};
 use ddcommon_ffi::Slice;
 use std::ops::Range;
 
@@ -110,6 +111,58 @@ pub struct ProfileAdapter {
     mappings: ddcommon_ffi::vec::Vec<usize>,
 }
 
+// struct Index { val: size_t }
+// struct Exception { index: Index, count }
+// struct CpuSample { nanoseconds: i64, count }
+// struct AllocSample { nanoseconds: i64, count: i64 }
+
+// [     0,            1,        2]
+// [CPU[2], Exception[1], Alloc[2]]
+// Profile_new(
+//     [
+//      (0, (Cpu-count, cpu-dur)),
+//      (1,  (Exception))
+//      (2, (Alloc-bytes, alloc-count)),
+//     ]
+//
+// )
+// Adapter_new(
+//     [Cpu-count, cpu-dur, Exception, Alloc-bytes, alloc-count]
+//     [        0,       0,         1,           2,           2]
+//
+// )
+//
+// struct GenericSample {
+//     either a profile index, or sample/value ranges
+//     index: 1, // profile vs sample-type
+//     values: [ 0, 0, 1, 0, 0]
+//     labels: Vec<Tag>,
+// }
+
+// struct SampleValue {
+//    index: Index,
+//    union: {
+//         wall: WallSample,
+//         cpu: CpuSample,
+//         cpu: AllocSample,
+//    };
+// }
+
+// rs:
+// pub enum SampleValue {
+//     Wall { duration:,  count: }
+//     CPU { duration }
+//     Alloc { bytes:, count}
+//}
+
+// -----
+// [   exception,  cpu-count, cpu-duration,   wall-dur,]
+// [ ValueType{}, ValueType{}, ValueType{}, ValueType{}]
+// [            0,          1,           1,           2, ...]
+// [          i64,        i64,         i64,         i64]
+
+// [            0,          1,        1000,           0]
+
 impl Drop for ProfileAdapter {
     fn drop(&mut self) {
         let profiles = mem::take(&mut self.profiles);
@@ -152,9 +205,9 @@ impl Drop for ProfileAdapter {
 /// ddog_prof_ValueType value_types[5] = {
 ///     wall_time, wall_samples, cpu_time, alloc_bytes, alloc_count
 /// };
-/// int64_t groupings[5] = { 0, 0, 1, 0, 0 };
+/// int64_t groupings[5] = { 0, 0, 1, 2, 2 };
 ///
-/// ddog_prof_ProfileAdapterHandle adapter;
+/// ddog_prof_ProfileAdapter adapter;
 /// ddog_prof_ProfileStatus st = ddog_prof_ProfileAdapter_new(
 ///     &adapter,
 ///     dictionary,
@@ -172,12 +225,11 @@ impl Drop for ProfileAdapter {
 /// int64_t values[5] = { 0, 0, 0, 128, 1 };
 /// ddog_Slice_I64 ffi_slice = { .ptr = values, len = 5 };
 ///
-/// ddog_prof_ProfileHandle profile_handle;
 /// ddog_prof_SampleBuilderHandle sample_builder_handle;
-/// st = ddog_prof_ProfileAdapter_adapt(
-///     &profile_handle,
+/// st = ddog_prof_ProfileAdapter_add_sample(
 ///     &sample_builder_handle,
 ///     adapter,
+///     profile_index,
 ///     ffi_slice,
 ///     scratchpad,
 /// );
@@ -186,12 +238,28 @@ impl Drop for ProfileAdapter {
 /// // to add timestamps, links, etc.
 ///
 /// // then add it to the profile:
-/// st = ddog_prof_SampleBuilder_build_into_profile(
+/// st = ddog_prof_SampleBuilder_build(
 ///     &sample_builder_handle,
-///     profile_handle
 /// );
 ///
 /// // ...later...
+/// ddog_prof_ProfileAdapter_add_proportional_upscaling(adapter, 1, vec[ , ], ASSUME_UTF8)
+/// ddog_prof_ProfileAdapter_add_upscaling_proportional(
+///     index: usize,
+///
+/// )
+/// PprofBuilderHandle pprof_builder;
+/// upscalings[];
+/// for i in n_profiles {
+///     // if no upscaling
+///     ddog_prof_PprofBuilder_add_profile(pprof_builder, adapter.profiles.ptr[i])
+///
+///     // if propoertional
+///     ddog_prof_PprofBuilder_add_profile_proportional(pprof_builder, adapter.profiles.ptr[i], ...)
+///     ddog_prof_PprofBuilder_add_profile_poisson(pprof_builder, adapter.profiles.ptr[i], ...)
+/// }
+///
+///
 ///
 /// // order of these doesn't matter, the adapter keeps a refcount
 /// // alive on the dictionary.
@@ -289,15 +357,15 @@ fn count_runs_and_longest_run(groupings: &[i64]) -> (usize, usize) {
 /// into the profile.
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_ProfileAdapter_adapt(
-    profile_handle: *mut ProfileHandle<Profile>,
+pub unsafe extern "C" fn ddog_prof_ProfileAdapter_build_sample(
     sample_builder: *mut ProfileHandle<SampleBuilder>,
     adapter: &ProfileAdapter,
+    profile_grouping: usize,
     values: Slice<'_, i64>,
     scratchpad: ArcHandle<ScratchPad>,
 ) -> ProfileStatus {
-    assert!(!profile_handle.is_null());
     assert!(!sample_builder.is_null());
+    assert!(profile_grouping < adapter.profiles.len());
     if adapter.profiles.is_empty() || adapter.mappings.is_empty() {
         return ProfileStatus::from(c"invalid input: ddog_prof_ProfileAdapter_adapt was called on an empty adapter");
     }
@@ -354,11 +422,21 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_adapt(
         }
     }
 
-    profile_handle.write(handle);
     sample_builder.write(builder);
 
     ProfileStatus::OK
 }
+
+// #[must_use]
+// #[no_mangle]
+// pub unsafe extern "C" fn ddog_prof_ProfileAdapter_add_proportional_upscaling(
+//     mut handle: *mut ProfileAdapter,
+//     index: usize,
+//     upscaling_rules: Slice<ProportionalUpscalingRule<'_>,
+//         utf8_option: Utf8Option,
+// ) -> ProfileStatus {
+//
+// }
 
 /// Frees the resources associated to the profile adapter handle, leaving an
 /// empty adapter in its place. This is safe to call with null, and it's also

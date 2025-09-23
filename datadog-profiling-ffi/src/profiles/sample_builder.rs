@@ -9,11 +9,17 @@ use crate::profiles::{
 use crate::ProfileStatus;
 use datadog_profiling::profiles::collections::StringId;
 use datadog_profiling::profiles::datatypes::{
-    Link, Profile, SampleBuilder, ScratchPad, StackId,
+    self, Link, Profile, ScratchPad, StackId,
 };
 use datadog_profiling::profiles::ProfileError;
 use ddcommon_ffi::{CharSlice, Timespec};
+use std::hash::Hasher;
 use std::time::SystemTime;
+
+struct SampleBuilder {
+    builder: datatypes::SampleBuilder,
+    profile: ProfileHandle<Profile>, // borrowed
+}
 
 /// Creates a `SampleBuilder` backed by the provided `ScratchPad`.
 ///
@@ -22,12 +28,14 @@ use std::time::SystemTime;
 /// # Safety
 ///
 /// - `out` must be non-null and valid for writes of `SampleBuilderHandle`.
+/// - `profile` handle must outlive the sample value, as it borrows it.
 /// - `scratchpad` must be a live handle; its resource must outlive all uses of
 ///   the returned builder handle.
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_SampleBuilder_new(
     out: *mut ProfileHandle<SampleBuilder>,
+    profile: ProfileHandle<Profile>,
     scratchpad: ArcHandle<ScratchPad>,
 ) -> ProfileStatus {
     ensure_non_null_out_parameter!(out);
@@ -35,9 +43,10 @@ pub unsafe extern "C" fn ddog_prof_SampleBuilder_new(
         let sp = scratchpad.as_inner()?;
         let attributes = sp.attributes().try_clone()?;
         let links = sp.links().try_clone()?;
-        let builder = SampleBuilder::new(attributes, links);
-        let h = ProfileHandle::try_new(builder)?;
-        unsafe { out.write(h) };
+        let builder = datatypes::SampleBuilder::new(attributes, links);
+        let ffi_builder = SampleBuilder { builder, profile };
+        let handle = ProfileHandle::try_new(ffi_builder)?;
+        unsafe { out.write(handle) };
         Ok(())
     }())
 }
@@ -54,8 +63,8 @@ pub unsafe extern "C" fn ddog_prof_SampleBuilder_stack_id(
     stack_id: StackId,
 ) -> ProfileStatus {
     ProfileStatus::from(|| -> Result<(), ProfileError> {
-        let b = unsafe { handle.as_inner_mut()? };
-        b.set_stack_id(stack_id);
+        let ffi_builder = unsafe { handle.as_inner_mut()? };
+        ffi_builder.builder.set_stack_id(stack_id);
         Ok(())
     }())
 }
@@ -73,8 +82,8 @@ pub unsafe extern "C" fn ddog_prof_SampleBuilder_value(
     value: i64,
 ) -> ProfileStatus {
     ProfileStatus::from(|| -> Result<(), ProfileError> {
-        let b = unsafe { handle.as_inner_mut()? };
-        b.push_value(value)?;
+        let ffi_builder = unsafe { handle.as_inner_mut()? };
+        ffi_builder.builder.push_value(value)?;
         Ok(())
     }())
 }
@@ -95,8 +104,8 @@ pub unsafe extern "C" fn ddog_prof_SampleBuilder_attribute_str(
 ) -> ProfileStatus {
     ProfileStatus::from(|| -> Result<(), ProfileError> {
         let val = unsafe { utf8.try_as_bytes_convert(val)? };
-        let b = unsafe { handle.as_inner_mut()? };
-        b.push_attribute_str(key_id, val.as_ref())?;
+        let ffi_builder = unsafe { handle.as_inner_mut()? };
+        ffi_builder.builder.push_attribute_str(key_id, val.as_ref())?;
         Ok(())
     }())
 }
@@ -115,8 +124,8 @@ pub unsafe extern "C" fn ddog_prof_SampleBuilder_attribute_int(
     val: i64,
 ) -> ProfileStatus {
     ProfileStatus::from(|| -> Result<(), ProfileError> {
-        let b = unsafe { handle.as_inner_mut()? };
-        b.push_attribute_int(key_id, val)?;
+        let ffi_builder = unsafe { handle.as_inner_mut()? };
+        ffi_builder.builder.push_attribute_int(key_id, val)?;
         Ok(())
     }())
 }
@@ -137,9 +146,9 @@ pub unsafe extern "C" fn ddog_prof_SampleBuilder_link(
 ) -> ProfileStatus {
     ensure_non_null_insert!(link);
     ProfileStatus::from(|| -> Result<(), ProfileError> {
-        let b = unsafe { handle.as_inner_mut()? };
+        let ffi_builder = unsafe { handle.as_inner_mut()? };
         let link = unsafe { *link };
-        b.set_link(link)?;
+        ffi_builder.builder.set_link(link)?;
         Ok(())
     }())
 }
@@ -157,8 +166,8 @@ pub unsafe extern "C" fn ddog_prof_SampleBuilder_timestamp(
 ) -> ProfileStatus {
     ProfileStatus::from(|| -> Result<(), ProfileError> {
         let timestamp = SystemTime::from(timestamp);
-        let b = unsafe { handle.as_inner_mut()? };
-        b.set_timestamp(timestamp);
+        let ffi_builder = unsafe { handle.as_inner_mut()? };
+        ffi_builder.builder.set_timestamp(timestamp);
         Ok(())
     }())
 }
@@ -173,22 +182,20 @@ pub unsafe extern "C" fn ddog_prof_SampleBuilder_timestamp(
 /// # Safety
 ///
 /// - `builder` must point to a valid `ProfileHandle<SampleBuilder>`.
-/// - `profile` must refer to a live `Profile` and is treated as a unique
-///   mutable reference for the duration of the call.
 /// - After a successful build, the builder’s internal state is consumed and
 ///   must not be used unless rebuilt.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_SampleBuilder_build_into_profile(
+pub unsafe extern "C" fn ddog_prof_SampleBuilder_finish(
     builder: *mut ProfileHandle<SampleBuilder>,
-    mut profile: ProfileHandle<Profile>,
 ) -> ProfileStatus {
     ProfileStatus::from(|| -> Result<(), ProfileError> {
-        let prof = unsafe { profile.as_inner_mut()? };
         let builder_handle =
             builder.as_mut().ok_or(ProfileError::InvalidInput)?;
-        // Borrow the inner builder and build a sample, then add to profile.
-        let b = unsafe { builder_handle.as_inner_mut()? };
-        let sample = b.build()?;
+        // todo: safety
+        let ffi_builder = unsafe { builder_handle.as_inner_mut()? };
+        let sample = ffi_builder.builder.build()?;
+        // todo: safety
+        let prof = unsafe { ffi_builder.profile.as_inner_mut()? };
         prof.add_sample(sample)
     }())
 }
