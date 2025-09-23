@@ -10,6 +10,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::modes::unix::*;
+use nix::sys::socket;
+use std::os::unix::io::AsRawFd;
 
 /// Defines the additional behavior for a given crashtracking test
 pub trait Behavior {
@@ -89,6 +91,32 @@ pub fn remove_permissive(filepath: &Path) {
     let _ = std::fs::remove_file(filepath);
 }
 
+// This helper function is used to trigger a SIGPIPE signal. This is useful to
+// verify that the crashtracker correctly suppresses the SIGPIPE signal while it
+// emitts information to the collector, and that the SIGPIPE signal can be emitted
+// and used normally afterwards, as tested in the following tests:
+// - test_001_sigpipe
+// - test_005_sigpipe_sigstack
+pub fn trigger_sigpipe() -> Result<()> {
+    let (reader_fd, writer_fd) = socket::socketpair(
+        socket::AddressFamily::Unix,
+        socket::SockType::Stream,
+        None,
+        socket::SockFlag::empty(),
+    )?;
+    drop(reader_fd);
+
+    let writer_raw_fd = writer_fd.as_raw_fd();
+    let write_result =
+        unsafe { libc::write(writer_raw_fd, b"Hello".as_ptr() as *const libc::c_void, 5) };
+
+    if write_result != -1 {
+        anyhow::bail!("Expected write to fail with SIGPIPE, but it succeeded");
+    }
+
+    Ok(())
+}
+
 pub fn get_behavior(mode_str: &str) -> Box<dyn Behavior> {
     match mode_str {
         "donothing" => Box::new(test_000_donothing::Test),
@@ -102,5 +130,79 @@ pub fn get_behavior(mode_str: &str) -> Box<dyn Behavior> {
         "fork" => Box::new(test_008_fork::Test),
         "prechain_abort" => Box::new(test_009_prechain_with_abort::Test),
         _ => panic!("Unknown mode: {mode_str}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static SIGPIPE_CAUGHT: AtomicBool = AtomicBool::new(false);
+
+    extern "C" fn sigpipe_handler(_: libc::c_int) {
+        SIGPIPE_CAUGHT.store(true, Ordering::SeqCst);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_trigger_sigpipe() {
+        use std::mem;
+        use std::thread;
+
+        let result = thread::spawn(|| {
+            SIGPIPE_CAUGHT.store(false, Ordering::SeqCst);
+
+            let mut sigset: libc::sigset_t = unsafe { mem::zeroed() };
+            unsafe {
+                libc::sigemptyset(&mut sigset);
+            }
+
+            let sigpipe_action = libc::sigaction {
+                sa_sigaction: sigpipe_handler as usize,
+                sa_mask: sigset,
+                sa_flags: libc::SA_RESTART | libc::SA_SIGINFO,
+                #[cfg(target_os = "linux")]
+                sa_restorer: None,
+            };
+
+            let mut old_action: libc::sigaction = unsafe { mem::zeroed() };
+            let install_result =
+                unsafe { libc::sigaction(libc::SIGPIPE, &sigpipe_action, &mut old_action) };
+
+            if install_result != 0 {
+                return Err("Failed to set up SIGPIPE handler".to_string());
+            }
+
+            let trigger_result = trigger_sigpipe();
+
+            thread::sleep(std::time::Duration::from_millis(10));
+
+            let handler_called = SIGPIPE_CAUGHT.load(Ordering::SeqCst);
+
+            unsafe {
+                libc::sigaction(libc::SIGPIPE, &old_action, std::ptr::null_mut());
+            }
+
+            if trigger_result.is_err() {
+                return Err(format!(
+                    "trigger_sigpipe should succeed: {:?}",
+                    trigger_result
+                ));
+            }
+
+            if !handler_called {
+                return Err("SIGPIPE handler should have been called".to_string());
+            }
+
+            Ok(())
+        })
+        .join();
+
+        match result {
+            Ok(Ok(())) => {} // Test passed
+            Ok(Err(e)) => panic!("{}", e),
+            Err(_) => panic!("Thread panicked during SIGPIPE test"),
+        }
     }
 }

@@ -48,7 +48,7 @@ ddsketch-ffi = { path = "../ddsketch-ffi", default-features = false, optional = 
 function_name = "0.3.0"
 futures = { version = "0.3", default-features = false }
 http-body-util = "0.1"
-hyper = { version = "1.6", features = ["http1", "client"] }
+hyper = { workspace = true}
 libc = "0.2"
 serde_json = { version = "1.0" }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }

@@ -76,6 +76,12 @@ impl From<&Label> for prost_impls::Label {
 
 impl From<Label> for datadog_profiling_protobuf::Label {
     fn from(label: Label) -> Self {
+        Self::from(&label)
+    }
+}
+
+impl From<&Label> for datadog_profiling_protobuf::Label {
+    fn from(label: &Label) -> Self {
         let (str, num, num_unit) = match label.value {
             LabelValue::Str(str) => (str, 0, StringOffset::ZERO),
             LabelValue::Num { num, num_unit } => (StringOffset::ZERO, num, num_unit),
@@ -125,8 +131,20 @@ pub struct LabelSet {
 }
 
 impl LabelSet {
+    pub fn is_empty(&self) -> bool {
+        self.labels.is_empty()
+    }
+
     pub fn iter(&self) -> core::slice::Iter<'_, LabelId> {
         self.labels.iter()
+    }
+
+    pub fn labels(&self) -> &[LabelId] {
+        &self.labels
+    }
+
+    pub fn len(&self) -> usize {
+        self.labels.len()
     }
 
     pub fn new(labels: Box<[LabelId]>) -> Self {

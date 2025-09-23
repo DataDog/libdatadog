@@ -272,9 +272,10 @@ pub enum FileType {
 fn byte_slice_as_hex(bv: &[u8]) -> String {
     use std::fmt::Write;
 
-    let mut s = String::new();
+    let mut s = String::with_capacity(bv.len() * 2);
     for byte in bv {
-        let _ = write!(&mut s, "{byte:X}");
+        // The backend requires (deobfuscation-api) requires lowercase
+        let _ = write!(&mut s, "{byte:02x}");
     }
     s
 }
@@ -386,5 +387,144 @@ mod tests {
         frame.demangle_name().unwrap();
         assert_eq!(frame.function, Some("invalid_mangled_name".to_string()));
         assert_eq!(frame.mangled_name, None);
+    }
+}
+
+// Tests are disabled on macos because we cannot generate the libs
+#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(test)]
+mod unix_test {
+    use super::*;
+    use crate::{get_data_folder_path, SharedLibrary};
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_normalize_ip() {
+        let test_so = get_data_folder_path()
+            .expect("Failed to get the data folder path")
+            .join("libtest.so")
+            .canonicalize()
+            .unwrap();
+
+        let libtest_so =
+            SharedLibrary::open(test_so.to_str().unwrap()).expect("Failed to open library");
+        let address = libtest_so.get_symbol_address("my_function").unwrap();
+        let mut frame = StackFrame::new();
+        frame.ip = Some(address);
+
+        let normalizer = Normalizer::new();
+        frame
+            .normalize_ip(
+                &normalizer,
+                Pid::from(std::process::id()),
+                &mut CachedElfResolvers::default(),
+            )
+            .unwrap();
+
+        assert_eq!(frame.build_id_type, Some(BuildIdType::GNU));
+        assert_eq!(frame.file_type, Some(FileType::ELF));
+        assert_eq!(frame.path, Some(test_so.to_string_lossy().to_string()));
+        assert_eq!(
+            frame.build_id,
+            Some("aaaabbbbccccddddeeeeffff0011223344556677".to_string()) //define in the build.rs
+        );
+        assert!(frame.relative_address.is_some());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_normalize_ip_cpp() {
+        let test_so = get_data_folder_path()
+            .expect("Failed to get the data folder path")
+            .join("libtest_cpp.so")
+            .canonicalize()
+            .unwrap();
+
+        let libtest_so =
+            SharedLibrary::open(test_so.to_str().unwrap()).expect("Failed to open library");
+        let address = libtest_so.get_symbol_address("_Z12cpp_functionv").unwrap();
+        let mut frame = StackFrame::new();
+        frame.ip = Some(address);
+
+        let normalizer = Normalizer::new();
+        frame
+            .normalize_ip(
+                &normalizer,
+                Pid::from(std::process::id()),
+                &mut CachedElfResolvers::default(),
+            )
+            .unwrap();
+
+        assert_eq!(frame.build_id_type, Some(BuildIdType::GNU));
+        assert_eq!(frame.file_type, Some(FileType::ELF));
+        assert_eq!(frame.path, Some(test_so.to_string_lossy().to_string()));
+        assert_eq!(
+            frame.build_id,
+            Some("0011223344556677aaaabbbbccccddddeeeeffff".to_string()) //define in the build.rs
+        );
+        assert!(frame.relative_address.is_some());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_symbolization() {
+        let test_so = get_data_folder_path()
+            .expect("Failed to get the data folder path")
+            .join("libtest.so")
+            .canonicalize()
+            .unwrap();
+
+        let libtest_so =
+            SharedLibrary::open(test_so.to_str().unwrap()).expect("Failed to open library");
+        let address = libtest_so.get_symbol_address("my_function").unwrap();
+        let mut frame = StackFrame::new();
+        frame.ip = Some(address);
+
+        let mut process = blazesym::symbolize::source::Process::new(std::process::id().into());
+        process.map_files = false;
+        let src = blazesym::symbolize::source::Source::Process(process);
+        let symbolizer = blazesym::symbolize::Symbolizer::new();
+        frame.resolve_names(&src, &symbolizer).unwrap();
+
+        assert_eq!(frame.function, Some("my_function".to_string()));
+        let parent_dir = test_so.parent().unwrap();
+        let c_file = parent_dir.join("libtest.c");
+        assert_eq!(frame.file, Some(c_file.to_string_lossy().to_string()));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_symbolization_cpp() {
+        let test_so = get_data_folder_path()
+            .expect("Failed to get the data folder path")
+            .join("libtest_cpp.so")
+            .canonicalize()
+            .unwrap();
+
+        let libtest_so =
+            SharedLibrary::open(test_so.to_str().unwrap()).expect("Failed to open library");
+        let address = libtest_so
+            .get_symbol_address(
+                "_ZN11MyNamespace16ClassInNamespace21InnerClassInNamespace12InnerMethod1Ev",
+            )
+            .unwrap();
+        let mut frame = StackFrame::new();
+        frame.ip = Some(address);
+
+        let mut process = blazesym::symbolize::source::Process::new(std::process::id().into());
+        process.map_files = false;
+        let src = blazesym::symbolize::source::Source::Process(process);
+        let symbolizer = blazesym::symbolize::Symbolizer::new();
+        frame.resolve_names(&src, &symbolizer).unwrap();
+
+        assert_eq!(
+            frame.function,
+            Some(
+                "MyNamespace::ClassInNamespace::InnerClassInNamespace::InnerMethod1()".to_string()
+            )
+        );
+        let parent_dir = test_so.parent().unwrap();
+        let c_file = parent_dir.join("libtest_cpp.cpp");
+        assert_eq!(frame.file, Some(c_file.to_string_lossy().to_string()));
     }
 }

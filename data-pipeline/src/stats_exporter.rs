@@ -253,7 +253,7 @@ mod tests {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
                     .path("/v0.6/stats")
-                    .body_contains("libdatadog-test");
+                    .body_includes("libdatadog-test");
                 then.status(200).body("");
             })
             .await;
@@ -312,7 +312,7 @@ mod tests {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
                     .path("/v0.6/stats")
-                    .body_contains("libdatadog-test");
+                    .body_includes("libdatadog-test");
                 then.status(200).body("");
             })
             .await;
@@ -349,7 +349,7 @@ mod tests {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
                     .path("/v0.6/stats")
-                    .body_contains("libdatadog-test");
+                    .body_includes("libdatadog-test");
                 then.status(200).body("");
             })
             .await;

@@ -1,7 +1,9 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[derive(Eq, Hash, PartialEq, ::prost::Message)]
+pub use ::prost::Message;
+
+#[derive(Eq, Hash, PartialEq, Message)]
 pub struct Profile {
     #[prost(message, repeated, tag = "1")]
     pub sample_types: Vec<ValueType>,
@@ -33,7 +35,7 @@ pub struct Profile {
     pub default_sample_type: i64,
 }
 
-#[derive(Clone, Eq, Hash, PartialEq, PartialOrd, Ord, ::prost::Message)]
+#[derive(Clone, Eq, Hash, PartialEq, PartialOrd, Ord, Message)]
 pub struct Sample {
     #[prost(uint64, repeated, tag = "1")]
     pub location_ids: Vec<u64>,
@@ -43,7 +45,7 @@ pub struct Sample {
     pub labels: Vec<Label>,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, ::prost::Message)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Message)]
 pub struct ValueType {
     #[prost(int64, tag = "1")]
     pub r#type: i64, // Index into string table
@@ -51,7 +53,7 @@ pub struct ValueType {
     pub unit: i64, // Index into string table
 }
 
-#[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, ::prost::Message)]
+#[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Message)]
 pub struct Label {
     #[prost(int64, tag = "1")]
     pub key: i64, // Index into string table
@@ -63,7 +65,7 @@ pub struct Label {
     pub num_unit: i64,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, ::prost::Message)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Message)]
 pub struct Mapping {
     #[prost(uint64, tag = "1")]
     pub id: u64,
@@ -87,7 +89,7 @@ pub struct Mapping {
     pub has_inline_frames: bool,
 }
 
-#[derive(Clone, Eq, PartialEq, Hash, ::prost::Message)]
+#[derive(Clone, Eq, PartialEq, Hash, Message)]
 pub struct Location {
     #[prost(uint64, tag = "1")]
     pub id: u64,
@@ -101,7 +103,7 @@ pub struct Location {
     pub is_folded: bool,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, ::prost::Message)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Message)]
 pub struct Line {
     #[prost(uint64, tag = "1")]
     pub function_id: u64,
@@ -109,7 +111,7 @@ pub struct Line {
     pub line: i64,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, ::prost::Message)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Message)]
 pub struct Function {
     #[prost(uint64, tag = "1")]
     pub id: u64,
