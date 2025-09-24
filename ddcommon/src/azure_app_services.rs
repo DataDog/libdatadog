@@ -146,7 +146,7 @@ impl AzureMetadata {
             .or_else(|| {
                 let extracted = AzureMetadata::extract_resource_group(query.get_var(WEBSITE_OWNER_NAME));
                 match extracted.as_deref() {
-                    Some("flex") => panic!("ERROR: Resource group not found. If you are using Azure Functions on the Flex Consumption plan, please add your resource group name as an environment variable called `DD_AZURE_RESOURCE_GROUP` in Azure app settings."),
+                    Some("flex") => None,
                     _ => extracted,
                 }
             });
@@ -494,10 +494,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "ERROR: Resource group not found. If you are using Azure Functions on the Flex Consumption plan, please add your resource group name as an environment variable called `DD_AZURE_RESOURCE_GROUP` in Azure app settings."
-    )]
-    fn test_flex_consumption_panics_without_dd_azure_resource_group() {
+    fn test_flex_consumption_resource_group_is_none_without_dd_azure_resource_group() {
         let mocked_env = MockEnv::new(&[
             (
                 WEBSITE_OWNER_NAME,
@@ -506,7 +503,9 @@ mod tests {
             (SERVICE_CONTEXT, "1"),
         ]);
 
-        AzureMetadata::new(mocked_env);
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
+
+        assert_eq!(metadata.get_resource_group(), UNKNOWN_VALUE);
     }
 
     #[test]
