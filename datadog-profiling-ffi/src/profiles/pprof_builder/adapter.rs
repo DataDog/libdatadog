@@ -5,8 +5,9 @@ use crate::profiles::{
     ddog_prof_PprofBuilder_add_profile_with_poisson_upscaling,
     ddog_prof_PprofBuilder_add_profile_with_proportional_upscaling,
     ddog_prof_PprofBuilder_build_compressed, ddog_prof_PprofBuilder_new,
-    ddog_prof_SampleBuilder_new, ddog_prof_SampleBuilder_value,
-    PoissonUpscalingRule, ProportionalUpscalingRule, SampleBuilder, Utf8Option,
+    ddog_prof_SampleBuilder_drop, ddog_prof_SampleBuilder_new,
+    ddog_prof_SampleBuilder_value, PoissonUpscalingRule,
+    ProportionalUpscalingRule, SampleBuilder, Utf8Option,
 };
 use crate::{
     ensure_non_null_out_parameter, profiles, ArcHandle, ProfileHandle,
@@ -22,12 +23,11 @@ use std::ops::Range;
 use std::time::SystemTime;
 
 /// An adapter from the offset-based pprof format to the separate profiles
-/// format that sort of mirrors the otel format.
+/// format that sort of mirrors the otel format. If you use this type, you are
+/// expected to make a new one each profiling interval e.g. 60 seconds.
 ///
 /// Don't mutate this directly. Its definition is available for FFI layout
-/// reasons and you can use it to iterate over the profiles, but it should
-/// only be created and modified through the profile adapter FFI functions.
-/// Otherwise, you could corrupt the adapter and crash.
+/// reasons only.
 #[repr(C)]
 pub struct ProfileAdapter<'a> {
     started_at: Timespec,
@@ -107,10 +107,12 @@ impl Drop for ProfileAdapter<'_> {
 /// };
 /// int64_t groupings[5] = { 0, 0, 1, 2, 2 };
 ///
+/// ddog_prof_ScratchPadHandle scratchpad = // ... ;
 /// ddog_prof_ProfileAdapter adapter;
 /// ddog_prof_ProfileStatus st = ddog_prof_ProfileAdapter_new(
 ///     &adapter,
 ///     dictionary,
+///     scratchpad,
 ///     (ddog_Slice_ValueType){ .ptr = value_types, .len = 5 },
 ///     (ddog_Slice_I64){ .ptr = groupings, .len = 5 }
 /// );
@@ -126,10 +128,11 @@ impl Drop for ProfileAdapter<'_> {
 /// ddog_Slice_I64 ffi_slice = { .ptr = values, len = 5 };
 ///
 /// ddog_prof_SampleBuilderHandle sample_builder_handle;
+///
 /// st = ddog_prof_ProfileAdapter_add_sample(
 ///     &sample_builder_handle,
 ///     adapter,
-///     profile_index,
+///     2, // profile grouping 2
 ///     ffi_slice,
 ///     scratchpad,
 /// );
@@ -138,32 +141,30 @@ impl Drop for ProfileAdapter<'_> {
 /// // to add timestamps, links, etc.
 ///
 /// // then add it to the profile:
-/// st = ddog_prof_SampleBuilder_build(
+/// st = ddog_prof_SampleBuilder_finish(
 ///     &sample_builder_handle,
 /// );
 ///
-/// // ...later...
-/// ddog_prof_ProfileAdapter_add_proportional_upscaling(adapter, 1, vec[ , ], ASSUME_UTF8)
-/// ddog_prof_ProfileAdapter_add_upscaling_proportional(
-///     index: usize,
+/// // add upscalings per profile grouping with one of:
+/// // ddog_prof_ProfileAdapter_add_poisson_upscaling
+/// // ddog_prof_ProfileAdapter_add_proportional_upscaling
 ///
-/// )
-/// PprofBuilderHandle pprof_builder;
-/// upscalings[];
-/// for i in n_profiles {
-///     // if no upscaling
-///     ddog_prof_PprofBuilder_add_profile(pprof_builder, adapter.profiles.ptr[i])
 ///
-///     // if propoertional
-///     ddog_prof_PprofBuilder_add_profile_proportional(pprof_builder, adapter.profiles.ptr[i], ...)
-///     ddog_prof_PprofBuilder_add_profile_poisson(pprof_builder, adapter.profiles.ptr[i], ...)
-/// }
-///
+/// // When the interval is up e.g. 60 seconds, then:
+/// ddog_prof_EndcodedProfile encoded_profile;
+/// status = ddog_prof_ProfileAdapter_build_compressed(
+///     &encoded_profile,
+///     &adapter, // this clears the adapter
+///     NULL, // start time, if you want to provide one manually
+///     NULL, // stop time, if you want to provide one manually
+/// );
 ///
 ///
 /// // order of these doesn't matter, the adapter keeps a refcount
-/// // alive on the dictionary.
-/// ddog_prof_ProfilesDictionaryHandle_drop(&dictionary);
+/// // alive on the dictionary and scratchpad.
+/// ddog_prof_ProfilesDictionary_drop(&dictionary);
+/// ddog_prof_ScratchPad_drop(&scratchpad);
+///
 /// ddog_prof_ProfileAdapter_drop(&adapter);
 /// ```
 #[must_use]
@@ -308,6 +309,7 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_add_sample(
     for val in values[mapping.range.clone()].iter().copied() {
         let status = ddog_prof_SampleBuilder_value(builder, val);
         if status.flags != 0 {
+            ddog_prof_SampleBuilder_drop(&mut builder);
             return status;
         }
     }
@@ -385,6 +387,8 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_add_poisson_upscaling(
 }
 
 /// Builds and compresses a pprof using the data in the profile adapter.
+///
+/// Afterward, you probably want to drop the adapter and make a new one.
 ///
 /// # Parameters
 ///  * `out_profile`: a pointer safe for `core::ptr::write`ing the handle for
