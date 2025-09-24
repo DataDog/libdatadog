@@ -144,7 +144,8 @@ impl AzureMetadata {
             .get_var(DD_AZURE_RESOURCE_GROUP)
             .or_else(|| query.get_var(WEBSITE_RESOURCE_GROUP))
             .or_else(|| {
-                let extracted = AzureMetadata::extract_resource_group(query.get_var(WEBSITE_OWNER_NAME));
+                let extracted =
+                    AzureMetadata::extract_resource_group(query.get_var(WEBSITE_OWNER_NAME));
                 match extracted.as_deref() {
                     Some("flex") => None,
                     _ => extracted,
