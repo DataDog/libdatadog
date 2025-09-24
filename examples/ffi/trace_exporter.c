@@ -92,6 +92,18 @@ int main(int argc, char** argv)
     ddog_trace_exporter_config_set_tracer_version(config, tracer_version);
     ddog_trace_exporter_config_set_language(config, language);
 
+    ddog_TelemetryClientConfig telemetry_config = {
+        .interval = 60000,
+        .runtime_id = DDOG_CHARSLICE_C("12345678-1234-1234-1234-123456789abc"),
+        .debug_enabled = true
+    };
+
+    ret = ddog_trace_exporter_config_enable_telemetry(config, &telemetry_config);
+    if (ret) {
+        handle_error(ret);
+        goto error;
+    }
+
     ret = ddog_trace_exporter_new(&trace_exporter, config);
 
     assert(ret == NULL);

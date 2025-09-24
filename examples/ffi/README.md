@@ -17,6 +17,11 @@ cmake --build ./examples/ffi/build
 # Run FFI examples
 
 The build command will create executables in the examples/ffi/build folder. You can run any of them with:
-````
-./examples/ffi/build/test-name
-````
+
+```
+./examples/ffi/build/ddsketch
+./examples/ffi/build/telemetry
+./examples/ffi/build/crashtracker
+./examples/ffi/build/trace_exporter
+# ... etc
+```

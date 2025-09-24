@@ -10,7 +10,7 @@ license.workspace = true
 bench = false
 
 [features]
-default = []
+default = ["tracing"]
 tracing = ["tracing/std"]
 
 [dependencies]
