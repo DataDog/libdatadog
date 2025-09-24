@@ -1,0 +1,4 @@
+disallowed-methods = [
+    # reqwest clients should be built with our adapter for datadog-lambda-extension bottlecap correctness
+    { path = "reqwest::Client::builder", reason = "prefer the FIPS-compatible adapter", replacement = "datadog_fips::reqwest_adapter::create_reqwest_client_builder" },
+]
