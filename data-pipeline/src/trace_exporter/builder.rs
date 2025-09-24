@@ -193,12 +193,8 @@ impl TraceExporterBuilder {
     }
 
     /// Enables sending telemetry metrics.
-    pub fn enable_telemetry(&mut self, cfg: Option<TelemetryConfig>) -> &mut Self {
-        if let Some(cfg) = cfg {
-            self.telemetry = Some(cfg);
-        } else {
-            self.telemetry = Some(TelemetryConfig::default());
-        }
+    pub fn enable_telemetry(&mut self, cfg: TelemetryConfig) -> &mut Self {
+        self.telemetry = Some(cfg);
         self
     }
 

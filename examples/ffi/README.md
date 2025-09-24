@@ -26,5 +26,6 @@ The build command will create executables in the examples/ffi/build folder. You 
 ./examples/ffi/build/ddsketch
 ./examples/ffi/build/telemetry
 ./examples/ffi/build/crashtracker
+./examples/ffi/build/trace_exporter
 # ... etc
 ```

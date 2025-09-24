@@ -4,6 +4,7 @@
 use ddcommon::{config::parse_env, parse_uri, Endpoint};
 use http::{uri::PathAndQuery, Uri};
 use std::{borrow::Cow, time::Duration};
+use tracing::debug;
 
 pub const DEFAULT_DD_SITE: &str = "datadoghq.com";
 pub const PROD_INTAKE_SUBDOMAIN: &str = "instrumentation-telemetry-intake";
@@ -119,6 +120,10 @@ impl Settings {
     const _DD_SHARED_LIB_DEBUG: &'static str = "_DD_SHARED_LIB_DEBUG";
 
     pub fn from_env() -> Self {
+        debug!(
+            config.source = "environment",
+            "Loading telemetry settings from environment variables"
+        );
         let default = Self::default();
         Self {
             agent_host: parse_env::str_not_empty(Self::DD_AGENT_HOST),
