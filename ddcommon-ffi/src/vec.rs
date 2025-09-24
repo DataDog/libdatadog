@@ -4,9 +4,11 @@
 extern crate alloc;
 
 use crate::slice::Slice;
+use crate::MutSlice;
 use core::ops::Deref;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
+use std::ops::DerefMut;
 use std::ptr::NonNull;
 
 /// Holds the raw parts of a Rust Vec; it should only be created from Rust,
@@ -94,7 +96,6 @@ impl<T> Vec<T> {
     }
 
     pub fn push(&mut self, value: T) {
-        // todo: I'm never sure when to propagate unsafe upwards
         let mut vec = ManuallyDrop::new(unsafe {
             alloc::vec::Vec::from_raw_parts(self.ptr as *mut T, self.len, self.capacity)
         });
@@ -105,6 +106,9 @@ impl<T> Vec<T> {
     pub fn as_slice(&self) -> Slice<'_, T> {
         unsafe { Slice::from_raw_parts(self.ptr, self.len) }
     }
+    pub fn as_mut_slice(&mut self) -> MutSlice<'_, T> {
+        unsafe { MutSlice::from_raw_parts(self.ptr.cast_mut(), self.len) }
+    }
 
     pub const fn new() -> Self {
         Vec {
@@ -114,6 +118,40 @@ impl<T> Vec<T> {
             _marker: PhantomData,
         }
     }
+
+    /// Tries to reserve capacity for at least additional more elements to be
+    /// inserted in the given `Vec<T>`.
+    ///
+    /// See [`std::vec::Vec::try_reserve`] for more information.
+    pub fn try_reserve(
+        &mut self,
+        additional: usize,
+    ) -> Result<(), std::collections::TryReserveError> {
+        let mut vec = ManuallyDrop::new(unsafe {
+            alloc::vec::Vec::from_raw_parts(self.ptr as *mut T, self.len, self.capacity)
+        });
+        let result = vec.try_reserve(additional);
+        self.replace(vec);
+        result
+    }
+
+    /// Tries to reserve the minimum capacity for at least additional elements
+    /// to be inserted in the given `Vec<T>`. Unlike `try_reserve`, this will
+    /// not deliberately over-allocate to speculatively avoid frequent
+    /// allocations.
+    ///
+    /// See [`std::vec::Vec::try_reserve_exact`] for more information.
+    pub fn try_reserve_exact(
+        &mut self,
+        additional: usize,
+    ) -> Result<(), std::collections::TryReserveError> {
+        let mut vec = ManuallyDrop::new(unsafe {
+            alloc::vec::Vec::from_raw_parts(self.ptr as *mut T, self.len, self.capacity)
+        });
+        let result = vec.try_reserve_exact(additional);
+        self.replace(vec);
+        result
+    }
 }
 
 impl<T> Deref for Vec<T> {
@@ -121,6 +159,12 @@ impl<T> Deref for Vec<T> {
 
     fn deref(&self) -> &Self::Target {
         self.as_slice().as_slice()
+    }
+}
+
+impl<T> DerefMut for Vec<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.as_mut_slice().as_mut_slice()
     }
 }
 
