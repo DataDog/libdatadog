@@ -151,43 +151,6 @@ pub fn register_runtime_stack_callback(
     }
 }
 
-/// Internal function to invoke the registered runtime callback
-///
-/// This is called during crash handling to collect runtime-specific stack frames.
-///
-/// # Safety
-/// This function is intended to be called from signal handlers and must maintain
-/// signal safety. It does not perform any dynamic allocation.
-pub(crate) unsafe fn invoke_runtime_callback() -> Option<Vec<RuntimeFrame>> {
-    let callback_ptr = RUNTIME_CALLBACK.load(Ordering::SeqCst);
-    if callback_ptr.is_null() {
-        return None;
-    }
-
-    let (callback_fn, context) = &*callback_ptr;
-
-    // Define the emit_frame function that collects frames
-    unsafe extern "C" fn emit_frame_collector(frame: *const RuntimeStackFrame) {
-        // We need a way to pass the vector to this function.
-        // Since we can't use closures in signal context, we'll use a different approach.
-        // For now, we'll store frames in a thread-local or global storage.
-        FRAME_COLLECTOR.with(|collector| {
-            collector.collect_frame(frame);
-        });
-    }
-
-    // Clear any previous frames
-    FRAME_COLLECTOR.with(|collector| {
-        collector.clear();
-    });
-
-    // Invoke the user callback
-    callback_fn(emit_frame_collector, *context);
-
-    // Collect the frames
-    Some(FRAME_COLLECTOR.with(|collector| collector.take_frames()))
-}
-
 /// Internal function to invoke the registered runtime callback with direct pipe writing
 ///
 /// This is called during crash handling to collect runtime-specific stack frames
@@ -248,20 +211,6 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
 
     // Return the number of frames written
     Ok(FRAME_COUNT.with(|count| count.get()))
-}
-
-/// Thread-local storage for collecting frames during callback execution
-///
-/// This is necessary because we can't pass closures to C function pointers
-/// and need a way to collect frames from the callback.
-struct FrameCollector {
-    frames: std::cell::RefCell<Vec<RuntimeFrame>>,
-}
-
-thread_local! {
-    static FRAME_COLLECTOR: FrameCollector = FrameCollector {
-        frames: std::cell::RefCell::new(Vec::new()),
-    };
 }
 
 thread_local! {
@@ -354,61 +303,6 @@ unsafe fn emit_frame_as_json(
     Ok(())
 }
 
-impl FrameCollector {
-    /// Collect a frame from the runtime callback
-    fn collect_frame(&self, frame: *const RuntimeStackFrame) {
-        if frame.is_null() {
-            return;
-        }
-
-        let frame_ref = unsafe { &*frame };
-        let runtime_frame = RuntimeFrame {
-            function: self.c_str_to_string(frame_ref.function_name),
-            file: self.c_str_to_string(frame_ref.file_name),
-            line: if frame_ref.line_number == 0 {
-                None
-            } else {
-                Some(frame_ref.line_number)
-            },
-            column: if frame_ref.column_number == 0 {
-                None
-            } else {
-                Some(frame_ref.column_number)
-            },
-            class_name: self.c_str_to_string(frame_ref.class_name),
-            module_name: self.c_str_to_string(frame_ref.module_name),
-        };
-
-        self.frames.borrow_mut().push(runtime_frame);
-    }
-
-    /// Clear collected frames
-    fn clear(&self) {
-        self.frames.borrow_mut().clear();
-    }
-
-    /// Take all collected frames
-    fn take_frames(&self) -> Vec<RuntimeFrame> {
-        let mut frames = self.frames.borrow_mut();
-        std::mem::take(&mut *frames)
-    }
-
-    /// Convert a C string pointer to a Rust String option
-    ///
-    /// Returns None if the pointer is null or the string is empty
-    fn c_str_to_string(&self, ptr: *const c_char) -> Option<String> {
-        if ptr.is_null() {
-            return None;
-        }
-
-        let c_str = unsafe { std::ffi::CStr::from_ptr(ptr) };
-        match c_str.to_str() {
-            Ok(s) if !s.is_empty() => Some(s.to_string()),
-            _ => None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,20 +367,38 @@ mod tests {
         let result = register_runtime_stack_callback(test_callback, ptr::null_mut());
         assert!(result.is_ok(), "Failed to register callback: {:?}", result);
 
-        // Invoke callback and collect frames
-        let frames = unsafe { invoke_runtime_callback() };
-        assert!(frames.is_some(), "No frames collected from callback");
+        // Invoke callback and collect frames using writer
+        let mut buffer = Vec::new();
+        let frame_count = unsafe { invoke_runtime_callback_with_writer(&mut buffer) };
+        assert!(frame_count.is_ok(), "Failed to invoke callback with writer");
 
-        let frames = frames.unwrap();
-        assert_eq!(frames.len(), 1);
+        let frame_count = frame_count.unwrap();
+        assert_eq!(frame_count, 1, "Expected 1 frame to be written");
 
-        let frame = &frames[0];
-        assert_eq!(frame.function, Some("test_function".to_string()));
-        assert_eq!(frame.file, Some("test.rb".to_string()));
-        assert_eq!(frame.line, Some(42));
-        assert_eq!(frame.column, Some(10));
-        assert_eq!(frame.class_name, Some("TestClass".to_string()));
-        assert_eq!(frame.module_name, None);
+        // Convert buffer to string and check JSON format
+        let json_output = String::from_utf8(buffer).expect("Invalid UTF-8 in output");
+
+        // Should contain the frame data as JSON
+        assert!(
+            json_output.contains("\"function\""),
+            "Missing function field"
+        );
+        assert!(
+            json_output.contains("test_function"),
+            "Missing function name"
+        );
+        assert!(json_output.contains("\"file\""), "Missing file field");
+        assert!(json_output.contains("test.rb"), "Missing file name");
+        assert!(json_output.contains("\"line\": 42"), "Missing line number");
+        assert!(
+            json_output.contains("\"column\": 10"),
+            "Missing column number"
+        );
+        assert!(
+            json_output.contains("\"class_name\""),
+            "Missing class_name field"
+        );
+        assert!(json_output.contains("TestClass"), "Missing class name");
 
         // Clean up
         ensure_callback_cleared();
@@ -497,11 +409,21 @@ mod tests {
         let _guard = TEST_MUTEX.lock().unwrap();
         ensure_callback_cleared();
 
-        // Test that invoke_runtime_callback returns None when no callback is registered
-        let frames = unsafe { invoke_runtime_callback() };
+        // Test that invoke_runtime_callback_with_writer returns 0 frames when no callback is registered
+        let mut buffer = Vec::new();
+        let frame_count = unsafe { invoke_runtime_callback_with_writer(&mut buffer) };
+        assert!(frame_count.is_ok(), "Failed to invoke callback with writer");
+
+        let frame_count = frame_count.unwrap();
+        assert_eq!(
+            frame_count, 0,
+            "Expected 0 frames when no callback registered"
+        );
+
+        // Buffer should be empty
         assert!(
-            frames.is_none(),
-            "Expected None when no callback registered"
+            buffer.is_empty(),
+            "Expected empty buffer when no callback registered"
         );
     }
 
