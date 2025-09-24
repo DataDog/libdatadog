@@ -31,11 +31,11 @@ pub struct ProportionalUpscalingRule<'a> {
 pub struct PoissonUpscalingRule {
     /// Which offset in the profile's sample is the sum. Must be disjoint from
     /// `count_offset`.
-    sum_offset: u32,
+    pub sum_offset: u32,
     /// Which offset in the profile's sample is the count. Must be disjoint
     /// from `sum_offset`.
-    count_offset: u32,
-    sampling_distance: u64,
+    pub count_offset: u32,
+    pub sampling_distance: u64,
 }
 
 #[derive(Debug)]

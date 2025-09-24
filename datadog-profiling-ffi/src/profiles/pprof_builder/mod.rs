@@ -1,12 +1,13 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod adapter;
 mod upscaling;
 
-pub use upscaling::ProportionalUpscalingRule;
+pub use adapter::*;
+pub use upscaling::*;
 
 use crate::profile_handle::ProfileHandle;
-use crate::profiles::pprof_builder::upscaling::PoissonUpscalingRule;
 use crate::profiles::{
     ensure_non_null_out_parameter, Utf8ConversionError, Utf8Option,
 };
@@ -32,8 +33,8 @@ use ddcommon_ffi::{Handle, Timespec};
 ///   mutated through this handle, no other references to the same builder
 ///   may be used.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_PprofBuilder_new(
-    out: *mut ProfileHandle<PprofBuilder<'static>>,
+pub unsafe extern "C" fn ddog_prof_PprofBuilder_new<'a>(
+    out: *mut ProfileHandle<PprofBuilder<'a>>,
     dictionary: ArcHandle<ProfilesDictionary>,
     scratchpad: ArcHandle<ScratchPad>,
 ) -> ProfileStatus {
@@ -97,23 +98,29 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile_with_poisson_upscaling(
     mut handle: ProfileHandle<PprofBuilder>,
-    profile: *const Profile,
+    profile: ProfileHandle<Profile>,
     upscaling_rule: PoissonUpscalingRule,
 ) -> ProfileStatus {
-    crate::profiles::ensure_non_null_insert!(profile);
+    let profile = match profile.as_inner() {
+        Ok(profile) => profile,
+        Err(err) => return ProfileStatus::from_ffi_safe_error_message(err),
+    };
     let result = || -> Result<(), ProfileStatus> {
         let builder = unsafe {
             handle
                 .as_inner_mut()
                 .map_err(ProfileStatus::from_ffi_safe_error_message)?
         };
-        let prof_ref = unsafe { &*profile };
 
         let upscaling_rule = upscaling_rule
             .try_into()
             .map_err(ProfileStatus::from_ffi_safe_error_message)?;
         builder
-            .try_add_profile_with_poisson_upscaling(prof_ref, upscaling_rule)
+            .try_add_profile_with_poisson_upscaling(
+                // SAFETY: todo lifetime extension
+                unsafe { core::mem::transmute(profile) },
+                upscaling_rule,
+            )
             .map_err(ProfileStatus::from_ffi_safe_error_message)
     }();
     match result {
@@ -138,15 +145,17 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile_with_proportional_up
     'a,
 >(
     mut handle: ProfileHandle<PprofBuilder<'a>>,
-    profile: *const Profile,
+    profile: ProfileHandle<Profile>,
     upscaling_rules: Slice<ProportionalUpscalingRule<'a>>,
     utf8_option: Utf8Option,
 ) -> ProfileStatus {
-    crate::profiles::ensure_non_null_insert!(profile);
+    let profile = match profile.as_inner() {
+        Ok(profile) => profile,
+        Err(err) => return ProfileStatus::from_error(err),
+    };
     let result = || -> Result<(), ProfileStatus> {
         let builder = unsafe { handle.as_inner_mut() }
             .map_err(ProfileStatus::from_ffi_safe_error_message)?;
-        let prof_ref = unsafe { &*profile };
 
         let upscaling_rules = upscaling_rules
             .try_as_slice()
@@ -154,7 +163,8 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile_with_proportional_up
 
         builder
             .try_add_profile_with_proportional_upscaling(
-                prof_ref,
+                // SAFETY: todo lifetime extension
+                unsafe { core::mem::transmute(profile) },
                 upscaling_rules.iter().map(
                     |rule| -> Result<_, Utf8ConversionError> {
                         let key = rule.group_by_label.key;
@@ -187,7 +197,7 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile_with_proportional_up
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_PprofBuilder_build_compressed(
     out_profile: *mut Handle<EncodedProfile>,
-    handle: ProfileHandle<PprofBuilder<'static>>,
+    handle: ProfileHandle<PprofBuilder<'_>>,
     size_hint: u32,
     start: Timespec,
     end: Timespec,
@@ -229,7 +239,7 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_build_uncompressed(
 
 fn build_with_sink<Sink, Make, Finalize>(
     out_profile: *mut Handle<EncodedProfile>,
-    mut handle: ProfileHandle<PprofBuilder<'static>>,
+    mut handle: ProfileHandle<PprofBuilder<'_>>,
     size_hint: u32,
     start: Timespec,
     end: Timespec,
