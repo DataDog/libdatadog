@@ -1,6 +1,39 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! Crash data emission and Unix socket protocol serialization.
+//!
+//! This module implements the collector-side serialization of crash data using the
+//! Unix socket communication protocol. It writes structured crash information to
+//! Unix domain sockets for consumption by receiver processes.
+//!
+//! ## Protocol Emission
+//!
+//! The emitter writes crash data as a series of delimited sections:
+//!
+//! 1. **Section Delimiters**: Uses constants from [`crate::shared::constants`] to mark boundaries
+//! 2. **Structured Data**: Writes JSON, text, or binary data within sections
+//! 3. **Immediate Flushing**: Flushes each section to ensure data integrity
+//! 4. **Completion Marker**: Ends transmission with `DD_CRASHTRACK_DONE`
+//!
+//! ## Section Format Implementation
+//!
+//! Each section follows this pattern:
+//! ```text
+//! DD_CRASHTRACK_BEGIN_[SECTION]
+//! [section data - JSON, text, or binary]
+//! DD_CRASHTRACK_END_[SECTION]
+//! ```
+//!
+//! ### Key Sections
+//!
+//! - **Stack Trace** (`emit_backtrace_by_frames`): Stack frames with optional symbol resolution
+//! - **Signal Info** (`emit_siginfo`): Signal details from `siginfo_t`
+//! - **Process Context** (`emit_ucontext`): Processor state from `ucontext_t`
+//! - **Memory Maps** (`emit_file`): `/proc/self/maps` for symbol resolution
+//!
+//! For complete protocol documentation, see [`crate::shared::unix_socket_communication`].
+
 use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::{emit_spans, emit_traces};
@@ -116,6 +149,52 @@ unsafe fn emit_backtrace_by_frames(
     Ok(())
 }
 
+/// Emits a complete crash report using the Unix socket communication protocol.
+///
+/// This is the main function that orchestrates the emission of all crash data sections
+/// to the Unix socket. It writes the structured crash report in the order specified
+/// by the protocol, with proper delimiters and flushing for data integrity.
+///
+/// ## Section Emission Order
+///
+/// The crash report is written in this specific order:
+/// 1. **Metadata** - Application context, tags, environment info
+/// 2. **Configuration** - Crash tracker settings and endpoint info
+/// 3. **Signal Information** - Details from `siginfo_t`
+/// 4. **Process Context** - CPU state from `ucontext_t`
+/// 5. **Process Information** - Process ID
+/// 6. **Counters** - Internal crash tracker metrics
+/// 7. **Spans** - Active distributed tracing spans
+/// 8. **Additional Tags** - Extra tags collected at crash time
+/// 9. **Traces** - Active trace information
+/// 10. **Memory Maps** (Linux only) - `/proc/self/maps` content
+/// 11. **Stack Trace** - Stack frames with symbol resolution
+/// 12. **Completion Marker** - `DD_CRASHTRACK_DONE`
+///
+/// ## Data Integrity
+///
+/// Each section is immediately flushed after writing to ensure the receiver
+/// can process partial data even if the collector crashes during transmission.
+///
+/// ## Arguments
+///
+/// * `pipe` - Write stream (typically Unix socket)
+/// * `config` - Crash tracker configuration object
+/// * `config_str` - JSON-serialized configuration for receiver
+/// * `metadata_string` - JSON-serialized metadata
+/// * `sig_info` - Signal information from crash context
+/// * `ucontext` - Processor context at crash time
+/// * `ppid` - Parent process ID
+///
+/// ## Returns
+///
+/// * `Ok(())` - All crash data written successfully
+/// * `Err(EmitterError)` - I/O error or data serialization failure
+///
+/// ## Signal Safety
+///
+/// This function is designed to be called from signal handler context and uses
+/// only async-signal-safe operations where possible.
 pub(crate) fn emit_crashreport(
     pipe: &mut impl Write,
     config: &CrashtrackerConfiguration,

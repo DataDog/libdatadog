@@ -1,6 +1,42 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! Unix socket stream parsing for crash tracker receiver.
+//!
+//! This module implements the receiver-side parsing of the Unix socket communication protocol.
+//! It reads the structured crash data stream sent by the collector and reconstructs the
+//! crash information and configuration objects.
+//!
+//! ## Stream Parsing Process
+//!
+//! The parser operates as a state machine that processes the delimited sections:
+//!
+//! 1. **Line-by-line reading**: Reads the stream with timeout protection
+//! 2. **Delimiter matching**: Identifies section boundaries using protocol markers
+//! 3. **Section accumulation**: Collects data between begin/end delimiters
+//! 4. **JSON deserialization**: Converts section data into appropriate data structures
+//! 5. **State transitions**: Moves between parsing states until completion marker
+//!
+//! ```text
+//! ┌─────────────────┐    Read Line     ┌─────────────────┐    Match Delimiter
+//! │ Unix Socket     │─────────────────►│ Line Buffer     │─────────────────────┐
+//! │ Stream          │                  │                 │                     │
+//! └─────────────────┘                  └─────────────────┘                     │
+//!                                                                               │
+//!                                                                               v
+//! ┌─────────────────┐    Build Objects ┌─────────────────┐    Accumulate Data  │
+//! │ CrashInfo +     │◄─────────────────│ Section Data    │◄────────────────────┘
+//! │ Configuration   │                  │ Collection      │
+//! └─────────────────┘                  └─────────────────┘
+//! ```
+//!
+//! ## State Machine
+//!
+//! The [`StdinState`] enum tracks the current parsing state and accumulates data
+//! for multi-line sections until complete.
+//!
+//! For complete protocol documentation, see [`crate::shared::unix_socket_communication`].
+
 use crate::{
     crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, Span, TelemetryCrashUploader},
     shared::constants::*,
@@ -35,18 +71,39 @@ async fn send_crash_ping_to_url(
     Ok(())
 }
 
-/// The crashtracker collector sends data in blocks.
-/// This enum tracks which block we're currently in, and, for multi-line blocks,
-/// collects the partial data until the block is closed and it can be appended
-/// to the CrashReport.
+/// State machine for parsing Unix socket crash data stream.
+///
+/// This enum tracks the current parsing state as the receiver processes the structured
+/// crash data stream. Each variant represents a different section of the crash report
+/// protocol, and for multi-line sections, accumulates partial data until the section
+/// is complete.
+///
+/// ## State Transitions
+///
+/// The parser transitions between states based on delimiter markers:
+/// - `DD_CRASHTRACK_BEGIN_*` markers transition to data collection states
+/// - `DD_CRASHTRACK_END_*` markers complete sections and process accumulated data
+/// - `DD_CRASHTRACK_DONE` transitions to the final Done state
+///
+/// ## Multi-line Section Handling
+///
+/// Some states like `File` and `Stacktrace` accumulate multiple lines of data
+/// between their begin/end delimiters before processing.
 #[derive(Debug)]
 pub(crate) enum StdinState {
+    /// Parsing additional tags section
     AdditionalTags,
+    /// Parsing configuration section (JSON)
     Config,
+    /// Parsing internal counters section
     Counters,
+    /// Parsing complete - crash report transmission finished
     Done,
+    /// Parsing file section (filename, content lines)
     File(String, Vec<String>),
+    /// Parsing metadata section (JSON)
     Metadata,
+    /// Parsing process information section (JSON)
     ProcInfo,
     SigInfo,
     SpanIds,

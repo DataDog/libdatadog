@@ -1,6 +1,31 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! Crash tracker receiver process management and Unix socket communication setup.
+//!
+//! This module handles the creation and management of receiver processes that collect
+//! crash data via Unix domain sockets. The crash tracker uses a two-process architecture:
+//!
+//! 1. **Collector Process**: Forks from the crashing process and writes crash data to a Unix socket
+//! 2. **Receiver Process**: Created via fork+execve, reads from Unix socket and processes/uploads crash data
+//!
+//! ## Socket Communication Architecture
+//!
+//! The communication uses anonymous Unix domain socket pairs created with [`socketpair()`]:
+//!
+//! ```text
+//! ┌─────────────────┐    socketpair()    ┌─────────────────┐
+//! │ Collector       │◄───────────────────►│ Receiver        │
+//! │ (Crashing proc) │                     │ (Fork+execve)   │
+//! │                 │     Write End       │                 │
+//! │ uds_parent ────────────────────────────────► stdin (fd=0) │
+//! └─────────────────┘                     └─────────────────┘
+//! ```
+//!
+//! For complete protocol documentation, see [`crate::shared::unix_socket_communication`].
+//!
+//! [`socketpair()`]: nix::sys::socket::socketpair
+
 use super::process_handle::ProcessHandle;
 use ddcommon::timeout::TimeoutManager;
 
@@ -40,10 +65,26 @@ pub(crate) struct Receiver {
 }
 
 impl Receiver {
+    /// Creates a receiver that connects to an existing Unix socket.
+    ///
+    /// This mode is used when connecting to a long-lived receiver process instead of
+    /// spawning a new one via fork+execve. The collector will write crash data directly
+    /// to the provided Unix socket.
+    ///
+    /// ## Socket Path Formats
+    ///
+    /// - **File system sockets**: Paths starting with `.` or `/` (e.g., `/tmp/receiver.sock`)
+    /// - **Abstract sockets** (Linux only): Names not starting with `.` or `/` (e.g., `crashtracker-receiver`)
+    ///
+    /// ## Arguments
+    ///
+    /// * `unix_socket_path` - Path to the Unix socket (file system or abstract name)
+    ///
+    /// ## Errors
+    ///
+    /// * [`ReceiverError::NoReceiverPath`] - If the path is empty
+    /// * [`ReceiverError::ConnectionError`] - If connection to the socket fails
     pub(crate) fn from_socket(unix_socket_path: &str) -> Result<Self, ReceiverError> {
-        // Creates a fake "Receiver", which can be waited on like a normal receiver.
-        // This is intended to support configurations where the collector is speaking to a
-        // long-lived, async receiver process.
         if unix_socket_path.is_empty() {
             return Err(ReceiverError::NoReceiverPath);
         }
@@ -66,6 +107,46 @@ impl Receiver {
         })
     }
 
+    /// Spawns a new receiver process using fork+execve with Unix socket communication.
+    ///
+    /// This is the primary method for creating receiver processes. It:
+    ///
+    /// 1. **Creates socket pair**: Uses [`socketpair()`] to establish anonymous Unix domain socket communication
+    /// 2. **Forks process**: Creates child process that will become the receiver
+    /// 3. **Sets up file descriptors**: Redirects socket to stdin, configures stdout/stderr
+    /// 4. **Executes receiver**: Child process executes the receiver binary
+    ///
+    /// ## Socket Architecture
+    ///
+    /// ```text
+    /// Parent Process                    Child Process
+    /// ┌─────────────────────┐          ┌─────────────────────┐
+    /// │ Collector           │          │ Receiver            │
+    /// │                     │          │                     │
+    /// │ uds_parent (write) ─────────────────► stdin (fd=0)    │
+    /// │                     │          │ stdout (configured) │
+    /// │                     │          │ stderr (configured) │
+    /// └─────────────────────┘          └─────────────────────┘
+    /// ```
+    ///
+    /// ## File Descriptor Management
+    ///
+    /// - **Parent**: Keeps `uds_parent` for writing crash data
+    /// - **Child**: `uds_child` redirected to stdin, original socket closed
+    /// - **Stdio**: Child's stdout/stderr redirected to configured files or `/dev/null`
+    ///
+    /// ## Arguments
+    ///
+    /// * `config` - Receiver configuration including binary path and I/O redirection
+    /// * `prepared_exec` - Pre-prepared execve arguments and environment (avoids allocations in signal handler)
+    ///
+    /// ## Errors
+    ///
+    /// * [`ReceiverError::FileOpenError`] - Failed to open stdout/stderr files
+    /// * [`ReceiverError::SocketPairError`] - Failed to create socket pair
+    /// * [`ReceiverError::ForkFailed`] - Fork operation failed
+    ///
+    /// [`socketpair()`]: nix::sys::socket::socketpair
     pub(crate) fn spawn_from_config(
         config: &CrashtrackerReceiverConfig,
         prepared_exec: &PreparedExecve,
@@ -75,7 +156,10 @@ impl Receiver {
         let stdout = open_file_or_quiet(config.stdout_filename.as_deref())
             .map_err(ReceiverError::FileOpenError)?;
 
-        // Create anonymous Unix domain socket pair for communication
+        // Create anonymous Unix domain socket pair for communication between collector and receiver.
+        // This establishes a bidirectional communication channel where:
+        // - uds_parent: Used by collector (parent/grandparent) process for writing crash data
+        // - uds_child: Used by receiver process, redirected to stdin for reading crash data
         let (uds_parent, uds_child) = socket::socketpair(
             socket::AddressFamily::Unix,
             socket::SockType::Stream,
@@ -148,18 +232,41 @@ impl Receiver {
     }
 }
 
-/// Wrapper around the child process that will run the crash receiver
+/// Child process entry point that sets up file descriptors and executes the receiver binary.
+///
+/// This function is called only in the child process after fork. It performs critical
+/// file descriptor setup to establish the Unix socket communication channel:
+///
+/// ## File Descriptor Setup
+///
+/// 1. **stdin (fd=0)**: Redirected to `uds_child` socket for receiving crash data
+/// 2. **stdout (fd=1)**: Redirected to configured output file or `/dev/null`
+/// 3. **stderr (fd=2)**: Redirected to configured error file or `/dev/null`
+///
+/// ## Signal Handler Reset
+///
+/// Signal handlers are reset to default disposition to ensure clean receiver operation.
+///
+/// ## Arguments
+///
+/// * `prepared_exec` - Pre-prepared execve arguments and environment
+/// * `uds_child` - Unix socket file descriptor for reading crash data
+/// * `stderr` - File descriptor for stderr redirection
+/// * `stdout` - File descriptor for stdout redirection
+///
+/// This function never returns - it either successfully executes the receiver binary
+/// or terminates the process.
 fn run_receiver_child(
     prepared_exec: &PreparedExecve,
     uds_child: RawFd,
     stderr: RawFd,
     stdout: RawFd,
 ) -> ! {
-    // File descriptor management
+    // File descriptor management: Redirect Unix socket to stdin so receiver can read crash data
     unsafe {
-        let _ = libc::dup2(uds_child, 0);
-        let _ = libc::dup2(stdout, 1);
-        let _ = libc::dup2(stderr, 2);
+        let _ = libc::dup2(uds_child, 0);   // stdin = Unix socket (crash data input)
+        let _ = libc::dup2(stdout, 1);     // stdout = configured output file
+        let _ = libc::dup2(stderr, 2);     // stderr = configured error file
     }
 
     // Close unused file descriptors
