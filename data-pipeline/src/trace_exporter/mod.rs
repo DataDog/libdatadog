@@ -208,12 +208,26 @@ pub struct TraceExporter {
     health_metrics_enabled: bool,
     workers: Arc<Mutex<TraceExporterWorkers>>,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
+    http_client: Arc<Mutex<Option<hyper_migration::HttpClient>>>,
 }
 
 impl TraceExporter {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
+    }
+
+    /// Get or create the HTTP client for reuse
+    fn get_http_client(&self) -> hyper_migration::HttpClient {
+        let mut client_guard = self.http_client.lock_or_panic();
+        match client_guard.as_ref() {
+            Some(client) => client.clone(),
+            None => {
+                let client = hyper_migration::new_default_client();
+                *client_guard = Some(client.clone());
+                client
+            }
+        }
     }
 
     /// Return the existing runtime or create a new one and start all workers
@@ -516,7 +530,8 @@ impl TraceExporter {
             &self.common_stats_tags,
         );
         let req = transport_client.build_trace_request(data, trace_count, uri);
-        match hyper_migration::new_default_client().request(req).await {
+        let client = self.get_http_client();
+        match client.request(req).await {
             Ok(response) => {
                 let response = hyper_migration::into_response(response);
                 transport_client

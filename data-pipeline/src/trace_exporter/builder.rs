@@ -339,6 +339,7 @@ impl TraceExporterBuilder {
                 stats: None,
                 telemetry: telemetry_worker,
             })),
+            http_client: Arc::new(Mutex::new(None)),
 
             agent_payload_response_version: self
                 .agent_rates_payload_version_enabled
