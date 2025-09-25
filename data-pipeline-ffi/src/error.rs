@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use data_pipeline::trace_exporter::error::TraceExporterError;
-use std::ffi::{c_char, CString};
-use std::fmt::Display;
+use std::ffi::{c_char, CStr, CString};
+use std::fmt::{Display, Write};
 
 /// Context field for structured error data.
 /// Contains a key-value pair that can be safely used for logging or debugging.
@@ -47,35 +47,47 @@ pub enum ExporterErrorCode {
     Panic,
 }
 
+impl ExporterErrorCode {
+   pub fn as_cstr(&self) -> &'static CStr {
+       unsafe {
+           match self {
+               Self::AddressInUse => CStr::from_bytes_with_nul_unchecked(b"Address already in use\0"),
+               Self::ConnectionAborted => CStr::from_bytes_with_nul_unchecked(b"Connection aborted\0"),
+               Self::ConnectionRefused => CStr::from_bytes_with_nul_unchecked(b"Connection refused\0"),
+               Self::ConnectionReset => CStr::from_bytes_with_nul_unchecked(b"Connection reset by peer\0"),
+               Self::HttpBodyFormat => CStr::from_bytes_with_nul_unchecked(b"Error parsing HTTP body\0"),
+               Self::HttpBodyTooLong => CStr::from_bytes_with_nul_unchecked(b"HTTP body too long\0"),
+               Self::HttpClient => CStr::from_bytes_with_nul_unchecked(b"HTTP error originated by client"),
+               Self::HttpEmptyBody => CStr::from_bytes_with_nul_unchecked(b"HTTP empty body"),
+               Self::HttpParse => CStr::from_bytes_with_nul_unchecked(b"Error while parsing HTTP message"),
+               Self::HttpServer => CStr::from_bytes_with_nul_unchecked(b"HTTP error originated by server"),
+               Self::HttpWrongStatus => CStr::from_bytes_with_nul_unchecked(b"HTTP wrong status number"),
+               Self::HttpUnknown => CStr::from_bytes_with_nul_unchecked(b"HTTP unknown error"),
+               Self::InvalidArgument => CStr::from_bytes_with_nul_unchecked(b"Invalid argument provided"),
+               Self::InvalidData => CStr::from_bytes_with_nul_unchecked(b"Invalid data payload"),
+               Self::InvalidInput => CStr::from_bytes_with_nul_unchecked(b"Invalid input"),
+               Self::InvalidUrl => CStr::from_bytes_with_nul_unchecked(b"Invalid URL\0"),
+               Self::IoError => CStr::from_bytes_with_nul_unchecked(b"Input/Output error\0"),
+               Self::NetworkUnknown => CStr::from_bytes_with_nul_unchecked(b"Unknown network error\0"),
+               Self::Serde => CStr::from_bytes_with_nul_unchecked(b"Serialization/Deserialization error\0"),
+               Self::Shutdown => CStr::from_bytes_with_nul_unchecked(b"Shutdown timed out\0"),
+               Self::TimedOut => CStr::from_bytes_with_nul_unchecked(b"Operation timed out\0"),
+               Self::Telemetry => CStr::from_bytes_with_nul_unchecked(b"Telemetry error\0"),
+               Self::Internal => CStr::from_bytes_with_nul_unchecked(b"Internal Error\0"),
+               #[cfg(feature = "catch_panic")]
+               Self::Panic => CStr::from_bytes_with_nul_unchecked(b"Operation panicked\0"),
+           }
+       }
+   }
+
+   pub fn as_str(&self) -> &'static str {
+      self.as_cstr().to_str().unwrap()
+   }
+}
+
 impl Display for ExporterErrorCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::AddressInUse => write!(f, "Address already in use"),
-            Self::ConnectionAborted => write!(f, "Connection aborted"),
-            Self::ConnectionRefused => write!(f, "Connection refused"),
-            Self::ConnectionReset => write!(f, "Connection reset by peer"),
-            Self::HttpBodyFormat => write!(f, "Error parsing HTTP body"),
-            Self::HttpBodyTooLong => write!(f, "HTTP body too long"),
-            Self::HttpClient => write!(f, "HTTP error originated by client"),
-            Self::HttpEmptyBody => write!(f, "HTTP empty body"),
-            Self::HttpParse => write!(f, "Error while parsing HTTP message"),
-            Self::HttpServer => write!(f, "HTTP error originated by server"),
-            Self::HttpWrongStatus => write!(f, "HTTP wrong status number"),
-            Self::HttpUnknown => write!(f, "HTTP unknown error"),
-            Self::InvalidArgument => write!(f, "Invalid argument provided"),
-            Self::InvalidData => write!(f, "Invalid data payload"),
-            Self::InvalidInput => write!(f, "Invalid input"),
-            Self::InvalidUrl => write!(f, "Invalid URL"),
-            Self::IoError => write!(f, "Input/Output error"),
-            Self::NetworkUnknown => write!(f, "Unknown network error"),
-            Self::Serde => write!(f, "Serialization/Deserialization error"),
-            Self::Shutdown => write!(f, "Shutdown timed out"),
-            Self::TimedOut => write!(f, "Operation timed out"),
-            Self::Telemetry => write!(f, "Telemetry error"),
-            Self::Internal => write!(f, "Internal error"),
-            #[cfg(feature = "catch_panic")]
-            Self::Panic => write!(f, "Operation panicked"),
-        }
+        f.write_str(self.as_str())
     }
 }
 
