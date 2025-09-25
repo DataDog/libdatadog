@@ -55,6 +55,9 @@ use std::ptr::NonNull;
 use std::slice;
 use std::sync::Arc;
 use std::time::Duration;
+use std::fs::OpenOptions;
+use std::io::Write;
+
 
 #[no_mangle]
 #[cfg(target_os = "windows")]
@@ -407,6 +410,54 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
         vec![SidecarAction::Telemetry(config_entry)],
     ));
     MaybeError::None
+}
+
+/// Reports an endpoint to the telemetry.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+    r#type: CharSlice,
+    method: ddtelemetry::data::Method,
+    path: CharSlice,
+    operation_name: CharSlice,
+    resource_name: CharSlice,
+    request_body_type: ffi::Vec<CharSlice>,
+    response_body_type: ffi::Vec<CharSlice>,
+    // response_code: ffi::Vec<i32>,
+    // authentication: ffi::Vec<ddtelemetry::data::Authentication>
+) -> MaybeError {
+
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open("/tmp/alex.log") {
+        let _ = writeln!(file, "Here Alex 0");
+        let _ = writeln!(file, "Request body type - {:?}", request_body_type.first());
+        let _ = writeln!(file, "Response body type - {:?}", response_body_type.first());
+    }
+
+    MaybeError::None
+
+
+    // let endpoint = TelemetryActions::AddEndpoint(ddtelemetry::data::Endpoint {
+    //     r#type: Some(r#type.to_utf8_lossy().into_owned()),
+    //     method: Some(method),
+    //     path: Some(path.to_utf8_lossy().into_owned()),
+    //     operation_name: operation_name.to_utf8_lossy().into_owned(),
+    //     resource_name: resource_name.to_utf8_lossy().into_owned(),
+    //     request_body_type: Some(request_body_type.iter().map(|s| s.to_utf8_lossy().into_owned()).collect()),
+    //     response_body_type: Some(response_body_type.iter().map(|s| s.to_utf8_lossy().into_owned()).collect()),
+    //     // response_code: Some(response_code.iter().cloned().collect()),
+    //     // authentication: Some(authentication.iter().cloned().collect()),
+    // });
+
+    // try_c!(blocking::enqueue_actions(
+    //     transport,
+    //     instance_id,
+    //     queue_id,
+    //     vec![SidecarAction::Telemetry(endpoint)],
+    // ));
+    // MaybeError::None
 }
 
 /// Reports a dependency to the telemetry.
