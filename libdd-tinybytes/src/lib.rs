@@ -7,6 +7,8 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+#[cfg(feature = "serde")]
+use serde::Serialize;
 use std::{
     borrow, cmp, fmt, hash,
     ops::{self, RangeBounds},
@@ -14,11 +16,9 @@ use std::{
     sync::atomic::AtomicUsize,
 };
 
-#[cfg(feature = "serde")]
-use serde::Serialize;
-
 /// Immutable bytes type with zero copy cloning and slicing.
 #[derive(Clone)]
+#[repr(C)] // fixed layout for ad-hoc conversion to slice
 pub struct Bytes {
     ptr: NonNull<u8>,
     len: usize,
@@ -49,11 +49,24 @@ impl Bytes {
         len: usize,
         refcount: RefCountedCell,
     ) -> Self {
-        Self {
-            ptr,
-            len,
-            bytes: Some(refcount),
-        }
+        Self::from_raw(ptr, len, Some(refcount))
+    }
+
+    #[inline]
+    /// Creates a new `Bytes` from the given slice data and the refcount. Can be used after calling
+    /// into_raw().
+    ///
+    /// # Safety
+    ///
+    /// * the pointer should be valid for the given length
+    /// * the pointer should be valid for reads as long as the refcount or any of it's clone is not
+    ///   dropped
+    pub const unsafe fn from_raw(
+        ptr: NonNull<u8>,
+        len: usize,
+        bytes: Option<RefCountedCell>,
+    ) -> Self {
+        Self { ptr, len, bytes }
     }
 
     /// Creates empty `Bytes`.
@@ -234,6 +247,11 @@ impl Bytes {
     fn as_slice(&self) -> &[u8] {
         // SAFETY: ptr is valid for the associated length
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr().cast_const(), self.len()) }
+    }
+
+    #[inline]
+    pub fn into_raw(self) -> (NonNull<u8>, usize, Option<RefCountedCell>) {
+        (self.ptr, self.len, self.bytes)
     }
 }
 

@@ -1,53 +1,25 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
+use crate::span::TraceData;
 use rmp::decode;
-use rmp::decode::DecodeStringError;
 use std::collections::HashMap;
 
 // https://docs.rs/rmp/latest/rmp/enum.Marker.html#variant.Null (0xc0 == 192)
 const NULL_MARKER: &u8 = &0xc0;
-
-/// Read a string from `buf`.
-///
-/// # Errors
-/// Fails if the buffer doesn't contain a valid utf8 msgpack string.
-#[inline]
-pub fn read_string_ref_nomut(buf: &[u8]) -> Result<(&str, &[u8]), DecodeError> {
-    decode::read_str_from_slice(buf).map_err(|e| match e {
-        DecodeStringError::InvalidMarkerRead(e) => DecodeError::InvalidFormat(e.to_string()),
-        DecodeStringError::InvalidDataRead(e) => DecodeError::InvalidConversion(e.to_string()),
-        DecodeStringError::TypeMismatch(marker) => {
-            DecodeError::InvalidType(format!("Type mismatch at marker {marker:?}"))
-        }
-        DecodeStringError::InvalidUtf8(_, e) => DecodeError::Utf8Error(e.to_string()),
-        _ => DecodeError::IOError,
-    })
-}
-
-/// Read a string from the slices `buf`.
-///
-/// # Errors
-/// Fails if the buffer doesn't contain a valid utf8 msgpack string.
-#[inline]
-pub fn read_string_ref<'a>(buf: &mut &'a [u8]) -> Result<&'a str, DecodeError> {
-    read_string_ref_nomut(buf).map(|(str, newbuf)| {
-        *buf = newbuf;
-        str
-    })
-}
 
 /// Read a nullable string from the slices `buf`.
 ///
 /// # Errors
 /// Fails if the buffer doesn't contain a valid utf8 msgpack string or a null marker.
 #[inline]
-pub fn read_nullable_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, DecodeError> {
+pub fn read_nullable_string<T: TraceData>(buf: &mut Buffer<T>) -> Result<T::Text, DecodeError> {
     if handle_null_marker(buf) {
-        Ok("")
+        Ok(T::Text::default())
     } else {
-        read_string_ref(buf)
+        buf.read_string()
     }
 }
 
@@ -58,19 +30,19 @@ pub fn read_nullable_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, DecodeErr
 /// or if any key or value is not a valid utf8 msgpack string.
 /// Null values are skipped (key not inserted into map).
 #[inline]
-pub fn read_str_map_to_strings<'a>(
-    buf: &mut &'a [u8],
-) -> Result<HashMap<&'a str, &'a str>, DecodeError> {
-    let len = decode::read_map_len(buf)
+pub fn read_str_map_to_strings<T: TraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<HashMap<T::Text, T::Text>, DecodeError> {
+    let len = decode::read_map_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
 
     #[allow(clippy::expect_used)]
     let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
     for _ in 0..len {
-        let key = read_string_ref(buf)?;
+        let key = buf.read_string()?;
         // Only insert if value is not null
         if !handle_null_marker(buf) {
-            let value = read_string_ref(buf)?;
+            let value = buf.read_string()?;
             map.insert(key, value);
         }
     }
@@ -84,9 +56,9 @@ pub fn read_str_map_to_strings<'a>(
 /// or if any key or value is not a valid utf8 msgpack string.
 /// Null values are skipped (key not inserted into map).
 #[inline]
-pub fn read_nullable_str_map_to_strings<'a>(
-    buf: &mut &'a [u8],
-) -> Result<HashMap<&'a str, &'a str>, DecodeError> {
+pub fn read_nullable_str_map_to_strings<T: TraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<HashMap<T::Text, T::Text>, DecodeError> {
     if handle_null_marker(buf) {
         return Ok(HashMap::default());
     }
@@ -100,9 +72,10 @@ pub fn read_nullable_str_map_to_strings<'a>(
 /// # Returns
 /// A boolean indicating whether the next value is null or not.
 #[inline]
-pub fn handle_null_marker(buf: &mut &[u8]) -> bool {
-    if buf.first() == Some(NULL_MARKER) {
-        *buf = &buf[1..];
+pub fn handle_null_marker<T: TraceData>(buf: &mut Buffer<T>) -> bool {
+    let slice = buf.as_mut_slice();
+    if slice.first() == Some(NULL_MARKER) {
+        *slice = &slice[1..];
         true
     } else {
         false

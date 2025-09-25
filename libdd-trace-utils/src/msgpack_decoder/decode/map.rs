@@ -1,7 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::msgpack_decoder::decode::error::DecodeError;
+use crate::msgpack_decoder::decode::{buffer::Buffer, error::DecodeError};
+use crate::span::TraceData;
 use rmp::{decode, decode::RmpRead, Marker};
 use std::collections::HashMap;
 
@@ -33,14 +34,14 @@ use std::collections::HashMap;
 /// * `V` - The type of the values in the map.
 /// * `F` - The type of the function used to read key-value pairs from the buffer.
 #[inline]
-pub fn read_map<'a, K, V, F>(
+pub fn read_map<K, V, F, B>(
     len: usize,
-    buf: &mut &'a [u8],
+    buf: &mut B,
     read_pair: F,
 ) -> Result<HashMap<K, V>, DecodeError>
 where
     K: std::hash::Hash + Eq,
-    F: Fn(&mut &'a [u8]) -> Result<(K, V), DecodeError>,
+    F: Fn(&mut B) -> Result<(K, V), DecodeError>,
 {
     let mut map = HashMap::with_capacity(len);
     for _ in 0..len {
@@ -67,7 +68,8 @@ where
 /// - The buffer does not contain a map.
 /// - There is an error reading from the buffer.
 #[inline]
-pub fn read_map_len(buf: &mut &[u8]) -> Result<usize, DecodeError> {
+pub fn read_map_len<T: TraceData>(buf: &mut Buffer<T>) -> Result<usize, DecodeError> {
+    let buf = buf.as_mut_slice();
     match decode::read_marker(buf)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for map".to_owned()))?
     {
