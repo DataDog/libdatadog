@@ -325,7 +325,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
     catch_panic!(
         if let Option::Some(config) = config {
             if let Option::Some(telemetry_cfg) = telemetry_cfg {
-                 let cfg = TelemetryConfig {
+                let cfg = TelemetryConfig {
                     heartbeat: telemetry_cfg.interval,
                     runtime_id: match sanitize_string(telemetry_cfg.runtime_id) {
                         Ok(s) => Some(s),

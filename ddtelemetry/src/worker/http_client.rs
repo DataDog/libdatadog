@@ -108,9 +108,7 @@ pub struct HyperClient {
 
 impl HttpClient for HyperClient {
     fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture {
-        debug!(
-            "Sending HTTP request via HyperClient"
-        );
+        debug!("Sending HTTP request via HyperClient");
         let resp = self.inner.request(req);
         Box::pin(async move {
             match resp.await {
@@ -142,9 +140,7 @@ impl HttpClient for MockClient {
     fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture {
         let s = self.clone();
         Box::pin(async move {
-            debug!(
-                "MockClient writing request to file"
-            );
+            debug!("MockClient writing request to file");
             let mut body = req.collect().await?.to_bytes().to_vec();
             body.push(b'\n');
 
@@ -167,10 +163,7 @@ impl HttpClient for MockClient {
                 }
             }
 
-            debug!(
-                http.status = 202,
-                "MockClient returning success response"
-            );
+            debug!(http.status = 202, "MockClient returning success response");
             hyper_migration::empty_response(hyper::Response::builder().status(202))
         })
     }

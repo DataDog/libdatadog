@@ -2,13 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
-use data_pipeline::trace_exporter::{TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat};
+use data_pipeline::trace_exporter::{
+    TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
+};
+use datadog_log::logger::{
+    logger_configure_std, logger_set_log_level, LogEventLevel, StdConfig, StdTarget,
+};
 use datadog_trace_protobuf::pb;
 use std::{
     collections::HashMap,
     time::{Duration, UNIX_EPOCH},
 };
-use datadog_log::logger::{logger_configure_std, logger_set_log_level, LogEventLevel, StdConfig, StdTarget};
 
 fn get_span(now: i64, trace_id: u64, span_id: u64) -> pb::Span {
     pb::Span {
@@ -44,10 +48,10 @@ struct Args {
 
 fn main() {
     logger_configure_std(StdConfig {
-        target: StdTarget::Out
-    }).expect("Failed to configure logger");
-    logger_set_log_level(LogEventLevel::Debug)
-        .expect("Failed to set log level");
+        target: StdTarget::Out,
+    })
+    .expect("Failed to configure logger");
+    logger_set_log_level(LogEventLevel::Debug).expect("Failed to set log level");
 
     let args = Args::parse();
     let telemetry_cfg = TelemetryConfig::default();
@@ -65,9 +69,9 @@ fn main() {
         .set_output_format(TraceExporterOutputFormat::V04)
         .enable_telemetry(telemetry_cfg)
         .enable_stats(Duration::from_secs(10));
-    let exporter = builder.build()
-        .expect("Failed to build TraceExporter");
-    let now = UNIX_EPOCH.elapsed()
+    let exporter = builder.build().expect("Failed to build TraceExporter");
+    let now = UNIX_EPOCH
+        .elapsed()
         .expect("Failed to get time since UNIX_EPOCH")
         .as_nanos() as i64;
 
@@ -79,11 +83,12 @@ fn main() {
         }
         traces.push(trace);
     }
-    let data = rmp_serde::to_vec_named(&traces)
-        .expect("Failed to serialize traces");
+    let data = rmp_serde::to_vec_named(&traces).expect("Failed to serialize traces");
 
-    exporter.send(data.as_ref(), 2)
+    exporter
+        .send(data.as_ref(), 2)
         .expect("Failed to send traces");
-    exporter.shutdown(None)
+    exporter
+        .shutdown(None)
         .expect("Failed to shutdown exporter");
 }
