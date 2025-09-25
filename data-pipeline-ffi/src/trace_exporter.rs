@@ -795,8 +795,7 @@ mod tests {
             let mut cfg = TraceExporterConfig::default();
             let error = ddog_trace_exporter_config_enable_telemetry(Some(&mut cfg), None);
             assert!(error.is_none());
-            assert_eq!(cfg.telemetry_cfg.as_ref().unwrap().heartbeat, 0);
-            assert!(cfg.telemetry_cfg.as_ref().unwrap().runtime_id.is_none());
+            assert!(cfg.telemetry_cfg.is_none());
 
             let mut cfg = TraceExporterConfig::default();
             let error = ddog_trace_exporter_config_enable_telemetry(
