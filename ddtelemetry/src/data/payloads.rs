@@ -5,6 +5,8 @@ use crate::data::metrics;
 
 use serde::{Deserialize, Serialize};
 
+use std::os::raw::c_char;
+
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
 pub struct Dependency {
     pub name: String,
@@ -146,9 +148,9 @@ pub struct Endpoint {
     pub operation_name: String,
     pub resource_name: String,
     #[serde(default)]
-    pub request_body_type: Option<Vec<String>>,
+    pub request_body_type: Option<Vec<c_char>>,
     #[serde(default)]
-    pub response_body_type: Option<Vec<String>>,
+    pub response_body_type: Option<Vec<c_char>>,
     // #[serde(default)]
     // pub response_code: Option<Vec<i32>>,
     // #[serde(default)]
