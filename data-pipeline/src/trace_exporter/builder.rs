@@ -379,11 +379,11 @@ mod tests {
             .set_input_format(TraceExporterInputFormat::Proxy)
             .set_output_format(TraceExporterOutputFormat::V04)
             .set_client_computed_stats()
-            .enable_telemetry(Some(TelemetryConfig {
+            .enable_telemetry(TelemetryConfig {
                 heartbeat: 1000,
                 runtime_id: None,
                 debug_enabled: false,
-            }));
+            });
         let exporter = builder.build().unwrap();
 
         assert_eq!(
