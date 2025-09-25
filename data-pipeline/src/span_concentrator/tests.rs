@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::span_concentrator::aggregation::OwnedAggregationKey;
+
 use super::*;
 use datadog_trace_utils::span::{trace_utils::compute_top_level_span, SpanSlice};
 use rand::{thread_rng, Rng};
@@ -83,12 +85,12 @@ fn assert_counts_equal(expected: Vec<pb::ClientGroupedStats>, actual: Vec<pb::Cl
     expected.into_iter().for_each(|mut group| {
         group.ok_summary = vec![];
         group.error_summary = vec![];
-        expected_map.insert(AggregationKey::from(group.clone()), group);
+        expected_map.insert(OwnedAggregationKey::from(group.clone()), group);
     });
     actual.into_iter().for_each(|mut group| {
         group.ok_summary = vec![];
         group.error_summary = vec![];
-        actual_map.insert(AggregationKey::from(group.clone()), group);
+        actual_map.insert(OwnedAggregationKey::from(group.clone()), group);
     });
     assert_eq!(expected_map, actual_map)
 }

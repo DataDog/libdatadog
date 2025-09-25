@@ -30,6 +30,7 @@ tokio = { version = "1.23", features = [
 ], default-features = false }
 uuid = { version = "1.10.0", features = ["v4"] }
 tokio-util = "0.7.11"
+hashbrown = { version = "0.15" }
 
 ddcommon = { path = "../ddcommon", default-features = false }
 ddtelemetry = { path = "../ddtelemetry", default-features = false }
