@@ -1,12 +1,13 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::msgpack_decoder::decode::number::read_number_slice;
-use crate::msgpack_decoder::decode::string::{
-    handle_null_marker, read_str_map_to_strings, read_string_ref,
-};
-use crate::span::SpanLinkSlice;
+use crate::msgpack_decoder::decode::number::read_number;
+use crate::msgpack_decoder::decode::string::{handle_null_marker, read_str_map_to_strings};
+use crate::span::v04::SpanLink;
+use crate::span::TraceData;
+use std::borrow::Borrow;
 use std::str::FromStr;
 
 /// Reads a slice of bytes and decodes it into a vector of `SpanLink` objects.
@@ -26,18 +27,18 @@ use std::str::FromStr;
 /// - The marker for the array length cannot be read.
 /// - Any `SpanLink` cannot be decoded.
 /// ```
-pub(crate) fn read_span_links<'a>(
-    buf: &mut &'a [u8],
-) -> Result<Vec<SpanLinkSlice<'a>>, DecodeError> {
+pub(crate) fn read_span_links<T: TraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<Vec<SpanLink<T>>, DecodeError> {
     if handle_null_marker(buf) {
         return Ok(Vec::default());
     }
 
-    let len = rmp::decode::read_array_len(buf).map_err(|_| {
+    let len = rmp::decode::read_array_len(buf.as_mut_slice()).map_err(|_| {
         DecodeError::InvalidType("Unable to get array len for span links".to_owned())
     })?;
 
-    let mut vec: Vec<SpanLinkSlice> = Vec::with_capacity(len as usize);
+    let mut vec: Vec<SpanLink<T>> = Vec::with_capacity(len as usize);
     for _ in 0..len {
         vec.push(decode_span_link(buf)?);
     }
@@ -71,19 +72,19 @@ impl FromStr for SpanLinkKey {
     }
 }
 
-fn decode_span_link<'a>(buf: &mut &'a [u8]) -> Result<SpanLinkSlice<'a>, DecodeError> {
-    let mut span = SpanLinkSlice::default();
-    let span_size = rmp::decode::read_map_len(buf)
+fn decode_span_link<T: TraceData>(buf: &mut Buffer<T>) -> Result<SpanLink<T>, DecodeError> {
+    let mut span = SpanLink::default();
+    let span_size = rmp::decode::read_map_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidType("Unable to get map len for span size".to_owned()))?;
 
     for _ in 0..span_size {
-        match read_string_ref(buf)?.parse::<SpanLinkKey>()? {
-            SpanLinkKey::TraceId => span.trace_id = read_number_slice(buf)?,
-            SpanLinkKey::TraceIdHigh => span.trace_id_high = read_number_slice(buf)?,
-            SpanLinkKey::SpanId => span.span_id = read_number_slice(buf)?,
+        match buf.read_string()?.borrow().parse::<SpanLinkKey>()? {
+            SpanLinkKey::TraceId => span.trace_id = read_number(buf)?,
+            SpanLinkKey::TraceIdHigh => span.trace_id_high = read_number(buf)?,
+            SpanLinkKey::SpanId => span.span_id = read_number(buf)?,
             SpanLinkKey::Attributes => span.attributes = read_str_map_to_strings(buf)?,
-            SpanLinkKey::Tracestate => span.tracestate = read_string_ref(buf)?,
-            SpanLinkKey::Flags => span.flags = read_number_slice(buf)?,
+            SpanLinkKey::Tracestate => span.tracestate = buf.read_string()?,
+            SpanLinkKey::Flags => span.flags = read_number(buf)?,
         }
     }
 

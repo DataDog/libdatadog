@@ -8,7 +8,7 @@ use crate::trace_exporter::error::TraceExporterError;
 use crate::trace_exporter::TraceExporterOutputFormat;
 use datadog_trace_utils::msgpack_decoder::decode::error::DecodeError;
 use datadog_trace_utils::msgpack_encoder;
-use datadog_trace_utils::span::{Span, SpanText};
+use datadog_trace_utils::span::{v04::Span, TraceData};
 use datadog_trace_utils::trace_utils::{self, TracerHeaderTags};
 use datadog_trace_utils::tracer_payload;
 use ddcommon::header::{
@@ -46,7 +46,7 @@ impl<'a> TraceSerializer<'a> {
     }
 
     /// Prepare traces payload and HTTP headers for sending to agent
-    pub(super) fn prepare_traces_payload<T: SpanText>(
+    pub(super) fn prepare_traces_payload<T: TraceData>(
         &self,
         traces: Vec<Vec<Span<T>>>,
         header_tags: TracerHeaderTags,
@@ -64,7 +64,7 @@ impl<'a> TraceSerializer<'a> {
     }
 
     /// Collect trace chunks based on output format
-    fn collect_and_process_traces<T: SpanText>(
+    fn collect_and_process_traces<T: TraceData>(
         &self,
         traces: Vec<Vec<Span<T>>>,
     ) -> Result<tracer_payload::TraceChunks<T>, TraceExporterError> {
@@ -97,7 +97,7 @@ impl<'a> TraceSerializer<'a> {
     }
 
     /// Serialize payload to msgpack format
-    fn serialize_payload<T: SpanText>(
+    fn serialize_payload<T: TraceData>(
         &self,
         payload: &tracer_payload::TraceChunks<T>,
     ) -> Result<Vec<u8>, TraceExporterError> {
@@ -114,7 +114,7 @@ impl<'a> TraceSerializer<'a> {
 mod tests {
     use super::*;
     use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
-    use datadog_trace_utils::span::SpanBytes;
+    use datadog_trace_utils::span::v04::SpanBytes;
     use datadog_trace_utils::trace_utils::TracerHeaderTags;
     use ddcommon::header::{
         APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
