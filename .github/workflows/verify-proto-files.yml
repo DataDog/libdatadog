@@ -4,7 +4,7 @@ on:
     types: [ opened, synchronize, reopened ]
 
 env:
-  DATADOG_AGENT_TAG: "7.55.0-rc.3"
+  DATADOG_AGENT_TAG: "7f6d07c93ba087f23f80a3f0c2da4b1f3dc664d7"
   rust_version: "1.84.1"
 
 jobs:
@@ -35,6 +35,16 @@ jobs:
         working-directory: datadog-trace-protobuf/src/pb
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file span.proto --tag ${{ env.DATADOG_AGENT_TAG }}
+      - name: diff idx/tracer_payload.proto
+        if: success() || failure()
+        working-directory: datadog-trace-protobuf/src/pb
+        run: |
+          ../../../.github/workflows/diff-proto-files.sh --file idx/tracer_payload.proto --tag ${{ env.DATADOG_AGENT_TAG }}
+      - name: diff idx/span.proto
+        if: success() || failure()
+        working-directory: datadog-trace-protobuf/src/pb
+        run: |
+          ../../../.github/workflows/diff-proto-files.sh --file idx/span.proto --tag ${{ env.DATADOG_AGENT_TAG }}
       - name: Cache
         uses: ./.github/actions/cache
         with:

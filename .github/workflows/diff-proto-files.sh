@@ -33,4 +33,4 @@ fi
 GO_AGENT_PROTO=$(curl -s "https://raw.githubusercontent.com/DataDog/datadog-agent/$DATADOG_AGENT_TAG/pkg/proto/datadog/trace/$PROTO_FILE")
 FIX_IMPORT_PATH=$(echo "$GO_AGENT_PROTO" | sed -e 's/import "datadog\/trace\//import "/g')
 FIX_PACKAGE_NAME=$(echo "$FIX_IMPORT_PATH" | sed -e 's/datadog\.trace/pb/g')
-echo "$FIX_PACKAGE_NAME" | diff "$PROTO_FILE" -
+echo "$FIX_PACKAGE_NAME" | diff -u "$PROTO_FILE" -

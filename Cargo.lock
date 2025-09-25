@@ -1298,6 +1298,7 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "bytes",
+ "clap",
  "criterion",
  "datadog-ddsketch",
  "datadog-trace-protobuf",

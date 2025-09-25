@@ -26,6 +26,8 @@ pub(super) struct BorrowedAggregationKey<'a> {
     is_synthetics_request: bool,
     peer_tags: Vec<(&'a str, &'a str)>,
     is_trace_root: bool,
+    http_method: &'a str,
+    http_endpoint: &'a str,
 }
 
 impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
@@ -45,6 +47,8 @@ impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
                 .zip(key.peer_tags.iter())
                 .all(|((k1, v1), (k2, v2))| k1 == k2 && v1 == v2)
             && self.is_trace_root == key.is_trace_root
+            && self.http_method == key.http_method
+            && self.http_endpoint == key.http_endpoint
     }
 }
 
@@ -66,6 +70,8 @@ pub(super) struct OwnedAggregationKey {
     is_synthetics_request: bool,
     peer_tags: Vec<(String, String)>,
     is_trace_root: bool,
+    http_method: String,
+    http_endpoint: String,
 }
 
 impl From<&BorrowedAggregationKey<'_>> for OwnedAggregationKey {
@@ -84,6 +90,8 @@ impl From<&BorrowedAggregationKey<'_>> for OwnedAggregationKey {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
             is_trace_root: value.is_trace_root,
+            http_method: value.http_method.to_owned(),
+            http_endpoint: value.http_endpoint.to_owned(),
         }
     }
 }
@@ -107,6 +115,20 @@ impl<'a> BorrowedAggregationKey<'a> {
         } else {
             vec![]
         };
+
+        let http_method = span
+            .meta
+            .get("http.method")
+            .map(|s| s.borrow())
+            .unwrap_or_default();
+
+        let http_endpoint = span
+            .meta
+            .get("http.endpoint")
+            .or_else(|| span.meta.get("http.route"))
+            .map(|s| s.borrow())
+            .unwrap_or_default();
+
         Self {
             resource_name: span.resource.borrow(),
             service_name: span.service.borrow(),
@@ -118,8 +140,10 @@ impl<'a> BorrowedAggregationKey<'a> {
                 .meta
                 .get(TAG_ORIGIN)
                 .is_some_and(|origin| origin.borrow().starts_with(TAG_SYNTHETICS)),
-            is_trace_root: span.parent_id == 0,
             peer_tags,
+            is_trace_root: span.parent_id == 0,
+            http_method,
+            http_endpoint,
         }
     }
 }
@@ -143,6 +167,8 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
                 })
                 .collect(),
             is_trace_root: value.is_trace_root == 1,
+            http_method: value.http_method,
+            http_endpoint: value.http_endpoint,
         }
     }
 }
@@ -292,6 +318,9 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
         } else {
             pb::Trilean::False.into()
         },
+        http_method: key.http_method,
+        http_endpoint: key.http_endpoint,
+        grpc_status_code: String::new(), // currently not used
     }
 }
 
@@ -503,6 +532,57 @@ mod tests {
                     is_synthetics_request: false,
                     is_trace_root: true,
                     http_status_code: 418,
+                    ..Default::default()
+                },
+            ),
+            // Span with http.method and http.route
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "GET /api/v1/users".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: HashMap::from([
+                        ("http.method".into(), "GET".into()),
+                        ("http.route".into(), "/api/v1/users".into()),
+                    ]),
+                    ..Default::default()
+                },
+                OwnedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "GET /api/v1/users".into(),
+                    http_method: "GET".into(),
+                    http_endpoint: "/api/v1/users".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: true,
+                    ..Default::default()
+                },
+            ),
+            // Span with http.method and http.endpoint (http.endpoint takes precedence)
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "POST /users/create".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: HashMap::from([
+                        ("http.method".into(), "POST".into()),
+                        ("http.route".into(), "/users/create".into()),
+                        ("http.endpoint".into(), "/users/create2".into()),
+                    ]),
+                    ..Default::default()
+                },
+                OwnedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "POST /users/create".into(),
+                    http_method: "POST".into(),
+                    http_endpoint: "/users/create2".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: true,
                     ..Default::default()
                 },
             ),

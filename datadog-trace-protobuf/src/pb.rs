@@ -46,6 +46,201 @@ pub struct SpanLink {
 }
 #[derive(Deserialize, Serialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SpanEvent {
+    /// @gotags: json:"time_unix_nano" msg:"time_unix_nano"
+    ///
+    /// time is the number of nanoseconds between the Unix epoch and this event.
+    #[prost(fixed64, tag = "1")]
+    #[serde(default)]
+    pub time_unix_nano: u64,
+    /// @gotags: json:"name" msg:"name"
+    ///
+    /// name is this event's name.
+    #[prost(string, tag = "2")]
+    #[serde(default)]
+    pub name: ::prost::alloc::string::String,
+    /// attributes is a mapping from attribute key string to any value.
+    /// The order of attributes should be preserved in the key/value map.
+    /// The supported values match the OpenTelemetry attributes specification:
+    /// <https://github.com/open-telemetry/opentelemetry-proto/blob/a8f08fc49d60538f97ffabcc7feac92f832976dd/opentelemetry/proto/common/v1/common.proto>
+    /// @gotags: json:"attributes" msg:"attributes"
+    #[prost(map = "string, message", tag = "3")]
+    #[serde(default)]
+    pub attributes: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        AttributeAnyValue,
+    >,
+}
+/// AttributeAnyValue is used to represent any type of attribute value. AttributeAnyValue may contain a
+/// primitive value such as a string or integer or it may contain an arbitrary nested
+/// object containing arrays, key-value lists and primitives.
+#[derive(Deserialize, Serialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AttributeAnyValue {
+    /// We implement a union manually here because Go's MessagePack generator does not support
+    /// Protobuf `oneof` unions: <https://github.com/tinylib/msgp/issues/184>
+    /// Despite this, the format represented here is binary compatible with `oneof`, if we choose
+    /// to migrate to that in the future.
+    /// @gotags: json:"type" msg:"type"
+    #[prost(enumeration = "attribute_any_value::AttributeAnyValueType", tag = "1")]
+    #[serde(default)]
+    pub r#type: i32,
+    /// @gotags: json:"string_value" msg:"string_value"
+    #[prost(string, tag = "2")]
+    #[serde(default)]
+    pub string_value: ::prost::alloc::string::String,
+    /// @gotags: json:"bool_value" msg:"bool_value"
+    #[prost(bool, tag = "3")]
+    #[serde(default)]
+    pub bool_value: bool,
+    /// @gotags: json:"int_value" msg:"int_value"
+    #[prost(int64, tag = "4")]
+    #[serde(default)]
+    pub int_value: i64,
+    /// @gotags: json:"double_value" msg:"double_value"
+    #[prost(double, tag = "5")]
+    #[serde(default)]
+    pub double_value: f64,
+    /// @gotags: json:"array_value" msg:"array_value"
+    #[prost(message, optional, tag = "6")]
+    #[serde(default)]
+    pub array_value: ::core::option::Option<AttributeArray>,
+}
+/// Nested message and enum types in `AttributeAnyValue`.
+pub mod attribute_any_value {
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum AttributeAnyValueType {
+        StringValue = 0,
+        BoolValue = 1,
+        IntValue = 2,
+        DoubleValue = 3,
+        ArrayValue = 4,
+    }
+    impl AttributeAnyValueType {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                Self::StringValue => "STRING_VALUE",
+                Self::BoolValue => "BOOL_VALUE",
+                Self::IntValue => "INT_VALUE",
+                Self::DoubleValue => "DOUBLE_VALUE",
+                Self::ArrayValue => "ARRAY_VALUE",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "STRING_VALUE" => Some(Self::StringValue),
+                "BOOL_VALUE" => Some(Self::BoolValue),
+                "INT_VALUE" => Some(Self::IntValue),
+                "DOUBLE_VALUE" => Some(Self::DoubleValue),
+                "ARRAY_VALUE" => Some(Self::ArrayValue),
+                _ => None,
+            }
+        }
+    }
+}
+/// AttributeArray is a list of AttributeArrayValue messages. We need this as a message since `oneof` in AttributeAnyValue does not allow repeated fields.
+#[derive(Deserialize, Serialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AttributeArray {
+    /// Array of values. The array may be empty (contain 0 elements).
+    /// @gotags: json:"values" msg:"values"
+    #[prost(message, repeated, tag = "1")]
+    #[serde(default)]
+    pub values: ::prost::alloc::vec::Vec<AttributeArrayValue>,
+}
+/// An element in the homogeneous AttributeArray.
+/// Compared to AttributeAnyValue, it only supports scalar values.
+#[derive(Deserialize, Serialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AttributeArrayValue {
+    /// We implement a union manually here because Go's MessagePack generator does not support
+    /// Protobuf `oneof` unions: <https://github.com/tinylib/msgp/issues/184>
+    /// Despite this, the format represented here is binary compatible with `oneof`, if we choose
+    /// to migrate to that in the future.
+    /// @gotags: json:"type" msg:"type"
+    #[prost(enumeration = "attribute_array_value::AttributeArrayValueType", tag = "1")]
+    #[serde(default)]
+    pub r#type: i32,
+    /// @gotags: json:"string_value" msg:"string_value"
+    #[prost(string, tag = "2")]
+    #[serde(default)]
+    pub string_value: ::prost::alloc::string::String,
+    /// @gotags: json:"bool_value" msg:"bool_value"
+    #[prost(bool, tag = "3")]
+    #[serde(default)]
+    pub bool_value: bool,
+    /// @gotags: json:"int_value" msg:"int_value"
+    #[prost(int64, tag = "4")]
+    #[serde(default)]
+    pub int_value: i64,
+    /// @gotags: json:"double_value" msg:"double_value"
+    #[prost(double, tag = "5")]
+    #[serde(default)]
+    pub double_value: f64,
+}
+/// Nested message and enum types in `AttributeArrayValue`.
+pub mod attribute_array_value {
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum AttributeArrayValueType {
+        StringValue = 0,
+        BoolValue = 1,
+        IntValue = 2,
+        DoubleValue = 3,
+    }
+    impl AttributeArrayValueType {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                Self::StringValue => "STRING_VALUE",
+                Self::BoolValue => "BOOL_VALUE",
+                Self::IntValue => "INT_VALUE",
+                Self::DoubleValue => "DOUBLE_VALUE",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "STRING_VALUE" => Some(Self::StringValue),
+                "BOOL_VALUE" => Some(Self::BoolValue),
+                "INT_VALUE" => Some(Self::IntValue),
+                "DOUBLE_VALUE" => Some(Self::DoubleValue),
+                _ => None,
+            }
+        }
+    }
+}
+#[derive(Deserialize, Serialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Span {
     /// service is the name of the service with which this span is associated.
     /// @gotags: json:"service" msg:"service"
@@ -140,6 +335,13 @@ pub struct Span {
     #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
     #[serde(skip_serializing_if = "::prost::alloc::vec::Vec::is_empty")]
     pub span_links: ::prost::alloc::vec::Vec<SpanLink>,
+    /// spanEvents represent an event at an instant in time related to this span, but not necessarily during the span.
+    /// @gotags: json:"span_events,omitempty" msg:"span_events,omitempty"
+    #[prost(message, repeated, tag = "15")]
+    #[serde(default)]
+    #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
+    #[serde(skip_serializing_if = "::prost::alloc::vec::Vec::is_empty")]
+    pub span_events: ::prost::alloc::vec::Vec<SpanEvent>,
 }
 /// TraceChunk represents a list of spans with the same trace ID. In other words, a chunk of a trace.
 #[derive(Deserialize, Serialize)]
@@ -247,6 +449,10 @@ pub struct AgentPayload {
     /// rareSamplerEnabled holds `RareSamplerEnabled` value in AgentConfig
     #[prost(bool, tag = "10")]
     pub rare_sampler_enabled: bool,
+    /// idxTracerPayloads specifies list of the payloads received from tracers.
+    /// @gotags: msg:"-"
+    #[prost(message, repeated, tag = "11")]
+    pub idx_tracer_payloads: ::prost::alloc::vec::Vec<idx::TracerPayload>,
 }
 /// StatsPayload is the payload used to send stats from the agent to the backend.
 #[derive(Deserialize, Serialize)]
@@ -338,6 +544,14 @@ pub struct ClientStatsPayload {
     #[prost(string, tag = "14")]
     #[serde(default)]
     pub image_tag: ::prost::alloc::string::String,
+    /// The process tags hash is used as a key for agent stats agregation.
+    #[prost(uint64, tag = "15")]
+    #[serde(default)]
+    pub process_tags_hash: u64,
+    /// The process tags contains a list of tags that are specific to the process.
+    #[prost(string, tag = "16")]
+    #[serde(default)]
+    pub process_tags: ::prost::alloc::string::String,
 }
 /// ClientStatsBucket is a time bucket containing aggregated stats.
 #[derive(Deserialize, Serialize)]
@@ -417,6 +631,17 @@ pub struct ClientGroupedStats {
     #[prost(enumeration = "Trilean", tag = "17")]
     #[serde(default)]
     pub is_trace_root: i32,
+    #[prost(string, tag = "18")]
+    #[serde(default)]
+    pub grpc_status_code: ::prost::alloc::string::String,
+    /// HTTP method of the request
+    #[prost(string, tag = "19")]
+    #[serde(default)]
+    pub http_method: ::prost::alloc::string::String,
+    /// Http route or quantized/simplified URL path
+    #[prost(string, tag = "20")]
+    #[serde(default)]
+    pub http_endpoint: ::prost::alloc::string::String,
 }
 /// Trilean is an expanded boolean type that is meant to differentiate between being unset and false.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
