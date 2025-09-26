@@ -147,8 +147,11 @@ impl AzureMetadata {
             .or_else(|| {
                 // Check if we're in flex consumption plan first
                 match query.get_var(WEBSITE_SKU).as_deref() {
-                    Some("FlexConsumption") => None, /* Flex Consumption plans need */
-                    // `DD_AZURE_RESOURCE_GROUP` env var
+                    Some("FlexConsumption") => None,
+                    /* Flex Consumption plans need the `DD_AZURE_RESOURCE_GROUP` env var. If this
+                     * logic ever changes, update the logic in
+                     * `serverless-components/src/datadog-trace-agent` and the serverless compat
+                     * layers accordingly. */
                     _ => AzureMetadata::extract_resource_group(query.get_var(WEBSITE_OWNER_NAME)),
                 }
             });
