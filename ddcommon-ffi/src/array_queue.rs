@@ -327,11 +327,11 @@ mod tests {
             assert!(matches!(result, ArrayQueuePushResult::Ok));
             let result = ddog_ArrayQueue_push(queue, item2_ptr as *mut c_void);
             assert!(
-                matches!(result, ArrayQueuePushResult::Full(ptr) if ptr == item2_ptr as *mut c_void)
+                matches!(result, ArrayQueuePushResult::Full(ptr) if std::ptr::eq(ptr, item2_ptr as *mut c_void))
             );
             let result = ddog_ArrayQueue_pop(queue);
             assert!(
-                matches!(result, ArrayQueuePopResult::Ok(ptr) if ptr == item_ptr as *mut c_void)
+                matches!(result, ArrayQueuePopResult::Ok(ptr) if std::ptr::eq(ptr, item_ptr as *mut c_void))
             );
             let item_ptr = match result {
                 ArrayQueuePopResult::Ok(ptr) => ptr,

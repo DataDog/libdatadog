@@ -75,7 +75,11 @@ impl<T> From<alloc::vec::Vec<T>> for Vec<T> {
 impl From<anyhow::Error> for Vec<u8> {
     fn from(err: anyhow::Error) -> Self {
         let mut vec = vec![];
-        write!(vec, "{err}").expect("write to vec to always succeed");
+        // Writing to a Vec<u8> should never fail in practice, but we handle it gracefully
+        if write!(vec, "{err}").is_err() {
+            // Fallback to a basic error message if formatting fails
+            vec = b"Error formatting failed".to_vec();
+        }
         Self::from(vec)
     }
 }
@@ -105,7 +109,7 @@ impl<T> Vec<T> {
         self.replace(vec);
     }
 
-    pub fn as_slice(&self) -> Slice<T> {
+    pub fn as_slice(&self) -> Slice<'_, T> {
         unsafe { Slice::from_raw_parts(self.ptr, self.len) }
     }
 
