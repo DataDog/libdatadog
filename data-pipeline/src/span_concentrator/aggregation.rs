@@ -52,11 +52,11 @@ pub(super) struct BorrowedAggregationKey<'a> {
 /// the key type `K` implements `Borrow<Q>`. Since `AggregationKey<'static>` cannot implement
 /// `Borrow<AggregationKey<'a>>` we use `dyn BorrowableAggregationKey` as a placeholder.
 trait BorrowableAggregationKey {
-    fn borrowed_aggregation_key(&self) -> BorrowedAggregationKey;
+    fn borrowed_aggregation_key(&self) -> BorrowedAggregationKey<'_>;
 }
 
 impl BorrowableAggregationKey for AggregationKey<'_> {
-    fn borrowed_aggregation_key(&self) -> BorrowedAggregationKey {
+    fn borrowed_aggregation_key(&self) -> BorrowedAggregationKey<'_> {
         BorrowedAggregationKey {
             resource_name: self.resource_name.borrow(),
             service_name: self.service_name.borrow(),
@@ -76,7 +76,7 @@ impl BorrowableAggregationKey for AggregationKey<'_> {
 }
 
 impl BorrowableAggregationKey for BorrowedAggregationKey<'_> {
-    fn borrowed_aggregation_key(&self) -> BorrowedAggregationKey {
+    fn borrowed_aggregation_key(&self) -> BorrowedAggregationKey<'_> {
         self.clone()
     }
 }
@@ -90,16 +90,16 @@ where
     }
 }
 
-impl Eq for (dyn BorrowableAggregationKey + '_) {}
+impl Eq for dyn BorrowableAggregationKey + '_ {}
 
-impl PartialEq for (dyn BorrowableAggregationKey + '_) {
+impl PartialEq for dyn BorrowableAggregationKey + '_ {
     fn eq(&self, other: &dyn BorrowableAggregationKey) -> bool {
         self.borrowed_aggregation_key()
             .eq(&other.borrowed_aggregation_key())
     }
 }
 
-impl std::hash::Hash for (dyn BorrowableAggregationKey + '_) {
+impl std::hash::Hash for dyn BorrowableAggregationKey + '_ {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.borrowed_aggregation_key().hash(state)
     }
