@@ -10,8 +10,6 @@ pub enum FlareError {
     ListeningError(String),
     /// Parsing of config failed.
     ParsingError(String),
-    /// Send the flare was asking without being prepared.
-    RemoteConfigError(String),
     /// Sending the flare failed.
     SendError(String),
     /// Creating the zipped flare failed.
@@ -23,9 +21,6 @@ impl std::fmt::Display for FlareError {
         match self {
             FlareError::ListeningError(msg) => write!(f, "Listening failed with: {msg}"),
             FlareError::ParsingError(msg) => write!(f, "Parsing failed with: {msg}"),
-            FlareError::RemoteConfigError(msg) => {
-                write!(f, "RemoteConfig file processed in a wrong order: {msg}")
-            }
             FlareError::SendError(msg) => write!(f, "Sending the flare failed with: {msg}"),
             FlareError::ZipError(msg) => write!(f, "Creating the zip failed with: {msg}"),
         }
