@@ -148,7 +148,9 @@ impl SessionInfo {
         self.runtimes.lock_or_panic()
     }
 
-    pub(crate) fn get_telemetry_config(&self) -> MutexGuard<'_, Option<ddtelemetry::config::Config>> {
+    pub(crate) fn get_telemetry_config(
+        &self,
+    ) -> MutexGuard<'_, Option<ddtelemetry::config::Config>> {
         let mut cfg = self.session_config.lock_or_panic();
 
         if (*cfg).is_none() {
