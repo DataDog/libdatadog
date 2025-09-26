@@ -207,7 +207,7 @@ impl<Inner> Debug for ShmLimiter<Inner> {
 }
 
 impl<Inner> ShmLimiter<Inner> {
-    fn limiter(&self) -> &ShmLimiterData<Inner> {
+    fn limiter(&self) -> &ShmLimiterData<'_, Inner> {
         #[allow(clippy::unwrap_used)]
         unsafe {
             &*self
