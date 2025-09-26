@@ -71,35 +71,34 @@ unsafe fn emit_backtrace_by_frames(
         }
         if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
             backtrace::resolve_frame_unsynchronized(frame, |symbol| {
-                write!(w, "{{").unwrap();
-                #[allow(clippy::unwrap_used)]
-                emit_absolute_addresses(w, frame).unwrap();
+                // In crash handling context, we need to be resilient to write failures
+                // If any write fails, we continue to try the next operations
+                let _ = write!(w, "{{");
+                let _ = emit_absolute_addresses(w, frame);
                 if let Some(column) = symbol.colno() {
-                    write!(w, ", \"column\": {column}").unwrap();
+                    let _ = write!(w, ", \"column\": {column}");
                 }
                 if let Some(file) = symbol.filename() {
                     // The debug printer for path already wraps it in `"` marks.
-                    write!(w, ", \"file\": {file:?}").unwrap();
+                    let _ = write!(w, ", \"file\": {file:?}");
                 }
                 if let Some(function) = symbol.name() {
-                    write!(w, ", \"function\": \"{function}\"").unwrap();
+                    let _ = write!(w, ", \"function\": \"{function}\"");
                 }
                 if let Some(line) = symbol.lineno() {
-                    write!(w, ", \"line\": {line}").unwrap();
+                    let _ = write!(w, ", \"line\": {line}");
                 }
-                writeln!(w, "}}").unwrap();
+                let _ = writeln!(w, "}}");
                 // Flush eagerly to ensure that each frame gets emitted even if the next one fails
-                #[allow(clippy::unwrap_used)]
-                w.flush().unwrap();
+                let _ = w.flush();
             });
         } else {
-            write!(w, "{{").unwrap();
-            #[allow(clippy::unwrap_used)]
-            emit_absolute_addresses(w, frame).unwrap();
-            writeln!(w, "}}").unwrap();
+            // In crash handling context, we need to be resilient to write failures
+            let _ = write!(w, "{{");
+            let _ = emit_absolute_addresses(w, frame);
+            let _ = writeln!(w, "}}");
             // Flush eagerly to ensure that each frame gets emitted even if the next one fails
-            #[allow(clippy::unwrap_used)]
-            w.flush().unwrap();
+            let _ = w.flush();
         }
         true // keep going to the next frame
     });

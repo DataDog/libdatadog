@@ -109,7 +109,7 @@ pub fn from_bytes(data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize)
 /// let decoded_span = &decoded_traces[0][0];
 /// assert_eq!("test-span", decoded_span.name);
 /// ```
-pub fn from_slice(mut data: &[u8]) -> Result<(Vec<Vec<SpanSlice>>, usize), DecodeError> {
+pub fn from_slice(mut data: &[u8]) -> Result<(Vec<Vec<SpanSlice<'_>>>, usize), DecodeError> {
     let trace_count = rmp::decode::read_array_len(&mut data).map_err(|_| {
         DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
     })?;
