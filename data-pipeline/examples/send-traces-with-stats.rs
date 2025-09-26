@@ -1,12 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use clap::Parser;
 use data_pipeline::trace_exporter::{
     TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
-};
-use data_pipeline::trace_exporter::{
-    TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
 use datadog_log::logger::{
     logger_configure_std, logger_set_log_level, LogEventLevel, StdConfig, StdTarget,
@@ -43,7 +39,6 @@ fn main() {
     .expect("Failed to configure logger");
     logger_set_log_level(LogEventLevel::Debug).expect("Failed to set log level");
 
-    let args = Args::parse();
     let telemetry_cfg = TelemetryConfig::default();
     let mut builder = TraceExporter::builder();
     builder
