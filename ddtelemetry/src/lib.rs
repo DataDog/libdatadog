@@ -10,6 +10,7 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 use ddcommon::entity_id;
+use tracing::debug;
 
 pub mod config;
 pub mod data;
@@ -18,11 +19,24 @@ pub mod metrics;
 pub mod worker;
 
 pub fn build_host() -> data::Host {
+    debug!("Building telemetry host information");
+    let hostname = info::os::real_hostname().unwrap_or_else(|_| String::from("unknown_hostname"));
+    let container_id = entity_id::get_container_id().map(|f| f.to_string());
+    let os_version = info::os::os_version().ok();
+
+    debug!(
+        host.hostname = %hostname,
+        host.container_id = ?container_id,
+        host.os = info::os::os_name(),
+        host.os_version = ?os_version,
+        "Built telemetry host information"
+    );
+
     data::Host {
-        hostname: info::os::real_hostname().unwrap_or_else(|_| String::from("unknown_hostname")),
-        container_id: entity_id::get_container_id().map(|f| f.to_string()),
+        hostname,
+        container_id,
         os: Some(String::from(info::os::os_name())),
-        os_version: info::os::os_version().ok(),
+        os_version,
         kernel_name: None,
         kernel_release: None,
         kernel_version: None,
