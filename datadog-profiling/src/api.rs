@@ -290,7 +290,7 @@ fn string_table_fetch(pprof: &prost_impls::Profile, id: i64) -> anyhow::Result<&
         .ok_or_else(|| anyhow::anyhow!("String {id} was not found."))
 }
 
-fn mapping_fetch(pprof: &prost_impls::Profile, id: u64) -> anyhow::Result<Mapping> {
+fn mapping_fetch(pprof: &prost_impls::Profile, id: u64) -> anyhow::Result<Mapping<'_>> {
     if id == 0 {
         return Ok(Mapping::default());
     }
@@ -307,7 +307,7 @@ fn mapping_fetch(pprof: &prost_impls::Profile, id: u64) -> anyhow::Result<Mappin
     }
 }
 
-fn function_fetch(pprof: &prost_impls::Profile, id: u64) -> anyhow::Result<Function> {
+fn function_fetch(pprof: &prost_impls::Profile, id: u64) -> anyhow::Result<Function<'_>> {
     if id == 0 {
         return Ok(Function::default());
     }
@@ -322,7 +322,7 @@ fn function_fetch(pprof: &prost_impls::Profile, id: u64) -> anyhow::Result<Funct
     }
 }
 
-fn location_fetch(pprof: &prost_impls::Profile, id: u64) -> anyhow::Result<Location> {
+fn location_fetch(pprof: &prost_impls::Profile, id: u64) -> anyhow::Result<Location<'_>> {
     if id == 0 {
         return Ok(Location::default());
     }
