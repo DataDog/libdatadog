@@ -259,9 +259,14 @@ async fn send_request(
         hyper_migration::new_default_client().request(req)
     };
 
+    let now = std::time::Instant::now();
+    println!("awaiting req future");
     match tokio::time::timeout(timeout, req_future).await {
         Ok(resp) => match resp {
-            Ok(body) => Ok(hyper_migration::into_response(body)),
+            Ok(body) => {
+                println!("got result: {:?}", now.elapsed());
+                Ok(hyper_migration::into_response(body))
+            }
             Err(e) => Err(RequestError::Network(e)),
         },
         Err(_) => Err(RequestError::TimeoutApi),

@@ -95,6 +95,7 @@ impl SendDataBuilder {
         size: usize,
         tracer_payload: TracerPayloadCollection,
         tracer_header_tags: TracerHeaderTags,
+        retry_strategy: RetryStrategy,
         target: &Endpoint,
     ) -> SendDataBuilder {
         let mut headers: HashMap<&'static str, String> = tracer_header_tags.into();
@@ -104,7 +105,7 @@ impl SendDataBuilder {
             size,
             target: target.clone(),
             headers,
-            retry_strategy: RetryStrategy::default(),
+            retry_strategy,
             #[cfg(feature = "compression")]
             compression: Compression::None,
         }
