@@ -17,6 +17,7 @@ const FUNCTIONS_WORKER_RUNTIME: &str = "FUNCTIONS_WORKER_RUNTIME";
 const FUNCTIONS_WORKER_RUNTIME_VERSION: &str = "FUNCTIONS_WORKER_RUNTIME_VERSION";
 const FUNCTIONS_EXTENSION_VERSION: &str = "FUNCTIONS_EXTENSION_VERSION";
 const DD_AZURE_RESOURCE_GROUP: &str = "DD_AZURE_RESOURCE_GROUP";
+const WEBSITE_SKU: &str = "WEBSITE_SKU";
 
 const UNKNOWN_VALUE: &str = "unknown";
 
@@ -144,11 +145,11 @@ impl AzureMetadata {
             .get_var(DD_AZURE_RESOURCE_GROUP)
             .or_else(|| query.get_var(WEBSITE_RESOURCE_GROUP))
             .or_else(|| {
-                let extracted =
-                    AzureMetadata::extract_resource_group(query.get_var(WEBSITE_OWNER_NAME));
-                match extracted.as_deref() {
-                    Some("flex") => None,
-                    _ => extracted,
+                // Check if we're in flex consumption plan first
+                match query.get_var(WEBSITE_SKU).as_deref() {
+                    Some("FlexConsumption") => None, /* Flex Consumption plans need */
+                    // `DD_AZURE_RESOURCE_GROUP` env var
+                    _ => AzureMetadata::extract_resource_group(query.get_var(WEBSITE_OWNER_NAME)),
                 }
             });
 
@@ -485,6 +486,7 @@ mod tests {
                 "00000000-0000-0000-0000-000000000000+test-rg-EastUSwebspace-Linux",
             ),
             (SERVICE_CONTEXT, "1"),
+            (WEBSITE_SKU, "ElasticPremium"),
         ]);
 
         let metadata = AzureMetadata::new(mocked_env).unwrap();
@@ -501,6 +503,7 @@ mod tests {
                 WEBSITE_OWNER_NAME,
                 "00000000-0000-0000-0000-000000000000+flex-EastUSwebspace-Linux",
             ),
+            (WEBSITE_SKU, "FlexConsumption"),
             (SERVICE_CONTEXT, "1"),
         ]);
 
@@ -517,6 +520,7 @@ mod tests {
                 "00000000-0000-0000-0000-000000000000+flex-EastUSwebspace-Linux",
             ),
             (DD_AZURE_RESOURCE_GROUP, "test-flex-rg"),
+            (WEBSITE_SKU, "FlexConsumption"),
             (SERVICE_CONTEXT, "1"),
         ]);
 
