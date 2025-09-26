@@ -696,7 +696,7 @@ pub mod tests {
             endpoint: server.endpoint.clone(),
             products: vec![
                 RemoteConfigProduct::ApmTracing,
-                RemoteConfigProduct::LiveDebugger,
+                RemoteConfigProduct::AgentConfig,
             ],
             capabilities: vec![RemoteConfigCapabilities::ApmTracingCustomTags],
         };
@@ -727,7 +727,7 @@ pub mod tests {
 
             let client = req.client.as_ref().unwrap();
             assert_eq!(client.capabilities, &[128, 0]);
-            assert_eq!(client.products, &["APM_TRACING", "LIVE_DEBUGGING"]);
+            assert_eq!(client.products, &["APM_TRACING", "AGENT_CONFIG"]);
             assert!(client.is_tracer);
             assert!(!client.is_agent);
             assert_eq!(client.id, "foo");
@@ -779,7 +779,7 @@ pub mod tests {
 
             let client = req.client.as_ref().unwrap();
             assert_eq!(client.capabilities, &[128, 0]);
-            assert_eq!(client.products, &["APM_TRACING", "LIVE_DEBUGGING"]);
+            assert_eq!(client.products, &["APM_TRACING", "AGENT_CONFIG"]);
             assert!(client.is_tracer);
             assert!(!client.is_agent);
             assert_eq!(client.id, "foo");
