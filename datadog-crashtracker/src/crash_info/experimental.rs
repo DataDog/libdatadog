@@ -1,5 +1,6 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+use crate::runtime_callback::RuntimeStack;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +12,10 @@ pub struct Experimental {
     pub additional_tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ucontext: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_stack_frames: Option<RuntimeStack>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_stack_string: Option<String>,
 }
 
 impl Experimental {
@@ -27,6 +32,16 @@ impl Experimental {
         self.ucontext = Some(ucontext);
         self
     }
+
+    pub fn with_runtime_stack_frames(mut self, runtime_stack: RuntimeStack) -> Self {
+        self.runtime_stack_frames = Some(runtime_stack);
+        self
+    }
+
+    pub fn with_runtime_stack_string(mut self, runtime_stack_string: String) -> Self {
+        self.runtime_stack_string = Some(runtime_stack_string);
+        self
+    }
 }
 
 impl UnknownValue for Experimental {
@@ -34,6 +49,8 @@ impl UnknownValue for Experimental {
         Self {
             additional_tags: vec![],
             ucontext: None,
+            runtime_stack_frames: None,
+            runtime_stack_string: None,
         }
     }
 }

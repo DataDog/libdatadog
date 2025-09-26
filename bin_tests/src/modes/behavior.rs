@@ -129,6 +129,7 @@ pub fn get_behavior(mode_str: &str) -> Box<dyn Behavior> {
         "chained" => Box::new(test_007_chaining::Test),
         "fork" => Box::new(test_008_fork::Test),
         "prechain_abort" => Box::new(test_009_prechain_with_abort::Test),
+        "runtime_callback" => Box::new(test_010_runtime_callback::Test),
         _ => panic!("Unknown mode: {mode_str}"),
     }
 }
