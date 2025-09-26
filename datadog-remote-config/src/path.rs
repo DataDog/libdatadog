@@ -59,7 +59,7 @@ pub struct RemoteConfigPathRef<'a> {
 }
 
 impl RemoteConfigPath {
-    pub fn try_parse(path: &str) -> anyhow::Result<RemoteConfigPathRef> {
+    pub fn try_parse(path: &str) -> anyhow::Result<RemoteConfigPathRef<'_>> {
         let parts: Vec<_> = path.split('/').collect();
         Ok(RemoteConfigPathRef {
             source: match parts[0] {
