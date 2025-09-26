@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 #[cfg(unix)]
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ErrorData {
@@ -23,49 +25,81 @@ pub struct ErrorData {
 }
 
 #[cfg(unix)]
-#[derive(Default)]
-pub struct CachedElfResolvers {
-    elf_resolvers: HashMap<PathBuf, ElfResolver>,
+pub struct CachedElfResolvers<'a> {
+    symbolizer: &'a mut blazesym::symbolize::Symbolizer,
+    elf_resolvers: HashMap<PathBuf, Rc<ElfResolver>>,
 }
 
 #[cfg(unix)]
-impl CachedElfResolvers {
-    pub fn get(&mut self, file_path: &PathBuf) -> anyhow::Result<&ElfResolver> {
-        use anyhow::Context;
-        if !self.elf_resolvers.contains_key(file_path.as_path()) {
-            let resolver = ElfResolver::open(file_path).with_context(|| {
-                format!(
-                    "ElfResolver::open failed for '{}'",
-                    file_path.to_string_lossy()
-                )
-            })?;
-            self.elf_resolvers.insert(file_path.clone(), resolver);
+impl<'a> CachedElfResolvers<'a> {
+    pub fn new(symbolizer: &'a mut blazesym::symbolize::Symbolizer) -> Self {
+        Self {
+            symbolizer,
+            elf_resolvers: HashMap::new(),
         }
-        self.elf_resolvers
-            .get(file_path.as_path())
-            .with_context(|| "key '{}' not found in ElfResolver cache")
+    }
+
+    pub fn get_or_insert(&mut self, file_path: &PathBuf) -> anyhow::Result<Rc<ElfResolver>> {
+        use anyhow::Context;
+        let entry = self.elf_resolvers.entry(file_path.clone());
+
+        match entry {
+            std::collections::hash_map::Entry::Occupied(o) => Ok(o.get().clone()),
+            std::collections::hash_map::Entry::Vacant(v) => {
+                let resolver = ElfResolver::open(file_path).with_context(|| {
+                    format!(
+                        "ElfResolver::open failed for '{}'",
+                        file_path.to_string_lossy()
+                    )
+                });
+
+                match resolver {
+                    Ok(resolver) => {
+                        let resolver = Rc::new(resolver);
+                        // even if the symbolizer failed at registering the elf resolver, we still
+                        // cache it to avoid trying to open it again
+                        let _ = self
+                            .symbolizer
+                            .register_elf_resolver(file_path.as_path(), Rc::clone(&resolver));
+                        v.insert(Rc::clone(&resolver));
+                        Ok(resolver)
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+        }
     }
 }
 
 #[cfg(unix)]
 impl ErrorData {
     pub fn normalize_ips(&mut self, pid: u32) -> anyhow::Result<()> {
-        let mut errors = 0;
-        let mut elf_resolvers = CachedElfResolvers::default();
+        let mut symbolizer = blazesym::symbolize::Symbolizer::new();
+        let mut elf_resolvers = CachedElfResolvers::new(&mut symbolizer);
         let normalizer = blazesym::normalize::Normalizer::builder()
             .enable_vma_caching(true)
             .enable_build_ids(true)
             .enable_build_id_caching(true)
             .build();
+        self.normalize_ips_impl(pid, &normalizer, &mut elf_resolvers)
+    }
+
+    pub(crate) fn normalize_ips_impl(
+        &mut self,
+        pid: u32,
+        normalizer: &blazesym::normalize::Normalizer,
+        elf_resolvers: &mut CachedElfResolvers,
+    ) -> anyhow::Result<()> {
+        let mut errors = 0;
         let pid = pid.into();
         self.stack
-            .normalize_ips(&normalizer, pid, &mut elf_resolvers)
+            .normalize_ips(normalizer, pid, elf_resolvers)
             .unwrap_or_else(|_| errors += 1);
 
         for thread in &mut self.threads {
             thread
                 .stack
-                .normalize_ips(&normalizer, pid, &mut elf_resolvers)
+                .normalize_ips(normalizer, pid, elf_resolvers)
                 .unwrap_or_else(|_| errors += 1);
         }
         anyhow::ensure!(
@@ -75,21 +109,43 @@ impl ErrorData {
         Ok(())
     }
 
-    pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {
-        let mut errors = 0;
+    pub(crate) fn create_symbolizer_source<'a>(
+        pid: u32,
+    ) -> blazesym::symbolize::source::Source<'a> {
         let mut process = blazesym::symbolize::source::Process::new(pid.into());
         // https://github.com/libbpf/blazesym/issues/518
         process.map_files = false;
-        let src = blazesym::symbolize::source::Source::Process(process);
+        blazesym::symbolize::source::Source::Process(process)
+    }
+
+    pub(crate) fn create_normalizer() -> blazesym::normalize::Normalizer {
+        blazesym::normalize::Normalizer::builder()
+            .enable_vma_caching(true)
+            .enable_build_ids(true)
+            .enable_build_id_caching(true)
+            .build()
+    }
+
+    pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {
+        let src = Self::create_symbolizer_source(pid);
         let symbolizer = blazesym::symbolize::Symbolizer::new();
+        self.resolve_names_impl(&symbolizer, &src)
+    }
+
+    pub(crate) fn resolve_names_impl(
+        &mut self,
+        symbolizer: &blazesym::symbolize::Symbolizer,
+        src: &blazesym::symbolize::source::Source,
+    ) -> anyhow::Result<()> {
+        let mut errors = 0;
         self.stack
-            .resolve_names(&src, &symbolizer)
+            .resolve_names(src, symbolizer)
             .unwrap_or_else(|_| errors += 1);
 
         for thread in &mut self.threads {
             thread
                 .stack
-                .resolve_names(&src, &symbolizer)
+                .resolve_names(src, symbolizer)
                 .unwrap_or_else(|_| errors += 1);
         }
         anyhow::ensure!(
