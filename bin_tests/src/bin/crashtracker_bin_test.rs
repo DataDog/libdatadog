@@ -22,9 +22,11 @@ mod unix {
     use std::time::Duration;
 
     use datadog_crashtracker::{
-        self as crashtracker, CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata,
+        self as crashtracker, register_runtime_stack_callback, CrashtrackerConfiguration,
+        CrashtrackerReceiverConfig, Metadata, RuntimeStackFrame,
     };
     use ddcommon::{tag, Endpoint};
+    use std::ffi::{c_char, c_void, CString};
 
     const TEST_COLLECTOR_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -40,6 +42,58 @@ mod unix {
             std::arch::asm!("mov x0, #0", "ldr x1, [x0]", options(nostack));
         }
         anyhow::bail!("Failed to cause segmentation fault")
+    }
+
+    // Simulated Python/Ruby runtime callback for testing
+    unsafe extern "C" fn test_runtime_callback(
+        emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
+        _context: *mut c_void,
+    ) {
+        // Use static strings for signal safety - in a real runtime these would be
+        // pointers to strings in the runtime's managed memory
+        let frames = [
+            // Application frame
+            RuntimeStackFrame {
+                function_name: b"handle_request\0".as_ptr() as *const c_char,
+                file_name: b"app.py\0".as_ptr() as *const c_char,
+                line_number: 45,
+                column_number: 12,
+                class_name: b"RequestHandler\0".as_ptr() as *const c_char,
+                module_name: b"myapp\0".as_ptr() as *const c_char,
+            },
+            // Framework frame
+            RuntimeStackFrame {
+                function_name: b"process_request\0".as_ptr() as *const c_char,
+                file_name: b"framework/web.py\0".as_ptr() as *const c_char,
+                line_number: 123,
+                column_number: 8,
+                class_name: b"WebFramework\0".as_ptr() as *const c_char,
+                module_name: b"framework\0".as_ptr() as *const c_char,
+            },
+            // Library frame
+            RuntimeStackFrame {
+                function_name: b"db_query\0".as_ptr() as *const c_char,
+                file_name: b"lib/database.py\0".as_ptr() as *const c_char,
+                line_number: 67,
+                column_number: 15,
+                class_name: b"DatabaseConnection\0".as_ptr() as *const c_char,
+                module_name: b"database\0".as_ptr() as *const c_char,
+            },
+            // Core runtime frame (no class/module for C code)
+            RuntimeStackFrame {
+                function_name: b"_execute_bytecode\0".as_ptr() as *const c_char,
+                file_name: b"python/eval.c\0".as_ptr() as *const c_char,
+                line_number: 2341,
+                column_number: 0,
+                class_name: std::ptr::null(),
+                module_name: std::ptr::null(),
+            },
+        ];
+
+        // Emit each frame
+        for frame in &frames {
+            emit_frame(frame);
+        }
     }
 
     pub fn main() -> anyhow::Result<()> {
@@ -122,6 +176,15 @@ mod unix {
             "raise_sigill" => raise(Signal::SIGILL)?,
             "raise_sigbus" => raise(Signal::SIGBUS)?,
             "raise_sigsegv" => raise(Signal::SIGSEGV)?,
+            "runtime_callback_test" => {
+                // Register runtime callback to simulate Python/Ruby runtime integration
+                register_runtime_stack_callback(test_runtime_callback, std::ptr::null_mut())
+                    .map_err(|e| anyhow::anyhow!("Failed to register runtime callback: {:?}", e))?;
+                eprintln!("Runtime callback registered successfully");
+
+                // Cause a segfault to trigger crash handling with runtime callback
+                unsafe { cause_segfault()? }
+            }
             _ => anyhow::bail!("Unexpected crash_typ: {crash_typ}"),
         }
         crashtracker::end_op(crashtracker::OpTypes::ProfilerCollectingSample)?;
