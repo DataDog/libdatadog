@@ -424,10 +424,10 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
     path: CharSlice,
     operation_name: CharSlice,
     resource_name: CharSlice,
-    request_body_type:&mut ffi::Vec<c_char>,
-    response_body_type:&mut ffi::Vec<c_char>,
+    request_body_type:&mut ffi::Vec<CharSlice>,
+    response_body_type:&mut ffi::Vec<CharSlice>,
     response_code:&mut ffi::Vec<i32>,
-    authentication: ffi::Vec<ddtelemetry::data::Authentication>,
+    authentication:&mut ffi::Vec<ddtelemetry::data::Authentication>,
     metadata: CharSlice
 ) -> MaybeError {
 
@@ -438,8 +438,8 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
         path: Some(path.to_utf8_lossy().into_owned()),
         operation_name: operation_name.to_utf8_lossy().into_owned(),
         resource_name: resource_name.to_utf8_lossy().into_owned(),
-        request_body_type: Some(request_body_type.as_slice().to_vec()),
-        response_body_type: Some(response_body_type.as_slice().to_vec()),
+        request_body_type: Some(request_body_type.to_vec().iter().map(|s| s.to_utf8_lossy().into_owned()).collect()),
+        response_body_type: Some(response_body_type.to_vec().iter().map(|s| s.to_utf8_lossy().into_owned()).collect()),
         response_code: Some(response_code.to_vec()),
         authentication: Some(authentication.to_vec()),
         metadata: Some(metadata_json),
