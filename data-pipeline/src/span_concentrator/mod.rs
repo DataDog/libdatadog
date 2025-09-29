@@ -7,7 +7,7 @@ use std::time::{self, Duration, SystemTime};
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::span::{trace_utils, Span, SpanText};
 
-use aggregation::{AggregationKey, StatsBucket};
+use aggregation::{BorrowedAggregationKey, StatsBucket};
 
 mod aggregation;
 
@@ -133,7 +133,7 @@ impl SpanConcentrator {
                 bucket_timestamp = self.oldest_timestamp;
             }
 
-            let agg_key = AggregationKey::from_span(span, self.peer_tag_keys.as_slice());
+            let agg_key = BorrowedAggregationKey::from_span(span, self.peer_tag_keys.as_slice());
 
             self.buckets
                 .entry(bucket_timestamp)

@@ -22,7 +22,7 @@ datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 ddtelemetry = { path = "../ddtelemetry", features = ["tracing"] }
 data-pipeline = { path = "../data-pipeline" }
 datadog-trace-utils = { path = "../datadog-trace-utils" }
-datadog-remote-config = { path = "../datadog-remote-config" }
+datadog-remote-config = { path = "../datadog-remote-config" , features = ["live-debugger"]}
 datadog-live-debugger = { path = "../datadog-live-debugger" }
 datadog-crashtracker = { path = "../datadog-crashtracker" }
 dogstatsd-client = { path = "../dogstatsd-client" }
