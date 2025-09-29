@@ -1,6 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use datadog_remote_config::config::agent_task::AgentTaskFile;
 use ddcommon::{hyper_migration, Endpoint};
 use hyper::{body::Bytes, Method};
 use std::{
@@ -232,17 +233,9 @@ fn generate_payload(
 async fn send(
     zip: File,
     log_level: String,
+    agent_task: AgentTaskFile,
     tracer_flare: &mut TracerFlareManager,
 ) -> Result<(), FlareError> {
-    let agent_task = match &tracer_flare.agent_task {
-        Some(agent_task) => agent_task,
-        _ => {
-            return Err(FlareError::SendError(
-                "Trying to send the flare without AGENT_TASK received".to_string(),
-            ))
-        }
-    };
-
     let payload = generate_payload(
         zip,
         &tracer_flare.language,
@@ -359,11 +352,20 @@ pub async fn zip_and_send(
     log_level: String,
     tracer_flare: &mut TracerFlareManager,
 ) -> Result<(), FlareError> {
+    let agent_task = match &tracer_flare.agent_task {
+        Some(agent_task) => agent_task.to_owned(),
+        _ => {
+            return Err(FlareError::SendError(
+                "Trying to send the flare without AGENT_TASK received".to_string(),
+            ))
+        }
+    };
+
     let zip = zip_files(files)?;
 
     // APMSP-2118 - TODO: Implement obfuscation of sensitive data
 
-    let response = send(zip, log_level, tracer_flare).await;
+    let response = send(zip, log_level, agent_task, tracer_flare).await;
 
     tracer_flare.agent_task = None;
 

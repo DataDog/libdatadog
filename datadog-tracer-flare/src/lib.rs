@@ -9,6 +9,8 @@
 pub mod error;
 pub mod zip;
 
+use std::cmp::max;
+
 use datadog_remote_config::{
     config::agent_task::AgentTaskFile, file_storage::RawFile, RemoteConfigData,
 };
@@ -27,10 +29,35 @@ use {
 
 use crate::error::FlareError;
 
+/// A manager for handling tracer flare functionality and remote configuration.
+///
+/// The TracerFlareManager serves as the central coordinator for tracer flare operations,
+/// managing the lifecycle of flare collection and transmission. It operates in two modes:
+///
+/// - **Basic mode**: Stores agent URL and language configuration for flare operations
+/// - **Remote config mode**: Listens to remote configuration updates to automatically trigger flare
+///   collection and transmission
+///
+/// The manager maintains:
+/// - Agent connection details (URL, language)
+/// - Current agent task information (when received via remote config)
+/// - Remote configuration listener (when enabled)
+///
+/// Key responsibilities:
+/// - Parsing remote configuration files to determine flare actions (Set log level, Send flare)
+/// - Storing agent task metadata needed for flare transmission
+/// - Coordinating with the zip module to package and send flares to the agent
+///
+/// Typical usage flow:
+/// 1. Create manager with basic config or remote config listener
+/// 2. Listen for remote config changes that trigger flare actions
+/// 3. When a flare is requested, use the stored agent task to send the flare
+/// 4. Manager state is reset after flare transmission
 pub struct TracerFlareManager {
     pub agent_url: String,
     pub language: String,
     pub agent_task: Option<AgentTaskFile>,
+    pub state: ReturnAction,
     /// As a featured option so we can use the component with no Listener
     #[cfg(feature = "listener")]
     pub listener: Option<Listener>,
@@ -42,6 +69,7 @@ impl Default for TracerFlareManager {
             agent_url: hyper::Uri::default().to_string(),
             language: "rust".to_string(),
             agent_task: None,
+            state: ReturnAction::None,
             #[cfg(feature = "listener")]
             listener: None,
         }
@@ -141,7 +169,7 @@ impl TracerFlareManager {
 }
 
 /// Enum that hold the different log level possible
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum LogLevel {
     Trace,
     Debug,
@@ -153,7 +181,7 @@ pub enum LogLevel {
 }
 
 /// Enum that hold the different returned action to do after listening
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum ReturnAction {
     /// If AGENT_CONFIG received with the right properties.
     Set(LogLevel),
@@ -207,10 +235,18 @@ pub fn check_remote_config_file(
     match config.as_ref() {
         Ok(data) => match data {
             RemoteConfigData::TracerFlareConfig(agent_config) => {
+                if let ReturnAction::Send = tracer_flare.state {
+                    return Ok(tracer_flare.state);
+                }
                 if agent_config.name.starts_with("flare-log-level.") {
                     if let Some(log_level) = &agent_config.config.log_level {
                         let log_level = log_level.as_str().try_into()?;
-                        return Ok(ReturnAction::Set(log_level));
+                        match tracer_flare.state {
+                            ReturnAction::Set(level) => {
+                                return Ok(ReturnAction::Set(max(level, log_level)))
+                            }
+                            _ => return Ok(ReturnAction::Set(log_level)),
+                        }
                     }
                 }
             }
@@ -220,13 +256,13 @@ pub fn check_remote_config_file(
                     return Ok(ReturnAction::Send);
                 }
             }
-            _ => return Ok(ReturnAction::None),
+            _ => return Ok(tracer_flare.state),
         },
         Err(e) => {
             return Err(FlareError::ParsingError(e.to_string()));
         }
     }
-    Ok(ReturnAction::None)
+    Ok(tracer_flare.state)
 }
 
 /// Function that listens to RemoteConfig on the agent using the TracerFlareManager instance
@@ -295,15 +331,18 @@ pub async fn run_remote_config_listener(
             println!("Got {} changes.", changes.len());
             for change in changes {
                 if let Change::Add(file) = change {
-                    let action = check_remote_config_file(file, tracer_flare);
-                    if action != Ok(ReturnAction::None) {
-                        return action;
+                    match check_remote_config_file(file, tracer_flare) {
+                        Ok(ReturnAction::Send) => return Ok(ReturnAction::Send),
+                        Ok(action) => tracer_flare.state = action,
+                        Err(err) => return Err(err),
                     }
                 } else if let Change::Remove(file) = change {
                     match file.contents().as_ref() {
                         Ok(data) => match data {
                             RemoteConfigData::TracerFlareConfig(_) => {
-                                return Ok(ReturnAction::Unset)
+                                if tracer_flare.state == ReturnAction::None {
+                                    tracer_flare.state = ReturnAction::Unset;
+                                }
                             }
                             _ => continue,
                         },
@@ -319,7 +358,7 @@ pub async fn run_remote_config_listener(
         }
     }
 
-    Ok(ReturnAction::None)
+    Ok(tracer_flare.state)
 }
 
 #[cfg(test)]
@@ -402,6 +441,7 @@ mod tests {
             .unwrap();
         let mut tracer_flare = TracerFlareManager::default();
         let result = check_remote_config_file(file, &mut tracer_flare);
+        println!("Res : {:?}", result);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ReturnAction::Send);
         assert_eq!(tracer_flare.agent_task, Some(task));
