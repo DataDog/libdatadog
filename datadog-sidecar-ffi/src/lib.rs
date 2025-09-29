@@ -426,10 +426,12 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
     resource_name: CharSlice,
     request_body_type:&mut ffi::Vec<CharSlice>,
     response_body_type:&mut ffi::Vec<CharSlice>,
-    response_code:&mut ffi::Vec<i32>,
+    response_code:i32,
     authentication:&mut ffi::Vec<ddtelemetry::data::Authentication>,
     metadata: CharSlice
 ) -> MaybeError {
+
+    let response_code_vec = vec![response_code];
 
     let metadata_json = serde_json::from_slice::<serde_json::Value>(&metadata.to_utf8_lossy().into_owned().as_bytes()).unwrap();
     let endpoint = TelemetryActions::AddEndpoint(ddtelemetry::data::Endpoint {
@@ -440,7 +442,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
         resource_name: resource_name.to_utf8_lossy().into_owned(),
         request_body_type: Some(request_body_type.to_vec().iter().map(|s| s.to_utf8_lossy().into_owned()).collect()),
         response_body_type: Some(response_body_type.to_vec().iter().map(|s| s.to_utf8_lossy().into_owned()).collect()),
-        response_code: Some(response_code.to_vec()),
+        response_code: Some(response_code_vec),
         authentication: Some(authentication.to_vec()),
         metadata: Some(metadata_json),
     });
