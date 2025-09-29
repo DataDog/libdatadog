@@ -368,6 +368,7 @@ pub async fn zip_and_send(
     let response = send(zip, log_level, agent_task, tracer_flare).await;
 
     tracer_flare.agent_task = None;
+    tracer_flare.state = crate::ReturnAction::None;
 
     response
 }
