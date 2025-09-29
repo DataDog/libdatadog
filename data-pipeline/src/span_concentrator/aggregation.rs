@@ -4,7 +4,6 @@
 //! This includes the aggregation key to group spans together and the computation of stats from a
 //! span.
 use datadog_trace_protobuf::pb;
-use datadog_trace_utils::span::trace_utils;
 use datadog_trace_utils::span::Span;
 use datadog_trace_utils::span::SpanText;
 use hashbrown::HashMap;
@@ -111,7 +110,12 @@ impl<'a> BorrowedAggregationKey<'a> {
             .map(|s| s.borrow())
             .unwrap_or_default();
         let peer_tags = if client_or_producer(span_kind) {
-            get_peer_tags(span, peer_tag_keys)
+            // Parse the meta tags of the span and return a list of the peer tags based on the list of
+            // `peer_tag_keys`
+            peer_tag_keys
+                .iter()
+                .filter_map(|key| Some(((key.as_str()), (span.meta.get(key.as_str())?.borrow()))))
+                .collect()
         } else {
             vec![]
         };
@@ -129,17 +133,86 @@ impl<'a> BorrowedAggregationKey<'a> {
             .map(|s| s.borrow())
             .unwrap_or_default();
 
+        let status_code = if let Some(status_code) = span.metrics.get(TAG_STATUS_CODE) {
+            *status_code as u32
+        } else if let Some(status_code) = span.meta.get(TAG_STATUS_CODE) {
+            status_code.borrow().parse().unwrap_or(0)
+        } else {
+            0
+        };
+
         Self {
             resource_name: span.resource.borrow(),
             service_name: span.service.borrow(),
             operation_name: span.name.borrow(),
             span_type: span.r#type.borrow(),
             span_kind,
-            http_status_code: get_status_code(span),
+            http_status_code: status_code,
             is_synthetics_request: span
                 .meta
                 .get(TAG_ORIGIN)
                 .is_some_and(|origin| origin.borrow().starts_with(TAG_SYNTHETICS)),
+            peer_tags,
+            is_trace_root: span.parent_id == 0,
+            http_method,
+            http_endpoint,
+        }
+    }
+
+    /// Return an AggregationKey matching the given span.
+    ///
+    /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
+    /// key.
+    pub(super) fn from_pb_span(span: &'a pb::Span, peer_tag_keys: &'a [String]) -> Self {
+        let span_kind = span
+            .meta
+            .get(TAG_SPANKIND)
+            .map(|s| s.as_str())
+            .unwrap_or("");
+
+        let peer_tags = if client_or_producer(span_kind) {
+            // Parse the meta tags of the span and return a list of the peer tags based on the list of
+            // `peer_tag_keys`
+            peer_tag_keys
+                .iter()
+                .filter_map(|key| Some(((key.as_str()), (span.meta.get(key)?.as_str()))))
+                .collect()
+        } else {
+            vec![]
+        };
+
+        let http_method = span
+            .meta
+            .get("http.method")
+            .map(|s| s.as_str())
+            .unwrap_or_default();
+
+        let http_endpoint = span
+            .meta
+            .get("http.endpoint")
+            .or_else(|| span.meta.get("http.route"))
+            .map(|s| s.as_str())
+            .unwrap_or_default();
+
+        let status_code = if let Some(status_code) = span.metrics.get(TAG_STATUS_CODE) {
+            *status_code as u32
+        } else if let Some(status_code) = span.meta.get(TAG_STATUS_CODE) {
+            status_code.as_str().parse().unwrap_or(0)
+        } else {
+            0
+        };
+
+        Self {
+            resource_name: span.resource.as_str(),
+            service_name: span.service.as_str(),
+            operation_name: span.name.as_str(),
+            span_type: span.r#type.as_str(),
+            span_kind,
+            http_status_code: status_code,
+            is_synthetics_request: span
+                .meta
+                .get(TAG_ORIGIN)
+                .is_some_and(|origin| origin.as_str().starts_with(TAG_SYNTHETICS)),
             peer_tags,
             is_trace_root: span.parent_id == 0,
             http_method,
@@ -173,20 +246,6 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
     }
 }
 
-/// Return the status code of a span based on the metrics and meta tags.
-fn get_status_code<T>(span: &Span<T>) -> u32
-where
-    T: SpanText,
-{
-    if let Some(status_code) = span.metrics.get(TAG_STATUS_CODE) {
-        *status_code as u32
-    } else if let Some(status_code) = span.meta.get(TAG_STATUS_CODE) {
-        status_code.borrow().parse().unwrap_or(0)
-    } else {
-        0
-    }
-}
-
 /// Return true if the span kind is "client" or "producer"
 fn client_or_producer<T>(span_kind: T) -> bool
 where
@@ -196,21 +255,6 @@ where
         span_kind.borrow().to_lowercase().as_str(),
         "client" | "producer"
     )
-}
-
-/// Parse the meta tags of a span and return a list of the peer tags based on the list of
-/// `peer_tag_keys`
-fn get_peer_tags<'k, 'v, T>(
-    span: &'v Span<T>,
-    peer_tag_keys: &'k [String],
-) -> Vec<(&'k str, &'v str)>
-where
-    T: SpanText,
-{
-    peer_tag_keys
-        .iter()
-        .filter_map(|key| Some(((key.as_str()), (span.meta.get(key.as_str())?.borrow()))))
-        .collect()
 }
 
 /// The stats computed from a group of span with the same AggregationKey
@@ -226,20 +270,17 @@ pub(super) struct GroupedStats {
 
 impl GroupedStats {
     /// Update the stats of a GroupedStats by inserting a span.
-    fn insert<T>(&mut self, value: &Span<T>)
-    where
-        T: SpanText,
-    {
+    fn insert(&mut self, duration: i64, is_error: bool, is_top_level: bool) {
         self.hits += 1;
-        self.duration += value.duration as u64;
+        self.duration += duration as u64;
 
-        if value.error != 0 {
+        if is_error {
             self.errors += 1;
-            let _ = self.error_summary.add(value.duration as f64);
+            let _ = self.error_summary.add(duration as f64);
         } else {
-            let _ = self.ok_summary.add(value.duration as f64);
+            let _ = self.ok_summary.add(duration as f64);
         }
-        if trace_utils::has_top_level(value) {
+        if is_top_level {
             self.top_level_hits += 1;
         }
     }
@@ -264,11 +305,17 @@ impl StatsBucket {
 
     /// Insert a value as stats in the group corresponding to the aggregation key, if it does
     /// not exist it creates it.
-    pub(super) fn insert<T>(&mut self, key: BorrowedAggregationKey<'_>, value: &Span<T>)
-    where
-        T: SpanText,
-    {
-        self.data.entry_ref(&key).or_default().insert(value);
+    pub(super) fn insert(
+        &mut self,
+        key: BorrowedAggregationKey<'_>,
+        duration: i64,
+        is_error: bool,
+        is_top_level: bool,
+    ) {
+        self.data
+            .entry_ref(&key)
+            .or_default()
+            .insert(duration, is_error, is_top_level);
     }
 
     /// Consume the bucket and return a ClientStatsBucket containing the bucket stats.

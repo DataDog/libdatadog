@@ -1002,6 +1002,210 @@ fn test_compute_stats_for_span_kind() {
     ];
 
     for (span, is_eligible) in test_cases {
-        assert!(compute_stats_for_span_kind(&span, &get_span_kinds()) == is_eligible)
+        assert!(span_is_eligible(&span, &get_span_kinds()) == is_eligible)
     }
+}
+
+#[test]
+fn test_pb_span() {
+    let now = SystemTime::now();
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec!["db.instance".to_string(), "db.system".to_string()],
+    );
+
+    let mut pb_spans = vec![
+        // Root span
+        pb::Span {
+            service: "service1".to_string(),
+            name: "query".to_string(),
+            resource: "GET /users".to_string(),
+            trace_id: 1,
+            span_id: 1,
+            parent_id: 0,
+            start: (aligned_now - BUCKET_SIZE) as i64,
+            duration: 100,
+            error: 0,
+            r#type: "db".to_string(),
+            meta: std::collections::HashMap::new(),
+            metrics: std::collections::HashMap::new(),
+            meta_struct: std::collections::HashMap::new(),
+            span_links: vec![],
+            span_events: vec![],
+        },
+        // Child span not measured
+        pb::Span {
+            service: "service1".to_string(),
+            name: "query".to_string(),
+            resource: "GET /users".to_string(),
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 1,
+            start: (aligned_now - BUCKET_SIZE + 10) as i64,
+            duration: 50,
+            error: 0,
+            r#type: "db".to_string(),
+            meta: std::collections::HashMap::new(),
+            metrics: std::collections::HashMap::new(),
+            meta_struct: std::collections::HashMap::new(),
+            span_links: vec![],
+            span_events: vec![],
+        },
+        // Span with span.kind = client and peer tags
+        {
+            let mut meta = std::collections::HashMap::new();
+            meta.insert("span.kind".to_string(), "client".to_string());
+            meta.insert("db.instance".to_string(), "i-1234".to_string());
+            meta.insert("db.system".to_string(), "postgres".to_string());
+
+            pb::Span {
+                service: "service1".to_string(),
+                name: "query".to_string(),
+                resource: "GET /users".to_string(),
+                trace_id: 1,
+                span_id: 3,
+                parent_id: 1,
+                start: (aligned_now - BUCKET_SIZE + 20) as i64,
+                duration: 75,
+                error: 0,
+                r#type: "db".to_string(),
+                meta,
+                metrics: std::collections::HashMap::new(),
+                meta_struct: std::collections::HashMap::new(),
+                span_links: vec![],
+                span_events: vec![],
+            }
+        },
+        // Span with span.kind = server
+        {
+            let mut meta = std::collections::HashMap::new();
+            meta.insert("span.kind".to_string(), "server".to_string());
+
+            let mut metrics = std::collections::HashMap::new();
+            metrics.insert("http.status_code".to_string(), 200.0);
+
+            pb::Span {
+                service: "service2".to_string(),
+                name: "query".to_string(),
+                resource: "POST /api/users".to_string(),
+                trace_id: 1,
+                span_id: 4,
+                parent_id: 1,
+                start: (aligned_now - BUCKET_SIZE + 30) as i64,
+                duration: 200,
+                error: 0,
+                r#type: "db".to_string(),
+                meta,
+                metrics,
+                meta_struct: std::collections::HashMap::new(),
+                span_links: vec![],
+                span_events: vec![],
+            }
+        },
+        // Span with measured flag
+        {
+            let mut metrics = std::collections::HashMap::new();
+            metrics.insert("_dd.measured".to_string(), 1.0);
+
+            pb::Span {
+                service: "service1".to_string(),
+                name: "query".to_string(),
+                resource: "database_query".to_string(),
+                trace_id: 1,
+                span_id: 5,
+                parent_id: 1,
+                start: (aligned_now - BUCKET_SIZE + 40) as i64,
+                duration: 150,
+                error: 1,
+                r#type: "db".to_string(),
+                meta: std::collections::HashMap::new(),
+                metrics,
+                meta_struct: std::collections::HashMap::new(),
+                span_links: vec![],
+                span_events: vec![],
+            }
+        },
+    ];
+
+    datadog_trace_utils::trace_utils::compute_top_level_span(pb_spans.as_mut_slice());
+
+    // Add spans to concentrator
+    for span in &pb_spans {
+        concentrator.add_pb_span(span);
+    }
+
+    // Flush and get stats
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let stats = concentrator.flush(flushtime, false);
+
+    assert_eq!(stats.len(), 1, "Should get exactly one time bucket");
+    let bucket = &stats[0];
+
+    // Validate the stats content
+    let expected_stats = vec![
+        // Root span stats
+        pb::ClientGroupedStats {
+            service: "service1".to_string(),
+            resource: "GET /users".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            duration: 100,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Client span with peer tags
+        pb::ClientGroupedStats {
+            service: "service1".to_string(),
+            resource: "GET /users".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "client".to_string(),
+            peer_tags: vec![
+                "db.instance:i-1234".to_string(),
+                "db.system:postgres".to_string(),
+            ],
+            duration: 75,
+            hits: 1,
+            top_level_hits: 0,
+            errors: 0,
+            is_trace_root: pb::Trilean::False.into(),
+            ..Default::default()
+        },
+        // Server span
+        pb::ClientGroupedStats {
+            service: "service2".to_string(),
+            resource: "POST /api/users".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "server".to_string(),
+            http_status_code: 200,
+            duration: 200,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::False.into(),
+            ..Default::default()
+        },
+        // Measured span
+        pb::ClientGroupedStats {
+            service: "service1".to_string(),
+            resource: "database_query".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            duration: 150,
+            hits: 1,
+            top_level_hits: 0,
+            errors: 1,
+            is_trace_root: pb::Trilean::False.into(),
+            ..Default::default()
+        },
+    ];
+
+    assert_counts_equal(expected_stats, bucket.stats.clone());
 }

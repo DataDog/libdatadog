@@ -6,6 +6,7 @@ use std::time::{self, Duration, SystemTime};
 
 use datadog_trace_protobuf::pb;
 use datadog_trace_utils::span::{trace_utils, Span, SpanText};
+use datadog_trace_utils::trace_utils as pb_utils;
 
 use aggregation::{BorrowedAggregationKey, StatsBucket};
 
@@ -24,26 +25,25 @@ fn align_timestamp(t: u64, bucket_size: u64) -> u64 {
     t - (t % bucket_size)
 }
 
-/// Return true if the span has a span.kind that is eligible for stats computation
-fn compute_stats_for_span_kind<T>(span: &Span<T>, span_kinds_stats_computed: &[String]) -> bool
+/// Return true if the span is eligible for stats computation
+fn span_is_eligible<T>(span: &Span<T>, span_kinds_stats_computed: &[String]) -> bool
 where
     T: SpanText,
 {
-    !span_kinds_stats_computed.is_empty()
-        && span.meta.get("span.kind").is_some_and(|span_kind| {
+    (trace_utils::has_top_level(span) || trace_utils::is_measured(span) || {
+        span.meta.get("span.kind").is_some_and(|span_kind| {
             span_kinds_stats_computed.contains(&span_kind.borrow().to_lowercase())
         })
+    }) && !trace_utils::is_partial_snapshot(span)
 }
 
-/// Return true if the span should be ignored for stats computation
-fn should_ignore_span<T>(span: &Span<T>, span_kinds_stats_computed: &[String]) -> bool
-where
-    T: SpanText,
-{
-    !(trace_utils::has_top_level(span)
-        || trace_utils::is_measured(span)
-        || compute_stats_for_span_kind(span, span_kinds_stats_computed))
-        || trace_utils::is_partial_snapshot(span)
+/// Return true if the span is eligible for stats computation
+fn pb_span_is_eligible(span: &pb::Span, span_kinds_stats_computed: &[String]) -> bool {
+    (pb_utils::has_top_level(span) || pb_utils::is_measured(span) || {
+        span.meta.get("span.kind").is_some_and(|span_kind| {
+            span_kinds_stats_computed.contains(&span_kind.as_str().to_lowercase())
+        })
+    }) && !pb_utils::is_partial_snapshot(span)
 }
 
 /// SpanConcentrator compute stats on span aggregated by time and span attributes
@@ -124,7 +124,7 @@ impl SpanConcentrator {
         T: SpanText,
     {
         // If the span is eligible for stats computation
-        if !should_ignore_span(span, self.span_kinds_stats_computed.as_slice()) {
+        if span_is_eligible(span, self.span_kinds_stats_computed.as_slice()) {
             let mut bucket_timestamp =
                 align_timestamp((span.start + span.duration) as u64, self.bucket_size);
             // If the span is to old we aggregate it in the latest bucket instead of
@@ -138,7 +138,39 @@ impl SpanConcentrator {
             self.buckets
                 .entry(bucket_timestamp)
                 .or_insert(StatsBucket::new(bucket_timestamp))
-                .insert(agg_key, span);
+                .insert(
+                    agg_key,
+                    span.duration,
+                    span.error != 0,
+                    trace_utils::has_top_level(span),
+                );
+        }
+    }
+
+    /// Add a span into the concentrator, by computing stats if the span is eligible for stats
+    /// computation.
+    pub fn add_pb_span(&mut self, span: &pb::Span) {
+        // If the span is eligible for stats computation
+        if pb_span_is_eligible(span, self.span_kinds_stats_computed.as_slice()) {
+            let mut bucket_timestamp =
+                align_timestamp((span.start + span.duration) as u64, self.bucket_size);
+            // If the span is to old we aggregate it in the latest bucket instead of
+            // creating a new one
+            if bucket_timestamp < self.oldest_timestamp {
+                bucket_timestamp = self.oldest_timestamp;
+            }
+
+            let agg_key = BorrowedAggregationKey::from_pb_span(span, self.peer_tag_keys.as_slice());
+
+            self.buckets
+                .entry(bucket_timestamp)
+                .or_insert(StatsBucket::new(bucket_timestamp))
+                .insert(
+                    agg_key,
+                    span.duration,
+                    span.error != 0,
+                    pb_utils::has_top_level(span),
+                );
         }
     }
 
