@@ -427,7 +427,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
     resource_name: CharSlice,
     request_body_type:&mut ffi::Vec<c_char>,
     response_body_type:&mut ffi::Vec<c_char>,
-    // response_code: ffi::Vec<i32>,
+    response_code:&mut ffi::Vec<i32>,
     // authentication: ffi::Vec<ddtelemetry::data::Authentication>
 ) -> MaybeError {
     let endpoint = TelemetryActions::AddEndpoint(ddtelemetry::data::Endpoint {
@@ -438,8 +438,8 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
         resource_name: resource_name.to_utf8_lossy().into_owned(),
         request_body_type: Some(request_body_type.as_slice().to_vec()),
         response_body_type: Some(response_body_type.as_slice().to_vec()),
-        // response_code: Some(response_code.iter().cloned().collect()),
-        // authentication: Some(authentication.iter().cloned().collect()),
+        response_code: Some(response_code.to_vec()),
+        authentication: Some(authentication.iter().cloned().collect()),
     });
 
     try_c!(blocking::enqueue_actions(
