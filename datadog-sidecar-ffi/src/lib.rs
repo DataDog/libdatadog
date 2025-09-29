@@ -56,8 +56,7 @@ use std::ptr::NonNull;
 use std::slice;
 use std::sync::Arc;
 use std::time::Duration;
-use std::fs::OpenOptions;
-use std::io::Write;
+use serde_json::Value;
 
 
 #[no_mangle]
@@ -428,8 +427,11 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
     request_body_type:&mut ffi::Vec<c_char>,
     response_body_type:&mut ffi::Vec<c_char>,
     response_code:&mut ffi::Vec<i32>,
-    authentication: ffi::Vec<ddtelemetry::data::Authentication>
+    authentication: ffi::Vec<ddtelemetry::data::Authentication>,
+    metadata: CharSlice
 ) -> MaybeError {
+
+    let metadata_json = serde_json::from_slice::<serde_json::Value>(&metadata.to_utf8_lossy().into_owned().as_bytes()).unwrap();
     let endpoint = TelemetryActions::AddEndpoint(ddtelemetry::data::Endpoint {
         r#type: Some(r#type.to_utf8_lossy().into_owned()),
         method: Some(method),
@@ -440,6 +442,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
         response_body_type: Some(response_body_type.as_slice().to_vec()),
         response_code: Some(response_code.to_vec()),
         authentication: Some(authentication.to_vec()),
+        metadata: Some(metadata_json),
     });
 
     try_c!(blocking::enqueue_actions(
