@@ -23,9 +23,10 @@ pub enum MetadataKind {
     TracerVersion = 2,
     Hostname = 3,
     ServiceName = 4,
-    ServiceVersion = 5,
-    ProcessTags = 6,
-    ContainerId = 7,
+    ServiceEnv = 5,
+    ServiceVersion = 6,
+    ProcessTags = 7,
+    ContainerId = 8,
 }
 
 /// Allocates and returns a pointer to a new `TracerMetadata` object on the heap.
@@ -93,6 +94,7 @@ pub unsafe extern "C" fn ddog_tracer_metadata_set(
             MetadataKind::TracerVersion => metadata.tracer_version = str_value,
             MetadataKind::Hostname => metadata.hostname = str_value,
             MetadataKind::ServiceName => metadata.service_name = Some(str_value),
+            MetadataKind::ServiceEnv => metadata.service_env = Some(str_value),
             MetadataKind::ServiceVersion => metadata.service_version = Some(str_value),
             MetadataKind::ProcessTags => metadata.process_tags = Some(str_value),
             MetadataKind::ContainerId => metadata.container_id = Some(str_value),
