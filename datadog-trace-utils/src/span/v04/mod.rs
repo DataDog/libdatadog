@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::{SliceData, SpanKeyParseError, TinyData, TraceData};
+use crate::span::{BytesData, SliceData, SpanKeyParseError, TraceData};
 use crate::tracer_payload::TraceChunks;
 use serde::ser::SerializeStruct;
 use serde::Serialize;
@@ -217,11 +217,11 @@ fn is_default<T: Default + PartialEq>(t: &T) -> bool {
     t == &T::default()
 }
 
-pub type SpanBytes = Span<TinyData>;
-pub type SpanLinkBytes = SpanLink<TinyData>;
-pub type SpanEventBytes = SpanEvent<TinyData>;
-pub type AttributeAnyValueBytes = AttributeAnyValue<TinyData>;
-pub type AttributeArrayValueBytes = AttributeArrayValue<TinyData>;
+pub type SpanBytes = Span<BytesData>;
+pub type SpanLinkBytes = SpanLink<BytesData>;
+pub type SpanEventBytes = SpanEvent<BytesData>;
+pub type AttributeAnyValueBytes = AttributeAnyValue<BytesData>;
+pub type AttributeArrayValueBytes = AttributeArrayValue<BytesData>;
 
 pub type SpanSlice<'a> = Span<SliceData<'a>>;
 pub type SpanLinkSlice<'a> = SpanLink<SliceData<'a>>;
@@ -229,7 +229,7 @@ pub type SpanEventSlice<'a> = SpanEvent<SliceData<'a>>;
 pub type AttributeAnyValueSlice<'a> = AttributeAnyValue<SliceData<'a>>;
 pub type AttributeArrayValueSlice<'a> = AttributeArrayValue<SliceData<'a>>;
 
-pub type TraceChunksBytes = TraceChunks<TinyData>;
+pub type TraceChunksBytes = TraceChunks<BytesData>;
 
 #[cfg(test)]
 mod tests {

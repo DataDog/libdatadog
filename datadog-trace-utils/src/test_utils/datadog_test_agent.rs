@@ -216,7 +216,7 @@ impl DatadogAgentContainerBuilder {
 ///
 ///     let data = SendData::new(
 ///         100,
-///         TracerPayloadCollection::V04(vec![trace.clone()]),
+///         TracerPayloadCollection::V04(vec![trace]),
 ///         TracerHeaderTags::default(),
 ///         &endpoint,
 ///     );

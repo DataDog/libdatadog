@@ -99,7 +99,7 @@ impl SpanBytes for Bytes {
 /// Trait representing a tuple of (Text, Bytes) types used for different underlying data structures.
 /// Note: The functions are internal to the msgpack decoder and should not be used directly: they're
 /// only exposed here due to the inavailability of min_specialization in stable Rust.
-pub trait TraceData: Default + Debug + Clone + PartialEq + Serialize {
+pub trait TraceData: Default + Clone + Debug + PartialEq + Serialize {
     type Text: SpanText;
     type Bytes: SpanBytes;
 
@@ -111,9 +111,9 @@ pub trait TraceData: Default + Debug + Clone + PartialEq + Serialize {
 }
 
 /// TraceData implementation using `Bytes` and `BytesString`.
-#[derive(Default, Debug, Clone, PartialEq, Serialize)]
-pub struct TinyData;
-impl TraceData for TinyData {
+#[derive(Clone, Default, Debug, PartialEq, Serialize)]
+pub struct BytesData;
+impl TraceData for BytesData {
     type Text = BytesString;
     type Bytes = Bytes;
 
@@ -134,7 +134,6 @@ impl TraceData for TinyData {
 
     #[inline]
     fn read_string(buf: &mut Bytes) -> Result<BytesString, DecodeError> {
-        // Note: we need to pass a &'static lifetime here, otherwise it'll complain
         read_string_ref_nomut(unsafe { buf.as_mut_slice() }).map(|(str, newbuf)| {
             let string = BytesString::from_bytes_slice(buf, str);
             *unsafe { buf.as_mut_slice() } = newbuf;
@@ -144,7 +143,7 @@ impl TraceData for TinyData {
 }
 
 /// TraceData implementation using `&str` and `&[u8]`.
-#[derive(Default, Debug, Clone, PartialEq, Serialize)]
+#[derive(Clone, Default, Debug, PartialEq, Serialize)]
 pub struct SliceData<'a>(PhantomData<&'a u8>);
 impl<'a> TraceData for SliceData<'a> {
     type Text = &'a str;

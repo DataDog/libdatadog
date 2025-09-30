@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::{v04, v05, TinyData, TraceData};
+use crate::span::{v04, v05, BytesData, TraceData};
 use crate::trace_utils::collect_trace_chunks;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
 use datadog_trace_protobuf::pb;
@@ -29,7 +29,7 @@ pub enum TraceChunks<T: TraceData> {
     V05((Vec<T::Text>, Vec<Vec<v05::Span>>)),
 }
 
-impl TraceChunks<TinyData> {
+impl TraceChunks<BytesData> {
     pub fn into_tracer_payload_collection(self) -> TracerPayloadCollection {
         match self {
             TraceChunks::V04(traces) => TracerPayloadCollection::V04(traces),
@@ -222,7 +222,7 @@ impl TraceChunkProcessor for DefaultTraceChunkProcessor {
 pub fn decode_to_trace_chunks(
     data: tinybytes::Bytes,
     encoding_type: TraceEncoding,
-) -> Result<(TraceChunks<TinyData>, usize), anyhow::Error> {
+) -> Result<(TraceChunks<BytesData>, usize), anyhow::Error> {
     let (data, size) = match encoding_type {
         TraceEncoding::V04 => msgpack_decoder::v04::from_bytes(data),
         TraceEncoding::V05 => msgpack_decoder::v05::from_bytes(data),
