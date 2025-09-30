@@ -110,8 +110,8 @@ impl<'a> BorrowedAggregationKey<'a> {
             .map(|s| s.borrow())
             .unwrap_or_default();
         let peer_tags = if client_or_producer(span_kind) {
-            // Parse the meta tags of the span and return a list of the peer tags based on the list of
-            // `peer_tag_keys`
+            // Parse the meta tags of the span and return a list of the peer tags based on the list
+            // of `peer_tag_keys`
             peer_tag_keys
                 .iter()
                 .filter_map(|key| Some(((key.as_str()), (span.meta.get(key.as_str())?.borrow()))))
@@ -171,8 +171,8 @@ impl<'a> BorrowedAggregationKey<'a> {
             .unwrap_or("");
 
         let peer_tags = if client_or_producer(span_kind) {
-            // Parse the meta tags of the span and return a list of the peer tags based on the list of
-            // `peer_tag_keys`
+            // Parse the meta tags of the span and return a list of the peer tags based on the list
+            // of `peer_tag_keys`
             peer_tag_keys
                 .iter()
                 .filter_map(|key| Some(((key.as_str()), (span.meta.get(key)?.as_str()))))
