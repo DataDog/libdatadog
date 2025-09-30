@@ -30,11 +30,11 @@ tokio = { version = "1.23", features = [
 ], default-features = false }
 uuid = { version = "1.10.0", features = ["v4"] }
 tokio-util = "0.7.11"
-hashbrown = { version = "0.15" }
 
 ddcommon = { path = "../ddcommon", default-features = false }
 ddtelemetry = { path = "../ddtelemetry", default-features = false }
 datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
+datadog-trace-stats = { path = "../datadog-trace-stats"}
 datadog-trace-utils = { path = "../datadog-trace-utils", default-features = false }
 datadog-ddsketch = { path = "../ddsketch" }
 dogstatsd-client = { path = "../dogstatsd-client", default-features = false }
@@ -45,11 +45,6 @@ tinybytes = { path = "../tinybytes", features = [
 
 [lib]
 bench = false
-
-[[bench]]
-name = "main"
-harness = false
-path = "benches/main.rs"
 
 [dev-dependencies]
 clap = { version = "4.0", features = ["derive"] }

@@ -1302,12 +1302,12 @@ dependencies = [
  "criterion",
  "datadog-ddsketch",
  "datadog-trace-protobuf",
+ "datadog-trace-stats",
  "datadog-trace-utils",
  "ddcommon",
  "ddtelemetry",
  "dogstatsd-client",
  "either",
- "hashbrown 0.15.1",
  "http",
  "http-body-util",
  "httpmock",
@@ -1772,6 +1772,17 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "datadog-trace-stats"
+version = "21.0.0"
+dependencies = [
+ "criterion",
+ "datadog-ddsketch",
+ "datadog-trace-protobuf",
+ "datadog-trace-utils",
+ "hashbrown 0.15.1",
 ]
 
 [[package]]

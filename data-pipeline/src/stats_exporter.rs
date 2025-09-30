@@ -11,8 +11,9 @@ use std::{
     time,
 };
 
-use crate::{span_concentrator::SpanConcentrator, trace_exporter::TracerMetadata};
+use crate::trace_exporter::TracerMetadata;
 use datadog_trace_protobuf::pb;
+use datadog_trace_stats::span_concentrator::SpanConcentrator;
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
 use ddcommon::{worker::Worker, Endpoint};
 use hyper;
