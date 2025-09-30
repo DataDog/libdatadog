@@ -453,6 +453,11 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
         queue_id,
         vec![SidecarAction::Telemetry(endpoint)],
     ));
+
+    std::ptr::drop_in_place(request_body_type);
+    std::ptr::drop_in_place(response_body_type);
+    std::ptr::drop_in_place(authentication);
+
     MaybeError::None
 }
 
