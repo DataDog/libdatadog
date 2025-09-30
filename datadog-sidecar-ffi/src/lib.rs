@@ -433,7 +433,15 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
 
     let response_code_vec = vec![response_code];
 
-    let metadata_json = serde_json::from_slice::<serde_json::Value>(&metadata.to_utf8_lossy().into_owned().as_bytes()).unwrap();
+    let maybe_metadata = serde_json::from_slice::<serde_json::Value>(std::slice::from_raw_parts(
+        metadata.as_ptr() as *const u8,
+        metadata.len(),
+    ));
+    if let Err(e) = maybe_metadata {
+        return MaybeError::Some(e.to_string().into());
+    }
+    #[allow(clippy::unwrap_used)]
+    let metadata_json = maybe_metadata.unwrap();
     let endpoint = TelemetryActions::AddEndpoint(ddtelemetry::data::Endpoint {
         r#type: Some(r#type.to_utf8_lossy().into_owned()),
         method: Some(method),
