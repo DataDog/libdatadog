@@ -1015,6 +1015,10 @@ fn test_pb_span() {
         get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
     );
+    let aligned_now = align_timestamp(
+        system_time_to_unix_duration(now).as_nanos() as u64,
+        concentrator.bucket_size,
+    );
 
     let mut pb_spans = vec![
         // Root span
