@@ -57,19 +57,16 @@ impl Write for SizeRestrictedBuffer {
     }
 }
 
-type Encoder = zstd::Encoder<'static, SizeRestrictedBuffer>;
-
 /// Used to compress profile data.
 pub struct Compressor {
-    encoder: Encoder,
+    encoder: zstd::Encoder<'static, SizeRestrictedBuffer>,
 }
 
 impl Compressor {
     /// Creates a new compressor with the provided configuration.
     ///
-    /// - `size_hint`: beginning capacity for the output buffer. This is a
-    ///   hint for the starting size, and the implementation may use something
-    ///   different.
+    /// - `size_hint`: beginning capacity for the output buffer. This is a hint for the starting
+    ///   size, and the implementation may use something different.
     /// - `max_capacity`: the maximum size for the output buffer (hard limit).
     /// - `compression_level`: see [`zstd::Encoder::new`] for the valid range.
     pub fn try_new(
@@ -78,7 +75,8 @@ impl Compressor {
         compression_level: i32,
     ) -> io::Result<Compressor> {
         let buffer = SizeRestrictedBuffer::try_new(size_hint, max_capacity)?;
-        let encoder = Encoder::new(buffer, compression_level)?;
+        let encoder =
+            zstd::Encoder::<'static, SizeRestrictedBuffer>::new(buffer, compression_level)?;
         Ok(Compressor { encoder })
     }
 
