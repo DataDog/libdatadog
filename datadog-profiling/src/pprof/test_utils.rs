@@ -1,13 +1,16 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use anyhow::Context;
 use datadog_profiling_protobuf::prost_impls::{Profile, Sample};
+use std::io::Cursor;
 
 pub fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<Profile> {
     use prost::Message;
     use std::io::Read;
 
-    let mut decoder = lz4_flex::frame::FrameDecoder::new(encoded);
+    let mut decoder =
+        zstd::Decoder::new(Cursor::new(encoded)).context("failed to create zstd decoder")?;
     let mut buf = Vec::new();
     decoder.read_to_end(&mut buf)?;
     let profile = Profile::decode(buf.as_slice())?;

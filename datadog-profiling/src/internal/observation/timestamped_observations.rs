@@ -11,14 +11,11 @@ use super::super::StackTraceId;
 use crate::collections::identifiable::Id;
 use crate::internal::Timestamp;
 use byteorder::{NativeEndian, ReadBytesExt};
-use lz4_flex::frame::FrameDecoder;
-use lz4_flex::frame::FrameEncoder;
-use std::io::Cursor;
 use std::io::Write;
+use std::io::{BufReader, Cursor};
 
-#[derive(Debug)]
 pub struct TimestampedObservations {
-    compressed_timestamped_data: FrameEncoder<Vec<u8>>,
+    compressed_timestamped_data: zstd::Encoder<'static, Vec<u8>>,
     sample_types_len: usize,
 }
 
@@ -32,16 +29,19 @@ impl TimestampedObservations {
 
     pub fn new(sample_types_len: usize) -> Self {
         Self {
-            compressed_timestamped_data: FrameEncoder::new(Vec::with_capacity(
-                Self::DEFAULT_BUFFER_SIZE,
-            )),
+            compressed_timestamped_data: zstd::Encoder::new(
+                Vec::with_capacity(Self::DEFAULT_BUFFER_SIZE),
+                1,
+            )
+            .expect("failed to create zstd encoder"),
             sample_types_len,
         }
     }
 
     pub fn with_no_backing_store() -> Self {
         Self {
-            compressed_timestamped_data: FrameEncoder::new(vec![]),
+            compressed_timestamped_data: zstd::Encoder::new(vec![], 1)
+                .expect("failed to create zstd encoder"),
             sample_types_len: 0,
         }
     }
@@ -74,16 +74,17 @@ impl TimestampedObservations {
     pub fn into_iter(self) -> TimestampedObservationsIter {
         #[allow(clippy::unwrap_used)]
         TimestampedObservationsIter {
-            decoder: FrameDecoder::new(Cursor::new(
+            decoder: zstd::Decoder::new(Cursor::new(
                 self.compressed_timestamped_data.finish().unwrap(),
-            )),
+            ))
+            .expect("failed to create zstd decoder"),
             sample_types_len: self.sample_types_len,
         }
     }
 }
 
 pub struct TimestampedObservationsIter {
-    decoder: FrameDecoder<Cursor<Vec<u8>>>,
+    decoder: zstd::Decoder<'static, BufReader<Cursor<Vec<u8>>>>,
     sample_types_len: usize,
 }
 

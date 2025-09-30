@@ -1,12 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use anyhow::Context;
 use bytes::Bytes;
 pub use chrono::{DateTime, Utc};
 pub use ddcommon::tag::Tag;
 pub use hyper::Uri;
 use hyper_multipart_rfc7578::client::multipart;
-use lz4_flex::frame::FrameEncoder;
 use serde_json::json;
 use std::borrow::Cow;
 use std::fmt::Debug;
@@ -29,6 +29,7 @@ pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
 pub use connector::named_pipe::{named_pipe_path_from_uri, named_pipe_path_to_uri};
 
 use crate::internal::EncodedProfile;
+use crate::profiles::Compressor;
 
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 
@@ -279,8 +280,10 @@ impl ProfileExporter {
             // not reserving too much for things that compress really well, and
             // power-of-two capacities are almost always the best performing.
             let capacity = (file.bytes.len() / 10).next_power_of_two();
-            let buffer = Vec::with_capacity(capacity);
-            let mut encoder = FrameEncoder::new(buffer);
+            let max_capacity = 50 * 1024 * 1024;
+            let compression_level = 1;
+            let mut encoder = Compressor::try_new(capacity, max_capacity, compression_level)
+                .context("failed to create compressor")?;
             encoder.write_all(file.bytes)?;
             let encoded = encoder.finish()?;
             /* The Datadog RFC examples strip off the file extension, but the exact behavior

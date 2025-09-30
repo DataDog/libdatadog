@@ -14,10 +14,10 @@ use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::{self, StringTable};
 use crate::iter::{IntoLendingIterator, LendingIterator};
+use crate::profiles::Compressor;
 use anyhow::Context;
 use datadog_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
 use interning_api::Generation;
-use lz4_flex::frame::FrameEncoder;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io;
@@ -342,7 +342,18 @@ impl Profile {
         // size of 32KiB should definitely outperform starting at zero for
         // time consumed, allocator pressure, and allocator fragmentation.
         const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
-        let mut compressor = FrameEncoder::new(Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE));
+        const MAX_PROFILE_SIZE: usize = 50 * 1024 * 1024;
+
+        // When testing on some profiles that can't be shared publicly,
+        // level 1 provided better compressed files while taking less time
+        // compared to lz4.
+        const COMPRESSION_LEVEL: i32 = 1;
+        let mut compressor = Compressor::try_new(
+            INITIAL_PPROF_BUFFER_SIZE,
+            MAX_PROFILE_SIZE,
+            COMPRESSION_LEVEL,
+        )
+        .context("failed to create compressor")?;
 
         let mut encoded_profile = self.encode(&mut compressor, end_time, duration)?;
         encoded_profile.buffer = compressor.finish()?;
