@@ -12,6 +12,7 @@ use crate::trace_exporter::{
     INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
+use ddcommon::hyper_migration::new_default_client;
 use ddcommon::{parse_uri, tag, Endpoint};
 use dogstatsd_client::new;
 use std::sync::{Arc, Mutex};
@@ -339,6 +340,7 @@ impl TraceExporterBuilder {
             agent_payload_response_version: self
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
+            http_client: new_default_client(),
         })
     }
 

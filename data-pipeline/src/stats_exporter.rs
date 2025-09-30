@@ -15,7 +15,8 @@ use crate::trace_exporter::TracerMetadata;
 use datadog_trace_protobuf::pb;
 use datadog_trace_stats::span_concentrator::SpanConcentrator;
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
-use ddcommon::{worker::Worker, Endpoint};
+use ddcommon::hyper_migration::new_default_client;
+use ddcommon::{worker::Worker, Endpoint, HttpClient};
 use hyper;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
@@ -32,6 +33,7 @@ pub struct StatsExporter {
     meta: TracerMetadata,
     sequence_id: AtomicU64,
     cancellation_token: CancellationToken,
+    client: HttpClient,
 }
 
 impl StatsExporter {
@@ -49,6 +51,7 @@ impl StatsExporter {
         meta: TracerMetadata,
         endpoint: Endpoint,
         cancellation_token: CancellationToken,
+        client: Option<HttpClient>,
     ) -> Self {
         Self {
             flush_interval,
@@ -57,6 +60,7 @@ impl StatsExporter {
             meta,
             sequence_id: AtomicU64::new(0),
             cancellation_token,
+            client: client.unwrap_or(new_default_client()),
         }
     }
 
@@ -90,11 +94,11 @@ impl StatsExporter {
         );
 
         let result = send_with_retry(
+            &self.client,
             &self.endpoint,
             body,
             &headers,
             &RetryStrategy::default(),
-            None,
         )
         .await;
 
@@ -267,6 +271,7 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
+            None,
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -294,6 +299,7 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
+            None,
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -326,6 +332,7 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             CancellationToken::new(),
+            None,
         );
 
         tokio::time::pause();
@@ -366,6 +373,7 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             cancellation_token.clone(),
+            None,
         );
 
         tokio::spawn(async move {
