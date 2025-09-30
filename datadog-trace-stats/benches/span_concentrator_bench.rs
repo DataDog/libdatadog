@@ -6,7 +6,7 @@ use std::{
 };
 
 use criterion::{criterion_group, Criterion};
-use data_pipeline::span_concentrator::SpanConcentrator;
+use datadog_trace_stats::span_concentrator::SpanConcentrator;
 use datadog_trace_utils::span::SpanBytes;
 
 fn get_bucket_start(now: SystemTime, n: u64) -> i64 {
