@@ -10,7 +10,7 @@ use crate::msgpack_decoder::decode::string::{
     read_nullable_str_map_to_strings, read_nullable_string,
 };
 use crate::msgpack_decoder::decode::{meta_struct::read_meta_struct, metrics::read_metrics};
-use crate::span::{v04::Span, SpanKey, TraceData};
+use crate::span::{v04::Span, v04::SpanKey, TraceData};
 use std::borrow::Borrow;
 
 /// Decodes a slice of bytes into a `Span` object.

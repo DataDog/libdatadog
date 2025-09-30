@@ -14,52 +14,7 @@ use std::fmt;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
-use std::str::FromStr;
 use tinybytes::{Bytes, BytesString};
-
-#[derive(Debug, PartialEq)]
-pub enum SpanKey {
-    Service,
-    Name,
-    Resource,
-    TraceId,
-    SpanId,
-    ParentId,
-    Start,
-    Duration,
-    Error,
-    Meta,
-    Metrics,
-    Type,
-    MetaStruct,
-    SpanLinks,
-    SpanEvents,
-}
-
-impl FromStr for SpanKey {
-    type Err = SpanKeyParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "service" => Ok(SpanKey::Service),
-            "name" => Ok(SpanKey::Name),
-            "resource" => Ok(SpanKey::Resource),
-            "trace_id" => Ok(SpanKey::TraceId),
-            "span_id" => Ok(SpanKey::SpanId),
-            "parent_id" => Ok(SpanKey::ParentId),
-            "start" => Ok(SpanKey::Start),
-            "duration" => Ok(SpanKey::Duration),
-            "error" => Ok(SpanKey::Error),
-            "meta" => Ok(SpanKey::Meta),
-            "metrics" => Ok(SpanKey::Metrics),
-            "type" => Ok(SpanKey::Type),
-            "meta_struct" => Ok(SpanKey::MetaStruct),
-            "span_links" => Ok(SpanKey::SpanLinks),
-            "span_events" => Ok(SpanKey::SpanEvents),
-            _ => Err(SpanKeyParseError::new(format!("Invalid span key: {s}"))),
-        }
-    }
-}
 
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
