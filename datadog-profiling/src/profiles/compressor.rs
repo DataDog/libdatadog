@@ -68,8 +68,8 @@ impl Compressor {
     /// Creates a new compressor with the provided configuration.
     ///
     /// - `size_hint`: beginning capacity for the output buffer. This is a
-    ///                hint for the starting size, and a different one may
-    ///                be used.
+    ///   hint for the starting size, and the implementation may use something
+    ///   different.
     /// - `max_capacity`: the maximum size for the output buffer (hard limit).
     /// - `compression_level`: see [`zstd::Encoder::new`] for the valid range.
     pub fn try_new(

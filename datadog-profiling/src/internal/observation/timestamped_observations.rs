@@ -28,6 +28,7 @@ impl TimestampedObservations {
     const DEFAULT_BUFFER_SIZE: usize = 1_048_576;
 
     pub fn new(sample_types_len: usize) -> Self {
+        #[allow(clippy::expect_used)] // previous API panic'd implicitly
         Self {
             compressed_timestamped_data: zstd::Encoder::new(
                 Vec::with_capacity(Self::DEFAULT_BUFFER_SIZE),
@@ -39,6 +40,7 @@ impl TimestampedObservations {
     }
 
     pub fn with_no_backing_store() -> Self {
+        #[allow(clippy::expect_used)] // previous API panic'd implicitly
         Self {
             compressed_timestamped_data: zstd::Encoder::new(vec![], 1)
                 .expect("failed to create zstd encoder"),
@@ -72,7 +74,7 @@ impl TimestampedObservations {
     }
 
     pub fn into_iter(self) -> TimestampedObservationsIter {
-        #[allow(clippy::unwrap_used)]
+        #[allow(clippy::expect_used, clippy::unwrap_used)]
         TimestampedObservationsIter {
             decoder: zstd::Decoder::new(Cursor::new(
                 self.compressed_timestamped_data.finish().unwrap(),
