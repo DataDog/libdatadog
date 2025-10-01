@@ -44,7 +44,7 @@ members = [
   "tinybytes",
   "dogstatsd-client",
   "datadog-log",
-  "datadog-log-ffi", "datadog-trace-stats",
+  "datadog-log-ffi",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html

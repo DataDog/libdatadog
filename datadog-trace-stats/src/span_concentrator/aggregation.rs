@@ -1,12 +1,15 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+
 //! This module implement the logic for stats aggregation into time buckets and stats group.
 //! This includes the aggregation key to group spans together and the computation of stats from a
 //! span.
+
 use datadog_trace_protobuf::pb;
-use datadog_trace_utils::span::Span;
 use datadog_trace_utils::span::SpanText;
 use hashbrown::HashMap;
+
+use crate::span_concentrator::StatSpan;
 
 const TAG_STATUS_CODE: &str = "http.status_code";
 const TAG_SYNTHETICS: &str = "synthetics";
@@ -100,121 +103,46 @@ impl<'a> BorrowedAggregationKey<'a> {
     ///
     /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
     /// key.
-    pub(super) fn from_span<T>(span: &'a Span<T>, peer_tag_keys: &'a [String]) -> Self
-    where
-        T: SpanText,
-    {
-        let span_kind = span
-            .meta
-            .get(TAG_SPANKIND)
-            .map(|s| s.borrow())
-            .unwrap_or_default();
+    pub(super) fn from_span<T: StatSpan<'a>>(span: &'a T, peer_tag_keys: &'a [String]) -> Self {
+        let span_kind = span.get_meta(TAG_SPANKIND).unwrap_or_default();
         let peer_tags = if client_or_producer(span_kind) {
             // Parse the meta tags of the span and return a list of the peer tags based on the list
             // of `peer_tag_keys`
             peer_tag_keys
                 .iter()
-                .filter_map(|key| Some(((key.as_str()), (span.meta.get(key.as_str())?.borrow()))))
+                .filter_map(|key| Some(((key.as_str()), (span.get_meta(key.as_str())?))))
                 .collect()
         } else {
             vec![]
         };
 
-        let http_method = span
-            .meta
-            .get("http.method")
-            .map(|s| s.borrow())
-            .unwrap_or_default();
+        let http_method = span.get_meta("http.method").unwrap_or_default();
 
         let http_endpoint = span
-            .meta
-            .get("http.endpoint")
-            .or_else(|| span.meta.get("http.route"))
-            .map(|s| s.borrow())
+            .get_meta("http.endpoint")
+            .or_else(|| span.get_meta("http.route"))
             .unwrap_or_default();
 
-        let status_code = if let Some(status_code) = span.metrics.get(TAG_STATUS_CODE) {
-            *status_code as u32
-        } else if let Some(status_code) = span.meta.get(TAG_STATUS_CODE) {
-            status_code.borrow().parse().unwrap_or(0)
+        let status_code = if let Some(status_code) = span.get_metrics(TAG_STATUS_CODE) {
+            status_code as u32
+        } else if let Some(status_code) = span.get_meta(TAG_STATUS_CODE) {
+            status_code.parse().unwrap_or_default()
         } else {
             0
         };
 
         Self {
-            resource_name: span.resource.borrow(),
-            service_name: span.service.borrow(),
-            operation_name: span.name.borrow(),
-            span_type: span.r#type.borrow(),
+            resource_name: span.resource(),
+            service_name: span.service(),
+            operation_name: span.name(),
+            span_type: span.r#type(),
             span_kind,
             http_status_code: status_code,
             is_synthetics_request: span
-                .meta
-                .get(TAG_ORIGIN)
-                .is_some_and(|origin| origin.borrow().starts_with(TAG_SYNTHETICS)),
+                .get_meta(TAG_ORIGIN)
+                .is_some_and(|origin| origin.starts_with(TAG_SYNTHETICS)),
             peer_tags,
-            is_trace_root: span.parent_id == 0,
-            http_method,
-            http_endpoint,
-        }
-    }
-
-    /// Return an AggregationKey matching the given span.
-    ///
-    /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
-    /// key.
-    pub(super) fn from_pb_span(span: &'a pb::Span, peer_tag_keys: &'a [String]) -> Self {
-        let span_kind = span
-            .meta
-            .get(TAG_SPANKIND)
-            .map(|s| s.as_str())
-            .unwrap_or("");
-
-        let peer_tags = if client_or_producer(span_kind) {
-            // Parse the meta tags of the span and return a list of the peer tags based on the list
-            // of `peer_tag_keys`
-            peer_tag_keys
-                .iter()
-                .filter_map(|key| Some(((key.as_str()), (span.meta.get(key)?.as_str()))))
-                .collect()
-        } else {
-            vec![]
-        };
-
-        let http_method = span
-            .meta
-            .get("http.method")
-            .map(|s| s.as_str())
-            .unwrap_or_default();
-
-        let http_endpoint = span
-            .meta
-            .get("http.endpoint")
-            .or_else(|| span.meta.get("http.route"))
-            .map(|s| s.as_str())
-            .unwrap_or_default();
-
-        let status_code = if let Some(status_code) = span.metrics.get(TAG_STATUS_CODE) {
-            *status_code as u32
-        } else if let Some(status_code) = span.meta.get(TAG_STATUS_CODE) {
-            status_code.as_str().parse().unwrap_or(0)
-        } else {
-            0
-        };
-
-        Self {
-            resource_name: span.resource.as_str(),
-            service_name: span.service.as_str(),
-            operation_name: span.name.as_str(),
-            span_type: span.r#type.as_str(),
-            span_kind,
-            http_status_code: status_code,
-            is_synthetics_request: span
-                .meta
-                .get(TAG_ORIGIN)
-                .is_some_and(|origin| origin.as_str().starts_with(TAG_SYNTHETICS)),
-            peer_tags,
-            is_trace_root: span.parent_id == 0,
+            is_trace_root: span.is_trace_root(),
             http_method,
             http_endpoint,
         }

@@ -5,12 +5,13 @@ use std::collections::HashMap;
 use std::time::{self, Duration, SystemTime};
 
 use datadog_trace_protobuf::pb;
-use datadog_trace_utils::span::{trace_utils, Span, SpanText};
-use datadog_trace_utils::trace_utils as pb_utils;
 
 use aggregation::{BorrowedAggregationKey, StatsBucket};
+use stat_span::StatSpan;
 
 mod aggregation;
+
+mod stat_span;
 
 /// Return a Duration between t and the unix epoch
 /// If t is before the unix epoch return 0
@@ -26,24 +27,14 @@ fn align_timestamp(t: u64, bucket_size: u64) -> u64 {
 }
 
 /// Return true if the span is eligible for stats computation
-fn span_is_eligible<T>(span: &Span<T>, span_kinds_stats_computed: &[String]) -> bool
+fn is_span_eligible<'a, T>(span: &'a T, span_kinds_stats_computed: &[String]) -> bool
 where
-    T: SpanText,
+    T: StatSpan<'a>,
 {
-    (trace_utils::has_top_level(span) || trace_utils::is_measured(span) || {
-        span.meta.get("span.kind").is_some_and(|span_kind| {
-            span_kinds_stats_computed.contains(&span_kind.borrow().to_lowercase())
-        })
-    }) && !trace_utils::is_partial_snapshot(span)
-}
-
-/// Return true if the span is eligible for stats computation
-fn pb_span_is_eligible(span: &pb::Span, span_kinds_stats_computed: &[String]) -> bool {
-    (pb_utils::has_top_level(span) || pb_utils::is_measured(span) || {
-        span.meta.get("span.kind").is_some_and(|span_kind| {
-            span_kinds_stats_computed.contains(&span_kind.as_str().to_lowercase())
-        })
-    }) && !pb_utils::is_partial_snapshot(span)
+    (span.has_top_level() || span.is_measured() || {
+        span.get_meta("span.kind")
+            .is_some_and(|span_kind| span_kinds_stats_computed.contains(&span_kind.to_lowercase()))
+    }) && !span.is_partial_snapshot()
 }
 
 /// SpanConcentrator compute stats on span aggregated by time and span attributes
@@ -119,14 +110,14 @@ impl SpanConcentrator {
 
     /// Add a span into the concentrator, by computing stats if the span is eligible for stats
     /// computation.
-    pub fn add_span<T>(&mut self, span: &Span<T>)
+    pub fn add_span<'a, T>(&'a mut self, span: &'a T)
     where
-        T: SpanText,
+        T: StatSpan<'a>,
     {
         // If the span is eligible for stats computation
-        if span_is_eligible(span, self.span_kinds_stats_computed.as_slice()) {
+        if is_span_eligible(span, self.span_kinds_stats_computed.as_slice()) {
             let mut bucket_timestamp =
-                align_timestamp((span.start + span.duration) as u64, self.bucket_size);
+                align_timestamp((span.start() + span.duration()) as u64, self.bucket_size);
             // If the span is to old we aggregate it in the latest bucket instead of
             // creating a new one
             if bucket_timestamp < self.oldest_timestamp {
@@ -140,36 +131,9 @@ impl SpanConcentrator {
                 .or_insert(StatsBucket::new(bucket_timestamp))
                 .insert(
                     agg_key,
-                    span.duration,
-                    span.error != 0,
-                    trace_utils::has_top_level(span),
-                );
-        }
-    }
-
-    /// Add a span into the concentrator, by computing stats if the span is eligible for stats
-    /// computation.
-    pub fn add_pb_span(&mut self, span: &pb::Span) {
-        // If the span is eligible for stats computation
-        if pb_span_is_eligible(span, self.span_kinds_stats_computed.as_slice()) {
-            let mut bucket_timestamp =
-                align_timestamp((span.start + span.duration) as u64, self.bucket_size);
-            // If the span is to old we aggregate it in the latest bucket instead of
-            // creating a new one
-            if bucket_timestamp < self.oldest_timestamp {
-                bucket_timestamp = self.oldest_timestamp;
-            }
-
-            let agg_key = BorrowedAggregationKey::from_pb_span(span, self.peer_tag_keys.as_slice());
-
-            self.buckets
-                .entry(bucket_timestamp)
-                .or_insert(StatsBucket::new(bucket_timestamp))
-                .insert(
-                    agg_key,
-                    span.duration,
-                    span.error != 0,
-                    pb_utils::has_top_level(span),
+                    span.duration(),
+                    span.is_error(),
+                    span.has_top_level(),
                 );
         }
     }

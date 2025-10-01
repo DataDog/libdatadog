@@ -1002,7 +1002,7 @@ fn test_compute_stats_for_span_kind() {
     ];
 
     for (span, is_eligible) in test_cases {
-        assert!(span_is_eligible(&span, &get_span_kinds()) == is_eligible)
+        assert!(is_span_eligible(&span, &get_span_kinds()) == is_eligible)
     }
 }
 
@@ -1137,7 +1137,7 @@ fn test_pb_span() {
 
     // Add spans to concentrator
     for span in &pb_spans {
-        concentrator.add_pb_span(span);
+        concentrator.add_span(span);
     }
 
     // Flush and get stats
