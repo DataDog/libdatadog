@@ -308,7 +308,7 @@ async fn send(
 /// * `log_level` - Log level of the tracer.
 /// * `tracer_flare` - TracerFlareManager instance containing the agent configuration and task data.
 /// * `send_action` - ReturnAction to perform by the tracer flare. Must be a Send action or the
-/// function will return an Error.
+///   function will return an Error.
 ///
 /// # Returns
 ///
