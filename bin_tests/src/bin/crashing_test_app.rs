@@ -1,15 +1,10 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(not(unix))]
-fn main() {}
-
-#[cfg(unix)]
 fn main() -> anyhow::Result<()> {
     unix::main()
 }
 
-#[cfg(unix)]
 mod unix {
     use anyhow::ensure;
     use anyhow::Context;
