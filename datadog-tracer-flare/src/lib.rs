@@ -223,7 +223,6 @@ pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData,
 /// * `FlareError(msg)` - If something fail.
 pub fn check_remote_config_file(
     file: RemoteConfigFile,
-    // tracer_flare: &mut TracerFlareManager,
 ) -> Result<ReturnAction, FlareError> {
     let config = file.contents();
     match config.as_ref() {
@@ -317,14 +316,12 @@ pub async fn run_remote_config_listener(
             for change in changes {
                 if let Change::Add(file) = change {
                     match check_remote_config_file(file) {
-                        //, tracer_flare) {
                         Ok(action) => actions.push(action),
                         Err(err) => return Err(err),
                     }
                 } else if let Change::Remove(file) = change {
                     match file.contents().as_ref() {
                         Ok(data) => match data {
-                            // add action
                             RemoteConfigData::TracerFlareConfig(_) => {
                                 actions.push(ReturnAction::Unset);
                             }
