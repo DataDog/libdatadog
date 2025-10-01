@@ -174,7 +174,7 @@ impl Builder {
     /// Copy license files to the target directory
     pub fn copy_license_files(&self) -> Result<()> {
         let project_root = project_root();
-        let license_files = ["LICENSE", "LICENSE-3rdparty.yml", "NOTICE"];
+        let license_files = ["LICENSE", "LICENSE-3rdparty.yml"];
 
         for file in &license_files {
             let source_path = project_root.join(file);
