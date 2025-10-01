@@ -123,7 +123,7 @@ pub fn main() {
     match res {
         Ok(_) => {
             builder.sanitize_libraries();
-            builder.pack().unwrap()
+            // Note: tar creation is handled by CI, not by this binary
         }
         Err(err) => panic!("{}", format!("Building failed: {err}")),
     }
