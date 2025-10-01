@@ -221,9 +221,7 @@ pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData,
 ///
 /// * `Ok(ReturnAction)` - If successful.
 /// * `FlareError(msg)` - If something fail.
-pub fn check_remote_config_file(
-    file: RemoteConfigFile,
-) -> Result<ReturnAction, FlareError> {
+pub fn check_remote_config_file(file: RemoteConfigFile) -> Result<ReturnAction, FlareError> {
     let config = file.contents();
     match config.as_ref() {
         Ok(data) => match data {
