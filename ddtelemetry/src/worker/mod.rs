@@ -41,6 +41,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, warn};
 
 const CONTINUE: ControlFlow<()> = ControlFlow::Continue(());
 const BREAK: ControlFlow<()> = ControlFlow::Break(());
@@ -56,18 +57,28 @@ fn time_now() -> f64 {
 macro_rules! telemetry_worker_log {
     ($worker:expr , ERROR , $fmt_str:tt, $($arg:tt)*) => {
         {
-            #[cfg(feature = "tracing")]
-            tracing::error!($fmt_str, $($arg)*);
+            error!(
+                worker.runtime_id = %$worker.runtime_id,
+                worker.debug_logging = $worker.config.telemetry_debug_logging_enabled,
+                $fmt_str,
+                $($arg)*
+            );
             if $worker.config.telemetry_debug_logging_enabled {
                 eprintln!(concat!("{}: Telemetry worker ERROR: ", $fmt_str), time_now(), $($arg)*);
             }
         }
     };
     ($worker:expr , DEBUG , $fmt_str:tt, $($arg:tt)*) => {
-        #[cfg(feature = "tracing")]
-        tracing::debug!($fmt_str, $($arg)*);
-        if $worker.config.telemetry_debug_logging_enabled {
-            println!(concat!("{}: Telemetry worker DEBUG: ", $fmt_str), time_now(), $($arg)*);
+        {
+            debug!(
+                worker.runtime_id = %$worker.runtime_id,
+                worker.debug_logging = $worker.config.telemetry_debug_logging_enabled,
+                $fmt_str,
+                $($arg)*
+            );
+            if $worker.config.telemetry_debug_logging_enabled {
+                println!(concat!("{}: Telemetry worker DEBUG: ", $fmt_str), time_now(), $($arg)*);
+            }
         }
     };
 }
@@ -147,12 +158,27 @@ impl Worker for TelemetryWorker {
     // Runs a state machine that waits for actions, either from the worker's
     // mailbox, or scheduled actions from the worker's deadline object.
     async fn run(&mut self) {
+        debug!(
+            worker.flavor = ?self.flavor,
+            worker.runtime_id = %self.runtime_id,
+            "Starting telemetry worker"
+        );
+
         loop {
             if self.cancellation_token.is_cancelled() {
+                debug!(
+                    worker.runtime_id = %self.runtime_id,
+                    "Telemetry worker cancelled, shutting down"
+                );
                 return;
             }
 
             let action = self.recv_next_action().await;
+            debug!(
+                worker.runtime_id = %self.runtime_id,
+                action = ?action,
+                "Received telemetry action"
+            );
 
             let action_result = match self.flavor {
                 TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
@@ -164,12 +190,22 @@ impl Worker for TelemetryWorker {
             match action_result {
                 ControlFlow::Continue(()) => {}
                 ControlFlow::Break(()) => {
+                    debug!(
+                        worker.runtime_id = %self.runtime_id,
+                        worker.restartable = self.config.restartable,
+                        "Telemetry worker received break signal"
+                    );
                     if !self.config.restartable {
                         break;
                     }
                 }
             };
         }
+
+        debug!(
+            worker.runtime_id = %self.runtime_id,
+            "Telemetry worker stopped"
+        );
     }
 }
 
@@ -644,8 +680,28 @@ impl TelemetryWorker {
     }
 
     async fn send_payload(&self, payload: &data::Payload) -> Result<()> {
+        debug!(
+            worker.runtime_id = %self.runtime_id,
+            payload.type = payload.request_type(),
+            seq_id = self.seq_id.load(Ordering::Acquire),
+            "Sending telemetry payload"
+        );
         let req = self.build_request(payload)?;
-        self.send_request(req).await
+        let result = self.send_request(req).await;
+        match &result {
+            Ok(()) => debug!(
+                worker.runtime_id = %self.runtime_id,
+                payload.type = payload.request_type(),
+                "Successfully sent telemetry payload"
+            ),
+            Err(e) => error!(
+                worker.runtime_id = %self.runtime_id,
+                payload.type = payload.request_type(),
+                error = %e,
+                "Failed to send telemetry payload"
+            ),
+        }
+        result
     }
 
     fn build_request(&self, payload: &data::Payload) -> Result<hyper_migration::HttpRequest> {
@@ -691,24 +747,51 @@ impl TelemetryWorker {
     }
 
     async fn send_request(&self, req: hyper_migration::HttpRequest) -> Result<()> {
+        let timeout_ms = if let Some(endpoint) = self.config.endpoint.as_ref() {
+            endpoint.timeout_ms
+        } else {
+            Endpoint::DEFAULT_TIMEOUT
+        };
+
+        debug!(
+            worker.runtime_id = %self.runtime_id,
+            http.timeout_ms = timeout_ms,
+            "Sending HTTP request"
+        );
+
         tokio::select! {
             _ = self.cancellation_token.cancelled() => {
+                warn!(
+                    worker.runtime_id = %self.runtime_id,
+                    "Telemetry request cancelled"
+                );
                 Err(anyhow::anyhow!("Request cancelled"))
             },
-            _ = tokio::time::sleep(time::Duration::from_millis(
-                    if let Some(endpoint) = self.config.endpoint.as_ref() {
-                        endpoint.timeout_ms
-                    } else {
-                        Endpoint::DEFAULT_TIMEOUT
-                    })) => {
+            _ = tokio::time::sleep(time::Duration::from_millis(timeout_ms)) => {
+                warn!(
+                    worker.runtime_id = %self.runtime_id,
+                    http.timeout_ms = timeout_ms,
+                    "Telemetry request timed out"
+                );
                 Err(anyhow::anyhow!("Request timed out"))
             },
             r = self.client.request(req) => {
                 match r {
                     Ok(_) => {
+                        debug!(
+                            worker.runtime_id = %self.runtime_id,
+                            "HTTP request completed successfully"
+                        );
                         Ok(())
                     }
-                    Err(e) => Err(e),
+                    Err(e) => {
+                        error!(
+                            worker.runtime_id = %self.runtime_id,
+                            error = %e,
+                            "HTTP request failed"
+                        );
+                        Err(e)
+                    },
                 }
             }
         }
