@@ -1,11 +1,12 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 //! This module implements the SpanConcentrator used to aggregate spans into stats
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::time::{self, Duration, SystemTime};
 
 use datadog_trace_protobuf::pb;
-use datadog_trace_utils::span::{trace_utils, Span, SpanText};
+use datadog_trace_utils::span::{trace_utils, v04::Span, TraceData};
 
 use aggregation::{BorrowedAggregationKey, StatsBucket};
 
@@ -27,7 +28,7 @@ fn align_timestamp(t: u64, bucket_size: u64) -> u64 {
 /// Return true if the span has a span.kind that is eligible for stats computation
 fn compute_stats_for_span_kind<T>(span: &Span<T>, span_kinds_stats_computed: &[String]) -> bool
 where
-    T: SpanText,
+    T: TraceData,
 {
     !span_kinds_stats_computed.is_empty()
         && span.meta.get("span.kind").is_some_and(|span_kind| {
@@ -38,7 +39,7 @@ where
 /// Return true if the span should be ignored for stats computation
 fn should_ignore_span<T>(span: &Span<T>, span_kinds_stats_computed: &[String]) -> bool
 where
-    T: SpanText,
+    T: TraceData,
 {
     !(trace_utils::has_top_level(span)
         || trace_utils::is_measured(span)
@@ -121,7 +122,7 @@ impl SpanConcentrator {
     /// computation.
     pub fn add_span<T>(&mut self, span: &Span<T>)
     where
-        T: SpanText,
+        T: TraceData,
     {
         // If the span is eligible for stats computation
         if !should_ignore_span(span, self.span_kinds_stats_computed.as_slice()) {

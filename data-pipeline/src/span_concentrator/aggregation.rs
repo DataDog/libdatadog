@@ -4,10 +4,10 @@
 //! This includes the aggregation key to group spans together and the computation of stats from a
 //! span.
 use datadog_trace_protobuf::pb;
-use datadog_trace_utils::span::trace_utils;
-use datadog_trace_utils::span::Span;
-use datadog_trace_utils::span::SpanText;
+use datadog_trace_utils::span::v04::Span;
+use datadog_trace_utils::span::{trace_utils, SpanText, TraceData};
 use hashbrown::HashMap;
+use std::borrow::Borrow;
 
 const TAG_STATUS_CODE: &str = "http.status_code";
 const TAG_SYNTHETICS: &str = "synthetics";
@@ -101,10 +101,7 @@ impl<'a> BorrowedAggregationKey<'a> {
     ///
     /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
     /// key.
-    pub(super) fn from_span<T>(span: &'a Span<T>, peer_tag_keys: &'a [String]) -> Self
-    where
-        T: SpanText,
-    {
+    pub(super) fn from_span<T: TraceData>(span: &'a Span<T>, peer_tag_keys: &'a [String]) -> Self {
         let span_kind = span
             .meta
             .get(TAG_SPANKIND)
@@ -176,7 +173,7 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
 /// Return the status code of a span based on the metrics and meta tags.
 fn get_status_code<T>(span: &Span<T>) -> u32
 where
-    T: SpanText,
+    T: TraceData,
 {
     if let Some(status_code) = span.metrics.get(TAG_STATUS_CODE) {
         *status_code as u32
@@ -205,7 +202,7 @@ fn get_peer_tags<'k, 'v, T>(
     peer_tag_keys: &'k [String],
 ) -> Vec<(&'k str, &'v str)>
 where
-    T: SpanText,
+    T: TraceData,
 {
     peer_tag_keys
         .iter()
@@ -228,7 +225,7 @@ impl GroupedStats {
     /// Update the stats of a GroupedStats by inserting a span.
     fn insert<T>(&mut self, value: &Span<T>)
     where
-        T: SpanText,
+        T: TraceData,
     {
         self.hits += 1;
         self.duration += value.duration as u64;
@@ -266,7 +263,7 @@ impl StatsBucket {
     /// not exist it creates it.
     pub(super) fn insert<T>(&mut self, key: BorrowedAggregationKey<'_>, value: &Span<T>)
     where
-        T: SpanText,
+        T: TraceData,
     {
         self.data.entry_ref(&key).or_default().insert(value);
     }
@@ -326,7 +323,7 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
 
 #[cfg(test)]
 mod tests {
-    use datadog_trace_utils::span::{SpanBytes, SpanSlice};
+    use datadog_trace_utils::span::v04::{SpanBytes, SpanSlice};
 
     use super::*;
     use std::{collections::HashMap, hash::Hash};

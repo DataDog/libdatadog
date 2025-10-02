@@ -3,7 +3,7 @@
 
 //! Trace-utils functionalities implementation for tinybytes based spans
 
-use super::{Span, SpanText};
+use super::{v04::Span, SpanText, TraceData};
 use std::collections::HashMap;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
@@ -15,10 +15,11 @@ const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
 fn set_top_level_span<T>(span: &mut Span<T>, is_top_level: bool)
 where
-    T: SpanText,
+    T: TraceData,
 {
     if is_top_level {
-        span.metrics.insert(T::from_static_str(TOP_LEVEL_KEY), 1.0);
+        span.metrics
+            .insert(T::Text::from_static_str(TOP_LEVEL_KEY), 1.0);
     } else {
         span.metrics.remove(TOP_LEVEL_KEY);
     }
@@ -32,9 +33,9 @@ where
 ///     ancestor of other spans belonging to this service and attached to it).
 pub fn compute_top_level_span<T>(trace: &mut [Span<T>])
 where
-    T: SpanText,
+    T: TraceData,
 {
-    let mut span_id_to_service: HashMap<u64, T> = HashMap::new();
+    let mut span_id_to_service: HashMap<u64, T::Text> = HashMap::new();
     for span in trace.iter() {
         span_id_to_service.insert(span.span_id, span.service.clone());
     }
@@ -60,7 +61,7 @@ where
 }
 
 /// Return true if the span has a top level key set
-pub fn has_top_level<T: SpanText>(span: &Span<T>) -> bool {
+pub fn has_top_level<T: TraceData>(span: &Span<T>) -> bool {
     span.metrics
         .get(TRACER_TOP_LEVEL_KEY)
         .is_some_and(|v| *v == 1.0)
@@ -68,7 +69,7 @@ pub fn has_top_level<T: SpanText>(span: &Span<T>) -> bool {
 }
 
 /// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
-pub fn is_measured<T: SpanText>(span: &Span<T>) -> bool {
+pub fn is_measured<T: TraceData>(span: &Span<T>) -> bool {
     span.metrics.get(MEASURED_KEY).is_some_and(|v| *v == 1.0)
 }
 
@@ -77,7 +78,7 @@ pub fn is_measured<T: SpanText>(span: &Span<T>) -> bool {
 /// When incomplete, a partial snapshot has a metric _dd.partial_version which is a positive
 /// integer. The metric usually increases each time a new version of the same span is sent by
 /// the tracer
-pub fn is_partial_snapshot<T: SpanText>(span: &Span<T>) -> bool {
+pub fn is_partial_snapshot<T: TraceData>(span: &Span<T>) -> bool {
     span.metrics
         .get(PARTIAL_VERSION_KEY)
         .is_some_and(|v| *v >= 0.0)
@@ -102,7 +103,7 @@ const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 /// dropped and the latter to the spans dropped.
 pub fn drop_chunks<T>(traces: &mut Vec<Vec<Span<T>>>) -> DroppedP0Stats
 where
-    T: SpanText,
+    T: TraceData,
 {
     let mut dropped_p0_traces = 0;
     let mut dropped_p0_spans = 0;
@@ -156,7 +157,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::SpanBytes;
+    use crate::span::v04::SpanBytes;
 
     fn create_test_span(
         trace_id: u64,

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_sidecar_ffi::span::*;
-use datadog_trace_utils::span::*;
+use datadog_trace_utils::span::v04::*;
 use ddcommon_ffi::slice::*;
 use std::collections::HashMap;
 use tinybytes::*;

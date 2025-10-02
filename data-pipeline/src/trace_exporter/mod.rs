@@ -34,7 +34,7 @@ use datadog_trace_utils::msgpack_decoder;
 use datadog_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
 };
-use datadog_trace_utils::span::{Span, SpanText};
+use datadog_trace_utils::span::{v04::Span, TraceData};
 use datadog_trace_utils::trace_utils::TracerHeaderTags;
 use ddcommon::MutexExt;
 use ddcommon::{hyper_migration, Endpoint};
@@ -577,7 +577,7 @@ impl TraceExporter {
     /// # Returns
     /// * Ok(String): The response from the agent
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
-    pub fn send_trace_chunks<T: SpanText>(
+    pub fn send_trace_chunks<T: TraceData>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -658,7 +658,7 @@ impl TraceExporter {
         self.handle_send_result(result, chunks, payload_len).await
     }
 
-    fn send_trace_chunks_inner<T: SpanText>(
+    fn send_trace_chunks_inner<T: TraceData>(
         &self,
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -982,8 +982,8 @@ mod tests {
     use self::error::AgentErrorKind;
     use super::*;
     use datadog_trace_utils::msgpack_encoder;
+    use datadog_trace_utils::span::v04::SpanBytes;
     use datadog_trace_utils::span::v05;
-    use datadog_trace_utils::span::SpanBytes;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use std::collections::HashMap;
@@ -1993,7 +1993,7 @@ mod single_threaded_tests {
     use super::*;
     use crate::agent_info;
     use datadog_trace_utils::msgpack_encoder;
-    use datadog_trace_utils::span::SpanBytes;
+    use datadog_trace_utils::span::v04::SpanBytes;
     use httpmock::prelude::*;
     use std::time::Duration;
     use tokio::time::sleep;
