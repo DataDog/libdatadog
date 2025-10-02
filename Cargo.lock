@@ -1301,6 +1301,7 @@ dependencies = [
  "clap",
  "criterion",
  "datadog-ddsketch",
+ "datadog-log",
  "datadog-trace-protobuf",
  "datadog-trace-stats",
  "datadog-trace-utils",
