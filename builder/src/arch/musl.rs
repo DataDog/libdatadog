@@ -12,7 +12,12 @@ pub const PROF_DYNAMIC_LIB_FFI: &str = "libdatadog_profiling_ffi.so";
 pub const PROF_STATIC_LIB_FFI: &str = "libdatadog_profiling_ffi.a";
 pub const REMOVE_RPATH: bool = false;
 pub const BUILD_CRASHTRACKER: bool = true;
-pub const RUSTFLAGS: [&str; 2] = ["-C", "relocation-model=pic"];
+pub const RUSTFLAGS: [&str; 4] = [
+    "-C",
+    "relocation-model=pic",
+    "-C",
+    "link-arg=-Wl,-soname,libdatadog_profiling.so",
+];
 
 pub fn fix_rpath(lib_path: &str) {
     if REMOVE_RPATH {
@@ -58,17 +63,6 @@ pub fn strip_libraries(lib_path: &str) {
         .expect("Failed to spawn objcopy");
 
     debug.wait().expect("Failed to set debuglink");
-}
-
-pub fn fix_soname(lib_path: &str) {
-    let mut patch_soname = Command::new("patchelf")
-        .arg("--set-soname")
-        .arg(PROF_DYNAMIC_LIB)
-        .arg(lib_path.to_owned() + "/" + PROF_DYNAMIC_LIB)
-        .spawn()
-        .expect("failed to spawn patchelf");
-
-    patch_soname.wait().expect("failed to change the soname");
 }
 
 pub fn add_additional_files(_lib_path: &str, _target_path: &OsStr) {}
