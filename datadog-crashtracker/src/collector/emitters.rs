@@ -4,6 +4,10 @@
 use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::{emit_spans, emit_traces};
+use crate::runtime_callback::{
+    get_registered_callback_type_enum, get_registered_runtime_type_enum,
+    invoke_runtime_callback_with_writer, is_runtime_callback_registered, CallbackType,
+};
 use crate::shared::constants::*;
 use crate::{translate_si_code, CrashtrackerConfiguration, SignalNames, StacktraceCollection};
 use backtrace::Frame;
@@ -148,6 +152,11 @@ pub(crate) fn emit_crashreport(
         let fault_rsp = extract_rsp(ucontext);
         unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_rsp)? };
     }
+
+    if is_runtime_callback_registered() {
+        emit_runtime_stack(pipe)?;
+    }
+
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
     pipe.flush()?;
 
@@ -195,6 +204,77 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
     // SAFETY: the pointer is given to us by the signal handler, and is non-null.
     writeln!(w, "{:?}", unsafe { *ucontext })?;
     writeln!(w, "{DD_CRASHTRACK_END_UCONTEXT}")?;
+    w.flush()?;
+    Ok(())
+}
+
+/// Emit runtime stack frames collected from registered runtime callback
+///
+/// This function invokes any registered runtime callback to collect runtime-specific
+/// stack traces
+///
+/// If runtime stacks are being emitted frame by frame, this function writes structured JSON.
+/// If not, it writes a single line with the stacktrace string.
+///
+/// SAFETY:
+///     Crash-tracking functions are not reentrant.
+///     No other crash-handler functions should be called concurrently.
+/// SIGNAL SAFETY:
+///     This function attempts to be signal safe by only invoking user-registered
+///     callbacks and writing to the provided stream. The runtime callback itself
+///     must be signal safe.
+fn emit_runtime_stack(w: &mut impl Write) -> Result<(), EmitterError> {
+    let callback_type = unsafe { get_registered_callback_type_enum() };
+    let runtime_type = unsafe { get_registered_runtime_type_enum() };
+
+    let callback_type = match callback_type {
+        Some(ct) => ct,
+        None => return Ok(()), // No callback registered
+    };
+
+    let runtime_type_str = runtime_type.map(|rt| rt.as_str()).unwrap_or("unknown");
+
+    match callback_type {
+        CallbackType::Frame => emit_runtime_stack_by_frames(w, runtime_type_str),
+        CallbackType::StacktraceString => {
+            emit_runtime_stack_by_stacktrace_string(w, runtime_type_str)
+        }
+    }
+}
+
+fn emit_runtime_stack_by_frames(
+    w: &mut impl Write,
+    runtime_type: &str,
+) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME}")?;
+
+    // Emit runtime type as metadata
+    writeln!(w, "{{\"runtime_type\": \"{runtime_type}\"}}")?;
+
+    // JSON array for frames
+    write!(w, "[")?;
+    unsafe { invoke_runtime_callback_with_writer(w)? };
+    write!(w, "]")?;
+
+    writeln!(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_FRAME}")?;
+    w.flush()?;
+    Ok(())
+}
+
+fn emit_runtime_stack_by_stacktrace_string(
+    w: &mut impl Write,
+    runtime_type: &str,
+) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_STRING}")?;
+
+    // Emit runtime type as metadata
+    writeln!(w, "{{\"runtime_type\": \"{runtime_type}\"}}")?;
+
+    // Emit the stacktrace string
+    unsafe { invoke_runtime_callback_with_writer(w)? };
+
+    writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_STRING}")?;
     w.flush()?;
     Ok(())
 }
