@@ -5,8 +5,8 @@ use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::{emit_spans, emit_traces};
 use crate::runtime_callback::{
-    get_registered_callback_type_enum, get_registered_runtime_type_enum,
-    invoke_runtime_callback_with_writer, is_runtime_callback_registered, CallbackType,
+    get_registered_callback_type_enum, invoke_runtime_callback_with_writer,
+    is_runtime_callback_registered, CallbackType,
 };
 use crate::shared::constants::*;
 use crate::{translate_si_code, CrashtrackerConfiguration, SignalNames, StacktraceCollection};
@@ -225,31 +225,20 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
 ///     must be signal safe.
 fn emit_runtime_stack(w: &mut impl Write) -> Result<(), EmitterError> {
     let callback_type = unsafe { get_registered_callback_type_enum() };
-    let runtime_type = unsafe { get_registered_runtime_type_enum() };
 
     let callback_type = match callback_type {
         Some(ct) => ct,
         None => return Ok(()), // No callback registered
     };
 
-    let runtime_type_str = runtime_type.map(|rt| rt.as_str()).unwrap_or("unknown");
-
     match callback_type {
-        CallbackType::Frame => emit_runtime_stack_by_frames(w, runtime_type_str),
-        CallbackType::StacktraceString => {
-            emit_runtime_stack_by_stacktrace_string(w, runtime_type_str)
-        }
+        CallbackType::Frame => emit_runtime_stack_by_frames(w),
+        CallbackType::StacktraceString => emit_runtime_stack_by_stacktrace_string(w),
     }
 }
 
-fn emit_runtime_stack_by_frames(
-    w: &mut impl Write,
-    runtime_type: &str,
-) -> Result<(), EmitterError> {
+fn emit_runtime_stack_by_frames(w: &mut impl Write) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME}")?;
-
-    // Emit runtime type as metadata
-    writeln!(w, "{{\"runtime_type\": \"{runtime_type}\"}}")?;
 
     // JSON array for frames
     write!(w, "[")?;
@@ -262,14 +251,8 @@ fn emit_runtime_stack_by_frames(
     Ok(())
 }
 
-fn emit_runtime_stack_by_stacktrace_string(
-    w: &mut impl Write,
-    runtime_type: &str,
-) -> Result<(), EmitterError> {
+fn emit_runtime_stack_by_stacktrace_string(w: &mut impl Write) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_STRING}")?;
-
-    // Emit runtime type as metadata
-    writeln!(w, "{{\"runtime_type\": \"{runtime_type}\"}}")?;
 
     // Emit the stacktrace string
     unsafe { invoke_runtime_callback_with_writer(w)? };
