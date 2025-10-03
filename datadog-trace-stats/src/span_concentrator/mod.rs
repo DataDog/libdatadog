@@ -5,9 +5,10 @@ use std::collections::HashMap;
 use std::time::{self, Duration, SystemTime};
 
 use datadog_trace_protobuf::pb;
-
+use tracing::debug;
 use aggregation::{BorrowedAggregationKey, StatsBucket};
 use stat_span::StatSpan;
+
 
 mod aggregation;
 
@@ -123,10 +124,12 @@ impl SpanConcentrator {
         if is_span_eligible(span, self.span_kinds_stats_computed.as_slice()) {
             let mut bucket_timestamp =
                 align_timestamp((span.start() + span.duration()) as u64, self.bucket_size);
+            debug!("Adding span. end_time: {}, bucket_timestamp: {}, oldest_timestamp: {}", span.start() + span.duration(), bucket_timestamp, self.oldest_timestamp);
             // If the span is to old we aggregate it in the latest bucket instead of
             // creating a new one
             if bucket_timestamp < self.oldest_timestamp {
                 bucket_timestamp = self.oldest_timestamp;
+                debug!("Setting bucket_timestamp to oldest_timestamp: {}", bucket_timestamp);
             }
 
             let agg_key = BorrowedAggregationKey::from_span(span, self.peer_tag_keys.as_slice());
