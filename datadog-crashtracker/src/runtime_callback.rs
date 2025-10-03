@@ -16,62 +16,8 @@ use std::{
 };
 use thiserror::Error;
 
-// Static null-terminated C strings for signal-safe access
-static PYTHON_CSTR: &std::ffi::CStr = c"python";
-static RUBY_CSTR: &std::ffi::CStr = c"ruby";
-static PHP_CSTR: &std::ffi::CStr = c"php";
-static NODEJS_CSTR: &std::ffi::CStr = c"nodejs";
-static UNKNOWN_CSTR: &std::ffi::CStr = c"unknown";
-
 static FRAME_CSTR: &std::ffi::CStr = c"frame";
 static STACKTRACE_STRING_CSTR: &std::ffi::CStr = c"stacktrace_string";
-
-/// Runtime type identifier for different language runtimes
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RuntimeType {
-    Python,
-    Ruby,
-    Php,
-    Nodejs,
-    Unknown,
-}
-
-impl RuntimeType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            RuntimeType::Python => "python",
-            RuntimeType::Ruby => "ruby",
-            RuntimeType::Php => "php",
-            RuntimeType::Nodejs => "nodejs",
-            RuntimeType::Unknown => "unknown",
-        }
-    }
-
-    pub fn as_cstr(&self) -> &'static std::ffi::CStr {
-        match self {
-            RuntimeType::Python => PYTHON_CSTR,
-            RuntimeType::Ruby => RUBY_CSTR,
-            RuntimeType::Php => PHP_CSTR,
-            RuntimeType::Nodejs => NODEJS_CSTR,
-            RuntimeType::Unknown => UNKNOWN_CSTR,
-        }
-    }
-}
-
-impl std::str::FromStr for RuntimeType {
-    type Err = &'static str;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "python" => Ok(RuntimeType::Python),
-            "ruby" => Ok(RuntimeType::Ruby),
-            "php" => Ok(RuntimeType::Php),
-            "nodejs" => Ok(RuntimeType::Nodejs),
-            "unknown" => Ok(RuntimeType::Unknown),
-            _ => Err("Invalid runtime type"),
-        }
-    }
-}
 
 /// Callback type identifier for different collection strategies
 #[repr(C)]
@@ -111,7 +57,7 @@ impl std::str::FromStr for CallbackType {
 /// Global storage for the runtime callback
 ///
 /// Uses atomic pointer to ensure safe access from signal handlers
-static RUNTIME_CALLBACK: AtomicPtr<(RuntimeStackCallback, RuntimeType, CallbackType)> =
+static RUNTIME_CALLBACK: AtomicPtr<(RuntimeStackCallback, CallbackType)> =
     AtomicPtr::new(ptr::null_mut());
 
 #[repr(C)]
@@ -169,8 +115,6 @@ pub struct RuntimeStack {
     /// Raw stacktrace string (optional, mutually exclusive with frames)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stacktrace_string: Option<String>,
-    /// Runtime type identifier ("ruby", "python", "php", etc.)
-    pub runtime_type: String,
 }
 
 /// JSON-serializable runtime stack frame
@@ -206,14 +150,13 @@ pub enum CallbackError {
 /// Register a runtime stack collection callback
 pub fn register_runtime_stack_callback(
     callback: RuntimeStackCallback,
-    runtime_type: RuntimeType,
     callback_type: CallbackType,
 ) -> Result<(), CallbackError> {
     if callback as usize == 0 {
         return Err(CallbackError::NullCallback);
     }
 
-    let callback_data = Box::into_raw(Box::new((callback, runtime_type, callback_type)));
+    let callback_data = Box::into_raw(Box::new((callback, callback_type)));
     let previous = RUNTIME_CALLBACK.swap(callback_data, Ordering::SeqCst);
 
     if !previous.is_null() {
@@ -230,29 +173,6 @@ pub fn register_runtime_stack_callback(
 /// Returns true if a callback is registered, false otherwise
 pub fn is_runtime_callback_registered() -> bool {
     !RUNTIME_CALLBACK.load(Ordering::SeqCst).is_null()
-}
-
-/// Get the runtime type enum from the currently registered callback
-///
-/// Returns the runtime type enum if a callback is registered, None otherwise
-///
-/// # Safety
-/// This function loads from an atomic pointer and dereferences it.
-/// The caller must ensure that no other thread is calling `clear_runtime_callback`
-/// or `register_runtime_stack_callback` concurrently, as those could invalidate
-/// the pointer between the null check and dereferencing.
-pub unsafe fn get_registered_runtime_type_enum() -> Option<RuntimeType> {
-    let callback_ptr = RUNTIME_CALLBACK.load(Ordering::SeqCst);
-    if callback_ptr.is_null() {
-        return None;
-    }
-
-    // Safety: callback_ptr was checked to be non-null above, and was created by
-    // Box::into_raw() in register_runtime_stack_callback(), so it's a valid pointer
-    // to a properly aligned, initialized tuple. The atomic load with SeqCst ordering
-    // ensures we see the pointer after it was stored.
-    let (_, runtime_type, _) = &*callback_ptr;
-    Some(*runtime_type)
 }
 
 /// Get the callback type enum from the currently registered callback
@@ -274,29 +194,8 @@ pub unsafe fn get_registered_callback_type_enum() -> Option<CallbackType> {
     // Box::into_raw() in register_runtime_stack_callback(), so it's a valid pointer
     // to a properly aligned, initialized tuple. The atomic load with SeqCst ordering
     // ensures we see the pointer after it was stored.
-    let (_, _, callback_type) = &*callback_ptr;
+    let (_, callback_type) = &*callback_ptr;
     Some(*callback_type)
-}
-
-/// Get the runtime type C string pointer from the currently registered callback
-///
-/// # Safety
-/// This function loads from an atomic pointer and dereferences it.
-/// The caller must ensure that no other thread is calling `clear_runtime_callback`
-/// or `register_runtime_stack_callback` concurrently, as those could invalidate
-/// the pointer between the null check and dereferencing.
-pub unsafe fn get_registered_runtime_type_ptr() -> *const std::ffi::c_char {
-    let callback_ptr = RUNTIME_CALLBACK.load(Ordering::SeqCst);
-    if callback_ptr.is_null() {
-        return std::ptr::null();
-    }
-
-    // Safety: callback_ptr was checked to be non-null above, and was created by
-    // Box::into_raw() in register_runtime_stack_callback(), so it's a valid pointer
-    // to a properly aligned, initialized tuple. The returned C string pointer
-    // points to static string literals, so it's always valid.
-    let (_, runtime_type, _) = &*callback_ptr;
-    runtime_type.as_cstr().as_ptr()
 }
 
 /// Get the callback type C string pointer from the currently registered callback
@@ -316,7 +215,7 @@ pub unsafe fn get_registered_callback_type_ptr() -> *const std::ffi::c_char {
     // Box::into_raw() in register_runtime_stack_callback(), so it's a valid pointer
     // to a properly aligned, initialized tuple. The returned C string pointer
     // points to static string literals, so it's always valid.
-    let (_, _, callback_type) = &*callback_ptr;
+    let (_, callback_type) = &*callback_ptr;
     callback_type.as_cstr().as_ptr()
 }
 
@@ -364,7 +263,7 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
     // Safety: callback_ptr was checked to be non-null above, and was created by
     // Box::into_raw() in register_runtime_stack_callback(), so it's a valid pointer
     // to a properly aligned, initialized tuple.
-    let (callback_fn, _, _) = &*callback_ptr;
+    let (callback_fn, _) = &*callback_ptr;
 
     let mut frame_count = 0usize;
 
@@ -591,19 +490,11 @@ mod tests {
         ensure_callback_cleared();
 
         // Test successful registration
-        let result = register_runtime_stack_callback(
-            test_emit_frame_callback,
-            RuntimeType::Python,
-            CallbackType::Frame,
-        );
+        let result = register_runtime_stack_callback(test_emit_frame_callback, CallbackType::Frame);
         assert!(result.is_ok(), "Failed to register callback: {:?}", result);
 
         // Test duplicate registration succeeds (replaces previous)
-        let result = register_runtime_stack_callback(
-            test_emit_frame_callback,
-            RuntimeType::Python,
-            CallbackType::Frame,
-        );
+        let result = register_runtime_stack_callback(test_emit_frame_callback, CallbackType::Frame);
         assert!(
             result.is_ok(),
             "Failed to re-register callback: {:?}",
@@ -620,11 +511,7 @@ mod tests {
         ensure_callback_cleared();
 
         // Register callback
-        let result = register_runtime_stack_callback(
-            test_emit_frame_callback,
-            RuntimeType::Python,
-            CallbackType::Frame,
-        );
+        let result = register_runtime_stack_callback(test_emit_frame_callback, CallbackType::Frame);
         assert!(result.is_ok(), "Failed to register callback: {:?}", result);
 
         // Invoke callback and collect frames using writer
@@ -672,7 +559,6 @@ mod tests {
         // Register callback
         let result = register_runtime_stack_callback(
             test_emit_stacktrace_string_callback,
-            RuntimeType::Python,
             CallbackType::StacktraceString,
         );
         assert!(result.is_ok(), "Failed to register callback: {:?}", result);
@@ -721,11 +607,7 @@ mod tests {
         let _guard = TEST_MUTEX.lock().unwrap();
         ensure_callback_cleared();
 
-        let result = register_runtime_stack_callback(
-            test_emit_frame_callback,
-            RuntimeType::Python,
-            CallbackType::Frame,
-        );
+        let result = register_runtime_stack_callback(test_emit_frame_callback, CallbackType::Frame);
         assert!(result.is_ok(), "Failed to register callback: {:?}", result);
 
         // Test writing directly to a buffer

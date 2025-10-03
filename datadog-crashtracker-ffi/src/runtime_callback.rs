@@ -6,14 +6,12 @@
 //! This module provides C-compatible FFI bindings for registering runtime-specific
 //! crash callbacks that can provide stack traces for dynamic languages.
 use datadog_crashtracker::{
-    get_registered_callback_type_ptr, get_registered_runtime_type_ptr,
-    is_runtime_callback_registered, register_runtime_stack_callback, CallbackError, CallbackType,
-    RuntimeStackCallback, RuntimeType,
+    get_registered_callback_type_ptr, is_runtime_callback_registered,
+    register_runtime_stack_callback, CallbackError, CallbackType, RuntimeStackCallback,
 };
 
 // Re-export the enums for C/C++ consumers
 pub use datadog_crashtracker::CallbackType as ddog_CallbackType;
-pub use datadog_crashtracker::RuntimeType as ddog_RuntimeType;
 
 pub use datadog_crashtracker::RuntimeStackFrame as ddog_RuntimeStackFrame;
 
@@ -75,7 +73,6 @@ impl From<CallbackError> for CallbackResult {
 ///
 /// ddog_CallbackResult result = ddog_crasht_register_runtime_stack_callback(
 ///     my_runtime_callback,
-///     RuntimeType::Ruby,
 ///     CallbackType::Frame,
 /// );
 /// ```
@@ -86,7 +83,6 @@ impl From<CallbackError> for CallbackResult {
 ///
 /// # Arguments
 /// - `callback`: The callback function to invoke during crashes
-/// - `runtime_type`: Runtime type enum (Python, Ruby, Php, Nodejs, Unknown)
 /// - `callback_type`: Callback type enum (Frame, StacktraceString)
 ///
 /// # Returns
@@ -99,10 +95,9 @@ impl From<CallbackError> for CallbackResult {
 #[no_mangle]
 pub unsafe extern "C" fn ddog_crasht_register_runtime_stack_callback(
     callback: RuntimeStackCallback,
-    runtime_type: RuntimeType,
     callback_type: CallbackType,
 ) -> CallbackResult {
-    match register_runtime_stack_callback(callback, runtime_type, callback_type) {
+    match register_runtime_stack_callback(callback, callback_type) {
         Ok(()) => CallbackResult::Ok,
         Err(e) => e.into(),
     }
@@ -117,20 +112,6 @@ pub unsafe extern "C" fn ddog_crasht_register_runtime_stack_callback(
 #[no_mangle]
 pub extern "C" fn ddog_crasht_is_runtime_callback_registered() -> bool {
     is_runtime_callback_registered()
-}
-
-/// Get the runtime type from the currently registered callback context
-///
-/// Returns the runtime type C string pointer if a callback with valid context is registered,
-/// null pointer otherwise
-///
-/// # Safety
-/// - The returned pointer is valid only while the callback remains registered
-/// - The caller should not free the returned pointer
-/// - The returned string should be copied if it needs to persist beyond callback lifetime
-#[no_mangle]
-pub unsafe extern "C" fn ddog_crasht_get_registered_runtime_type() -> *const std::ffi::c_char {
-    get_registered_runtime_type_ptr()
 }
 
 /// Get the callback type from the currently registered callback context
@@ -191,12 +172,10 @@ mod tests {
 
             // Test that no callback is initially registered
             assert!(!ddog_crasht_is_runtime_callback_registered());
-            assert_eq!(ddog_crasht_get_registered_runtime_type(), ptr::null());
 
             // Test successful registration using type-safe enums
             let result = ddog_crasht_register_runtime_stack_callback(
                 test_runtime_callback,
-                RuntimeType::Ruby,
                 CallbackType::Frame,
             );
 
@@ -205,16 +184,9 @@ mod tests {
             // Verify callback is now registered
             assert!(ddog_crasht_is_runtime_callback_registered());
 
-            // Verify we can retrieve the runtime type
-            let runtime_type_ptr = ddog_crasht_get_registered_runtime_type();
-            assert!(!runtime_type_ptr.is_null());
-            let runtime_type_str = std::ffi::CStr::from_ptr(runtime_type_ptr).to_str().unwrap();
-            assert_eq!(runtime_type_str, "ruby");
-
             // Test duplicate registration fails
             let result = ddog_crasht_register_runtime_stack_callback(
                 test_runtime_callback,
-                RuntimeType::Ruby,
                 CallbackType::Frame,
             );
             assert_eq!(result, CallbackResult::Ok);
@@ -239,18 +211,11 @@ mod tests {
             // Test registration with enum values - Python + StacktraceString
             let result = ddog_crasht_register_runtime_stack_callback(
                 test_runtime_callback,
-                RuntimeType::Python,
                 CallbackType::StacktraceString,
             );
 
             assert_eq!(result, CallbackResult::Ok);
             assert!(ddog_crasht_is_runtime_callback_registered());
-
-            // Verify runtime type
-            let runtime_type_ptr = ddog_crasht_get_registered_runtime_type();
-            assert!(!runtime_type_ptr.is_null());
-            let runtime_type_str = std::ffi::CStr::from_ptr(runtime_type_ptr).to_str().unwrap();
-            assert_eq!(runtime_type_str, "python");
 
             // Verify callback type
             let callback_type_ptr = ddog_crasht_get_registered_callback_type();
@@ -263,16 +228,10 @@ mod tests {
             // Test re-registration with different values - Ruby + Frame
             let result = ddog_crasht_register_runtime_stack_callback(
                 test_runtime_callback,
-                RuntimeType::Ruby,
                 CallbackType::Frame,
             );
 
             assert_eq!(result, CallbackResult::Ok);
-
-            // Verify new values
-            let runtime_type_ptr = ddog_crasht_get_registered_runtime_type();
-            let runtime_type_str = std::ffi::CStr::from_ptr(runtime_type_ptr).to_str().unwrap();
-            assert_eq!(runtime_type_str, "ruby");
 
             let callback_type_ptr = ddog_crasht_get_registered_callback_type();
             let callback_type_str = std::ffi::CStr::from_ptr(callback_type_ptr)
