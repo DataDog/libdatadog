@@ -64,7 +64,7 @@ pub fn fix_soname(lib_path: &str) {
     let mut patch_soname = Command::new("patchelf")
         .arg("--set-soname")
         .arg(PROF_DYNAMIC_LIB)
-        .arg(lib_path)
+        .arg(lib_path.to_owned() + "/" + PROF_DYNAMIC_LIB)
         .spawn()
         .expect("failed to spawn patchelf");
 
