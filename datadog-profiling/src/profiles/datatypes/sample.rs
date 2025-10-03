@@ -47,6 +47,11 @@ impl SampleBuilder {
             timestamp: None,
         }
     }
+
+    pub fn try_reserve_attributes(&mut self, additional: usize) -> Result<(), ProfileError> {
+        Ok(self.attributes.try_reserve(additional)?)
+    }
+
     /// Sets the stack id in-place.
     pub fn set_stack_id(&mut self, id: StackId) {
         self.stack_id = Some(id);
