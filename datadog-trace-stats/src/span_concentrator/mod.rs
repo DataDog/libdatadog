@@ -103,6 +103,11 @@ impl SpanConcentrator {
         self.peer_tag_keys = peer_tags;
     }
 
+    /// Set the number of stats bucket to keep when flushing
+    pub fn set_buffer_len(&mut self, buffer_len: usize) {
+        self.buffer_len = buffer_len;
+    }
+
     /// Return the bucket size used for aggregation
     pub fn get_bucket_size(&self) -> Duration {
         Duration::from_nanos(self.bucket_size)
