@@ -167,6 +167,9 @@ impl Drop for ProfileAdapter<'_> {
 ///
 /// ddog_prof_ProfileAdapter_drop(&adapter);
 /// ```
+///
+/// # Safety
+/// todo
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_ProfileAdapter_new(
@@ -208,9 +211,15 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_new(
     let mut mappings = ddcommon_ffi::vec::Vec::new();
     let mut proportional_upscaling_rules = ddcommon_ffi::vec::Vec::new();
     let mut poisson_upscaling_rules = ddcommon_ffi::vec::Vec::new();
-    mappings.try_reserve_exact(n_runs).unwrap();
-    proportional_upscaling_rules.try_reserve_exact(n_runs).unwrap();
-    poisson_upscaling_rules.try_reserve_exact(n_runs).unwrap();
+    if mappings.try_reserve_exact(n_runs).is_err() {
+        return ProfileStatus::from(c"out of memory: couldn't reserve memory for ProfileAdapter's mappings");
+    }
+    if proportional_upscaling_rules.try_reserve_exact(n_runs).is_err() {
+        return ProfileStatus::from(c"out of memory: couldn't reserve memory for ProfileAdapter's proportional upscaling rules");
+    }
+    if poisson_upscaling_rules.try_reserve_exact(n_runs).is_err() {
+        return ProfileStatus::from(c"out of memory: couldn't reserve memory for ProfileAdapter's poisson upscaling rules");
+    }
 
     for run in RunsIter::new(groupings) {
         // Create a profile for this run
@@ -278,6 +287,9 @@ fn count_runs_and_longest_run(groupings: &[i64]) -> (usize, usize) {
 /// have already been added to the sample builder; the caller still needs to
 /// add stack, timestamp, link, etc to the  sample builder and then build it
 /// into the profile.
+///
+/// # Safety
+/// todo
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_ProfileAdapter_add_sample(
@@ -291,7 +303,9 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_add_sample(
     if adapter.mappings.is_empty() {
         return ProfileStatus::from(c"invalid input: ddog_prof_ProfileAdapter_add_sample was called on an empty adapter");
     }
-    let values = values.try_as_slice().unwrap();
+    let Ok(values) = values.try_as_slice() else {
+        return ProfileStatus::from(c"invalid input: FFI values slice passed to ddog_prof_ProfileAdapter_add_sample couldn't be converted to a Rust slice");
+    };
 
     let Some(mapping) = adapter.mappings.get(profile_grouping) else {
         return ProfileStatus::from(c"invalid input: grouping passed to ddog_prof_ProfileAdapter_add_sample was out of range");
@@ -319,6 +333,8 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_add_sample(
     ProfileStatus::OK
 }
 
+/// # Safety
+/// todo
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_ProfileAdapter_add_proportional_upscaling<
@@ -350,6 +366,8 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_add_proportional_upscaling<
     ProfileStatus::OK
 }
 
+/// # Safety
+/// todo
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_ProfileAdapter_add_poisson_upscaling(
@@ -392,12 +410,15 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_add_poisson_upscaling(
 ///
 /// # Parameters
 ///  * `out_profile`: a pointer safe for `core::ptr::write`ing the handle for
-///         the encoded profile.
+///    the encoded profile.
 ///  * `adapter`: a mutable reference to the profile adapter.
 ///  * `start`: an optional reference to the start time of the Pprof profile.
-///         Defaults to the time the adapter was made.
+///    Defaults to the time the adapter was made.
 /// * `end`: an optional reference to the stop time of the Pprof profile.
-///         Defaults to the time this call was made.
+///   Defaults to the time this call was made.
+///
+/// # Safety
+/// todo
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_ProfileAdapter_build_compressed(
@@ -410,7 +431,7 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_build_compressed(
     let Some(adapter) = adapter else {
         return ProfileStatus::from(c"invalid input: null adapter passed to ddog_prof_ProfileAdapter_build_compressed");
     };
-    let start = start.unwrap_or(&adapter.started_at).clone();
+    let start = *start.unwrap_or(&adapter.started_at);
     let end = end.cloned().unwrap_or_else(|| Timespec::from(SystemTime::now()));
 
     let mut pprof_builder = ProfileHandle::default();
@@ -466,6 +487,9 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_build_compressed(
 /// Frees the resources associated to the profile adapter handle, leaving an
 /// empty adapter in its place. This is safe to call with null, and it's also
 /// safe to call with an empty adapter.
+///
+/// # Safety
+/// todo
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_ProfileAdapter_drop(
     adapter: *mut ProfileAdapter,

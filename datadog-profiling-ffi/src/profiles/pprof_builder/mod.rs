@@ -118,7 +118,7 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile_with_poisson_upscali
         builder
             .try_add_profile_with_poisson_upscaling(
                 // SAFETY: todo lifetime extension
-                unsafe { core::mem::transmute(profile) },
+                unsafe { core::mem::transmute::<&Profile, &Profile>(profile) },
                 upscaling_rule,
             )
             .map_err(ProfileStatus::from_ffi_safe_error_message)
@@ -164,7 +164,7 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile_with_proportional_up
         builder
             .try_add_profile_with_proportional_upscaling(
                 // SAFETY: todo lifetime extension
-                unsafe { core::mem::transmute(profile) },
+                unsafe { core::mem::transmute::<&Profile, &Profile>(profile) },
                 upscaling_rules.iter().map(
                     |rule| -> Result<_, Utf8ConversionError> {
                         let key = rule.group_by_label.key;
