@@ -1,6 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::runtime_callback::RuntimeStack;
+
 use chrono::{DateTime, Utc};
 use error_data::ThreadData;
 use stacktrace::StackTrace;
@@ -213,6 +215,18 @@ impl CrashInfoBuilder {
             experimental.ucontext = Some(ucontext);
         } else {
             self.experimental = Some(Experimental::new().with_ucontext(ucontext));
+        }
+        Ok(self)
+    }
+
+    pub fn with_experimental_runtime_stack(
+        &mut self,
+        runtime_stack: RuntimeStack,
+    ) -> anyhow::Result<&mut Self> {
+        if let Some(experimental) = &mut self.experimental {
+            experimental.runtime_stack = Some(runtime_stack);
+        } else {
+            self.experimental = Some(Experimental::new().with_runtime_stack(runtime_stack));
         }
         Ok(self)
     }

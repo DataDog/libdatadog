@@ -510,6 +510,11 @@ dependencies = [
  "current_platform",
  "datadog-crashtracker",
  "datadog-profiling",
+<<<<<<< HEAD
+=======
+ "ddcommon",
+ "ddcommon-ffi",
+>>>>>>> d3d727c3 (Runtime stack collection callabck registration)
  "libc",
  "libdd-common",
  "nix",
@@ -1301,6 +1306,9 @@ dependencies = [
  "cc",
  "chrono",
  "criterion",
+ "ddcommon",
+ "ddcommon-ffi",
+ "ddtelemetry",
  "goblin",
  "http",
  "libc",
