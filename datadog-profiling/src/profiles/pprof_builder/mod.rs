@@ -487,12 +487,20 @@ impl<'a> PprofBuilder<'a> {
                     labels_buf.push(pprof::Record::from(lbl));
                 }
 
+                // Apply upscaling to local sample values before remapping,
+                // because Poisson upscaling works based off local indices,
+                // not the remapped ones.
+                let mut local_values = sample.values.clone();
+                for rule in &pwu.upscalings {
+                    rule.scale(&mut local_values, &labels_buf);
+                }
+
                 // align values to global types
                 values_buf.clear();
                 values_buf.try_reserve(n_sample_types)?;
                 values_buf.resize(n_sample_types, 0);
                 for (local_idx, &global_idx) in remap.iter().enumerate() {
-                    if let Some(v) = sample.values.get(local_idx) {
+                    if let Some(v) = local_values.get(local_idx) {
                         values_buf[global_idx] = *v;
                     }
                 }
@@ -503,11 +511,6 @@ impl<'a> PprofBuilder<'a> {
                 if let Some(ts) = sample.timestamp {
                     let key = string_table.intern(writer, "end_timestamp_ns")?;
                     Self::add_sample_timestamp_label(&mut labels_buf, ts, key);
-                }
-
-                // Apply upscaling
-                for rule in &pwu.upscalings {
-                    rule.scale(&mut values_buf, &labels_buf);
                 }
 
                 let s_msg = pprof::Sample {
