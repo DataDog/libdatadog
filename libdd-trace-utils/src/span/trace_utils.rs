@@ -3,7 +3,7 @@
 
 //! Trace-utils functionalities implementation for tinybytes based spans
 
-use super::{v04::Span, SpanText, TraceData};
+use super::{Span, SpanText, TraceData, TraceProjector, TraceAttributesOp};
 use std::collections::HashMap;
 
 /// Span metric the mini agent must set for the backend to recognize top level span
@@ -13,15 +13,11 @@ const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
-fn set_top_level_span<T>(span: &mut Span<T>, is_top_level: bool)
-where
-    T: TraceData,
-{
+fn set_top_level_span<T: TraceProjector<D>, D: TraceData>(span: &mut Span<T, D>, is_top_level: bool) {
     if is_top_level {
-        span.metrics
-            .insert(T::Text::from_static_str(TOP_LEVEL_KEY), 1.0);
+        span.attributes().set_double(TOP_LEVEL_KEY, 1.0);
     } else {
-        span.metrics.remove(TOP_LEVEL_KEY);
+        span.attributes().remove(TOP_LEVEL_KEY);
     }
 }
 
@@ -31,23 +27,20 @@ where
 ///   - OR its parent is unknown (other part of the code, distributed trace)
 ///   - OR its parent belongs to another service (in that case it's a "local root" being the highest
 ///     ancestor of other spans belonging to this service and attached to it).
-pub fn compute_top_level_span<T>(trace: &mut [Span<T>])
-where
-    T: TraceData,
-{
-    let mut span_id_idx: HashMap<u64, usize> = HashMap::new();
-    for (i, span) in trace.iter().enumerate() {
-        span_id_idx.insert(span.span_id, i);
+pub fn compute_top_level_span<T: TraceProjector<D>, D: TraceData>(trace: &mut [Span<T, D>]) {
+    let mut span_id_to_service: HashMap<u64, D::Text> = HashMap::new();
+    for span in trace.iter() {
+        span_id_to_service.insert(span.span_id().get(), span.service().get().clone());
     }
-    for span_idx in 0..trace.len() {
-        let parent_id = trace[span_idx].parent_id;
+    for span in trace.iter_mut() {
+        let parent_id = span.parent_id().get();
         if parent_id == 0 {
             set_top_level_span(&mut trace[span_idx], true);
             continue;
         }
         match span_id_idx.get(&parent_id).map(|i| &trace[*i].service) {
             Some(parent_span_service) => {
-                if !(parent_span_service == &trace[span_idx].service) {
+                if !parent_span_service.eq(&span.service().get()) {
                     // parent is not in the same service
                     set_top_level_span(&mut trace[span_idx], true)
                 }
@@ -61,7 +54,7 @@ where
 }
 
 /// Return true if the span has a top level key set
-pub fn has_top_level<T: TraceData>(span: &Span<T>) -> bool {
+pub fn has_top_level<T: TraceProjector<D>, D: TraceData>(span: &Span<T, D>) -> bool {
     span.metrics
         .get(TRACER_TOP_LEVEL_KEY)
         .is_some_and(|v| *v == 1.0)
@@ -69,7 +62,7 @@ pub fn has_top_level<T: TraceData>(span: &Span<T>) -> bool {
 }
 
 /// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
-pub fn is_measured<T: TraceData>(span: &Span<T>) -> bool {
+pub fn is_measured<T: TraceProjector<D>, D: TraceData>(span: &Span<T, D>) -> bool {
     span.metrics.get(MEASURED_KEY).is_some_and(|v| *v == 1.0)
 }
 
@@ -78,7 +71,7 @@ pub fn is_measured<T: TraceData>(span: &Span<T>) -> bool {
 /// When incomplete, a partial snapshot has a metric _dd.partial_version which is a positive
 /// integer. The metric usually increases each time a new version of the same span is sent by
 /// the tracer
-pub fn is_partial_snapshot<T: TraceData>(span: &Span<T>) -> bool {
+pub fn is_partial_snapshot<T: TraceProjector<D>, D: TraceData>(span: &Span<T, D>) -> bool {
     span.metrics
         .get(PARTIAL_VERSION_KEY)
         .is_some_and(|v| *v >= 0.0)
@@ -104,7 +97,7 @@ const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 ///
 /// # Trace-level attributes
 /// Some attributes related to the whole trace are stored in the root span of the chunk.
-pub fn drop_chunks<T>(traces: &mut Vec<Vec<Span<T>>>) -> DroppedP0Stats
+pub fn drop_chunks<T: TraceProjector<D>, D: TraceData>(traces: &mut Vec<Vec<Span<T>>>) -> DroppedP0Stats
 where
     T: TraceData,
 {

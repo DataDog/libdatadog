@@ -3,35 +3,135 @@
 
 pub mod dict;
 
-use crate::span::{v05::dict::SharedDict, TraceData};
+use crate::span::{v05::dict::SharedDict, TraceData, TraceProjector, TraceValueType, TraceValue, TraceValueOp, Traces, SpanValue, SpanValueType, TraceAttributes, TraceAttributesOp, AttributeAnyValue, AttributeAnyValueType, AttributeInnerValue, MUT, TraceValueMutOp};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::ops::Deref;
+use std::slice::Iter;
+use crate::span::table::{StaticDataVec, TraceDataText, TraceStringRef};
 
 /// Structure that represent a TraceChunk Span which String fields are interned in a shared
 /// dictionary. The number of elements is fixed by the spec and they all need to be serialized, in
 /// case of adding more items the constant msgpack_decoder::v05::SPAN_ELEM_COUNT need to be
 /// updated.
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Debug, Default, PartialEq, Serialize)]
 pub struct Span {
-    pub service: u32,
-    pub name: u32,
-    pub resource: u32,
+    pub service: TraceStringRef,
+    pub name: TraceStringRef,
+    pub resource: TraceStringRef,
     pub trace_id: u64,
     pub span_id: u64,
     pub parent_id: u64,
     pub start: i64,
     pub duration: i64,
     pub error: i32,
-    pub meta: HashMap<u32, u32>,
-    pub metrics: HashMap<u32, f64>,
-    pub r#type: u32,
+    pub meta: HashMap<TraceStringRef, TraceStringRef>,
+    pub metrics: HashMap<TraceStringRef, f64>,
+    pub r#type: TraceStringRef,
 }
+
+pub struct ChunkCollection<T: TraceData> {
+    pub dict: StaticDataVec<T, TraceDataText>,
+    pub chunks: Vec<Vec<Span>>,
+}
+
+impl<'a, D: TraceData> TraceProjector<D> for &'a ChunkCollection<D> {
+    type Storage = StaticDataVec<D, TraceDataText>;
+    type TraceRef = Vec<Vec<Span>>;
+    type ChunkRef = Vec<Span>;
+    type SpanRef = Span;
+    type SpanLinkRef = ();
+    type SpanEventRef = ();
+    type AttributeRef = Span;
+
+    fn project(self) -> Traces<Self::Storage, D> {
+        Traces {
+            storage: self,
+        }
+    }
+
+    fn chunk_iterator(trace: Self::TraceRef) -> Iter<Vec<Span>> {
+        trace.chunks.iter()
+    }
+
+    fn span_iterator(chunk: Self::ChunkRef) -> Iter<Span> {
+        chunk.iter()
+    }
+
+    fn span_link_iterator(span: Self::SpanRef) -> Iter<<Self::SpanLinkRef as Deref>::Target> {
+        [].iter()
+    }
+
+    fn span_events_iterator(span: Self::SpanRef) -> Iter<<Self::SpanEventRef as Deref>::Target> {
+        [].iter()
+    }
+}
+
+impl<'a, D: TraceData> TraceValueOp<D> for TraceValue<&'a mut ChunkCollection<D>, D, { TraceValueType::ContainerId as u8 }> {
+    fn set<I: Into<Self::Value>>(&self, value: I) {
+        todo!()
+    }
+
+    fn get(&self) -> &str {
+        todo!()
+    }
+}
+
+impl<'a, D: TraceData> TraceValueMutOp<D> for SpanValue<&'a ChunkCollection<D>, D, { SpanValueType::Service as u8 }, MUT> {
+    fn set(storage: &mut &'a mut StaticDataVec<D, TraceDataText>, span: &'a mut Span, value: D::Text) {
+        storage.update(&mut span.service, value)
+    }
+}
+
+impl<'a, D: TraceData> TraceValueOp<D> for SpanValue<&'a ChunkCollection<D>, D, { SpanValueType::Service as u8 }> {
+    fn get(&self) -> D::Text {
+        self.storage.get(self.span.service)
+    }
+}
+
+fn inner_value<'a, D: TraceData, const Type: u8>(span: &'a mut Span, dict: &'a mut StaticDataVec<D, TraceDataText>) -> AttributeInnerValue<&'a ChunkCollection<D>, D, Type> {
+    AttributeInnerValue {
+        storage: dict,
+        container: span,
+    }
+}
+
+impl<'a, D: TraceData> TraceAttributesOp<&'a ChunkCollection<D>, D> for TraceAttributes<&'a ChunkCollection<D>, D, &'a ChunkCollection<D>> {
+    fn set(&self, key: &str, value: AttributeAnyValueType) -> AttributeAnyValue<&'a ChunkCollection<D>, D> {
+        let span = &mut self.container.chunks[0][0];
+        match value {
+            AttributeAnyValueType::String => AttributeAnyValue::String(inner_value(span, self.storage)),
+            AttributeAnyValueType::Bytes => AttributeAnyValue::Bytes(inner_value(span, self.storage)),
+            AttributeAnyValueType::Boolean => AttributeAnyValue::Boolean(inner_value(span, self.storage)),
+            AttributeAnyValueType::Integer => AttributeAnyValue::Integer(inner_value(span, self.storage)),
+            AttributeAnyValueType::Double => AttributeAnyValue::Double(inner_value(span, self.storage)),
+            AttributeAnyValueType::Array => {}
+            AttributeAnyValueType::Map => {}
+        }
+    }
+
+    fn get(&self, key: &str) -> Option<AttributeAnyValue<&'a ChunkCollection<D>, D>> {
+        todo!()
+    }
+
+    fn remove(&self, key: &str) {
+        todo!()
+    }
+}
+
+impl<T: TraceProjector<D>, D: TraceData> TraceAttributes<T, D> {
+    pub fn set(&self, key: &str, value: AttributeAnyValue) {
+        self.container.set_attribute(self, key, value);
+    }
+}
+
 
 pub fn from_v04_span<T: TraceData>(
     span: crate::span::v04::Span<T>,
     dict: &mut SharedDict<T::Text>,
 ) -> Result<Span> {
+    /*
     let meta_len = span.meta.len();
     let metrics_len = span.metrics.len();
     Ok(Span {
@@ -60,6 +160,9 @@ pub fn from_v04_span<T: TraceData>(
         )?,
         r#type: dict.get_or_insert(span.r#type)?,
     })
+
+     */
+    Ok(Span::default())
 }
 
 #[cfg(test)]
