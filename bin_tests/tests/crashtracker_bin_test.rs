@@ -535,16 +535,26 @@ fn test_crash_tracking_bin_runtime_callback_string_impl(
         .spawn()
         .unwrap();
 
-    let exit_status = bin_tests::timeit!("exit after signal", {
-        eprintln!("Waiting for exit");
-        p.wait().unwrap()
-    });
+    let crash_profile = fs::read(&fixtures.crash_profile_path)
+        .context("reading crashtracker profiling payload")
+        .unwrap();
+    let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
+        .context("deserializing crashtracker profiling payload to json")
+        .unwrap();
 
-    // Runtime callback string tests currently have timeout issues
-    // This test demonstrates the string callback registration but may timeout
-    // due to receiver implementation details with multiline string parsing
+    // Validate normal crash data first
+    assert_eq!(
+        serde_json::json!({
+          "profiler_collecting_sample": 1,
+          "profiler_inactive": 0,
+          "profiler_serializing": 0,
+          "profiler_unwinding": 0
+        }),
+        crash_payload["counters"],
+    );
 
-    // For now, we just verify the test ran and the marker file was created
+    validate_runtime_callback_string_data(&crash_payload);
+
     let marker_path = format!("{0}/runtime_callback_test", fixtures.output_dir.display());
     if let Ok(marker_content) = fs::read_to_string(marker_path) {
         assert_eq!(marker_content.trim(), "string_mode");
