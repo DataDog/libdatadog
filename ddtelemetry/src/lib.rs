@@ -37,8 +37,8 @@ pub fn build_host() -> data::Host {
         container_id,
         os: Some(String::from(info::os::os_name())),
         os_version,
-        kernel_name: None,
-        kernel_release: None,
-        kernel_version: None,
+        kernel_name: info::os::os_type(),
+        kernel_release: info::os::os_release(),
+        kernel_version: unsafe { info::os::uname() },
     }
 }
