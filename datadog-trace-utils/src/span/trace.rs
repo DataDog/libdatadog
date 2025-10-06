@@ -1,396 +1,296 @@
 use std::marker::PhantomData;
 use datadog_trace_protobuf::pb::idx::SpanKind;
-use crate::span::TraceData;
+use crate::span::{SpanBytes, SpanText, TraceData};
+
+trait TraceProjectorDependencies<D: TraceData> {
+
+}
+
+
 
 pub trait TraceProjector<D: TraceData>
 where
-    AttributeArray<Self, D>: AttributeArrayOp<Self, D>,
-    TraceAttributes<Self, D, Self::TraceRef>: TraceAttributesOp<Self, D>,
-    TraceAttributes<Self, D, Self::ChunkRef>: TraceAttributesOp<Self, D>,
-    TraceAttributes<Self, D, Self::SpanRef>: TraceAttributesOp<Self, D>,
-    TraceValue<Self, D, { TraceValueType::ContainerId as u8 }>: TraceValueOp<D>,
-    TraceValue<Self, D, { TraceValueType::LanguageName as u8 }>: TraceValueOp<D>,
-    TraceValue<Self, D, { TraceValueType::LanguageVersion as u8 }>: TraceValueOp<D>,
-    TraceValue<Self, D, { TraceValueType::TracerVersion as u8 }>: TraceValueOp<D>,
-    TraceValue<Self, D, { TraceValueType::RuntimeId as u8 }>: TraceValueOp<D>,
-    TraceValue<Self, D, { TraceValueType::Env as u8 }>: TraceValueOp<D>,
-    TraceValue<Self, D, { TraceValueType::Hostname as u8 }>: TraceValueOp<D>,
-    TraceValue<Self, D, { TraceValueType::AppVersion as u8 }>: TraceValueOp<D>,
-    ChunkValue<Self, D, { ChunkValueType::Priority as u8 }>: TraceValueOp<D>,
-    ChunkValue<Self, D, { ChunkValueType::Origin as u8 }>: TraceValueOp<D>,
-    ChunkValue<Self, D, { ChunkValueType::DroppedTrace as u8 }>: TraceValueOp<D>,
-    ChunkValue<Self, D, { ChunkValueType::TraceId as u8 }>: TraceValueOp<D>,
-    ChunkValue<Self, D, { ChunkValueType::SamplingMechanism as u8 }>: TraceValueOp<D>,
-    SpanValue<Self, D, { SpanValueType::Service as u8 }>: TraceValueOp<D>,
-    SpanValue<Self, D, { SpanValueType::Name as u8 }>: TraceValueOp<D>,
-    SpanValue<Self, D, { SpanValueType::Resource as u8 }>: TraceValueOp<D>,
-    SpanValue<Self, D, { SpanValueType::Type as u8 }>: TraceValueOp<D>,
-    SpanValue<Self, D, { SpanValueType::SpanId as u8 }>: TraceValueOp<D>,
-    SpanValue<Self, D, { SpanValueType::ParentId as u8 }>: TraceValueOp<D>,
-    SpanValue<Self, D, { SpanValueType::Start as u8 }>: TraceValueOp<D>,
-    SpanValue<Self, D, { SpanValueType::Duration as u8 }>: TraceValueOp<D>,
-    SpanValue<Self, D, { SpanValueType::Error as u8 }>: TraceValueOp<D>,
-    SpanValue<Self, D, { SpanValueType::Env as u8 }>: TraceValueOp<D>,
-    SpanValue<Self, D, { SpanValueType::Version as u8 }>: TraceValueOp<D>,
-    SpanValue<Self, D, { SpanValueType::Component as u8 }>: TraceValueOp<D>,
-    SpanValue<Self, D, { SpanValueType::Kind as u8 }>: TraceValueOp<D>,
-    // TODO and mut variants
+    for<'a> TraceAttributes<Self, D, AttrRef<'a, Self::Trace>, Self::Trace>: TraceAttributesOp<'a, Self, D, Self::Trace>,
+    for<'a> TraceAttributes<Self, D, AttrRef<'a, Self::Chunk>, Self::Chunk>: TraceAttributesOp<'a, Self, D, Self::Chunk>,
+    for<'a> TraceAttributes<Self, D, AttrRef<'a, Self::Span>, Self::Span>: TraceAttributesOp<'a, Self, D, Self::Span>,
+    for<'a> TraceAttributes<Self, D, AttrRef<'a, Self::SpanLink>, Self::SpanLink>: TraceAttributesOp<'a, Self, D, Self::SpanLink>,
+    for<'a> TraceAttributes<Self, D, AttrRef<'a, Self::SpanEvent>, Self::SpanEvent>: TraceAttributesOp<'a, Self, D, Self::SpanEvent>,
 {
-    // Safety note: Not only may it not be transferred across threads, but it also must not do callbacks (to avoid two mut references)
-    type Storage: ?Send;
-    type TraceRef;
-    type ChunkRef;
-    type SpanRef;
-    type SpanLinkRef;
-    type SpanEventRef;
-    type AttributeRef;
+    type Storage;
+    type Trace;
+    type Chunk;
+    type Span;
+    type SpanLink;
+    type SpanEvent;
 
-    fn project(&mut self) -> Traces<Self::Storage, D>;
+    fn project(&self) -> Traces<Self, D>;
+    fn project_mut(&mut self) -> TracesMut<Self, D>;
 
-    fn chunk_iterator(trace: &Self::TraceRef) -> std::slice::Iter<Self::ChunkRef>;
-    fn span_iterator(chunk: &Self::ChunkRef) -> std::slice::Iter<Self::SpanRef>;
-    fn span_link_iterator(span: &Self::SpanRef) -> std::slice::Iter<Self::SpanLinkRef>;
-    fn span_events_iterator(span: &Self::SpanRef) -> std::slice::Iter<Self::SpanEventRef>;
+    fn add_chunk<'a>(trace: &'a mut Self::Trace, storage: &mut Self::Storage) -> &'a mut Self::Chunk;
+    fn chunk_iterator(trace: &Self::Trace) -> std::slice::Iter<Self::Chunk>;
+    fn retain_chunks(trace: &mut Self::Trace, storage: &mut Self::Storage, predicate: impl FnMut(&mut Self::Chunk, &mut Self::Storage) -> bool);
+    fn add_span<'a>(chunk: &'a mut Self::Chunk, storage: &mut Self::Storage) -> &'a mut Self::Span;
+    fn span_iterator(chunk: &Self::Chunk) -> std::slice::Iter<Self::Span>;
+    fn retain_spans(chunk: &mut Self::Chunk, storage: &mut Self::Storage, predicate: impl FnMut(&mut Self::Span, &mut Self::Storage) -> bool);
+    fn add_span_link<'a>(span: &'a mut Self::Span, storage: &mut Self::Storage) -> &'a mut Self::SpanLink;
+    fn span_link_iterator(span: &Self::Span) -> std::slice::Iter<Self::SpanLink>;
+    fn retain_span_links(chunk: &mut Self::Span, storage: &mut Self::Storage, predicate: impl FnMut(&mut Self::SpanLink, &mut Self::Storage) -> bool);
+    fn add_span_event<'a>(span: &mut Self::Span, storage: &mut Self::Storage) -> &'a mut Self::SpanEvent;
+    fn span_event_iterator(span: &Self::Span) -> std::slice::Iter<Self::SpanEvent>;
+    fn retain_span_events(chunk: &mut Self::Span, storage: &mut Self::Storage, predicate: impl FnMut(&mut Self::SpanEvent, &mut Self::Storage) -> bool);
+
+    fn get_trace_container_id<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_trace_language_name<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_trace_language_version<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_trace_tracer_version<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_trace_runtime_id<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_trace_env<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_trace_hostname<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_trace_app_version<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
+
+    fn set_trace_container_id(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
+    fn set_trace_language_name(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
+    fn set_trace_language_version(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
+    fn set_trace_tracer_version(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
+    fn set_trace_runtime_id(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
+    fn set_trace_env(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
+    fn set_trace_hostname(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
+    fn set_trace_app_version(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
+
+    fn get_chunk_priority(chunk: &Self::Chunk, storage: &Self::Storage) -> i32;
+    fn get_chunk_origin<'a>(chunk: &'a Self::Chunk, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_chunk_dropped_trace(chunk: &Self::Chunk, storage: &Self::Storage) -> bool;
+    fn get_chunk_trace_id(chunk: &Self::Chunk, storage: &Self::Storage) -> u128;
+    fn get_chunk_sampling_mechanism(chunk: &Self::Chunk, storage: &Self::Storage) -> u32;
+
+    fn set_chunk_priority(chunk: &mut Self::Chunk, storage: &mut Self::Storage, value: i32);
+    fn set_chunk_origin(chunk: &mut Self::Chunk, storage: &mut Self::Storage, value: D::Text);
+    fn set_chunk_dropped_trace(chunk: &mut Self::Chunk, storage: &mut Self::Storage, value: bool);
+    fn set_chunk_trace_id(chunk: &mut Self::Chunk, storage: &mut Self::Storage, value: u128);
+    fn set_chunk_sampling_mechanism(chunk: &mut Self::Chunk, storage: &mut Self::Storage, value: u32);
+
+    fn get_span_service<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_span_name<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_span_resource<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_span_type<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_span_span_id(span: &Self::Span, storage: &Self::Storage) -> u64;
+    fn get_span_parent_id(span: &Self::Span, storage: &Self::Storage) -> u64;
+    fn get_span_start(span: &Self::Span, storage: &Self::Storage) -> i64;
+    fn get_span_duration(span: &Self::Span, storage: &Self::Storage) -> i64;
+    fn get_span_error(span: &Self::Span, storage: &Self::Storage) -> bool;
+    fn get_span_env<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_span_version<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_span_component<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_span_kind(span: &Self::Span, storage: &Self::Storage) -> SpanKind;
+
+    fn set_span_service(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text);
+    fn set_span_name(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text);
+    fn set_span_resource(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text);
+    fn set_span_type(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text);
+    fn set_span_span_id(span: &mut Self::Span, storage: &mut Self::Storage, value: u64);
+    fn set_span_parent_id(span: &mut Self::Span, storage: &mut Self::Storage, value: u64);
+    fn set_span_start(span: &mut Self::Span, storage: &mut Self::Storage, value: i64);
+    fn set_span_duration(span: &mut Self::Span, storage: &mut Self::Storage, value: i64);
+    fn set_span_error(span: &mut Self::Span, storage: &mut Self::Storage, value: bool);
+    fn set_span_env(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text);
+    fn set_span_version(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text);
+    fn set_span_component(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text);
+    fn set_span_kind(span: &mut Self::Span, storage: &mut Self::Storage, value: SpanKind);
+
+    fn get_link_trace_id(link: &Self::SpanLink, storage: &Self::Storage) -> u128;
+    fn get_link_span_id(link: &Self::SpanLink, storage: &Self::Storage) -> u64;
+    fn get_link_trace_state<'a>(link: &'a Self::SpanLink, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_link_flags(link: &Self::SpanLink, storage: &Self::Storage) -> u32;
+
+    fn set_link_trace_id(link: &mut Self::SpanLink, storage: &mut Self::Storage, value: u128);
+    fn set_link_span_id(link: &mut Self::SpanLink, storage: &mut Self::Storage, value: u64);
+    fn set_link_trace_state(link: &mut Self::SpanLink, storage: &mut Self::Storage, value: D::Text);
+    fn set_link_flags(link: &mut Self::SpanLink, storage: &mut Self::Storage, value: u32);
+
+    fn get_event_time_unix_nano(event: &Self::SpanEvent, storage: &Self::Storage) -> u64;
+    fn get_event_name<'a>(event: &'a Self::SpanEvent, storage: &'a Self::Storage) -> &'a D::Text;
+
+    fn set_event_time_unix_nano(event: &mut Self::SpanEvent, storage: &mut Self::Storage, value: u64);
+    fn set_event_name(event: &mut Self::SpanEvent, storage: &mut Self::Storage, value: D::Text);
 }
 
 const IMMUT: u8 = 0;
-pub const MUT: u8 = 1;
+const MUT: u8 = 1;
 
 unsafe fn as_mut<T>(v: &T) -> &mut T {
     &mut *(v as *const _ as *mut _)
 }
 
-pub struct TraceValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> {
-    traces: &'a Traces<'a, T, D, Mut>,
-}
-
-pub struct ChunkValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> {
+struct TraceValue<'a, T: TraceProjector<D>, D: TraceData, C, const Type: u8, const Mut: u8 = IMMUT> {
     storage: &'a T::Storage,
-    chunk: &'a T::ChunkRef,
+    container: &'a C,
 }
 
-impl<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8> ChunkValue<'a, T, D, Type, MUT> {
-    pub fn storage(&self) -> &'a T::Storage {
-        self.storage
-    }
+pub type TracesValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::Trace, Type, Mut>;
+pub type ChunkValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::Chunk, Type, Mut>;
+pub type SpanValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::Span, Type, Mut>;
+pub type SpanLinkValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::SpanLink, Type, Mut>;
+pub type SpanEventValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::SpanEvent, Type, Mut>;
 
-    pub fn chunk(&self) -> &'a T::ChunkRef {
-        self.storage
-    }
-}
-
-impl<'a, T: TraceProjector<D>, D: TraceData, const Type: u8> ChunkValue<'a, T, D, Type, MUT> {
-    pub fn as_mut(&mut self) -> (&'a mut T::Storage, &'a mut T::ChunkRef) {
-        // SATEFY: As given by invariants on TraceProjector::Storage / this being MUT
-        (
-            &mut unsafe { *(self.storage as *const _ as *mut _) },
-            &mut unsafe { *(self.chunk as *const _ as *mut _) },
-        )
-    }
-}
-
-pub struct SpanValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> {
+#[derive(Debug)]
+pub struct Traces<'a, T: TraceProjector<D> + ?Sized, D: TraceData, const Mut: u8 = IMMUT> {
     storage: &'a T::Storage,
-    span: &'a T::SpanRef,
-}
-
-impl<'a, T: TraceProjector<D>, D: TraceData, const Type: u8> SpanValue<'a, T, D, Type, MUT> {
-    pub fn mut_storage(&mut self) -> &'a mut T::Storage {
-        // SATEFY: As given by invariants on TraceProjector::Storage
-        &mut unsafe { *(self.storage as *const _ as *mut _) }
-    }
-
-    pub fn mut_span(&mut self) -> &'a mut T::SpanRef {
-        // SATEFY: Exclusive by this being MUT
-        &mut unsafe { *(self.span as *const _ as *mut _) }
-    }
-}
-
-pub struct SpanLinkValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> {
-    storage: &'a T::Storage,
-    link: &'a T::SpanLinkRef,
-}
-
-impl<'a, T: TraceProjector<D>, D: TraceData, const Type: u8> SpanLinkValue<'a, T, D, Type, MUT> {
-    pub fn mut_storage(&mut self) -> &'a mut T::Storage {
-        // SATEFY: As given by invariants on TraceProjector::Storage
-        &mut unsafe { *(self.storage as *const _ as *mut _) }
-    }
-
-    pub fn mut_span(&mut self) -> &'a mut T::SpanLinkRef {
-        // SATEFY: Exclusive by this being MUT
-        &mut unsafe { *(self.link as *const _ as *mut _) }
-    }
-}
-
-pub struct SpanEventValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> {
-    storage: &'a T::Storage,
-    event: &'a T::SpanEventRef,
-}
-
-impl<'a, T: TraceProjector<D>, D: TraceData, const Type: u8> SpanEventValue<'a, T, D, Type, MUT> {
-    pub fn mut_storage(&mut self) -> &'a mut T::Storage {
-        // SATEFY: As given by invariants on TraceProjector::Storage
-        &mut unsafe { *(self.storage as *const _ as *mut _) }
-    }
-
-    pub fn mut_span(&mut self) -> &'a mut T::SpanRef {
-        // SATEFY: Exclusive by this being MUT
-        &mut unsafe { *(self.event as *const _ as *mut _) }
-    }
-}
-
-pub trait TraceValueDataType<D: TraceData> {
-    type Value;
-}
-
-pub trait TraceValueOp<S, C, D: TraceData>: TraceValueDataType<D> {
-    fn get(storage: &S, chunk: &C) -> Self::Value;
-}
-
-pub trait TraceValueMutOp<S, C, D: TraceData>: TraceValueOp<S, C, D>  {
-    fn set(storage: &mut S, chunk: &mut C, value: <Self as TraceValueDataType<D>>::Value);
-}
-
-impl<V: TraceValueOp<T, T::Storage, T::SpanRef>, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8> SpanValue<T, D, Type, Mut> {
-    fn get_self(&self) {
-        TraceValueOp::get(&self.storage, &self.span)
-    }
-}
-
-impl<V: TraceValueMutOp<T, T::Storage, T::SpanRef>, T: TraceProjector<D>, D: TraceData, const Type: u8> SpanValue<T, D, Type, MUT> {
-    fn set_self(&self, value: <Self as TraceValueDataType<D>>::Value) {
-        unsafe { TraceValueMutOp::set(as_mut(self.storage), as_mut(self.span), value) }
-    }
-}
-
-pub enum TraceValueType {
-    ContainerId = 1,
-    LanguageName = 2,
-    LanguageVersion = 3,
-    TracerVersion = 4,
-    RuntimeId = 5,
-    Env = 6,
-    Hostname = 7,
-    AppVersion = 8,
-}
-
-impl<T, D: TraceData, const Type: u8> TraceValueDataType<D> for TraceValue<T, D, Type> {
-    type Value = String;
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct Traces<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8 = IMMUT> {
-    storage: &'a T::Storage, // pin?
+    traces: &'a T::Trace,
 }
 pub type TracesMut<'a, T, D> = Traces<'a, T, D, MUT>;
 
-impl<T: TraceProjector<D>, D: TraceData, const Mut: u8> Traces<T, D, Mut> {
-    fn value<const Type: u8>(&self) -> TraceValue<T, D, Type> {
-        TraceValue {
-            traces: self,
+impl<T: TraceProjector<D>, D: TraceData> Clone for Traces<'_, T, D> { // Note: not for MUT
+    fn clone(&self) -> Self {
+        Traces {
+            storage: self.storage,
+            traces: self.traces,
+        }
+    }
+}
+impl<T: TraceProjector<D>, D: TraceData> Copy for Traces<'_, T, D> {}
+
+impl<'a, T: TraceProjector<D>, D: TraceData> Traces<'a, T, D> {
+    pub fn new(traces: &'a T::Trace, storage: &'a T::Storage) -> Self {
+        Self::generic_new(traces, storage)
+    }
+}
+
+impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> Traces<'a, T, D, Mut> {
+    fn generic_new(traces: &'a T::Trace, storage: &'a T::Storage) -> Self {
+        Traces {
+            storage,
+            traces,
         }
     }
 
-    pub fn container_id(&self) -> D::Text {
-        self.value::<{ TraceValueType::ContainerId as u8 }>().get()
+    pub fn container_id(&self) -> &D::Text {
+        T::get_trace_container_id(self.traces, self.storage)
     }
 
-    pub fn language_name(&self) -> D::Text {
-        self.value::<{ TraceValueType::LanguageName as u8 }>().get()
+    pub fn language_name(&self) -> &D::Text {
+        T::get_trace_language_name(self.traces, self.storage)
     }
 
-    pub fn language_version(&self) -> D::Text {
-        self.value::<{ TraceValueType::LanguageVersion as u8 }>().get()
+    pub fn language_version(&self) -> &D::Text {
+        T::get_trace_language_version(self.traces, self.storage)
     }
 
-    pub fn tracer_version(&self) -> D::Text {
-        self.value::<{ TraceValueType::TracerVersion as u8 }>().get()
+    pub fn tracer_version(&self) -> &D::Text {
+        T::get_trace_tracer_version(self.traces, self.storage)
     }
 
-    pub fn runtime_id(&self) -> D::Text {
-        self.value::<{ TraceValueType::RuntimeId as u8 }>().get()
+    pub fn runtime_id(&self) -> &D::Text {
+        T::get_trace_runtime_id(self.traces, self.storage)
     }
 
-    pub fn env(&self) -> D::Text {
-        self.value::<{ TraceValueType::Env as u8 }>().get()
+    pub fn env(&self) -> &D::Text {
+        T::get_trace_env(self.traces, self.storage)
     }
 
-    pub fn hostname(&self) -> D::Text {
-        self.value::<{ TraceValueType::Hostname as u8 }>().get()
+    pub fn hostname(&self) -> &D::Text {
+        T::get_trace_hostname(self.traces, self.storage)
     }
 
-    pub fn app_version(&self) -> D::Text {
-        self.value::<{ TraceValueType::AppVersion as u8 }>().get()
+    pub fn app_version(&self) -> &D::Text {
+        T::get_trace_app_version(self.traces, self.storage)
     }
 
-    pub fn attributes(&self) -> TraceAttributes<T, D, T::TraceRef, Mut> {
+    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Trace>, T::Trace> {
         TraceAttributes {
             storage: self.storage,
-            container: self,
+            container: AttrRef(self.traces),
+            _phantom: PhantomData,
         }
     }
 
-    pub fn chunks(&self) -> Nested<T, D, T::TraceRef, T::ChunkRef, Mut> {
-        Nested {
+    pub fn chunks(&self) -> ChunkIterator<'a, T, D, std::slice::Iter<'a, T::Chunk>> {
+        ChunkIterator {
             storage: self.storage,
-            container: self,
-            _phantom: PhantomData,
+            it: T::chunk_iterator(self.traces)
         }
     }
 }
 
-impl <T: TraceProjector<D>, D: TraceData> TracesMut<'_, T, D> {
+impl<'a, T: TraceProjector<D>, D: TraceData> TracesMut<'a, T, D> {
+    pub fn new_mut(traces: &'a mut T::Trace, storage: &'a mut T::Storage) -> Self {
+        Self::generic_new(traces, storage)
+    }
+
     pub fn set_container_id<I: Into<D::Text>>(&mut self, value: I) {
-        self.value::<{ TraceValueType::ContainerId as u8 }>().set(value.into())
+        unsafe { T::set_trace_container_id(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
     pub fn set_language_name<I: Into<D::Text>>(&mut self, value: I) {
-        self.value::<{ TraceValueType::LanguageName as u8 }>().set(value.into())
+        unsafe { T::set_trace_language_name(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
     pub fn set_language_version<I: Into<D::Text>>(&mut self, value: I) {
-        self.value::<{ TraceValueType::LanguageVersion as u8 }>().set(value.into())
+        unsafe { T::set_trace_language_version(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
     pub fn set_tracer_version<I: Into<D::Text>>(&mut self, value: I) {
-        self.value::<{ TraceValueType::TracerVersion as u8 }>().set(value.into())
+        unsafe { T::set_trace_tracer_version(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
     pub fn set_runtime_id<I: Into<D::Text>>(&mut self, value: I) {
-        self.value::<{ TraceValueType::RuntimeId as u8 }>().set(value.into())
+        unsafe { T::set_trace_runtime_id(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
     pub fn set_env<I: Into<D::Text>>(&mut self, value: I) {
-        self.value::<{ TraceValueType::Env as u8 }>().set(value.into())
+        unsafe { T::set_trace_env(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
     pub fn set_hostname<I: Into<D::Text>>(&mut self, value: I) {
-        self.value::<{ TraceValueType::Hostname as u8 }>().set(value.into())
+        unsafe { T::set_trace_hostname(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
     pub fn set_app_version<I: Into<D::Text>>(&mut self, value: I) {
-        self.value::<{ TraceValueType::AppVersion as u8 }>().set(value.into())
-    }
-}
-
-pub struct Nested<'a, T: TraceProjector<D>, D: TraceData, C, I, const Mut: u8 = IMMUT> {
-    storage: &'a T::Storage,
-    container: &'a C,
-    _phantom: PhantomData<I>,
-}
-
-struct NestedIterator<'a, T: TraceProjector<D>, D: TraceData, I: Iterator> {
-    storage: &'a T::Storage,
-    it: I,
-}
-
-impl<T: TraceProjector<D>, D: TraceData, I: Iterator<Item = T::ChunkRef>> Iterator for NestedIterator<T, D, I> {
-    type Item = TraceChunk<T, D>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.it.next().map(|chunk| {
-            TraceChunk {
-                storage: self.storage,
-                chunk,
-            }
-        })
-    }
-}
-
-impl<'a, T: TraceProjector<D>, D: TraceData> IntoIterator for &'a mut Nested<'a, T, D, T::TraceRef, T::ChunkRef> {
-    type Item = TraceChunk<T, D>;
-    type IntoIter = NestedIterator<'a, T, D, std::slice::Iter<'a, T::ChunkRef>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        NestedIterator {
-            storage: self.storage,
-            it: T::chunk_iterator(self.container)
-        }
-    }
-}
-
-pub enum ChunkValueType {
-    Priority = 1,
-    Origin = 2,
-    DroppedTrace = 3,
-    TraceId = 4,
-    SamplingMechanism = 5,
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for ChunkValue<T, D, { ChunkValueType::Priority as u8 }, Mut> {
-    type Value = i32;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for ChunkValue<T, D, { ChunkValueType::Origin as u8 }, Mut> {
-    type Value = String;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for ChunkValue<T, D, { ChunkValueType::DroppedTrace as u8 }, Mut> {
-    type Value = bool;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for ChunkValue<T, D, { ChunkValueType::TraceId as u8 }, Mut> {
-    type Value = u128;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for ChunkValue<T, D, { ChunkValueType::SamplingMechanism as u8 }, Mut> {
-    type Value = u32;
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct TraceChunk<T: TraceProjector<D>, D: TraceData, const Mut: u8 = IMMUT> {
-    storage: T::Storage,
-    chunk: T::ChunkRef,
-}
-
-impl<T: TraceProjector<D>, D: TraceData, const Mut: u8> TraceChunk<T, D, Mut> {
-    fn value<const Type: u8>(&self) -> ChunkValue<T, D, Type, Mut> {
-        ChunkValue {
-            chunk: self.chunk,
-            storage: self.storage,
-        }
+        unsafe { T::set_trace_app_version(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
-    pub fn priority(&self) -> ChunkValue<T, D, { ChunkValueType::Priority as u8 }, Mut> {
-        self.value()
-    }
-
-    pub fn origin(&self) -> ChunkValue<T, D, { ChunkValueType::Origin as u8 }, Mut> {
-        self.value()
-    }
-
-    pub fn dropped_trace(&self) -> ChunkValue<T, D, { ChunkValueType::DroppedTrace as u8 }, Mut> {
-        self.value()
-    }
-
-    pub fn trace_id(&self) -> ChunkValue<T, D, { ChunkValueType::TraceId as u8 }, Mut> {
-        self.value()
-    }
-
-    pub fn sampling_mechanism(&self) -> ChunkValue<T, D, { ChunkValueType::SamplingMechanism as u8 }, Mut> {
-        self.value()
-    }
-
-    pub fn attributes(&self) -> TraceAttributes<T, D, T::ChunkRef, Mut> {
+    pub fn attributes_mut(&mut self) -> TraceAttributesMut<'a, T, D, AttrRef<'a, T::Trace>, T::Trace> {
         TraceAttributes {
             storage: self.storage,
-            container: self,
-        }
-    }
-
-    pub fn spans(&self) -> Nested<T, D, T::ChunkRef, T::SpanRef, Mut> {
-        Nested {
-            storage: self.storage,
-            container: self,
+            container: AttrRef(self.traces),
             _phantom: PhantomData,
         }
     }
+
+    pub fn chunks_mut(&mut self) -> ChunkIteratorMut<'a, T, D, std::slice::Iter<'a, T::Chunk>> {
+        ChunkIterator {
+            storage: self.storage,
+            it: T::chunk_iterator(self.traces)
+        }
+    }
+
+    pub fn retain_chunks(&mut self, mut predicate: impl FnMut(&mut TraceChunkMut<T, D>) -> bool) {
+        // We may not make self.storage mut inside the closure. As that would be a double mut-borrow
+        unsafe {
+            T::retain_chunks(as_mut(self.traces), as_mut(self.storage), |chunk, storage|
+                predicate(&mut TraceChunk {
+                    storage,
+                    chunk,
+                })
+            )
+        }
+    }
+
+    pub fn add_chunk(&mut self) -> TraceChunkMut<T, D> {
+        TraceChunk {
+            storage: self.storage,
+            chunk: unsafe { T::add_chunk(as_mut(self.traces), as_mut(self.storage)) },
+        }
+    }
 }
 
+pub struct ChunkIterator<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Chunk>, const Mut: u8 = IMMUT> where T::Chunk: 'a {
+    storage: &'a T::Storage,
+    it: I,
+}
+pub type ChunkIteratorMut<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Chunk>> = ChunkIterator<'a, T, D, I, MUT>;
 
-impl<T: TraceProjector<D>, D: TraceData, I: Iterator<Item = T::SpanRef>> Iterator for NestedIterator<T, D, I> {
-    type Item = TraceChunk<T, D>;
+impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Chunk>, const Mut: u8> Iterator for ChunkIterator<'a, T, D, I, Mut> where T::Chunk: 'a {
+    type Item = TraceChunk<'a, T, D, Mut>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.it.next().map(|chunk| {
@@ -402,86 +302,134 @@ impl<T: TraceProjector<D>, D: TraceData, I: Iterator<Item = T::SpanRef>> Iterato
     }
 }
 
-impl<'a, T: TraceProjector<D>, D: TraceData> IntoIterator for &'a mut Nested<T, D, T::ChunkRef, T::SpanRef> {
-    type Item = TraceChunk<T, D>;
-    type IntoIter = NestedIterator<'a, T, D, std::slice::Iter<'a, T::SpanRef>>;
+#[derive(Debug)]
+pub struct TraceChunk<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8 = IMMUT> {
+    storage: &'a T::Storage,
+    chunk: &'a T::Chunk,
+}
+pub type TraceChunkMut<'a, T, D> = TraceChunk<'a, T, D, MUT>;
 
-    fn into_iter(self) -> Self::IntoIter {
-        NestedIterator {
+impl<T: TraceProjector<D>, D: TraceData> Clone for TraceChunk<'_, T, D> { // Note: not for MUT
+    fn clone(&self) -> Self {
+        TraceChunk {
             storage: self.storage,
-            it: T::span_iterator(self.container)
+            chunk: self.chunk,
+        }
+    }
+}
+impl<T: TraceProjector<D>, D: TraceData> Copy for TraceChunk<'_, T, D> {}
+
+impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> TraceChunk<'a, T, D, Mut> {
+    pub fn priority(&self) -> i32 {
+        T::get_chunk_priority(self.chunk, self.storage)
+    }
+
+    pub fn origin(&self) -> &D::Text {
+        T::get_chunk_origin(self.chunk, self.storage)
+    }
+
+    pub fn dropped_trace(&self) -> bool {
+        T::get_chunk_dropped_trace(self.chunk, self.storage)
+    }
+
+    pub fn trace_id(&self) -> u128 {
+        T::get_chunk_trace_id(self.chunk, self.storage)
+    }
+
+    pub fn sampling_mechanism(&self) -> u32 {
+        T::get_chunk_sampling_mechanism(self.chunk, self.storage)
+    }
+
+    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Chunk>, T::Chunk> {
+        TraceAttributes {
+            storage: self.storage,
+            container: AttrRef(self.chunk),
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn spans(&self) -> SpanIterator<'a, T, D, std::slice::Iter<'a, T::Span>> {
+        SpanIterator {
+            storage: self.storage,
+            it: T::span_iterator(self.chunk)
         }
     }
 }
 
-pub enum SpanValueType {
-    Service = 1,
-    Name = 2,
-    Resource = 3,
-    Type = 4,
-    SpanId = 5,
-    ParentId = 6,
-    Start = 7,
-    Duration = 8,
-    Error = 9,
-    Env = 10,
-    Version = 11,
-    Component = 12,
-    Kind = 13,
+impl<'a, T: TraceProjector<D>, D: TraceData> TraceChunk<'a, T, D, MUT> {
+    pub fn set_priority(&self, value: i32) {
+        unsafe { T::set_chunk_priority(as_mut(self.chunk), as_mut(self.storage), value) }
+    }
+
+    pub fn set_origin<I: Into<D::Text>>(&self, value: I) {
+        unsafe { T::set_chunk_origin(as_mut(self.chunk), as_mut(self.storage), value.into()) }
+    }
+
+    pub fn set_dropped_trace(&self, value: bool) {
+        unsafe { T::set_chunk_dropped_trace(as_mut(self.chunk), as_mut(self.storage), value) }
+    }
+
+    pub fn set_trace_id(&self, value: u128) {
+        unsafe { T::set_chunk_trace_id(as_mut(self.chunk), as_mut(self.storage), value) }
+    }
+
+    pub fn set_sampling_mechanism(&self, value: u32) {
+        unsafe { T::set_chunk_sampling_mechanism(as_mut(self.chunk), as_mut(self.storage), value) }
+    }
+
+    pub fn attributes_mut(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Chunk>, T::Chunk, MUT> {
+        TraceAttributes {
+            storage: self.storage,
+            container: AttrRef(self.chunk),
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn spans_mut(&mut self) -> SpanIteratorMut<'a, T, D, std::slice::Iter<'a, T::Span>> {
+        SpanIterator {
+            storage: self.storage,
+            it: T::span_iterator(self.chunk)
+        }
+    }
+
+    pub fn retain_spans(&mut self, mut predicate: impl FnMut(&mut SpanMut<T, D>) -> bool) {
+        // We may not make self.storage mut inside the closure. As that would be a double mut-borrow
+        unsafe {
+            T::retain_spans(as_mut(self.chunk), as_mut(self.storage), |span, storage|
+                predicate(&mut Span {
+                    storage,
+                    span,
+                })
+            )
+        }
+    }
+
+    pub fn add_span(&mut self) -> SpanMut<T, D> {
+        Span {
+            storage: self.storage,
+            span: unsafe { T::add_span(as_mut(self.chunk), as_mut(self.storage)) }
+        }
+    }
 }
 
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanValue<T, D, { SpanValueType::Service as u8 }, Mut> {
-    type Value = String;
+pub struct SpanIterator<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Span>, const Mut: u8 = IMMUT> where T::Span: 'a {
+    storage: &'a T::Storage,
+    it: I,
 }
+pub type SpanIteratorMut<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Span>> = SpanIterator<'a, T, D, I, MUT>;
 
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanValue<T, D, { SpanValueType::Name as u8 }, Mut> {
-    type Value = String;
+impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Span>, const Mut: u8> Iterator for SpanIterator<'a, T, D, I, Mut> where T::Span: 'a {
+    type Item = Span<'a, T, D>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.it.next().map(|span| {
+            Span {
+                storage: self.storage,
+                span,
+            }
+        })
+    }
 }
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanValue<T, D, { SpanValueType::Resource as u8 }, Mut> {
-    type Value = String;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanValue<T, D, { SpanValueType::Type as u8 }, Mut> {
-    type Value = String;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanValue<T, D, { SpanValueType::SpanId as u8 }, Mut> {
-    type Value = u64;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanValue<T, D, { SpanValueType::ParentId as u8 }, Mut> {
-    type Value = u64;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanValue<T, D, { SpanValueType::Start as u8 }, Mut> {
-    type Value = i64;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanValue<T, D, { SpanValueType::Duration as u8 }, Mut> {
-    type Value = i64;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanValue<T, D, { SpanValueType::Error as u8 }, Mut> {
-    type Value = bool;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanValue<T, D, { SpanValueType::Env as u8 }, Mut> {
-    type Value = String;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanValue<T, D, { SpanValueType::Version as u8 }, Mut> {
-    type Value = String;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanValue<T, D, { SpanValueType::Component as u8 }, Mut> {
-    type Value = String;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanValue<T, D, { SpanValueType::Kind as u8 }, Mut> {
-    type Value = SpanKind;
-}
-
 
 /// The generic representation of a V04 span.
 ///
@@ -494,376 +442,878 @@ impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanValue<T, D, {
 ///     let _ = span.attributes.get("foo");
 /// }
 /// ```
-#[derive(Debug, Copy, Clone)]
-pub struct Span<T: TraceProjector<D>, D: TraceData, const Mut: u8 = IMMUT> {
-    storage: T::Storage,
-    span: T::SpanRef,
+#[derive(Debug)]
+pub struct Span<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8 = IMMUT> {
+    storage: &'a T::Storage,
+    span: &'a T::Span,
 }
+pub type SpanMut<'a, T, D> = Span<'a, T, D, MUT>;
 
-impl<T: TraceProjector<D>, D: TraceData, const Mut: u8> Span<T, D, Mut> {
-    fn value<const Type: u8>(&self) -> SpanValue<T, D, Type, Mut> {
-        SpanValue {
-            span: self.span,
+impl<T: TraceProjector<D>, D: TraceData> Clone for Span<'_, T, D> { // Note: not for MUT
+    fn clone(&self) -> Self {
+        Span {
             storage: self.storage,
+            span: self.span,
         }
     }
+}
+impl<T: TraceProjector<D>, D: TraceData> Copy for Span<'_, T, D> {}
 
-    pub fn service(&self) -> SpanValue<T, D, { SpanValueType::Service as u8 }, Mut> {
-        self.value()
+impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> Span<'a, T, D, Mut> {
+    pub fn service(&self) -> &D::Text {
+        T::get_span_service(self.span, self.storage)
     }
 
-    pub fn name(&self) -> SpanValue<T, D, { SpanValueType::Name as u8 }, Mut> {
-        self.value()
+    pub fn name(&self) -> &D::Text {
+        T::get_span_name(self.span, self.storage)
     }
 
-    pub fn resource(&self) -> SpanValue<T, D, { SpanValueType::Resource as u8 }, Mut> {
-        self.value()
+    pub fn resource(&self) -> &D::Text {
+        T::get_span_resource(self.span, self.storage)
     }
 
-    pub fn r#type(&self) -> SpanValue<T, D, { SpanValueType::Type as u8 }, Mut> {
-        self.value()
+    pub fn r#type(&self) -> &D::Text {
+        T::get_span_type(self.span, self.storage)
     }
 
-    pub fn span_id(&self) -> SpanValue<T, D, { SpanValueType::SpanId as u8 }, Mut> {
-        self.value()
+    pub fn span_id(&self) -> u64 {
+        T::get_span_span_id(self.span, self.storage)
     }
 
-    pub fn parent_id(&self) -> SpanValue<T, D, { SpanValueType::ParentId as u8 }, Mut> {
-        self.value()
+    pub fn parent_id(&self) -> u64 {
+        T::get_span_parent_id(self.span, self.storage)
     }
 
-    pub fn start(&self) -> SpanValue<T, D, { SpanValueType::Start as u8 }, Mut> {
-        self.value()
+    pub fn start(&self) -> i64 {
+        T::get_span_start(self.span, self.storage)
     }
 
-    pub fn duration(&self) -> SpanValue<T, D, { SpanValueType::Duration as u8 }, Mut> {
-        self.value()
+    pub fn duration(&self) -> i64 {
+        T::get_span_duration(self.span, self.storage)
     }
 
-    pub fn error(&self) -> SpanValue<T, D, { SpanValueType::Error as u8 }, Mut> {
-        self.value()
+    pub fn error(&self) -> bool {
+        T::get_span_error(self.span, self.storage)
     }
 
-    pub fn env(&self) -> SpanValue<T, D, { SpanValueType::Env as u8 }, Mut> {
-        self.value()
+    pub fn env(&self) -> &D::Text {
+        T::get_span_env(self.span, self.storage)
     }
 
-    pub fn version(&self) -> SpanValue<T, D, { SpanValueType::Version as u8 }, Mut> {
-        self.value()
+    pub fn version(&self) -> &D::Text {
+        T::get_span_version(self.span, self.storage)
     }
 
-    pub fn component(&self) -> SpanValue<T, D, { SpanValueType::Component as u8 }, Mut> {
-        self.value()
+    pub fn component(&self) -> &D::Text {
+        T::get_span_component(self.span, self.storage)
     }
 
-    pub fn kind(&self) -> SpanValue<T, D, { SpanValueType::Kind as u8 }, Mut> {
-        self.value()
+    pub fn kind(&self) -> SpanKind {
+        T::get_span_kind(self.span, self.storage)
     }
 
-
-    pub fn attributes(&self) -> TraceAttributes<T, D, T::SpanRef, Mut> {
+    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Span>, T::Span> {
         TraceAttributes {
             storage: self.storage,
-            container: self,
-        }
-    }
-
-    pub fn span_links(&self) -> Nested<T, D, T::SpanRef, T::SpanLinkRef, Mut> {
-        Nested {
-            storage: self.storage,
-            container: self,
+            container: AttrRef(self.span),
             _phantom: PhantomData,
         }
     }
 
-    pub fn span_events(&self) -> Nested<T, D, T::SpanRef, T::SpanEventRef, Mut> {
-        Nested {
+    pub fn span_links(&self) -> SpanLinkIterator<'a, T, D, std::slice::Iter<'a, T::SpanLink>> {
+        SpanLinkIterator {
             storage: self.storage,
-            container: self,
-            _phantom: PhantomData,
+            it: T::span_link_iterator(self.span)
+        }
+    }
+
+    pub fn retain_span_links(&mut self, mut predicate: impl FnMut(&mut SpanLinkMut<T, D>) -> bool) {
+        // We may not make self.storage mut inside the closure. As that would be a double mut-borrow
+        unsafe {
+            T::retain_span_links(as_mut(self.span), as_mut(self.storage), |link, storage|
+                predicate(&mut SpanLink {
+                    storage,
+                    link,
+                })
+            )
+        }
+    }
+
+    pub fn add_span_link(&mut self) -> SpanLinkMut<T, D> {
+        SpanLink {
+            storage: self.storage,
+            link: unsafe { T::add_span_link(as_mut(self.span), as_mut(self.storage)) }
+        }
+    }
+
+    pub fn span_events(&self) -> SpanEventIterator<'a, T, D, std::slice::Iter<'a,T::SpanEvent>> {
+        SpanEventIterator {
+            storage: self.storage,
+            it: T::span_event_iterator(self.span)
+        }
+    }
+
+    pub fn retain_span_events(&mut self, mut predicate: impl FnMut(&mut SpanEventMut<T, D>) -> bool) {
+        // We may not make self.storage mut inside the closure. As that would be a double mut-borrow
+        unsafe {
+            T::retain_span_events(as_mut(self.span), as_mut(self.storage), |event, storage|
+                predicate(&mut SpanEvent {
+                    storage,
+                    event,
+                })
+            )
+        }
+    }
+
+    pub fn add_span_event(&mut self) -> SpanEventMut<T, D> {
+        SpanEvent {
+            storage: self.storage,
+            event: unsafe { T::add_span_event(as_mut(self.span), as_mut(self.storage)) }
         }
     }
 }
 
-pub enum SpanLinkType {
-    TraceId = 1,
-    SpanId = 2,
-    TraceState = 3,
-    Flags = 4,
+impl <'a, T: TraceProjector<D>, D: TraceData> SpanMut<'a, T, D> {
+    pub fn set_service<I: Into<D::Text>>(&mut self, value: I) {
+        unsafe { T::set_span_service(as_mut(self.span), as_mut(self.storage), value.into()) }
+    }
+
+    pub fn set_name<I: Into<D::Text>>(&mut self, value: I) {
+        unsafe { T::set_span_name(as_mut(self.span), as_mut(self.storage), value.into()) }
+    }
+
+    pub fn set_resource<I: Into<D::Text>>(&mut self, value: I) {
+        unsafe { T::set_span_resource(as_mut(self.span), as_mut(self.storage), value.into()) }
+    }
+
+    pub fn set_type<I: Into<D::Text>>(&mut self, value: I) {
+        unsafe { T::set_span_type(as_mut(self.span), as_mut(self.storage), value.into()) }
+    }
+
+    pub fn set_span_id(&mut self, value: u64) {
+        unsafe { T::set_span_span_id(as_mut(self.span), as_mut(self.storage), value) }
+    }
+
+    pub fn set_parent_id(&mut self, value: u64) {
+        unsafe { T::set_span_parent_id(as_mut(self.span), as_mut(self.storage), value) }
+    }
+
+    pub fn set_start(&mut self, value: i64) {
+        unsafe { T::set_span_start(as_mut(self.span), as_mut(self.storage), value) }
+    }
+
+    pub fn set_duration(&mut self, value: i64) {
+        unsafe { T::set_span_duration(as_mut(self.span), as_mut(self.storage), value) }
+    }
+
+    pub fn set_error(&mut self, value: bool) {
+        unsafe { T::set_span_error(as_mut(self.span), as_mut(self.storage), value) }
+    }
+
+    pub fn set_env<I: Into<D::Text>>(&mut self, value: I) {
+        unsafe { T::set_span_env(as_mut(self.span), as_mut(self.storage), value.into()) }
+    }
+
+    pub fn set_version<I: Into<D::Text>>(&mut self, value: I) {
+        unsafe { T::set_span_version(as_mut(self.span), as_mut(self.storage), value.into()) }
+    }
+
+    pub fn set_component<I: Into<D::Text>>(&mut self, value: I) {
+        unsafe { T::set_span_component(as_mut(self.span), as_mut(self.storage), value.into()) }
+    }
+
+    pub fn set_kind(&mut self, value: SpanKind) {
+        unsafe { T::set_span_kind(as_mut(self.span), as_mut(self.storage), value) }
+    }
+
+    pub fn attributes_mut(&mut self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Span>, T::Span, MUT> {
+        TraceAttributes {
+            storage: self.storage,
+            container: AttrRef(self.span),
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn span_links_mut(&mut self) -> SpanLinkIteratorMut<'a, T, D, std::slice::Iter<'a, T::SpanLink>> {
+        SpanLinkIterator {
+            storage: self.storage,
+            it: T::span_link_iterator(self.span)
+        }
+    }
+
+    pub fn span_events_mut(&mut self) -> SpanEventIteratorMut<'a, T, D, std::slice::Iter<'a, T::SpanEvent>> {
+        SpanEventIterator {
+            storage: self.storage,
+            it: T::span_event_iterator(self.span)
+        }
+    }
 }
 
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanLinkValue<T, D, { SpanLinkType::TraceId as u8 }, Mut> {
-    type Value = u128;
+pub struct SpanLinkIterator<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanLink>, const Mut: u8 = IMMUT> where T::SpanLink: 'a {
+    storage: &'a T::Storage,
+    it: I,
+}
+pub type SpanLinkIteratorMut<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanLink>> = SpanLinkIterator<'a, T, D, I, MUT>;
+
+impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanLink>, const Mut: u8> Iterator for SpanLinkIterator<'a, T, D, I, Mut> where T::SpanLink: 'a {
+    type Item = SpanLink<'a, T, D>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.it.next().map(|link| {
+            SpanLink {
+                storage: self.storage,
+                link,
+            }
+        })
+    }
 }
 
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanLinkValue<T, D, { SpanLinkType::SpanId as u8 }, Mut> {
-    type Value = u64;
+pub struct SpanEventIterator<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanEvent>, const Mut: u8 = IMMUT> where T::SpanEvent: 'a {
+    storage: &'a T::Storage,
+    it: I,
 }
+pub type SpanEventIteratorMut<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanEvent>> = SpanEventIterator<'a, T, D, I, MUT>;
 
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanLinkValue<T, D, { SpanLinkType::TraceState as u8 }, Mut> {
-    type Value = D::Text;
+impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanEvent>, const Mut: u8> Iterator for SpanEventIterator<'a, T, D, I, Mut> where T::SpanEvent: 'a {
+    type Item = SpanEvent<'a, T, D>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.it.next().map(|event| {
+            SpanEvent {
+                storage: self.storage,
+                event,
+            }
+        })
+    }
 }
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for SpanLinkValue<T, D, { SpanLinkType::Flags as u8 }, Mut> {
-    type Value = u32;
-}
-
 
 /// The generic representation of a V04 span link.
 /// `T` is the type used to represent strings in the span link.
 #[derive(Debug)]
-pub struct SpanLink<T: TraceProjector<D>, D: TraceData, const Mut: u8 = IMMUT> {
-    storage: T::Storage,
-    link: T::SpanLinkRef,
+pub struct SpanLink<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8 = IMMUT> {
+    storage: &'a T::Storage,
+    link: &'a T::SpanLink,
 }
+pub type SpanLinkMut<'a, T, D> = SpanLink<'a, T, D, MUT>;
 
-impl<T: TraceProjector<D>, D: TraceData, const Mut: u8> SpanLink<T, D, Mut> {
-    fn value<const Type: u8>(&self) -> SpanLinkValue<T, D, Type, Mut> {
-        SpanLinkValue {
-            link: self.link,
+impl<T: TraceProjector<D>, D: TraceData> Clone for SpanLink<'_, T, D> { // Note: not for MUT
+    fn clone(&self) -> Self {
+        SpanLink {
             storage: self.storage,
+            link: self.link,
         }
     }
+}
+impl<T: TraceProjector<D>, D: TraceData> Copy for SpanLink<'_, T, D> {}
 
-    pub fn trace_id(&self) -> SpanLinkValue<T, D, { SpanLinkType::TraceId as u8 }, Mut> {
-        self.value()
+
+impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> SpanLink<'a, T, D, Mut> {
+    pub fn trace_id(&self) -> u128 {
+        T::get_link_trace_id(self.link, self.storage)
     }
 
-    pub fn span_id(&self) -> SpanLinkValue<T, D, { SpanLinkType::SpanId as u8 }, Mut> {
-        self.value()
+    pub fn span_id(&self) -> u64 {
+        T::get_link_span_id(self.link, self.storage)
     }
 
-    pub fn trace_state(&self) -> SpanLinkValue<T, D, { SpanLinkType::TraceState as u8 }, Mut> {
-        self.value()
+    pub fn trace_state(&self) -> &D::Text {
+        T::get_link_trace_state(self.link, self.storage)
     }
 
-    pub fn flags(&self) -> SpanLinkValue<T, D, { SpanLinkType::Flags as u8 }, Mut> {
-        self.value()
+    pub fn flags(&self) -> u32 {
+        T::get_link_flags(self.link, self.storage)
     }
 
-    pub fn attributes(&self) -> TraceAttributes<T, D, T::SpanLinkRef, Mut> {
+    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanLink>, T::SpanLink> {
         TraceAttributes {
             storage: self.storage,
-            container: self,
+            container: AttrRef(self.link),
+            _phantom: PhantomData,
         }
     }
 }
 
-pub enum SpanEventType {
-    TimeUnixNano = 1,
-    Name = 2,
-}
+impl<'a, T: TraceProjector<D>, D: TraceData> SpanLinkMut<'a, T, D> {
+    pub fn set_trace_id(&self, value: u128) {
+        unsafe { T::set_link_trace_id(as_mut(self.link), as_mut(self.storage), value) }
+    }
 
-impl<T, D: TraceData> TraceValueDataType<D> for SpanEventValue<T, D, { SpanEventType::TimeUnixNano as u8 }> {
-    type Value = u64;
-}
+    pub fn set_span_id(&self, value: u64) {
+        unsafe { T::set_link_span_id(as_mut(self.link), as_mut(self.storage), value) }
+    }
 
-impl<T, D: TraceData> TraceValueDataType<D> for SpanEventValue<T, D, { SpanEventType::Name as u8 }> {
-    type Value = D::Text;
-}
+    pub fn set_trace_state<I: Into<D::Text>>(&self, value: I) {
+        unsafe { T::set_link_trace_state(as_mut(self.link), as_mut(self.storage), value.into()) }
+    }
 
+    pub fn set_flags(&self, value: u32) {
+        unsafe { T::set_link_flags(as_mut(self.link), as_mut(self.storage), value) }
+    }
+
+    pub fn attributes_mut(&mut self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanLink>, T::SpanLink, MUT> {
+        TraceAttributes {
+            storage: self.storage,
+            container: AttrRef(self.link),
+            _phantom: PhantomData,
+        }
+    }
+}
 
 /// The generic representation of a V04 span event.
 /// `T` is the type used to represent strings in the span event.
 #[derive(Debug)]
-pub struct SpanEvent<T: TraceProjector<D>, D: TraceData, const Mut: u8 = IMMUT> {
-    storage: T::Storage,
-    event: T::SpanEventRef,
+pub struct SpanEvent<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8 = IMMUT> {
+    storage: &'a T::Storage,
+    event: &'a T::SpanEvent,
 }
+pub type SpanEventMut<'a, T, D> = SpanEvent<'a, T, D, MUT>;
 
-impl<T: TraceProjector<D>, D: TraceData, const Mut: u8> SpanEvent<T, D, Mut> {
-    fn value<const Type: u8>(&self) -> SpanEventValue<T, D, Type, Mut> {
-        SpanEventValue {
+impl<T: TraceProjector<D>, D: TraceData> Clone for SpanEvent<'_, T, D> { // Note: not for MUT
+    fn clone(&self) -> Self {
+        SpanEvent {
             storage: self.storage,
             event: self.event,
         }
     }
+}
+impl<T: TraceProjector<D>, D: TraceData> Copy for SpanEvent<'_, T, D> {}
 
-    pub fn time_unix_nano(&self) -> SpanEventValue<T, D, { SpanEventType::TimeUnixNano as u8 }, Mut> {
-        self.value()
+impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> SpanEvent<'a, T, D, Mut> {
+    pub fn time_unix_nano(&self) -> u64 {
+        T::get_event_time_unix_nano(self.event, self.storage)
     }
 
-    pub fn name(&self) -> SpanEventValue<T, D, { SpanEventType::Name as u8 }, Mut> {
-        self.value()
+    pub fn name(&self) -> &D::Text {
+        T::get_event_name(self.event, self.storage)
+    }
+
+    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanEvent>, T::SpanEvent> {
+        TraceAttributes {
+            storage: self.storage,
+            container: AttrRef(self.event),
+            _phantom: PhantomData,
+        }
     }
 }
 
-enum AttributeAnyValueType {
-    String = 1,
-    Bytes = 2,
-    Boolean = 3,
-    Integer = 4,
-    Double = 5,
-    Array = 6,
-    Map = 7,
+impl<'a, T: TraceProjector<D>, D: TraceData> SpanEventMut<'a, T, D> {
+    pub fn set_time_unix_nano(&mut self, value: u64) {
+        unsafe { T::set_event_time_unix_nano(as_mut(self.event), as_mut(self.storage), value) }
+    }
+
+    pub fn set_name<I: Into<D::Text>>(&mut self, value: I) {
+        unsafe { T::set_event_name(as_mut(self.event), as_mut(self.storage), value.into()) }
+    }
+
+    pub fn attributes_mut(&mut self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanEvent>, T::SpanEvent, MUT> {
+        TraceAttributes {
+            storage: self.storage,
+            container: AttrRef(self.event),
+            _phantom: PhantomData,
+        }
+    }
 }
 
-pub struct AttributeInnerValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> {
-    pub storage: &'a mut T::Storage,
-    pub container: &'a mut T::AttributeRef,
+pub enum AttributeAnyValueType {
+    String,
+    Bytes,
+    Boolean,
+    Integer,
+    Double,
+    Array,
+    Map,
 }
 
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for AttributeInnerValue<T, D, { AttributeAnyValueType::String as u8 }, Mut> {
-    type Value = D::Text;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for AttributeInnerValue<T, D, { AttributeAnyValueType::Bytes as u8 }, Mut> {
-    type Value = D::Bytes;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for AttributeInnerValue<T, D, { AttributeAnyValueType::Boolean as u8 }, Mut> {
-    type Value = bool;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for AttributeInnerValue<T, D, { AttributeAnyValueType::Integer as u8 }, Mut> {
-    type Value = i64;
-}
-
-impl<T, D: TraceData, const Mut: u8> TraceValueDataType<D> for AttributeInnerValue<T, D, { AttributeAnyValueType::Double as u8 }, Mut> {
-    type Value = f64;
-}
-
-pub struct AttributeArray<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8 = IMMUT> {
+pub struct AttributeArray<'a, T: TraceProjector<D>, D: TraceData, C: 'a, const Mut: u8 = IMMUT> {
     storage: &'a T::Storage,
-    container: &'a T::AttributeRef,
+    container: C,
+}
+pub type AttributeArrayMut<'a, T: TraceProjector<D>, D: TraceData, C: 'a> = AttributeArray<'a, T, D, C, MUT>;
+
+impl<T: TraceProjector<D>, D: TraceData, C: Clone> Clone for AttributeArray<'_, T, D, C> { // Note: not for MUT
+    fn clone(&self) -> Self {
+        AttributeArray {
+            storage: self.storage,
+            container: self.container.clone(),
+        }
+    }
+}
+impl<T: TraceProjector<D>, D: TraceData, C: Copy> Copy for AttributeArray<'_, T, D, C> {}
+
+pub trait AttributeArrayOp<T: TraceProjector<D>, D: TraceData>: Sized {
+    fn get_attribute_array_len(&self, storage: &T::Storage) -> usize;
+    fn get_attribute_array_value<'a>(&'a self, storage: &'a T::Storage, index: usize) -> AttributeAnyGetterContainer<'a, TraceAttributes<'a, T, D, AttrOwned<Self>, Self>, T, D, Self>;
 }
 
-pub trait AttributeArrayOp<T: TraceProjector<D>, D: TraceData>: Iterator<Item = AttributeAnyValue<T, D>> {
-    fn append(&self) -> AttributeAnyValue<T, D>;
-    fn len(&self) -> usize;
-    fn get(&self, index: usize) -> AttributeAnyValue<T, D>;
+impl<T: TraceProjector<D>, D: TraceData> AttributeArrayOp<T, D> for () {
+    fn get_attribute_array_len(&self, storage: &T::Storage) -> usize {
+        0
+    }
+
+    fn get_attribute_array_value<'a>(&'a self, _storage: &'a T::Storage, _index: usize) -> AttributeAnyGetterContainer<'a, TraceAttributes<'a, T, D, AttrOwned<()>, ()>, T, D, ()> {
+        panic!("AttributeArrayOp::get_attribute_array_value called on empty array")
+    }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum AttributeAnyValue<'a, T: TraceProjector<D>, D: TraceData> {
-    String(AttributeInnerValue<'a, T, D, { AttributeAnyValueType::String as u8 }>),
-    Bytes(AttributeInnerValue<'a, T, D, { AttributeAnyValueType::Bytes as u8 }>),
-    Boolean(AttributeInnerValue<'a, T, D, { AttributeAnyValueType::Boolean as u8 }>),
-    Integer(AttributeInnerValue<'a, T, D, { AttributeAnyValueType::Integer as u8 }>),
-    Double(AttributeInnerValue<'a, T, D, { AttributeAnyValueType::Double as u8 }>),
-    Array(AttributeArray<'a, T, D>),
-    Map(TraceAttributes<'a, T, D, T::AttributeRef>)
+pub trait AttributeArrayMutOp<T: TraceProjector<D>, D: TraceData>: AttributeArrayOp<T, D> {
+    fn get_attribute_array_value_mut(&mut self, storage: &mut T::Storage, index: usize) -> Option<AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<Self>, Self>, T, D, Self>>;
+    fn append_attribute_array_value(&mut self, storage: &mut T::Storage, value: AttributeAnyValueType) -> AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<Self>, Self>, T, D, Self>;
 }
 
-pub struct TraceAttributes<'a, T: TraceProjector<D>, D: TraceData, C, const Mut: u8 = IMMUT> {
+impl<T: TraceProjector<D>, D: TraceData> AttributeArrayMutOp<T, D> for () {
+    fn get_attribute_array_value_mut(&mut self, storage: &mut T::Storage, index: usize) -> Option<AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<()>, ()>, T, D, Self>> {
+        None
+    }
+
+    fn append_attribute_array_value(&mut self, storage: &mut T::Storage, value: AttributeAnyValueType) -> AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<()>, ()>, T, D, ()> {
+        match value {
+            AttributeAnyValueType::String => AttributeAnyContainer::String(()),
+            AttributeAnyValueType::Bytes => AttributeAnyContainer::Bytes(()),
+            AttributeAnyValueType::Boolean => AttributeAnyContainer::Boolean(()),
+            AttributeAnyValueType::Integer => AttributeAnyContainer::Integer(()),
+            AttributeAnyValueType::Double => AttributeAnyContainer::Double(()),
+            AttributeAnyValueType::Array => AttributeAnyContainer::Array(()),
+            AttributeAnyValueType::Map => AttributeAnyContainer::Map(()),
+        }
+    }
+}
+
+impl<'a, T: TraceProjector<D>, D: TraceData, C, const Mut: u8> AttributeArray<'a, T, D, C, Mut>
+where
+    C: AttributeArrayOp<T, D>,
+    TraceAttributes<'a, T, D, AttrOwned<C>, C>: TraceAttributesOp<'a, T, D, C>,
+{
+    fn len(&self) -> usize {
+        self.container.get_attribute_array_len(self.storage)
+    }
+
+    fn get(&self, index: usize) -> AttributeAnyGetterContainer<'a, TraceAttributes<'a, T, D, AttrOwned<C>, C>, T, D, C> {
+        self.container.get_attribute_array_value(self.storage, index)
+    }
+}
+
+impl<'a, T: TraceProjector<D>, D: TraceData, C> AttributeArrayMut<'a, T, D, C>
+where
+    C: AttributeArrayMutOp<T, D>,
+    TraceAttributesMut<'a, T, D, AttrOwned<C>, C>: TraceAttributesMutOp<'a, T, D, C>,
+{
+    fn get_mut(&mut self, index: usize) -> Option<AttributeAnySetterContainer<'a, TraceAttributesMut<'a, T, D, AttrOwned<C>, C>, T, D, C>> {
+        unsafe { self.container.get_attribute_array_value_mut(as_mut(self.storage), index) }
+    }
+
+    fn append(&mut self, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, TraceAttributesMut<'a, T, D, AttrOwned<C>, C>, T, D, C> {
+        unsafe { self.container.append_attribute_array_value(as_mut(self.storage), value) }
+    }
+    
+    // TODO: retain_mut
+}
+
+// TODO MUT iter
+impl<'a, T: TraceProjector<D>, D: TraceData, C, const Mut: u8> Iterator for AttributeArray<'a, T, D, C, Mut> {
+    type Item = AttributeAnyGetterContainer<'a, TraceAttributes<'a, T, D, AttrOwned<C>, C, Mut>, T, D, C>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        todo!()
+    }
+}
+
+pub enum AttributeAnyContainer<String, Bytes, Boolean, Integer, Double, Array, Map> {
+    String(String),
+    Bytes(Bytes),
+    Boolean(Boolean),
+    Integer(Integer),
+    Double(Double),
+    Array(Array),
+    Map(Map),
+}
+
+pub type AttributeAnyGetterContainer<'a, A: TraceAttributesOp<'a, T, D, C>, T: TraceProjector<D>, D: TraceData, C: 'a> = AttributeAnyContainer<
+    &'a D::Text,
+    &'a D::Bytes,
+    bool,
+    i64,
+    f64,
+    A::Array,
+    A::Map,
+>;
+
+pub type AttributeAnySetterContainer<'a, A: TraceAttributesMutOp<'a, T, D, C>, T: TraceProjector<D>, D: TraceData, C: 'a> = AttributeAnyContainer<
+    A::MutString,
+    A::MutBytes,
+    A::MutBoolean,
+    A::MutInteger,
+    A::MutDouble,
+    A::MutArray,
+    A::MutMap,
+>;
+
+pub type AttributeAnyValue<'a, A: TraceAttributesOp<'a, T, D, C>, T: TraceProjector<D>, D: TraceData, C: 'a> = AttributeAnyContainer<
+    &'a D::Text,
+    &'a D::Bytes,
+    bool,
+    i64,
+    f64,
+    AttributeArray<'a, T, D, A::Array>,
+    TraceAttributes<'a, T, D, AttrOwned<A::Map>, A::Map>,
+>;
+
+trait AttrVal<C> {
+    unsafe fn as_mut(&self) -> &mut C;
+    fn as_ref(&self) -> &C;
+}
+
+#[derive(Copy, Clone)]
+pub struct AttrRef<'a, C>(&'a C);
+impl<'a, C> AttrVal<C> for AttrRef<'a, C> {
+    unsafe fn as_mut(&self) -> &mut C {
+        as_mut(self.0)
+    }
+
+    fn as_ref(&self) -> &C {
+        self.0
+    }
+}
+
+pub struct AttrOwned<C>(C);
+impl<'a, C: 'a> AttrVal<C> for AttrOwned<C> {
+    unsafe fn as_mut(&self) -> &mut C {
+        as_mut(&self.0)
+    }
+
+    fn as_ref(&self) -> &C {
+        &self.0
+    }
+}
+
+impl<C: Clone> Clone for AttrOwned<C> {
+    fn clone(&self) -> Self {
+        AttrOwned(self.0.clone())
+    }
+}
+
+impl<C: Copy> Copy for AttrOwned<C> {}
+
+pub struct TraceAttributes<'a, T: TraceProjector<D>, D: TraceData, V: AttrVal<C>, C, const Mut: u8 = IMMUT> {
     storage: &'a T::Storage,
-    container: &'a C,
+    container: V,
+    _phantom: PhantomData<C>,
 }
+pub type TraceAttributesMut<'a, T: TraceProjector<D>, D: TraceData, V: AttrVal<C>, C> = TraceAttributes<'a, T, D, V, C, MUT>;
 
-trait TraceAttributesOp<T: TraceProjector<D>, D: TraceData>
+impl<T: TraceProjector<D>, D: TraceData, V: AttrVal<C> + Clone, C> Clone for TraceAttributes<'_, T, D, V, C> { // Note: not for MUT
+    fn clone(&self) -> Self {
+        TraceAttributes {
+            storage: self.storage,
+            container: self.container.clone(),
+            _phantom: PhantomData,
+        }
+    }
+}
+impl<T: TraceProjector<D>, D: TraceData, A: AttrVal<C> + Copy, C> Copy for TraceAttributes<'_, T, D, A, C> {}
+
+pub trait TraceAttributesOp<'a, T: TraceProjector<D>, D: TraceData, C>
 {
-    fn set(&mut self, key: &str, value: AttributeAnyValueType) -> AttributeAnyValue<T, D>;
-    fn get(&self, key: &str) -> Option<AttributeAnyValue<T, D>>;
-    fn remove(&mut self, key: &str);
+    type Array;
+    type Map;
+
+    fn get(container: &'a C, storage: &T::Storage, key: D::Text) -> Option<AttributeAnyGetterContainer<'a, Self, T, D, C>>;
 }
 
-impl<T: TraceProjector<D>, D: TraceData, C> TraceAttributes<T, D, C> where Self: TraceAttributesOp<T, D>, AttributeInnerValue<T, D, { AttributeAnyValueType::String as u8 }>: TraceValueMutOp<D, T::Storage, T::AttributeRef>
+impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> TraceAttributesOp<'a, T, D, ()> for TraceAttributes<'a, T, D, AttrOwned<()>, (), Mut> {
+    type Array = ();
+    type Map = ();
+
+    fn get(_container: &'a (), _storage: &T::Storage, _key: D::Text) -> Option<AttributeAnyGetterContainer<'a, Self, T, D, ()>> {
+        None
+    }
+}
+
+pub trait TraceAttributesMutOp<'a, T: TraceProjector<D>, D: TraceData, C>: TraceAttributesOp<'a, T, D, C>
+where
+    Self::MutString: TraceAttributesString<T, D>,
+    Self::MutBytes: TraceAttributesBytes<T, D>,
+    Self::MutBoolean: TraceAttributesBoolean,
+    Self::MutInteger: TraceAttributesInteger,
+    Self::MutDouble: TraceAttributesDouble,
 {
-    fn set_string(&mut self, key: &str, value: D::Text) {
-        let AttributeAnyValue::String(inner) = self.set(key, AttributeAnyValueType::String) else { unreachable!() };
-        inner.set(value);
+    type MutString;
+    type MutBytes;
+    type MutBoolean;
+    type MutInteger;
+    type MutDouble;
+    type MutArray;
+    type MutMap;
+
+    fn get_mut(container: &mut C, storage: &mut T::Storage, key: D::Text) -> Option<AttributeAnySetterContainer<'a, Self, T, D, C>>;
+    fn set(container: &mut C, storage: &mut T::Storage, key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, Self, T, D, C>;
+    fn remove(container: &mut C, storage: &mut T::Storage, key: D::Text);
+}
+
+impl<'a, T: TraceProjector<D>, D: TraceData> TraceAttributesMutOp<'a, T, D, ()> for TraceAttributesMut<'a, T, D, AttrOwned<()>, ()> {
+    type MutString = ();
+    type MutBytes = ();
+    type MutBoolean = ();
+    type MutInteger = ();
+    type MutDouble = ();
+    type MutArray = ();
+    type MutMap = ();
+
+    fn get_mut(_container: &mut (), _storage: &mut T::Storage, _key: D::Text) -> Option<AttributeAnySetterContainer<'a, Self, T, D, ()>> {
+        None
+    }
+
+    fn set(_container: &mut (), _storage: &mut T::Storage, _key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, Self, T, D, ()> {
+        match value {
+            AttributeAnyValueType::String => AttributeAnyContainer::String(()),
+            AttributeAnyValueType::Bytes => AttributeAnyContainer::Bytes(()),
+            AttributeAnyValueType::Boolean => AttributeAnyContainer::Boolean(()),
+            AttributeAnyValueType::Integer => AttributeAnyContainer::Integer(()),
+            AttributeAnyValueType::Double => AttributeAnyContainer::Double(()),
+            AttributeAnyValueType::Array => AttributeAnyContainer::Array(()),
+            AttributeAnyValueType::Map => AttributeAnyContainer::Map(()),
+        }
+    }
+
+    fn remove(_container: &mut (), _storage: &mut T::Storage, _key: D::Text) {
     }
 }
 
-impl<T: TraceProjector<D>, D: TraceData, C> TraceAttributes<T, D, C> where Self: TraceAttributesOp<T, D>, AttributeInnerValue<T, D, { AttributeAnyValueType::String as u8 }>: TraceValueOp<D, T::Storage, T::AttributeRef>
+pub trait TraceAttributesString<T: TraceProjector<D>, D: TraceData> {
+    fn get(&self, storage: &T::Storage) -> &D::Text;
+    fn set(self, storage: &mut T::Storage, value: D::Text);
+}
+
+impl<T: TraceProjector<D>, D: TraceData> TraceAttributesString<T, D> for () {
+    fn get(&self, _storage: &T::Storage) -> &D::Text {
+        D::Text::default_ref()
+    }
+
+    fn set(self, _storage: &mut T::Storage, _value: D::Text) {
+    }
+}
+
+pub trait TraceAttributesBytes<T: TraceProjector<D>, D: TraceData> {
+    fn get(&self, storage: &T::Storage) -> &D::Bytes;
+    fn set(self, storage: &mut T::Storage, value: D::Bytes);
+}
+
+impl<T: TraceProjector<D>, D: TraceData> TraceAttributesBytes<T, D> for () {
+    fn get(&self, _storage: &T::Storage) -> &D::Bytes {
+        D::Bytes::default_ref()
+    }
+
+    fn set(self, _storage: &mut T::Storage, _value: D::Bytes) {
+    }
+}
+
+
+pub trait TraceAttributesInteger {
+    fn get(&self) -> i64;
+    fn set(self, value: i64);
+}
+
+impl TraceAttributesInteger for () {
+    fn get(&self) -> i64 {
+        0
+    }
+
+    fn set(self, _value: i64) {
+    }
+}
+
+pub trait TraceAttributesBoolean {
+    fn get(&self) -> bool;
+    fn set(self, value: bool);
+}
+
+impl TraceAttributesBoolean for () {
+    fn get(&self) -> bool {
+        false
+    }
+
+    fn set(self, _value: bool) {
+    }
+}
+
+pub trait TraceAttributesDouble {
+    fn get(&self) -> f64;
+    fn set(self, value: f64);
+}
+
+impl TraceAttributesDouble for () {
+    fn get(&self) -> f64 {
+        0.
+    }
+
+    fn set(self, _value: f64) {
+    }
+}
+
+impl<'a, T: TraceProjector<D>, D: TraceData, V: AttrVal<C>, C: 'a> TraceAttributes<'a, T, D, V, C>
+where
+    Self: TraceAttributesOp<'a, T, D, C>,
+    D::Text: 'a,
+    D::Bytes: 'a,
 {
-    fn get_string(&self, key: &str) -> Option<D::Text> {
-        if let Some(AttributeAnyValue::String(inner)) = self.get(key) {
-            Some(inner.get())
+    fn fetch(&self, key: D::Text) -> Option<AttributeAnyGetterContainer<'a, Self, T, D, C>> {
+        <Self as TraceAttributesOp<T, D, C>>::get(self.container.as_ref(), self.storage, key)
+    }
+    
+    pub fn get<K: Into<D::Text>>(&self, key: K) -> Option<AttributeAnyValue<'a, Self, T, D, C>> {
+        self.fetch(key.into()).map(|v| match v {
+            AttributeAnyContainer::String(text) => AttributeAnyValue::<Self, T, D, C>::String(text),
+            AttributeAnyContainer::Bytes(bytes) => AttributeAnyValue::<Self, T, D, C>::Bytes(bytes),
+            AttributeAnyContainer::Boolean(boolean) => AttributeAnyValue::<Self, T, D, C>::Boolean(boolean),
+            AttributeAnyContainer::Integer(integer) => AttributeAnyValue::<Self, T, D, C>::Integer(integer),
+            AttributeAnyContainer::Double(double) => AttributeAnyValue::<Self, T, D, C>::Double(double),
+            AttributeAnyContainer::Array(array) => AttributeAnyValue::<Self, T, D, C>::Array(AttributeArray {
+                storage: self.storage,
+                container: array,
+            }),
+            AttributeAnyContainer::Map(map) => AttributeAnyValue::<Self, T, D, C>::Map(TraceAttributes {
+                storage: self.storage,
+                container: AttrOwned(map),
+                _phantom: PhantomData,
+            }),
+        })
+    }
+    
+    pub fn get_string<K: Into<D::Text>>(&self, key: K) -> Option<&D::Text> {
+        if let Some(AttributeAnyContainer::String(container)) = self.fetch(key.into()) {
+            Some(container)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_bytes<K: Into<D::Text>>(&self, key: K) -> Option<&D::Bytes> {
+        if let Some(AttributeAnyContainer::Bytes(container)) = self.fetch(key.into()) {
+            Some(container)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_bool<K: Into<D::Text>>(&self, key: K) -> Option<bool> {
+        if let Some(AttributeAnyContainer::Boolean(container)) = self.fetch(key.into()) {
+            Some(container)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_int<K: Into<D::Text>>(&self, key: K) -> Option<i64> {
+        if let Some(AttributeAnyContainer::Integer(container)) = self.fetch(key.into()) {
+            Some(container)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_double<K: Into<D::Text>>(&self, key: K) -> Option<f64> {
+        if let Some(AttributeAnyContainer::Double(container)) = self.fetch(key.into()) {
+            Some(container)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_array<K: Into<D::Text>>(&self, key: K) -> Option<AttributeArray<T, D, <Self as TraceAttributesOp<'a, T, D, C>>::Array>> {
+        if let Some(AttributeAnyContainer::Array(container)) = self.fetch(key.into()) {
+            Some(AttributeArray {
+                storage: self.storage,
+                container,
+            })
+        } else {
+            None
+        }
+    }
+
+
+    pub fn get_map<K: Into<D::Text>>(&self, key: K) -> Option<TraceAttributes<T, D, AttrOwned<<Self as TraceAttributesOp<'a, T, D, C>>::Map>, <Self as TraceAttributesOp<'a, T, D, C>>::Map>> {
+        if let Some(AttributeAnyContainer::Map(container)) = self.fetch(key.into()) {
+            Some(TraceAttributes {
+                storage: self.storage,
+                container: AttrOwned(container),
+                _phantom: PhantomData,
+            })
         } else {
             None
         }
     }
 }
 
-impl<T, D: TraceData, C> TraceAttributes<T, D, C> where Self: TraceAttributesOp<T, D>, AttributeInnerValue<T, D, { AttributeAnyValueType::Bytes as u8 }>: TraceValueOp<D> {
-    fn set_bytes(&mut self, key: &str, value: D::Bytes) {
-        let AttributeAnyValue::Bytes(inner) = self.set(key, AttributeAnyValueType::Bytes) else { unreachable!() };
-        inner.set(value);
+impl<'a, T: TraceProjector<D>, D: TraceData, V: AttrVal<C>, C: 'a> TraceAttributes<'a, T, D, V, C>
+where
+    Self: TraceAttributesMutOp<'a, T, D, C>,
+{
+    pub fn set_string<K: Into<D::Text>, Val: Into<D::Text>>(&mut self, key: K, value: Val) {
+        let AttributeAnyContainer::String(container) = (unsafe { Self::set(self.container.as_mut(), as_mut(self.storage), key.into(), AttributeAnyValueType::String) }) else { unreachable!() };
+        unsafe { container.set(as_mut(self.storage), value.into()) }
     }
 
-    fn get_bytes(&self, key: &str) -> Option<D::Bytes> {
-        if let Some(AttributeAnyValue::Bytes(inner)) = self.get(key) {
-            Some(inner.get())
-        } else {
-            None
+    pub fn set_bytes<K: Into<D::Text>, Val: Into<D::Bytes>>(&mut self, key: K, value: Val) {
+        let AttributeAnyContainer::Bytes(container) = (unsafe { Self::set(self.container.as_mut(), as_mut(self.storage), key.into(), AttributeAnyValueType::Bytes) }) else { unreachable!() };
+        unsafe { container.set(as_mut(self.storage), value.into()) }
+    }
+
+    pub fn set_bool<K: Into<D::Text>>(&mut self, key: K, value: bool) {
+        let AttributeAnyContainer::Boolean(container) = (unsafe { Self::set(self.container.as_mut(), as_mut(self.storage), key.into(), AttributeAnyValueType::Boolean) }) else { unreachable!() };
+        container.set(value)
+    }
+
+    pub fn set_int<K: Into<D::Text>>(&mut self, key: K, value: i64) {
+        let AttributeAnyContainer::Integer(container) = (unsafe { Self::set(self.container.as_mut(), as_mut(self.storage), key.into(), AttributeAnyValueType::Integer) }) else { unreachable!() };
+        container.set(value)
+    }
+
+    pub fn set_double<K: Into<D::Text>>(&mut self, key: K, value: f64) {
+        let AttributeAnyContainer::Double(container) = (unsafe { Self::set(self.container.as_mut(), as_mut(self.storage), key.into(), AttributeAnyValueType::Double) }) else { unreachable!() };
+        container.set(value)
+    }
+
+    pub fn set_empty_array<K: Into<D::Text>>(&mut self, key: K) -> AttributeArrayMut<T, D, <Self as TraceAttributesMutOp<'a, T, D, C>>::MutArray> {
+        let AttributeAnyContainer::Array(container) = (unsafe { Self::set(self.container.as_mut(), as_mut(self.storage), key.into(), AttributeAnyValueType::Array) }) else { unreachable!() };
+        AttributeArray {
+            storage: self.storage,
+            container,
         }
     }
-}
 
-impl<T, D: TraceData, C> TraceAttributes<T, D, C> where Self: TraceAttributesOp<T, D>, AttributeInnerValue<T, D, { AttributeAnyValueType::Boolean as u8 }>: TraceValueOp<D> {
-
-    fn set_bool(&mut self, key: &str, value: bool) {
-        let AttributeAnyValue::Boolean(inner) = self.set(key, AttributeAnyValueType::Boolean) else { unreachable!() };
-        inner.set(value);
-    }
-
-    fn get_bool(&self, key: &str) -> Option<bool> {
-        if let Some(AttributeAnyValue::Boolean(inner)) = self.get(key) {
-            Some(inner.get())
-        } else {
-            None
+    pub fn set_empty_map<K: Into<D::Text>>(&mut self, key: K) -> TraceAttributesMut<T, D, AttrOwned<<Self as TraceAttributesMutOp<'a, T, D, C>>::MutMap>, <Self as TraceAttributesMutOp<'a, T, D, C>>::MutMap> {
+        let AttributeAnyContainer::Map(container) = (unsafe { Self::set(self.container.as_mut(), as_mut(self.storage), key.into(), AttributeAnyValueType::Map) }) else { unreachable!() };
+        TraceAttributes {
+            storage: self.storage,
+            container: AttrOwned(container),
+            _phantom: PhantomData,
         }
     }
-}
 
-impl<T, D: TraceData, C> TraceAttributes<T, D, C> where Self: TraceAttributesOp<T, D>, AttributeInnerValue<T, D, { AttributeAnyValueType::Integer as u8 }>: TraceValueOp<D> {
-
-    fn set_int(&mut self, key: &str, value: i64) {
-        let AttributeAnyValue::Integer(inner) = self.set(key, AttributeAnyValueType::Integer) else { unreachable!() };
-        inner.set(value);
-    }
-
-    fn get_int(&self, key: &str) -> Option<i64> {
-        if let Some(AttributeAnyValue::Integer(inner)) = self.get(key) {
-            Some(inner.get())
-        } else {
-            None
-        }
-    }
-}
-
-impl<T, D: TraceData, C> TraceAttributes<T, D, C> where Self: TraceAttributesOp<T, D>, AttributeInnerValue<T, D, { AttributeAnyValueType::Double as u8 }>: TraceValueOp<D> {
-
-    fn set_double(&mut self, key: &str, value: f64) {
-        let AttributeAnyValue::Double(inner) = self.set(key, AttributeAnyValueType::Double) else { unreachable!() };
-        inner.set(value);
-    }
-
-    fn get_double(&self, key: &str) -> Option<f64> {
-        if let Some(AttributeAnyValue::Double(inner)) = self.get(key) {
-            Some(inner.get())
-        } else {
-            None
-        }
-    }
-}
-
-impl<T: TraceProjector<D>, D: TraceData, C> TraceAttributes<T, D, C> where Self: TraceAttributesOp<T, D> {
-
-    fn set_array(&mut self, key: &str) -> AttributeArray<T, D> {
-        let AttributeAnyValue::Array(inner) = self.set(key, AttributeAnyValueType::Array) else { unreachable!() };
-        inner
-    }
-
-    fn get_array(&self, key: &str) -> Option<AttributeArray<T, D>> {
-        if let Some(AttributeAnyValue::Array(inner)) = self.get(key) {
-            Some(inner)
+    pub fn get_array_mut<K: Into<D::Text>>(&mut self, key: K) -> Option<AttributeArrayMut<T, D, <Self as TraceAttributesMutOp<'a, T, D, C>>::MutArray>> {
+        if let Some(AttributeAnyContainer::Array(container)) = unsafe { Self::get_mut(self.container.as_mut(), as_mut(self.storage), key.into()) } {
+            Some(AttributeArray {
+                storage: self.storage,
+                container,
+            })
         } else {
             None
         }
     }
 
-    fn set_map(&mut self, key: &str) -> TraceAttributes<T, D, T::AttributeRef> {
-        let AttributeAnyValue::Map(inner) = self.set(key, AttributeAnyValueType::Map) else { unreachable!() };
-        inner
-    }
 
-    fn get_map(&self, key: &str) -> Option<TraceAttributes<T, D, T::AttributeRef>> {
-        if let Some(AttributeAnyValue::Map(inner)) = self.get(key) {
-            Some(inner)
+    pub fn get_map_mut<K: Into<D::Text>>(&mut self, key: K) -> Option<TraceAttributesMut<T, D, AttrOwned<<Self as TraceAttributesMutOp<'a, T, D, C>>::MutMap>, <Self as TraceAttributesMutOp<'a, T, D, C>>::MutMap>> {
+        if let Some(AttributeAnyContainer::Map(container)) = unsafe { Self::get_mut(self.container.as_mut(), as_mut(self.storage), key.into()) } {
+            Some(TraceAttributes {
+                storage: self.storage,
+                container: AttrOwned(container),
+                _phantom: PhantomData,
+            })
         } else {
             None
         }
+    }
+
+    pub fn remove<K: Into<D::Text>>(&mut self, key: K) {
+        unsafe { <Self as TraceAttributesMutOp<T, D, C>>::remove(self.container.as_mut(), as_mut(self.storage), key.into()); }
     }
 }

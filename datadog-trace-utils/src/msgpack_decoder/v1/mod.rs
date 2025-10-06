@@ -6,8 +6,8 @@ pub(crate) mod span;
 use self::span::decode_span;
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::v04::{Span, SpanBytes, SpanSlice};
-use crate::span::{TraceData, Traces, TracesBytes, TracesSlice};
+use crate::span::{TraceData, v1::Traces, v1::TracePayloadBytes, v1::TracePayloadSlice};
+use crate::span::v1::TracePayload;
 
 /// Decodes a Bytes buffer into a `Vec<Vec<SpanBytes>>` object, also represented as a vector of
 /// `TracerPayloadV04` objects.
@@ -51,7 +51,7 @@ use crate::span::{TraceData, Traces, TracesBytes, TracesSlice};
 /// let decoded_span = &decoded_traces[0][0];
 /// assert_eq!("test-span", decoded_span.name.as_str());
 /// ```
-pub fn from_bytes(data: tinybytes::Bytes) -> Result<(TracesBytes, usize), DecodeError> {
+pub fn from_bytes(data: tinybytes::Bytes) -> Result<(TracePayloadBytes, usize), DecodeError> {
     from_buffer(&mut Buffer::new(data))
 }
 
@@ -97,19 +97,19 @@ pub fn from_bytes(data: tinybytes::Bytes) -> Result<(TracesBytes, usize), Decode
 /// let decoded_span = &decoded_traces[0][0];
 /// assert_eq!("test-span", decoded_span.name);
 /// ```
-pub fn from_slice(data: &[u8]) -> Result<(TracesSlice<'_>, usize), DecodeError> {
+pub fn from_slice(data: &[u8]) -> Result<(TracePayloadSlice<'_>, usize), DecodeError> {
     from_buffer(&mut Buffer::new(data))
 }
 
 #[allow(clippy::type_complexity)]
 pub fn from_buffer<T: TraceData>(
     data: &mut Buffer<T>,
-) -> Result<(Traces<T>, usize), DecodeError> {
+) -> Result<(TracePayload<T>, usize), DecodeError> {
     let trace_count = rmp::decode::read_array_len(data.as_mut_slice()).map_err(|_| {
         DecodeError::InvalidFormat("Unable to read array len for trace count".to_owned())
     })?;
 
-    let traces = Traces::default();
+    let traces = TracePayload::default();
 
     // Intentionally skip the size of the array (as it will be recomputed after coalescing).
     let start_len = data.len();

@@ -8,6 +8,7 @@ use datadog_trace_protobuf::pb;
 use std::cmp::Ordering;
 use std::iter::Iterator;
 use tinybytes::{self, BytesString};
+use crate::span::v1::TracePayload;
 
 pub type TracerPayloadV04 = Vec<v04::SpanBytes>;
 pub type TracerPayloadV05 = Vec<v05::Span>;
@@ -30,7 +31,7 @@ pub enum TraceChunks<T: TraceData> {
     /// Collection of TraceChunkSpan with de-duplicated strings.
     V05((Vec<T::Text>, Vec<Vec<v05::Span>>)),
     /// A full V1 trace.
-    V1(Traces<T>)
+    V1(TracePayload<T>)
 }
 
 impl TraceChunks<BytesData> {
@@ -58,7 +59,7 @@ impl<T: TraceData> TraceChunks<T> {
 /// Enum representing a general abstraction for a collection of tracer payloads.
 pub enum TracerPayloadCollection {
     /// Collection of TracerPayloads.
-    V1(v1::Traces<BytesData>),
+    V1(v1::TracePayload<BytesData>),
     /// Collection of TracerPayloads.
     V07(Vec<pb::TracerPayload>),
     /// Collection of TraceChunkSpan.
