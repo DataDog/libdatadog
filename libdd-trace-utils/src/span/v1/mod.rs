@@ -11,7 +11,7 @@ fn is_empty_str<T: Borrow<str>>(value: &T) -> bool {
     value.borrow().is_empty()
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct TraceStaticData<T: TraceData> {
     pub strings: StaticDataVec<T, TraceDataText>,
     pub bytes: StaticDataVec<T, TraceDataBytes>,
@@ -35,9 +35,15 @@ impl<T: TraceData> TraceStaticData<T> {
     }
 }
 
+// We split this struct so that we can borrow the byte/string data separately from traces data
 #[derive(Default, Debug)]
-pub struct Traces<T: TraceData> {
+pub struct TracePayload<T: TraceData> {
     pub static_data: TraceStaticData<T>,
+    pub traces: Traces,
+}
+
+#[derive(Default, Debug)]
+pub struct Traces {
     pub container_id: TraceStringRef,
     pub language_name: TraceStringRef,
     pub language_version: TraceStringRef,
@@ -77,20 +83,14 @@ pub struct Span {
     pub service: TraceStringRef,
     pub name: TraceStringRef,
     pub resource: TraceStringRef,
-    #[serde(skip_serializing_if = "is_empty_str")]
     pub r#type: TraceStringRef,
     pub span_id: u64,
-    #[serde(skip_serializing_if = "is_default")]
     pub parent_id: u64,
     pub start: i64,
     pub duration: i64,
-    #[serde(skip_serializing_if = "is_default")]
     pub error: bool,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub attributes: HashMap<TraceStringRef, AttributeAnyValue>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub span_links: Vec<SpanLink>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub span_events: Vec<SpanEvent>,
     pub env: TraceStringRef,
     pub version: TraceStringRef,
@@ -104,11 +104,8 @@ pub struct Span {
 pub struct SpanLink {
     pub trace_id: u128,
     pub span_id: u64,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub attributes: HashMap<TraceStringRef, AttributeAnyValue>,
-    #[serde(skip_serializing_if = "is_empty_str")]
     pub tracestate: TraceStringRef,
-    #[serde(skip_serializing_if = "is_default")]
     pub flags: u32,
 }
 
@@ -118,7 +115,6 @@ pub struct SpanLink {
 pub struct SpanEvent {
     pub time_unix_nano: u64,
     pub name: TraceStringRef,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub attributes: HashMap<TraceStringRef, AttributeAnyValue>,
 }
 
@@ -133,5 +129,5 @@ pub enum AttributeAnyValue {
     Map(HashMap<TraceStringRef, AttributeAnyValue>)
 }
 
-pub type TracesSlice<'a> = Traces<SliceData<'a>>;
-pub type TracesBytes = Traces<BytesData>;
+pub type TracePayloadSlice<'a> = TracePayload<SliceData<'a>>;
+pub type TracePayloadBytes = TracePayload<BytesData>;

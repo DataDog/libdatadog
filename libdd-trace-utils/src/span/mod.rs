@@ -14,6 +14,7 @@ use crate::msgpack_decoder::decode::buffer::read_string_ref_nomut;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::v05::dict::SharedDict;
 use libdd_tinybytes::{Bytes, BytesString};
+use libdd_trace_protobuf::pb::idx::SpanKind;
 use serde::Serialize;
 use std::borrow::Borrow;
 use std::fmt::Debug;
@@ -26,35 +27,56 @@ use std::{fmt, ptr};
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.
-pub trait SpanText: Debug + Eq + Hash + Borrow<str> + Serialize + Default {
+pub trait SpanText: Debug + Eq + Hash + Borrow<str> + Serialize + Default + for<'a> From<&'a str> {
     fn from_static_str(value: &'static str) -> Self;
+    fn default_ref<'a>() -> &'a Self;
 }
 
 impl SpanText for &str {
     fn from_static_str(value: &'static str) -> Self {
         value
     }
+
+    fn default_ref<'a>() -> &'a Self {
+        &""
+    }
 }
 
+static EMPTY_BYTESSTRING: BytesString = BytesString::from_static("");
 impl SpanText for BytesString {
     fn from_static_str(value: &'static str) -> Self {
         BytesString::from_static(value)
+    }
+
+    fn default_ref<'a>() -> &'a Self {
+        &EMPTY_BYTESSTRING
     }
 }
 
 pub trait SpanBytes: Debug + Eq + Hash + Borrow<[u8]> + Serialize + Default {
     fn from_static_bytes(value: &'static [u8]) -> Self;
+    fn default_ref<'a>() -> &'a Self;
 }
 
+static EMPTY_SLICE: &[u8] = &[];
 impl SpanBytes for &[u8] {
     fn from_static_bytes(value: &'static [u8]) -> Self {
         value
     }
+
+    fn default_ref<'a>() -> &'a Self {
+        &EMPTY_SLICE
+    }
 }
 
+static EMPTY_BYTES: Bytes = Bytes::empty();
 impl SpanBytes for Bytes {
     fn from_static_bytes(value: &'static [u8]) -> Self {
         Bytes::from_static(value)
+    }
+
+    fn default_ref<'a>() -> &'a Self {
+        &EMPTY_BYTES
     }
 }
 
@@ -174,3 +196,26 @@ impl fmt::Display for SpanKeyParseError {
 impl std::error::Error for SpanKeyParseError {}
 
 pub type SharedDictBytes = SharedDict<BytesString>;
+
+
+pub fn parse_span_kind(kind: &str) -> SpanKind {
+    match kind {
+        "internal" => SpanKind::Internal,
+        "server" => SpanKind::Server,
+        "client" => SpanKind::Client,
+        "producer" => SpanKind::Producer,
+        "consumer" => SpanKind::Consumer,
+        _ => SpanKind::Unspecified,
+    }
+}
+
+pub fn span_kind_to_str(kind: SpanKind) -> Option<&'static str> {
+    match kind {
+        SpanKind::Internal => Some("internal"),
+        SpanKind::Server => Some("server"),
+        SpanKind::Client => Some("client"),
+        SpanKind::Producer => Some("producer"),
+        SpanKind::Consumer => Some("consumer"),
+        _ => None,
+    }
+}

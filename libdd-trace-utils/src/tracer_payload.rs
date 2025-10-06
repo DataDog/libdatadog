@@ -3,6 +3,7 @@
 
 use crate::span::v05::dict::SharedDict;
 use crate::span::{v04, v05, v1, BytesData, SharedDictBytes, TraceData};
+use crate::span::v1::TracePayload;
 use crate::trace_utils::collect_trace_chunks;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
 use libdd_trace_protobuf::pb;
@@ -30,7 +31,7 @@ pub enum TraceChunks<T: TraceData> {
     /// Collection of TraceChunkSpan with de-duplicated strings.
     V05((SharedDict<T::Text>, Vec<Vec<v05::Span>>)),
     /// A full V1 trace.
-    V1(Traces<T>),
+    V1(TracePayload<T>)
 }
 
 impl TraceChunks<BytesData> {
@@ -58,7 +59,7 @@ impl<T: TraceData> TraceChunks<T> {
 /// Enum representing a general abstraction for a collection of tracer payloads.
 pub enum TracerPayloadCollection {
     /// Collection of TracerPayloads.
-    V1(v1::Traces<BytesData>),
+    V1(v1::TracePayload<BytesData>),
     /// Collection of TracerPayloads.
     V07(Vec<pb::TracerPayload>),
     /// Collection of TraceChunkSpan.
