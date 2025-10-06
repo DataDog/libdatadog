@@ -86,21 +86,17 @@ pub struct RuntimeStackFrame {
 /// - Only async-signal-safe functions
 ///
 /// # Parameters
-/// - `emit_frame`: Function to call for each runtime frame (takes writer context and frame pointer)
-/// - `emit_stacktrace_string`: Function to call for complete stacktrace string (takes writer
-///   context and C string)
-/// - `writer_ctx`: Opaque pointer to writer context that should be passed to emit functions
+/// - `emit_frame`: Function to call for each runtime frame (takes frame pointer)
+/// - `emit_stacktrace_string`: Function to call for complete stacktrace string (takes C string)
 ///
 /// # Safety
 /// The callback function is marked unsafe because:
 /// - It receives function pointers that take raw pointers as parameters
 /// - The callback must ensure any pointers it passes to these functions are valid
 /// - All C strings passed must be null-terminated and remain valid for the call duration
-/// - The writer_ctx must be passed unchanged to the emit functions
 pub type RuntimeStackCallback = unsafe extern "C" fn(
-    emit_frame: unsafe extern "C" fn(*mut std::ffi::c_void, *const RuntimeStackFrame),
-    emit_stacktrace_string: unsafe extern "C" fn(*mut std::ffi::c_void, *const c_char),
-    writer_ctx: *mut std::ffi::c_void,
+    emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
+    emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
 );
 
 /// Runtime stack representation for JSON serialization
@@ -265,47 +261,73 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
     // to a properly aligned, initialized tuple.
     let (callback_fn, _) = &*callback_ptr;
 
+    use std::sync::atomic::{AtomicPtr, Ordering};
+
+    // Thread-safe storage for the current callback context
+    // Store as raw data and meta pointers
+    static CURRENT_WRITER_DATA: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
+    static CURRENT_WRITER_VTABLE: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
+    static CURRENT_FRAME_COUNT: AtomicPtr<usize> = AtomicPtr::new(ptr::null_mut());
+
     let mut frame_count = 0usize;
 
-    // Define the emit_frame function that writes directly to the writer
-    // Safety: This function receives writer context and frame pointer from the runtime callback.
-    // The writer context is guaranteed to be valid for the duration of the callback.
-    unsafe extern "C" fn emit_frame_collector(
-        writer_ctx: *mut std::ffi::c_void,
-        frame: *const RuntimeStackFrame,
-    ) {
-        if writer_ctx.is_null() || frame.is_null() {
+    let writer_trait_obj: *mut dyn std::io::Write = writer;
+    let writer_parts: (*mut (), *mut ()) = unsafe { std::mem::transmute(writer_trait_obj) };
+    let frame_count_ptr = &mut frame_count as *mut usize;
+
+    // Store components atomically
+    CURRENT_WRITER_DATA.store(writer_parts.0, Ordering::SeqCst);
+    CURRENT_WRITER_VTABLE.store(writer_parts.1, Ordering::SeqCst);
+    CURRENT_FRAME_COUNT.store(frame_count_ptr, Ordering::SeqCst);
+
+    // Define the emit functions that read from the atomic storage
+    unsafe extern "C" fn emit_frame_collector(frame: *const RuntimeStackFrame) {
+        if frame.is_null() {
             return;
         }
 
-        // Safety: writer_ctx was created from a valid writer reference and frame_count pointer
-        let (writer, frame_count) =
-            &mut *(writer_ctx as *mut (&mut dyn std::io::Write, &mut usize));
+        let writer_data = CURRENT_WRITER_DATA.load(Ordering::SeqCst);
+        let writer_vtable = CURRENT_WRITER_VTABLE.load(Ordering::SeqCst);
+        let frame_count_ptr = CURRENT_FRAME_COUNT.load(Ordering::SeqCst);
+
+        if writer_data.is_null() || writer_vtable.is_null() || frame_count_ptr.is_null() {
+            return;
+        }
+
+        // Reconstruct fat pointer
+        let writer_trait_obj: *mut dyn std::io::Write =
+            std::mem::transmute((writer_data, writer_vtable));
+        let writer = &mut *writer_trait_obj;
+        let frame_count = &mut *frame_count_ptr;
 
         // Add comma separator for frames after the first
-        if **frame_count > 0 {
+        if *frame_count > 0 {
             let _ = write!(writer, ", ");
         }
 
         // Write the frame as JSON
-        // Safety: frame pointer is passed from the runtime callback
-        let _ = emit_frame_as_json(*writer, frame);
+        let _ = emit_frame_as_json(writer, frame);
         let _ = writer.flush();
 
-        **frame_count += 1;
+        *frame_count += 1;
     }
 
-    // Safety: This function receives writer context and C string pointer from the runtime callback.
-    unsafe extern "C" fn emit_stacktrace_string_collector(
-        writer_ctx: *mut std::ffi::c_void,
-        stacktrace_string: *const c_char,
-    ) {
-        if writer_ctx.is_null() || stacktrace_string.is_null() {
+    unsafe extern "C" fn emit_stacktrace_string_collector(stacktrace_string: *const c_char) {
+        if stacktrace_string.is_null() {
             return;
         }
 
-        // Safety: writer_ctx was created from a valid writer reference
-        let (writer, _) = &mut *(writer_ctx as *mut (&mut dyn std::io::Write, &mut usize));
+        let writer_data = CURRENT_WRITER_DATA.load(Ordering::SeqCst);
+        let writer_vtable = CURRENT_WRITER_VTABLE.load(Ordering::SeqCst);
+
+        if writer_data.is_null() || writer_vtable.is_null() {
+            return;
+        }
+
+        // Reconstruct fat pointer
+        let writer_trait_obj: *mut dyn std::io::Write =
+            std::mem::transmute((writer_data, writer_vtable));
+        let writer = &mut *writer_trait_obj;
 
         // Safety: stacktrace_string is guaranteed by the runtime callback contract to be
         // a valid, null-terminated C string that remains valid for the duration of this call.
@@ -316,18 +338,15 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
         let _ = writer.flush();
     }
 
-    // Create writer context that bundles writer and frame counter
-    let mut writer_context = (writer as &mut dyn std::io::Write, &mut frame_count);
-    let writer_ctx = &mut writer_context as *mut _ as *mut std::ffi::c_void;
-
-    // Invoke the user callback with the writer context
+    // Invoke the user callback with the simplified emit functions
     // Safety: callback_fn was verified to be non-null during registration, and the
-    // emit functions and writer context are valid for the duration of this call.
-    callback_fn(
-        emit_frame_collector,
-        emit_stacktrace_string_collector,
-        writer_ctx,
-    );
+    // emit functions are valid for the duration of this call.
+    callback_fn(emit_frame_collector, emit_stacktrace_string_collector);
+
+    // Clear atomic storage
+    CURRENT_WRITER_DATA.store(ptr::null_mut(), Ordering::SeqCst);
+    CURRENT_WRITER_VTABLE.store(ptr::null_mut(), Ordering::SeqCst);
+    CURRENT_FRAME_COUNT.store(ptr::null_mut(), Ordering::SeqCst);
 
     Ok(())
 }
@@ -444,9 +463,8 @@ mod tests {
     static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     unsafe extern "C" fn test_emit_frame_callback(
-        emit_frame: unsafe extern "C" fn(*mut std::ffi::c_void, *const RuntimeStackFrame),
-        _emit_stacktrace_string: unsafe extern "C" fn(*mut std::ffi::c_void, *const c_char),
-        writer_ctx: *mut std::ffi::c_void,
+        emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
+        _emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
     ) {
         let function_name = CString::new("test_function").unwrap();
         let file_name = CString::new("test.rb").unwrap();
@@ -462,18 +480,17 @@ mod tests {
         };
 
         // Safety: frame is a valid RuntimeStackFrame with valid C string pointers
-        emit_frame(writer_ctx, &frame);
+        emit_frame(&frame);
     }
 
     unsafe extern "C" fn test_emit_stacktrace_string_callback(
-        _emit_frame: unsafe extern "C" fn(*mut std::ffi::c_void, *const RuntimeStackFrame),
-        emit_stacktrace_string: unsafe extern "C" fn(*mut std::ffi::c_void, *const c_char),
-        writer_ctx: *mut std::ffi::c_void,
+        _emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
+        emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
     ) {
         let stacktrace_string = CString::new("test_stacktrace_string").unwrap();
 
         // Safety: stacktrace_string.as_ptr() returns a valid null-terminated C string
-        emit_stacktrace_string(writer_ctx, stacktrace_string.as_ptr());
+        emit_stacktrace_string(stacktrace_string.as_ptr());
     }
 
     fn ensure_callback_cleared() {
