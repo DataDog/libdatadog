@@ -39,7 +39,6 @@ impl From<CallbackError> for CallbackResult {
 ///
 /// # Arguments
 /// - `callback`: The callback function to invoke during crashes
-/// - `context`: User-provided context pointer passed to the callback
 ///
 /// # Returns
 /// - `CallbackResult::Ok` if registration succeeds
@@ -47,7 +46,6 @@ impl From<CallbackError> for CallbackResult {
 ///
 /// # Safety
 /// - The callback must be signal-safe
-/// - The context pointer must remain valid for the lifetime of the process
 /// - Only one callback can be registered at a time
 /// - The callback must be registered once on CrashTracker initialization, before any crash occurs
 ///
@@ -55,8 +53,7 @@ impl From<CallbackError> for CallbackResult {
 /// ```c
 /// static void my_runtime_callback(
 ///     void (*emit_frame)(const ddog_RuntimeStackFrame*),
-///     void (*emit_stacktrace_string)(const char*),
-///     void* writer_ctx
+///     void (*emit_stacktrace_string)(const char*)
 /// ) {
 ///     // Collect runtime frames and call emit_frame for each one
 ///     ddog_RuntimeStackFrame frame = {
@@ -67,7 +64,7 @@ impl From<CallbackError> for CallbackResult {
 ///         .class_name = "MyClass",
 ///         .module_name = NULL
 ///     };
-///     emit_frame(writer_ctx, &frame);
+///     emit_frame(&frame);
 /// }
 ///
 ///
@@ -132,7 +129,7 @@ pub unsafe extern "C" fn ddog_crasht_get_registered_callback_type() -> *const st
 mod tests {
     use super::*;
     use datadog_crashtracker::{clear_runtime_callback, RuntimeStackFrame};
-    use std::ffi::{c_char, c_void, CString};
+    use std::ffi::{c_char, CString};
     use std::ptr;
     use std::sync::Mutex;
 
@@ -141,9 +138,8 @@ mod tests {
     static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     unsafe extern "C" fn test_runtime_callback(
-        emit_frame: unsafe extern "C" fn(*mut c_void, *const RuntimeStackFrame),
-        _emit_stacktrace_string: unsafe extern "C" fn(*mut c_void, *const c_char),
-        writer_ctx: *mut c_void,
+        emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
+        _emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
     ) {
         let function_name = CString::new("test_function").unwrap();
         let file_name = CString::new("test.rb").unwrap();
@@ -160,7 +156,7 @@ mod tests {
             module_name: ptr::null(),
         };
 
-        emit_frame(writer_ctx, &frame);
+        emit_frame(&frame);
     }
 
     #[test]
