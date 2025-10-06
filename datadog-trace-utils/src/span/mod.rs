@@ -1,9 +1,14 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod table;
 pub mod trace_utils;
 pub mod v04;
 pub mod v05;
+pub mod v1;
+
+mod trace;
+pub use trace::*;
 
 use crate::msgpack_decoder::decode::buffer::read_string_ref_nomut;
 use crate::msgpack_decoder::decode::error::DecodeError;
@@ -14,6 +19,7 @@ use std::fmt;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::ops::Deref;
 use tinybytes::{Bytes, BytesString};
 
 /// Trait representing the requirements for a type to be used as a Span "string" type.
@@ -125,6 +131,7 @@ impl<'a> TraceData for SliceData<'a> {
         })
     }
 }
+
 
 #[derive(Debug)]
 pub struct SpanKeyParseError {
