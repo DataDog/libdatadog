@@ -425,7 +425,7 @@ impl TraceExporter {
                             &agent_info,
                             &self.client_side_stats,
                             &self.workers,
-                            Some(self.http_client.clone()),
+                            self.http_client.clone(),
                         );
                     }
                     StatsComputationStatus::Enabled {

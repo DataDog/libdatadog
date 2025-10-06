@@ -64,7 +64,7 @@ pub(crate) fn start_stats_computation(
     workers: &Arc<Mutex<super::TraceExporterWorkers>>,
     span_kinds: Vec<String>,
     peer_tags: Vec<String>,
-    client: Option<HttpClient>,
+    client: HttpClient,
 ) -> anyhow::Result<()> {
     if let StatsComputationStatus::DisabledByAgent { bucket_size } = **client_side_stats.load() {
         let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
@@ -95,7 +95,7 @@ fn create_and_start_stats_worker(
     cancellation_token: &CancellationToken,
     workers: &Arc<Mutex<super::TraceExporterWorkers>>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
-    client: Option<HttpClient>,
+    client: HttpClient,
 ) -> anyhow::Result<()> {
     let stats_exporter = stats_exporter::StatsExporter::new(
         bucket_size,
@@ -164,7 +164,7 @@ pub(crate) fn handle_stats_disabled_by_agent(
     agent_info: &Arc<AgentInfo>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     workers: &Arc<Mutex<super::TraceExporterWorkers>>,
-    client: Option<HttpClient>,
+    client: HttpClient,
 ) {
     if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
         // Client-side stats is supported by the agent
