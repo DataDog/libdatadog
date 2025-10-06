@@ -69,7 +69,10 @@ mod tests {
                                 0,
                                 0,
                                 0
-                            ]
+                            ],
+                            "HttpMethod": "GET",
+                            "HttpEndpoint": "/test",
+                            "GrpcStatusCode": "0"
                         }
                     ]
                 }
@@ -106,6 +109,9 @@ mod tests {
                     span_kind: "".to_string(),
                     peer_tags: vec![],
                     is_trace_root: NotSet.into(),
+                    grpc_status_code: "0".to_string(),
+                    http_endpoint: "/test".to_string(),
+                    http_method: "GET".to_string(),
                 }],
                 agent_time_shift: 0,
             }],
@@ -119,6 +125,8 @@ mod tests {
             tags: vec![],
             git_commit_sha: "".to_string(),
             image_tag: "".to_string(),
+            process_tags_hash: 0,
+            process_tags: "".to_string(),
         };
 
         assert_eq!(deserialized_stats_json, client_stats_payload)

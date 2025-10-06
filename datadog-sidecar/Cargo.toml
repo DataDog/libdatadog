@@ -22,7 +22,7 @@ datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 ddtelemetry = { path = "../ddtelemetry", features = ["tracing"] }
 data-pipeline = { path = "../data-pipeline" }
 datadog-trace-utils = { path = "../datadog-trace-utils" }
-datadog-remote-config = { path = "../datadog-remote-config" }
+datadog-remote-config = { path = "../datadog-remote-config" , features = ["live-debugger"]}
 datadog-live-debugger = { path = "../datadog-live-debugger" }
 datadog-crashtracker = { path = "../datadog-crashtracker" }
 dogstatsd-client = { path = "../dogstatsd-client" }
@@ -31,7 +31,7 @@ tinybytes = { path = "../tinybytes" }
 futures = { version = "0.3", default-features = false }
 manual_future = "0.1.1"
 http = "1.0"
-hyper = { version = "1.6", features = ["http1", "client"] }
+hyper = { workspace = true}
 http-body-util = "0.1"
 
 datadog-ipc = { path = "../datadog-ipc", features = ["tiny-bytes"] }
@@ -99,7 +99,7 @@ microseh = "0.1.1"
 [dev-dependencies]
 libc = { version = "0.2" }
 tempfile = { version = "3.3" }
-httpmock = "0.7.0"
+httpmock = "0.8.0-alpha.1"
 datadog-remote-config = { path = "../datadog-remote-config", features = ["test"] }
 datadog-trace-utils = { path = "../datadog-trace-utils", features = ["test-utils"] }
 

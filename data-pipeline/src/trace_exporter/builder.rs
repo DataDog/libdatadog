@@ -193,12 +193,8 @@ impl TraceExporterBuilder {
     }
 
     /// Enables sending telemetry metrics.
-    pub fn enable_telemetry(&mut self, cfg: Option<TelemetryConfig>) -> &mut Self {
-        if let Some(cfg) = cfg {
-            self.telemetry = Some(cfg);
-        } else {
-            self.telemetry = Some(TelemetryConfig::default());
-        }
+    pub fn enable_telemetry(&mut self, cfg: TelemetryConfig) -> &mut Self {
+        self.telemetry = Some(cfg);
         self
     }
 
@@ -273,6 +269,8 @@ impl TraceExporterBuilder {
                 .set_language(&self.language)
                 .set_language_version(&self.language_version)
                 .set_service_name(&self.service)
+                .set_service_version(&self.app_version)
+                .set_env(&self.env)
                 .set_tracer_version(&self.tracer_version)
                 .set_heartbeat(telemetry_config.heartbeat)
                 .set_url(base_url)
@@ -379,11 +377,11 @@ mod tests {
             .set_input_format(TraceExporterInputFormat::Proxy)
             .set_output_format(TraceExporterOutputFormat::V04)
             .set_client_computed_stats()
-            .enable_telemetry(Some(TelemetryConfig {
+            .enable_telemetry(TelemetryConfig {
                 heartbeat: 1000,
                 runtime_id: None,
                 debug_enabled: false,
-            }));
+            });
         let exporter = builder.build().unwrap();
 
         assert_eq!(

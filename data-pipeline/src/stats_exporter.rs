@@ -11,8 +11,9 @@ use std::{
     time,
 };
 
-use crate::{span_concentrator::SpanConcentrator, trace_exporter::TracerMetadata};
+use crate::trace_exporter::TracerMetadata;
 use datadog_trace_protobuf::pb;
+use datadog_trace_stats::span_concentrator::SpanConcentrator;
 use datadog_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
 use ddcommon::{worker::Worker, Endpoint};
 use hyper;
@@ -171,6 +172,8 @@ fn encode_stats_payload(
         tags: Vec::new(),
         agent_aggregation: String::new(),
         image_tag: String::new(),
+        process_tags: String::new(),
+        process_tags_hash: 0,
     }
 }
 
@@ -253,7 +256,7 @@ mod tests {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
                     .path("/v0.6/stats")
-                    .body_contains("libdatadog-test");
+                    .body_includes("libdatadog-test");
                 then.status(200).body("");
             })
             .await;
@@ -312,7 +315,7 @@ mod tests {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
                     .path("/v0.6/stats")
-                    .body_contains("libdatadog-test");
+                    .body_includes("libdatadog-test");
                 then.status(200).body("");
             })
             .await;
@@ -349,7 +352,7 @@ mod tests {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
                     .path("/v0.6/stats")
-                    .body_contains("libdatadog-test");
+                    .body_includes("libdatadog-test");
                 then.status(200).body("");
             })
             .await;

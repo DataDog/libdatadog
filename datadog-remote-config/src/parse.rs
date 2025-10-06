@@ -7,11 +7,13 @@ use crate::{
     },
     RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
 };
+#[cfg(feature = "live-debugger")]
 use datadog_live_debugger::LiveDebuggingData;
 
 #[derive(Debug)]
 pub enum RemoteConfigData {
     DynamicConfig(DynamicConfigFile),
+    #[cfg(feature = "live-debugger")]
     LiveDebugger(LiveDebuggingData),
     TracerFlareConfig(AgentConfigFile),
     TracerFlareTask(AgentTaskFile),
@@ -33,6 +35,7 @@ impl RemoteConfigData {
             RemoteConfigProduct::ApmTracing => {
                 RemoteConfigData::DynamicConfig(config::dynamic::parse_json(data)?)
             }
+            #[cfg(feature = "live-debugger")]
             RemoteConfigProduct::LiveDebugger => {
                 let parsed = datadog_live_debugger::parse_json(&String::from_utf8_lossy(data))?;
                 RemoteConfigData::LiveDebugger(parsed)
@@ -46,6 +49,7 @@ impl From<&RemoteConfigData> for RemoteConfigProduct {
     fn from(value: &RemoteConfigData) -> Self {
         match value {
             RemoteConfigData::DynamicConfig(_) => RemoteConfigProduct::ApmTracing,
+            #[cfg(feature = "live-debugger")]
             RemoteConfigData::LiveDebugger(_) => RemoteConfigProduct::LiveDebugger,
             RemoteConfigData::TracerFlareConfig(_) => RemoteConfigProduct::AgentConfig,
             RemoteConfigData::TracerFlareTask(_) => RemoteConfigProduct::AgentTask,

@@ -5,14 +5,16 @@ name = "datadog-remote-config"
 version = "0.0.1"
 
 [features]
+default = []
+live-debugger = ["datadog-live-debugger"]
 test = ["hyper/server", "hyper-util"]
 
 [dependencies]
 anyhow = { version = "1.0" }
 ddcommon = { path = "../ddcommon" }
 datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
-datadog-live-debugger = { path = "../datadog-live-debugger" }
-hyper = { version = "1.6", features = ["http1", "client"] }
+datadog-live-debugger = { path = "../datadog-live-debugger", optional = true }
+hyper = { workspace = true }
 http-body-util = "0.1"
 http = "1.0"
 base64 = "0.22.1"
@@ -29,7 +31,7 @@ serde_json = { version = "1.0", features = ["raw_value"] }
 serde_with = "3"
 
 # Test feature
-hyper-util = { version = "0.1", features = ["service"], optional = true }
+hyper-util = { workspace = true, features = ["service"], optional = true }
 
 [dev-dependencies]
 futures = "0.3"

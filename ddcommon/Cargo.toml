@@ -18,12 +18,8 @@ futures = "0.3"
 futures-core = { version = "0.3.0", default-features = false }
 futures-util = { version = "0.3.0", default-features = false }
 hex = "0.4"
-hyper = { version = "1.6", features = ["http1", "client"] }
-hyper-util = { version = "0.1.10", features = [
-    "http1",
-    "client",
-    "client-legacy",
-] }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
 http = "1.0"
 http-body = "1.0"
 http-body-util = "0.1"

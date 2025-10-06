@@ -11,7 +11,7 @@ use ddcommon_ffi::{
     {slice::AsBytes, slice::ByteSlice},
 };
 use std::{ptr::NonNull, time::Duration};
-use tracing::error;
+use tracing::{debug, error};
 
 #[cfg(all(feature = "catch_panic", panic = "unwind"))]
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -325,16 +325,16 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
     catch_panic!(
         if let Option::Some(config) = config {
             if let Option::Some(telemetry_cfg) = telemetry_cfg {
-                config.telemetry_cfg = Some(TelemetryConfig {
+                let cfg = TelemetryConfig {
                     heartbeat: telemetry_cfg.interval,
                     runtime_id: match sanitize_string(telemetry_cfg.runtime_id) {
                         Ok(s) => Some(s),
                         Err(e) => return Some(e),
                     },
                     debug_enabled: telemetry_cfg.debug_enabled,
-                })
-            } else {
-                config.telemetry_cfg = Some(TelemetryConfig::default());
+                };
+                debug!(telemetry_cfg = ?cfg, "Configuring telemetry");
+                config.telemetry_cfg = Some(cfg);
             }
             None
         } else {
@@ -467,7 +467,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
             }
 
             if let Some(cfg) = &config.telemetry_cfg {
-                builder.enable_telemetry(Some(cfg.clone()));
+                builder.enable_telemetry(cfg.clone());
             }
 
             if let Some(token) = &config.test_session_token {
@@ -795,8 +795,7 @@ mod tests {
             let mut cfg = TraceExporterConfig::default();
             let error = ddog_trace_exporter_config_enable_telemetry(Some(&mut cfg), None);
             assert!(error.is_none());
-            assert_eq!(cfg.telemetry_cfg.as_ref().unwrap().heartbeat, 0);
-            assert!(cfg.telemetry_cfg.as_ref().unwrap().runtime_id.is_none());
+            assert!(cfg.telemetry_cfg.is_none());
 
             let mut cfg = TraceExporterConfig::default();
             let error = ddog_trace_exporter_config_enable_telemetry(
@@ -1080,8 +1079,8 @@ mod tests {
             let mock_metrics = server.mock(|when, then| {
                 when.method(POST)
                     .path("/telemetry/proxy/api/v2/apmtelemetry")
-                    .body_contains(r#""runtime_id":"foo""#)
-                    .body_contains(r#""metric":"trace_api."#);
+                    .body_includes(r#""runtime_id":"foo""#)
+                    .body_includes(r#""metric":"trace_api."#);
                 then.status(200)
                     .header("content-type", "application/json")
                     .body("");
@@ -1134,7 +1133,7 @@ mod tests {
 
             ddog_trace_exporter_free(exporter);
             // It should receive 1 metrics payload (excluding heartbeats)
-            mock_metrics.assert_hits(1);
+            mock_metrics.assert_calls(1);
         }
     }
 

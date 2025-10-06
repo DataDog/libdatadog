@@ -23,7 +23,7 @@ anyhow = "1.0"
 chrono = { version = "0.4.38", features = ["std"] }
 crossbeam-queue = "0.3.11"
 ddcommon = { path = "../ddcommon" }
-hyper = { version = "1.6", features = ["http1", "client"] }
+hyper = { workspace = true}
 serde = "1.0"
 
 [dev-dependencies]
