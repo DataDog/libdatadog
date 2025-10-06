@@ -424,16 +424,40 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
     path: CharSlice,
     operation_name: CharSlice,
     resource_name: CharSlice,
-    request_body_type:&mut ffi::Vec<CharSlice>,
-    response_body_type:&mut ffi::Vec<CharSlice>,
+    request_body_type:*mut ffi::Vec<CharSlice>,
+    response_body_type:*mut ffi::Vec<CharSlice>,
     response_code:i32,
-    authentication:&mut ffi::Vec<ddtelemetry::data::Authentication>,
+    authentication:*mut ffi::Vec<ddtelemetry::data::Authentication>,
     metadata: CharSlice
 ) -> MaybeError {
 
     let response_code_vec = vec![response_code];
+    let request_body_type_local = Box::into_raw(Box::new(ffi::Vec::<CharSlice>::new()));
+    let response_body_type_local = Box::into_raw(Box::new(ffi::Vec::<CharSlice>::new()));
+    let authentication_local = Box::into_raw(Box::new(ffi::Vec::<ddtelemetry::data::Authentication>::new()));
+    if let Some(req_vec) = request_body_type.as_ref() {
+        if let Some(local_vec) = request_body_type_local.as_mut() {
+            for item in req_vec.to_vec() {
+                local_vec.push(item);
+            }
+        }
+    }
+    if let Some(resp_vec) = response_body_type.as_ref() {
+        if let Some(local_vec) = response_body_type_local.as_mut() {
+            for item in resp_vec.to_vec() {
+                local_vec.push(item);
+            }
+        }
+    }
+    if let Some(auth_vec) = authentication.as_ref() {
+        if let Some(local_vec) = authentication_local.as_mut() {
+            for item in auth_vec.to_vec() {
+                local_vec.push(item);
+            }
+        }
+    }
 
-    let maybe_metadata = serde_json::from_slice::<serde_json::Value>(std::slice::from_raw_parts(
+    let maybe_metadata: Result<Value, serde_json::Error> = serde_json::from_slice::<serde_json::Value>(std::slice::from_raw_parts(
         metadata.as_ptr() as *const u8,
         metadata.len(),
     ));
@@ -448,10 +472,10 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
         path: Some(path.to_utf8_lossy().into_owned()),
         operation_name: operation_name.to_utf8_lossy().into_owned(),
         resource_name: resource_name.to_utf8_lossy().into_owned(),
-        request_body_type: Some(request_body_type.to_vec().iter().map(|s| s.to_utf8_lossy().into_owned()).collect()),
-        response_body_type: Some(response_body_type.to_vec().iter().map(|s| s.to_utf8_lossy().into_owned()).collect()),
+        request_body_type: Some(request_body_type_local.as_ref().unwrap().to_vec().iter().map(|s| s.to_utf8_lossy().into_owned()).collect()),
+        response_body_type: Some(response_body_type_local.as_ref().unwrap().to_vec().iter().map(|s| s.to_utf8_lossy().into_owned()).collect()),
         response_code: Some(response_code_vec),
-        authentication: Some(authentication.to_vec()),
+        authentication: Some(authentication_local.as_ref().unwrap().to_vec()),
         metadata: Some(metadata_json),
     });
 
