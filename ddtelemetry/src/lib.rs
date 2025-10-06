@@ -39,6 +39,10 @@ pub fn build_host() -> data::Host {
         os_version,
         kernel_name: info::os::os_type(),
         kernel_release: info::os::os_release(),
+        #[cfg(unix)]
         kernel_version: unsafe { info::os::uname() },
+        // TODO Figure it out
+        #[cfg(not(unix))]
+        kernel_version: None,
     }
 }
