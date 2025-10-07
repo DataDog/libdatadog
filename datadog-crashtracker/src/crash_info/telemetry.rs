@@ -4,8 +4,8 @@ use std::{fmt::Write, time::SystemTime};
 
 use crate::SigInfo;
 
-use super::{CrashInfo, Metadata};
-use anyhow::{Context, Ok};
+use super::{build_crash_ping_message, CrashInfo, ErrorsIntakeUploader, Metadata};
+use anyhow::Context;
 use chrono::{DateTime, Utc};
 use ddcommon::Endpoint;
 use ddtelemetry::{
@@ -68,9 +68,37 @@ macro_rules! parse_tags {
 pub struct TelemetryCrashUploader {
     metadata: TelemetryMetadata,
     cfg: ddtelemetry::config::Config,
+    errors_intake_uploader: Option<ErrorsIntakeUploader>,
 }
 
 impl TelemetryCrashUploader {
+    // build_crash_ping_message is now imported from the parent module
+
+    /// Helper function to convert telemetry metadata to crashtracker metadata
+    /// This is used for dual uploads to errors intake
+    fn telemetry_metadata_to_crashtracker_metadata(&self) -> Metadata {
+        let metadata = &self.metadata;
+        let mut tags = vec![
+            format!("service:{}", metadata.application.service_name),
+            format!("language:{}", metadata.application.language_name),
+            format!("language_version:{}", metadata.application.language_version),
+            format!("profiler_version:{}", metadata.application.tracer_version),
+        ];
+
+        if let Some(env) = &metadata.application.env {
+            tags.push(format!("env:{}", env));
+        }
+        if let Some(version) = &metadata.application.service_version {
+            tags.push(format!("version:{}", version));
+        }
+
+        Metadata {
+            library_name: metadata.application.language_name.clone(),
+            library_version: metadata.application.tracer_version.clone(),
+            family: "crashtracker".to_string(),
+            tags,
+        }
+    }
     pub fn new(
         crashtracker_metadata: &Metadata,
         endpoint: &Option<Endpoint>,
@@ -120,6 +148,14 @@ impl TelemetryCrashUploader {
 
         let host = build_host();
 
+        let errors_intake_uploader =
+            match ErrorsIntakeUploader::new(crashtracker_metadata, endpoint) {
+                Ok(uploader) => Some(uploader),
+                Err(e) => {
+                    panic!("Failed to create errors intake uploader: {e}");
+                }
+            };
+
         let s = Self {
             metadata: TelemetryMetadata {
                 host,
@@ -127,6 +163,7 @@ impl TelemetryCrashUploader {
                 runtime_id: runtime_id.unwrap_or("unknown").to_owned(),
             },
             cfg,
+            errors_intake_uploader,
         };
         Ok(s)
     }
@@ -175,10 +212,7 @@ impl TelemetryCrashUploader {
 
         let crash_ping_msg = CrashPingMessage::new(
             crash_uuid.to_string(),
-            format!(
-                "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
-                sig_info.si_code_human_readable, sig_info.si_signo_human_readable
-            ),
+            build_crash_ping_message(sig_info),
             sig_info.clone(),
         );
 
@@ -201,7 +235,22 @@ impl TelemetryCrashUploader {
             origin: Some("Crashtracker"),
         };
 
-        self.send_telemetry_payload(&payload).await
+        // Send to both telemetry and errors intake
+        let telemetry_result = self.send_telemetry_payload(&payload).await;
+
+        if let Some(errors_uploader) = &self.errors_intake_uploader {
+            let crash_metadata = self.telemetry_metadata_to_crashtracker_metadata();
+            let errors_intake_result = errors_uploader
+                .send_crash_ping(crash_uuid, sig_info, &crash_metadata)
+                .await;
+            if let Err(e) = errors_intake_result {
+                eprintln!("Failed to send crash report to errors intake: {e}");
+            }
+        } else {
+            eprintln!("No errors intake uploader available for crash report");
+        }
+
+        telemetry_result
     }
 
     pub async fn upload_to_telemetry(&self, crash_info: &CrashInfo) -> anyhow::Result<()> {
@@ -241,7 +290,18 @@ impl TelemetryCrashUploader {
             origin: Some("Crashtracker"),
         };
 
-        self.send_telemetry_payload(&payload).await
+        // Send to both telemetry and errors intake
+        let telemetry_result = self.send_telemetry_payload(&payload).await;
+
+        if let Some(errors_uploader) = &self.errors_intake_uploader {
+            let errors_intake_result = errors_uploader.upload_to_errors_intake(crash_info).await;
+            if let Err(e) = errors_intake_result {
+                eprintln!("Failed to send crash report to errors intake: {e}");
+            }
+        } else {
+            eprintln!("No errors intake uploader available for crash report");
+        }
+        telemetry_result
     }
 
     async fn send_telemetry_payload(&self, payload: &data::Telemetry<'_>) -> anyhow::Result<()> {
