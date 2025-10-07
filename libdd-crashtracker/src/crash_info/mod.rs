@@ -3,6 +3,7 @@
 
 mod builder;
 mod error_data;
+mod errors_intake;
 mod experimental;
 mod metadata;
 mod os_info;
@@ -16,6 +17,7 @@ mod unknown_value;
 
 pub use builder::*;
 pub use error_data::*;
+pub use errors_intake::*;
 pub use experimental::*;
 use libdd_common::Endpoint;
 pub use metadata::Metadata;
@@ -30,6 +32,15 @@ use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs::File, path::Path};
+
+/// Helper function to create standardized crash ping message format
+/// This is shared between telemetry and errors intake
+pub fn build_crash_ping_message(sig_info: &SigInfo) -> String {
+    format!(
+        "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
+        sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+    )
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CrashInfo {
