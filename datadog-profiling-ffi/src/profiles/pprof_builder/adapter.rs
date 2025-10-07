@@ -57,7 +57,6 @@ impl Default for ProfileAdapter<'_> {
     }
 }
 
-#[repr(C)]
 pub struct ProfileAdapterMapping {
     profile: ProfileHandle<Profile>,
     /// This is the range in the sample types/values array in the legacy API

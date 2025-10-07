@@ -43,58 +43,37 @@ int main(int argc, char **argv) {
   check_ok(ddog_prof_ScratchPad_new(&scratch), "ScratchPad_new");
 
   // ValueType: wall-time / nanoseconds
-  ddog_prof_StringId vt_type = {0}, vt_unit = {0};
+  ddog_prof_ValueType vt = {DDOG_PROF_STRINGID_EMPTY, DDOG_PROF_STRINGID_EMPTY};
   const ddog_CharSlice wall_time = DDOG_CHARSLICE_C_BARE("wall-time");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt_type, dict, wall_time,
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt.type_id, dict, wall_time,
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(type)");
   const ddog_CharSlice nanoseconds = DDOG_CHARSLICE_C_BARE("nanoseconds");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt_unit, dict, nanoseconds,
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt.unit_id, dict, nanoseconds,
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(unit)");
-  ddog_prof_ValueType vt = {.type_id = vt_type, .unit_id = vt_unit};
 
   // Insert a function and mapping in the dictionary
-  ddog_prof_StringId fn_name = {0}, fn_sys = {0}, fn_file = {0};
-  const ddog_CharSlice root_str = DDOG_CHARSLICE_C_BARE("root");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_name, dict, root_str,
+  ddog_prof_Function func = {.name = DDOG_PROF_STRINGID_EMPTY,
+                             .system_name = DDOG_PROF_STRINGID_EMPTY,
+                             .file_name = DDOG_PROF_STRINGID_EMPTY};
+  const ddog_CharSlice root_str = DDOG_CHARSLICE_C_BARE("<?php");
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&func.name, dict, root_str,
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(fn name)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_sys, dict, root_str,
-                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
-           "insert_str(fn system)");
-  const ddog_CharSlice root_cpp = DDOG_CHARSLICE_C_BARE("root.cpp");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&fn_file, dict, root_cpp,
+  const ddog_CharSlice filename = DDOG_CHARSLICE_C_BARE("/srv/example/index.php");
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&func.file_name, dict, filename,
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(fn file)");
-  ddog_prof_Function func = {.name = fn_name, .system_name = fn_sys, .file_name = fn_file};
   ddog_prof_FunctionId func_id = NULL;
   check_ok(ddog_prof_ProfilesDictionary_insert_function(&func_id, dict, &func), "insert_function");
 
-  ddog_prof_StringId map_file = {0}, map_build = {0};
-  const ddog_CharSlice bin_example = DDOG_CHARSLICE_C_BARE("/bin/example");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&map_file, dict, bin_example,
-                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
-           "insert_str(map filename)");
-  const ddog_CharSlice deadbeef = DDOG_CHARSLICE_C_BARE("deadbeef");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&map_build, dict, deadbeef,
-                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
-           "insert_str(map build)");
-  ddog_prof_Mapping mapping = {.memory_start = 0,
-                               .memory_limit = 0,
-                               .file_offset = 0,
-                               .filename = map_file,
-                               .build_id = map_build};
-  ddog_prof_MappingId map_id = NULL;
-  check_ok(ddog_prof_ProfilesDictionary_insert_mapping(&map_id, dict, &mapping), "insert_mapping");
-
   // Insert a location and stack in the scratchpad
   ddog_prof_Line line = {.line_number = 42, .function_id = func_id};
-  ddog_prof_Location loc = {.address = 0, .mapping_id = map_id, .line = line};
-  ddog_prof_LocationId loc_id = NULL;
-  check_ok(ddog_prof_ScratchPad_insert_location(&loc_id, scratch, &loc),
-           "ScratchPad_insert_location");
-  ddog_prof_LocationId locs[1] = {loc_id};
+  // No mapping id is valid, used in dynamic languages.
+  ddog_prof_Location loc = {.address = 0, .mapping_id = NULL, .line = line};
+  ddog_prof_LocationId locs[1] = {NULL};
+  check_ok(ddog_prof_ScratchPad_insert_location(locs, scratch, &loc), "ScratchPad_insert_location");
   ddog_prof_Slice_LocationId loc_slice = {.ptr = locs, .len = 1};
   ddog_prof_StackId stack_id = {0};
   check_ok(ddog_prof_ScratchPad_insert_stack(&stack_id, scratch, loc_slice),
@@ -107,13 +86,20 @@ int main(int argc, char **argv) {
   check_ok(ddog_prof_Profile_add_period(profile, 10'000'000LL, vt),
            "Profile_add_period"); // 10ms tick
 
-  // Build one sample via SampleBuilder
+  // Build one sample via SampleBuilder with label language:php.
+  ddog_prof_StringId language_id = DDOG_PROF_STRINGID_EMPTY;
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&language_id, dict, DDOG_CHARSLICE_C("language"),
+                                                   DDOG_PROF_UTF8_OPTION_ASSUME),
+           "insert_str(sample label)");
+
   ddog_prof_SampleBuilderHandle sb = NULL;
-  check_ok(ddog_prof_SampleBuilder_new(&sb, scratch), "SampleBuilder_new");
+  check_ok(ddog_prof_SampleBuilder_new(&sb, profile, scratch), "SampleBuilder_new");
   check_ok(ddog_prof_SampleBuilder_stack_id(sb, stack_id), "SampleBuilder_stack_id");
   check_ok(ddog_prof_SampleBuilder_value(sb, 10'000'000LL), "SampleBuilder_value");
-  check_ok(ddog_prof_SampleBuilder_build_into_profile(&sb, profile),
-           "SampleBuilder_build_into_profile");
+  check_ok(ddog_prof_SampleBuilder_attribute_str(sb, language_id, DDOG_CHARSLICE_C("php"),
+                                                 DDOG_PROF_UTF8_OPTION_ASSUME),
+           "SampleBuilder_attribute_str");
+  check_ok(ddog_prof_SampleBuilder_finish(&sb), "SampleBuilder_finish");
 
   // Build EncodedProfile with PprofBuilder
   ddog_prof_PprofBuilderHandle pprof = NULL;
