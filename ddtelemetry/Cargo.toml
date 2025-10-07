@@ -36,6 +36,7 @@ datadog-ddsketch = { path = "../ddsketch" }
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.176"
+
 [target."cfg(windows)".dependencies]
 winver = "1.0.0"
 
