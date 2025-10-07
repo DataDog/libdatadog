@@ -22,7 +22,7 @@ const AGENT_ERRORS_INTAKE_URL_PATH: &str = "/evp_proxy/v4/api/v2/errorsintake";
 const DEFAULT_AGENT_HOST: &str = "localhost";
 const DEFAULT_AGENT_PORT: u16 = 8126;
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ErrorsIntakeConfig {
     /// Endpoint to send the data to
     /// This is private and should be interacted with through the set_endpoint function
@@ -56,7 +56,7 @@ fn endpoint_with_errors_intake_path(
 }
 
 /// Settings gathers configuration options we receive from the environment
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ErrorsIntakeSettings {
     // Env parameter
     pub agent_host: Option<String>,
@@ -71,24 +71,6 @@ pub struct ErrorsIntakeSettings {
 
     // Filesystem check
     pub agent_uds_socket_found: bool,
-}
-
-impl Default for ErrorsIntakeSettings {
-    fn default() -> Self {
-        Self {
-            agent_host: None,
-            trace_agent_port: None,
-            trace_agent_url: None,
-            trace_pipe_name: None,
-            direct_submission_enabled: false,
-            api_key: None,
-            site: None,
-            errors_intake_dd_url: None,
-            shared_lib_debug: false,
-
-            agent_uds_socket_found: false,
-        }
-    }
 }
 
 impl ErrorsIntakeSettings {
@@ -133,16 +115,6 @@ impl ErrorsIntakeSettings {
     }
 }
 
-impl Default for ErrorsIntakeConfig {
-    fn default() -> Self {
-        Self {
-            endpoint: None,
-            direct_submission_enabled: false,
-            debug_enabled: false,
-        }
-    }
-}
-
 impl ErrorsIntakeConfig {
     // Implemented following same pattern as telemetry
     fn trace_agent_url_from_setting(settings: &ErrorsIntakeSettings) -> String {
@@ -178,7 +150,7 @@ impl ErrorsIntakeConfig {
             #[cfg(unix)]
             return settings
                 .agent_uds_socket_found
-                .then(|| format!("unix:///var/run/datadog/apm.socket"));
+                .then(|| "unix:///var/run/datadog/apm.socket".to_string());
             #[cfg(not(unix))]
             return None;
         })

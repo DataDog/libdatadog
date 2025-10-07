@@ -244,7 +244,8 @@ impl TelemetryCrashUploader {
             match ErrorsIntakeUploader::new(crashtracker_metadata, endpoint) {
                 Ok(uploader) => Some(uploader),
                 Err(e) => {
-                    panic!("Failed to create errors intake uploader: {e}");
+                    eprintln!("Failed to create errors intake uploader: {e}");
+                    None
                 }
             };
 
