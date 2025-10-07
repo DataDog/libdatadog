@@ -111,7 +111,7 @@ fn zip_files(files: Vec<String>) -> Result<File, FlareError> {
             add_file_to_zip(&mut zip, &path, None, &options)?;
         } else {
             return Err(FlareError::ZipError(format!(
-                "Invalid or inexisting file: {}",
+                "Invalid or non-existent file: {}",
                 path.to_string_lossy()
             )));
         }
@@ -327,19 +327,17 @@ async fn send(
 ///
 /// ```rust no_run
 /// use datadog_tracer_flare::zip::zip_and_send;
-/// use datadog_tracer_flare::TracerFlareManager;
-/// use datadog_tracer_flare::ReturnAction;
-/// use datadog_remote_config::config::agent_task::AgentTaskFile;
-/// use datadog_remote_config::config::agent_task::AgentTask;
+/// use datadog_tracer_flare::{TracerFlareManager, ReturnAction};
+/// use datadog_remote_config::config::agent_task::{AgentTaskFile, AgentTask};
 /// use std::num::NonZeroU64;
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let tracer_flare = TracerFlareManager::default();
 ///
-///     // ... listen to remote config and receiving an agent task ...
+///     // ... listen to remote config and receive an agent task ...
 ///
-///     // simulate the receiving of a Send action
+///     // Simulate receiving a Send action from remote config
 ///     let task = AgentTaskFile {
 ///         args: AgentTask {
 ///             case_id: NonZeroU64::new(123).unwrap(),
@@ -382,7 +380,9 @@ pub async fn zip_and_send(
 
     // APMSP-2118 - TODO: Implement obfuscation of sensitive data
 
-    send(zip, log_level, agent_task, tracer_flare).await
+    let response = send(zip, log_level, agent_task, tracer_flare).await;
+
+    response
 }
 
 #[cfg(test)]

@@ -54,6 +54,7 @@ use crate::error::FlareError;
 pub struct TracerFlareManager {
     pub agent_url: String,
     pub language: String,
+    pub collecting: bool,
     /// As a featured option so we can use the component with no Listener
     #[cfg(feature = "listener")]
     pub listener: Option<Listener>,
@@ -64,6 +65,7 @@ impl Default for TracerFlareManager {
         TracerFlareManager {
             agent_url: hyper::Uri::default().to_string(),
             language: "rust".to_string(),
+            collecting: false,
             #[cfg(feature = "listener")]
             listener: None,
         }
@@ -71,7 +73,7 @@ impl Default for TracerFlareManager {
 }
 
 impl TracerFlareManager {
-    /// Function that creates a new TracerFlareManager instance with basic configuration.
+    /// Creates a new TracerFlareManager instance with basic configuration.
     ///
     /// # Arguments
     ///
@@ -91,7 +93,7 @@ impl TracerFlareManager {
         }
     }
 
-    /// Function that creates a new TracerFlareManager instance and initializes its RemoteConfig
+    /// Creates a new TracerFlareManager instance and initializes its RemoteConfig
     /// listener with the provided configuration parameters.
     ///
     /// # Arguments
@@ -162,8 +164,8 @@ impl TracerFlareManager {
     }
 }
 
-/// Enum that hold the different log level possible
-#[derive(Debug, PartialEq)]
+/// Enum that holds the different log levels possible
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum LogLevel {
     Trace,
     Debug,
@@ -174,17 +176,48 @@ pub enum LogLevel {
     Off,
 }
 
-/// Enum that hold the different returned action to do after listening
-#[derive(Debug, PartialEq)]
+/// Enum that holds the different return actions to perform after listening
+#[derive(Debug, PartialEq, Clone)]
 pub enum ReturnAction {
+    /// If AGENT_TASK received with the right properties.
+    Send(AgentTaskFile),
     /// If AGENT_CONFIG received with the right properties.
     Set(LogLevel),
     /// If AGENT_CONFIG is removed.
     Unset,
-    /// If AGENT_TASK received with the right properties.
-    Send(AgentTaskFile),
     /// If anything else received.
     None,
+}
+
+impl ReturnAction {
+    /// A priority is used to know which action to handle when receiving multiple RemoteConfigFile
+    /// at the same time. Here is the specific order implemented :
+    /// 1. Add an AGENT_TASK : `Send(agent_task)`
+    /// 2. Add an AGENT_CONFIG : `Set(log_level)`
+    /// 3. Remove an AGENT_CONFIG : `Unset`
+    /// 4. Anything else : `None`
+    fn priority(self, other: Self) -> Self {
+        match &self {
+            ReturnAction::Send(_) => return self,
+            ReturnAction::Set(self_level) => match &other {
+                ReturnAction::Send(_) => return other,
+                ReturnAction::Set(other_level) => {
+                    if self_level <= other_level {
+                        return self;
+                    }
+                    return other;
+                }
+                _ => return self,
+            },
+            ReturnAction::Unset => {
+                if other == ReturnAction::None {
+                    return self;
+                }
+                return other;
+            }
+            _ => return other,
+        }
+    }
 }
 
 impl TryFrom<&str> for LogLevel {
@@ -209,19 +242,17 @@ pub type RemoteConfigFile = std::sync::Arc<RawFile<Result<RemoteConfigData, anyh
 pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>>;
 
 /// Check the `RemoteConfigFile` and return the action that tracer flare needs
-/// to perform. This function also updates the `TracerFlareManager` state based on the
-/// received configuration.
+/// to perform.
 ///
 /// # Arguments
 ///
 /// * `file` - RemoteConfigFile received by the Listener.
-/// * `tracer_flare` - TracerFlareManager object to update with the received configuration.
 ///
 /// # Returns
 ///
 /// * `Ok(ReturnAction)` - If successful.
 /// * `FlareError(msg)` - If something fail.
-pub fn check_remote_config_file(file: RemoteConfigFile) -> Result<ReturnAction, FlareError> {
+fn check_remote_config_file(file: RemoteConfigFile) -> Result<ReturnAction, FlareError> {
     let config = file.contents();
     match config.as_ref() {
         Ok(data) => match data {
@@ -247,11 +278,40 @@ pub fn check_remote_config_file(file: RemoteConfigFile) -> Result<ReturnAction, 
     Ok(ReturnAction::None)
 }
 
+/// Handle the `RemoteConfigFile` and return the action that tracer flare needs
+/// to perform. This function also updates the `TracerFlareManager` state based on the
+/// received configuration.
+///
+/// # Arguments
+///
+/// * `file` - RemoteConfigFile received by the Listener.
+/// * `tracer_flare` - TracerFlareManager object to update with the received configuration.
+///
+/// # Returns
+///
+/// * `Ok(ReturnAction)` - If successful.
+/// * `FlareError(msg)` - If something fail.
+pub fn handle_remote_config_file(
+    file: RemoteConfigFile,
+    tracer_flare: &mut TracerFlareManager,
+) -> Result<ReturnAction, FlareError> {
+    let action = check_remote_config_file(file);
+    if let Ok(ReturnAction::Set(_)) = action {
+        if tracer_flare.collecting {
+            return Ok(ReturnAction::None);
+        }
+        tracer_flare.collecting = true;
+    } else if let Ok(ReturnAction::Send(_)) = action {
+        tracer_flare.collecting = false;
+    }
+    return action;
+}
+
 /// Function that listens to RemoteConfig on the agent using the TracerFlareManager instance
 ///
 /// This function uses the listener contained within the TracerFlareManager to fetch
 /// RemoteConfig changes from the agent and processes them to determine the
-/// appropriate actions to take.
+/// appropriate action to take.
 ///
 /// # Arguments
 ///
@@ -261,7 +321,7 @@ pub fn check_remote_config_file(file: RemoteConfigFile) -> Result<ReturnAction, 
 ///
 /// # Returns
 ///
-/// * `Ok(Vec<ReturnAction>)` - If successful.
+/// * `Ok(ReturnAction)` - If successful.
 /// * `FlareError(msg)` - If something fail.
 ///
 /// # Examples
@@ -299,7 +359,7 @@ pub fn check_remote_config_file(file: RemoteConfigFile) -> Result<ReturnAction, 
 #[cfg(feature = "listener")]
 pub async fn run_remote_config_listener(
     tracer_flare: &mut TracerFlareManager,
-) -> Result<Vec<ReturnAction>, FlareError> {
+) -> Result<ReturnAction, FlareError> {
     let listener = match &mut tracer_flare.listener {
         Some(listener) => listener,
         None => {
@@ -308,20 +368,22 @@ pub async fn run_remote_config_listener(
             ))
         }
     };
-    let mut actions = Vec::new();
+    let mut state = ReturnAction::None;
     match listener.fetch_changes().await {
         Ok(changes) => {
             for change in changes {
                 if let Change::Add(file) = change {
                     match check_remote_config_file(file) {
-                        Ok(action) => actions.push(action),
+                        Ok(action) => state = ReturnAction::priority(action, state),
                         Err(err) => return Err(err),
                     }
                 } else if let Change::Remove(file) = change {
                     match file.contents().as_ref() {
                         Ok(data) => match data {
                             RemoteConfigData::TracerFlareConfig(_) => {
-                                actions.push(ReturnAction::Unset);
+                                if state == ReturnAction::None {
+                                    state = ReturnAction::Unset;
+                                }
                             }
                             _ => continue,
                         },
@@ -337,7 +399,13 @@ pub async fn run_remote_config_listener(
         }
     }
 
-    Ok(actions)
+    if let ReturnAction::Set(_) = state {
+        tracer_flare.collecting = true;
+    } else if let ReturnAction::Send(_) = state {
+        tracer_flare.collecting = false;
+    }
+
+    Ok(state)
 }
 
 #[cfg(test)]
