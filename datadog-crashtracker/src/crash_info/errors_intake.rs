@@ -378,9 +378,14 @@ pub struct ErrorsIntakeUploader {
 impl ErrorsIntakeUploader {
     pub fn new(
         _crashtracker_metadata: &Metadata,
-        _endpoint: &Option<Endpoint>,
+        endpoint: &Option<Endpoint>,
     ) -> anyhow::Result<Self> {
-        let cfg = ErrorsIntakeConfig::from_env();
+        let mut cfg = ErrorsIntakeConfig::from_env();
+
+        if let Some(endpoint) = endpoint {
+            cfg.set_endpoint(endpoint.clone())?;
+        }
+
         Ok(Self { cfg })
     }
 
@@ -401,7 +406,6 @@ impl ErrorsIntakeUploader {
 
     async fn send_payload(&self, payload: &ErrorsIntakePayload) -> anyhow::Result<()> {
         let Some(endpoint) = self.cfg.endpoint() else {
-            // No endpoint configured - this is fine, errors intake is optional
             return Ok(());
         };
 
