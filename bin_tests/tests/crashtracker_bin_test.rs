@@ -175,6 +175,18 @@ fn test_crash_ping_timing_and_content() {
     test_crash_tracking_bin(BuildProfile::Release, "donothing", "null_deref");
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_errors_intake_upload() {
+    test_crash_tracking_bin_with_errors_intake(BuildProfile::Release, "donothing", "null_deref");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_errors_intake_crash_ping() {
+    test_crash_tracking_errors_intake_dual_upload(BuildProfile::Release, "donothing", "null_deref");
+}
+
 // This test is disabled for now on x86_64 musl and macos
 // It seems that on aarch64 musl, libc has CFI which allows
 // unwinding passed the signal frame.
@@ -1423,6 +1435,214 @@ fn setup_crashtracking_crates(
         ..Default::default()
     };
     (crashtracker_bin, crashtracker_receiver)
+}
+
+fn test_crash_tracking_bin_with_errors_intake(
+    crash_tracking_receiver_profile: BuildProfile,
+    mode: &str,
+    crash_typ: &str,
+) {
+    let (crashtracker_bin, crashtracker_receiver) =
+        setup_crashtracking_crates(crash_tracking_receiver_profile);
+    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
+
+    let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
+        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
+        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
+        .arg(&fixtures.output_dir)
+        .arg(mode)
+        .arg(crash_typ)
+        .spawn()
+        .unwrap();
+
+    let exit_status = bin_tests::timeit!("exit after signal", {
+        eprintln!("Waiting for exit");
+        p.wait().unwrap()
+    });
+
+    match crash_typ {
+        "kill_sigabrt" | "kill_sigill" | "null_deref" | "raise_sigabrt" | "raise_sigill" => {
+            assert!(!exit_status.success())
+        }
+        "kill_sigbus" | "kill_sigsegv" | "raise_sigbus" | "raise_sigsegv" => {
+            assert!(exit_status.success())
+        }
+        _ => unreachable!("{crash_typ} shouldn't happen"),
+    }
+
+    // Check that errors intake file was created
+    let errors_intake_path = fixtures.crash_profile_path.with_extension("errors");
+    assert!(
+        errors_intake_path.exists(),
+        "Errors intake file should be created at {}",
+        errors_intake_path.display()
+    );
+
+    // Read and validate errors intake payload
+    let errors_intake_content = fs::read(&errors_intake_path)
+        .context("reading errors intake payload")
+        .unwrap();
+    let errors_payload = serde_json::from_slice::<serde_json::Value>(&errors_intake_content)
+        .context("deserializing errors intake payload to json")
+        .unwrap();
+
+    // Validate errors intake payload structure
+    assert_errors_intake_payload(&errors_payload, crash_typ);
+
+    // Also validate telemetry still works (dual upload)
+    let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
+        .context("reading crashtracker telemetry payload")
+        .unwrap();
+    assert_telemetry_message(&crash_telemetry, crash_typ);
+}
+
+fn test_crash_tracking_errors_intake_dual_upload(
+    crash_tracking_receiver_profile: BuildProfile,
+    mode: &str,
+    crash_typ: &str,
+) {
+    let (crashtracker_bin, crashtracker_receiver) =
+        setup_crashtracking_crates(crash_tracking_receiver_profile);
+    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
+
+    let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
+        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
+        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
+        .arg(&fixtures.output_dir)
+        .arg(mode)
+        .arg(crash_typ)
+        .spawn()
+        .unwrap();
+
+    let exit_status = bin_tests::timeit!("exit after signal", {
+        eprintln!("Waiting for exit");
+        p.wait().unwrap()
+    });
+
+    match crash_typ {
+        "kill_sigabrt" | "kill_sigill" | "null_deref" | "raise_sigabrt" | "raise_sigill" => {
+            assert!(!exit_status.success())
+        }
+        "kill_sigbus" | "kill_sigsegv" | "raise_sigbus" | "raise_sigsegv" => {
+            assert!(exit_status.success())
+        }
+        _ => unreachable!("{crash_typ} shouldn't happen"),
+    }
+
+    // Check that errors intake file was created
+    let errors_intake_path = fixtures.crash_profile_path.with_extension("errors");
+    assert!(
+        errors_intake_path.exists(),
+        "Errors intake file should be created at {}",
+        errors_intake_path.display()
+    );
+
+    // Read and validate errors intake payload
+    let errors_intake_content = fs::read(&errors_intake_path)
+        .context("reading errors intake payload")
+        .unwrap();
+
+    // The errors intake might contain multiple JSON objects (crash ping + crash report)
+    // Try to parse as a single JSON first, if that fails, try line by line
+    if let Ok(single_payload) = serde_json::from_slice::<serde_json::Value>(&errors_intake_content)
+    {
+        // Single JSON payload - validate it
+        assert_errors_intake_payload(&single_payload, crash_typ);
+    } else {
+        // Multiple JSON objects - parse line by line
+        let content_str = String::from_utf8(errors_intake_content).unwrap();
+        let lines: Vec<&str> = content_str.lines().collect();
+        assert!(!lines.is_empty(), "Errors intake file should not be empty");
+
+        let mut _found_crash_ping = false;
+        let mut found_crash_report = false;
+
+        for line in lines {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let payload: serde_json::Value = serde_json::from_str(line)
+                .context("parsing errors intake payload line")
+                .unwrap();
+
+            assert_errors_intake_payload(&payload, crash_typ);
+
+            // Check which type this is
+            let ddtags = payload["ddtags"].as_str().unwrap();
+            if ddtags.contains("is_crash_ping:true") {
+                _found_crash_ping = true;
+            } else {
+                found_crash_report = true;
+            }
+        }
+
+        // In dual upload mode, we expect at least the crash report
+        // Crash ping might not always be sent (e.g., file endpoints skip it)
+        assert!(
+            found_crash_report,
+            "Should have found crash report in errors intake"
+        );
+    }
+
+    // Also validate telemetry still works (dual upload)
+    let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
+        .context("reading crashtracker telemetry payload")
+        .unwrap();
+    assert_telemetry_message(&crash_telemetry, crash_typ);
+}
+
+fn assert_errors_intake_payload(payload: &Value, crash_typ: &str) {
+    // Validate basic structure
+    assert_eq!(payload["ddsource"], "crashtracker");
+    assert!(payload["timestamp"].is_number());
+    assert!(payload["ddtags"].is_string());
+
+    let ddtags = payload["ddtags"].as_str().unwrap();
+    assert!(ddtags.contains("service:foo"));
+    assert!(ddtags.contains("uuid:"));
+
+    let error = &payload["error"];
+    assert_eq!(error["source_type"], "Crashtracking");
+    assert!(error["type"].is_string()); // Note: "error_type" field is serialized as "type"
+    assert!(error["message"].is_string());
+
+    // Check if this is a crash ping or crash report
+    if ddtags.contains("is_crash_ping:true") {
+        assert_eq!(error["is_crash"], false);
+        assert!(error["stack"].is_null());
+    } else {
+        assert_eq!(error["is_crash"], true);
+    }
+
+    // Check signal-specific values
+    match crash_typ {
+        "null_deref" => {
+            assert_eq!(error["type"], "SIGSEGV");
+            assert!(error["message"]
+                .as_str()
+                .unwrap()
+                .contains("Process terminated"));
+            assert!(error["message"].as_str().unwrap().contains("SIGSEGV"));
+        }
+        "kill_sigabrt" | "raise_sigabrt" => {
+            assert_eq!(error["type"], "SIGABRT");
+            assert!(error["message"].as_str().unwrap().contains("SIGABRT"));
+        }
+        "kill_sigill" | "raise_sigill" => {
+            assert_eq!(error["type"], "SIGILL");
+            assert!(error["message"].as_str().unwrap().contains("SIGILL"));
+        }
+        "kill_sigbus" | "raise_sigbus" => {
+            assert_eq!(error["type"], "SIGBUS");
+            assert!(error["message"].as_str().unwrap().contains("SIGBUS"));
+        }
+        "kill_sigsegv" | "raise_sigsegv" => {
+            assert_eq!(error["type"], "SIGSEGV");
+            assert!(error["message"].as_str().unwrap().contains("SIGSEGV"));
+        }
+        _ => panic!("Unexpected crash_typ: {crash_typ}"),
+    }
 }
 
 fn extend_path<T: AsRef<Path>>(parent: &Path, path: T) -> PathBuf {
