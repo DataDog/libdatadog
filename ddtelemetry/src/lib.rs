@@ -41,8 +41,10 @@ pub fn build_host() -> data::Host {
         kernel_release: info::os::os_release(),
         #[cfg(unix)]
         kernel_version: unsafe { info::os::uname() },
-        // TODO Figure it out
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        kernel_version: winver::WindowsVersion::detect()
+            .map(|wv| format!("{}.{}.{}", wv.major, wv.minor, wv.build)),
+        #[cfg(not(any(windows, unix)))]
         kernel_version: None,
     }
 }
