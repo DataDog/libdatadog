@@ -380,9 +380,7 @@ pub async fn zip_and_send(
 
     // APMSP-2118 - TODO: Implement obfuscation of sensitive data
 
-    let response = send(zip, log_level, agent_task, tracer_flare).await;
-
-    response
+    send(zip, log_level, agent_task, tracer_flare).await
 }
 
 #[cfg(test)]

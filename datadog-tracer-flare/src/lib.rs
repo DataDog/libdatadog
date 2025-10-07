@@ -198,24 +198,24 @@ impl ReturnAction {
     /// 4. Anything else : `None`
     fn priority(self, other: Self) -> Self {
         match &self {
-            ReturnAction::Send(_) => return self,
+            ReturnAction::Send(_) => self,
             ReturnAction::Set(self_level) => match &other {
-                ReturnAction::Send(_) => return other,
+                ReturnAction::Send(_) => other,
                 ReturnAction::Set(other_level) => {
                     if self_level <= other_level {
                         return self;
                     }
-                    return other;
+                    other
                 }
-                _ => return self,
+                _ => self,
             },
             ReturnAction::Unset => {
                 if other == ReturnAction::None {
                     return self;
                 }
-                return other;
+                other
             }
-            _ => return other,
+            _ => other,
         }
     }
 }
@@ -304,7 +304,7 @@ pub fn handle_remote_config_file(
     } else if let Ok(ReturnAction::Send(_)) = action {
         tracer_flare.collecting = false;
     }
-    return action;
+    action
 }
 
 /// Function that listens to RemoteConfig on the agent using the TracerFlareManager instance
