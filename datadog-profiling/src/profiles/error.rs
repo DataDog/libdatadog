@@ -42,7 +42,7 @@ pub enum ProfileError {
     StorageFull,
     /// Some other error. Try to categorize all the errors, but since some
     /// things use [`io::Error`], there may be uncategorized errors.
-    #[error("`0`")]
+    #[error("{0}")]
     Other(Cow<'static, str>),
 }
 

@@ -222,16 +222,12 @@ int main(void) {
       struct ddog_Timespec end_ts = now_wall();
       struct ddog_Timespec start_ts = {.seconds = (int64_t)interval_started, .nanoseconds = 0};
       struct ddog_prof_EncodedProfile encoded = {0};
-      // Manually build pprof: wall-time without upscaling, alloc with poisson
-      ddog_prof_PprofBuilderHandle pprof = NULL;
-      check_ok(ddog_prof_PprofBuilder_new(&pprof, dict, scratch), "PprofBuilder_new");
       // Grouping 0: profile has no upscaling, no special API to call.
       // Grouping 1: add profile with poisson upscaling
       check_ok(ddog_prof_ProfileAdapter_add_poisson_upscaling(&adapter, 1, poisson_rule),
                "ProfileAdapter_add_poisson_upscaling)");
-      check_ok(ddog_prof_PprofBuilder_build_compressed(&encoded, pprof, 4096, start_ts, end_ts),
-               "PprofBuilder_build_compressed");
-      ddog_prof_PprofBuilder_drop(&pprof);
+      check_ok(ddog_prof_ProfileAdapter_build_compressed(&encoded, &adapter, &start_ts, &end_ts),
+               "PprofAdapter_build_compressed");
 
       // Build and send exporter request
       struct ddog_prof_Slice_Exporter_File files_to_compress =

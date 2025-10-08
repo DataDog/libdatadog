@@ -138,7 +138,7 @@ pub enum TryAddProfileError {
     Other(&'static CStr),
 }
 
-// SAFETY: we ensure c-str literals here or i
+// SAFETY: we ensure c-str literals here are utf-8 valid.
 unsafe impl FfiSafeErrorMessage for TryAddProfileError {
     fn as_ffi_str(&self) -> &'static CStr {
         match self {
@@ -382,8 +382,20 @@ impl<'a> PprofBuilder<'a> {
                 duration_ns as i64
             };
             // Field 9: time_nanos, Field 10: duration_nanos in the Profile message
-            pprof::Record::<i64, 9, { pprof::OPT_ZERO }>::from(start_i64).encode(writer)?;
-            pprof::Record::<i64, 10, { pprof::OPT_ZERO }>::from(duration_i64).encode(writer)?;
+            pprof::Record::<i64, 9, { pprof::OPT_ZERO }>::from(start_i64)
+                .encode(writer)
+                .map_err(|e| {
+                    ProfileError::fmt(format_args!(
+                        "pprof builder failed to encode profile time_nanos: {e}"
+                    ))
+                })?;
+            pprof::Record::<i64, 10, { pprof::OPT_ZERO }>::from(duration_i64)
+                .encode(writer)
+                .map_err(|e| {
+                    ProfileError::fmt(format_args!(
+                        "pprof builder failed to encode profile duration: {e}"
+                    ))
+                })?;
         }
         let mut values_buf: Vec<i64> = Vec::new();
         let mut labels_buf: Vec<pprof::Record<pprof::Label, 3, { pprof::NO_OPT_ZERO }>> =
@@ -519,7 +531,12 @@ impl<'a> PprofBuilder<'a> {
                     labels: labels_buf.as_slice(),
                 };
                 pprof::Record::<pprof::Sample, 2, { pprof::NO_OPT_ZERO }>::from(s_msg)
-                    .encode(writer)?;
+                    .encode(writer)
+                    .map_err(|e| {
+                        ProfileError::fmt(format_args!(
+                            "pprof builder failed to encode a sample: {e}"
+                        ))
+                    })?;
             }
         }
 
@@ -568,7 +585,13 @@ impl<'a> PprofBuilder<'a> {
                 system_name: pprof::Record::from(sys),
                 filename: pprof::Record::from(file),
             };
-            pprof::Record::<pprof::Function, 5, { pprof::NO_OPT_ZERO }>::from(msg).encode(w)?;
+            pprof::Record::<pprof::Function, 5, { pprof::NO_OPT_ZERO }>::from(msg)
+                .encode(w)
+                .map_err(|e| {
+                    ProfileError::fmt(format_args!(
+                        "pprof builder failed to encode a function: {e}"
+                    ))
+                })?;
             Ok(())
         })
     }
@@ -592,7 +615,13 @@ impl<'a> PprofBuilder<'a> {
                 filename: pprof::Record::from(filename),
                 build_id: pprof::Record::from(build_id),
             };
-            pprof::Record::<pprof::Mapping, 3, { pprof::NO_OPT_ZERO }>::from(msg).encode(w)?;
+            pprof::Record::<pprof::Mapping, 3, { pprof::NO_OPT_ZERO }>::from(msg)
+                .encode(w)
+                .map_err(|e| {
+                    ProfileError::fmt(format_args!(
+                        "pprof builder failed to encode a mapping: {e}"
+                    ))
+                })?;
             Ok(())
         })
     }
@@ -636,7 +665,13 @@ impl<'a> PprofBuilder<'a> {
                 address: pprof::Record::from(loc.address),
                 line: pprof::Record::from(line),
             };
-            pprof::Record::<pprof::Location, 4, { pprof::NO_OPT_ZERO }>::from(msg).encode(w)?;
+            pprof::Record::<pprof::Location, 4, { pprof::NO_OPT_ZERO }>::from(msg)
+                .encode(w)
+                .map_err(|e| {
+                    ProfileError::fmt(format_args!(
+                        "pprof builder failed to encode a location: {e}"
+                    ))
+                })?;
             Ok(())
         })
     }

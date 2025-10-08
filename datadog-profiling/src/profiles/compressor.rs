@@ -10,6 +10,7 @@ use std::io::{self, Write};
 /// capacity that won't be exceeded. Additionally, it gracefully handles
 /// out-of-memory conditions instead of panicking (unfortunately not compatible
 /// with the `no-panic` crate, though).
+#[derive(Debug)]
 pub struct SizeRestrictedBuffer {
     vec: Vec<u8>,
     max_capacity: usize,
@@ -64,9 +65,11 @@ impl Write for SizeRestrictedBuffer {
 }
 
 /// An opaque encoder which does the compression for the Compressor.
+#[derive(Debug)]
 pub struct Encoder(FrameEncoder<SizeRestrictedBuffer>);
 
 /// Used to compress profile data.
+#[derive(Debug)]
 pub struct Compressor {
     encoder: Encoder,
 }
@@ -104,7 +107,9 @@ impl Compressor {
     ///  2. Fails if the encoder fails, e.g., the output buffer is full.
     pub fn finish(&mut self) -> Result<Vec<u8>, ProfileError> {
         if let Err(err) = self.encoder.0.try_finish() {
-            return Err(ProfileError::from(io::Error::from(err)));
+            return Err(ProfileError::fmt(format_args!(
+                "profile compressor failed to finish: {err}"
+            )));
         }
 
         // Move out the current encoder, create a fresh one with the same cap,

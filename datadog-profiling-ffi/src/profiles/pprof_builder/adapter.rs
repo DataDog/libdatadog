@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::profiles::{
+    ddog_prof_PprofBuilder_add_profile,
     ddog_prof_PprofBuilder_add_profile_with_poisson_upscaling,
     ddog_prof_PprofBuilder_add_profile_with_proportional_upscaling,
     ddog_prof_PprofBuilder_build_compressed, ddog_prof_PprofBuilder_new,
@@ -462,22 +463,32 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_build_compressed(
             }
         } else {
             let poisson = adapter.poisson_upscaling_rules[grouping_index];
-            let status =
+
+            let status = if poisson.sampling_distance != 0 {
                 ddog_prof_PprofBuilder_add_profile_with_poisson_upscaling(
                     pprof_builder,
                     mapping.profile,
                     poisson,
-                );
+                )
+            } else {
+                ddog_prof_PprofBuilder_add_profile(
+                    pprof_builder,
+                    mapping.profile,
+                )
+            };
             if status.flags != 0 {
                 return status;
             }
         }
     }
 
+    // This is a limit of protobuf itself, the function will limit to a
+    // smaller value around the current intake limits.
+    let max_capacity = i32::MAX as u32;
     ddog_prof_PprofBuilder_build_compressed(
         out_profile,
         pprof_builder,
-        4096,
+        max_capacity,
         start,
         end,
     )

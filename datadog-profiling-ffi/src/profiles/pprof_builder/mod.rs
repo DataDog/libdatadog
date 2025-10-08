@@ -33,8 +33,8 @@ use ddcommon_ffi::{Handle, Timespec};
 ///   mutated through this handle, no other references to the same builder
 ///   may be used.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_PprofBuilder_new<'a>(
-    out: *mut ProfileHandle<PprofBuilder<'a>>,
+pub unsafe extern "C" fn ddog_prof_PprofBuilder_new(
+    out: *mut ProfileHandle<PprofBuilder<'_>>,
     dictionary: ArcHandle<ProfilesDictionary>,
     scratchpad: ArcHandle<ScratchPad>,
 ) -> ProfileStatus {
@@ -63,19 +63,23 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_new<'a>(
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile(
-    mut handle: ProfileHandle<PprofBuilder>,
-    profile: *const Profile,
+    mut handle: ProfileHandle<PprofBuilder<'_>>,
+    profile: ProfileHandle<Profile>,
 ) -> ProfileStatus {
-    crate::profiles::ensure_non_null_insert!(profile);
+    let profile = match profile.as_inner() {
+        Ok(profile) => unsafe {
+            core::mem::transmute::<&Profile, &Profile>(profile)
+        },
+        Err(err) => return ProfileStatus::from_ffi_safe_error_message(err),
+    };
     let result = || -> Result<(), ProfileStatus> {
         let builder = unsafe {
             handle
                 .as_inner_mut()
                 .map_err(ProfileStatus::from_ffi_safe_error_message)?
         };
-        let prof_ref = unsafe { &*profile };
         builder
-            .try_add_profile(prof_ref)
+            .try_add_profile(profile)
             .map_err(ProfileStatus::from_ffi_safe_error_message)
     }();
     match result {
@@ -97,7 +101,7 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile(
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile_with_poisson_upscaling(
-    mut handle: ProfileHandle<PprofBuilder>,
+    mut handle: ProfileHandle<PprofBuilder<'_>>,
     profile: ProfileHandle<Profile>,
     upscaling_rule: PoissonUpscalingRule,
 ) -> ProfileStatus {
@@ -198,14 +202,14 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_add_profile_with_proportional_up
 pub unsafe extern "C" fn ddog_prof_PprofBuilder_build_compressed(
     out_profile: *mut Handle<EncodedProfile>,
     handle: ProfileHandle<PprofBuilder<'_>>,
-    size_hint: u32,
+    max_capacity: u32,
     start: Timespec,
     end: Timespec,
 ) -> ProfileStatus {
     build_with_sink::<Compressor, _, _>(
         out_profile,
         handle,
-        size_hint,
+        max_capacity,
         start,
         end,
         |cap| Ok(Compressor::with_max_capacity(cap)),
@@ -240,7 +244,7 @@ pub unsafe extern "C" fn ddog_prof_PprofBuilder_build_uncompressed(
 fn build_with_sink<Sink, Make, Finalize>(
     out_profile: *mut Handle<EncodedProfile>,
     mut handle: ProfileHandle<PprofBuilder<'_>>,
-    size_hint: u32,
+    max_capacity: u32,
     start: Timespec,
     end: Timespec,
     make_sink: Make,
@@ -267,7 +271,7 @@ where
         // limit is raised a little, clients don't need to be rebuilt. Of
         // course, if the limit is raised a lot then we'll need to rebuild
         // with a new max.
-        let max_cap = (size_hint as usize).min(64 * MIB);
+        let max_cap = (max_capacity as usize).min(64 * MIB);
         let mut sink = make_sink(max_cap)?;
         builder.build(&mut sink)?;
         let buffer = finalize(sink)?;
