@@ -1,18 +1,17 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(target_os = "linux")]
 use datadog_library_config::tracer_metadata::AnonymousFileHandle;
 use datadog_library_config::tracer_metadata::{self, TracerMetadata};
 use ddcommon_ffi::Result;
 use std::ffi::CStr;
-use std::os::raw::{c_char, c_int};
+use std::os::raw::{c_char, c_void};
 
 /// C-compatible representation of an anonymous file handle
 #[repr(C)]
 pub struct TracerMemfdHandle {
     /// File descriptor (relevant only on Linux)
-    pub fd: c_int,
+    pub opaque_ptr: *mut c_void,
 }
 
 /// Represents the types of metadata that can be set on a `TracerMetadata` object.
@@ -108,7 +107,7 @@ pub unsafe extern "C" fn ddog_tracer_metadata_set(
 /// - `ptr` must be a valid, non-null pointer to a `TracerMetadata`.
 ///
 /// # Returns
-/// - On Linux: a `TracerMemfdHandle` containing a raw file descriptor to a memory file.
+/// - On supported platform: a `TracerMemfdHandle` containing an opaque pointer on the underlying Rust datastructure.
 /// - On unsupported platforms: an error.
 /// - On failure: propagates any internal errors from the metadata storage process.
 ///
@@ -130,15 +129,22 @@ pub unsafe extern "C" fn ddog_tracer_metadata_store(
     let result: anyhow::Result<TracerMemfdHandle> =
         match tracer_metadata::store_tracer_metadata(metadata) {
             #[cfg(target_os = "linux")]
-            Ok(handle) => {
+            Ok(anonymous_file) => {
                 use std::os::fd::{IntoRawFd, OwnedFd};
-                let AnonymousFileHandle::Linux(memfd) = handle;
+                let AnonymousFileHandle::Linux(memfd) = anonymous_file;
                 let owned_fd: OwnedFd = memfd.into_file().into();
                 Ok(TracerMemfdHandle {
-                    fd: owned_fd.into_raw_fd(),
+                    opaque_ptr: owned_fd.into_raw_fd() as *mut c_void,
                 })
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(target_os = "windows")]
+            Ok(anonymous_file) => {
+                let boxed: Box<AnonymousFileHandle> = Box::new(anonymous_file);
+                Ok(TracerMemfdHandle {
+                    opaque_ptr: Box::into_raw(boxed) as *mut c_void,
+                })
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
             Ok(_) => Err(anyhow::anyhow!("Unsupported platform")),
             Err(err) => Err(err),
         };
