@@ -277,6 +277,7 @@ impl ErrorsIntakePayload {
             ddtags.push_str(&format!(",version:{version}"));
         }
         ddtags.push_str(&format!(",uuid:{}", crash_info.uuid));
+        ddtags.push_str(",is_crash:true");
 
         // Extract error info from signal
         let (error_type, error_message) = if let Some(sig_info) = &crash_info.sig_info {
