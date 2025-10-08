@@ -240,13 +240,14 @@ impl TelemetryCrashUploader {
 
         let host = build_host();
 
-        let errors_intake_uploader = match ErrorsIntakeUploader::new(crashtracker_metadata) {
-            Ok(uploader) => Some(uploader),
-            Err(e) => {
-                eprintln!("Failed to create errors intake uploader: {e}");
-                None
-            }
-        };
+        let errors_intake_uploader =
+            match ErrorsIntakeUploader::new(crashtracker_metadata, endpoint) {
+                Ok(uploader) => Some(uploader),
+                Err(e) => {
+                    eprintln!("Failed to create errors intake uploader: {e}");
+                    None
+                }
+            };
 
         let s = Self {
             metadata: TelemetryMetadata {
