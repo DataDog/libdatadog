@@ -186,7 +186,7 @@ impl ErrorsIntakeConfig {
         };
 
         // For direct submission, construct the proper intake URL
-        let url = if settings.direct_submission_enabled && api_key.is_some() {
+        let url = if settings.direct_submission_enabled && settings.api_key.is_some() {
             // Check for explicit errors intake URL first
             if let Some(ref errors_intake_url) = settings.errors_intake_dd_url {
                 errors_intake_url.clone()
@@ -611,5 +611,41 @@ mod tests {
         std::env::remove_var("DD_API_KEY");
         std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
         std::env::remove_var("DD_SITE");
+    }
+
+    #[test]
+    fn test_errors_intake_config_agent_with_api_key_but_no_direct() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap();
+
+        // Clear all environment variables first to isolate test
+        std::env::remove_var("DD_TRACE_AGENT_URL");
+        std::env::remove_var("DD_AGENT_HOST");
+        std::env::remove_var("DD_TRACE_AGENT_PORT");
+        std::env::remove_var("DD_API_KEY");
+        std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
+        std::env::remove_var("DD_SITE");
+
+        // Test: API key is set but direct submission is NOT enabled
+        // Should still use agent proxy
+        std::env::set_var("DD_TRACE_AGENT_URL", "http://localhost:9126");
+        std::env::set_var("DD_API_KEY", "test-key");
+        // Note: _DD_DIRECT_SUBMISSION_ENABLED is NOT set (defaults to false)
+
+        let cfg = ErrorsIntakeConfig::from_env();
+        let endpoint = cfg.endpoint().unwrap();
+
+        // Should use agent URL, not direct submission
+        assert_eq!(endpoint.url.host(), Some("localhost"));
+        assert_eq!(endpoint.url.port_u16(), Some(9126));
+
+        // Should use agent proxy path, not direct path
+        assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
+
+        // Should have no API key in endpoint since we're using agent proxy
+        assert!(endpoint.api_key.is_none());
+
+        // Clean up test environment
+        std::env::remove_var("DD_TRACE_AGENT_URL");
+        std::env::remove_var("DD_API_KEY");
     }
 }
