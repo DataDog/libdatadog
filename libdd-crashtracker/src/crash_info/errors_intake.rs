@@ -138,14 +138,6 @@ impl ErrorsIntakeConfig {
             #[cfg(not(windows))]
             return None;
         })
-        .or_else(|| match (&settings.agent_host, settings.trace_agent_port) {
-            (None, None) => None,
-            _ => Some(format!(
-                "http://{}:{}",
-                settings.agent_host.as_deref().unwrap_or(DEFAULT_AGENT_HOST),
-                settings.trace_agent_port.unwrap_or(DEFAULT_AGENT_PORT),
-            )),
-        })
         .or_else(|| {
             #[cfg(unix)]
             return settings
@@ -153,6 +145,14 @@ impl ErrorsIntakeConfig {
                 .then(|| "unix:///var/run/datadog/apm.socket".to_string());
             #[cfg(not(unix))]
             return None;
+        })
+        .or_else(|| match (&settings.agent_host, settings.trace_agent_port) {
+            (None, None) => None,
+            _ => Some(format!(
+                "http://{}:{}",
+                settings.agent_host.as_deref().unwrap_or(DEFAULT_AGENT_HOST),
+                settings.trace_agent_port.unwrap_or(DEFAULT_AGENT_PORT),
+            )),
         })
         .unwrap_or_else(|| format!("http://{DEFAULT_AGENT_HOST}:{DEFAULT_AGENT_PORT}"))
     }
@@ -177,7 +177,6 @@ impl ErrorsIntakeConfig {
     }
 
     pub fn from_settings(settings: &ErrorsIntakeSettings) -> Self {
-        let trace_agent_url = Self::trace_agent_url_from_setting(settings);
         let api_key = Self::api_key_from_settings(settings);
 
         let mut this = Self {
@@ -186,9 +185,24 @@ impl ErrorsIntakeConfig {
             debug_enabled: settings.shared_lib_debug,
         };
 
-        if let Ok(url) = parse_uri(&trace_agent_url) {
+        // For direct submission, construct the proper intake URL
+        let url = if settings.direct_submission_enabled && api_key.is_some() {
+            // Check for explicit errors intake URL first
+            if let Some(ref errors_intake_url) = settings.errors_intake_dd_url {
+                errors_intake_url.clone()
+            } else {
+                // Build direct submission URL using site configuration
+                let site = settings.site.as_deref().unwrap_or(DEFAULT_DD_SITE);
+                format!("https://{}.{}", PROD_ERRORS_INTAKE_SUBDOMAIN, site)
+            }
+        } else {
+            // For agent proxy, use existing logic
+            Self::trace_agent_url_from_setting(settings)
+        };
+
+        if let Ok(parsed_url) = parse_uri(&url) {
             let _res = this.set_endpoint(Endpoint {
-                url,
+                url: parsed_url,
                 api_key,
                 ..Default::default()
             });
@@ -377,16 +391,8 @@ pub struct ErrorsIntakeUploader {
 }
 
 impl ErrorsIntakeUploader {
-    pub fn new(
-        _crashtracker_metadata: &Metadata,
-        endpoint: &Option<Endpoint>,
-    ) -> anyhow::Result<Self> {
-        let mut cfg = ErrorsIntakeConfig::from_env();
-
-        if let Some(endpoint) = endpoint {
-            cfg.set_endpoint(endpoint.clone())?;
-        }
-
+    pub fn new(_crashtracker_metadata: &Metadata) -> anyhow::Result<Self> {
+        let cfg = ErrorsIntakeConfig::from_env();
         Ok(Self { cfg })
     }
 
@@ -484,6 +490,7 @@ mod tests {
         assert_eq!(payload.ddsource, "crashtracker");
         assert!(payload.ddtags.contains("service:foo"));
         assert!(payload.ddtags.contains("uuid:"));
+        assert!(payload.ddtags.contains("is_crash:true"));
         assert_eq!(payload.error.source_type, Some("Crashtracking".to_string()));
         assert_eq!(payload.error.is_crash, Some(true));
     }
@@ -518,26 +525,59 @@ mod tests {
         std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
         std::env::remove_var("DD_SITE");
 
-        // Test configuration building from environment
-        std::env::set_var("DD_AGENT_HOST", "test-host");
-        std::env::set_var("DD_TRACE_AGENT_PORT", "1234");
+        // Test direct submission configuration
         std::env::set_var("DD_API_KEY", "test-key");
         std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true");
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
 
-        assert_eq!(endpoint.url.host(), Some("test-host"));
-        assert_eq!(endpoint.url.port_u16(), Some(1234));
+        // Should use event-platform-intake.datad0g.com for direct submission
+        assert_eq!(
+            endpoint.url.host(),
+            Some("event-platform-intake.datad0g.com")
+        );
+        assert_eq!(endpoint.url.scheme_str(), Some("https"));
         assert!(endpoint.api_key.is_some());
 
         // With direct submission enabled and API key, should use direct path
         assert_eq!(endpoint.url.path(), DIRECT_ERRORS_INTAKE_URL_PATH);
 
+        std::env::remove_var("DD_API_KEY");
+        std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
+    }
+
+    #[test]
+    fn test_errors_intake_config_custom_site() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap();
+
+        std::env::remove_var("DD_TRACE_AGENT_URL");
         std::env::remove_var("DD_AGENT_HOST");
         std::env::remove_var("DD_TRACE_AGENT_PORT");
         std::env::remove_var("DD_API_KEY");
         std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
+        std::env::remove_var("DD_SITE");
+
+        // Test direct submission with custom site
+        std::env::set_var("DD_API_KEY", "test-key");
+        std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true");
+        std::env::set_var("DD_SITE", "us3.datadoghq.com");
+
+        let cfg = ErrorsIntakeConfig::from_env();
+        let endpoint = cfg.endpoint().unwrap();
+
+        // Should use event-platform-intake with custom site
+        assert_eq!(
+            endpoint.url.host(),
+            Some("event-platform-intake.us3.datadoghq.com")
+        );
+        assert_eq!(endpoint.url.scheme_str(), Some("https"));
+        assert!(endpoint.api_key.is_some());
+        assert_eq!(endpoint.url.path(), DIRECT_ERRORS_INTAKE_URL_PATH);
+
+        std::env::remove_var("DD_API_KEY");
+        std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
+        std::env::remove_var("DD_SITE");
     }
 
     #[test]
