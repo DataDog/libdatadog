@@ -56,8 +56,6 @@ use std::ptr::NonNull;
 use std::slice;
 use std::sync::Arc;
 use std::time::Duration;
-use serde_json::Value;
-
 
 #[no_mangle]
 #[cfg(target_os = "windows")]
@@ -412,6 +410,25 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     MaybeError::None
 }
 
+unsafe fn box_from_raw_opt<T>(ptr: *mut T) -> Option<Box<T>> {
+    if ptr.is_null() {
+        None
+    } else {
+        Some(Box::from_raw(ptr))
+    }
+}
+
+fn slice_of_char_slice_to_vec_of_string<'a, T>(ffi_vec: T) -> Vec<String>
+where
+    T: AsRef<[CharSlice<'a>]>,
+{
+    ffi_vec
+        .as_ref()
+        .iter()
+        .map(|s| s.to_utf8_lossy().into_owned())
+        .collect()
+}
+
 /// Reports an endpoint to the telemetry.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
@@ -424,59 +441,30 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
     path: CharSlice,
     operation_name: CharSlice,
     resource_name: CharSlice,
-    request_body_type:*mut ffi::Vec<CharSlice>,
-    response_body_type:*mut ffi::Vec<CharSlice>,
-    response_code:i32,
-    authentication:*mut ffi::Vec<ddtelemetry::data::Authentication>,
-    metadata: CharSlice
+    request_body_type: *mut ffi::Vec<CharSlice>,
+    response_body_type: *mut ffi::Vec<CharSlice>,
+    response_code: i32,
+    authentication: *mut ffi::Vec<ddtelemetry::data::Authentication>,
+    metadata: CharSlice,
 ) -> MaybeError {
-
     let response_code_vec = vec![response_code];
-    let request_body_type_local = Box::into_raw(Box::new(ffi::Vec::<CharSlice>::new()));
-    let response_body_type_local = Box::into_raw(Box::new(ffi::Vec::<CharSlice>::new()));
-    let authentication_local = Box::into_raw(Box::new(ffi::Vec::<ddtelemetry::data::Authentication>::new()));
-    if let Some(req_vec) = request_body_type.as_ref() {
-        if let Some(local_vec) = request_body_type_local.as_mut() {
-            for item in req_vec.to_vec() {
-                local_vec.push(item);
-            }
-        }
-    }
-    if let Some(resp_vec) = response_body_type.as_ref() {
-        if let Some(local_vec) = response_body_type_local.as_mut() {
-            for item in resp_vec.to_vec() {
-                local_vec.push(item);
-            }
-        }
-    }
-    if let Some(auth_vec) = authentication.as_ref() {
-        if let Some(local_vec) = authentication_local.as_mut() {
-            for item in auth_vec.to_vec() {
-                local_vec.push(item);
-            }
-        }
-    }
+    let request_body_type = box_from_raw_opt(request_body_type);
+    let response_body_type = box_from_raw_opt(response_body_type);
+    let authentication = box_from_raw_opt(authentication);
 
-    let maybe_metadata: Result<Value, serde_json::Error> = serde_json::from_slice::<serde_json::Value>(std::slice::from_raw_parts(
-        metadata.as_ptr() as *const u8,
-        metadata.len(),
-    ));
-    if let Err(e) = maybe_metadata {
-        return MaybeError::Some(e.to_string().into());
-    }
     #[allow(clippy::unwrap_used)]
-    let metadata_json = maybe_metadata.unwrap();
     let endpoint = TelemetryActions::AddEndpoint(ddtelemetry::data::Endpoint {
         r#type: Some(r#type.to_utf8_lossy().into_owned()),
         method: Some(method),
         path: Some(path.to_utf8_lossy().into_owned()),
         operation_name: operation_name.to_utf8_lossy().into_owned(),
         resource_name: resource_name.to_utf8_lossy().into_owned(),
-        request_body_type: Some(request_body_type_local.as_ref().unwrap().to_vec().iter().map(|s| s.to_utf8_lossy().into_owned()).collect()),
-        response_body_type: Some(response_body_type_local.as_ref().unwrap().to_vec().iter().map(|s| s.to_utf8_lossy().into_owned()).collect()),
+        request_body_type: request_body_type.map(|v| slice_of_char_slice_to_vec_of_string(&**v)),
+        response_body_type: response_body_type.map(|v| slice_of_char_slice_to_vec_of_string(&**v)),
         response_code: Some(response_code_vec),
-        authentication: Some(authentication_local.as_ref().unwrap().to_vec()),
-        metadata: Some(metadata_json),
+        // into_iter() is not implemented correctly for ffi::Vec, so we need to copy the elements
+        authentication: authentication.map(|v| v.iter().map(|auth| auth.to_owned()).collect()),
+        metadata: metadata.assume_utf8().to_string(),
     });
 
     try_c!(blocking::enqueue_actions(
@@ -485,10 +473,6 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
         queue_id,
         vec![SidecarAction::Telemetry(endpoint)],
     ));
-
-    std::ptr::drop_in_place(request_body_type);
-    std::ptr::drop_in_place(response_body_type);
-    std::ptr::drop_in_place(authentication);
 
     MaybeError::None
 }

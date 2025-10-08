@@ -320,7 +320,11 @@ impl TelemetryWorker {
                     }
                 }
             }
-            AddConfig(_) | AddDependency(_) | AddIntegration(_) | AddEndpoint(_) | Lifecycle(ExtendedHeartbeat) => {}
+            AddConfig(_)
+            | AddDependency(_)
+            | AddIntegration(_)
+            | AddEndpoint(_)
+            | Lifecycle(ExtendedHeartbeat) => {}
             Lifecycle(Stop) => {
                 if !self.data.started {
                     return BREAK;
@@ -527,7 +531,13 @@ impl TelemetryWorker {
             payloads.push(data::Payload::AppEndpointsChange(
                 data::AppEndpointsChange {
                     is_first: true,
-                    endpoints: self.data.endpoints.unflushed().cloned().collect(),
+                    endpoints: self
+                        .data
+                        .endpoints
+                        .unflushed()
+                        .map(|e| e.to_json_value().unwrap_or_default())
+                        .filter(|e| e.is_object())
+                        .collect(),
                 },
             ))
         }
@@ -633,9 +643,7 @@ impl TelemetryWorker {
                 .data
                 .configurations
                 .removed_flushed(p.configuration.len()),
-            AppEndpointsChange(p) => {
-                self.data.endpoints.removed_flushed(p.endpoints.len())
-            }
+            AppEndpointsChange(p) => self.data.endpoints.removed_flushed(p.endpoints.len()),
             MessageBatch(batch) => {
                 for p in batch {
                     self.payload_sent_success(p);
