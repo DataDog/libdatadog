@@ -11,7 +11,7 @@ use crate::modes::behavior::{file_write_msg, Behavior};
 use datadog_crashtracker::{
     register_runtime_stack_callback, CallbackType, CrashtrackerConfiguration, RuntimeStackFrame,
 };
-use std::ffi::{c_char, c_void};
+use std::ffi::c_char;
 use std::path::Path;
 use std::ptr;
 
@@ -44,9 +44,8 @@ impl Behavior for Test {
 
 // Signal-safe test callback that emits mock runtime stack frames
 unsafe extern "C" fn test_runtime_callback_frame(
-    emit_frame: unsafe extern "C" fn(*mut c_void, *const RuntimeStackFrame),
-    _emit_stacktrace_string: unsafe extern "C" fn(*mut c_void, *const c_char),
-    writer_ctx: *mut c_void,
+    emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
+    _emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
 ) {
     // Use static null-terminated strings to avoid allocation in signal context
     // In a real runtime, these would come from the runtime's managed string pool
@@ -71,7 +70,7 @@ unsafe extern "C" fn test_runtime_callback_frame(
         class_name: CLASS_NAME_1.as_ptr() as *const c_char,
         module_name: MODULE_NAME_1.as_ptr() as *const c_char,
     };
-    emit_frame(writer_ctx, &frame1);
+    emit_frame(&frame1);
 
     // Frame 2: runtime_function_2 in module.py
     let frame2 = RuntimeStackFrame {
@@ -82,7 +81,7 @@ unsafe extern "C" fn test_runtime_callback_frame(
         class_name: CLASS_NAME_2.as_ptr() as *const c_char,
         module_name: MODULE_NAME_2.as_ptr() as *const c_char,
     };
-    emit_frame(writer_ctx, &frame2);
+    emit_frame(&frame2);
 
     // Frame 3: runtime_main in main.py (no class)
     let frame3 = RuntimeStackFrame {
@@ -93,7 +92,7 @@ unsafe extern "C" fn test_runtime_callback_frame(
         class_name: ptr::null(), // No class for main function
         module_name: MODULE_NAME_3.as_ptr() as *const c_char,
     };
-    emit_frame(writer_ctx, &frame3);
+    emit_frame(&frame3);
 }
 
 #[cfg(test)]
