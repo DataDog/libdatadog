@@ -50,16 +50,15 @@ impl Behavior for Test {
 
 // Signal-safe test callback that emits a complete stacktrace string
 unsafe extern "C" fn test_runtime_callback_string(
-    _emit_frame: unsafe extern "C" fn(*mut c_void, *const datadog_crashtracker::RuntimeStackFrame),
-    emit_stacktrace_string: unsafe extern "C" fn(*mut c_void, *const c_char),
-    writer_ctx: *mut c_void,
+    _emit_frame: unsafe extern "C" fn(*const datadog_crashtracker::RuntimeStackFrame),
+    emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
 ) {
     // Use static null-terminated string to avoid allocation in signal context
     // IMPORTANT: No embedded newlines - the receiver processes this line by line
     static STACKTRACE: &[u8] = b"RuntimeError in script.py:42 runtime_function_1 -> module.py:100 runtime_function_2 -> main.py:10 runtime_main\0";
 
     // Emit the complete stacktrace string
-    emit_stacktrace_string(writer_ctx, STACKTRACE.as_ptr() as *const c_char);
+    emit_stacktrace_string(STACKTRACE.as_ptr() as *const c_char);
 }
 
 #[cfg(test)]
