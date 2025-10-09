@@ -24,3 +24,11 @@ tempfile = { version = "3.3" }
 
 [target.'cfg(unix)'.dependencies]
 memfd = { version = "0.6" }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_System_Memory",
+  "Win32_Security",
+] }
+

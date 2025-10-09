@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::default::Default;
 
+const MAX_SIZE: usize = 64 * 1024; //< 64KiB
+
 /// This struct MUST be backward compatible.
 #[derive(serde::Serialize, Debug)]
 pub struct TracerMetadata {
@@ -54,13 +56,15 @@ impl Default for TracerMetadata {
 pub enum AnonymousFileHandle {
     #[cfg(target_os = "linux")]
     Linux(memfd::Memfd),
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    Windows(windows::AnonymousFile),
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     Other(()),
 }
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use anyhow::Context;
+    use anyhow::{anyhow, Context};
     use rand::distributions::Alphanumeric;
     use rand::Rng;
     use std::io::Write;
@@ -69,6 +73,14 @@ mod linux {
     pub fn store_tracer_metadata(
         data: &super::TracerMetadata,
     ) -> anyhow::Result<super::AnonymousFileHandle> {
+        let buf = rmp_serde::to_vec_named(data).context("failed serialization")?;
+        if buf.len() > super::MAX_SIZE {
+            return Err(anyhow!(
+                "serialized tracer configuration exceeds {} limit",
+                super::MAX_SIZE
+            ));
+        }
+
         let uid: String = rand::thread_rng()
             .sample_iter(&Alphanumeric)
             .take(8)
@@ -83,7 +95,6 @@ mod linux {
             .create::<&str>(mfd_name.as_ref())
             .context("unable to create memfd")?;
 
-        let buf = rmp_serde::to_vec_named(data).context("failed serialization")?;
         mfd.as_file()
             .write_all(&buf)
             .context("unable to write into memfd")?;
@@ -99,7 +110,81 @@ mod linux {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+mod windows {
+    use anyhow::{anyhow, Context};
+    use std::ffi::CString;
+    use std::{process, ptr};
+    use windows::core::PSTR;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows::Win32::System::Memory::{
+        CreateFileMappingA, MapViewOfFile, UnmapViewOfFile, VirtualProtect, FILE_MAP_WRITE,
+        MEMORY_MAPPED_VIEW_ADDRESS, PAGE_PROTECTION_FLAGS, PAGE_READONLY, PAGE_READWRITE,
+    };
+
+    pub struct AnonymousFile {
+        handle: HANDLE,
+        addr: MEMORY_MAPPED_VIEW_ADDRESS,
+    }
+
+    impl Drop for AnonymousFile {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = UnmapViewOfFile(self.addr);
+                let _ = CloseHandle(self.handle);
+            }
+        }
+    }
+
+    pub fn store_tracer_metadata(
+        data: &super::TracerMetadata,
+    ) -> anyhow::Result<super::AnonymousFileHandle> {
+        let buf = rmp_serde::to_vec_named(data).context("failed serialization")?;
+        if buf.len() > super::MAX_SIZE {
+            return Err(anyhow!(
+                "serialized tracer configuration exceeds {} limit",
+                super::MAX_SIZE
+            ));
+        }
+
+        let pid = process::id();
+        let anon_file_id =
+            CString::new(format!("datadog-tracer-info-{pid}")).expect("CString::new failed");
+
+        unsafe {
+            let handle = CreateFileMappingA(
+                INVALID_HANDLE_VALUE,
+                None,
+                PAGE_READWRITE,
+                0,
+                super::MAX_SIZE.try_into().unwrap(),
+                PSTR(anon_file_id.as_ptr() as *mut u8),
+            )
+            .context("failed to create a memory file mapping")?;
+
+            let addr = MapViewOfFile(handle, FILE_MAP_WRITE, 0, 0, buf.len());
+            if addr.Value.is_null() {
+                return Err(anyhow!("failed to map a view of {:?}", anon_file_id));
+            }
+
+            // EEEEEEEEEHHHH can this be outside of `unsafe`?
+            let dest = addr.Value as *mut u8;
+            ptr::copy_nonoverlapping(buf.as_ptr(), dest, buf.len());
+            *dest.add(buf.len()) = 0; // Add null-terminate char
+
+            let mut out_flag = PAGE_PROTECTION_FLAGS(0);
+            let _ = VirtualProtect(addr.Value, super::MAX_SIZE, PAGE_READONLY, &mut out_flag)
+                .context("failed to seal memory file");
+
+            Ok(super::AnonymousFileHandle::Windows(AnonymousFile {
+                handle,
+                addr,
+            }))
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 mod other {
     pub fn store_tracer_metadata(
         _data: &super::TracerMetadata,
@@ -110,5 +195,7 @@ mod other {
 
 #[cfg(target_os = "linux")]
 pub use linux::*;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub use other::*;
+#[cfg(target_os = "windows")]
+pub use windows::*;
