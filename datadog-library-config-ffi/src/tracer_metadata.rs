@@ -107,7 +107,8 @@ pub unsafe extern "C" fn ddog_tracer_metadata_set(
 /// - `ptr` must be a valid, non-null pointer to a `TracerMetadata`.
 ///
 /// # Returns
-/// - On supported platform: a `TracerMemfdHandle` containing an opaque pointer on the underlying Rust datastructure.
+/// - On supported platform: a `TracerMemfdHandle` containing an opaque pointer on the underlying
+///   Rust datastructure.
 /// - On unsupported platforms: an error.
 /// - On failure: propagates any internal errors from the metadata storage process.
 ///
