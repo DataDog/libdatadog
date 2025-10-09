@@ -4,10 +4,11 @@
 //! See the mod.rs file comment for why this module and file exists.
 
 use super::super::Sample;
-use super::timestamped_observations::TimestampedObservations;
+use super::timestamped_observations::{EncodingType, TimestampedObservations};
 use super::trimmed_observation::{ObservationLength, TrimmedObservation};
 use crate::internal::Timestamp;
 use std::collections::HashMap;
+use std::io;
 
 struct NonEmptyObservations {
     // Samples with no timestamps are aggregated in-place as each observation is added
@@ -27,14 +28,28 @@ pub struct Observations {
 /// Public API
 impl Observations {
     pub fn new(observations_len: usize) -> Self {
-        Observations {
+        // zstd does FFI calls which miri cannot handle
+        let encoding_type = if cfg!(not(miri)) {
+            EncodingType::Zstd
+        } else {
+            EncodingType::None
+        };
+        #[allow(clippy::expect_used)]
+        Self::try_new(encoding_type, observations_len).expect("failed to initialize observations")
+    }
+
+    pub fn try_new(encoding_type: EncodingType, observations_len: usize) -> io::Result<Self> {
+        Ok(Observations {
             inner: Some(NonEmptyObservations {
                 aggregated_data: AggregatedObservations::new(observations_len),
-                timestamped_data: TimestampedObservations::new(observations_len),
+                timestamped_data: TimestampedObservations::try_new(
+                    encoding_type,
+                    observations_len,
+                )?,
                 obs_len: ObservationLength::new(observations_len),
                 timestamped_samples_count: 0,
             }),
-        }
+        })
     }
 
     pub fn add(

@@ -13,6 +13,14 @@ pub struct SizeRestrictedBuffer {
 }
 
 impl SizeRestrictedBuffer {
+    /// Returns a buffer which never holds any data.
+    pub const fn zero_capacity() -> Self {
+        Self {
+            vec: Vec::new(),
+            max_capacity: 0,
+        }
+    }
+
     pub fn try_new(size_hint: usize, max_capacity: usize) -> io::Result<Self> {
         if size_hint > max_capacity {
             return Err(io::Error::new(
@@ -27,7 +35,7 @@ impl SizeRestrictedBuffer {
         Ok(SizeRestrictedBuffer { vec, max_capacity })
     }
 
-    pub fn as_slice(&self) -> &[u8] {
+    pub const fn as_slice(&self) -> &[u8] {
         self.vec.as_slice()
     }
 }
@@ -35,6 +43,12 @@ impl SizeRestrictedBuffer {
 impl From<SizeRestrictedBuffer> for Vec<u8> {
     fn from(buf: SizeRestrictedBuffer) -> Self {
         buf.vec
+    }
+}
+
+impl AsRef<[u8]> for SizeRestrictedBuffer {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
     }
 }
 

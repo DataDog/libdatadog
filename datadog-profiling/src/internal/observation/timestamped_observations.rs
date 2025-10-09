@@ -10,13 +10,90 @@ use super::super::Sample;
 use super::super::StackTraceId;
 use crate::collections::identifiable::Id;
 use crate::internal::Timestamp;
+use crate::profiles::SizeRestrictedBuffer;
 use byteorder::{NativeEndian, ReadBytesExt};
-use std::io::Write;
-use std::io::{BufReader, Cursor};
+use std::io::{self, Cursor, Read, Write};
+
+// todo: document
+#[derive(Clone, Copy, Debug, Default)]
+pub enum EncodingType {
+    #[default]
+    None,
+    Zstd,
+}
+
+enum ObservationEncoder {
+    Noop(SizeRestrictedBuffer),
+    Zstd(zstd::Encoder<'static, SizeRestrictedBuffer>),
+}
 
 pub struct TimestampedObservations {
-    compressed_timestamped_data: zstd::Encoder<'static, Vec<u8>>,
+    compressed_timestamped_data: ObservationEncoder,
     sample_types_len: usize,
+}
+
+enum ObservationDecoder {
+    Noop(Cursor<SizeRestrictedBuffer>),
+    Zstd(zstd::Decoder<'static, Cursor<SizeRestrictedBuffer>>),
+}
+
+pub struct TimestampedObservationsIter {
+    decoder: ObservationDecoder,
+    sample_types_len: usize,
+}
+
+impl ObservationEncoder {
+    pub fn try_new(
+        encoding_type: EncodingType,
+        size_hint: usize,
+        max_capacity: usize,
+    ) -> io::Result<Self> {
+        let output_buffer = SizeRestrictedBuffer::try_new(size_hint, max_capacity)?;
+        match encoding_type {
+            EncodingType::None => Ok(ObservationEncoder::Noop(output_buffer)),
+            EncodingType::Zstd => Ok(ObservationEncoder::Zstd(zstd::Encoder::new(
+                output_buffer,
+                1,
+            )?)),
+        }
+    }
+
+    pub fn try_into_decoder(self) -> io::Result<ObservationDecoder> {
+        match self {
+            ObservationEncoder::Noop(buffer) => Ok(ObservationDecoder::Noop(Cursor::new(buffer))),
+            ObservationEncoder::Zstd(encoder) => match encoder.try_finish() {
+                Ok(buffer) => Ok(ObservationDecoder::Zstd(zstd::Decoder::with_buffer(
+                    Cursor::new(buffer),
+                )?)),
+                Err((_encoder, error)) => Err(error),
+            },
+        }
+    }
+}
+
+impl Write for ObservationEncoder {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            ObservationEncoder::Noop(encoder) => encoder.write(buf),
+            ObservationEncoder::Zstd(encoder) => encoder.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            ObservationEncoder::Noop(encoder) => encoder.flush(),
+            ObservationEncoder::Zstd(encoder) => encoder.flush(),
+        }
+    }
+}
+
+impl Read for ObservationDecoder {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            ObservationDecoder::Noop(decoder) => decoder.read(buf),
+            ObservationDecoder::Zstd(decoder) => decoder.read(buf),
+        }
+    }
 }
 
 impl TimestampedObservations {
@@ -25,25 +102,28 @@ impl TimestampedObservations {
     // memory fragmentation for apps that employ multiple threads.
     // To avoid this, we've picked a default buffer size of 1MB that very rarely needs to grow, and
     // when it does, is expected to grow in larger steps.
-    const DEFAULT_BUFFER_SIZE: usize = 1_048_576;
+    const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024;
 
-    pub fn new(sample_types_len: usize) -> Self {
-        #[allow(clippy::expect_used)] // previous API panic'd implicitly
-        Self {
-            compressed_timestamped_data: zstd::Encoder::new(
-                Vec::with_capacity(Self::DEFAULT_BUFFER_SIZE),
-                1,
-            )
-            .expect("failed to create zstd encoder"),
+    // Protobufs can't exceed 2 GiB, if our observations grow this large, then
+    // the profile as a whole would defintely exceed this.
+    const MAX_CAPACITY: usize = i32::MAX as usize;
+
+    pub fn try_new(encoding_type: EncodingType, sample_types_len: usize) -> io::Result<Self> {
+        Ok(Self {
+            compressed_timestamped_data: ObservationEncoder::try_new(
+                encoding_type,
+                Self::DEFAULT_BUFFER_SIZE,
+                Self::MAX_CAPACITY,
+            )?,
             sample_types_len,
-        }
+        })
     }
 
-    pub fn with_no_backing_store() -> Self {
-        #[allow(clippy::expect_used)] // previous API panic'd implicitly
+    pub const fn with_no_backing_store() -> Self {
         Self {
-            compressed_timestamped_data: zstd::Encoder::new(vec![], 1)
-                .expect("failed to create zstd encoder"),
+            compressed_timestamped_data: ObservationEncoder::Noop(
+                SizeRestrictedBuffer::zero_capacity(),
+            ),
             sample_types_len: 0,
         }
     }
@@ -74,20 +154,15 @@ impl TimestampedObservations {
     }
 
     pub fn into_iter(self) -> TimestampedObservationsIter {
-        #[allow(clippy::expect_used, clippy::unwrap_used)]
+        #[allow(clippy::expect_used)]
         TimestampedObservationsIter {
-            decoder: zstd::Decoder::new(Cursor::new(
-                self.compressed_timestamped_data.finish().unwrap(),
-            ))
-            .expect("failed to create zstd decoder"),
+            decoder: self
+                .compressed_timestamped_data
+                .try_into_decoder()
+                .expect("failed to initialize timestamped observation decoder"),
             sample_types_len: self.sample_types_len,
         }
     }
-}
-
-pub struct TimestampedObservationsIter {
-    decoder: zstd::Decoder<'static, BufReader<Cursor<Vec<u8>>>>,
-    sample_types_len: usize,
 }
 
 impl Iterator for TimestampedObservationsIter {
