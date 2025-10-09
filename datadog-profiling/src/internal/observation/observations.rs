@@ -189,7 +189,7 @@ impl IntoIterator for Observations {
     }
 }
 
-#[cfg(all(test, not(miri)))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::collections::identifiable::*;
