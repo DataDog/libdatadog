@@ -29,7 +29,7 @@ pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
 pub use connector::named_pipe::{named_pipe_path_from_uri, named_pipe_path_to_uri};
 
 use crate::internal::EncodedProfile;
-use crate::profiles::Compressor;
+use crate::profiles::{Compressor, DefaultProfileCodec};
 
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
 
@@ -282,8 +282,12 @@ impl ProfileExporter {
             let capacity = (file.bytes.len() / 10).next_power_of_two();
             let max_capacity = 50 * 1024 * 1024;
             let compression_level = 1;
-            let mut encoder = Compressor::try_new(capacity, max_capacity, compression_level)
-                .context("failed to create compressor")?;
+            let mut encoder = Compressor::<DefaultProfileCodec>::try_new(
+                capacity,
+                max_capacity,
+                compression_level,
+            )
+            .context("failed to create compressor")?;
             encoder.write_all(file.bytes)?;
             let encoded = encoder.finish()?;
             /* The Datadog RFC examples strip off the file extension, but the exact behavior

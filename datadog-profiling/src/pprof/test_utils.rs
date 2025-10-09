@@ -5,14 +5,20 @@ use anyhow::Context;
 use datadog_profiling_protobuf::prost_impls::{Profile, Sample};
 use std::io::Cursor;
 
-pub fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<Profile> {
+fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<Profile> {
     use prost::Message;
     use std::io::Read;
 
-    let mut decoder =
-        zstd::Decoder::new(Cursor::new(encoded)).context("failed to create zstd decoder")?;
-    let mut buf = Vec::new();
-    decoder.read_to_end(&mut buf)?;
+    #[cfg(miri)]
+    let buf = encoded.to_vec();
+    #[cfg(not(miri))]
+    let buf = {
+        let mut decoder =
+            zstd::Decoder::new(Cursor::new(encoded)).context("failed to create zstd decoder")?;
+        let mut out = Vec::new();
+        decoder.read_to_end(&mut out)?;
+        out
+    };
     let profile = Profile::decode(buf.as_slice())?;
     Ok(profile)
 }

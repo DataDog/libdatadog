@@ -14,7 +14,7 @@ use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::{self, StringTable};
 use crate::iter::{IntoLendingIterator, LendingIterator};
-use crate::profiles::Compressor;
+use crate::profiles::{Compressor, DefaultProfileCodec};
 use anyhow::Context;
 use datadog_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
 use interning_api::Generation;
@@ -348,7 +348,7 @@ impl Profile {
         // level 1 provided better compressed files while taking less time
         // compared to lz4.
         const COMPRESSION_LEVEL: i32 = 1;
-        let mut compressor = Compressor::try_new(
+        let mut compressor = Compressor::<DefaultProfileCodec>::try_new(
             INITIAL_PPROF_BUFFER_SIZE,
             MAX_PROFILE_SIZE,
             COMPRESSION_LEVEL,

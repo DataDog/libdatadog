@@ -35,7 +35,7 @@ impl SizeRestrictedBuffer {
         Ok(SizeRestrictedBuffer { vec, max_capacity })
     }
 
-    pub const fn as_slice(&self) -> &[u8] {
+    pub fn as_slice(&self) -> &[u8] {
         self.vec.as_slice()
     }
 }
@@ -71,12 +71,123 @@ impl Write for SizeRestrictedBuffer {
     }
 }
 
-/// Used to compress profile data.
-pub struct Compressor {
-    encoder: zstd::Encoder<'static, SizeRestrictedBuffer>,
+pub trait ProfileCodec {
+    type Encoder: Write;
+
+    fn new_encoder(
+        size_hint: usize,
+        max_capacity: usize,
+        compression_level: i32,
+    ) -> io::Result<Self::Encoder>;
+
+    fn finish(encoder: Self::Encoder) -> io::Result<Vec<u8>>;
 }
 
-impl Compressor {
+#[allow(unused)]
+pub struct NoopProfileCodec;
+
+impl ProfileCodec for NoopProfileCodec {
+    type Encoder = SizeRestrictedBuffer;
+
+    fn new_encoder(
+        size_hint: usize,
+        max_capacity: usize,
+        _compression_level: i32,
+    ) -> io::Result<Self::Encoder> {
+        SizeRestrictedBuffer::try_new(size_hint, max_capacity)
+    }
+
+    fn finish(encoder: Self::Encoder) -> io::Result<Vec<u8>> {
+        Ok(encoder.into())
+    }
+}
+
+#[allow(unused)]
+pub struct ZstdProfileCodec;
+
+impl ProfileCodec for ZstdProfileCodec {
+    type Encoder = zstd::Encoder<'static, SizeRestrictedBuffer>;
+
+    fn new_encoder(
+        size_hint: usize,
+        max_capacity: usize,
+        compression_level: i32,
+    ) -> io::Result<Self::Encoder> {
+        let buffer = SizeRestrictedBuffer::try_new(size_hint, max_capacity)?;
+        zstd::Encoder::<'static, SizeRestrictedBuffer>::new(buffer, compression_level)
+    }
+
+    fn finish(encoder: Self::Encoder) -> io::Result<Vec<u8>> {
+        match encoder.try_finish() {
+            Ok(buffer) => Ok(buffer.into()),
+            Err((_enc, error)) => Err(error),
+        }
+    }
+}
+
+#[cfg(not(miri))]
+pub type DefaultProfileCodec = ZstdProfileCodec;
+#[cfg(miri)]
+pub type DefaultProfileCodec = NoopProfileCodec;
+
+// Observation codecs (used by timestamped observations):
+use std::io::Read;
+
+pub trait ObservationCodec {
+    type Encoder: Write;
+    type Decoder: Read;
+
+    fn new_encoder(size_hint: usize, max_capacity: usize) -> io::Result<Self::Encoder>;
+    fn encoder_into_decoder(encoder: Self::Encoder) -> io::Result<Self::Decoder>;
+}
+
+#[allow(unused)]
+pub struct NoopObservationCodec;
+
+impl ObservationCodec for NoopObservationCodec {
+    type Encoder = SizeRestrictedBuffer;
+    type Decoder = std::io::Cursor<SizeRestrictedBuffer>;
+
+    fn new_encoder(size_hint: usize, max_capacity: usize) -> io::Result<Self::Encoder> {
+        SizeRestrictedBuffer::try_new(size_hint, max_capacity)
+    }
+
+    fn encoder_into_decoder(encoder: Self::Encoder) -> io::Result<Self::Decoder> {
+        Ok(std::io::Cursor::new(encoder))
+    }
+}
+
+#[allow(unused)]
+pub struct ZstdObservationCodec;
+
+impl ObservationCodec for ZstdObservationCodec {
+    type Encoder = zstd::Encoder<'static, SizeRestrictedBuffer>;
+    type Decoder = zstd::Decoder<'static, std::io::Cursor<SizeRestrictedBuffer>>;
+
+    fn new_encoder(size_hint: usize, max_capacity: usize) -> io::Result<Self::Encoder> {
+        let buffer = SizeRestrictedBuffer::try_new(size_hint, max_capacity)?;
+        zstd::Encoder::new(buffer, 1)
+    }
+
+    fn encoder_into_decoder(encoder: Self::Encoder) -> io::Result<Self::Decoder> {
+        match encoder.try_finish() {
+            Ok(buffer) => zstd::Decoder::with_buffer(std::io::Cursor::new(buffer)),
+            Err((_enc, error)) => Err(error),
+        }
+    }
+}
+
+#[cfg(not(miri))]
+pub type DefaultObservationCodec = ZstdObservationCodec;
+#[cfg(miri)]
+pub type DefaultObservationCodec = NoopObservationCodec;
+
+/// Used to compress profile data.
+pub struct Compressor<C: ProfileCodec = DefaultProfileCodec> {
+    encoder: C::Encoder,
+}
+
+impl<C: ProfileCodec> Compressor<C> {
     /// Creates a new compressor with the provided configuration.
     ///
     /// - `size_hint`: beginning capacity for the output buffer. This is a hint for the starting
@@ -87,34 +198,22 @@ impl Compressor {
         size_hint: usize,
         max_capacity: usize,
         compression_level: i32,
-    ) -> io::Result<Compressor> {
-        let buffer = SizeRestrictedBuffer::try_new(size_hint, max_capacity)?;
-        let encoder =
-            zstd::Encoder::<'static, SizeRestrictedBuffer>::new(buffer, compression_level)?;
-        Ok(Compressor { encoder })
+    ) -> io::Result<Compressor<C>> {
+        Ok(Compressor {
+            encoder: C::new_encoder(size_hint, max_capacity, compression_level)?,
+        })
     }
 
-    /// Finish the compression, and return the compressed data. The compressor
-    /// remains valid but is missing its encoder, so it will fail to encode
-    /// data.
-    ///
-    /// # Errors
-    ///
-    ///  1. Fails if the compressor's encoder is missing.
-    ///  2. Fails if the encoder fails, e.g., the output buffer is full.
+    /// Finish the compression, and return the compressed data.
     pub fn finish(self) -> io::Result<Vec<u8>> {
-        match self.encoder.try_finish() {
-            Ok(buffer) => Ok(buffer.vec),
-            Err(err) => Err(err.1),
-        }
+        C::finish(self.encoder)
     }
 }
 
-impl Write for Compressor {
+impl<C: ProfileCodec> Write for Compressor<C> {
     #[inline]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let encoder = &mut self.encoder;
-        encoder.write(buf)
+        self.encoder.write(buf)
     }
 
     #[inline]
