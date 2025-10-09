@@ -910,7 +910,7 @@ impl Profile {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(miri)))]
 mod api_tests {
     use super::*;
     use crate::pprof::test_utils::{roundtrip_to_pprof, sorted_samples, string_table_fetch};
