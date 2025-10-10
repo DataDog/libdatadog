@@ -105,7 +105,7 @@ where
     let mut dropped_p0_spans = 0;
 
     traces.retain_chunks(|chunk| {
-        let priority = chunk.sampling_priority();
+        let priority = chunk.priority();
         // List of spans to keep even if the chunk is dropped
         let mut sampled_indexes = HashSet::new();
         for (index, span) in chunk.spans().enumerate() {
@@ -115,7 +115,7 @@ where
                 return true;
             }
             // PrioritySampler and NoPrioritySampler
-            if has_top_level(&span) && (priority.is_none() || priority.is_some_and(|p| *p > 0.0)) {
+            if has_top_level(&span) && priority > 0 {
                 // We send chunks with positive priority or no priority
                 return true;
             }
