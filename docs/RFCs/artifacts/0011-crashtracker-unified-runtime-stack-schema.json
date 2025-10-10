@@ -310,8 +310,7 @@
       "description": "Runtime stack representation for JSON serialization",
       "type": "object",
       "required": [
-        "format",
-        "runtime_type"
+        "format"
       ],
       "properties": {
         "format": {
@@ -324,10 +323,6 @@
           "items": {
             "$ref": "#/definitions/RuntimeFrame"
           }
-        },
-        "runtime_type": {
-          "description": "Runtime type identifier (\"ruby\", \"python\", \"php\", etc.)",
-          "type": "string"
         },
         "stacktrace_string": {
           "description": "Raw stacktrace string (optional, mutually exclusive with frames)",
