@@ -151,6 +151,16 @@ fn test_crash_tracking_bin_runtime_callback_string() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_no_runtime_callback() {
+    test_crash_tracking_bin_no_runtime_callback_impl(
+        BuildProfile::Release,
+        "donothing",
+        "null_deref",
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn test_crash_ping_timing_and_content() {
     test_crash_tracking_bin(BuildProfile::Release, "donothing", "null_deref");
 }
@@ -479,6 +489,23 @@ fn validate_runtime_callback_string_data(crash_payload: &Value) {
     }
 }
 
+fn validate_no_runtime_callback_data(crash_payload: &Value) {
+    // Check if experimental section exists
+    let experimental = crash_payload.get("experimental");
+
+    if let Some(experimental) = experimental {
+        // If experimental section exists, runtime_stack should not be present
+        let runtime_stack = experimental.get("runtime_stack");
+        assert!(
+            runtime_stack.is_none(),
+            "Runtime stack should NOT be present in experimental section when no callback is registered. Got: {:?}",
+            runtime_stack
+        );
+    }
+    // If experimental section doesn't exist at all, that's also fine -
+    // it means no experimental features were added to the crash report
+}
+
 fn test_crash_tracking_bin_runtime_callback_string_impl(
     crash_tracking_receiver_profile: BuildProfile,
     mode: &str,
@@ -551,6 +578,85 @@ fn test_crash_tracking_bin_runtime_callback_string_impl(
 
     // Validate runtime callback string data
     validate_runtime_callback_string_data(&crash_payload);
+
+    let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
+        .context("reading crashtracker telemetry payload")
+        .unwrap();
+    assert_telemetry_message(&crash_telemetry, crash_typ);
+}
+
+fn test_crash_tracking_bin_no_runtime_callback_impl(
+    crash_tracking_receiver_profile: BuildProfile,
+    mode: &str,
+    crash_typ: &str,
+) {
+    let (crashtracker_bin, crashtracker_receiver) =
+        setup_crashtracking_crates(crash_tracking_receiver_profile);
+    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
+
+    let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
+        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
+        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
+        .arg(&fixtures.output_dir)
+        .arg(mode)
+        .arg(crash_typ)
+        .spawn()
+        .unwrap();
+
+    let exit_status = bin_tests::timeit!("exit after signal", {
+        eprintln!("Waiting for exit");
+        p.wait().unwrap()
+    });
+
+    // Should crash like normal tests
+    assert!(!exit_status.success());
+
+    let stderr_path = format!("{0}/out.stderr", fixtures.output_dir.display());
+    let stderr = fs::read(stderr_path)
+        .context("reading crashtracker stderr")
+        .unwrap();
+    let stdout_path = format!("{0}/out.stdout", fixtures.output_dir.display());
+    let stdout = fs::read(stdout_path)
+        .context("reading crashtracker stdout")
+        .unwrap();
+    let s = String::from_utf8(stderr);
+    assert!(
+        matches!(
+            s.as_deref(),
+            Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n")
+            | Ok("Failed to fully receive crash.  Exit state was: InternalError(\"{\\\"ip\\\": \\\"\")\n"),
+        ),
+        "got {s:?}"
+    );
+    assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
+
+    // Check the crash data
+    let crash_profile = fs::read(&fixtures.crash_profile_path)
+        .context("reading crashtracker profiling payload")
+        .unwrap();
+    let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
+        .context("deserializing crashtracker profiling payload to json")
+        .unwrap();
+
+    // Validate normal crash data first
+    assert_eq!(
+        serde_json::json!({
+          "profiler_collecting_sample": 1,
+          "profiler_inactive": 0,
+          "profiler_serializing": 0,
+          "profiler_unwinding": 0
+        }),
+        crash_payload["counters"],
+    );
+
+    let sig_info = &crash_payload["sig_info"];
+    assert_siginfo_message(sig_info, crash_typ);
+
+    let error = &crash_payload["error"];
+    assert_error_message(&error["message"], sig_info);
+
+    // Validate no runtime callback data is present
+    validate_no_runtime_callback_data(&crash_payload);
 
     let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
