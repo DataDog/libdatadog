@@ -1,17 +1,16 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 //
-// This test validates the runtime stack collection callback mechanism using stacktrace string mode.
-// It registers a test callback that provides a complete stacktrace string,
-// then crashes and verifies that the runtime stacktrace appears in the crash report.
+// This test validates the runtime stack collection callback mechanism using string mode.
+// It registers a test callback that provides mock runtime stacktrace string,
+// then crashes and verifies that the runtime stacktrace string appear in the crash report.
 //
-// This test uses CallbackType::StacktraceString to emit complete stacktrace text.
-//
+// This test uses CallbackType::StacktraceString to emit structured runtime stack data.
 
 use crate::modes::behavior::Behavior;
 use datadog_crashtracker::{
     clear_runtime_callback, register_runtime_stack_callback, CallbackType,
-    CrashtrackerConfiguration,
+    CrashtrackerConfiguration, RuntimeStackFrame,
 };
 use std::ffi::c_char;
 use std::path::Path;
@@ -32,7 +31,6 @@ impl Behavior for Test {
         unsafe {
             clear_runtime_callback();
         }
-        // Register our test runtime callback before crashtracker initialization
         register_runtime_stack_callback(
             test_runtime_callback_string,
             CallbackType::StacktraceString,
@@ -42,18 +40,17 @@ impl Behavior for Test {
     }
 
     fn post(&self, _output_dir: &Path) -> anyhow::Result<()> {
-        // Nothing to do post-initialization for this test
         Ok(())
     }
 }
 
-// Signal-safe test callback that emits a complete stacktrace string
+// Signal-safe test callback that emits mock runtime stacktrace string
 unsafe extern "C" fn test_runtime_callback_string(
-    _emit_frame: unsafe extern "C" fn(*const datadog_crashtracker::RuntimeStackFrame),
+    _emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
     emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
 ) {
-    static STACKTRACE: &[u8] = b"RuntimeError in script.py:42 runtime_function_1 -> module.py:100 runtime_function_2 -> main.py:10 runtime_main\0";
-    emit_stacktrace_string(STACKTRACE.as_ptr() as *const c_char);
+    static STACKTRACE_STRING: &[u8] = b"test_stacktrace_string\0";
+    emit_stacktrace_string(STACKTRACE_STRING.as_ptr() as *const c_char);
 }
 
 #[cfg(test)]
@@ -63,6 +60,11 @@ mod tests {
 
     #[test]
     fn test_runtime_callback_string_registration() {
+        // Ensure clean state
+        unsafe {
+            clear_runtime_callback();
+        }
+
         // Test that no callback is initially registered
         assert!(!is_runtime_callback_registered());
 

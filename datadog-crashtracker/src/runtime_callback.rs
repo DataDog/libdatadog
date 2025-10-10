@@ -327,6 +327,7 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
         let bytes = cstr.to_bytes();
 
         let _ = writer.write_all(bytes);
+        let _ = writeln!(writer);
         let _ = writer.flush();
     }
 
