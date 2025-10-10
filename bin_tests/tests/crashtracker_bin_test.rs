@@ -141,7 +141,6 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-#[ignore] // Ignored due to receiver timeout issues with stacktrace string mode
 fn test_crash_tracking_bin_runtime_callback_string() {
     test_crash_tracking_bin_runtime_callback_string_impl(
         BuildProfile::Release,
@@ -330,12 +329,6 @@ fn test_crash_tracking_bin_runtime_callback_frame_impl(
         .context("reading crashtracker telemetry payload")
         .unwrap();
     assert_telemetry_message(&crash_telemetry, crash_typ);
-
-    // Check for test-specific marker file
-    let marker_path = format!("{0}/runtime_callback_test", fixtures.output_dir.display());
-    if let Ok(marker_content) = fs::read_to_string(marker_path) {
-        assert_eq!(marker_content.trim(), "frame_mode");
-    }
 }
 
 fn validate_runtime_callback_frame_data(crash_payload: &Value) {
@@ -376,7 +369,11 @@ fn validate_runtime_callback_frame_data(crash_payload: &Value) {
     );
 
     // Validate the expected test frames
-    let expected_functions = ["runtime_function_1", "runtime_function_2", "runtime_main"];
+    let expected_functions = [
+        "test_module.TestClass.runtime_function_1",
+        "my_package.submodule.MyModule.runtime_function_2",
+        "__main__.runtime_main",
+    ];
     let expected_files = ["script.py", "module.py", "main.py"];
     let expected_lines = [42, 100, 10];
     let expected_columns = [15, 8, 1];
@@ -417,20 +414,6 @@ fn validate_runtime_callback_frame_data(crash_payload: &Value) {
                 i
             );
         }
-
-        // Check class and module names for first two frames (which should have them)
-        if i < 2 {
-            assert!(
-                frame.get("class_name").is_some(),
-                "Frame {} should have class_name",
-                i
-            );
-            assert!(
-                frame.get("module_name").is_some(),
-                "Frame {} should have module_name",
-                i
-            );
-        }
     }
 
     // Ensure stacktrace_string is null for frame mode
@@ -452,7 +435,11 @@ fn validate_runtime_callback_string_data(crash_payload: &Value) {
     let runtime_stack = experimental.unwrap().get("runtime_stack");
     assert!(
         runtime_stack.is_some(),
-        "Runtime stack should be present in experimental section for string mode"
+        "{}",
+        format!(
+            "Runtime stack should be present in experimental section for string mode. Got: {:?}",
+            experimental
+        )
     );
 
     let runtime_stack = runtime_stack.unwrap();
@@ -539,6 +526,34 @@ fn test_crash_tracking_bin_runtime_callback_string_impl(
         .spawn()
         .unwrap();
 
+    let exit_status = bin_tests::timeit!("exit after signal", {
+        eprintln!("Waiting for exit");
+        p.wait().unwrap()
+    });
+
+    // Runtime callback tests should crash like normal tests
+    assert!(!exit_status.success());
+
+    let stderr_path = format!("{0}/out.stderr", fixtures.output_dir.display());
+    let stderr = fs::read(stderr_path)
+        .context("reading crashtracker stderr")
+        .unwrap();
+    let stdout_path = format!("{0}/out.stdout", fixtures.output_dir.display());
+    let stdout = fs::read(stdout_path)
+        .context("reading crashtracker stdout")
+        .unwrap();
+    let s = String::from_utf8(stderr);
+    assert!(
+        matches!(
+            s.as_deref(),
+            Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n")
+            | Ok("Failed to fully receive crash.  Exit state was: InternalError(\"{\\\"ip\\\": \\\"\")\n"),
+        ),
+        "got {s:?}"
+    );
+    assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
+
+    // Check the crash data
     let crash_profile = fs::read(&fixtures.crash_profile_path)
         .context("reading crashtracker profiling payload")
         .unwrap();
@@ -557,12 +572,19 @@ fn test_crash_tracking_bin_runtime_callback_string_impl(
         crash_payload["counters"],
     );
 
+    let sig_info = &crash_payload["sig_info"];
+    assert_siginfo_message(sig_info, crash_typ);
+
+    let error = &crash_payload["error"];
+    assert_error_message(&error["message"], sig_info);
+
+    // Validate runtime callback string data
     validate_runtime_callback_string_data(&crash_payload);
 
-    let marker_path = format!("{0}/runtime_callback_test", fixtures.output_dir.display());
-    if let Ok(marker_content) = fs::read_to_string(marker_path) {
-        assert_eq!(marker_content.trim(), "string_mode");
-    }
+    let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
+        .context("reading crashtracker telemetry payload")
+        .unwrap();
+    assert_telemetry_message(&crash_telemetry, crash_typ);
 }
 
 fn test_crash_tracking_bin(
