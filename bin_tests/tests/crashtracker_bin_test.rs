@@ -461,35 +461,10 @@ fn validate_runtime_callback_string_data(crash_payload: &Value) {
     );
 
     let stacktrace_str = stacktrace_str.unwrap();
-
     // Validate that it contains the expected content from our test callback
-    assert!(
-        stacktrace_str.contains("RuntimeError"),
-        "Should contain RuntimeError"
-    );
-    assert!(
-        stacktrace_str.contains("script.py:42"),
-        "Should contain script.py:42 in traceback"
-    );
-    assert!(
-        stacktrace_str.contains("runtime_function_1"),
-        "Should contain runtime_function_1 in traceback"
-    );
-    assert!(
-        stacktrace_str.contains("module.py:100"),
-        "Should contain module.py:100 in traceback"
-    );
-    assert!(
-        stacktrace_str.contains("runtime_function_2"),
-        "Should contain runtime_function_2 in traceback"
-    );
-    assert!(
-        stacktrace_str.contains("main.py:10"),
-        "Should contain main.py:10 in traceback"
-    );
-    assert!(
-        stacktrace_str.contains("runtime_main"),
-        "Should contain runtime_main in traceback"
+    assert_eq!(
+        stacktrace_str, "test_stacktrace_string",
+        "Runtime stacktrace_string should be correct"
     );
 
     // Ensure frames array is empty for string mode
