@@ -258,13 +258,6 @@
       "description": "JSON-serializable runtime stack frame",
       "type": "object",
       "properties": {
-        "class_name": {
-          "description": "Class name for OOP languages",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "column": {
           "description": "Column number in source file",
           "type": [
@@ -282,7 +275,7 @@
           ]
         },
         "function": {
-          "description": "Function/method name",
+          "description": "Fully qualified function/method name Examples: \"my_package.submodule.TestClass.method\", \"MyClass::method\", \"namespace::function\"",
           "type": [
             "string",
             "null"
@@ -296,13 +289,6 @@
           ],
           "format": "uint32",
           "minimum": 0.0
-        },
-        "module_name": {
-          "description": "Module/namespace name",
-          "type": [
-            "string",
-            "null"
-          ]
         }
       }
     },

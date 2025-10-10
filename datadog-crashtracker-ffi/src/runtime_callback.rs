@@ -57,12 +57,10 @@ impl From<CallbackError> for CallbackResult {
 /// ) {
 ///     // Collect runtime frames and call emit_frame for each one
 ///     ddog_RuntimeStackFrame frame = {
-///         .function_name = "my_function",
+///         .function_name = "MyModule.MyClass.my_function",
 ///         .file_name = "script.rb",
 ///         .line_number = 42,
-///         .column_number = 10,
-///         .class_name = "MyClass",
-///         .module_name = NULL
+///         .column_number = 10
 ///     };
 ///     emit_frame(&frame);
 /// }
@@ -130,7 +128,6 @@ mod tests {
     use super::*;
     use datadog_crashtracker::{clear_runtime_callback, RuntimeStackFrame};
     use std::ffi::{c_char, CString};
-    use std::ptr;
     use std::sync::Mutex;
 
     // Use a mutex to ensure tests run sequentially to avoid race conditions
@@ -141,9 +138,8 @@ mod tests {
         emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
         _emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
     ) {
-        let function_name = CString::new("test_function").unwrap();
+        let function_name = CString::new("TestModule.TestClass.test_function").unwrap();
         let file_name = CString::new("test.rb").unwrap();
-        let class_name = CString::new("TestClass").unwrap();
 
         // Create the internal RuntimeStackFrame directly; no conversion needed
         // since both RuntimeStackFrame and ddog_RuntimeStackFrame have identical layouts
@@ -152,8 +148,6 @@ mod tests {
             file_name: file_name.as_ptr(),
             line_number: 42,
             column_number: 10,
-            class_name: class_name.as_ptr(),
-            module_name: ptr::null(),
         };
 
         emit_frame(&frame);

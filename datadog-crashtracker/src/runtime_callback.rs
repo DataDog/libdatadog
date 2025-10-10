@@ -63,7 +63,8 @@ static RUNTIME_CALLBACK: AtomicPtr<(RuntimeStackCallback, CallbackType)> =
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct RuntimeStackFrame {
-    /// Function/method name (null-terminated C string)
+    /// Fully qualified function/method name (null-terminated C string)
+    /// Examples: "my_package.submodule.TestClass.method", "MyClass::method", "namespace::function"
     pub function_name: *const c_char,
     /// Source file name (null-terminated C string)
     pub file_name: *const c_char,
@@ -71,10 +72,6 @@ pub struct RuntimeStackFrame {
     pub line_number: u32,
     /// Column number in source file (0 if unknown)
     pub column_number: u32,
-    /// Class name for OOP languages (nullable)
-    pub class_name: *const c_char,
-    /// Module/namespace name (nullable)
-    pub module_name: *const c_char,
 }
 
 /// Function signature for runtime stack collection callbacks
@@ -116,7 +113,8 @@ pub struct RuntimeStack {
 /// JSON-serializable runtime stack frame
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct RuntimeFrame {
-    /// Function/method name
+    /// Fully qualified function/method name
+    /// Examples: "my_package.submodule.TestClass.method", "MyClass::method", "namespace::function"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub function: Option<String>,
     /// Source file name
@@ -128,12 +126,6 @@ pub struct RuntimeFrame {
     /// Column number in source file
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub column: Option<u32>,
-    /// Class name for OOP languages
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub class_name: Option<String>,
-    /// Module/namespace name
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub module_name: Option<String>,
 }
 
 /// Errors that can occur during callback registration
@@ -416,36 +408,6 @@ unsafe fn emit_frame_as_json(
             write!(writer, ", ")?;
         }
         write!(writer, "\"column\": {}", frame_ref.column_number)?;
-        first = false;
-    }
-
-    if !frame_ref.class_name.is_null() {
-        // Safety: frame_ref.class_name was checked to be non-null. The caller
-        // guarantees it points to a valid, null-terminated C string.
-        let c_str = std::ffi::CStr::from_ptr(frame_ref.class_name);
-        if let Ok(s) = c_str.to_str() {
-            if !s.is_empty() {
-                if !first {
-                    write!(writer, ", ")?;
-                }
-                write!(writer, "\"class_name\": \"{}\"", s)?;
-                first = false;
-            }
-        }
-    }
-
-    if !frame_ref.module_name.is_null() {
-        // Safety: frame_ref.module_name was checked to be non-null. The caller
-        // guarantees it points to a valid, null-terminated C string.
-        let c_str = std::ffi::CStr::from_ptr(frame_ref.module_name);
-        if let Ok(s) = c_str.to_str() {
-            if !s.is_empty() {
-                if !first {
-                    write!(writer, ", ")?;
-                }
-                write!(writer, "\"module_name\": \"{}\"", s)?;
-            }
-        }
     }
 
     write!(writer, "}}")?;
@@ -466,17 +428,14 @@ mod tests {
         emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
         _emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
     ) {
-        let function_name = CString::new("test_function").unwrap();
+        let function_name = CString::new("TestModule.TestClass.test_function").unwrap();
         let file_name = CString::new("test.rb").unwrap();
-        let class_name = CString::new("TestClass").unwrap();
 
         let frame = RuntimeStackFrame {
             function_name: function_name.as_ptr(),
             file_name: file_name.as_ptr(),
             line_number: 42,
             column_number: 10,
-            class_name: class_name.as_ptr(),
-            module_name: ptr::null(),
         };
 
         // Safety: frame is a valid RuntimeStackFrame with valid C string pointers
@@ -539,7 +498,6 @@ mod tests {
             "Failed to invoke callback with writer"
         );
 
-        // Convert buffer to string and check JSON format
         let json_output = String::from_utf8(buffer).expect("Invalid UTF-8 in output");
 
         // Should contain the frame data as JSON
@@ -548,8 +506,8 @@ mod tests {
             "Missing function field"
         );
         assert!(
-            json_output.contains("test_function"),
-            "Missing function name"
+            json_output.contains("TestModule.TestClass.test_function"),
+            "Missing fully qualified function name"
         );
         assert!(json_output.contains("\"file\""), "Missing file field");
         assert!(json_output.contains("test.rb"), "Missing file name");
@@ -558,11 +516,6 @@ mod tests {
             json_output.contains("\"column\": 10"),
             "Missing column number"
         );
-        assert!(
-            json_output.contains("\"class_name\""),
-            "Missing class_name field"
-        );
-        assert!(json_output.contains("TestClass"), "Missing class name");
 
         // Clean up
         ensure_callback_cleared();
@@ -638,14 +591,13 @@ mod tests {
         // Convert buffer to string and check JSON format
         let json_output = String::from_utf8(buffer).expect("Invalid UTF-8 in output");
 
-        // Should contain the frame data as JSON
         assert!(
             json_output.contains("\"function\""),
             "Missing function field"
         );
         assert!(
-            json_output.contains("test_function"),
-            "Missing function name"
+            json_output.contains("TestModule.TestClass.test_function"),
+            "Missing fully qualified function name"
         );
         assert!(json_output.contains("\"file\""), "Missing file field");
         assert!(json_output.contains("test.rb"), "Missing file name");
@@ -654,11 +606,6 @@ mod tests {
             json_output.contains("\"column\": 10"),
             "Missing column number"
         );
-        assert!(
-            json_output.contains("\"class_name\""),
-            "Missing class_name field"
-        );
-        assert!(json_output.contains("TestClass"), "Missing class name");
 
         ensure_callback_cleared();
     }
