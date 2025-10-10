@@ -22,22 +22,22 @@ end
 LIB_GITHUB_RELEASES = [
   {
     file: "libdatadog-aarch64-alpine-linux-musl.tar.gz",
-    sha256: "5cf54178ec492b0a44ad82d41eb2099ed412a9a7d56a49d7e7af7139ee1f985c",
+    sha256: "1a9ace8904db9e5232732d43ec72b7c796866059614abec254b4c2c91665a5d0",
     ruby_platform: "aarch64-linux-musl"
   },
   {
     file: "libdatadog-aarch64-unknown-linux-gnu.tar.gz",
-    sha256: "c9aa49fe7a6b80e354ee5134736431ff61139ea1bab516b63a48a2bce3bebeca",
+    sha256: "ec79b9a0b8d0163c04058c28455d083dc518ffdec9870698d87187abe059a825",
     ruby_platform: "aarch64-linux"
   },
   {
     file: "libdatadog-x86_64-alpine-linux-musl.tar.gz",
-    sha256: "7b21231bb9c61993d425a45b6ae8ecede0cdac4a24c551b5bedebc0520721706",
+    sha256: "c44cfc89d65b3e46964dccbf98508caf3e1897a295f6bdb798b65b692c74d520",
     ruby_platform: "x86_64-linux-musl"
   },
   {
     file: "libdatadog-x86_64-unknown-linux-gnu.tar.gz",
-    sha256: "3daf4bbac975e440c6e93f6ca39df5f96777a7eaee63ff974c89b2180daf58c5",
+    sha256: "803c96e0d96e129d2dafd151d4d1209c7ad5d05e5002702ea0cd322a2133190a",
     ruby_platform: "x86_64-linux"
   }
 ]
@@ -202,7 +202,7 @@ module Helpers
     excluded_files: [
       "datadog_profiling.pc", # we use the datadog_profiling_with_rpath.pc variant
       "libdatadog_profiling.a", "datadog_profiling-static.pc", # We don't use the static library
-      "libdatadog_profiling.so.debug", # We don't include debug info
+      "libdatadog_profiling.debug", # We don't include debug info
       "DatadogConfig.cmake" # We don't compile using cmake
     ]
   )

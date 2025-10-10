@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "build_common"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "cbindgen",
  "serde",
@@ -718,7 +718,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1293,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1301,13 +1301,14 @@ dependencies = [
  "clap",
  "criterion",
  "datadog-ddsketch",
+ "datadog-log",
  "datadog-trace-protobuf",
+ "datadog-trace-stats",
  "datadog-trace-utils",
  "ddcommon",
  "ddtelemetry",
  "dogstatsd-client",
  "either",
- "hashbrown 0.15.1",
  "http",
  "http-body-util",
  "httpmock",
@@ -1329,7 +1330,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline-ffi"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "build_common",
  "data-pipeline",
@@ -1343,7 +1344,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-alloc"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "allocator-api2",
  "bolero",
@@ -1353,7 +1354,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -1388,7 +1389,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker-ffi"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1407,7 +1408,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ddsketch"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "prost",
  "prost-build",
@@ -1520,7 +1521,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-log"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "chrono",
  "ddcommon-ffi",
@@ -1532,7 +1533,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-log-ffi"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "build_common",
  "datadog-log",
@@ -1541,7 +1542,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -1573,7 +1574,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-ffi"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1598,7 +1599,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-protobuf"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "bolero",
  "datadog-profiling-protobuf",
@@ -1607,7 +1608,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1735,7 +1736,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1746,7 +1747,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1764,7 +1765,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "prost",
  "prost-build",
@@ -1776,8 +1777,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-trace-stats"
+version = "22.0.1"
+dependencies = [
+ "criterion",
+ "datadog-ddsketch",
+ "datadog-trace-protobuf",
+ "datadog-trace-utils",
+ "hashbrown 0.15.1",
+ "rand 0.8.5",
+]
+
+[[package]]
 name = "datadog-trace-utils"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1812,7 +1825,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-tracer-flare"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "anyhow",
  "datadog-remote-config",
@@ -1828,7 +1841,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "anyhow",
  "cc",
@@ -1863,7 +1876,7 @@ dependencies = [
 
 [[package]]
 name = "ddcommon-ffi"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1877,7 +1890,7 @@ dependencies = [
 
 [[package]]
 name = "ddsketch-ffi"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "build_common",
  "datadog-ddsketch",
@@ -1886,7 +1899,7 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1898,6 +1911,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "libc",
  "serde",
  "serde_json",
  "sys-info",
@@ -1906,11 +1920,12 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "winver",
 ]
 
 [[package]]
 name = "ddtelemetry-ffi"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "build_common",
  "ddcommon",
@@ -1988,7 +2003,7 @@ dependencies = [
 
 [[package]]
 name = "dogstatsd-client"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "anyhow",
  "cadence",
@@ -3056,9 +3071,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.172"
+version = "0.2.176"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d750af042f7ef4f724306de029d18836c26c1765a54a6a3f094cbd23a7267ffa"
+checksum = "58f929b4d672ea937a23a1ab494143d968337a5f47e56d0815df1e0890ddf174"
 
 [[package]]
 name = "libloading"
@@ -4684,7 +4699,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -4964,7 +4979,7 @@ dependencies = [
 
 [[package]]
 name = "tinybytes"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "once_cell",
  "pretty_assertions",
@@ -5164,7 +5179,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "21.0.0"
+version = "22.0.1"
 dependencies = [
  "regex",
 ]
@@ -5649,6 +5664,15 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "windows"
+version = "0.48.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e686886bc078bc1b0b600cac0147aadb815089b6e4da64016cbd754b6342700f"
+dependencies = [
+ "windows-targets 0.48.5",
+]
+
+[[package]]
+name = "windows"
 version = "0.51.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca229916c5ee38c2f2bc1e9d8f04df975b4bd93f9955dc69fabb5d91270045c9"
@@ -5711,9 +5735,9 @@ dependencies = [
 
 [[package]]
 name = "windows-interface"
-version = "0.59.0"
+version = "0.59.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb26fd936d991781ea39e87c3a27285081e3c0da5ca0fcbc02d368cc6f52ff01"
+checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6023,6 +6047,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9fb597c990f03753e08d3c29efbfcf2019a003b4bf4ba19225c158e1549f0f3"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "winver"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e0e7162b9e282fd75a0a832cce93994bdb21208d848a418cd05a5fdd9b9ab33"
+dependencies = [
+ "windows 0.48.0",
 ]
 
 [[package]]

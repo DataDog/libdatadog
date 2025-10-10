@@ -167,6 +167,25 @@ impl Builder {
             module.build()?;
             module.install()?;
         }
+        self.copy_license_files()?;
+        Ok(())
+    }
+
+    /// Copy license files to the target directory
+    pub fn copy_license_files(&self) -> Result<()> {
+        let project_root = project_root();
+        let license_files = ["LICENSE", "LICENSE-3rdparty.yml", "NOTICE"];
+
+        for file in &license_files {
+            let source_path = project_root.join(file);
+            let dest_path = Path::new(self.target_dir.as_ref()).join(file);
+
+            if source_path.exists() {
+                fs::copy(&source_path, &dest_path)
+                    .map_err(|e| anyhow::anyhow!("Failed to copy {}: {}", file, e))?;
+            }
+        }
+
         Ok(())
     }
 
