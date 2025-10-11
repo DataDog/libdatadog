@@ -6,7 +6,7 @@ pub(crate) mod span;
 use self::span::decode_span;
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::{TraceData, v1::Traces, v1::TracePayloadBytes, v1::TracePayloadSlice};
+use crate::span::{TraceData, v1::Traces, v1::TracePayloadBytes, v1::TracePayloadSlice, DeserializableTraceData};
 use crate::span::v1::TracePayload;
 
 /// Decodes a Bytes buffer into a `Vec<Vec<SpanBytes>>` object, also represented as a vector of
@@ -14,7 +14,7 @@ use crate::span::v1::TracePayload;
 ///
 /// # Arguments
 ///
-/// * `data` - A tinybytes Bytes buffer containing the encoded data. Bytes are expected to be
+/// * `data` - A libdd_tinybytes Bytes buffer containing the encoded data. Bytes are expected to be
 ///   encoded msgpack data containing a list of a list of v04 spans.
 ///
 /// # Returns
@@ -35,23 +35,23 @@ use crate::span::v1::TracePayload;
 /// use datadog_trace_protobuf::pb::Span;
 /// use datadog_trace_utils::msgpack_decoder::v04::from_bytes;
 /// use rmp_serde::to_vec_named;
-/// use tinybytes;
+/// use libdd_tinybytes;
 ///
 /// let span = Span {
 ///     name: "test-span".to_owned(),
 ///     ..Default::default()
 /// };
 /// let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
-/// let encoded_data_as_tinybytes = tinybytes::Bytes::from(encoded_data);
+/// let encoded_data_as_libdd_tinybytes = libdd_tinybytes::Bytes::from(encoded_data);
 /// let (decoded_traces, _payload_size) =
-///     from_bytes(encoded_data_as_tinybytes).expect("Decoding failed");
+///     from_bytes(encoded_data_as_libdd_tinybytes).expect("Decoding failed");
 ///
 /// assert_eq!(1, decoded_traces.len());
 /// assert_eq!(1, decoded_traces[0].len());
 /// let decoded_span = &decoded_traces[0][0];
 /// assert_eq!("test-span", decoded_span.name.as_str());
 /// ```
-pub fn from_bytes(data: tinybytes::Bytes) -> Result<(TracePayloadBytes, usize), DecodeError> {
+pub fn from_bytes(data: libdd_tinybytes::Bytes) -> Result<(TracePayloadBytes, usize), DecodeError> {
     from_buffer(&mut Buffer::new(data))
 }
 
@@ -81,16 +81,16 @@ pub fn from_bytes(data: tinybytes::Bytes) -> Result<(TracePayloadBytes, usize), 
 /// use datadog_trace_protobuf::pb::Span;
 /// use datadog_trace_utils::msgpack_decoder::v04::from_slice;
 /// use rmp_serde::to_vec_named;
-/// use tinybytes;
+/// use libdd_tinybytes;
 ///
 /// let span = Span {
 ///     name: "test-span".to_owned(),
 ///     ..Default::default()
 /// };
 /// let encoded_data = to_vec_named(&vec![vec![span]]).unwrap();
-/// let encoded_data_as_tinybytes = tinybytes::Bytes::from(encoded_data);
+/// let encoded_data_as_libdd_tinybytes = libdd_tinybytes::Bytes::from(encoded_data);
 /// let (decoded_traces, _payload_size) =
-///     from_slice(&encoded_data_as_tinybytes).expect("Decoding failed");
+///     from_slice(&encoded_data_as_libdd_tinybytes).expect("Decoding failed");
 ///
 /// assert_eq!(1, decoded_traces.len());
 /// assert_eq!(1, decoded_traces[0].len());
@@ -102,7 +102,7 @@ pub fn from_slice(data: &[u8]) -> Result<(TracePayloadSlice<'_>, usize), DecodeE
 }
 
 #[allow(clippy::type_complexity)]
-pub fn from_buffer<T: TraceData>(
+pub fn from_buffer<T: DeserializableTraceData>(
     data: &mut Buffer<T>,
 ) -> Result<(TracePayload<T>, usize), DecodeError> {
     let trace_count = rmp::decode::read_array_len(data.as_mut_slice()).map_err(|_| {

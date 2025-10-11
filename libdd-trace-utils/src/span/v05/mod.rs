@@ -5,13 +5,13 @@ pub mod dict;
 
 use std::cmp::Ordering;
 use std::collections::hash_map::Entry;
-use crate::span::{v05::dict::SharedDict, TraceData, TraceProjector, Traces, SpanValue, TraceAttributes, TraceAttributesOp, TracesMut, parse_span_kind, span_kind_to_str, AttributeAnyContainer, TraceAttributesMutOp, TraceAttributesMut, AttributeAnyValueType, TraceAttributesString, TraceAttributesBytes, AttributeAnySetterContainer, AttributeAnyGetterContainer, TraceAttributesBoolean, TraceAttributesInteger, TraceAttributesDouble, SpanBytes, SpanText, AttrOwned, AttrRef};
+use crate::span::{v05::dict::SharedDict, TraceData, TraceProjector, Traces, SpanValue, TraceAttributes, TraceAttributesOp, TracesMut, parse_span_kind, span_kind_to_str, AttributeAnyContainer, TraceAttributesMutOp, TraceAttributesMut, AttributeAnyValueType, TraceAttributesString, TraceAttributesBytes, AttributeAnySetterContainer, AttributeAnyGetterContainer, TraceAttributesBoolean, TraceAttributesInteger, TraceAttributesDouble, SpanBytes, SpanText, AttrOwned, AttrRef, TraceProjectorDependencies};
 use anyhow::Result;
 use serde::Serialize;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::slice::Iter;
-use datadog_trace_protobuf::pb::idx::SpanKind;
+use libdd_trace_protobuf::pb::idx::SpanKind;
 use crate::span::table::{StaticDataVec, TraceDataText, TraceStringRef};
 
 /// Structure that represent a TraceChunk Span which String fields are interned in a shared
@@ -95,7 +95,12 @@ impl Span {
     }
 }
 
+type Trace = Vec<Vec<Span>>;
+type Chunk = Vec<Span>;
 type Storage<D> = StaticDataVec<D, TraceDataText>;
+type SpanLink = [(); 0];
+type SpanEvent = [(); 0];
+
 
 pub struct ChunkCollection<D: TraceData> {
     pub dict: Storage<D>,
@@ -128,13 +133,21 @@ fn find_chunk_root_span() {
 
 }
 
+impl<D: TraceData> TraceProjectorDependencies<D, ChunkCollection<D>> for ChunkCollection<D> {
+    type AttributeTrace<'a> = TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, Trace>, Trace> where D: 'a;
+    type AttributeChunk<'a> = TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, Chunk>, Chunk> where D: 'a;
+    type AttributeSpan<'a> = TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, Span>, Span> where D: 'a;
+    type AttributeSpanLink<'a> = TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, SpanLink>, SpanLink> where D: 'a;
+    type AttributeSpanEvent<'a> = TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, SpanEvent>, SpanEvent> where D: 'a;
+}
+
 impl<D: TraceData> TraceProjector<D> for ChunkCollection<D> {
-    type Storage = StaticDataVec<D, TraceDataText>;
-    type Trace = Vec<Vec<Span>>;
-    type Chunk = Vec<Span>;
-    type Span = Span;
-    type SpanLink = [(); 0];
-    type SpanEvent = [(); 0];
+    type Storage<'a> = Storage<D> where D: 'a;
+    type Trace<'a> = Trace;
+    type Chunk<'a> = Chunk;
+    type Span<'a> = Span;
+    type SpanLink<'a> = SpanLink;
+    type SpanEvent<'a> = SpanEvent;
 
     fn project(&self) -> Traces<Self, D> {
         Traces::new(&self.chunks, &self.dict)
@@ -144,16 +157,16 @@ impl<D: TraceData> TraceProjector<D> for ChunkCollection<D> {
         Traces::new_mut(&mut self.chunks, &mut self.dict)
     }
 
-    fn add_chunk<'a>(trace: &'a mut Self::Trace, _storage: &mut Self::Storage) -> &'a mut Self::Chunk {
+    fn add_chunk<'a>(trace: &'a mut Trace, _storage: &mut Storage<D>) -> &'a mut Chunk {
         trace.push(Vec::new());
         unsafe { trace.last_mut().unwrap_unchecked() }
     }
 
-    fn chunk_iterator(trace: &Self::Trace) -> Iter<Vec<Span>> {
+    fn chunk_iterator(trace: &Trace) -> Iter<Vec<Span>> {
         trace.iter()
     }
 
-    fn retain_chunks(trace: &mut Self::Trace, storage: &mut Self::Storage, mut predicate: impl FnMut(&mut Self::Chunk, &mut Self::Storage) -> bool) {
+    fn retain_chunks(trace: &mut Trace, storage: &mut Storage<D>, mut predicate: impl FnMut(&mut Chunk, &mut Storage<D>) -> bool) {
         trace.retain_mut(|chunk| {
             if predicate(chunk, storage) {
                 true
@@ -164,7 +177,7 @@ impl<D: TraceData> TraceProjector<D> for ChunkCollection<D> {
         })
     }
 
-    fn add_span<'a>(chunk: &'a mut Self::Chunk, storage: &mut Self::Storage) -> &'a mut Self::Span {
+    fn add_span<'a>(chunk: &'a mut Chunk, storage: &mut Storage<D>) -> &'a mut Span {
         // TODO: well, we can optimize that and directly copy instead of always re-computing the trace_id
         let trace_id = Self::get_chunk_trace_id(chunk, storage);
         chunk.push(Span::default());
@@ -173,11 +186,11 @@ impl<D: TraceData> TraceProjector<D> for ChunkCollection<D> {
         span
     }
 
-    fn span_iterator(chunk: &Self::Chunk) -> Iter<Span> {
+    fn span_iterator(chunk: &Chunk) -> Iter<Span> {
         chunk.iter()
     }
 
-    fn retain_spans(chunk: &mut Self::Chunk, storage: &mut Self::Storage, mut predicate: impl FnMut(&mut Self::Span, &mut Self::Storage) -> bool) {
+    fn retain_spans(chunk: &mut Chunk, storage: &mut Storage<D>, mut predicate: impl FnMut(&mut Span, &mut Storage<D>) -> bool) {
         chunk.retain_mut(|span| {
             if predicate(span, storage) {
                 true
@@ -188,105 +201,105 @@ impl<D: TraceData> TraceProjector<D> for ChunkCollection<D> {
         })
     }
 
-    fn add_span_link<'a>(_span: &'a mut Self::Span, _storage: &mut Self::Storage) -> &'a mut Self::SpanLink {
+    fn add_span_link<'a>(_span: &'a mut Span, _storage: &mut Storage<D>) -> &'a mut SpanLink {
         &mut []
     }
 
-    fn span_link_iterator(_span: &Self::Span) -> Iter<Self::SpanLink> {
+    fn span_link_iterator(_span: &Span) -> Iter<SpanLink> {
         [].iter()
     }
 
-    fn retain_span_links(_trace: &mut Self::Span, _storage: &mut Self::Storage, _predicate: impl FnMut(&mut Self::SpanLink, &mut Self::Storage) -> bool) {
+    fn retain_span_links(_trace: &mut Span, _storage: &mut Storage<D>, _predicate: impl FnMut(&mut SpanLink, &mut Storage<D>) -> bool) {
     }
 
-    fn add_span_event<'a>(_span: &mut Self::Span, _storage: &mut Self::Storage) -> &'a mut Self::SpanEvent {
+    fn add_span_event<'a>(_span: &mut Span, _storage: &mut Storage<D>) -> &'a mut SpanEvent {
         &mut []
     }
 
-    fn span_event_iterator(_span: &Self::Span) -> Iter<Self::SpanEvent> {
+    fn span_event_iterator(_span: &Span) -> Iter<SpanEvent> {
         [].iter()
     }
 
-    fn retain_span_events(_trace: &mut Self::Span, _storage: &mut Self::Storage, _predicate: impl FnMut(&mut Self::SpanEvent, &mut Self::Storage) -> bool) {
+    fn retain_span_events(_trace: &mut Span, _storage: &mut Storage<D>, _predicate: impl FnMut(&mut SpanEvent, &mut Storage<D>) -> bool) {
     }
 
-    fn get_trace_container_id<'a>(_trace: &'a Self::Trace, _storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_trace_container_id<'a>(_trace: &'a Trace, _storage: &'a Storage<D>) -> &'a D::Text {
         D::Text::default_ref()
     }
 
-    fn get_trace_language_name<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_trace_language_name<'a>(trace: &'a Trace, storage: &'a Storage<D>) -> &'a D::Text {
         todo!()
     }
 
-    fn get_trace_language_version<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_trace_language_version<'a>(trace: &'a Trace, storage: &'a Storage<D>) -> &'a D::Text {
         todo!()
     }
 
-    fn get_trace_tracer_version<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_trace_tracer_version<'a>(trace: &'a Trace, storage: &'a Storage<D>) -> &'a D::Text {
         todo!()
     }
 
-    fn get_trace_runtime_id<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_trace_runtime_id<'a>(trace: &'a Trace, storage: &'a Storage<D>) -> &'a D::Text {
         todo!()
     }
 
-    fn get_trace_env<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_trace_env<'a>(trace: &'a Trace, storage: &'a Storage<D>) -> &'a D::Text {
         todo!()
     }
 
-    fn get_trace_hostname<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_trace_hostname<'a>(trace: &'a Trace, storage: &'a Storage<D>) -> &'a D::Text {
         todo!()
     }
 
-    fn get_trace_app_version<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_trace_app_version<'a>(trace: &'a Trace, storage: &'a Storage<D>) -> &'a D::Text {
         todo!()
     }
 
-    fn set_trace_container_id(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) {
+    fn set_trace_container_id(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
         todo!()
     }
 
-    fn set_trace_language_name(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) {
+    fn set_trace_language_name(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
         todo!()
     }
 
-    fn set_trace_language_version(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) {
+    fn set_trace_language_version(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
         todo!()
     }
 
-    fn set_trace_tracer_version(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) {
+    fn set_trace_tracer_version(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
         todo!()
     }
 
-    fn set_trace_runtime_id(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) {
+    fn set_trace_runtime_id(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
         todo!()
     }
 
-    fn set_trace_env(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) {
+    fn set_trace_env(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
         todo!()
     }
 
-    fn set_trace_hostname(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) {
+    fn set_trace_hostname(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
         todo!()
     }
 
-    fn set_trace_app_version(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text) {
+    fn set_trace_app_version(trace: &mut Trace, storage: &mut Storage<D>, value: D::Text) {
         todo!()
     }
 
-    fn get_chunk_priority(chunk: &Self::Chunk, storage: &Self::Storage) -> i32 {
+    fn get_chunk_priority(chunk: &Chunk, storage: &Storage<D>) -> i32 {
         todo!()
     }
 
-    fn get_chunk_origin<'a>(chunk: &'a Self::Chunk, storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_chunk_origin<'a>(chunk: &'a Chunk, storage: &'a Storage<D>) -> &'a D::Text {
         todo!()
     }
 
-    fn get_chunk_dropped_trace(chunk: &Self::Chunk, storage: &Self::Storage) -> bool {
+    fn get_chunk_dropped_trace(chunk: &Chunk, storage: &Storage<D>) -> bool {
         todo!()
     }
 
-    fn get_chunk_trace_id(chunk: &Self::Chunk, storage: &Self::Storage) -> u128 {
+    fn get_chunk_trace_id(chunk: &Chunk, storage: &Storage<D>) -> u128 {
         if let Some(span) = chunk.first() {
             let tid = span.get_meta("_dd.p.tid", storage).and_then(|v| u64::from_str_radix(v.borrow(), 16).ok()).unwrap_or(0);
             tid as u128 | span.trace_id as u128
@@ -295,180 +308,180 @@ impl<D: TraceData> TraceProjector<D> for ChunkCollection<D> {
         }
     }
 
-    fn get_chunk_sampling_mechanism(chunk: &Self::Chunk, storage: &Self::Storage) -> u32 {
+    fn get_chunk_sampling_mechanism(chunk: &Chunk, storage: &Storage<D>) -> u32 {
         todo!()
     }
 
-    fn set_chunk_priority(chunk: &mut Self::Chunk, storage: &mut Self::Storage, value: i32) {
+    fn set_chunk_priority(chunk: &mut Chunk, storage: &mut Storage<D>, value: i32) {
         todo!()
     }
 
-    fn set_chunk_origin(chunk: &mut Self::Chunk, storage: &mut Self::Storage, value: D::Text) {
+    fn set_chunk_origin(chunk: &mut Chunk, storage: &mut Storage<D>, value: D::Text) {
         todo!()
     }
 
-    fn set_chunk_dropped_trace(chunk: &mut Self::Chunk, storage: &mut Self::Storage, value: bool) {
+    fn set_chunk_dropped_trace(chunk: &mut Chunk, storage: &mut Storage<D>, value: bool) {
         todo!()
     }
 
-    fn set_chunk_trace_id(chunk: &mut Self::Chunk, storage: &mut Self::Storage, value: u128) {
+    fn set_chunk_trace_id(chunk: &mut Chunk, storage: &mut Storage<D>, value: u128) {
         for span in chunk.iter_mut() {
             span.set_trace_id(value, storage);
         }
     }
 
-    fn set_chunk_sampling_mechanism(chunk: &mut Self::Chunk, storage: &mut Self::Storage, value: u32) {
+    fn set_chunk_sampling_mechanism(chunk: &mut Chunk, storage: &mut Storage<D>, value: u32) {
         todo!()
     }
 
-    fn get_span_service<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_span_service<'a>(span: &'a Span, storage: &'a Storage<D>) -> &'a D::Text {
         span.service.get(storage)
     }
 
-    fn get_span_name<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_span_name<'a>(span: &'a Span, storage: &'a Storage<D>) -> &'a D::Text {
         span.name.get(storage)
     }
 
-    fn get_span_resource<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_span_resource<'a>(span: &'a Span, storage: &'a Storage<D>) -> &'a D::Text {
         span.resource.get(storage)
     }
 
-    fn get_span_type<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_span_type<'a>(span: &'a Span, storage: &'a Storage<D>) -> &'a D::Text {
         span.r#type.get(storage)
     }
 
-    fn get_span_span_id(span: &Self::Span, _storage: &Self::Storage) -> u64 {
+    fn get_span_span_id(span: &Span, _storage: &Storage<D>) -> u64 {
         span.span_id
     }
 
-    fn get_span_parent_id(span: &Self::Span, _storage: &Self::Storage) -> u64 {
+    fn get_span_parent_id(span: &Span, _storage: &Storage<D>) -> u64 {
         span.parent_id
     }
 
-    fn get_span_start(span: &Self::Span, _storage: &Self::Storage) -> i64 {
+    fn get_span_start(span: &Span, _storage: &Storage<D>) -> i64 {
         span.start
     }
 
-    fn get_span_duration(span: &Self::Span, _storage: &Self::Storage) -> i64 {
+    fn get_span_duration(span: &Span, _storage: &Storage<D>) -> i64 {
         span.duration
     }
 
-    fn get_span_error(span: &Self::Span, _storage: &Self::Storage) -> bool {
+    fn get_span_error(span: &Span, _storage: &Storage<D>) -> bool {
         span.error != 0
     }
 
-    fn get_span_env<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_span_env<'a>(span: &'a Span, storage: &'a Storage<D>) -> &'a D::Text {
         span.get_meta("env", storage).unwrap_or(D::Text::default_ref())
     }
 
-    fn get_span_version<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_span_version<'a>(span: &'a Span, storage: &'a Storage<D>) -> &'a D::Text {
         span.get_meta("version", storage).unwrap_or(D::Text::default_ref())
     }
 
-    fn get_span_component<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_span_component<'a>(span: &'a Span, storage: &'a Storage<D>) -> &'a D::Text {
         span.get_meta("component", storage).unwrap_or(D::Text::default_ref())
     }
 
-    fn get_span_kind(span: &Self::Span, storage: &Self::Storage) -> SpanKind {
+    fn get_span_kind(span: &Span, storage: &Storage<D>) -> SpanKind {
         let kind = span.get_meta("kind", storage).map(|v| v.borrow()).unwrap_or("");
         parse_span_kind(kind)
     }
 
-    fn set_span_service(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text) {
+    fn set_span_service(span: &mut Span, storage: &mut Storage<D>, value: D::Text) {
         span.service.set(storage, value)
     }
 
-    fn set_span_name(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text) {
+    fn set_span_name(span: &mut Span, storage: &mut Storage<D>, value: D::Text) {
         span.name.set(storage, value)
     }
 
-    fn set_span_resource(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text) {
+    fn set_span_resource(span: &mut Span, storage: &mut Storage<D>, value: D::Text) {
         span.resource.set(storage, value)
     }
 
-    fn set_span_type(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text) {
+    fn set_span_type(span: &mut Span, storage: &mut Storage<D>, value: D::Text) {
         span.r#type.set(storage, value)
     }
 
-    fn set_span_span_id(span: &mut Self::Span, _storage: &mut Self::Storage, value: u64) {
+    fn set_span_span_id(span: &mut Span, _storage: &mut Storage<D>, value: u64) {
         span.span_id = value;
     }
 
-    fn set_span_parent_id(span: &mut Self::Span, _storage: &mut Self::Storage, value: u64) {
+    fn set_span_parent_id(span: &mut Span, _storage: &mut Storage<D>, value: u64) {
         span.parent_id = value;
     }
 
-    fn set_span_start(span: &mut Self::Span, _storage: &mut Self::Storage, value: i64) {
+    fn set_span_start(span: &mut Span, _storage: &mut Storage<D>, value: i64) {
         span.start = value;
     }
 
-    fn set_span_duration(span: &mut Self::Span, _storage: &mut Self::Storage, value: i64) {
+    fn set_span_duration(span: &mut Span, _storage: &mut Storage<D>, value: i64) {
         span.duration = value;
     }
 
-    fn set_span_error(span: &mut Self::Span, _storage: &mut Self::Storage, value: bool) {
+    fn set_span_error(span: &mut Span, _storage: &mut Storage<D>, value: bool) {
         span.error = value as i32;
     }
 
-    fn set_span_env(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text) {
+    fn set_span_env(span: &mut Span, storage: &mut Storage<D>, value: D::Text) {
         span.set_meta("env", storage, value);
     }
 
-    fn set_span_version(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text) {
+    fn set_span_version(span: &mut Span, storage: &mut Storage<D>, value: D::Text) {
         span.set_meta("version", storage, value);
     }
 
-    fn set_span_component(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text) {
+    fn set_span_component(span: &mut Span, storage: &mut Storage<D>, value: D::Text) {
         span.set_meta("component", storage, value);
     }
 
-    fn set_span_kind(span: &mut Self::Span, storage: &mut Self::Storage, value: SpanKind) {
+    fn set_span_kind(span: &mut Span, storage: &mut Storage<D>, value: SpanKind) {
         match span_kind_to_str(value) {
             Some(kind) => { span.set_meta("kind", storage, kind); },
             None => span.remove_meta("kind", storage),
         }
     }
 
-    fn get_link_trace_id(_link: &Self::SpanLink, _storage: &Self::Storage) -> u128 {
+    fn get_link_trace_id(_link: &SpanLink, _storage: &Storage<D>) -> u128 {
         0
     }
 
-    fn get_link_span_id(_link: &Self::SpanLink, _storage: &Self::Storage) -> u64 {
+    fn get_link_span_id(_link: &SpanLink, _storage: &Storage<D>) -> u64 {
         0
     }
 
-    fn get_link_trace_state<'a>(_link: &'a Self::SpanLink, _storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_link_trace_state<'a>(_link: &'a SpanLink, _storage: &'a Storage<D>) -> &'a D::Text {
         D::Text::default_ref()
     }
 
-    fn get_link_flags(_link: &Self::SpanLink, _storage: &Self::Storage) -> u32 {
+    fn get_link_flags(_link: &SpanLink, _storage: &Storage<D>) -> u32 {
         0
     }
 
-    fn set_link_trace_id(_link: &mut Self::SpanLink, _storage: &mut Self::Storage, _value: u128) {
+    fn set_link_trace_id(_link: &mut SpanLink, _storage: &mut Storage<D>, _value: u128) {
     }
 
-    fn set_link_span_id(_link: &mut Self::SpanLink, _storage: &mut Self::Storage, _value: u64) {
+    fn set_link_span_id(_link: &mut SpanLink, _storage: &mut Storage<D>, _value: u64) {
     }
 
-    fn set_link_trace_state(_link: &mut Self::SpanLink, _storage: &mut Self::Storage, _value: D::Text) {
+    fn set_link_trace_state(_link: &mut SpanLink, _storage: &mut Storage<D>, _value: D::Text) {
     }
 
-    fn set_link_flags(_link: &mut Self::SpanLink, _storage: &mut Self::Storage, _value: u32) {
+    fn set_link_flags(_link: &mut SpanLink, _storage: &mut Storage<D>, _value: u32) {
     }
 
-    fn get_event_time_unix_nano(_event: &Self::SpanEvent, _storage: &Self::Storage) -> u64 {
+    fn get_event_time_unix_nano(_event: &SpanEvent, _storage: &Storage<D>) -> u64 {
         0
     }
 
-    fn get_event_name<'a>(_event: &'a Self::SpanEvent, _storage: &'a Self::Storage) -> &'a D::Text {
+    fn get_event_name<'a>(_event: &'a SpanEvent, _storage: &'a Storage<D>) -> &'a D::Text {
         D::Text::default_ref()
     }
 
-    fn set_event_time_unix_nano(_event: &mut Self::SpanEvent, _storage: &mut Self::Storage, _value: u64) {
+    fn set_event_time_unix_nano(_event: &mut SpanEvent, _storage: &mut Storage<D>, _value: u64) {
     }
 
-    fn set_event_name(_event: &mut Self::SpanEvent, _storage: &mut Self::Storage, _value: D::Text) {
+    fn set_event_name(_event: &mut SpanEvent, _storage: &mut Storage<D>, _value: D::Text) {
     }
 }
 //note: trait bound `trace::TraceAttributes<'_, T, D, trace::AttrRef<'_, <T as trace::TraceProjector<D>>::Span>, <T as trace::TraceProjector<D>>::Span, 0>: trace::TraceAttributesOp<'_, T, D, <T as trace::TraceProjector<D>>::Span>` was not satisfied
@@ -568,7 +581,14 @@ impl<'a> TraceAttributesDouble for &'a mut f64 {
     }
 }
 
+impl<'a, D: TraceData, const Mut: u8> TraceAttributesOp<ChunkCollection<D>, D, [(); 0]> for TraceAttributes<'a, ChunkCollection<D>, D, AttrRef<'a, Span>, Span, Mut> {
+    type Array = ();
+    type Map = ();
 
+    fn get<'a>(container: &'a [(); 0], storage: &'a Storage<D>, key: D::Text) -> Option<AttributeAnyGetterContainer<'a, Self, ChunkCollection<D>, D, [(); 0]>> {
+        None
+    }
+}
 
 
 

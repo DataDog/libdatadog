@@ -1,129 +1,121 @@
 use std::marker::PhantomData;
-use datadog_trace_protobuf::pb::idx::SpanKind;
+use libdd_trace_protobuf::pb::idx::SpanKind;
 use crate::span::{SpanBytes, SpanText, TraceData};
 
-trait TraceProjectorDependencies<D: TraceData, Projector: TraceProjector<D>> {
-    type AttributeTrace<'a>: TraceAttributesOp<Projector, D, Projector::Trace> + 'a;
-    type AttributeChunk<'a>: TraceAttributesOp<Projector, D, Projector::Chunk> + 'a;
-    type AttributeSpan<'a>: TraceAttributesOp<Projector, D, Projector::Span> + 'a;
-    type AttributeSpanLink<'a>: TraceAttributesOp<Projector, D, Projector::SpanLink> + 'a;
-    type AttributeSpanEvent<'a>: TraceAttributesOp<Projector, D, Projector::SpanEvent> + 'a;
-}
-
-impl<T: TraceProjector<D>, D: TraceData> TraceProjectorDependencies<D, T> for T {
-    type AttributeTrace<'a> = TraceAttributes<'a, Self, D, AttrRef<'a, T::Trace>, T::Trace>;
-    type AttributeChunk<'a> = TraceAttributes<'a, Self, D, AttrRef<'a, T::Chunk>, T::Chunk>;
-    type AttributeSpan<'a> = TraceAttributes<'a, Self, D, AttrRef<'a, T::Span>, T::Span>;
-    type AttributeSpanLink<'a> = TraceAttributes<'a, Self, D, AttrRef<'a, T::SpanLink>, T::SpanLink>;
-    type AttributeSpanEvent<'a> = TraceAttributes<'a, Self, D, AttrRef<'a, T::SpanEvent>, T::SpanEvent>;
+pub trait TraceProjectorDependencies<D: TraceData, Projector: TraceProjector<D>> {
+    type AttributeTrace<'a>: TraceAttributesOp<Projector, D, Projector::Trace<'a>> + 'a;
+    type AttributeChunk<'a>: TraceAttributesOp<Projector, D, Projector::Chunk<'a>> + 'a;
+    type AttributeSpan<'a>: TraceAttributesOp<Projector, D, Projector::Span<'a>> + 'a;
+    type AttributeSpanLink<'a>: TraceAttributesOp<Projector, D, Projector::SpanLink<'a>> + 'a;
+    type AttributeSpanEvent<'a>: TraceAttributesOp<Projector, D, Projector::SpanEvent<'a>> + 'a;
 }
 
 pub trait TraceProjector<D: TraceData>: Sized + for<'a> TraceProjectorDependencies<
     D,
     Self,
-    AttributeTrace<'a> = TraceAttributes<'a, Self, D, AttrRef<'a, Self::Trace>, Self::Trace>,
-    AttributeChunk<'a> = TraceAttributes<'a, Self, D, AttrRef<'a, Self::Chunk>, Self::Chunk>,
-    AttributeSpan<'a> = TraceAttributes<'a, Self, D, AttrRef<'a, Self::Span>, Self::Span>,
-    AttributeSpanLink<'a> = TraceAttributes<'a, Self, D, AttrRef<'a, Self::SpanLink>, Self::SpanLink>,
-    AttributeSpanEvent<'a> = TraceAttributes<'a, Self, D, AttrRef<'a, Self::SpanEvent>, Self::SpanEvent>,
+    AttributeTrace<'a> = TraceAttributes<'a, Self, D, AttrRef<'a, Self::Trace<'a>>, Self::Trace<'a>>,
+    AttributeChunk<'a> = TraceAttributes<'a, Self, D, AttrRef<'a, Self::Chunk<'a>>, Self::Chunk<'a>>,
+    AttributeSpan<'a> = TraceAttributes<'a, Self, D, AttrRef<'a, Self::Span<'a>>, Self::Span<'a>>,
+    AttributeSpanLink<'a> = TraceAttributes<'a, Self, D, AttrRef<'a, Self::SpanLink<'a>>, Self::SpanLink<'a>>,
+    AttributeSpanEvent<'a> = TraceAttributes<'a, Self, D, AttrRef<'a, Self::SpanEvent<'a>>, Self::SpanEvent<'a>>,
 >
 {
-    type Storage;
-    type Trace;
-    type Chunk;
-    type Span;
-    type SpanLink;
-    type SpanEvent;
+    type Storage<'a>: 'a;
+    type Trace<'a>: 'a;
+    type Chunk<'a>: 'a;
+    type Span<'a>: 'a;
+    type SpanLink<'a>: 'a;
+    type SpanEvent<'a>: 'a;
 
     fn project(&self) -> Traces<Self, D>;
     fn project_mut(&mut self) -> TracesMut<Self, D>;
 
-    fn add_chunk<'a>(trace: &'a mut Self::Trace, storage: &mut Self::Storage) -> &'a mut Self::Chunk;
-    fn chunk_iterator(trace: &Self::Trace) -> std::slice::Iter<Self::Chunk>;
-    fn retain_chunks(trace: &mut Self::Trace, storage: &mut Self::Storage, predicate: impl FnMut(&mut Self::Chunk, &mut Self::Storage) -> bool);
-    fn add_span<'a>(chunk: &'a mut Self::Chunk, storage: &mut Self::Storage) -> &'a mut Self::Span;
-    fn span_iterator(chunk: &Self::Chunk) -> std::slice::Iter<Self::Span>;
-    fn retain_spans(chunk: &mut Self::Chunk, storage: &mut Self::Storage, predicate: impl FnMut(&mut Self::Span, &mut Self::Storage) -> bool);
-    fn add_span_link<'a>(span: &'a mut Self::Span, storage: &mut Self::Storage) -> &'a mut Self::SpanLink;
-    fn span_link_iterator(span: &Self::Span) -> std::slice::Iter<Self::SpanLink>;
-    fn retain_span_links(chunk: &mut Self::Span, storage: &mut Self::Storage, predicate: impl FnMut(&mut Self::SpanLink, &mut Self::Storage) -> bool);
-    fn add_span_event<'a>(span: &mut Self::Span, storage: &mut Self::Storage) -> &'a mut Self::SpanEvent;
-    fn span_event_iterator(span: &Self::Span) -> std::slice::Iter<Self::SpanEvent>;
-    fn retain_span_events(chunk: &mut Self::Span, storage: &mut Self::Storage, predicate: impl FnMut(&mut Self::SpanEvent, &mut Self::Storage) -> bool);
+    fn add_chunk<'a>(trace: &'a mut Self::Trace<'a>, storage: &mut Self::Storage<'a>) -> &'a mut Self::Chunk<'a>;
+    fn chunk_iterator(trace: &Self::Trace<'_>) -> std::slice::Iter<Self::Chunk<'_>>;
+    fn retain_chunks(trace: &mut Self::Trace<'_>, storage: &mut Self::Storage<'_>, predicate: impl FnMut(&mut Self::Chunk<'_>, &mut Self::Storage<'_>) -> bool);
+    fn add_span<'a>(chunk: &'a mut Self::Chunk<'a>, storage: &mut Self::Storage<'a>) -> &'a mut Self::Span<'a>;
+    fn span_iterator(chunk: &Self::Chunk<'_>) -> std::slice::Iter<Self::Span<'_>>;
+    fn retain_spans(chunk: &mut Self::Chunk<'_>, storage: &mut Self::Storage<'_>, predicate: impl FnMut(&mut Self::Span<'_>, &mut Self::Storage<'_>) -> bool);
+    fn add_span_link<'a>(span: &'a mut Self::Span<'a>, storage: &mut Self::Storage<'a>) -> &'a mut Self::SpanLink<'a>;
+    fn span_link_iterator(span: &Self::Span<'_>) -> std::slice::Iter<Self::SpanLink<'_>>;
+    fn retain_span_links(chunk: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, predicate: impl FnMut(&mut Self::SpanLink<'_>, &mut Self::Storage<'_>) -> bool);
+    fn add_span_event<'a>(span: &mut Self::Span<'a>, storage: &mut Self::Storage<'a>) -> &'a mut Self::SpanEvent<'a>;
+    fn span_event_iterator(span: &Self::Span<'_>) -> std::slice::Iter<Self::SpanEvent<'_>>;
+    fn retain_span_events(chunk: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, predicate: impl FnMut(&mut Self::SpanEvent<'_>, &mut Self::Storage<'_>) -> bool);
 
-    fn get_trace_container_id<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_trace_language_name<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_trace_language_version<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_trace_tracer_version<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_trace_runtime_id<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_trace_env<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_trace_hostname<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_trace_app_version<'a>(trace: &'a Self::Trace, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_trace_container_id<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_trace_language_name<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_trace_language_version<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_trace_tracer_version<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_trace_runtime_id<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_trace_env<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_trace_hostname<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_trace_app_version<'a>(trace: &'a Self::Trace<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
 
-    fn set_trace_container_id(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
-    fn set_trace_language_name(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
-    fn set_trace_language_version(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
-    fn set_trace_tracer_version(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
-    fn set_trace_runtime_id(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
-    fn set_trace_env(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
-    fn set_trace_hostname(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
-    fn set_trace_app_version(trace: &mut Self::Trace, storage: &mut Self::Storage, value: D::Text);
+    fn set_trace_container_id(trace: &mut Self::Trace<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_trace_language_name(trace: &mut Self::Trace<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_trace_language_version(trace: &mut Self::Trace<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_trace_tracer_version(trace: &mut Self::Trace<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_trace_runtime_id(trace: &mut Self::Trace<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_trace_env(trace: &mut Self::Trace<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_trace_hostname(trace: &mut Self::Trace<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_trace_app_version(trace: &mut Self::Trace<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
 
-    fn get_chunk_priority(chunk: &Self::Chunk, storage: &Self::Storage) -> i32;
-    fn get_chunk_origin<'a>(chunk: &'a Self::Chunk, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_chunk_dropped_trace(chunk: &Self::Chunk, storage: &Self::Storage) -> bool;
-    fn get_chunk_trace_id(chunk: &Self::Chunk, storage: &Self::Storage) -> u128;
-    fn get_chunk_sampling_mechanism(chunk: &Self::Chunk, storage: &Self::Storage) -> u32;
+    fn get_chunk_priority(chunk: &Self::Chunk<'_>, storage: &Self::Storage<'_>) -> i32;
+    fn get_chunk_origin<'a>(chunk: &'a Self::Chunk<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_chunk_dropped_trace(chunk: &Self::Chunk<'_>, storage: &Self::Storage<'_>) -> bool;
+    fn get_chunk_trace_id(chunk: &Self::Chunk<'_>, storage: &Self::Storage<'_>) -> u128;
+    fn get_chunk_sampling_mechanism(chunk: &Self::Chunk<'_>, storage: &Self::Storage<'_>) -> u32;
 
-    fn set_chunk_priority(chunk: &mut Self::Chunk, storage: &mut Self::Storage, value: i32);
-    fn set_chunk_origin(chunk: &mut Self::Chunk, storage: &mut Self::Storage, value: D::Text);
-    fn set_chunk_dropped_trace(chunk: &mut Self::Chunk, storage: &mut Self::Storage, value: bool);
-    fn set_chunk_trace_id(chunk: &mut Self::Chunk, storage: &mut Self::Storage, value: u128);
-    fn set_chunk_sampling_mechanism(chunk: &mut Self::Chunk, storage: &mut Self::Storage, value: u32);
+    fn set_chunk_priority(chunk: &mut Self::Chunk<'_>, storage: &mut Self::Storage<'_>, value: i32);
+    fn set_chunk_origin(chunk: &mut Self::Chunk<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_chunk_dropped_trace(chunk: &mut Self::Chunk<'_>, storage: &mut Self::Storage<'_>, value: bool);
+    fn set_chunk_trace_id(chunk: &mut Self::Chunk<'_>, storage: &mut Self::Storage<'_>, value: u128);
+    fn set_chunk_sampling_mechanism(chunk: &mut Self::Chunk<'_>, storage: &mut Self::Storage<'_>, value: u32);
 
-    fn get_span_service<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_span_name<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_span_resource<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_span_type<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_span_span_id(span: &Self::Span, storage: &Self::Storage) -> u64;
-    fn get_span_parent_id(span: &Self::Span, storage: &Self::Storage) -> u64;
-    fn get_span_start(span: &Self::Span, storage: &Self::Storage) -> i64;
-    fn get_span_duration(span: &Self::Span, storage: &Self::Storage) -> i64;
-    fn get_span_error(span: &Self::Span, storage: &Self::Storage) -> bool;
-    fn get_span_env<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_span_version<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_span_component<'a>(span: &'a Self::Span, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_span_kind(span: &Self::Span, storage: &Self::Storage) -> SpanKind;
+    fn get_span_service<'a>(span: &'a Self::Span<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_span_name<'a>(span: &'a Self::Span<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_span_resource<'a>(span: &'a Self::Span<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_span_type<'a>(span: &'a Self::Span<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_span_span_id(span: &Self::Span<'_>, storage: &Self::Storage<'_>) -> u64;
+    fn get_span_parent_id(span: &Self::Span<'_>, storage: &Self::Storage<'_>) -> u64;
+    fn get_span_start(span: &Self::Span<'_>, storage: &Self::Storage<'_>) -> i64;
+    fn get_span_duration(span: &Self::Span<'_>, storage: &Self::Storage<'_>) -> i64;
+    fn get_span_error(span: &Self::Span<'_>, storage: &Self::Storage<'_>) -> bool;
+    fn get_span_env<'a>(span: &'a Self::Span<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_span_version<'a>(span: &'a Self::Span<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_span_component<'a>(span: &'a Self::Span<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_span_kind(span: &Self::Span<'_>, storage: &Self::Storage<'_>) -> SpanKind;
 
-    fn set_span_service(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text);
-    fn set_span_name(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text);
-    fn set_span_resource(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text);
-    fn set_span_type(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text);
-    fn set_span_span_id(span: &mut Self::Span, storage: &mut Self::Storage, value: u64);
-    fn set_span_parent_id(span: &mut Self::Span, storage: &mut Self::Storage, value: u64);
-    fn set_span_start(span: &mut Self::Span, storage: &mut Self::Storage, value: i64);
-    fn set_span_duration(span: &mut Self::Span, storage: &mut Self::Storage, value: i64);
-    fn set_span_error(span: &mut Self::Span, storage: &mut Self::Storage, value: bool);
-    fn set_span_env(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text);
-    fn set_span_version(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text);
-    fn set_span_component(span: &mut Self::Span, storage: &mut Self::Storage, value: D::Text);
-    fn set_span_kind(span: &mut Self::Span, storage: &mut Self::Storage, value: SpanKind);
+    fn set_span_service(span: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_span_name(span: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_span_resource(span: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_span_type(span: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_span_span_id(span: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, value: u64);
+    fn set_span_parent_id(span: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, value: u64);
+    fn set_span_start(span: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, value: i64);
+    fn set_span_duration(span: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, value: i64);
+    fn set_span_error(span: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, value: bool);
+    fn set_span_env(span: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_span_version(span: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_span_component(span: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_span_kind(span: &mut Self::Span<'_>, storage: &mut Self::Storage<'_>, value: SpanKind);
 
-    fn get_link_trace_id(link: &Self::SpanLink, storage: &Self::Storage) -> u128;
-    fn get_link_span_id(link: &Self::SpanLink, storage: &Self::Storage) -> u64;
-    fn get_link_trace_state<'a>(link: &'a Self::SpanLink, storage: &'a Self::Storage) -> &'a D::Text;
-    fn get_link_flags(link: &Self::SpanLink, storage: &Self::Storage) -> u32;
+    fn get_link_trace_id(link: &Self::SpanLink<'_>, storage: &Self::Storage<'_>) -> u128;
+    fn get_link_span_id(link: &Self::SpanLink<'_>, storage: &Self::Storage<'_>) -> u64;
+    fn get_link_trace_state<'a>(link: &'a Self::SpanLink<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
+    fn get_link_flags(link: &Self::SpanLink<'_>, storage: &Self::Storage<'_>) -> u32;
 
-    fn set_link_trace_id(link: &mut Self::SpanLink, storage: &mut Self::Storage, value: u128);
-    fn set_link_span_id(link: &mut Self::SpanLink, storage: &mut Self::Storage, value: u64);
-    fn set_link_trace_state(link: &mut Self::SpanLink, storage: &mut Self::Storage, value: D::Text);
-    fn set_link_flags(link: &mut Self::SpanLink, storage: &mut Self::Storage, value: u32);
+    fn set_link_trace_id(link: &mut Self::SpanLink<'_>, storage: &mut Self::Storage<'_>, value: u128);
+    fn set_link_span_id(link: &mut Self::SpanLink<'_>, storage: &mut Self::Storage<'_>, value: u64);
+    fn set_link_trace_state(link: &mut Self::SpanLink<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
+    fn set_link_flags(link: &mut Self::SpanLink<'_>, storage: &mut Self::Storage<'_>, value: u32);
 
-    fn get_event_time_unix_nano(event: &Self::SpanEvent, storage: &Self::Storage) -> u64;
-    fn get_event_name<'a>(event: &'a Self::SpanEvent, storage: &'a Self::Storage) -> &'a D::Text;
+    fn get_event_time_unix_nano(event: &Self::SpanEvent<'_>, storage: &Self::Storage<'_>) -> u64;
+    fn get_event_name<'a>(event: &'a Self::SpanEvent<'a>, storage: &'a Self::Storage<'a>) -> &'a D::Text;
 
-    fn set_event_time_unix_nano(event: &mut Self::SpanEvent, storage: &mut Self::Storage, value: u64);
-    fn set_event_name(event: &mut Self::SpanEvent, storage: &mut Self::Storage, value: D::Text);
+    fn set_event_time_unix_nano(event: &mut Self::SpanEvent<'_>, storage: &mut Self::Storage<'_>, value: u64);
+    fn set_event_name(event: &mut Self::SpanEvent<'_>, storage: &mut Self::Storage<'_>, value: D::Text);
 }
 
 const IMMUT: u8 = 0;
@@ -134,20 +126,20 @@ unsafe fn as_mut<T>(v: &T) -> &mut T {
 }
 
 struct TraceValue<'a, T: TraceProjector<D>, D: TraceData, C, const Type: u8, const Mut: u8 = IMMUT> {
-    storage: &'a T::Storage,
+    storage: &'a T::Storage<'a>,
     container: &'a C,
 }
 
-pub type TracesValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::Trace, Type, Mut>;
-pub type ChunkValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::Chunk, Type, Mut>;
-pub type SpanValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::Span, Type, Mut>;
-pub type SpanLinkValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::SpanLink, Type, Mut>;
-pub type SpanEventValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::SpanEvent, Type, Mut>;
+pub type TracesValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::Trace<'a>, Type, Mut>;
+pub type ChunkValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::Chunk<'a>, Type, Mut>;
+pub type SpanValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::Span<'a>, Type, Mut>;
+pub type SpanLinkValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::SpanLink<'a>, Type, Mut>;
+pub type SpanEventValue<'a, T: TraceProjector<D>, D: TraceData, const Type: u8, const Mut: u8 = IMMUT> = TraceValue<'a, T, D, T::SpanEvent<'a>, Type, Mut>;
 
 #[derive(Debug)]
 pub struct Traces<'a, T: TraceProjector<D> + ?Sized, D: TraceData, const Mut: u8 = IMMUT> {
-    storage: &'a T::Storage,
-    traces: &'a T::Trace,
+    storage: &'a T::Storage<'a>,
+    traces: &'a T::Trace<'a>,
 }
 pub type TracesMut<'a, T, D> = Traces<'a, T, D, MUT>;
 
@@ -162,13 +154,13 @@ impl<T: TraceProjector<D>, D: TraceData> Clone for Traces<'_, T, D> { // Note: n
 impl<T: TraceProjector<D>, D: TraceData> Copy for Traces<'_, T, D> {}
 
 impl<'a, T: TraceProjector<D>, D: TraceData> Traces<'a, T, D> {
-    pub fn new(traces: &'a T::Trace, storage: &'a T::Storage) -> Self {
+    pub fn new(traces: &'a T::Trace<'a>, storage: &'a T::Storage<'a>) -> Self {
         Self::generic_new(traces, storage)
     }
 }
 
 impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> Traces<'a, T, D, Mut> {
-    fn generic_new(traces: &'a T::Trace, storage: &'a T::Storage) -> Self {
+    fn generic_new(traces: &'a T::Trace<'a>, storage: &'a T::Storage<'a>) -> Self {
         Traces {
             storage,
             traces,
@@ -207,7 +199,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> Traces<'a, T, D, Mut
         T::get_trace_app_version(self.traces, self.storage)
     }
 
-    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Trace>, T::Trace> {
+    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Trace<'a>>, T::Trace<'a>> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.traces),
@@ -215,7 +207,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> Traces<'a, T, D, Mut
         }
     }
 
-    pub fn chunks(&self) -> ChunkIterator<'a, T, D, std::slice::Iter<'a, T::Chunk>> {
+    pub fn chunks(&self) -> ChunkIterator<'a, T, D, std::slice::Iter<'a, T::Chunk<'a>>> {
         ChunkIterator {
             storage: self.storage,
             it: T::chunk_iterator(self.traces)
@@ -224,7 +216,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> Traces<'a, T, D, Mut
 }
 
 impl<'a, T: TraceProjector<D>, D: TraceData> TracesMut<'a, T, D> {
-    pub fn new_mut(traces: &'a mut T::Trace, storage: &'a mut T::Storage) -> Self {
+    pub fn new_mut(traces: &'a mut T::Trace<'a>, storage: &'a mut T::Storage<'a>) -> Self {
         Self::generic_new(traces, storage)
     }
 
@@ -260,7 +252,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData> TracesMut<'a, T, D> {
         unsafe { T::set_trace_app_version(as_mut(self.traces), as_mut(self.storage), value.into()) }
     }
 
-    pub fn attributes_mut(&mut self) -> TraceAttributesMut<'a, T, D, AttrRef<'a, T::Trace>, T::Trace> {
+    pub fn attributes_mut(&mut self) -> TraceAttributesMut<'a, T, D, AttrRef<'a, T::Trace<'a>>, T::Trace<'a>> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.traces),
@@ -268,7 +260,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData> TracesMut<'a, T, D> {
         }
     }
 
-    pub fn chunks_mut(&mut self) -> ChunkIteratorMut<'a, T, D, std::slice::Iter<'a, T::Chunk>> {
+    pub fn chunks_mut(&mut self) -> ChunkIteratorMut<'a, T, D, std::slice::Iter<'a, T::Chunk<'a>>> {
         ChunkIterator {
             storage: self.storage,
             it: T::chunk_iterator(self.traces)
@@ -295,13 +287,13 @@ impl<'a, T: TraceProjector<D>, D: TraceData> TracesMut<'a, T, D> {
     }
 }
 
-pub struct ChunkIterator<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Chunk>, const Mut: u8 = IMMUT> where T::Chunk: 'a {
-    storage: &'a T::Storage,
+pub struct ChunkIterator<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Chunk<'a>>, const Mut: u8 = IMMUT> {
+    storage: &'a T::Storage<'a>,
     it: I,
 }
-pub type ChunkIteratorMut<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Chunk>> = ChunkIterator<'a, T, D, I, MUT>;
+pub type ChunkIteratorMut<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Chunk<'a>>> = ChunkIterator<'a, T, D, I, MUT>;
 
-impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Chunk>, const Mut: u8> Iterator for ChunkIterator<'a, T, D, I, Mut> where T::Chunk: 'a {
+impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Chunk<'a>>, const Mut: u8> Iterator for ChunkIterator<'a, T, D, I, Mut> {
     type Item = TraceChunk<'a, T, D, Mut>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -316,8 +308,8 @@ impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Chunk>, c
 
 #[derive(Debug)]
 pub struct TraceChunk<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8 = IMMUT> {
-    storage: &'a T::Storage,
-    chunk: &'a T::Chunk,
+    storage: &'a T::Storage<'a>,
+    chunk: &'a T::Chunk<'a>,
 }
 pub type TraceChunkMut<'a, T, D> = TraceChunk<'a, T, D, MUT>;
 
@@ -352,7 +344,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> TraceChunk<'a, T, D,
         T::get_chunk_sampling_mechanism(self.chunk, self.storage)
     }
 
-    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Chunk>, T::Chunk> {
+    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Chunk<'a>>, T::Chunk<'a>> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.chunk),
@@ -360,7 +352,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> TraceChunk<'a, T, D,
         }
     }
 
-    pub fn spans(&self) -> SpanIterator<'a, T, D, std::slice::Iter<'a, T::Span>> {
+    pub fn spans(&self) -> SpanIterator<'a, T, D, std::slice::Iter<'a, T::Span<'a>>> {
         SpanIterator {
             storage: self.storage,
             it: T::span_iterator(self.chunk)
@@ -389,7 +381,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData> TraceChunk<'a, T, D, MUT> {
         unsafe { T::set_chunk_sampling_mechanism(as_mut(self.chunk), as_mut(self.storage), value) }
     }
 
-    pub fn attributes_mut(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Chunk>, T::Chunk, MUT> {
+    pub fn attributes_mut(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Chunk<'a>>, T::Chunk<'a>, MUT> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.chunk),
@@ -397,7 +389,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData> TraceChunk<'a, T, D, MUT> {
         }
     }
 
-    pub fn spans_mut(&mut self) -> SpanIteratorMut<'a, T, D, std::slice::Iter<'a, T::Span>> {
+    pub fn spans_mut(&mut self) -> SpanIteratorMut<'a, T, D, std::slice::Iter<'a, T::Span<'a>>> {
         SpanIterator {
             storage: self.storage,
             it: T::span_iterator(self.chunk)
@@ -424,13 +416,13 @@ impl<'a, T: TraceProjector<D>, D: TraceData> TraceChunk<'a, T, D, MUT> {
     }
 }
 
-pub struct SpanIterator<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Span>, const Mut: u8 = IMMUT> where T::Span: 'a {
-    storage: &'a T::Storage,
+pub struct SpanIterator<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Span<'a>>, const Mut: u8 = IMMUT> {
+    storage: &'a T::Storage<'a>,
     it: I,
 }
-pub type SpanIteratorMut<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Span>> = SpanIterator<'a, T, D, I, MUT>;
+pub type SpanIteratorMut<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Span<'a>>> = SpanIterator<'a, T, D, I, MUT>;
 
-impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Span>, const Mut: u8> Iterator for SpanIterator<'a, T, D, I, Mut> where T::Span: 'a {
+impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Span<'a>>, const Mut: u8> Iterator for SpanIterator<'a, T, D, I, Mut> {
     type Item = Span<'a, T, D>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -456,8 +448,8 @@ impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::Span>, co
 /// ```
 #[derive(Debug)]
 pub struct Span<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8 = IMMUT> {
-    storage: &'a T::Storage,
-    span: &'a T::Span,
+    storage: &'a T::Storage<'a>,
+    span: &'a T::Span<'a>,
 }
 pub type SpanMut<'a, T, D> = Span<'a, T, D, MUT>;
 
@@ -524,7 +516,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> Span<'a, T, D, Mut> 
         T::get_span_kind(self.span, self.storage)
     }
 
-    pub fn attributes(&self) -> T::AttributeSpan { //TraceAttributes<'a, T, D, AttrRef<'a, T::Span>, T::Span> {
+    pub fn attributes(&self) -> T::AttributeSpan<'_> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.span),
@@ -532,7 +524,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> Span<'a, T, D, Mut> 
         }
     }
 
-    pub fn span_links(&self) -> SpanLinkIterator<'a, T, D, std::slice::Iter<'a, T::SpanLink>> {
+    pub fn span_links(&self) -> SpanLinkIterator<'a, T, D, std::slice::Iter<'a, T::SpanLink<'a>>> {
         SpanLinkIterator {
             storage: self.storage,
             it: T::span_link_iterator(self.span)
@@ -558,7 +550,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> Span<'a, T, D, Mut> 
         }
     }
 
-    pub fn span_events(&self) -> SpanEventIterator<'a, T, D, std::slice::Iter<'a,T::SpanEvent>> {
+    pub fn span_events(&self) -> SpanEventIterator<'a, T, D, std::slice::Iter<'a, T::SpanEvent<'a>>> {
         SpanEventIterator {
             storage: self.storage,
             it: T::span_event_iterator(self.span)
@@ -638,7 +630,7 @@ impl <'a, T: TraceProjector<D>, D: TraceData> SpanMut<'a, T, D> {
         unsafe { T::set_span_kind(as_mut(self.span), as_mut(self.storage), value) }
     }
 
-    pub fn attributes_mut(&mut self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Span>, T::Span, MUT> {
+    pub fn attributes_mut(&mut self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::Span<'a>>, T::Span<'a>, MUT> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.span),
@@ -646,14 +638,14 @@ impl <'a, T: TraceProjector<D>, D: TraceData> SpanMut<'a, T, D> {
         }
     }
 
-    pub fn span_links_mut(&mut self) -> SpanLinkIteratorMut<'a, T, D, std::slice::Iter<'a, T::SpanLink>> {
+    pub fn span_links_mut(&mut self) -> SpanLinkIteratorMut<'a, T, D, std::slice::Iter<'a, T::SpanLink<'a>>> {
         SpanLinkIterator {
             storage: self.storage,
             it: T::span_link_iterator(self.span)
         }
     }
 
-    pub fn span_events_mut(&mut self) -> SpanEventIteratorMut<'a, T, D, std::slice::Iter<'a, T::SpanEvent>> {
+    pub fn span_events_mut(&mut self) -> SpanEventIteratorMut<'a, T, D, std::slice::Iter<'a, T::SpanEvent<'a>>> {
         SpanEventIterator {
             storage: self.storage,
             it: T::span_event_iterator(self.span)
@@ -661,13 +653,13 @@ impl <'a, T: TraceProjector<D>, D: TraceData> SpanMut<'a, T, D> {
     }
 }
 
-pub struct SpanLinkIterator<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanLink>, const Mut: u8 = IMMUT> where T::SpanLink: 'a {
-    storage: &'a T::Storage,
+pub struct SpanLinkIterator<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanLink<'a>>, const Mut: u8 = IMMUT> {
+    storage: &'a T::Storage<'a>,
     it: I,
 }
-pub type SpanLinkIteratorMut<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanLink>> = SpanLinkIterator<'a, T, D, I, MUT>;
+pub type SpanLinkIteratorMut<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanLink<'a>>> = SpanLinkIterator<'a, T, D, I, MUT>;
 
-impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanLink>, const Mut: u8> Iterator for SpanLinkIterator<'a, T, D, I, Mut> where T::SpanLink: 'a {
+impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanLink<'a>>, const Mut: u8> Iterator for SpanLinkIterator<'a, T, D, I, Mut> {
     type Item = SpanLink<'a, T, D>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -680,13 +672,13 @@ impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanLink>
     }
 }
 
-pub struct SpanEventIterator<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanEvent>, const Mut: u8 = IMMUT> where T::SpanEvent: 'a {
-    storage: &'a T::Storage,
+pub struct SpanEventIterator<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanEvent<'a>>, const Mut: u8 = IMMUT> {
+    storage: &'a T::Storage<'a>,
     it: I,
 }
-pub type SpanEventIteratorMut<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanEvent>> = SpanEventIterator<'a, T, D, I, MUT>;
+pub type SpanEventIteratorMut<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanEvent<'a>>> = SpanEventIterator<'a, T, D, I, MUT>;
 
-impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanEvent>, const Mut: u8> Iterator for SpanEventIterator<'a, T, D, I, Mut> where T::SpanEvent: 'a {
+impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanEvent<'a>>, const Mut: u8> Iterator for SpanEventIterator<'a, T, D, I, Mut> {
     type Item = SpanEvent<'a, T, D>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -703,8 +695,8 @@ impl<'a, T: TraceProjector<D>, D: TraceData, I: Iterator<Item = &'a T::SpanEvent
 /// `T` is the type used to represent strings in the span link.
 #[derive(Debug)]
 pub struct SpanLink<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8 = IMMUT> {
-    storage: &'a T::Storage,
-    link: &'a T::SpanLink,
+    storage: &'a T::Storage<'a>,
+    link: &'a T::SpanLink<'a>,
 }
 pub type SpanLinkMut<'a, T, D> = SpanLink<'a, T, D, MUT>;
 
@@ -736,7 +728,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> SpanLink<'a, T, D, M
         T::get_link_flags(self.link, self.storage)
     }
 
-    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanLink>, T::SpanLink> {
+    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanLink<'a>>, T::SpanLink<'a>> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.link),
@@ -762,7 +754,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData> SpanLinkMut<'a, T, D> {
         unsafe { T::set_link_flags(as_mut(self.link), as_mut(self.storage), value) }
     }
 
-    pub fn attributes_mut(&mut self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanLink>, T::SpanLink, MUT> {
+    pub fn attributes_mut(&mut self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanLink<'a>>, T::SpanLink<'a>, MUT> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.link),
@@ -775,8 +767,8 @@ impl<'a, T: TraceProjector<D>, D: TraceData> SpanLinkMut<'a, T, D> {
 /// `T` is the type used to represent strings in the span event.
 #[derive(Debug)]
 pub struct SpanEvent<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8 = IMMUT> {
-    storage: &'a T::Storage,
-    event: &'a T::SpanEvent,
+    storage: &'a T::Storage<'a>,
+    event: &'a T::SpanEvent<'a>,
 }
 pub type SpanEventMut<'a, T, D> = SpanEvent<'a, T, D, MUT>;
 
@@ -799,7 +791,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> SpanEvent<'a, T, D, 
         T::get_event_name(self.event, self.storage)
     }
 
-    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanEvent>, T::SpanEvent> {
+    pub fn attributes(&self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanEvent<'a>>, T::SpanEvent<'a>> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.event),
@@ -817,7 +809,7 @@ impl<'a, T: TraceProjector<D>, D: TraceData> SpanEventMut<'a, T, D> {
         unsafe { T::set_event_name(as_mut(self.event), as_mut(self.storage), value.into()) }
     }
 
-    pub fn attributes_mut(&mut self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanEvent>, T::SpanEvent, MUT> {
+    pub fn attributes_mut(&mut self) -> TraceAttributes<'a, T, D, AttrRef<'a, T::SpanEvent<'a>>, T::SpanEvent<'a>, MUT> {
         TraceAttributes {
             storage: self.storage,
             container: AttrRef(self.event),
@@ -837,7 +829,7 @@ pub enum AttributeAnyValueType {
 }
 
 pub struct AttributeArray<'a, T: TraceProjector<D>, D: TraceData, C: 'a, const Mut: u8 = IMMUT> {
-    storage: &'a T::Storage,
+    storage: &'a T::Storage<'a>,
     container: C,
 }
 pub type AttributeArrayMut<'a, T: TraceProjector<D>, D: TraceData, C: 'a> = AttributeArray<'a, T, D, C, MUT>;
@@ -853,31 +845,31 @@ impl<T: TraceProjector<D>, D: TraceData, C: Clone> Clone for AttributeArray<'_, 
 impl<T: TraceProjector<D>, D: TraceData, C: Copy> Copy for AttributeArray<'_, T, D, C> {}
 
 pub trait AttributeArrayOp<T: TraceProjector<D>, D: TraceData>: Sized {
-    fn get_attribute_array_len(&self, storage: &T::Storage) -> usize;
-    fn get_attribute_array_value<'a>(&'a self, storage: &'a T::Storage, index: usize) -> AttributeAnyGetterContainer<'a, TraceAttributes<'a, T, D, AttrOwned<Self>, Self>, T, D, Self>;
+    fn get_attribute_array_len(&self, storage: &T::Storage<'_>) -> usize;
+    fn get_attribute_array_value<'a>(&'a self, storage: &'a T::Storage<'a>, index: usize) -> AttributeAnyGetterContainer<'a, TraceAttributes<'a, T, D, AttrOwned<Self>, Self>, T, D, Self>;
 }
 
 impl<T: TraceProjector<D>, D: TraceData> AttributeArrayOp<T, D> for () {
-    fn get_attribute_array_len(&self, storage: &T::Storage) -> usize {
+    fn get_attribute_array_len(&self, storage: &T::Storage<'_>) -> usize {
         0
     }
 
-    fn get_attribute_array_value<'a>(&'a self, _storage: &'a T::Storage, _index: usize) -> AttributeAnyGetterContainer<'a, TraceAttributes<'a, T, D, AttrOwned<()>, ()>, T, D, ()> {
+    fn get_attribute_array_value<'a>(&'a self, _storage: &'a T::Storage<'a>, _index: usize) -> AttributeAnyGetterContainer<'a, TraceAttributes<'a, T, D, AttrOwned<()>, ()>, T, D, ()> {
         panic!("AttributeArrayOp::get_attribute_array_value called on empty array")
     }
 }
 
 pub trait AttributeArrayMutOp<T: TraceProjector<D>, D: TraceData>: AttributeArrayOp<T, D> {
-    fn get_attribute_array_value_mut(&mut self, storage: &mut T::Storage, index: usize) -> Option<AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<Self>, Self>, T, D, Self>>;
-    fn append_attribute_array_value(&mut self, storage: &mut T::Storage, value: AttributeAnyValueType) -> AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<Self>, Self>, T, D, Self>;
+    fn get_attribute_array_value_mut(&mut self, storage: &mut T::Storage<'_>, index: usize) -> Option<AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<Self>, Self>, T, D, Self>>;
+    fn append_attribute_array_value(&mut self, storage: &mut T::Storage<'_>, value: AttributeAnyValueType) -> AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<Self>, Self>, T, D, Self>;
 }
 
 impl<T: TraceProjector<D>, D: TraceData> AttributeArrayMutOp<T, D> for () {
-    fn get_attribute_array_value_mut(&mut self, storage: &mut T::Storage, index: usize) -> Option<AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<()>, ()>, T, D, Self>> {
+    fn get_attribute_array_value_mut(&mut self, storage: &mut T::Storage<'_>, index: usize) -> Option<AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<()>, ()>, T, D, Self>> {
         None
     }
 
-    fn append_attribute_array_value(&mut self, storage: &mut T::Storage, value: AttributeAnyValueType) -> AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<()>, ()>, T, D, ()> {
+    fn append_attribute_array_value(&mut self, storage: &mut T::Storage<'_>, value: AttributeAnyValueType) -> AttributeAnySetterContainer<TraceAttributesMut<T, D, AttrOwned<()>, ()>, T, D, ()> {
         match value {
             AttributeAnyValueType::String => AttributeAnyContainer::String(()),
             AttributeAnyValueType::Bytes => AttributeAnyContainer::Bytes(()),
@@ -1006,7 +998,7 @@ impl<C: Clone> Clone for AttrOwned<C> {
 impl<C: Copy> Copy for AttrOwned<C> {}
 
 pub struct TraceAttributes<'a, T: TraceProjector<D>, D: TraceData, V: AttrVal<C>, C, const Mut: u8 = IMMUT> {
-    storage: &'a T::Storage,
+    storage: &'a T::Storage<'a>,
     container: V,
     _phantom: PhantomData<C>,
 }
@@ -1028,14 +1020,14 @@ pub trait TraceAttributesOp<T: TraceProjector<D>, D: TraceData, C>
     type Array;
     type Map;
 
-    fn get<'a>(container: &'a C, storage: &'a T::Storage, key: D::Text) -> Option<AttributeAnyGetterContainer<'a, Self, T, D, C>>;
+    fn get<'a>(container: &'a C, storage: &'a T::Storage<'a>, key: D::Text) -> Option<AttributeAnyGetterContainer<'a, Self, T, D, C>>;
 }
 
-impl<'a, T: TraceProjector<D>, D: TraceData, const Mut: u8> TraceAttributesOp<T, D, ()> for TraceAttributes<'a, T, D, AttrOwned<()>, (), Mut> {
+impl<'b, T: TraceProjector<D>, D: TraceData, const Mut: u8> TraceAttributesOp<T, D, ()> for TraceAttributes<'b, T, D, AttrOwned<()>, (), Mut> {
     type Array = ();
     type Map = ();
 
-    fn get<'a>(_container: &'a (), _storage: &'a T::Storage, _key: D::Text) -> Option<AttributeAnyGetterContainer<'a, Self, T, D, ()>> {
+    fn get<'a>(_container: &'a (), _storage: &'a T::Storage<'a>, _key: D::Text) -> Option<AttributeAnyGetterContainer<'a, Self, T, D, ()>> {
         None
     }
 }
@@ -1056,9 +1048,9 @@ where
     type MutArray;
     type MutMap;
 
-    fn get_mut<'a>(container: &'a mut C, storage: &'a mut T::Storage, key: D::Text) -> Option<AttributeAnySetterContainer<'a, Self, T, D, C>>;
-    fn set<'a>(container: &'a mut C, storage: &'a mut T::Storage, key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, Self, T, D, C>;
-    fn remove(container: &mut C, storage: &mut T::Storage, key: D::Text);
+    fn get_mut<'a>(container: &'a mut C, storage: &'a mut T::Storage<'a>, key: D::Text) -> Option<AttributeAnySetterContainer<'a, Self, T, D, C>>;
+    fn set<'a>(container: &'a mut C, storage: &'a mut T::Storage<'a>, key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, Self, T, D, C>;
+    fn remove(container: &mut C, storage: &mut T::Storage<'_>, key: D::Text);
 }
 
 impl<'a, T: TraceProjector<D>, D: TraceData> TraceAttributesMutOp<T, D, ()> for TraceAttributesMut<'a, T, D, AttrOwned<()>, ()> {
@@ -1070,11 +1062,11 @@ impl<'a, T: TraceProjector<D>, D: TraceData> TraceAttributesMutOp<T, D, ()> for 
     type MutArray = ();
     type MutMap = ();
 
-    fn get_mut<'a>(_container: &'a mut (), _storage: &'a mut T::Storage, _key: D::Text) -> Option<AttributeAnySetterContainer<'a, Self, T, D, ()>> {
+    fn get_mut<'a>(_container: &'a mut (), _storage: &'a mut T::Storage<'a>, _key: D::Text) -> Option<AttributeAnySetterContainer<'a, Self, T, D, ()>> {
         None
     }
 
-    fn set<'a>(_container: &'a mut (), _storage: &'a mut T::Storage, _key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, Self, T, D, ()> {
+    fn set<'a>(_container: &'a mut (), _storage: &'a mut T::Storage<'a>, _key: D::Text, value: AttributeAnyValueType) -> AttributeAnySetterContainer<'a, Self, T, D, ()> {
         match value {
             AttributeAnyValueType::String => AttributeAnyContainer::String(()),
             AttributeAnyValueType::Bytes => AttributeAnyContainer::Bytes(()),
@@ -1086,35 +1078,35 @@ impl<'a, T: TraceProjector<D>, D: TraceData> TraceAttributesMutOp<T, D, ()> for 
         }
     }
 
-    fn remove(_container: &mut (), _storage: &mut T::Storage, _key: D::Text) {
+    fn remove(_container: &mut (), _storage: &mut T::Storage<'_>, _key: D::Text) {
     }
 }
 
 pub trait TraceAttributesString<T: TraceProjector<D>, D: TraceData> {
-    fn get<'a>(&self, storage: &'a T::Storage) -> &'a D::Text;
-    fn set(self, storage: &mut T::Storage, value: D::Text);
+    fn get<'a>(&self, storage: &'a T::Storage<'a>) -> &'a D::Text;
+    fn set(self, storage: &mut T::Storage<'_>, value: D::Text);
 }
 
 impl<T: TraceProjector<D>, D: TraceData> TraceAttributesString<T, D> for () {
-    fn get<'a>(&self, _storage: &'a T::Storage) -> &'a D::Text {
+    fn get<'a>(&self, _storage: &'a T::Storage<'a>) -> &'a D::Text {
         D::Text::default_ref()
     }
 
-    fn set(self, _storage: &mut T::Storage, _value: D::Text) {
+    fn set(self, _storage: &mut T::Storage<'_>, _value: D::Text) {
     }
 }
 
 pub trait TraceAttributesBytes<T: TraceProjector<D>, D: TraceData> {
-    fn get<'a>(&self, storage: &'a T::Storage) -> &'a D::Bytes;
-    fn set(self, storage: &mut T::Storage, value: D::Bytes);
+    fn get<'a>(&self, storage: &'a T::Storage<'a>) -> &'a D::Bytes;
+    fn set(self, storage: &mut T::Storage<'_>, value: D::Bytes);
 }
 
 impl<T: TraceProjector<D>, D: TraceData> TraceAttributesBytes<T, D> for () {
-    fn get<'a>(&self, _storage: &'a T::Storage) -> &'a D::Bytes {
+    fn get<'a>(&self, _storage: &'a T::Storage<'a>) -> &'a D::Bytes {
         D::Bytes::default_ref()
     }
 
-    fn set(self, _storage: &mut T::Storage, _value: D::Bytes) {
+    fn set(self, _storage: &mut T::Storage<'_>, _value: D::Bytes) {
     }
 }
 
@@ -1164,14 +1156,12 @@ impl TraceAttributesDouble for () {
 impl<'a, T: TraceProjector<D>, D: TraceData, V: AttrVal<C>, C: 'a> TraceAttributes<'a, T, D, V, C>
 where
     Self: TraceAttributesOp<T, D, C>,
-    D::Text: 'a,
-    D::Bytes: 'a,
 {
-    fn fetch(&'a self, key: D::Text) -> Option<AttributeAnyGetterContainer<'a, Self, T, D, C>> {
+    fn fetch(&self, key: D::Text) -> Option<AttributeAnyGetterContainer<Self, T, D, C>> {
         <Self as TraceAttributesOp<T, D, C>>::get(self.container.as_ref(), self.storage, key)
     }
     
-    pub fn get<K: Into<D::Text>>(&'a self, key: K) -> Option<AttributeAnyValue<'a, Self, T, D, C>> {
+    pub fn get<K: Into<D::Text>>(&self, key: K) -> Option<AttributeAnyValue<Self, T, D, C>> {
         self.fetch(key.into()).map(|v| match v {
             AttributeAnyContainer::String(text) => AttributeAnyValue::<Self, T, D, C>::String(text),
             AttributeAnyContainer::Bytes(bytes) => AttributeAnyValue::<Self, T, D, C>::Bytes(bytes),
@@ -1190,7 +1180,7 @@ where
         })
     }
     
-    pub fn get_string<K: Into<D::Text>>(&'a self, key: K) -> Option<&'a D::Text> {
+    pub fn get_string<K: Into<D::Text>>(&self, key: K) -> Option<&D::Text> {
         if let Some(AttributeAnyContainer::String(container)) = self.fetch(key.into()) {
             Some(container)
         } else {
@@ -1198,7 +1188,7 @@ where
         }
     }
 
-    pub fn get_bytes<K: Into<D::Text>>(&'a self, key: K) -> Option<&'a D::Bytes> {
+    pub fn get_bytes<K: Into<D::Text>>(&self, key: K) -> Option<&'a D::Bytes> {
         if let Some(AttributeAnyContainer::Bytes(container)) = self.fetch(key.into()) {
             Some(container)
         } else {
@@ -1206,7 +1196,7 @@ where
         }
     }
 
-    pub fn get_bool<K: Into<D::Text>>(&'a self, key: K) -> Option<bool> {
+    pub fn get_bool<K: Into<D::Text>>(&self, key: K) -> Option<bool> {
         if let Some(AttributeAnyContainer::Boolean(container)) = self.fetch(key.into()) {
             Some(container)
         } else {
@@ -1214,7 +1204,7 @@ where
         }
     }
 
-    pub fn get_int<K: Into<D::Text>>(&'a self, key: K) -> Option<i64> {
+    pub fn get_int<K: Into<D::Text>>(&self, key: K) -> Option<i64> {
         if let Some(AttributeAnyContainer::Integer(container)) = self.fetch(key.into()) {
             Some(container)
         } else {
@@ -1222,7 +1212,7 @@ where
         }
     }
 
-    pub fn get_double<K: Into<D::Text>>(&'a self, key: K) -> Option<f64> {
+    pub fn get_double<K: Into<D::Text>>(&self, key: K) -> Option<f64> {
         if let Some(AttributeAnyContainer::Double(container)) = self.fetch(key.into()) {
             Some(container)
         } else {
@@ -1230,7 +1220,7 @@ where
         }
     }
 
-    pub fn get_array<K: Into<D::Text>>(&'a self, key: K) -> Option<AttributeArray<T, D, <Self as TraceAttributesOp<T, D, C>>::Array>> {
+    pub fn get_array<K: Into<D::Text>>(&self, key: K) -> Option<AttributeArray<T, D, <Self as TraceAttributesOp<T, D, C>>::Array>> {
         if let Some(AttributeAnyContainer::Array(container)) = self.fetch(key.into()) {
             Some(AttributeArray {
                 storage: self.storage,
@@ -1242,7 +1232,7 @@ where
     }
 
 
-    pub fn get_map<K: Into<D::Text>>(&'a self, key: K) -> Option<TraceAttributes<T, D, AttrOwned<<Self as TraceAttributesOp<T, D, C>>::Map>, <Self as TraceAttributesOp<T, D, C>>::Map>> {
+    pub fn get_map<K: Into<D::Text>>(&self, key: K) -> Option<TraceAttributes<T, D, AttrOwned<<Self as TraceAttributesOp<T, D, C>>::Map>, <Self as TraceAttributesOp<T, D, C>>::Map>> {
         if let Some(AttributeAnyContainer::Map(container)) = self.fetch(key.into()) {
             Some(TraceAttributes {
                 storage: self.storage,

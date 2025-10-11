@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
-use datadog_trace_protobuf::pb::idx::SpanKind;
+use libdd_trace_protobuf::pb::idx::SpanKind;
 use crate::span::{BytesData, SliceData, TraceData, table::*};
 
 
