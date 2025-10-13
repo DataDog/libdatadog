@@ -69,7 +69,8 @@ if(Datadog_FOUND)
                 shlwapi
                 Secur32
                 Ncrypt
-                PowrProf)
+                PowrProf
+                Version)
   endif()
 
   add_library(Datadog::Profiling ALIAS ${DD_LIB_NAME})
