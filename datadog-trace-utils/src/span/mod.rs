@@ -106,7 +106,7 @@ where
     pub resource: T,
     #[serde(skip_serializing_if = "is_empty_str")]
     pub r#type: T,
-    pub trace_id: u64,
+    pub trace_id: u128,
     pub span_id: u64,
     #[serde(skip_serializing_if = "is_default")]
     pub parent_id: u64,

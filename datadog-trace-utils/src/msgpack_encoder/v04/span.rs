@@ -207,7 +207,7 @@ pub fn encode_span<W: RmpWrite, T: SpanText>(
     write_str(writer, span.resource.borrow())?;
 
     write_str(writer, "trace_id")?;
-    write_u64(writer, span.trace_id)?;
+    write_u64(writer, span.trace_id as u64)?;
 
     write_str(writer, "span_id")?;
     write_u64(writer, span.span_id)?;

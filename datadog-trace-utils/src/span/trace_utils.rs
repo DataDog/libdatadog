@@ -169,7 +169,7 @@ mod tests {
         is_top_level: bool,
     ) -> SpanBytes {
         let mut span = SpanBytes {
-            trace_id,
+            trace_id: trace_id as u128,
             span_id,
             service: "test-service".into(),
             name: "test_name".into(),

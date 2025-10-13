@@ -38,7 +38,7 @@ pub fn from_span<T: SpanText>(
         service: dict.get_or_insert(span.service)?,
         name: dict.get_or_insert(span.name)?,
         resource: dict.get_or_insert(span.resource)?,
-        trace_id: span.trace_id,
+        trace_id: span.trace_id as u64,
         span_id: span.span_id,
         parent_id: span.parent_id,
         start: span.start,

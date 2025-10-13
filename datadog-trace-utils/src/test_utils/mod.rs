@@ -34,7 +34,7 @@ pub fn create_test_no_alloc_span(
     is_top_level: bool,
 ) -> SpanBytes {
     let mut span = SpanBytes {
-        trace_id,
+        trace_id: trace_id as u128,
         span_id,
         service: BytesString::from_slice("test-service".as_ref()).unwrap(),
         name: BytesString::from_slice("test_name".as_ref()).unwrap(),
