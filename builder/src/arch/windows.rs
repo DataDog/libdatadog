@@ -23,7 +23,6 @@ pub const RUSTFLAGS: [&str; 4] = [
 
 pub fn fix_rpath(_lib_path: &str) {}
 pub fn strip_libraries(_lib_path: &str) {}
-pub fn fix_soname(_lib_path: &str) {}
 
 pub fn add_additional_files(lib_path: &str, target_path: &OsStr) {
     let from_pdb: PathBuf = [lib_path, PROF_PDB_FFI].iter().collect();

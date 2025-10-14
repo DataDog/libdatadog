@@ -100,6 +100,9 @@ const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 ///
 /// A tuple containing the dropped p0 stats, the first value correspond the amount of traces
 /// dropped and the latter to the spans dropped.
+///
+/// # Trace-level attributes
+/// Some attributes related to the whole trace are stored in the root span of the chunk.  
 pub fn drop_chunks<T>(traces: &mut Vec<Vec<Span<T>>>) -> DroppedP0Stats
 where
     T: SpanText,

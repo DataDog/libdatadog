@@ -37,8 +37,14 @@ pub fn build_host() -> data::Host {
         container_id,
         os: Some(String::from(info::os::os_name())),
         os_version,
-        kernel_name: None,
-        kernel_release: None,
+        kernel_name: info::os::os_type(),
+        kernel_release: info::os::os_release(),
+        #[cfg(unix)]
+        kernel_version: unsafe { info::os::uname() },
+        #[cfg(windows)]
+        kernel_version: winver::WindowsVersion::detect()
+            .map(|wv| format!("{}.{}.{}", wv.major, wv.minor, wv.build)),
+        #[cfg(not(any(windows, unix)))]
         kernel_version: None,
     }
 }

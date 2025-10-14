@@ -14,8 +14,6 @@ pub mod agent_info;
 mod health_metrics;
 mod pausable_worker;
 #[allow(missing_docs)]
-pub mod span_concentrator;
-#[allow(missing_docs)]
 pub mod stats_exporter;
 pub mod telemetry;
 #[allow(missing_docs)]

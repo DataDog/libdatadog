@@ -8,9 +8,9 @@
 //! and processing traces for stats collection.
 
 use crate::agent_info::schema::AgentInfo;
-use crate::span_concentrator::SpanConcentrator;
 use crate::stats_exporter;
 use arc_swap::ArcSwap;
+use datadog_trace_stats::span_concentrator::SpanConcentrator;
 use ddcommon::{Endpoint, MutexExt};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

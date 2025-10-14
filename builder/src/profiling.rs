@@ -109,8 +109,6 @@ impl Profiling {
 
         arch::add_additional_files(&self.source_lib, lib_dir.as_os_str());
 
-        arch::fix_soname(&self.target_lib);
-
         // Generate debug information
         arch::strip_libraries(&self.target_lib);
         Ok(())
