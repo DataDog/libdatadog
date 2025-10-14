@@ -249,6 +249,109 @@ pub struct ErrorsIntakePayload {
     pub trace_id: Option<String>,
 }
 
+#[derive(Debug, Default)]
+struct ExtractedMetadata {
+    service_name: String,
+    env: Option<String>,
+    service_version: Option<String>,
+    language_name: Option<String>,
+    language_version: Option<String>,
+    tracer_version: Option<String>,
+}
+
+impl ExtractedMetadata {
+    fn from_metadata(metadata: &Metadata) -> Self {
+        let mut result = Self {
+            service_name: "unknown".to_string(),
+            ..Default::default()
+        };
+
+        for tag in &metadata.tags {
+            if let Some((key, value)) = tag.split_once(':') {
+                match key {
+                    "service" => result.service_name = value.to_string(),
+                    "env" => result.env = Some(value.to_string()),
+                    "version" | "service_version" => {
+                        result.service_version = Some(value.to_string())
+                    }
+                    "language" => result.language_name = Some(value.to_string()),
+                    "language_version" | "runtime_version" => {
+                        result.language_version = Some(value.to_string())
+                    }
+                    "library_version" | "profiler_version" => {
+                        result.tracer_version = Some(value.to_string())
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        result
+    }
+
+    fn append_base_tags(&self, tags: &mut String) {
+        tags.push_str(&format!("service:{}", self.service_name));
+        if let Some(env) = &self.env {
+            tags.push_str(&format!(",env:{env}"));
+        }
+        if let Some(version) = &self.service_version {
+            tags.push_str(&format!(",version:{version}"));
+        }
+    }
+
+    fn append_runtime_tags(&self, tags: &mut String) {
+        if let Some(language_name) = &self.language_name {
+            tags.push_str(&format!(",language_name:{language_name}"));
+        }
+        if let Some(language_version) = &self.language_version {
+            tags.push_str(&format!(",language_version:{language_version}"));
+        }
+        if let Some(tracer_version) = &self.tracer_version {
+            tags.push_str(&format!(",tracer_version:{tracer_version}"));
+        }
+    }
+}
+
+fn append_signal_tags(tags: &mut String, sig_info: &SigInfo) {
+    tags.push_str(&format!(
+        ",si_code_human_readable:{:?}",
+        sig_info.si_code_human_readable
+    ));
+    tags.push_str(&format!(",si_signo:{}", sig_info.si_signo));
+    tags.push_str(&format!(
+        ",si_signo_human_readable:{:?}",
+        sig_info.si_signo_human_readable
+    ));
+}
+
+fn build_crash_info_tags(crash_info: &CrashInfo) -> String {
+    let mut tags = format!("data_schema_version:{}", crash_info.data_schema_version);
+
+    if let Some(fingerprint) = &crash_info.fingerprint {
+        tags.push_str(&format!(",fingerprint:{fingerprint}"));
+    }
+
+    tags.push_str(&format!(",incomplete:{}", crash_info.incomplete));
+    tags.push_str(&format!(",is_crash:{}", crash_info.error.is_crash));
+    tags.push_str(&format!(",uuid:{}", crash_info.uuid));
+
+    // Add all counters
+    for (counter, value) in &crash_info.counters {
+        tags.push_str(&format!(",{counter}:{value}"));
+    }
+
+    // Add signal information
+    if let Some(siginfo) = &crash_info.sig_info {
+        if let Some(si_addr) = &siginfo.si_addr {
+            tags.push_str(&format!(",si_addr:{si_addr}"));
+        }
+        tags.push_str(&format!(",si_code:{}", siginfo.si_code));
+        append_signal_tags(&mut tags, siginfo);
+    }
+
+    tags
+}
+
 impl ErrorsIntakePayload {
     pub fn from_crash_info(crash_info: &CrashInfo) -> anyhow::Result<Self> {
         let timestamp = crash_info.timestamp.parse::<DateTime<Utc>>().map_or_else(
@@ -261,32 +364,15 @@ impl ErrorsIntakePayload {
             |ts| ts.timestamp_millis() as u64,
         );
 
-        // Extract service information from metadata tags
-        let mut service_name = "unknown".to_string();
-        let mut env = None;
-        let mut service_version = None;
+        // Extract metadata and build tags
+        let metadata = ExtractedMetadata::from_metadata(&crash_info.metadata);
+        let mut ddtags = String::new();
+        metadata.append_base_tags(&mut ddtags);
+        metadata.append_runtime_tags(&mut ddtags);
 
-        for tag in &crash_info.metadata.tags {
-            if let Some((key, value)) = tag.split_once(':') {
-                match key {
-                    "service" => service_name = value.to_string(),
-                    "env" => env = Some(value.to_string()),
-                    "version" => service_version = Some(value.to_string()),
-                    _ => {}
-                }
-            }
-        }
-
-        // Build ddtags
-        let mut ddtags = format!("service:{}", service_name);
-        if let Some(env) = env {
-            ddtags.push_str(&format!(",env:{env}"));
-        }
-        if let Some(version) = service_version {
-            ddtags.push_str(&format!(",version:{version}"));
-        }
-        ddtags.push_str(&format!(",uuid:{}", crash_info.uuid));
-        ddtags.push_str(",is_crash:true");
+        // Add crash-specific tags (same as telemetry extract_crash_info_tags)
+        let crash_tags = build_crash_info_tags(crash_info);
+        ddtags.push_str(&format!(",{crash_tags}"));
 
         // Extract error info from signal
         let (error_type, error_message) = if let Some(sig_info) = &crash_info.sig_info {
@@ -337,32 +423,22 @@ impl ErrorsIntakePayload {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
-        // Extract service info from metadata tags
-        let mut service_name = "unknown".to_string();
-        let mut env = None;
-        let mut service_version = None;
-
-        for tag in &metadata.tags {
-            if let Some((key, value)) = tag.split_once(':') {
-                match key {
-                    "service" => service_name = value.to_string(),
-                    "env" => env = Some(value.to_string()),
-                    "version" => service_version = Some(value.to_string()),
-                    _ => {}
-                }
-            }
-        }
-
-        // Build ddtags
-        let mut ddtags = format!("service:{}", service_name);
-        if let Some(env) = env {
+        // Extract metadata and build tags (same order as telemetry crash ping)
+        let extracted_metadata = ExtractedMetadata::from_metadata(metadata);
+        let mut ddtags = format!(
+            "uuid:{},is_crash_ping:true,service:{}",
+            crash_uuid, extracted_metadata.service_name
+        );
+        extracted_metadata.append_runtime_tags(&mut ddtags);
+        if let Some(env) = &extracted_metadata.env {
             ddtags.push_str(&format!(",env:{env}"));
         }
-        if let Some(version) = service_version {
+        if let Some(version) = &extracted_metadata.service_version {
             ddtags.push_str(&format!(",version:{version}"));
         }
-        ddtags.push_str(&format!(",uuid:{crash_uuid}"));
-        ddtags.push_str(",is_crash_ping:true");
+
+        // Add signal information tags (same as telemetry crash ping)
+        append_signal_tags(&mut ddtags, sig_info);
 
         Ok(Self {
             timestamp,
@@ -490,11 +566,32 @@ mod tests {
         let payload = ErrorsIntakePayload::from_crash_info(&crash_info).unwrap();
 
         assert_eq!(payload.ddsource, "crashtracker");
-        assert!(payload.ddtags.contains("service:foo"));
-        assert!(payload.ddtags.contains("uuid:"));
-        assert!(payload.ddtags.contains("is_crash:true"));
         assert_eq!(payload.error.source_type, Some("Crashtracking".to_string()));
         assert_eq!(payload.error.is_crash, Some(true));
+
+        let ddtags = &payload.ddtags;
+
+        // Base metadata tags
+        assert!(ddtags.contains("service:foo"));
+        assert!(ddtags.contains("version:bar"));
+        assert!(ddtags.contains("language_name:native"));
+
+        // Crash-specific tags (same as telemetry)
+        assert!(ddtags.contains("data_schema_version:1.4"));
+        assert!(ddtags.contains("incomplete:true"));
+        assert!(ddtags.contains("is_crash:true"));
+        assert!(ddtags.contains("uuid:1d6b97cb-968c-40c9-af6e-e4b4d71e8781"));
+
+        // Counter tags
+        assert!(ddtags.contains("collecting_sample:1"));
+        assert!(ddtags.contains("not_profiling:0"));
+
+        // Signal information tags
+        assert!(ddtags.contains("si_addr:0x0000000000001234"));
+        assert!(ddtags.contains("si_code:1"));
+        assert!(ddtags.contains("si_code_human_readable:SEGV_BNDERR"));
+        assert!(ddtags.contains("si_signo:11"));
+        assert!(ddtags.contains("si_signo_human_readable:SIGSEGV"));
     }
 
     #[test]
@@ -507,12 +604,97 @@ mod tests {
             ErrorsIntakePayload::from_crash_ping(crash_uuid, &sig_info, &metadata).unwrap();
 
         assert_eq!(payload.ddsource, "crashtracker");
-        assert!(payload.ddtags.contains("service:foo"));
-        assert!(payload.ddtags.contains("uuid:test-uuid-123"));
-        assert!(payload.ddtags.contains("is_crash_ping:true"));
         assert_eq!(payload.error.source_type, Some("Crashtracking".to_string()));
         assert_eq!(payload.error.is_crash, Some(false));
         assert!(payload.error.stack.is_none());
+
+        let ddtags = &payload.ddtags;
+
+        // Core crash ping tags (same order as telemetry)
+        assert!(ddtags.contains("uuid:test-uuid-123"));
+        assert!(ddtags.contains("is_crash_ping:true"));
+        assert!(ddtags.contains("service:foo"));
+
+        // Runtime metadata tags (same as telemetry crash ping)
+        assert!(ddtags.contains("language_name:native"));
+
+        // Base metadata tags
+        assert!(ddtags.contains("version:bar"));
+
+        // Signal information tags (same as telemetry crash ping)
+        assert!(ddtags.contains("si_code_human_readable:SEGV_BNDERR"));
+        assert!(ddtags.contains("si_signo:11"));
+        assert!(ddtags.contains("si_signo_human_readable:SIGSEGV"));
+    }
+
+    #[test]
+    fn test_errors_intake_has_all_telemetry_tags() {
+        let crash_info = CrashInfo::test_instance(1);
+        let payload = ErrorsIntakePayload::from_crash_info(&crash_info).unwrap();
+
+        // This test ensures we have all the tags that telemetry extract_crash_info_tags produces
+        let expected_crash_tags = vec![
+            "data_schema_version:1.4",
+            "incomplete:true",
+            "is_crash:true",
+            "uuid:1d6b97cb-968c-40c9-af6e-e4b4d71e8781",
+            "collecting_sample:1",
+            "not_profiling:0",
+            "si_addr:0x0000000000001234",
+            "si_code:1",
+            "si_code_human_readable:SEGV_BNDERR",
+            "si_signo:11",
+            "si_signo_human_readable:SIGSEGV",
+        ];
+
+        let expected_metadata_tags = vec![
+            "service:foo",
+            "version:bar", // service_version from test metadata
+            "language_name:native",
+        ];
+
+        for tag in expected_crash_tags
+            .iter()
+            .chain(expected_metadata_tags.iter())
+        {
+            assert!(
+                payload.ddtags.contains(tag),
+                "Missing expected tag: {} in ddtags: {}",
+                tag,
+                payload.ddtags
+            );
+        }
+    }
+
+    #[test]
+    fn test_crash_ping_has_all_telemetry_tags() {
+        let metadata = Metadata::test_instance(1);
+        let sig_info = crate::SigInfo::test_instance(42);
+        let crash_uuid = "test-crash-ping-uuid";
+
+        let payload =
+            ErrorsIntakePayload::from_crash_ping(crash_uuid, &sig_info, &metadata).unwrap();
+
+        // This test ensures we have all the tags that telemetry crash ping produces
+        let expected_tags = vec![
+            "uuid:test-crash-ping-uuid",
+            "is_crash_ping:true",
+            "service:foo",
+            "language_name:native",
+            "version:bar",
+            "si_code_human_readable:SEGV_BNDERR",
+            "si_signo:11",
+            "si_signo_human_readable:SIGSEGV",
+        ];
+
+        for tag in expected_tags {
+            assert!(
+                payload.ddtags.contains(tag),
+                "Missing expected tag: {} in ddtags: {}",
+                tag,
+                payload.ddtags
+            );
+        }
     }
 
     #[test]
