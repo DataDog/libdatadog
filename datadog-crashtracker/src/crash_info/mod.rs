@@ -33,8 +33,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs::File, path::Path};
 
-/// Helper function to create standardized crash ping message format
-/// This is shared between telemetry and errors intake
 pub fn build_crash_ping_message(sig_info: &SigInfo) -> String {
     format!(
         "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",

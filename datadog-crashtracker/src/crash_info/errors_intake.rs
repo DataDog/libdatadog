@@ -24,9 +24,6 @@ const DEFAULT_AGENT_PORT: u16 = 8126;
 
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ErrorsIntakeConfig {
-    /// Endpoint to send the data to
-    /// This is private and should be interacted with through the set_endpoint function
-    /// to ensure the url path is properly set
     pub(crate) endpoint: Option<Endpoint>,
     pub direct_submission_enabled: bool,
     pub debug_enabled: bool,
@@ -211,13 +208,11 @@ impl ErrorsIntakeConfig {
         this
     }
 
-    /// Get the configuration of the errors intake from env variables
     pub fn from_env() -> Self {
         let settings = ErrorsIntakeSettings::from_env();
         Self::from_settings(&settings)
     }
 
-    /// set_host sets the host errors intake should connect to.
     pub fn set_host_from_url(&mut self, host_url: &str) -> anyhow::Result<()> {
         let endpoint = self.endpoint.take().unwrap_or_default();
 
