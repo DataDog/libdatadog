@@ -164,10 +164,6 @@ pub struct TelemetryCrashUploader {
 }
 
 impl TelemetryCrashUploader {
-    // build_crash_ping_message is now imported from the parent module
-
-    /// Helper function to convert telemetry metadata to crashtracker metadata
-    /// This is used for dual uploads to errors intake
     fn telemetry_metadata_to_crashtracker_metadata(&self) -> Metadata {
         let metadata = &self.metadata;
         let mut tags = vec![
@@ -369,7 +365,6 @@ impl TelemetryCrashUploader {
             origin: Some("Crashtracker"),
         };
 
-        // Send to both telemetry and errors intake in parallel
         let telemetry_future = self.send_telemetry_payload(&payload);
 
         let errors_intake_future = async {
