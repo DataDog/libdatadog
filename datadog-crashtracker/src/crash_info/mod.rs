@@ -79,6 +79,25 @@ impl CrashInfo {
     pub fn resolve_names(&mut self, pid: u32) -> anyhow::Result<()> {
         self.error.resolve_names(pid)
     }
+
+    pub fn enrich_callstacks(&mut self, pid: u32) -> anyhow::Result<()> {
+        let src = ErrorData::create_symbolizer_source(pid);
+        let normalizer = ErrorData::create_normalizer();
+        let mut symbolizer = blazesym::symbolize::Symbolizer::new();
+        let mut elf_resolvers = CachedElfResolvers::new(&mut symbolizer);
+
+        // We must call ips normalization first.
+        // This will allow us to feed the symbolizer with the ELF Resolvers
+        let rval1 = self
+            .error
+            .normalize_ips_impl(pid, &normalizer, &mut elf_resolvers);
+        let rval2 = self.error.resolve_names_impl(&symbolizer, &src);
+        anyhow::ensure!(
+            rval1.is_ok() && rval2.is_ok(),
+            "normalize_ips: {rval1:?}\tresolve_names: {rval2:?}"
+        );
+        Ok(())
+    }
 }
 
 impl CrashInfo {
