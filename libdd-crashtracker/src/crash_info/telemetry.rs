@@ -369,17 +369,22 @@ impl TelemetryCrashUploader {
             origin: Some("Crashtracker"),
         };
 
-        // Send to both telemetry and errors intake
-        let telemetry_result = self.send_telemetry_payload(&payload).await;
+        // Send to both telemetry and errors intake in parallel
+        let telemetry_future = self.send_telemetry_payload(&payload);
 
-        if let Some(errors_uploader) = &self.errors_intake_uploader {
-            let errors_intake_result = errors_uploader.upload_to_errors_intake(crash_info).await;
-            if let Err(e) = errors_intake_result {
-                eprintln!("Failed to send crash report to errors intake: {e}");
+        let errors_intake_future = async {
+            if let Some(errors_uploader) = &self.errors_intake_uploader {
+                let errors_intake_result =
+                    errors_uploader.upload_to_errors_intake(crash_info).await;
+                if let Err(e) = errors_intake_result {
+                    eprintln!("Failed to send crash report to errors intake: {e}");
+                }
+            } else {
+                eprintln!("No errors intake uploader available for crash report");
             }
-        } else {
-            eprintln!("No errors intake uploader available for crash report");
-        }
+        };
+
+        let (telemetry_result, _) = tokio::join!(telemetry_future, errors_intake_future);
         telemetry_result
     }
 

@@ -1303,13 +1303,62 @@ fn crash_tracking_empty_endpoint() {
         .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
         .unwrap();
 
-    for body in [body1, body2].iter() {
-        if body.contains("is_crash_ping:true") {
-            assert_crash_ping_message(body);
-        } else if body.contains("is_crash:true") {
-            assert_telemetry_message(body.as_bytes(), "null_deref");
+    // We expect up to 4 requests total (crash ping + crash report, each to telemetry + errors intake)
+    // Wait for 2 additional requests
+    let mut additional_bodies = Vec::new();
+    for _ in 3..=4 {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let body = read_http_request_body(&mut stream);
+            additional_bodies.push(body);
+            // Send 200 OK response
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+        } else {
+            break;
         }
     }
+
+    // Collect all requests (now expecting 4: 2 crash pings + 2 crash reports due to dual upload)
+    let mut all_bodies = vec![body1, body2];
+    all_bodies.extend(additional_bodies);
+
+    // Separate crash pings from crash reports
+    let mut crash_pings = Vec::new();
+    let mut crash_reports = Vec::new();
+
+    for (i, body) in all_bodies.iter().enumerate() {
+        if body.contains("is_crash_ping:true") {
+            crash_pings.push((i + 1, body));
+        } else if body.contains("is_crash:true") {
+            crash_reports.push((i + 1, body));
+        }
+    }
+
+    assert_eq!(
+        crash_pings.len(),
+        2,
+        "Expected 2 crash pings (telemetry + errors intake), got {}",
+        crash_pings.len()
+    );
+    assert_eq!(
+        crash_reports.len(),
+        2,
+        "Expected 2 crash reports (telemetry + errors intake), got {}",
+        crash_reports.len()
+    );
+
+    let telemetry_crash_ping = crash_pings
+        .iter()
+        .find(|(_, body)| body.contains("api_version") && body.contains("request_type"))
+        .expect("Should have telemetry crash ping");
+    validate_crash_ping_telemetry(telemetry_crash_ping.1);
+
+    let telemetry_crash_report = crash_reports
+        .iter()
+        .find(|(_, body)| body.contains("api_version") && body.contains("request_type"))
+        .expect("Should have telemetry crash report");
+    assert_telemetry_message(telemetry_crash_report.1.as_bytes(), "null_deref");
 }
 
 fn read_http_request_body(stream: &mut impl Read) -> String {
