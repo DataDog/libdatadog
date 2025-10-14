@@ -1299,8 +1299,8 @@ fn crash_tracking_empty_endpoint() {
 
     let _ = stream2.write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n");
 
-    // We expect up to 4 requests total (crash ping + crash report, each to telemetry + errors intake)
-    // Wait for 2 additional requests
+    // We expect up to 4 requests total (crash ping + crash report, each to telemetry + errors
+    // intake) Wait for 2 additional requests
     let mut additional_bodies = Vec::new();
     for _ in 3..=4 {
         if let Ok((mut stream, _)) = listener.accept() {
