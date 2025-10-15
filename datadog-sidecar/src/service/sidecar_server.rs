@@ -468,7 +468,7 @@ impl SidecarInterface for SidecarServer {
                     }
                     SidecarAction::ClearQueueId => {
                         remove_entry = true;
-                    },
+                    }
                     SidecarAction::Telemetry(TelemetryActions::AddEndpoint(_)) => {
                         telemetry.last_endpoints_push = SystemTime::now();
                         buffered_info_changed = true;
