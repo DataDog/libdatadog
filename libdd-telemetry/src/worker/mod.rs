@@ -566,8 +566,8 @@ impl TelemetryWorker {
             ))
         }
         if self.data.endpoints.flush_not_empty() {
-            payloads.push(data::Payload::AppEndpointsChange(
-                data::AppEndpointsChange {
+            payloads.push(data::Payload::AppEndpoints(
+                data::AppEndpoints {
                     is_first: true,
                     endpoints: self
                         .data
@@ -681,7 +681,7 @@ impl TelemetryWorker {
                 .data
                 .configurations
                 .removed_flushed(p.configuration.len()),
-            AppEndpointsChange(p) => self.data.endpoints.removed_flushed(p.endpoints.len()),
+            AppEndpoints(p) => self.data.endpoints.removed_flushed(p.endpoints.len()),
             MessageBatch(batch) => {
                 for p in batch {
                     self.payload_sent_success(p);
