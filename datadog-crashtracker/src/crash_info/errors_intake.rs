@@ -633,7 +633,7 @@ mod tests {
         let payload = ErrorsIntakePayload::from_crash_info(&crash_info).unwrap();
 
         // This test ensures we have all the tags that telemetry extract_crash_info_tags produces
-        let expected_crash_tags = vec![
+        let expected_crash_tags = [
             "data_schema_version:1.4",
             "incomplete:true",
             "is_crash:true",
@@ -647,7 +647,7 @@ mod tests {
             "si_signo_human_readable:SIGSEGV",
         ];
 
-        let expected_metadata_tags = vec![
+        let expected_metadata_tags = [
             "service:foo",
             "version:bar", // service_version from test metadata
             "language_name:native",
@@ -676,7 +676,7 @@ mod tests {
             ErrorsIntakePayload::from_crash_ping(crash_uuid, &sig_info, &metadata).unwrap();
 
         // This test ensures we have all the tags that telemetry crash ping produces
-        let expected_tags = vec![
+        let expected_tags = [
             "uuid:test-crash-ping-uuid",
             "is_crash_ping:true",
             "service:foo",
