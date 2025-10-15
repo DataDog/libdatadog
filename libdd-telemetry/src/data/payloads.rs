@@ -65,7 +65,7 @@ pub struct AppClientConfigurationChange {
 }
 
 #[derive(Debug, Serialize)]
-pub struct AppEndpointsChange {
+pub struct AppEndpoints {
     pub is_first: bool,
     pub endpoints: Vec<serde_json::Value>,
 }
