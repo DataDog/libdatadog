@@ -43,6 +43,7 @@ pub fn into_response(response: hyper::Response<Incoming>) -> HttpResponse {
 #[derive(Debug)]
 pub enum Error {
     Hyper(hyper::Error),
+    Legacy(hyper_util::client::legacy::Error),
     Other(anyhow::Error),
     Infallible(Infallible),
 }
@@ -51,9 +52,28 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::Hyper(e) => write!(f, "hyper error: {e}"),
+            Error::Legacy(e) => write!(f, "hyper legacy error: {e}"),
             Error::Infallible(e) => match *e {},
             Error::Other(e) => write!(f, "other error: {e}"),
         }
+    }
+}
+
+impl From<hyper_util::client::legacy::Error> for Error {
+    fn from(value: hyper_util::client::legacy::Error) -> Self {
+        Self::Legacy(value)
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(value: std::io::Error) -> Self {
+        Self::Other(value.into())
+    }
+}
+
+impl From<http::Error> for Error {
+    fn from(value: http::Error) -> Self {
+        Self::Other(value.into())
     }
 }
 
@@ -66,7 +86,7 @@ pub fn mock_response(
     Ok(builder.body(Body::from_bytes(body))?)
 }
 
-pub fn empty_response(builder: http::response::Builder) -> anyhow::Result<HttpResponse> {
+pub fn empty_response(builder: http::response::Builder) -> Result<HttpResponse, Error> {
     Ok(builder.body(Body::empty())?)
 }
 

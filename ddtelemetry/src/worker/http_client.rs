@@ -26,8 +26,9 @@ pub mod header {
     pub const DEBUG_ENABLED: HeaderName = HeaderName::from_static("dd-telemetry-debug-enabled");
 }
 
-pub type ResponseFuture =
-    Pin<Box<dyn Future<Output = Result<hyper_migration::HttpResponse, anyhow::Error>> + Send>>;
+pub type ResponseFuture = Pin<
+    Box<dyn Future<Output = Result<hyper_migration::HttpResponse, hyper_migration::Error>> + Send>,
+>;
 
 pub trait HttpClient {
     fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture;
@@ -108,24 +109,11 @@ pub struct HyperClient {
 
 impl HttpClient for HyperClient {
     fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture {
-        debug!("Sending HTTP request via HyperClient");
         let resp = self.inner.request(req);
         Box::pin(async move {
             match resp.await {
-                Ok(response) => {
-                    debug!(
-                        http.status = response.status().as_u16(),
-                        "HTTP request completed successfully"
-                    );
-                    Ok(hyper_migration::into_response(response))
-                }
-                Err(e) => {
-                    error!(
-                        error = %e,
-                        "HTTP request failed"
-                    );
-                    Err(e.into())
-                }
+                Ok(response) => Ok(hyper_migration::into_response(response)),
+                Err(e) => Err(e.into()),
             }
         })
     }
@@ -158,7 +146,7 @@ impl HttpClient for MockClient {
                             error = %e,
                             "Failed to write to mock file"
                         );
-                        return Err(e.into());
+                        return Err(hyper_migration::Error::from(e));
                     }
                 }
             }
