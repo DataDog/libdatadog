@@ -358,42 +358,6 @@ impl TryFrom<&RemoteConfigData> for ReturnAction {
     }
 }
 
-impl TryFrom<RemoteConfigData> for ReturnAction {
-    type Error = FlareError;
-
-    /// Check the `RemoteConfigData` and return the action the tracer flare
-    /// needs to perform.
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - RemoteConfigData
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(ReturnAction)` - If successful
-    /// * `FlareError(msg)` - If something fails
-    fn try_from(data: RemoteConfigData) -> Result<Self, Self::Error> {
-        match data {
-            RemoteConfigData::TracerFlareConfig(agent_config) => {
-                if agent_config.name.starts_with("flare-log-level.") {
-                    if let Some(log_level) = &agent_config.config.log_level {
-                        let log_level = log_level.as_str().try_into()?;
-                        return Ok(ReturnAction::Set(log_level));
-                    }
-                }
-            }
-            RemoteConfigData::TracerFlareTask(agent_task) => {
-                if agent_task.task_type.eq("tracer_flare") {
-                    return Ok(ReturnAction::Send(agent_task.to_owned()));
-                }
-            }
-            _ => return Ok(ReturnAction::None),
-        }
-
-        Ok(ReturnAction::None)
-    }
-}
-
 /// Function that listens to RemoteConfig on the agent using the TracerFlareManager instance
 ///
 /// This function uses the listener contained within the TracerFlareManager to fetch
