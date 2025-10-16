@@ -211,7 +211,11 @@ impl TracerFlareManager {
     ) -> Result<ReturnAction, FlareError> {
         match file.contents().as_ref() {
             Ok(data) => self.handle_remote_config_data(data),
-            Err(e) => Err(FlareError::ParsingError(e.to_string())),
+            Err(e) => {
+                // If encounter an error we need to stop collecting
+                self.collecting = false;
+                Err(FlareError::ParsingError(e.to_string()))
+            }
         }
     }
 }
