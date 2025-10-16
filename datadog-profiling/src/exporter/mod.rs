@@ -28,7 +28,7 @@ pub use connector::uds::{socket_path_from_uri, socket_path_to_uri};
 #[cfg(windows)]
 pub use connector::named_pipe::{named_pipe_path_from_uri, named_pipe_path_to_uri};
 
-use crate::internal::EncodedProfile;
+use crate::internal::{EncodedProfile, Profile};
 use crate::profiles::{Compressor, DefaultProfileCodec};
 
 const DURATION_ZERO: std::time::Duration = std::time::Duration::from_millis(0);
@@ -273,15 +273,16 @@ impl ProfileExporter {
         );
 
         for file in files_to_compress_and_export {
-            // We tend to have good compression ratios for the pprof files,
-            // especially with timeline enabled. Not all files compress this
-            // well, but these are just initial Vec sizes, not a hard-bound.
-            // Using 1/10 gives us a better start than starting at zero, while
-            // not reserving too much for things that compress really well, and
-            // power-of-two capacities are almost always the best performing.
-            let capacity = (file.bytes.len() / 10).next_power_of_two();
-            let max_capacity = 50 * 1024 * 1024;
-            let compression_level = 1;
+            // We don't know the file types and how well they compress. So for
+            // a size hint, we look at roughly 1/8th of the file size.
+            let capacity = (file.bytes.len() >> 3).next_power_of_two();
+            // Most proxies/web server have a size limit per attachment,
+            // 10 MiB should be plenty for everything we upload.
+            let max_capacity = 10 * 1024 * 1024;
+            // We haven't yet tested compression for attachments other than
+            // profiles, which are compressed already before this point. We're
+            // re-using the  same level here for now.
+            let compression_level = Profile::COMPRESSION_LEVEL;
             let mut encoder = Compressor::<DefaultProfileCodec>::try_new(
                 capacity,
                 max_capacity,

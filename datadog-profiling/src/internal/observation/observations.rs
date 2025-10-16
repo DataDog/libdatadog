@@ -15,7 +15,7 @@ struct NonEmptyObservations {
     aggregated_data: AggregatedObservations,
     // Samples with timestamps are all separately kept (so we can know the exact values at the
     // given timestamp)
-    timestamped_data: Option<TimestampedObservations>,
+    timestamped_data: TimestampedObservations,
     obs_len: ObservationLength,
     timestamped_samples_count: usize,
 }
@@ -36,7 +36,7 @@ impl Observations {
         Ok(Observations {
             inner: Some(NonEmptyObservations {
                 aggregated_data: AggregatedObservations::new(observations_len),
-                timestamped_data: Some(TimestampedObservations::try_new(observations_len)?),
+                timestamped_data: TimestampedObservations::try_new(observations_len)?,
                 obs_len: ObservationLength::new(observations_len),
                 timestamped_samples_count: 0,
             }),
@@ -66,11 +66,7 @@ impl Observations {
 
         #[allow(clippy::expect_used)]
         if let Some(ts) = timestamp {
-            observations
-                .timestamped_data
-                .as_mut()
-                .expect("timestamped_data should be present")
-                .add(sample, ts, values)?;
+            observations.timestamped_data.add(sample, ts, values)?;
             observations.timestamped_samples_count += 1;
         } else {
             observations.aggregated_data.add(sample, values)?;
@@ -183,18 +179,22 @@ impl IntoIterator for Observations {
     type IntoIter = ObservationsIntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        let it = self.inner.into_iter().flat_map(|mut observations| {
-            #[allow(clippy::expect_used)]
-            let timestamped_data_it = observations
-                .timestamped_data
-                .take()
-                .expect("timestamped_data should be present")
+        let it = self.inner.into_iter().flat_map(|observations| {
+            let NonEmptyObservations {
+                mut aggregated_data,
+                timestamped_data,
+                obs_len,
+                ..
+            } = observations;
+
+            let timestamped_data_it = timestamped_data
                 .into_iter()
                 .map(|(s, t, o)| (s, Some(t), o));
-            let aggregated_data_it = std::mem::take(&mut observations.aggregated_data.data)
+
+            let aggregated_data_it = std::mem::take(&mut aggregated_data.data)
                 .into_iter()
-                .map(|(s, o)| (s, None, o))
-                .map(move |(s, t, o)| (s, t, unsafe { o.into_vec(observations.obs_len) }));
+                .map(move |(s, o)| (s, None, unsafe { o.into_vec(obs_len) }));
+
             timestamped_data_it.chain(aggregated_data_it)
         });
         ObservationsIntoIter { it: Box::new(it) }

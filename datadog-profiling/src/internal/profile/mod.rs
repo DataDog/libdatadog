@@ -94,6 +94,11 @@ impl EncodedProfile {
 
 /// Public API
 impl Profile {
+    /// When testing on some profiles that can't be shared publicly,
+    /// level 1 provided better compressed files while taking less or equal
+    /// time compared to lz4.
+    pub const COMPRESSION_LEVEL: i32 = 1;
+
     /// Add the endpoint data to the endpoint mappings.
     /// The `endpoint` string will be interned.
     pub fn add_endpoint(
@@ -336,22 +341,22 @@ impl Profile {
         // using libdatadog (all?) there is only 1 profile, so this is a good
         // proxy for the compressed, final size of the profiles.
         // We found that for all languages using libdatadog, the average
-        // tarball was at least 18 KiB. Since these archives are compressed,
-        // and because profiles compress well, especially ones with timeline
-        // enabled (over 9x for some analyzed timeline profiles), this initial
-        // size of 32KiB should definitely outperform starting at zero for
-        // time consumed, allocator pressure, and allocator fragmentation.
+        // tarball was at least 18 KiB. This initial size of 32KiB should
+        // definitely outperform starting at zero for time consumed, allocator
+        // pressure, and allocator fragmentation.
         const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
-        const MAX_PROFILE_SIZE: usize = 50 * 1024 * 1024;
 
-        // When testing on some profiles that can't be shared publicly,
-        // level 1 provided better compressed files while taking less time
-        // compared to lz4.
-        const COMPRESSION_LEVEL: i32 = 1;
+        // 2025-10-16: a profile larger than 10 MiB will be skipped, but a
+        // higher limit is accepted for upload. A limit of 16 MiB allows us to
+        // be a little bit decoupled from the exact limit so that if the
+        // backend decides to accept larger pprofs, clients don't have to be
+        // recompiled. But setting a much higher limit would be wasteful.
+        const MAX_PROFILE_SIZE: usize = 16 * 1024 * 1024;
+
         let mut compressor = Compressor::<DefaultProfileCodec>::try_new(
             INITIAL_PPROF_BUFFER_SIZE,
             MAX_PROFILE_SIZE,
-            COMPRESSION_LEVEL,
+            Self::COMPRESSION_LEVEL,
         )
         .context("failed to create compressor")?;
 

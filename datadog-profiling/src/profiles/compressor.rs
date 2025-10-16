@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 
 /// This type wraps a [`Vec`] to provide a [`Write`] interface that has a max
 /// capacity that won't be exceeded. Additionally, it gracefully handles
@@ -13,7 +13,7 @@ pub struct SizeRestrictedBuffer {
 }
 
 impl SizeRestrictedBuffer {
-    /// Returns a buffer which never holds any data.
+    /// Returns a buffer which can never hold any data.
     pub const fn zero_capacity() -> Self {
         Self {
             vec: Vec::new(),
@@ -21,6 +21,14 @@ impl SizeRestrictedBuffer {
         }
     }
 
+    /// Tries to create an initial buffer with the provided size hint as well
+    /// as the provided max capacity. Neither number is required to be a power
+    /// of 2.
+    ///
+    /// # Errors
+    ///
+    /// - Fails if the `size_hint` is larger than the `max_capacity`.
+    /// - Fails if memory cannot be reserved.
     pub fn try_new(size_hint: usize, max_capacity: usize) -> io::Result<Self> {
         if size_hint > max_capacity {
             return Err(io::Error::new(
@@ -28,10 +36,8 @@ impl SizeRestrictedBuffer {
                 "size hint shouldn't be larger than max capacity",
             ));
         }
-        // Round up to the next power of 2, but don't exceed the max_capacity.
-        let initial_capacity = size_hint.next_power_of_two().min(max_capacity);
         let mut vec = Vec::new();
-        vec.try_reserve(initial_capacity)?;
+        vec.try_reserve(size_hint)?;
         Ok(SizeRestrictedBuffer { vec, max_capacity })
     }
 
@@ -130,9 +136,6 @@ pub type DefaultProfileCodec = ZstdProfileCodec;
 #[cfg(miri)]
 pub type DefaultProfileCodec = NoopProfileCodec;
 
-// Observation codecs (used by timestamped observations):
-use std::io::Read;
-
 pub trait ObservationCodec {
     type Encoder: Write;
     type Decoder: Read;
@@ -146,14 +149,14 @@ pub struct NoopObservationCodec;
 
 impl ObservationCodec for NoopObservationCodec {
     type Encoder = SizeRestrictedBuffer;
-    type Decoder = std::io::Cursor<SizeRestrictedBuffer>;
+    type Decoder = io::Cursor<SizeRestrictedBuffer>;
 
     fn new_encoder(size_hint: usize, max_capacity: usize) -> io::Result<Self::Encoder> {
         SizeRestrictedBuffer::try_new(size_hint, max_capacity)
     }
 
     fn encoder_into_decoder(encoder: Self::Encoder) -> io::Result<Self::Decoder> {
-        Ok(std::io::Cursor::new(encoder))
+        Ok(io::Cursor::new(encoder))
     }
 }
 
@@ -162,7 +165,7 @@ pub struct ZstdObservationCodec;
 
 impl ObservationCodec for ZstdObservationCodec {
     type Encoder = zstd::Encoder<'static, SizeRestrictedBuffer>;
-    type Decoder = zstd::Decoder<'static, std::io::Cursor<SizeRestrictedBuffer>>;
+    type Decoder = zstd::Decoder<'static, io::Cursor<SizeRestrictedBuffer>>;
 
     fn new_encoder(size_hint: usize, max_capacity: usize) -> io::Result<Self::Encoder> {
         let buffer = SizeRestrictedBuffer::try_new(size_hint, max_capacity)?;
@@ -171,7 +174,7 @@ impl ObservationCodec for ZstdObservationCodec {
 
     fn encoder_into_decoder(encoder: Self::Encoder) -> io::Result<Self::Decoder> {
         match encoder.try_finish() {
-            Ok(buffer) => zstd::Decoder::with_buffer(std::io::Cursor::new(buffer)),
+            Ok(buffer) => zstd::Decoder::with_buffer(io::Cursor::new(buffer)),
             Err((_enc, error)) => Err(error),
         }
     }
