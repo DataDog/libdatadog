@@ -402,9 +402,9 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     MaybeError::None
 }
 
-unsafe fn box_from_raw_opt<T>(ptr: *mut T) -> Option<Box<T>> {
+unsafe fn box_from_raw_opt<T: Default>(ptr: *mut T) -> Option<Box<T>> {
     if ptr.is_null() {
-        None
+        Some(Box::new(T::default()))
     } else {
         Some(Box::from_raw(ptr))
     }
@@ -439,7 +439,10 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
     authentication: *mut ffi::Vec<ddtelemetry::data::Authentication>,
     metadata: CharSlice,
 ) -> MaybeError {
-    let response_code_vec = vec![response_code];
+    let mut response_code_vec = vec![];
+    if response_code > -1 {
+        response_code_vec.push(response_code);
+    }
     let request_body_type = box_from_raw_opt(request_body_type);
     let response_body_type = box_from_raw_opt(response_body_type);
     let authentication = box_from_raw_opt(authentication);
