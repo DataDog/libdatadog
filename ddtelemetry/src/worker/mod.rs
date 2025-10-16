@@ -40,7 +40,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, warn};
+use tracing::debug;
 
 const CONTINUE: ControlFlow<()> = ControlFlow::Continue(());
 const BREAK: ControlFlow<()> = ControlFlow::Break(());
@@ -56,7 +56,7 @@ fn time_now() -> f64 {
 macro_rules! telemetry_worker_log {
     ($worker:expr , ERROR , $fmt_str:tt, $($arg:tt)*) => {
         {
-            error!(
+            debug!(
                 worker.runtime_id = %$worker.runtime_id,
                 worker.debug_logging = $worker.config.telemetry_debug_logging_enabled,
                 $fmt_str,
@@ -694,7 +694,7 @@ impl TelemetryWorker {
                 response.status = resp.status().as_u16(),
                 "Successfully sent telemetry payload"
             ),
-            Err(e) => error!(
+            Err(e) => debug!(
                 worker.runtime_id = %self.runtime_id,
                 payload.type = payload.request_type(),
                 error = ?e,
@@ -767,14 +767,14 @@ impl TelemetryWorker {
 
         tokio::select! {
             _ = self.cancellation_token.cancelled() => {
-                warn!(
+                debug!(
                     worker.runtime_id = %self.runtime_id,
                     "Telemetry request cancelled"
                 );
                 Err(hyper_migration::Error::Other(anyhow::anyhow!("Request cancelled")))
             },
             _ = tokio::time::sleep(time::Duration::from_millis(timeout_ms)) => {
-                warn!(
+                debug!(
                     worker.runtime_id = %self.runtime_id,
                     http.timeout_ms = timeout_ms,
                     "Telemetry request timed out"
