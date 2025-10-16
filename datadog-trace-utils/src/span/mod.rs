@@ -106,6 +106,7 @@ where
     pub resource: T,
     #[serde(skip_serializing_if = "is_empty_str")]
     pub r#type: T,
+    #[serde(serialize_with = "serialize_lower_64_bits")]
     pub trace_id: u128,
     pub span_id: u64,
     #[serde(skip_serializing_if = "is_default")]
@@ -126,6 +127,13 @@ where
     pub span_links: Vec<SpanLink<T>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub span_events: Vec<SpanEvent<T>>,
+}
+
+fn serialize_lower_64_bits<S>(v: &u128, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_u64(*v as u64)
 }
 
 /// The generic representation of a V04 span link.
