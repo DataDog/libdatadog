@@ -73,13 +73,11 @@ impl<C: ObservationCodec> TimestampedObservationsImpl<C> {
         Ok(())
     }
 
-    pub fn into_iter(self) -> TimestampedObservationsIterImpl<C> {
-        #[allow(clippy::expect_used)]
-        TimestampedObservationsIterImpl {
-            decoder: C::encoder_into_decoder(self.compressed_timestamped_data)
-                .expect("failed to initialize timestamped observation decoder"),
+    pub fn try_into_iter(self) -> io::Result<TimestampedObservationsIterImpl<C>> {
+        Ok(TimestampedObservationsIterImpl {
+            decoder: C::encoder_into_decoder(self.compressed_timestamped_data)?,
             sample_types_len: self.sample_types_len,
-        }
+        })
     }
 }
 

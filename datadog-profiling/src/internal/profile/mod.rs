@@ -404,7 +404,8 @@ impl Profile {
             extended_label_sets.push(labels);
         }
 
-        for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
+        let iter = std::mem::take(&mut self.observations).try_into_iter()?;
+        for (sample, timestamp, mut values) in iter {
             let labels = &mut extended_label_sets[sample.labels.to_raw_id()];
             let location_ids: Vec<_> = self
                 .get_stacktrace(sample.stacktrace)?

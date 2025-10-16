@@ -93,6 +93,32 @@ impl Observations {
             .map(|o| o.timestamped_samples_count)
             .unwrap_or(0)
     }
+
+    pub fn try_into_iter(self) -> io::Result<ObservationsIntoIter> {
+        match self.inner {
+            None => Ok(ObservationsIntoIter {
+                it: Box::new(std::iter::empty()),
+            }),
+            Some(NonEmptyObservations {
+                mut aggregated_data,
+                timestamped_data,
+                obs_len,
+                ..
+            }) => {
+                let ts_it = timestamped_data
+                    .try_into_iter()?
+                    .map(|(s, t, o)| (s, Some(t), o));
+
+                let agg_it = std::mem::take(&mut aggregated_data.data)
+                    .into_iter()
+                    .map(move |(s, o)| (s, None, unsafe { o.into_vec(obs_len) }));
+
+                Ok(ObservationsIntoIter {
+                    it: Box::new(ts_it.chain(agg_it)),
+                })
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -164,40 +190,13 @@ impl Drop for AggregatedObservations {
 }
 
 pub struct ObservationsIntoIter {
-    it: Box<dyn Iterator<Item = <ObservationsIntoIter as IntoIterator>::Item>>,
+    it: Box<dyn Iterator<Item = <ObservationsIntoIter as Iterator>::Item>>,
 }
 
 impl Iterator for ObservationsIntoIter {
     type Item = (Sample, Option<Timestamp>, Vec<i64>);
     fn next(&mut self) -> Option<Self::Item> {
         self.it.next()
-    }
-}
-
-impl IntoIterator for Observations {
-    type Item = (Sample, Option<Timestamp>, Vec<i64>);
-    type IntoIter = ObservationsIntoIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        let it = self.inner.into_iter().flat_map(|observations| {
-            let NonEmptyObservations {
-                mut aggregated_data,
-                timestamped_data,
-                obs_len,
-                ..
-            } = observations;
-
-            let timestamped_data_it = timestamped_data
-                .into_iter()
-                .map(|(s, t, o)| (s, Some(t), o));
-
-            let aggregated_data_it = std::mem::take(&mut aggregated_data.data)
-                .into_iter()
-                .map(move |(s, o)| (s, None, unsafe { o.into_vec(obs_len) }));
-
-            timestamped_data_it.chain(aggregated_data_it)
-        });
-        ObservationsIntoIter { it: Box::new(it) }
     }
 }
 
@@ -240,7 +239,7 @@ mod tests {
 
         assert_eq!(2, o.timestamped_samples_count());
 
-        o.into_iter().for_each(|(k, ts, v)| {
+        o.try_into_iter().unwrap().for_each(|(k, ts, v)| {
             if k == s1 {
                 // Observations without timestamp, these are aggregated together
                 assert_eq!(v, vec![5, 7, 9]);
@@ -384,7 +383,7 @@ mod tests {
         o.add(s3, t1, &[1, 1, 2]).unwrap();
 
         let mut count = 0;
-        o.into_iter().for_each(|(k, ts, v)| {
+        o.try_into_iter().unwrap().for_each(|(k, ts, v)| {
             count += 1;
             if k == s1 {
                 assert!(ts.is_none());
@@ -438,7 +437,7 @@ mod tests {
 
         assert_eq!(o.aggregated_samples_count(), aggregated_observations.len());
 
-        let mut iter = o.into_iter();
+        let mut iter = o.try_into_iter().unwrap();
         for (expected_sample, expected_ts, expected_values) in ts_samples.iter() {
             if expected_values.len() != *observations_len {
                 continue;
