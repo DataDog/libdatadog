@@ -177,7 +177,7 @@ impl TracerFlareManager {
     /// * `FlareError(msg)` - If something fails.
     pub fn handle_remote_config_data(
         &mut self,
-        data: RemoteConfigData,
+        data: &RemoteConfigData,
     ) -> Result<ReturnAction, FlareError> {
         let action = data.try_into();
         if let Ok(ReturnAction::Set(_)) = action {
@@ -209,17 +209,10 @@ impl TracerFlareManager {
         &mut self,
         file: RemoteConfigFile,
     ) -> Result<ReturnAction, FlareError> {
-        let action = file.try_into();
-        if let Ok(ReturnAction::Set(_)) = action {
-            if self.collecting {
-                return Ok(ReturnAction::None);
-            }
-            self.collecting = true;
-        } else if Ok(ReturnAction::None) != action {
-            // If action is Send, Unset or an error, we need to stop collecting
-            self.collecting = false;
+        match file.contents().as_ref() {
+            Ok(data) => self.handle_remote_config_data(data),
+            Err(e) => Err(FlareError::ParsingError(e.to_string())),
         }
-        action
     }
 }
 
