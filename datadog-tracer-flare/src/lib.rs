@@ -322,28 +322,45 @@ impl TryFrom<RemoteConfigFile> for ReturnAction {
     /// * `Ok(ReturnAction)` - If successful.
     /// * `FlareError(msg)` - If something fail.
     fn try_from(file: RemoteConfigFile) -> Result<Self, Self::Error> {
-        let config = file.contents();
-        match config.as_ref() {
-            Ok(data) => match data {
-                RemoteConfigData::TracerFlareConfig(agent_config) => {
-                    if agent_config.name.starts_with("flare-log-level.") {
-                        if let Some(log_level) = &agent_config.config.log_level {
-                            let log_level = log_level.as_str().try_into()?;
-                            return Ok(ReturnAction::Set(log_level));
-                        }
-                    }
-                }
-                RemoteConfigData::TracerFlareTask(agent_task) => {
-                    if agent_task.task_type.eq("tracer_flare") {
-                        return Ok(ReturnAction::Send(agent_task.to_owned()));
-                    }
-                }
-                _ => return Ok(ReturnAction::None),
-            },
-            Err(e) => {
-                return Err(FlareError::ParsingError(e.to_string()));
-            }
+        match file.contents().as_ref() {
+            Ok(data) => data.try_into(),
+            Err(e) => Err(FlareError::ParsingError(e.to_string())),
         }
+    }
+}
+
+impl TryFrom<&RemoteConfigData> for ReturnAction {
+    type Error = FlareError;
+
+    /// Check the `&RemoteConfigData` and return the action the tracer flare
+    /// needs to perform.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - &RemoteConfigData
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(ReturnAction)` - If successful
+    /// * `FlareError(msg)` - If something fails
+    fn try_from(data: &RemoteConfigData) -> Result<Self, Self::Error> {
+        match data {
+            RemoteConfigData::TracerFlareConfig(agent_config) => {
+                if agent_config.name.starts_with("flare-log-level.") {
+                    if let Some(log_level) = &agent_config.config.log_level {
+                        let log_level = log_level.as_str().try_into()?;
+                        return Ok(ReturnAction::Set(log_level));
+                    }
+                }
+            }
+            RemoteConfigData::TracerFlareTask(agent_task) => {
+                if agent_task.task_type.eq("tracer_flare") {
+                    return Ok(ReturnAction::Send(agent_task.to_owned()));
+                }
+            }
+            _ => return Ok(ReturnAction::None),
+        }
+
         Ok(ReturnAction::None)
     }
 }
