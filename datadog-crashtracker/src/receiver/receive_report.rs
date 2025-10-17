@@ -66,6 +66,7 @@ fn process_line(
     line: &str,
     state: StdinState,
 ) -> anyhow::Result<StdinState> {
+    eprintln!("{line}");
     let next = match state {
         StdinState::AdditionalTags if line.starts_with(DD_CRASHTRACK_END_ADDITIONAL_TAGS) => {
             StdinState::Waiting
@@ -233,7 +234,7 @@ pub(crate) async fn receive_report_from_stream(
     timeout: Duration,
     stream: impl AsyncBufReadExt + std::marker::Unpin,
 ) -> anyhow::Result<Option<(CrashtrackerConfiguration, CrashInfo)>> {
-    eprint!(("Waiting for crash report"));
+    eprint!("Waiting for crash report");
     let mut builder = CrashInfoBuilder::new();
     let mut stdin_state = StdinState::Waiting;
     let mut config: Option<CrashtrackerConfiguration> = None;
