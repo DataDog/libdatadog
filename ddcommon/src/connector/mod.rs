@@ -41,15 +41,7 @@ impl Connector {
     fn new() -> Self {
         #[cfg(feature = "https")]
         {
-            #[cfg(feature = "use_webpki_roots")]
-            let https_connector_fn = https::build_https_connector_with_webpki_roots;
-            #[cfg(not(feature = "use_webpki_roots"))]
-            let https_connector_fn = https::build_https_connector;
-
-            match https_connector_fn() {
-                Ok(connector) => Connector::Https(connector),
-                Err(_) => Connector::Http(connect::HttpConnector::new()),
-            }
+            Connector::Http(connect::HttpConnector::new())
         }
         #[cfg(not(feature = "https"))]
         {
