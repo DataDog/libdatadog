@@ -36,9 +36,9 @@ use datadog_trace_utils::send_with_retry::{
 };
 use datadog_trace_utils::span::{Span, SpanText};
 use datadog_trace_utils::trace_utils::TracerHeaderTags;
-use ddcommon::MutexExt;
 use ddcommon::{hyper_migration, Endpoint};
 use ddcommon::{tag, tag::Tag};
+use ddcommon::{HttpClient, MutexExt};
 use ddtelemetry::worker::TelemetryWorker;
 use dogstatsd_client::Client;
 use http_body_util::BodyExt;
@@ -208,6 +208,7 @@ pub struct TraceExporter {
     health_metrics_enabled: bool,
     workers: Arc<Mutex<TraceExporterWorkers>>,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
+    http_client: HttpClient,
 }
 
 impl TraceExporter {
@@ -424,6 +425,7 @@ impl TraceExporter {
                             &agent_info,
                             &self.client_side_stats,
                             &self.workers,
+                            self.http_client.clone(),
                         );
                     }
                     StatsComputationStatus::Enabled {
@@ -627,7 +629,8 @@ impl TraceExporter {
         let payload_len = mp_payload.len();
 
         // Send traces to the agent
-        let result = send_with_retry(endpoint, mp_payload, &headers, &strategy, None).await;
+        let result =
+            send_with_retry(&self.http_client, endpoint, mp_payload, &headers, &strategy).await;
 
         // Emit http.requests health metric based on number of attempts
         let requests_count = match &result {

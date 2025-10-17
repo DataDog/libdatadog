@@ -11,7 +11,7 @@ use crate::agent_info::schema::AgentInfo;
 use crate::stats_exporter;
 use arc_swap::ArcSwap;
 use datadog_trace_stats::span_concentrator::SpanConcentrator;
-use ddcommon::{Endpoint, MutexExt};
+use ddcommon::{Endpoint, HttpClient, MutexExt};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -64,6 +64,7 @@ pub(crate) fn start_stats_computation(
     workers: &Arc<Mutex<super::TraceExporterWorkers>>,
     span_kinds: Vec<String>,
     peer_tags: Vec<String>,
+    client: HttpClient,
 ) -> anyhow::Result<()> {
     if let StatsComputationStatus::DisabledByAgent { bucket_size } = **client_side_stats.load() {
         let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
@@ -80,6 +81,7 @@ pub(crate) fn start_stats_computation(
             &cancellation_token,
             workers,
             client_side_stats,
+            client,
         )?;
     }
     Ok(())
@@ -93,6 +95,7 @@ fn create_and_start_stats_worker(
     cancellation_token: &CancellationToken,
     workers: &Arc<Mutex<super::TraceExporterWorkers>>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
+    client: HttpClient,
 ) -> anyhow::Result<()> {
     let stats_exporter = stats_exporter::StatsExporter::new(
         bucket_size,
@@ -100,6 +103,7 @@ fn create_and_start_stats_worker(
         ctx.metadata.clone(),
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
         cancellation_token.clone(),
+        client,
     );
     let mut stats_worker = crate::pausable_worker::PausableWorker::new(stats_exporter);
 
@@ -160,6 +164,7 @@ pub(crate) fn handle_stats_disabled_by_agent(
     agent_info: &Arc<AgentInfo>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     workers: &Arc<Mutex<super::TraceExporterWorkers>>,
+    client: HttpClient,
 ) {
     if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
         // Client-side stats is supported by the agent
@@ -169,6 +174,7 @@ pub(crate) fn handle_stats_disabled_by_agent(
             workers,
             get_span_kinds_for_stats(agent_info),
             agent_info.info.peer_tags.clone().unwrap_or_default(),
+            client,
         );
         match status {
             Ok(()) => info!("Client-side stats enabled"),
