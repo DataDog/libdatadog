@@ -82,7 +82,7 @@ impl ErrorDataBuilder {
             #[cfg(target_env = "musl")]
             return Ok(self);
             #[cfg(not(target_env = "musl"))]
-            anyhow::bail!("Can't set non-existant stack complete");
+            anyhow::bail!("Can't set non-existant stack complete. THIS IS NEW TEXT");
         }
         Ok(self)
     }
