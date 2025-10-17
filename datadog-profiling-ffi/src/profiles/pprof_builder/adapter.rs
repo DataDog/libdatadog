@@ -540,7 +540,7 @@ impl<'a> RunsIter<'a> {
     }
 }
 
-impl<'a> Iterator for RunsIter<'a> {
+impl Iterator for RunsIter<'_> {
     type Item = Range<usize>;
 
     fn next(&mut self) -> Option<Self::Item> {
