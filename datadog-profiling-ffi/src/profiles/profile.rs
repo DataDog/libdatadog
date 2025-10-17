@@ -179,7 +179,7 @@ mod tests {
             .prop_map(|(run_lens, ids)| {
                 let mut g = Vec::new();
                 for (len, id) in run_lens.into_iter().zip(ids.into_iter()) {
-                    g.extend(std::iter::repeat(id).take(len));
+                    g.extend(std::iter::repeat_n(id, len));
                 }
                 g
             })
