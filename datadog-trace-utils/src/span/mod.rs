@@ -63,7 +63,7 @@ impl FromStr for SpanKey {
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.
-pub trait SpanText: Eq + Hash + Borrow<str> + Serialize + Default + Clone {
+pub trait SpanText: Eq + Hash + Borrow<str> + Serialize + Default {
     fn from_static_str(value: &'static str) -> Self;
 }
 
@@ -106,7 +106,8 @@ where
     pub resource: T,
     #[serde(skip_serializing_if = "is_empty_str")]
     pub r#type: T,
-    pub trace_id: u64,
+    #[serde(serialize_with = "serialize_lower_64_bits")]
+    pub trace_id: u128,
     pub span_id: u64,
     #[serde(skip_serializing_if = "is_default")]
     pub parent_id: u64,
@@ -126,6 +127,13 @@ where
     pub span_links: Vec<SpanLink<T>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub span_events: Vec<SpanEvent<T>>,
+}
+
+fn serialize_lower_64_bits<S>(v: &u128, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_u64(*v as u64)
 }
 
 /// The generic representation of a V04 span link.
