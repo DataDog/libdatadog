@@ -88,8 +88,8 @@ int main(int argc, char **argv) {
 
   // Build one sample via SampleBuilder with label language:php.
   ddog_prof_StringId language_id = DDOG_PROF_STRINGID_EMPTY;
-  auto language = DDOG_CHARSLICE_C("language");
-  auto language_php = DDOG_CHARSLICE_C("php");
+  ddog_CharSlice language = DDOG_CHARSLICE_C_BARE("language");
+  ddog_CharSlice language_php = DDOG_CHARSLICE_C_BARE("php");
   check_ok(ddog_prof_ProfilesDictionary_insert_str(&language_id, dict, language,
                                                    DDOG_PROF_UTF8_OPTION_ASSUME),
            "insert_str(sample label)");
