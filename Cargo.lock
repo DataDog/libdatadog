@@ -4612,6 +4612,7 @@ dependencies = [
  "fastrand",
  "io-lifetimes",
  "kernel32-sys",
+ "libc",
  "memfd",
  "nix",
  "rlimit",
