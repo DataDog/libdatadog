@@ -61,6 +61,12 @@ pub struct AppClientConfigurationChange {
     pub configuration: Vec<Configuration>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct AppEndpoints {
+    pub is_first: bool,
+    pub endpoints: Vec<serde_json::Value>,
+}
+
 #[derive(Serialize, Debug)]
 pub struct GenerateMetrics {
     pub series: Vec<metrics::Serie>,
@@ -94,4 +100,40 @@ pub enum LogLevel {
     Error,
     Warn,
     Debug,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
+#[serde(rename_all = "UPPERCASE")]
+#[repr(C)]
+pub enum Method {
+    Get = 0,
+    Post = 1,
+    Put = 2,
+    Delete = 3,
+    Patch = 4,
+    Head = 5,
+    Options = 6,
+    Trace = 7,
+    Connect = 8,
+    Other = 9, //This is specified as "*" in the OpenAPI spec
+}
+
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
+pub struct Endpoint {
+    #[serde(default)]
+    pub method: Option<Method>,
+    #[serde(default)]
+    pub path: Option<String>,
+    pub operation_name: String, 
+    pub resource_name: String   
+}
+
+impl Endpoint {
+    pub fn to_json_value(&self) -> serde_json::Result<serde_json::Value> {
+        let result = serde_json::to_value(self);
+        match result {
+            Ok(value) => Ok(value),
+            Err(err) => Err(err),
+        }
+    }
 }
