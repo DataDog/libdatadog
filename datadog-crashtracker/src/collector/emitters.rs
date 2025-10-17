@@ -66,6 +66,7 @@ unsafe fn emit_backtrace_by_frames(
         // pointer (fault_rsp). These frames belong exclusively to the crash tracker and the
         // backtrace functionality and are therefore not relevant for troubleshooting.
         let sp = frame.sp();
+        println!("Inside a stack frame. sp was {sp:?}");
         if !sp.is_null() && (sp as usize) < fault_rsp {
             return true;
         }
