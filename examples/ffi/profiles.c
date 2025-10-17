@@ -8,6 +8,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 /* This example simulates gathering wall and allocation samples. Roughly every
  * minute it will export the data, assumes an http://localhost:8126/ location
@@ -61,6 +65,18 @@ static struct ddog_Timespec now_wall(void) {
 #endif
   struct ddog_Timespec dd = {.seconds = (int64_t)ts.tv_sec, .nanoseconds = (uint32_t)ts.tv_nsec};
   return dd;
+}
+
+// Cross-platform sleep with millisecond precision (sufficient for ~10ms accuracy)
+static void sleep_ms(unsigned int ms) {
+#ifdef _WIN32
+  Sleep(ms);
+#else
+  struct timespec req;
+  req.tv_sec = ms / 1000;
+  req.tv_nsec = (long)((ms % 1000) * 1000000L);
+  nanosleep(&req, NULL);
+#endif
 }
 
 static int64_t rand_range_i64(int64_t min_inclusive, int64_t max_inclusive) {
@@ -284,8 +300,7 @@ int main(void) {
     }
 
     // Sleep ~10ms, obviously this will drift, this is just an example.
-    struct timespec req = {.tv_sec = 0, .tv_nsec = WALL_TICK_NS};
-    nanosleep(&req, NULL);
+    sleep_ms((unsigned)(WALL_TICK_NS / 1000000));
   }
 
   printf("[profiles.c] shutting down\n");
