@@ -435,14 +435,9 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
     resource_name: CharSlice,
     request_body_type: *mut ffi::Vec<CharSlice>,
     response_body_type: *mut ffi::Vec<CharSlice>,
-    response_code: i32,
     authentication: *mut ffi::Vec<ddtelemetry::data::Authentication>,
     metadata: CharSlice,
 ) -> MaybeError {
-    let mut response_code_vec = vec![];
-    if response_code > -1 {
-        response_code_vec.push(response_code);
-    }
     let request_body_type = box_from_raw_opt(request_body_type);
     let response_body_type = box_from_raw_opt(response_body_type);
     let authentication = box_from_raw_opt(authentication);
@@ -456,7 +451,6 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
         resource_name: resource_name.to_utf8_lossy().into_owned(),
         request_body_type: request_body_type.map(|v| slice_of_char_slice_to_vec_of_string(&**v)),
         response_body_type: response_body_type.map(|v| slice_of_char_slice_to_vec_of_string(&**v)),
-        response_code: Some(response_code_vec),
         // into_iter() is not implemented correctly for ffi::Vec, so we need to copy the elements
         authentication: authentication.map(|v| v.iter().map(|auth| auth.to_owned()).collect()),
         metadata: metadata.assume_utf8().to_string(),

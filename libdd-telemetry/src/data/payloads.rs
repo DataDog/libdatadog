@@ -153,8 +153,6 @@ pub struct Endpoint {
     #[serde(default)]
     pub response_body_type: Option<Vec<String>>,
     #[serde(default)]
-    pub response_code: Option<Vec<i32>>,
-    #[serde(default)]
     pub authentication: Option<Vec<Authentication>>,
     #[serde(default)]
     pub metadata: String,
