@@ -234,7 +234,9 @@ pub(crate) async fn receive_report_from_stream(
     timeout: Duration,
     stream: impl AsyncBufReadExt + std::marker::Unpin,
 ) -> anyhow::Result<Option<(CrashtrackerConfiguration, CrashInfo)>> {
-    eprint!("Waiting for crash report");
+    eprintln!("Waiting for crash report");
+    println!("this should go to stdout");
+    eprintln!("This should go to stderr");
     let mut builder = CrashInfoBuilder::new();
     let mut stdin_state = StdinState::Waiting;
     let mut config: Option<CrashtrackerConfiguration> = None;
