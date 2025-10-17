@@ -10,7 +10,7 @@ license.workspace = true
 bench = false
 
 [features]
-default = []
+default = ["tracing"]
 tracing = ["tracing/std"]
 https = ["ddcommon/https"]
 
@@ -33,6 +33,12 @@ hashbrown = "0.15"
 
 ddcommon = { path = "../ddcommon", default-features = false }
 datadog-ddsketch = { path = "../ddsketch" }
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.176"
+
+[target."cfg(windows)".dependencies]
+winver = "1.0.0"
 
 [dev-dependencies]
 tracing-subscriber = "0.3.18"

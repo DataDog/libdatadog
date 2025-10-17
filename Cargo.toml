@@ -26,6 +26,7 @@ members = [
   "datadog-trace-obfuscation",
   "datadog-trace-protobuf",
   "datadog-trace-utils",
+  "datadog-trace-stats",
   "datadog-tracer-flare",
   "ddcommon",
   "ddcommon-ffi",
@@ -63,7 +64,7 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.84.1"
 edition = "2021"
-version = "21.0.0"
+version = "22.1.0"
 license = "Apache-2.0"
 
 [workspace.dependencies]

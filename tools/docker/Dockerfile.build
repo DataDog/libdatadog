@@ -20,7 +20,7 @@ ENV CARGO_HOME="/root/.cargo"
 WORKDIR /build
 
 RUN apk update \
-  && apk add --no-cache \
+    && apk add --no-cache \
     build-base \
     cargo \
     cmake \
@@ -33,7 +33,7 @@ RUN apk update \
     unzip \
     bash \
     clang16-libclang \
-  && mkdir /usr/local/src
+    && mkdir /usr/local/src
 
 # Tell docker to use bash as the default
 SHELL ["/bin/bash", "-c"]
@@ -45,7 +45,7 @@ SHELL ["/bin/bash", "-c"]
 
 FROM alpine_base AS alpine_aws_cli
 RUN apk add --no-cache aws-cli \
-  && rm -rf /var/cache/apk/*
+    && rm -rf /var/cache/apk/*
 
 RUN aws --version   # Just to make sure its installed alright
 
@@ -99,6 +99,7 @@ COPY "datadog-trace-normalization/Cargo.toml" "datadog-trace-normalization/"
 COPY "datadog-trace-obfuscation/Cargo.toml" "datadog-trace-obfuscation/"
 COPY "datadog-trace-protobuf/Cargo.toml" "datadog-trace-protobuf/"
 COPY "datadog-trace-utils/Cargo.toml" "datadog-trace-utils/"
+COPY "datadog-trace-stats/Cargo.toml" "datadog-trace-stats/"
 COPY "datadog-tracer-flare/Cargo.toml" "datadog-tracer-flare/"
 COPY "tools/Cargo.toml" "tools/"
 COPY "tools/cc_utils/Cargo.toml" "tools/cc_utils/"

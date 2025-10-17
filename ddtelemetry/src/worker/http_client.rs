@@ -12,6 +12,7 @@ use std::{
 };
 
 use crate::config::Config;
+use tracing::{debug, error};
 
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
@@ -25,8 +26,9 @@ pub mod header {
     pub const DEBUG_ENABLED: HeaderName = HeaderName::from_static("dd-telemetry-debug-enabled");
 }
 
-pub type ResponseFuture =
-    Pin<Box<dyn Future<Output = Result<hyper_migration::HttpResponse, anyhow::Error>> + Send>>;
+pub type ResponseFuture = Pin<
+    Box<dyn Future<Output = Result<hyper_migration::HttpResponse, hyper_migration::Error>> + Send>,
+>;
 
 pub trait HttpClient {
     fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture;
@@ -35,16 +37,29 @@ pub trait HttpClient {
 pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
     match &c.endpoint {
         Some(e) => {
+            debug!(
+                endpoint.url = %e.url,
+                endpoint.timeout_ms = e.timeout_ms,
+                telemetry.version = env!("CARGO_PKG_VERSION"),
+                "Building telemetry request"
+            );
             let mut builder =
                 e.to_request_builder(concat!("telemetry/", env!("CARGO_PKG_VERSION")));
             if c.debug_enabled {
+                debug!(
+                    telemetry.debug_enabled = true,
+                    "Telemetry debug mode enabled"
+                );
                 builder = Ok(builder?.header(header::DEBUG_ENABLED, "true"))
             }
             builder
         }
-        None => Err(anyhow::Error::msg(
-            "no valid endpoint found, can't build the request".to_string(),
-        )),
+        None => {
+            error!("No valid telemetry endpoint found, cannot build request");
+            Err(anyhow::Error::msg(
+                "no valid endpoint found, can't build the request".to_string(),
+            ))
+        }
     }
 }
 
@@ -54,6 +69,10 @@ pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
             #[allow(clippy::expect_used)]
             let file_path = ddcommon::decode_uri_path_in_authority(&e.url)
                 .expect("file urls should always have been encoded in authority");
+            debug!(
+                file.path = ?file_path,
+                "Using file-based mock telemetry client"
+            );
             return Box::new(MockClient {
                 #[allow(clippy::expect_used)]
                 file: Arc::new(Mutex::new(Box::new(
@@ -65,7 +84,19 @@ pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
                 ))),
             });
         }
-        Some(_) | None => {}
+        Some(e) => {
+            debug!(
+                endpoint.url = %e.url,
+                endpoint.timeout_ms = e.timeout_ms,
+                "Using HTTP telemetry client"
+            );
+        }
+        None => {
+            debug!(
+                endpoint = "default",
+                "No telemetry endpoint configured, using default HTTP client"
+            );
+        }
     };
     Box::new(HyperClient {
         inner: hyper_migration::new_client_periodic(),
@@ -79,7 +110,12 @@ pub struct HyperClient {
 impl HttpClient for HyperClient {
     fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture {
         let resp = self.inner.request(req);
-        Box::pin(async { Ok(hyper_migration::into_response(resp.await?)) })
+        Box::pin(async move {
+            match resp.await {
+                Ok(response) => Ok(hyper_migration::into_response(response)),
+                Err(e) => Err(e.into()),
+            }
+        })
     }
 }
 
@@ -92,6 +128,7 @@ impl HttpClient for MockClient {
     fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture {
         let s = self.clone();
         Box::pin(async move {
+            debug!("MockClient writing request to file");
             let mut body = req.collect().await?.to_bytes().to_vec();
             body.push(b'\n');
 
@@ -99,9 +136,22 @@ impl HttpClient for MockClient {
                 #[allow(clippy::expect_used)]
                 let mut writer = s.file.lock().expect("mutex poisoned");
 
-                writer.write_all(body.as_ref())?;
+                match writer.write_all(body.as_ref()) {
+                    Ok(()) => debug!(
+                        file.bytes_written = body.len(),
+                        "Successfully wrote payload to mock file"
+                    ),
+                    Err(e) => {
+                        error!(
+                            error = %e,
+                            "Failed to write to mock file"
+                        );
+                        return Err(hyper_migration::Error::from(e));
+                    }
+                }
             }
 
+            debug!(http.status = 202, "MockClient returning success response");
             hyper_migration::empty_response(hyper::Response::builder().status(202))
         })
     }

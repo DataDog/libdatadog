@@ -1080,10 +1080,10 @@ mod tests {
         };
 
         if enable_telemetry {
-            builder.enable_telemetry(Some(TelemetryConfig {
+            builder.enable_telemetry(TelemetryConfig {
                 heartbeat: 100,
                 ..Default::default()
-            }));
+            });
         }
 
         builder.build().unwrap()
@@ -1622,10 +1622,10 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8")
-            .enable_telemetry(Some(TelemetryConfig {
+            .enable_telemetry(TelemetryConfig {
                 heartbeat: 100,
                 ..Default::default()
-            }));
+            });
         let exporter = builder.build().unwrap();
 
         let traces = vec![0x90];
@@ -1746,10 +1746,10 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8")
-            .enable_telemetry(Some(TelemetryConfig {
+            .enable_telemetry(TelemetryConfig {
                 heartbeat: 100,
                 ..Default::default()
-            }))
+            })
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V05);
 
