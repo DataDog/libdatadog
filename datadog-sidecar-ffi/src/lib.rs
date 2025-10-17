@@ -402,25 +402,6 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     MaybeError::None
 }
 
-unsafe fn box_from_raw_opt<T: Default>(ptr: *mut T) -> Option<Box<T>> {
-    if ptr.is_null() {
-        Some(Box::new(T::default()))
-    } else {
-        Some(Box::from_raw(ptr))
-    }
-}
-
-fn slice_of_char_slice_to_vec_of_string<'a, T>(ffi_vec: T) -> Vec<String>
-where
-    T: AsRef<[CharSlice<'a>]>,
-{
-    ffi_vec
-        .as_ref()
-        .iter()
-        .map(|s| s.to_utf8_lossy().into_owned())
-        .collect()
-}
-
 /// Reports an endpoint to the telemetry.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
@@ -428,32 +409,17 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     queue_id: &QueueId,
-    r#type: CharSlice,
     method: ddtelemetry::data::Method,
     path: CharSlice,
     operation_name: CharSlice,
     resource_name: CharSlice,
-    request_body_type: *mut ffi::Vec<CharSlice>,
-    response_body_type: *mut ffi::Vec<CharSlice>,
-    authentication: *mut ffi::Vec<ddtelemetry::data::Authentication>,
-    metadata: CharSlice,
 ) -> MaybeError {
-    let request_body_type = box_from_raw_opt(request_body_type);
-    let response_body_type = box_from_raw_opt(response_body_type);
-    let authentication = box_from_raw_opt(authentication);
-
     #[allow(clippy::unwrap_used)]
     let endpoint = TelemetryActions::AddEndpoint(ddtelemetry::data::Endpoint {
-        r#type: Some(r#type.to_utf8_lossy().into_owned()),
         method: Some(method),
         path: Some(path.to_utf8_lossy().into_owned()),
         operation_name: operation_name.to_utf8_lossy().into_owned(),
         resource_name: resource_name.to_utf8_lossy().into_owned(),
-        request_body_type: request_body_type.map(|v| slice_of_char_slice_to_vec_of_string(&**v)),
-        response_body_type: response_body_type.map(|v| slice_of_char_slice_to_vec_of_string(&**v)),
-        // into_iter() is not implemented correctly for ffi::Vec, so we need to copy the elements
-        authentication: authentication.map(|v| v.iter().map(|auth| auth.to_owned()).collect()),
-        metadata: metadata.assume_utf8().to_string(),
     });
 
     try_c!(blocking::enqueue_actions(
