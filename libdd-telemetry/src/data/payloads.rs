@@ -4,7 +4,6 @@
 use crate::data::metrics;
 
 use serde::{Deserialize, Serialize};
-use tracing::warn;
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
 pub struct Dependency {
@@ -121,67 +120,22 @@ pub enum Method {
     Other = 9, //This is specified as "*" in the OpenAPI spec
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
-#[serde(rename_all = "UPPERCASE")]
-#[repr(C)]
-pub enum Authentication {
-    Jwt = 0,
-    Basic = 1,
-    Oauth = 2,
-    Oidc = 3,
-    ApiKey = 4,
-    Session = 5,
-    Mtls = 6,
-    Saml = 7,
-    Ldap = 8,
-    Form = 9,
-    Other = 10,
-}
-
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
 pub struct Endpoint {
-    #[serde(default)]
-    pub r#type: Option<String>,
     #[serde(default)]
     pub method: Option<Method>,
     #[serde(default)]
     pub path: Option<String>,
-    pub operation_name: String,
-    pub resource_name: String,
-    #[serde(default)]
-    pub request_body_type: Option<Vec<String>>,
-    #[serde(default)]
-    pub response_body_type: Option<Vec<String>>,
-    #[serde(default)]
-    pub authentication: Option<Vec<Authentication>>,
-    #[serde(default)]
-    pub metadata: String,
+    pub operation_name: String, 
+    pub resource_name: String   
 }
 
 impl Endpoint {
     pub fn to_json_value(&self) -> serde_json::Result<serde_json::Value> {
         let result = serde_json::to_value(self);
         match result {
-            Ok(mut value) => {
-                // replace the metadata string with parsed JSON
-                if let Some(obj) = value.as_object_mut() {
-                    let metadata_json = if self.metadata.is_empty() {
-                        serde_json::json!({})
-                    } else {
-                        serde_json::from_str(&self.metadata)?
-                    };
-                    obj.insert("metadata".to_string(), metadata_json);
-                }
-
-                Ok(value)
-            }
-            Err(err) => {
-                warn!(
-                    "Failed to convert Endpoint to JSON: {}: {}",
-                    self.metadata, err
-                );
-                Err(err)
-            }
+            Ok(value) => Ok(value),
+            Err(err) => Err(err),
         }
     }
 }
