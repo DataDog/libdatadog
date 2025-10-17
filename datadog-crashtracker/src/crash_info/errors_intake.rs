@@ -374,8 +374,8 @@ impl ErrorsIntakePayload {
             (
                 Some(format!("{:?}", sig_info.si_signo_human_readable)),
                 Some(format!(
-                    "Process terminated with {:?} ({:?})",
-                    sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+                    "Process terminated by signal {:?}",
+                    sig_info.si_signo_human_readable
                 )),
             )
         } else {
