@@ -17,6 +17,15 @@ pub struct Location {
     pub mapping_id: OptionalMappingId,
     pub line: Line,
 }
+// todo: Ivo thinks it would be nicer if we kept the API more similar to what
+//       was there before, something like:
+// pub struct Location {
+//     pub address: u64,
+//     pub mapping_id: OptionalMappingId,
+//     pub function_id: FunctionId,
+//     pub line_number: i64,
+// }
+
 impl Default for Location {
     fn default() -> Location {
         Location {
