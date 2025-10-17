@@ -121,7 +121,7 @@ struct TelemetryWorkerData {
     dependencies: store::Store<Dependency>,
     configurations: store::Store<data::Configuration>,
     integrations: store::Store<data::Integration>,
-    endpoints: store::Store<data::Endpoint>,
+    endpoints: Vec<data::Endpoint>,
     logs: store::QueueHashMap<LogIdentifier, Log>,
     metric_contexts: MetricContexts,
     metric_buckets: MetricBuckets,
@@ -220,8 +220,6 @@ pub struct TelemetryWorkerStats {
     pub configurations_unflushed: u32,
     pub integrations_stored: u32,
     pub integrations_unflushed: u32,
-    pub endpoints_stored: u32,
-    pub endpoints_unflushed: u32,
     pub logs: u32,
     pub metric_contexts: u32,
     pub metric_buckets: MetricBucketStats,
@@ -238,8 +236,6 @@ impl Add for TelemetryWorkerStats {
             configurations_unflushed: self.configurations_unflushed + rhs.configurations_unflushed,
             integrations_stored: self.integrations_stored + rhs.integrations_stored,
             integrations_unflushed: self.integrations_unflushed + rhs.integrations_unflushed,
-            endpoints_stored: self.endpoints_stored + rhs.endpoints_stored,
-            endpoints_unflushed: self.endpoints_unflushed + rhs.endpoints_unflushed,
             logs: self.logs + rhs.logs,
             metric_contexts: self.metric_contexts + rhs.metric_contexts,
             metric_buckets: MetricBucketStats {
@@ -419,7 +415,7 @@ impl TelemetryWorker {
             AddDependency(dep) => self.data.dependencies.insert(dep),
             AddIntegration(integration) => self.data.integrations.insert(integration),
             AddConfig(cfg) => self.data.configurations.insert(cfg),
-            AddEndpoint(endpoint) => self.data.endpoints.insert(endpoint),
+            AddEndpoint(endpoint) => self.data.endpoints.push(endpoint),
             AddLog((identifier, log)) => {
                 let (l, new) = self.data.logs.get_mut_or_insert(identifier, log);
                 if !new {
@@ -472,7 +468,6 @@ impl TelemetryWorker {
                 self.data.dependencies.unflush_stored();
                 self.data.integrations.unflush_stored();
                 self.data.configurations.unflush_stored();
-                self.data.endpoints.unflush_stored();
 
                 let app_started = data::Payload::AppStarted(self.build_app_started());
                 match self.send_payload(&app_started).await {
@@ -565,19 +560,19 @@ impl TelemetryWorker {
                 },
             ))
         }
-        if self.data.endpoints.flush_not_empty() {
+        if !self.data.endpoints.is_empty() {
             payloads.push(data::Payload::AppEndpoints(
                 data::AppEndpoints {
                     is_first: true,
                     endpoints: self
                         .data
                         .endpoints
-                        .unflushed()
+                        .iter()
                         .map(|e| e.to_json_value().unwrap_or_default())
                         .filter(|e| e.is_object())
                         .collect(),
                 },
-            ))
+            ));
         }
         payloads
     }
@@ -681,7 +676,7 @@ impl TelemetryWorker {
                 .data
                 .configurations
                 .removed_flushed(p.configuration.len()),
-            AppEndpoints(p) => self.data.endpoints.removed_flushed(p.endpoints.len()),
+            AppEndpoints(p) => self.data.endpoints.clear(),
             MessageBatch(batch) => {
                 for p in batch {
                     self.payload_sent_success(p);
@@ -831,8 +826,6 @@ impl TelemetryWorker {
             configurations_unflushed: self.data.configurations.len_unflushed() as u32,
             integrations_stored: self.data.integrations.len_stored() as u32,
             integrations_unflushed: self.data.integrations.len_unflushed() as u32,
-            endpoints_stored: self.data.endpoints.len_stored() as u32,
-            endpoints_unflushed: self.data.endpoints.len_unflushed() as u32,
             logs: self.data.logs.len() as u32,
             metric_contexts: self.data.metric_contexts.lock().len() as u32,
             metric_buckets: self.data.metric_buckets.stats(),
@@ -1046,7 +1039,7 @@ pub struct TelemetryWorkerBuilder {
     pub dependencies: store::Store<data::Dependency>,
     pub integrations: store::Store<data::Integration>,
     pub configurations: store::Store<data::Configuration>,
-    pub endpoints: store::Store<data::Endpoint>,
+    pub endpoints: Vec<data::Endpoint>,
     pub native_deps: bool,
     pub rust_shared_lib_deps: bool,
     pub config: Config,
@@ -1097,7 +1090,7 @@ impl TelemetryWorkerBuilder {
             dependencies: store::Store::new(MAX_ITEMS),
             integrations: store::Store::new(MAX_ITEMS),
             configurations: store::Store::new(MAX_ITEMS),
-            endpoints: store::Store::new(MAX_ITEMS),
+            endpoints: Vec::new(),
             native_deps: true,
             rust_shared_lib_deps: false,
             config: Config::default(),
