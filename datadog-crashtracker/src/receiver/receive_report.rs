@@ -285,6 +285,9 @@ pub(crate) async fn receive_report_from_stream(
         };
         let Some(next_line) = next_line else { break };
 
+        // TODO, guard this with an environment variable.
+        eprintln!("{next_line}");
+
         match process_line(&mut builder, &mut config, &next_line, stdin_state) {
             Ok(next_state) => {
                 stdin_state = next_state;
