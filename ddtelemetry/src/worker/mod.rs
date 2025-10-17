@@ -782,7 +782,7 @@ impl TelemetryWorker {
         let timeout_ms = if let Some(endpoint) = self.config.endpoint.as_ref() {
             endpoint.timeout_ms
         } else {
-            Endpoint::DEFAULT_TIMEOUT
+            ddcommon::Endpoint::DEFAULT_TIMEOUT
         };
 
         debug!(
@@ -799,13 +799,13 @@ impl TelemetryWorker {
                 );
                 Err(hyper_migration::Error::Other(anyhow::anyhow!("Request cancelled")))
             },
-            _ = tokio::time::sleep(time::Duration::from_millis(
-                    if let Some(endpoint) = self.config.endpoint.as_ref() {
-                        endpoint.timeout_ms
-                    } else {
-                        ddcommon::Endpoint::DEFAULT_TIMEOUT
-                    })) => {
-                Err(anyhow::anyhow!("Request timed out"))
+            _ = tokio::time::sleep(time::Duration::from_millis(timeout_ms)) => {
+                debug!(
+                    worker.runtime_id = %self.runtime_id,
+                    http.timeout_ms = timeout_ms,
+                    "Telemetry request timed out"
+                );
+                Err(hyper_migration::Error::Other(anyhow::anyhow!("Request timed out")))
             },
             r = self.client.request(req) => {
                 match r {
