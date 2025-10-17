@@ -88,7 +88,9 @@ int main(int argc, char **argv) {
 
   // Build one sample via SampleBuilder with label language:php.
   ddog_prof_StringId language_id = DDOG_PROF_STRINGID_EMPTY;
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&language_id, dict, DDOG_CHARSLICE_C("language"),
+  auto language = DDOG_CHARSLICE_C("language");
+  auto language_php = DDOG_CHARSLICE_C("php");
+  check_ok(ddog_prof_ProfilesDictionary_insert_str(&language_id, dict, language,
                                                    DDOG_PROF_UTF8_OPTION_ASSUME),
            "insert_str(sample label)");
 
@@ -96,7 +98,7 @@ int main(int argc, char **argv) {
   check_ok(ddog_prof_SampleBuilder_new(&sb, profile, scratch), "SampleBuilder_new");
   check_ok(ddog_prof_SampleBuilder_stack_id(sb, stack_id), "SampleBuilder_stack_id");
   check_ok(ddog_prof_SampleBuilder_value(sb, 10'000'000LL), "SampleBuilder_value");
-  check_ok(ddog_prof_SampleBuilder_attribute_str(sb, language_id, DDOG_CHARSLICE_C("php"),
+  check_ok(ddog_prof_SampleBuilder_attribute_str(sb, language_id, language_php,
                                                  DDOG_PROF_UTF8_OPTION_ASSUME),
            "SampleBuilder_attribute_str");
   check_ok(ddog_prof_SampleBuilder_finish(&sb), "SampleBuilder_finish");
