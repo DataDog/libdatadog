@@ -3,6 +3,7 @@
 
 mod builder;
 mod error_data;
+mod errors_intake;
 mod experimental;
 mod metadata;
 mod os_info;
@@ -17,6 +18,7 @@ mod unknown_value;
 pub use builder::*;
 use ddcommon::Endpoint;
 pub use error_data::*;
+pub use errors_intake::*;
 pub use experimental::*;
 pub use metadata::Metadata;
 pub use os_info::*;
@@ -30,6 +32,13 @@ use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs::File, path::Path};
+
+pub fn build_crash_ping_message(sig_info: &SigInfo) -> String {
+    format!(
+        "Crashtracker crash ping: crash processing started - Process terminated by signal {:?}",
+        sig_info.si_signo_human_readable
+    )
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CrashInfo {
