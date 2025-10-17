@@ -1,12 +1,12 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profile_handle::ProfileHandle;
+use crate::profile_handle::ProfileHandle2;
 use crate::wrap_with_ffi_result;
-use crate::{ensure_non_null_out_parameter, ProfileStatus};
-use datadog_profiling::exporter::EncodedProfile;
-use datadog_profiling::profiles::datatypes::{Profile, ValueType};
-use datadog_profiling::profiles::ProfileError;
+use crate::{ensure_non_null_out_parameter, ProfileStatus2};
+use datadog_profiling2::exporter::EncodedProfile;
+use datadog_profiling2::profiles::datatypes::{Profile2, ValueType2};
+use datadog_profiling2::profiles::ProfileError;
 use ddcommon_ffi::slice::ByteSlice;
 use ddcommon_ffi::{Handle, ToInner};
 use function_name::named;
@@ -16,16 +16,16 @@ use function_name::named;
 /// # Safety
 ///
 /// - `handle` must be non-null and valid for writes of `ProfileHandle<_>`.
-/// - The written handle must be dropped via the matching drop function;
-///   see [`ddog_prof_Profile_drop`] for more details.
+/// - The written handle must be dropped via the matching drop function; see
+///   [`ddog_prof2_Profile_drop`] for more details.
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Profile_new(
-    handle: *mut ProfileHandle<Profile>,
-) -> ProfileStatus {
+pub unsafe extern "C" fn ddog_prof2_Profile_new(
+    handle: *mut ProfileHandle2<Profile2>,
+) -> ProfileStatus2 {
     ensure_non_null_out_parameter!(handle);
-    ProfileStatus::from(|| -> Result<(), ProfileError> {
-        let h = ProfileHandle::try_new(Profile::default())?;
+    ProfileStatus2::from(|| -> Result<(), ProfileError> {
+        let h = ProfileHandle2::try_new(Profile2::default())?;
         unsafe { handle.write(h) };
         Ok(())
     }())
@@ -35,15 +35,15 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
 ///
 /// # Safety
 ///
-/// - `handle` must refer to a live `Profile` and is treated as a unique
-///   mutable reference for the duration of the call (no aliasing mutations).
+/// - `handle` must refer to a live `Profile` and is treated as a unique mutable reference for the
+///   duration of the call (no aliasing mutations).
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Profile_add_sample_type(
-    mut handle: ProfileHandle<Profile>,
-    vt: ValueType,
-) -> ProfileStatus {
-    ProfileStatus::from(|| -> Result<(), ProfileError> {
+pub unsafe extern "C" fn ddog_prof2_Profile_add_sample_type(
+    mut handle: ProfileHandle2<Profile2>,
+    vt: ValueType2,
+) -> ProfileStatus2 {
+    ProfileStatus2::from(|| -> Result<(), ProfileError> {
         let prof = unsafe { handle.as_inner_mut()? };
         prof.try_add_sample_type(vt)
     }())
@@ -53,16 +53,16 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_sample_type(
 ///
 /// # Safety
 ///
-/// - `handle` must refer to a live `Profile` and is treated as a unique
-///   mutable reference for the duration of the call (no aliasing mutations).
+/// - `handle` must refer to a live `Profile` and is treated as a unique mutable reference for the
+///   duration of the call (no aliasing mutations).
 #[must_use]
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Profile_add_period(
-    mut handle: ProfileHandle<Profile>,
+pub unsafe extern "C" fn ddog_prof2_Profile_add_period(
+    mut handle: ProfileHandle2<Profile2>,
     period: i64,
-    vt: ValueType,
-) -> ProfileStatus {
-    ProfileStatus::from(|| -> Result<(), ProfileError> {
+    vt: ValueType2,
+) -> ProfileStatus2 {
+    ProfileStatus2::from(|| -> Result<(), ProfileError> {
         let prof = unsafe { handle.as_inner_mut()? };
         prof.add_period(period, vt);
         Ok(())
@@ -81,45 +81,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_period(
 ///
 /// However, this function is safe to call multiple times on the _same handle_.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Profile_drop(
-    handle: *mut ProfileHandle<Profile>,
-) {
+pub unsafe extern "C" fn ddog_prof2_Profile_drop(handle: *mut ProfileHandle2<Profile2>) {
     if let Some(h) = handle.as_mut() {
         drop(h.take());
-    }
-}
-
-/// Given an EncodedProfile, get a slice representing the bytes in the pprof.
-/// This slice is valid for use until the encoded_profile is modified in any way (e.g. dropped or
-/// consumed).
-/// # Safety
-/// Only pass a reference to a valid `ddog_prof_EncodedProfile`.
-#[no_mangle]
-#[must_use]
-#[named]
-pub unsafe extern "C" fn ddog_prof_EncodedProfile_bytes<'a>(
-    mut encoded_profile: *mut Handle<EncodedProfile>,
-) -> ddcommon_ffi::Result<ByteSlice<'a>> {
-    wrap_with_ffi_result!({
-        let slice = encoded_profile.to_inner_mut()?.buffer.as_slice();
-        // Rountdtrip through raw pointers to avoid Rust complaining about lifetimes.
-        let byte_slice = ByteSlice::from_raw_parts(slice.as_ptr(), slice.len());
-        anyhow::Ok(byte_slice)
-    })
-}
-
-/// # Safety
-/// Only pass a reference to a valid `ddog_prof_EncodedProfile`, or null. A
-/// valid reference also means that it hasn't already been dropped or exported (do not
-/// call this twice on the same object).
-#[no_mangle]
-pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
-    profile: *mut Handle<EncodedProfile>,
-) {
-    // Technically, this function has been designed so if it's double-dropped
-    // then it's okay, but it's not something that should be relied on.
-    if !profile.is_null() {
-        drop((*profile).take())
     }
 }
 
@@ -127,15 +91,12 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
 mod tests {
     use super::*;
     use crate::profiles::{
-        ddog_prof_ProfileAdapter_drop, ddog_prof_ProfileAdapter_new,
-        ddog_prof_ProfilesDictionary_drop, ddog_prof_ScratchPad_drop,
-        ProfileAdapter,
+        ddog_prof2_ProfileAdapter_drop, ddog_prof2_ProfileAdapter_new,
+        ddog_prof2_ProfilesDictionary_drop, ddog_prof2_ScratchPad_drop, ProfileAdapter2,
     };
-    use crate::{ddog_prof_Status_drop, ArcHandle};
-    use datadog_profiling::profiles::collections::StringId;
-    use datadog_profiling::profiles::datatypes::{
-        ProfilesDictionary, ScratchPad,
-    };
+    use crate::{ddog_prof2_Status_drop, ArcHandle2};
+    use datadog_profiling2::profiles::collections::StringId2;
+    use datadog_profiling2::profiles::datatypes::{ProfilesDictionary2, ScratchPad};
     use proptest::prelude::*;
     use proptest::test_runner::Config as ProptestConfig;
     use std::ffi::CStr;
@@ -160,20 +121,17 @@ mod tests {
         // Generate 1..=8 runs, each run length in {1,2}, ensuring only adjacent runs differ.
         (1usize..=MAX_RUNS)
             .prop_flat_map(|num_runs| {
-                let run_lens = prop::collection::vec(
-                    prop_oneof![Just(1usize), Just(2usize)],
-                    num_runs,
-                );
-                let ids = prop::collection::vec(any::<i32>(), num_runs)
-                    .prop_map(|mut v| {
-                        // Ensure adjacent different by tweaking duplicates
-                        for i in 1..v.len() {
-                            if v[i] == v[i - 1] {
-                                v[i] = v[i].wrapping_add(1);
-                            }
+                let run_lens =
+                    prop::collection::vec(prop_oneof![Just(1usize), Just(2usize)], num_runs);
+                let ids = prop::collection::vec(any::<i32>(), num_runs).prop_map(|mut v| {
+                    // Ensure adjacent different by tweaking duplicates
+                    for i in 1..v.len() {
+                        if v[i] == v[i - 1] {
+                            v[i] = v[i].wrapping_add(1);
                         }
-                        v.into_iter().map(|x| x as i64).collect::<Vec<_>>()
-                    });
+                    }
+                    v.into_iter().map(|x| x as i64).collect::<Vec<_>>()
+                });
                 (run_lens, ids)
             })
             .prop_map(|(run_lens, ids)| {
@@ -187,11 +145,10 @@ mod tests {
     }
 
     // Strategy: (groupings, value_types) with aligned lengths
-    fn groupings_and_value_types(
-    ) -> impl Strategy<Value = (Vec<i64>, Vec<ValueType>)> {
+    fn groupings_and_value_types() -> impl Strategy<Value = (Vec<i64>, Vec<ValueType2>)> {
         groupings_strategy().prop_flat_map(|groupings| {
             let len = groupings.len();
-            let vt = ValueType::new(StringId::EMPTY, StringId::EMPTY);
+            let vt = ValueType2::new(StringId2::EMPTY, StringId2::EMPTY);
             prop::collection::vec(proptest::strategy::Just(vt), len)
                 .prop_map(move |vts| (groupings.clone(), vts))
         })
@@ -201,12 +158,12 @@ mod tests {
         #![proptest_config(ProptestConfig { cases: PROPTEST_CASES, max_shrink_iters: MAX_SHRINK_ITERS, .. ProptestConfig::default() })]
         #[test]
         fn adapter_new_ok_on_valid_inputs((groupings, value_types) in groupings_and_value_types()) {
-            let mut dict = ArcHandle::new(ProfilesDictionary::try_new().unwrap()).unwrap();
-            let mut scratchpad = ArcHandle::new(ScratchPad::try_new().unwrap()).unwrap();
+            let mut dict = ArcHandle2::new(ProfilesDictionary2::try_new().unwrap()).unwrap();
+            let mut scratchpad = ArcHandle2::new(ScratchPad::try_new().unwrap()).unwrap();
             // Construct adapter
-            let mut adapter = ProfileAdapter::default();
+            let mut adapter = ProfileAdapter2::default();
             let mut status = unsafe {
-                ddog_prof_ProfileAdapter_new(
+                ddog_prof2_ProfileAdapter_new(
                     &mut adapter,
                     dict,
                     scratchpad,
@@ -222,15 +179,15 @@ mod tests {
             }
 
             // Safe to call on OK too.
-            unsafe { ddog_prof_Status_drop(&mut status)};
+            unsafe { ddog_prof2_Status_drop(&mut status)};
 
             // Drop is safe
-            unsafe { ddog_prof_ProfileAdapter_drop(&mut adapter) };
+            unsafe { ddog_prof2_ProfileAdapter_drop(&mut adapter) };
             // Double-drop is a no-op
-            unsafe { ddog_prof_ProfileAdapter_drop(&mut adapter) };
+            unsafe { ddog_prof2_ProfileAdapter_drop(&mut adapter) };
 
-            unsafe { ddog_prof_ScratchPad_drop(&mut scratchpad) };
-            unsafe { ddog_prof_ProfilesDictionary_drop(&mut dict) };
+            unsafe { ddog_prof2_ScratchPad_drop(&mut scratchpad) };
+            unsafe { ddog_prof2_ProfilesDictionary_drop(&mut dict) };
         }
 
         #[test]
@@ -242,14 +199,14 @@ mod tests {
                 // Now first run is length >= 2; insert again to make it 3
                 groupings.insert(idx, groupings[idx]);
                 let len = groupings.len();
-                let vt = ValueType::new(StringId::EMPTY, StringId::EMPTY);
+                let vt = ValueType2::new(StringId2::EMPTY, StringId2::EMPTY);
                 let value_types = vec![vt; len];
 
-                let mut adapter = ProfileAdapter::default();
-                let mut dict = ArcHandle::new(ProfilesDictionary::try_new().unwrap()).unwrap();
-                let mut scratchpad = ArcHandle::new(ScratchPad::try_new().unwrap()).unwrap();
+                let mut adapter = ProfileAdapter2::default();
+                let mut dict = ArcHandle2::new(ProfilesDictionary2::try_new().unwrap()).unwrap();
+                let mut scratchpad = ArcHandle2::new(ScratchPad::try_new().unwrap()).unwrap();
                 let mut status = unsafe {
-                    ddog_prof_ProfileAdapter_new(
+                    ddog_prof2_ProfileAdapter_new(
                         &mut adapter,
                         dict,
                         scratchpad,
@@ -264,11 +221,11 @@ mod tests {
                     eprintln!("profile adapter failed: {str}");
                 }
                 // Safe to call on OK too.
-                unsafe { ddog_prof_Status_drop(&mut status)};
+                unsafe { ddog_prof2_Status_drop(&mut status)};
 
-                unsafe { ddog_prof_ProfileAdapter_drop(&mut adapter) };
-                unsafe { ddog_prof_ScratchPad_drop(&mut scratchpad) };
-                unsafe { ddog_prof_ProfilesDictionary_drop(&mut dict) };
+                unsafe { ddog_prof2_ProfileAdapter_drop(&mut adapter) };
+                unsafe { ddog_prof2_ScratchPad_drop(&mut scratchpad) };
+                unsafe { ddog_prof2_ProfilesDictionary_drop(&mut dict) };
             }
         }
     }

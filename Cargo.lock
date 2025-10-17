@@ -1565,6 +1565,85 @@ dependencies = [
 name = "datadog-profiling"
 version = "22.1.0"
 dependencies = [
+ "anyhow",
+ "bitmaps",
+ "bolero",
+ "byteorder",
+ "bytes",
+ "chrono",
+ "criterion",
+ "datadog-alloc",
+ "datadog-profiling-protobuf",
+ "ddcommon",
+ "futures",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-multipart-rfc7578",
+ "indexmap 2.11.4",
+ "lz4_flex",
+ "mime",
+ "prost",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "target-triple",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "datadog-profiling-ffi"
+version = "22.1.0"
+dependencies = [
+ "allocator-api2",
+ "anyhow",
+ "build_common",
+ "data-pipeline-ffi",
+ "datadog-crashtracker-ffi",
+ "datadog-library-config-ffi",
+ "datadog-log-ffi",
+ "datadog-profiling",
+ "datadog-profiling-protobuf",
+ "datadog-profiling2",
+ "ddcommon",
+ "ddcommon-ffi",
+ "ddsketch-ffi",
+ "ddtelemetry-ffi",
+ "function_name",
+ "futures",
+ "http-body-util",
+ "hyper",
+ "libc",
+ "proptest",
+ "serde_json",
+ "symbolizer-ffi",
+ "thiserror",
+ "tokio-util",
+]
+
+[[package]]
+name = "datadog-profiling-protobuf"
+version = "22.1.0"
+dependencies = [
+ "bolero",
+ "datadog-profiling-protobuf",
+ "prost",
+]
+
+[[package]]
+name = "datadog-profiling-validator"
+version = "22.1.0"
+dependencies = [
+ "clap",
+ "datadog-profiling-protobuf",
+ "thiserror",
+]
+
+[[package]]
+name = "datadog-profiling2"
+version = "22.1.0"
+dependencies = [
  "allocator-api2",
  "anyhow",
  "arrayvec",
@@ -1598,54 +1677,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
-]
-
-[[package]]
-name = "datadog-profiling-ffi"
-version = "22.1.0"
-dependencies = [
- "allocator-api2",
- "anyhow",
- "build_common",
- "data-pipeline-ffi",
- "datadog-crashtracker-ffi",
- "datadog-library-config-ffi",
- "datadog-log-ffi",
- "datadog-profiling",
- "datadog-profiling-protobuf",
- "ddcommon",
- "ddcommon-ffi",
- "ddsketch-ffi",
- "ddtelemetry-ffi",
- "function_name",
- "futures",
- "http-body-util",
- "hyper",
- "libc",
- "proptest",
- "rustc-hash",
- "serde_json",
- "symbolizer-ffi",
- "thiserror",
- "tokio-util",
-]
-
-[[package]]
-name = "datadog-profiling-protobuf"
-version = "22.1.0"
-dependencies = [
- "bolero",
- "datadog-profiling-protobuf",
- "prost",
-]
-
-[[package]]
-name = "datadog-profiling-validator"
-version = "22.1.0"
-dependencies = [
- "clap",
- "datadog-profiling-protobuf",
- "thiserror",
 ]
 
 [[package]]

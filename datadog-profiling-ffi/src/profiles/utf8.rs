@@ -1,8 +1,8 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_profiling::profiles::collections::{ParallelStringSet, StringId};
-use datadog_profiling::profiles::ProfileError;
+use datadog_profiling2::profiles::collections::{ParallelStringSet, StringId2};
+use datadog_profiling2::profiles::ProfileError;
 use ddcommon::error::FfiSafeErrorMessage;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, SliceConversionError};
 use std::borrow::Cow;
@@ -51,9 +51,7 @@ impl From<Utf8ConversionError> for ProfileError {
     fn from(err: Utf8ConversionError) -> ProfileError {
         match err {
             Utf8ConversionError::OutOfMemory(_) => ProfileError::OutOfMemory,
-            Utf8ConversionError::SliceConversionError(_) => {
-                ProfileError::InvalidInput
-            }
+            Utf8ConversionError::SliceConversionError(_) => ProfileError::InvalidInput,
             Utf8ConversionError::Utf8Error(_) => ProfileError::InvalidInput,
         }
     }
@@ -63,13 +61,9 @@ impl From<Utf8ConversionError> for ProfileError {
 unsafe impl FfiSafeErrorMessage for Utf8ConversionError {
     fn as_ffi_str(&self) -> &'static CStr {
         match self {
-            Utf8ConversionError::OutOfMemory(_) => {
-                c"out of memory: utf8 conversion failed"
-            }
+            Utf8ConversionError::OutOfMemory(_) => c"out of memory: utf8 conversion failed",
             Utf8ConversionError::SliceConversionError(err) => err.as_ffi_str(),
-            Utf8ConversionError::Utf8Error(_) => {
-                c"invalid input: string was not utf-8"
-            }
+            Utf8ConversionError::Utf8Error(_) => c"invalid input: string was not utf-8",
         }
     }
 }
@@ -83,15 +77,10 @@ impl Utf8Option {
     /// # Safety
     ///
     /// When [`Utf8Option::Assume`] is passed, it must be valid UTF-8.
-    pub unsafe fn convert(
-        self,
-        bytes: &[u8],
-    ) -> Result<Cow<'_, str>, Utf8ConversionError> {
+    pub unsafe fn convert(self, bytes: &[u8]) -> Result<Cow<'_, str>, Utf8ConversionError> {
         // SAFETY: caller asserts validity under Assume
         Ok(match self {
-            Utf8Option::Assume => {
-                Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(bytes) })
-            }
+            Utf8Option::Assume => Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(bytes) }),
             Utf8Option::ConvertLossy => try_from_utf8_lossy(bytes)?,
             Utf8Option::Validate => Cow::Borrowed(std::str::from_utf8(bytes)?),
         })
@@ -154,7 +143,7 @@ pub fn insert_str(
     set: &ParallelStringSet,
     str: CharSlice<'_>,
     utf8_options: Utf8Option,
-) -> Result<StringId, ProfileError> {
+) -> Result<StringId2, ProfileError> {
     let bytes = str.try_as_bytes().map_err(ProfileError::from_thin_error)?;
     let string = match utf8_options {
         Utf8Option::Assume => {
@@ -162,10 +151,9 @@ pub fn insert_str(
             Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(bytes) })
         }
         Utf8Option::ConvertLossy => try_from_utf8_lossy(bytes)?,
-        Utf8Option::Validate => Cow::Borrowed(
-            std::str::from_utf8(bytes)
-                .map_err(|_| ProfileError::InvalidInput)?,
-        ),
+        Utf8Option::Validate => {
+            Cow::Borrowed(std::str::from_utf8(bytes).map_err(|_| ProfileError::InvalidInput)?)
+        }
     };
     Ok(set.try_insert(string.as_ref())?)
 }

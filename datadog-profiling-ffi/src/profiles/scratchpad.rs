@@ -1,38 +1,37 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::arc_handle::ArcHandle;
+use crate::arc_handle::ArcHandle2;
 use crate::profiles::utf8::{insert_str, Utf8Option};
 use crate::profiles::{ensure_non_null_insert, ensure_non_null_out_parameter};
-use crate::{EmptyHandleError, ProfileStatus};
-use datadog_profiling::profiles::collections::StringId;
-use datadog_profiling::profiles::datatypes::ProfilesDictionary;
-use datadog_profiling::profiles::datatypes::{
-    AttributeId, KeyValue, Link, LinkId, Location, LocationId, ScratchPad,
-    StackId,
+use crate::{EmptyHandleError, ProfileStatus2};
+use datadog_profiling2::profiles::collections::StringId2;
+use datadog_profiling2::profiles::datatypes::ProfilesDictionary2;
+use datadog_profiling2::profiles::datatypes::{
+    AttributeId, KeyValue, Link2, LinkId2, Location2, LocationId2, ScratchPad, StackId2,
 };
-use datadog_profiling::profiles::string_writer::FallibleStringWriter;
-use datadog_profiling::profiles::ProfileError;
+use datadog_profiling2::profiles::string_writer::FallibleStringWriter;
+use datadog_profiling2::profiles::ProfileError;
 use ddcommon_ffi::CharSlice;
 
 /// Allocates a new `ScratchPad` and returns a handle to it via the out
 /// parameter `handle`.
 ///
-/// Use [`ddog_prof_ScratchPad_drop`] to free; see its docs for more details.
+/// Use [`ddog_prof2_ScratchPad_drop`] to free; see its docs for more details.
 ///
 /// # Safety
 ///
 ///  - `handle` must be non-null and valid for writes of `ScratchPadHandle`.
-///  - Don't make C copies to handles, use [`ddog_prof_ScratchPad_try_clone`]
-///    to get another refcounted copy (e.g. for another thread).
+///  - Don't make C copies to handles, use [`ddog_prof2_ScratchPad_try_clone`] to get another
+///    refcounted copy (e.g. for another thread).
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_ScratchPad_new(
-    handle: *mut ArcHandle<ScratchPad>,
-) -> ProfileStatus {
+pub unsafe extern "C" fn ddog_prof2_ScratchPad_new(
+    handle: *mut ArcHandle2<ScratchPad>,
+) -> ProfileStatus2 {
     ensure_non_null_out_parameter!(handle);
-    ProfileStatus::from(|| -> Result<(), ProfileError> {
+    ProfileStatus2::from(|| -> Result<(), ProfileError> {
         let pad = ScratchPad::try_new()?;
-        let h = ArcHandle::new(pad)?;
+        let h = ArcHandle2::new(pad)?;
         unsafe { handle.write(h) };
         Ok(())
     }())
@@ -45,15 +44,15 @@ pub unsafe extern "C" fn ddog_prof_ScratchPad_new(
 ///
 /// - `out` must be non-null and valid for writes of `ScratchPadHandle`.
 /// - `handle` must refer to a live `ScratchPad`.
-/// - Do not duplicate handles via memcpy; always use this API to create new
-///   handles so the reference count is maintained correctly.
+/// - Do not duplicate handles via memcpy; always use this API to create new handles so the
+///   reference count is maintained correctly.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_ScratchPad_try_clone(
-    out: *mut ArcHandle<ScratchPad>,
-    handle: ArcHandle<ScratchPad>,
-) -> ProfileStatus {
+pub unsafe extern "C" fn ddog_prof2_ScratchPad_try_clone(
+    out: *mut ArcHandle2<ScratchPad>,
+    handle: ArcHandle2<ScratchPad>,
+) -> ProfileStatus2 {
     ensure_non_null_out_parameter!(out);
-    ProfileStatus::from(|| -> Result<(), ProfileError> {
+    ProfileStatus2::from(|| -> Result<(), ProfileError> {
         let cloned = handle.try_clone()?;
         unsafe { out.write(cloned) };
         Ok(())
@@ -69,9 +68,7 @@ pub unsafe extern "C" fn ddog_prof_ScratchPad_try_clone(
 /// - If non-null, `handle` must point to a valid `ScratchPadHandle`.
 /// - Only drop properly created/cloned handles.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_ScratchPad_drop(
-    handle: *mut ArcHandle<ScratchPad>,
-) {
+pub unsafe extern "C" fn ddog_prof2_ScratchPad_drop(handle: *mut ArcHandle2<ScratchPad>) {
     if let Some(h) = handle.as_mut() {
         h.drop_resource();
     }
@@ -85,14 +82,14 @@ pub unsafe extern "C" fn ddog_prof_ScratchPad_drop(
 /// - `handle` must refer to a live `ScratchPad`.
 /// - `location` must be non-null and valid for the duration of the call.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_ScratchPad_insert_location(
-    out_location_id: *mut LocationId,
-    handle: ArcHandle<ScratchPad>,
-    location: *const Location,
-) -> ProfileStatus {
+pub unsafe extern "C" fn ddog_prof2_ScratchPad_insert_location(
+    out_location_id: *mut LocationId2,
+    handle: ArcHandle2<ScratchPad>,
+    location: *const Location2,
+) -> ProfileStatus2 {
     ensure_non_null_out_parameter!(out_location_id);
     ensure_non_null_insert!(location);
-    ProfileStatus::from(|| -> Result<(), ProfileError> {
+    ProfileStatus2::from(|| -> Result<(), ProfileError> {
         let pad = handle.as_inner()?;
         let id = pad.locations().try_insert(unsafe { *location })?;
         unsafe { out_location_id.write(id.into_raw()) };
@@ -106,24 +103,23 @@ pub unsafe extern "C" fn ddog_prof_ScratchPad_insert_location(
 ///
 /// - `out_stack_id` must be non-null and valid for writes of `StackId`.
 /// - `handle` must refer to a live `ScratchPad`.
-/// - `locations` must point to valid `LocationId`s obtained from the same
-///   `ScratchPad` and be valid for the duration of the call.
+/// - `locations` must point to valid `LocationId`s obtained from the same `ScratchPad` and be valid
+///   for the duration of the call.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_ScratchPad_insert_stack(
-    out_stack_id: *mut StackId,
-    handle: ArcHandle<ScratchPad>,
-    locations: ddcommon_ffi::Slice<'_, LocationId>,
-) -> ProfileStatus {
+pub unsafe extern "C" fn ddog_prof2_ScratchPad_insert_stack(
+    out_stack_id: *mut StackId2,
+    handle: ArcHandle2<ScratchPad>,
+    locations: ddcommon_ffi::Slice<'_, LocationId2>,
+) -> ProfileStatus2 {
     ensure_non_null_out_parameter!(out_stack_id);
-    ProfileStatus::from(|| -> Result<(), ProfileError> {
+    ProfileStatus2::from(|| -> Result<(), ProfileError> {
         let pad = handle.as_inner()?;
-        let slice =
-            locations.try_as_slice().map_err(ProfileError::from_thin_error)?;
+        let slice = locations
+            .try_as_slice()
+            .map_err(ProfileError::from_thin_error)?;
         // SAFETY: re-interpreting LocationId as SetId<Location> is safe as
         // long as they were made from SetId::into_raw.
-        let ids = unsafe {
-            core::slice::from_raw_parts(slice.as_ptr().cast(), slice.len())
-        };
+        let ids = unsafe { core::slice::from_raw_parts(slice.as_ptr().cast(), slice.len()) };
         let stack_id = pad.stacks().try_insert(ids)?;
         unsafe { out_stack_id.write(stack_id) };
         Ok(())
@@ -137,13 +133,13 @@ pub unsafe extern "C" fn ddog_prof_ScratchPad_insert_stack(
 /// - `out_link_id` must be non-null and valid for writes of `LinkId`.
 /// - `handle` must refer to a live `ScratchPad`.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_ScratchPad_insert_link(
-    out_link_id: *mut LinkId,
-    handle: ArcHandle<ScratchPad>,
-    link: Link,
-) -> ProfileStatus {
+pub unsafe extern "C" fn ddog_prof2_ScratchPad_insert_link(
+    out_link_id: *mut LinkId2,
+    handle: ArcHandle2<ScratchPad>,
+    link: Link2,
+) -> ProfileStatus2 {
     ensure_non_null_out_parameter!(out_link_id);
-    ProfileStatus::from(|| -> Result<(), ProfileError> {
+    ProfileStatus2::from(|| -> Result<(), ProfileError> {
         let pad = handle.as_inner()?;
         let id = pad.links().try_insert(link)?;
         unsafe { out_link_id.write(id.into_raw()) };
@@ -159,16 +155,16 @@ pub unsafe extern "C" fn ddog_prof_ScratchPad_insert_link(
 /// - `handle` must refer to a live `ScratchPad`.
 /// - `key`/`value` must adhere to the UTF-8 policy expressed by `utf8_option`.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_ScratchPad_insert_attribute_str(
+pub unsafe extern "C" fn ddog_prof2_ScratchPad_insert_attribute_str(
     out_attr_id: *mut AttributeId,
-    handle: ArcHandle<ScratchPad>,
-    dictionary: ArcHandle<ProfilesDictionary>,
+    handle: ArcHandle2<ScratchPad>,
+    dictionary: ArcHandle2<ProfilesDictionary2>,
     key: CharSlice<'_>,
     value: CharSlice<'_>,
     utf8_option: Utf8Option,
-) -> ProfileStatus {
+) -> ProfileStatus2 {
     ensure_non_null_out_parameter!(out_attr_id);
-    ProfileStatus::from(|| -> Result<(), ProfileError> {
+    ProfileStatus2::from(|| -> Result<(), ProfileError> {
         let pad = handle.as_inner()?;
         let key_str = utf8_option.try_as_bytes_convert(key)?;
         if key_str.is_empty() {
@@ -187,9 +183,7 @@ pub unsafe extern "C" fn ddog_prof_ScratchPad_insert_attribute_str(
 
         let kv = KeyValue {
             key: key_id,
-            value: datadog_profiling::profiles::datatypes::AnyValue::String(
-                val_owned,
-            ),
+            value: datadog_profiling2::profiles::datatypes::AnyValue::String(val_owned),
         };
         let id = pad.attributes().try_insert(kv)?;
         unsafe { out_attr_id.write(id.into_raw()) };
@@ -205,16 +199,16 @@ pub unsafe extern "C" fn ddog_prof_ScratchPad_insert_attribute_str(
 /// - `handle` must refer to a live `ScratchPad`.
 /// - `key` must adhere to the UTF-8 policy expressed by `utf8_option`.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_ScratchPad_insert_attribute_int(
+pub unsafe extern "C" fn ddog_prof2_ScratchPad_insert_attribute_int(
     out_attr_id: *mut AttributeId,
-    handle: ArcHandle<ScratchPad>,
-    dictionary: ArcHandle<ProfilesDictionary>,
+    handle: ArcHandle2<ScratchPad>,
+    dictionary: ArcHandle2<ProfilesDictionary2>,
     key: CharSlice<'_>,
     value: i64,
     utf8_option: Utf8Option,
-) -> ProfileStatus {
+) -> ProfileStatus2 {
     ensure_non_null_out_parameter!(out_attr_id);
-    ProfileStatus::from(|| -> Result<(), ProfileError> {
+    ProfileStatus2::from(|| -> Result<(), ProfileError> {
         let pad = handle.as_inner()?;
         let key_str = utf8_option.try_as_bytes_convert(key)?;
         if key_str.is_empty() {
@@ -225,9 +219,7 @@ pub unsafe extern "C" fn ddog_prof_ScratchPad_insert_attribute_int(
         let key_id = dict.strings().try_insert(key_str.as_ref())?;
         let kv = KeyValue {
             key: key_id,
-            value: datadog_profiling::profiles::datatypes::AnyValue::Integer(
-                value,
-            ),
+            value: datadog_profiling2::profiles::datatypes::AnyValue::Integer(value),
         };
         let id = pad.attributes().try_insert(kv)?;
         unsafe { out_attr_id.write(id.into_raw()) };
@@ -243,22 +235,18 @@ pub unsafe extern "C" fn ddog_prof_ScratchPad_insert_attribute_int(
 /// - `handle` must refer to a live `ScratchPad`.
 /// - `endpoint` must adhere to the UTF-8 policy expressed by `utf8_option`.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_ScratchPad_add_trace_endpoint(
-    out_string_id: *mut StringId,
-    handle: ArcHandle<ScratchPad>,
+pub unsafe extern "C" fn ddog_prof2_ScratchPad_add_trace_endpoint(
+    out_string_id: *mut StringId2,
+    handle: ArcHandle2<ScratchPad>,
     local_root_span_id: i64,
     endpoint: CharSlice<'_>,
     utf8_option: Utf8Option,
-) -> ProfileStatus {
+) -> ProfileStatus2 {
     ensure_non_null_out_parameter!(out_string_id);
-    ProfileStatus::from(|| -> Result<(), ProfileError> {
+    ProfileStatus2::from(|| -> Result<(), ProfileError> {
         let pad = handle.as_inner()?;
         // Use the same UTF-8 handling helpers as string insertion
-        let id = insert_str(
-            pad.endpoint_tracker().strings(),
-            endpoint,
-            utf8_option,
-        )?;
+        let id = insert_str(pad.endpoint_tracker().strings(), endpoint, utf8_option)?;
         // Now register the mapping and counts
         let _ = pad
             .endpoint_tracker()
@@ -276,14 +264,15 @@ pub unsafe extern "C" fn ddog_prof_ScratchPad_add_trace_endpoint(
 ///
 /// - `handle` must refer to a live `ScratchPad`.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_ScratchPad_add_endpoint_count(
-    handle: ArcHandle<ScratchPad>,
-    endpoint_id: StringId,
+pub unsafe extern "C" fn ddog_prof2_ScratchPad_add_endpoint_count(
+    handle: ArcHandle2<ScratchPad>,
+    endpoint_id: StringId2,
     count: usize,
-) -> ProfileStatus {
-    ProfileStatus::from(|| -> Result<(), ProfileError> {
+) -> ProfileStatus2 {
+    ProfileStatus2::from(|| -> Result<(), ProfileError> {
         let pad = handle.as_inner()?;
-        pad.endpoint_tracker().add_endpoint_count(endpoint_id, count)
+        pad.endpoint_tracker()
+            .add_endpoint_count(endpoint_id, count)
     }())
 }
 
@@ -295,16 +284,16 @@ pub unsafe extern "C" fn ddog_prof_ScratchPad_add_endpoint_count(
 /// - `handle` must refer to a live `ScratchPad`.
 /// - `endpoint` must adhere to the UTF-8 policy expressed by `utf8_option`.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_ScratchPad_add_trace_endpoint_with_count(
-    out_string_id: *mut StringId,
-    handle: ArcHandle<ScratchPad>,
+pub unsafe extern "C" fn ddog_prof2_ScratchPad_add_trace_endpoint_with_count(
+    out_string_id: *mut StringId2,
+    handle: ArcHandle2<ScratchPad>,
     local_root_span_id: i64,
     endpoint: CharSlice<'_>,
     utf8_option: Utf8Option,
     count: usize,
-) -> ProfileStatus {
+) -> ProfileStatus2 {
     ensure_non_null_out_parameter!(out_string_id);
-    ProfileStatus::from(|| -> Result<(), ProfileError> {
+    ProfileStatus2::from(|| -> Result<(), ProfileError> {
         let pad = handle.as_inner()?;
         let endpoint_str = utf8_option.try_as_bytes_convert(endpoint)?;
         let id = pad.endpoint_tracker().add_trace_endpoint_with_count(
@@ -326,78 +315,72 @@ struct EndpointNotFound(u64);
 /// # Safety
 ///
 /// - `result` must be non-null and valid for writes of `CharSlice<'static>`.
-/// - The returned slice borrows from the scratchpad’s internal string table;
-///   the caller must ensure the scratchpad outlives any use of `*result`.
+/// - The returned slice borrows from the scratchpad’s internal string table; the caller must ensure
+///   the scratchpad outlives any use of `*result`.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_ScratchPad_get_trace_endpoint_str(
+pub unsafe extern "C" fn ddog_prof2_ScratchPad_get_trace_endpoint_str(
     result: *mut CharSlice<'static>,
-    handle: ArcHandle<ScratchPad>,
+    handle: ArcHandle2<ScratchPad>,
     local_root_span_id: i64,
-) -> ProfileStatus {
+) -> ProfileStatus2 {
     ensure_non_null_out_parameter!(result);
     let Ok(pad) = handle.as_inner() else {
-        return ProfileStatus::from_ffi_safe_error_message(EmptyHandleError);
+        return ProfileStatus2::from_ffi_safe_error_message(EmptyHandleError);
     };
-    if let Some(s) =
-        pad.endpoint_tracker().get_trace_endpoint_str(local_root_span_id)
+    if let Some(s) = pad
+        .endpoint_tracker()
+        .get_trace_endpoint_str(local_root_span_id)
     {
         // SAFETY: the lifetime is _not_ safe, it's not static! It's tied to
         // the underlying string set (owned by the ScratchPad). It's up to the
         // FFI to use responsibly.
-        let slice = unsafe {
-            std::mem::transmute::<CharSlice<'_>, CharSlice<'static>>(
-                CharSlice::from(s),
-            )
-        };
+        let slice =
+            unsafe { std::mem::transmute::<CharSlice<'_>, CharSlice<'static>>(CharSlice::from(s)) };
         unsafe { result.write(slice) };
-        ProfileStatus::OK
+        ProfileStatus2::OK
     } else {
-        ProfileStatus::from_error(EndpointNotFound(local_root_span_id as u64))
+        ProfileStatus2::from_error(EndpointNotFound(local_root_span_id as u64))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ddog_prof_Status_drop;
+    use crate::ddog_prof2_Status_drop;
     use ddcommon_ffi::slice::AsBytes;
     use std::ffi::CStr;
 
     #[test]
     fn get_endpoint_str_not_found_has_message() {
         unsafe {
-            let mut handle = ArcHandle::<ScratchPad>::default();
-            Result::from(ddog_prof_ScratchPad_new(&mut handle)).unwrap();
+            let mut handle = ArcHandle2::<ScratchPad>::default();
+            Result::from(ddog_prof2_ScratchPad_new(&mut handle)).unwrap();
 
             let mut out = CharSlice::empty();
-            let mut status = ddog_prof_ScratchPad_get_trace_endpoint_str(
-                &mut out,
-                handle,
-                u64::MAX as i64,
-            );
+            let mut status =
+                ddog_prof2_ScratchPad_get_trace_endpoint_str(&mut out, handle, u64::MAX as i64);
 
-            let cstr: &CStr =
-                (&status).try_into().expect("expected error status");
+            let cstr: &CStr = (&status).try_into().expect("expected error status");
             let msg = cstr.to_string_lossy();
             assert_eq!(
                 msg.as_ref(),
                 "trace endpoint not found for local root span id 0xFFFFFFFFFFFFFFFF"
             );
 
-            ddog_prof_ScratchPad_drop(&mut handle);
-            ddog_prof_Status_drop(&mut status);
+            ddog_prof2_ScratchPad_drop(&mut handle);
+            ddog_prof2_Status_drop(&mut status);
         }
     }
 
     #[test]
     fn add_and_get_endpoint_str_ok() {
         unsafe {
-            let mut handle = ArcHandle::<ScratchPad>::default();
-            Result::from(ddog_prof_ScratchPad_new(&mut handle)).unwrap();
+            let mut handle = ArcHandle2::<ScratchPad>::default();
+            Result::from(ddog_prof2_ScratchPad_new(&mut handle)).unwrap();
 
-            let mut str_id = StringId::default();
+            let mut str_id = StringId2::default();
             let ep = CharSlice::from("/users/{id}");
-            let status = ddog_prof_ScratchPad_add_trace_endpoint(
+            let status = ddog_prof2_ScratchPad_add_trace_endpoint(
                 &mut str_id,
                 handle,
                 0x1234,
@@ -407,13 +390,11 @@ mod tests {
             Result::from(status).unwrap();
 
             let mut out = CharSlice::empty();
-            let status = ddog_prof_ScratchPad_get_trace_endpoint_str(
-                &mut out, handle, 0x1234,
-            );
+            let status = ddog_prof2_ScratchPad_get_trace_endpoint_str(&mut out, handle, 0x1234);
             Result::from(status).unwrap();
             assert_eq!(out.try_to_utf8().unwrap(), "/users/{id}");
 
-            ddog_prof_ScratchPad_drop(&mut handle);
+            ddog_prof2_ScratchPad_drop(&mut handle);
         }
     }
 }

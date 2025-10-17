@@ -21,10 +21,10 @@
 
 static const int EXPORT_INTERVAL = 10; // seconds
 
-static void check_ok(struct ddog_prof_Status status, const char *context) {
+static void check_ok(struct ddog_prof2_Status status, const char *context) {
   if (status.flags != 0) {
     fprintf(stderr, "%s: %s\n", context, status.err);
-    ddog_prof_Status_drop(&status);
+    ddog_prof2_Status_drop(&status);
     // this will cause leaks but this is just an example.
     exit(EXIT_FAILURE);
   }
@@ -86,15 +86,16 @@ static int64_t rand_range_i64(int64_t min_inclusive, int64_t max_inclusive) {
   return (int64_t)(min_inclusive + (rand() % span));
 }
 
-static void rebuild_scratchpad_state(ddog_prof_ScratchPadHandle pad, ddog_prof_FunctionId func_id,
-                                     ddog_prof_MappingId map_id, ddog_prof_StackId *out_stack_id) {
-  ddog_prof_Line line = {.function_id = func_id};
-  ddog_prof_Location loc = {.mapping_id = map_id, .line = line};
-  ddog_prof_LocationId locs[1];
-  check_ok(ddog_prof_ScratchPad_insert_location(locs, pad, &loc), "ScratchPad_insert_location");
-  ddog_prof_Slice_LocationId loc_slice = {.ptr = locs, .len = 1};
+static void rebuild_scratchpad_state(ddog_prof2_ScratchPadHandle pad, ddog_prof2_FunctionId func_id,
+                                     ddog_prof2_MappingId map_id,
+                                     ddog_prof2_StackId *out_stack_id) {
+  ddog_prof2_Line line = {.function_id = func_id};
+  ddog_prof2_Location loc = {.mapping_id = map_id, .line = line};
+  ddog_prof2_LocationId locs[1];
+  check_ok(ddog_prof2_ScratchPad_insert_location(locs, pad, &loc), "ScratchPad_insert_location");
+  ddog_prof2_Slice_LocationId loc_slice = {.ptr = locs, .len = 1};
   out_stack_id->thin_ptr = NULL;
-  check_ok(ddog_prof_ScratchPad_insert_stack(out_stack_id, pad, loc_slice),
+  check_ok(ddog_prof2_ScratchPad_insert_stack(out_stack_id, pad, loc_slice),
            "ScratchPad_insert_stack");
 }
 
@@ -103,82 +104,82 @@ int main(void) {
   srand((unsigned)time(NULL));
 
   // Create core handles
-  ddog_prof_ProfilesDictionaryHandle dict = NULL;
-  check_ok(ddog_prof_ProfilesDictionary_new(&dict), "ProfilesDictionary_new");
+  ddog_prof2_ProfilesDictionaryHandle dict = NULL;
+  check_ok(ddog_prof2_ProfilesDictionary_new(&dict), "ProfilesDictionary_new");
 
-  ddog_prof_ScratchPadHandle scratch = NULL;
-  check_ok(ddog_prof_ScratchPad_new(&scratch), "ScratchPad_new");
+  ddog_prof2_ScratchPadHandle scratch = NULL;
+  check_ok(ddog_prof2_ScratchPad_new(&scratch), "ScratchPad_new");
 
   // Insert function/mapping strings and create ids
-  ddog_prof_Function func = {.system_name = DDOG_PROF_STRINGID_EMPTY};
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&func.name, dict, DDOG_CHARSLICE_C("{main}"),
-                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
+  ddog_prof2_Function func = {.system_name = DDOG_PROF_STRINGID_EMPTY};
+  check_ok(ddog_prof2_ProfilesDictionary_insert_str(&func.name, dict, DDOG_CHARSLICE_C("{main}"),
+                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(fn name)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&func.file_name, dict,
-                                                   DDOG_CHARSLICE_C("/srv/example/index.php"),
-                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
+  check_ok(ddog_prof2_ProfilesDictionary_insert_str(&func.file_name, dict,
+                                                    DDOG_CHARSLICE_C("/srv/example/index.php"),
+                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(fn file)");
-  ddog_prof_FunctionId func_id = NULL;
-  check_ok(ddog_prof_ProfilesDictionary_insert_function(&func_id, dict, &func), "insert_function");
+  ddog_prof2_FunctionId func_id = NULL;
+  check_ok(ddog_prof2_ProfilesDictionary_insert_function(&func_id, dict, &func), "insert_function");
 
-  ddog_prof_Mapping mapping = {.build_id = DDOG_PROF_STRINGID_EMPTY};
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&mapping.filename, dict,
-                                                   DDOG_CHARSLICE_C("/bin/example"),
-                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
+  ddog_prof2_Mapping mapping = {.build_id = DDOG_PROF_STRINGID_EMPTY};
+  check_ok(ddog_prof2_ProfilesDictionary_insert_str(&mapping.filename, dict,
+                                                    DDOG_CHARSLICE_C("/bin/example"),
+                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(map filename)");
-  ddog_prof_MappingId map_id = NULL;
-  check_ok(ddog_prof_ProfilesDictionary_insert_mapping(&map_id, dict, &mapping), "insert_mapping");
+  ddog_prof2_MappingId map_id = NULL;
+  check_ok(ddog_prof2_ProfilesDictionary_insert_mapping(&map_id, dict, &mapping), "insert_mapping");
 
   // Prepare StringIds and ValueTypes for two profiles via ProfileAdapter:
   // - grouping 0: wall-time (nanoseconds)
   // - grouping 1: allocation profile with two sample types: bytes and count
-  ddog_prof_ValueType wall_time_vt = {DDOG_PROF_STRINGID_EMPTY, DDOG_PROF_STRINGID_EMPTY};
-  ddog_prof_ValueType alloc_space_vt = {DDOG_PROF_STRINGID_EMPTY, DDOG_PROF_STRINGID_EMPTY};
-  ddog_prof_ValueType alloc_samples_vt = {DDOG_PROF_STRINGID_EMPTY, DDOG_PROF_STRINGID_EMPTY};
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&wall_time_vt.type_id, dict,
-                                                   DDOG_CHARSLICE_C("wall-time"),
-                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
+  ddog_prof2_ValueType wall_time_vt = {DDOG_PROF_STRINGID_EMPTY, DDOG_PROF_STRINGID_EMPTY};
+  ddog_prof2_ValueType alloc_space_vt = {DDOG_PROF_STRINGID_EMPTY, DDOG_PROF_STRINGID_EMPTY};
+  ddog_prof2_ValueType alloc_samples_vt = {DDOG_PROF_STRINGID_EMPTY, DDOG_PROF_STRINGID_EMPTY};
+  check_ok(ddog_prof2_ProfilesDictionary_insert_str(&wall_time_vt.type_id, dict,
+                                                    DDOG_CHARSLICE_C("wall-time"),
+                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(wall type)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&wall_time_vt.unit_id, dict,
-                                                   DDOG_CHARSLICE_C("nanoseconds"),
-                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
+  check_ok(ddog_prof2_ProfilesDictionary_insert_str(&wall_time_vt.unit_id, dict,
+                                                    DDOG_CHARSLICE_C("nanoseconds"),
+                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(wall unit)");
 
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&alloc_space_vt.type_id, dict,
-                                                   DDOG_CHARSLICE_C("alloc-space"),
-                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
+  check_ok(ddog_prof2_ProfilesDictionary_insert_str(&alloc_space_vt.type_id, dict,
+                                                    DDOG_CHARSLICE_C("alloc-space"),
+                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(alloc bytes type)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&alloc_space_vt.unit_id, dict,
-                                                   DDOG_CHARSLICE_C("bytes"),
-                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
+  check_ok(ddog_prof2_ProfilesDictionary_insert_str(&alloc_space_vt.unit_id, dict,
+                                                    DDOG_CHARSLICE_C("bytes"),
+                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(alloc bytes unit)");
 
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&alloc_samples_vt.type_id, dict,
-                                                   DDOG_CHARSLICE_C("alloc-samples"),
-                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
+  check_ok(ddog_prof2_ProfilesDictionary_insert_str(&alloc_samples_vt.type_id, dict,
+                                                    DDOG_CHARSLICE_C("alloc-samples"),
+                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(alloc count type)");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&alloc_samples_vt.unit_id, dict,
-                                                   DDOG_CHARSLICE_C("count"),
-                                                   DDOG_PROF_UTF8_OPTION_VALIDATE),
+  check_ok(ddog_prof2_ProfilesDictionary_insert_str(&alloc_samples_vt.unit_id, dict,
+                                                    DDOG_CHARSLICE_C("count"),
+                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(alloc count unit)");
 
-  ddog_prof_ValueType value_types[3] = {wall_time_vt, alloc_space_vt, alloc_samples_vt};
+  ddog_prof2_ValueType value_types[3] = {wall_time_vt, alloc_space_vt, alloc_samples_vt};
   int64_t groupings[3] = {0, 1, 1};
 
   // Initial per-interval setup
-  ddog_prof_StackId stack_id = {0};
+  ddog_prof2_StackId stack_id = {0};
   rebuild_scratchpad_state(scratch, func_id, map_id, &stack_id);
 
-  ddog_prof_ProfileAdapter adapter;
-  check_ok(
-      ddog_prof_ProfileAdapter_new(&adapter, dict, scratch,
-                                   (struct ddog_prof_Slice_ValueType){.ptr = value_types, .len = 3},
-                                   (struct ddog_Slice_I64){.ptr = groupings, .len = 3}),
-      "ProfileAdapter_new");
+  ddog_prof2_ProfileAdapter adapter;
+  check_ok(ddog_prof2_ProfileAdapter_new(
+               &adapter, dict, scratch,
+               (struct ddog_prof2_Slice_ValueType){.ptr = value_types, .len = 3},
+               (struct ddog_Slice_I64){.ptr = groupings, .len = 3}),
+           "ProfileAdapter_new");
 
   // Simulate Poisson upscaling for the allocation grouping (group index 1)
   const uint64_t SAMPLING_DISTANCE = 512 * 1024; // 512 KiB sampling distance
-  struct ddog_prof_PoissonUpscalingRule poisson_rule = {
+  struct ddog_prof2_PoissonUpscalingRule poisson_rule = {
       .sum_offset = 0, .count_offset = 1, .sampling_distance = SAMPLING_DISTANCE};
 
   // These three tags are called unified service tags.
@@ -209,26 +210,26 @@ int main(void) {
     // Sample 1: wall-time (group 0)
     {
       int64_t values[3] = {WALL_TICK_NS, 0, 0};
-      ddog_prof_SampleBuilderHandle sb = NULL;
-      check_ok(ddog_prof_ProfileAdapter_add_sample(
+      ddog_prof2_SampleBuilderHandle sb = NULL;
+      check_ok(ddog_prof2_ProfileAdapter_add_sample(
                    &sb, &adapter, 0, (struct ddog_Slice_I64){.ptr = values, .len = 3}),
                "ProfileAdapter_add_sample(wall)");
-      check_ok(ddog_prof_SampleBuilder_stack_id(sb, stack_id), "SampleBuilder_stack_id(wall)");
-      check_ok(ddog_prof_SampleBuilder_timestamp(sb, ts_now), "SampleBuilder_timestamp(wall)");
-      check_ok(ddog_prof_SampleBuilder_finish(&sb), "SampleBuilder_finish(wall)");
+      check_ok(ddog_prof2_SampleBuilder_stack_id(sb, stack_id), "SampleBuilder_stack_id(wall)");
+      check_ok(ddog_prof2_SampleBuilder_timestamp(sb, ts_now), "SampleBuilder_timestamp(wall)");
+      check_ok(ddog_prof2_SampleBuilder_finish(&sb), "SampleBuilder_finish(wall)");
     }
 
     // Sample 2: allocation (group 1) using Poisson upscaling
     {
       int64_t bytes = rand_range_i64(1, (int64_t)SAMPLING_DISTANCE);
       int64_t values[3] = {0, bytes, 1};
-      ddog_prof_SampleBuilderHandle sb = NULL;
-      check_ok(ddog_prof_ProfileAdapter_add_sample(
+      ddog_prof2_SampleBuilderHandle sb = NULL;
+      check_ok(ddog_prof2_ProfileAdapter_add_sample(
                    &sb, &adapter, 1, (struct ddog_Slice_I64){.ptr = values, .len = 3}),
                "ProfileAdapter_add_sample(alloc)");
-      check_ok(ddog_prof_SampleBuilder_stack_id(sb, stack_id), "SampleBuilder_stack_id(alloc)");
-      check_ok(ddog_prof_SampleBuilder_timestamp(sb, ts_now), "SampleBuilder_timestamp(alloc)");
-      check_ok(ddog_prof_SampleBuilder_finish(&sb), "SampleBuilder_finish(alloc)");
+      check_ok(ddog_prof2_SampleBuilder_stack_id(sb, stack_id), "SampleBuilder_stack_id(alloc)");
+      check_ok(ddog_prof2_SampleBuilder_timestamp(sb, ts_now), "SampleBuilder_timestamp(alloc)");
+      check_ok(ddog_prof2_SampleBuilder_finish(&sb), "SampleBuilder_finish(alloc)");
     }
 
     // Flush once per interval
@@ -240,15 +241,15 @@ int main(void) {
       struct ddog_prof_EncodedProfile encoded = {0};
       // Grouping 0: profile has no upscaling, no special API to call.
       // Grouping 1: add profile with poisson upscaling
-      check_ok(ddog_prof_ProfileAdapter_add_poisson_upscaling(&adapter, 1, poisson_rule),
+      check_ok(ddog_prof2_ProfileAdapter_add_poisson_upscaling(&adapter, 1, poisson_rule),
                "ProfileAdapter_add_poisson_upscaling)");
-      check_ok(ddog_prof_ProfileAdapter_build_compressed(&encoded, &adapter, &start_ts, &end_ts),
+      check_ok(ddog_prof2_ProfileAdapter_build_compressed(&encoded, &adapter, &start_ts, &end_ts),
                "PprofAdapter_build_compressed");
 
       // Build and send exporter request
       struct ddog_prof_Slice_Exporter_File files_to_compress =
-          ddog_prof_Exporter_Slice_File_empty();
-      struct ddog_prof_Slice_Exporter_File files_unmodified = ddog_prof_Exporter_Slice_File_empty();
+          ddog_prof_Slice_Exporter_File_empty();
+      struct ddog_prof_Slice_Exporter_File files_unmodified = ddog_prof_Slice_Exporter_File_empty();
       struct ddog_prof_Endpoint endpoint =
           ddog_prof_Endpoint_agent(DDOG_CHARSLICE_C("http://localhost:8126"));
       struct ddog_prof_ProfileExporter_Result exporter_result =
@@ -286,13 +287,13 @@ int main(void) {
 
       // Reset interval: drop and recreate scratchpad and adapter.
       // The profiles dictionary lives forever in this example.
-      ddog_prof_ProfileAdapter_drop(&adapter);
-      ddog_prof_ScratchPad_drop(&scratch);
-      check_ok(ddog_prof_ScratchPad_new(&scratch), "ScratchPad_new(restart)");
+      ddog_prof2_ProfileAdapter_drop(&adapter);
+      ddog_prof2_ScratchPad_drop(&scratch);
+      check_ok(ddog_prof2_ScratchPad_new(&scratch), "ScratchPad_new(restart)");
       rebuild_scratchpad_state(scratch, func_id, map_id, &stack_id);
-      check_ok(ddog_prof_ProfileAdapter_new(
+      check_ok(ddog_prof2_ProfileAdapter_new(
                    &adapter, dict, scratch,
-                   (struct ddog_prof_Slice_ValueType){.ptr = value_types, .len = 3},
+                   (struct ddog_prof2_Slice_ValueType){.ptr = value_types, .len = 3},
                    (struct ddog_Slice_I64){.ptr = groupings, .len = 3}),
                "ProfileAdapter_new(restart)");
       interval_started = now_secs;
@@ -304,9 +305,9 @@ int main(void) {
   }
 
   printf("[profiles.c] shutting down\n");
-  ddog_prof_ProfileAdapter_drop(&adapter);
+  ddog_prof2_ProfileAdapter_drop(&adapter);
   ddog_Vec_Tag_drop(tags);
-  ddog_prof_ScratchPad_drop(&scratch);
-  ddog_prof_ProfilesDictionary_drop(&dict);
+  ddog_prof2_ScratchPad_drop(&scratch);
+  ddog_prof2_ProfilesDictionary_drop(&dict);
   return 0;
 }

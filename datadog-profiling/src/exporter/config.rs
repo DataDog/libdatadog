@@ -41,8 +41,7 @@ pub fn agent_uds(path: &std::path::Path) -> anyhow::Result<Endpoint> {
     agent(base_url)
 }
 
-/// Creates an Endpoint for talking to the Datadog agent though a windows named
-/// pipe.
+/// Creates an Endpoint for talking to the Datadog agent though a windows named pipe.
 ///
 /// # Arguments
 /// * `path` - file system path to the named pipe

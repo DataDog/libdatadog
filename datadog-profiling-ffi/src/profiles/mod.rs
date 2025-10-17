@@ -1,10 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-// todo: do we need to expose compressor? Does FFI have any desire to expose
-//       a non-compressed serialized profile?
-// mod compressor;
-// mod parallel_set;
+mod datatypes;
+mod interning_api;
 
 mod pprof_builder;
 mod profile;
@@ -35,9 +33,7 @@ pub const fn null_insert_err() -> &'static CStr {
 macro_rules! ensure_non_null_out_parameter {
     ($expr:expr) => {
         if $expr.is_null() {
-            return $crate::ProfileStatus::from(
-                $crate::profiles::null_out_param_err(),
-            );
+            return $crate::ProfileStatus2::from($crate::profiles::null_out_param_err());
         }
     };
 }
@@ -46,9 +42,7 @@ macro_rules! ensure_non_null_out_parameter {
 macro_rules! ensure_non_null_insert {
     ($expr:expr) => {
         if $expr.is_null() {
-            return $crate::ProfileStatus::from(
-                $crate::profiles::null_insert_err(),
-            );
+            return $crate::ProfileStatus2::from($crate::profiles::null_insert_err());
         }
     };
 }

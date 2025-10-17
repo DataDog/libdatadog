@@ -1,0 +1,53 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use crate::profiles::datatypes::{Sample, ValueType2};
+use crate::profiles::ProfileError;
+use arrayvec::ArrayVec;
+use ddcommon::vec::VecExt;
+
+pub const MAX_SAMPLE_TYPES: usize = 2;
+
+#[derive(Debug, Default)]
+pub struct Profile2 {
+    pub sample_types: ArrayVec<ValueType2, MAX_SAMPLE_TYPES>,
+    pub samples: Vec<Sample>,
+    pub period_types: Option<ValueType2>,
+    pub period: Option<i64>,
+}
+
+impl Profile2 {
+    pub fn sample_types(&self) -> &[ValueType2] {
+        self.sample_types.as_slice()
+    }
+
+    pub fn try_add_sample_type(&mut self, vt: ValueType2) -> Result<(), ProfileError> {
+        Ok(self.sample_types.try_push(vt)?)
+    }
+
+    pub fn add_period(&mut self, period: i64, vt: ValueType2) {
+        self.period_types = Some(vt);
+        self.period = Some(period);
+    }
+
+    pub fn add_sample(&mut self, sample: Sample) -> Result<(), ProfileError> {
+        if self.sample_types.len() != sample.values.len() {
+            return Err(self.sample_values_mismatch_error(sample.values.as_slice()));
+        }
+        self.samples.try_push(sample).map_err(|_| {
+            ProfileError::other("out of memory: sample couldn't be added to the profile")
+        })?;
+        Ok(())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn sample_values_mismatch_error(&self, values: &[i64]) -> ProfileError {
+        let sample_types = self.sample_types.len();
+        let values_len = values.len();
+        // todo: wire up string table so we can print out the sample type?
+        ProfileError::fmt(format_args!(
+            "invalid input: expected {sample_types} sample values, received {values_len}"
+        ))
+    }
+}

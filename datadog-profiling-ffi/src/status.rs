@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use allocator_api2::alloc::{AllocError, Allocator, Global, Layout};
-use datadog_profiling::profiles::FallibleStringWriter;
+use datadog_profiling2::profiles::FallibleStringWriter;
 use std::borrow::Cow;
 use std::ffi::{c_char, CStr, CString};
 use std::hint::unreachable_unchecked;
@@ -24,7 +24,7 @@ const MASK_UNUSED: usize = !(MASK_IS_ERROR | MASK_IS_ALLOCATED);
 /// The OK status is guaranteed to have a representation of `{ 0, null }`.
 #[repr(C)]
 #[derive(Debug)]
-pub struct ProfileStatus {
+pub struct ProfileStatus2 {
     /// 0 means okay, everything else is opaque in C.
     /// In Rust, the bits help us know whether it is heap allocated or not.
     pub flags: libc::size_t,
@@ -34,40 +34,49 @@ pub struct ProfileStatus {
     pub err: *const c_char,
 }
 
-impl Default for ProfileStatus {
+impl Default for ProfileStatus2 {
     fn default() -> Self {
-        Self { flags: 0, err: null() }
-    }
-}
-
-unsafe impl Send for ProfileStatus {}
-unsafe impl Sync for ProfileStatus {}
-
-impl<E: core::error::Error> From<Result<(), E>> for ProfileStatus {
-    fn from(result: Result<(), E>) -> Self {
-        match result {
-            Ok(_) => ProfileStatus::OK,
-            Err(err) => ProfileStatus::from_error(err),
+        Self {
+            flags: 0,
+            err: null(),
         }
     }
 }
 
-impl From<&'static CStr> for ProfileStatus {
+unsafe impl Send for ProfileStatus2 {}
+unsafe impl Sync for ProfileStatus2 {}
+
+impl<E: core::error::Error> From<Result<(), E>> for ProfileStatus2 {
+    fn from(result: Result<(), E>) -> Self {
+        match result {
+            Ok(_) => ProfileStatus2::OK,
+            Err(err) => ProfileStatus2::from_error(err),
+        }
+    }
+}
+
+impl From<&'static CStr> for ProfileStatus2 {
     fn from(value: &'static CStr) -> Self {
-        Self { flags: FLAG_STATIC, err: value.as_ptr() }
+        Self {
+            flags: FLAG_STATIC,
+            err: value.as_ptr(),
+        }
     }
 }
 
-impl From<CString> for ProfileStatus {
+impl From<CString> for ProfileStatus2 {
     fn from(cstring: CString) -> Self {
-        Self { flags: FLAG_ALLOCATED, err: cstring.into_raw() }
+        Self {
+            flags: FLAG_ALLOCATED,
+            err: cstring.into_raw(),
+        }
     }
 }
 
-impl TryFrom<ProfileStatus> for CString {
+impl TryFrom<ProfileStatus2> for CString {
     type Error = usize;
 
-    fn try_from(status: ProfileStatus) -> Result<Self, Self::Error> {
+    fn try_from(status: ProfileStatus2) -> Result<Self, Self::Error> {
         if status.flags == FLAG_ALLOCATED {
             Ok(unsafe { CString::from_raw(status.err.cast_mut()) })
         } else {
@@ -76,10 +85,10 @@ impl TryFrom<ProfileStatus> for CString {
     }
 }
 
-impl TryFrom<&ProfileStatus> for &CStr {
+impl TryFrom<&ProfileStatus2> for &CStr {
     type Error = usize;
 
-    fn try_from(status: &ProfileStatus) -> Result<Self, Self::Error> {
+    fn try_from(status: &ProfileStatus2) -> Result<Self, Self::Error> {
         if status.flags != FLAG_OK {
             Ok(unsafe { CStr::from_ptr(status.err.cast_mut()) })
         } else {
@@ -88,8 +97,8 @@ impl TryFrom<&ProfileStatus> for &CStr {
     }
 }
 
-impl From<ProfileStatus> for Result<(), Cow<'static, CStr>> {
-    fn from(status: ProfileStatus) -> Self {
+impl From<ProfileStatus2> for Result<(), Cow<'static, CStr>> {
+    fn from(status: ProfileStatus2) -> Self {
         let flags = status.flags;
         let is_error = (flags & MASK_IS_ERROR) != 0;
         let is_allocated = (flags & MASK_IS_ALLOCATED) != 0;
@@ -99,9 +108,7 @@ impl From<ProfileStatus> for Result<(), Cow<'static, CStr>> {
         }
         match (is_allocated, is_error) {
             (false, false) => Ok(()),
-            (false, true) => {
-                Err(Cow::Borrowed(unsafe { CStr::from_ptr(status.err) }))
-            }
+            (false, true) => Err(Cow::Borrowed(unsafe { CStr::from_ptr(status.err) })),
             (true, true) => Err(Cow::Owned(unsafe {
                 CString::from_raw(status.err.cast_mut())
             })),
@@ -116,7 +123,7 @@ impl From<ProfileStatus> for Result<(), Cow<'static, CStr>> {
     }
 }
 
-impl From<()> for ProfileStatus {
+impl From<()> for ProfileStatus2 {
     fn from(_: ()) -> Self {
         Self::OK
     }
@@ -181,31 +188,31 @@ fn string_try_shrink_to_fit(string: &mut String) -> Result<(), AllocError> {
     res
 }
 
-impl ProfileStatus {
-    pub const OK: ProfileStatus = ProfileStatus { flags: FLAG_OK, err: null() };
+impl ProfileStatus2 {
+    pub const OK: ProfileStatus2 = ProfileStatus2 {
+        flags: FLAG_OK,
+        err: null(),
+    };
 
-    const OUT_OF_MEMORY: ProfileStatus = ProfileStatus {
+    const OUT_OF_MEMORY: ProfileStatus2 = ProfileStatus2 {
         flags: FLAG_STATIC,
         err: c"out of memory while trying to display error".as_ptr(),
     };
-    const NULL_BYTE_IN_ERROR_MESSAGE: ProfileStatus = ProfileStatus {
+    const NULL_BYTE_IN_ERROR_MESSAGE: ProfileStatus2 = ProfileStatus2 {
         flags: FLAG_STATIC,
-        err: c"another error occured, but cannot be displayed because it has interior null bytes".as_ptr(),
+        err: c"another error occured, but cannot be displayed because it has interior null bytes"
+            .as_ptr(),
     };
 
-    pub fn from_ffi_safe_error_message<
-        E: ddcommon::error::FfiSafeErrorMessage,
-    >(
-        err: E,
-    ) -> Self {
-        ProfileStatus::from(err.as_ffi_str())
+    pub fn from_ffi_safe_error_message<E: ddcommon::error::FfiSafeErrorMessage>(err: E) -> Self {
+        ProfileStatus2::from(err.as_ffi_str())
     }
 
     pub fn from_error<E: core::error::Error>(err: E) -> Self {
         use core::fmt::Write;
         let mut writer = FallibleStringWriter::new();
         if write!(writer, "{}", err).is_err() {
-            return ProfileStatus::OUT_OF_MEMORY;
+            return ProfileStatus2::OUT_OF_MEMORY;
         }
 
         let mut str = String::from(writer);
@@ -214,18 +221,18 @@ impl ProfileStatus {
         // libc has it, and we use the libc crate already in FFI.
         let pos = unsafe { libc::memchr(str.as_ptr().cast(), 0, str.len()) };
         if !pos.is_null() {
-            return ProfileStatus::NULL_BYTE_IN_ERROR_MESSAGE;
+            return ProfileStatus2::NULL_BYTE_IN_ERROR_MESSAGE;
         }
 
         // Reserve memory exactly. We have to shrink later in order to turn
         // it into a box, so we don't want any excess capacity.
         if str.try_reserve_exact(1).is_err() {
-            return ProfileStatus::OUT_OF_MEMORY;
+            return ProfileStatus2::OUT_OF_MEMORY;
         }
         str.push('\0');
 
         if string_try_shrink_to_fit(&mut str).is_err() {
-            return ProfileStatus::OUT_OF_MEMORY;
+            return ProfileStatus2::OUT_OF_MEMORY;
         }
 
         // Pop the null off because CString::from_vec_unchecked adds one.
@@ -236,7 +243,7 @@ impl ProfileStatus {
         // to avoid an allocation failure here, we had to make a String with
         // no excess capacity.
         let cstring = unsafe { CString::from_vec_unchecked(str.into_bytes()) };
-        ProfileStatus::from(cstring)
+        ProfileStatus2::from(cstring)
     }
 }
 
@@ -246,11 +253,11 @@ impl ProfileStatus {
 ///
 /// The pointer should point at a valid Status object, if it's not null.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Status_drop(status: *mut ProfileStatus) {
+pub unsafe extern "C" fn ddog_prof2_Status_drop(status: *mut ProfileStatus2) {
     if status.is_null() {
         return;
     }
-    // SAFETY: safe when the user respects ddog_prof_Status_drop's conditions.
-    let status = unsafe { core::ptr::replace(status, ProfileStatus::OK) };
+    // SAFETY: safe when the user respects ddog_prof2_Status_drop's conditions.
+    let status = unsafe { core::ptr::replace(status, ProfileStatus2::OK) };
     drop(Result::from(status));
 }

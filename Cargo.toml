@@ -14,6 +14,7 @@ members = [
   "datadog-live-debugger",
   "datadog-live-debugger-ffi",
   "datadog-profiling",
+  "datadog-profiling2",
   "datadog-profiling-ffi",
   "datadog-profiling-protobuf",
   #"datadog-profiling-replayer", # todo: add back

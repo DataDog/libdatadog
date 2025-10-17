@@ -13,40 +13,35 @@ autobenches = false
 crate-type = ["lib"]
 bench = false
 
+[[bench]]
+name = "main"
+harness = false
+
 [dependencies]
-allocator-api2 = { version = "0.2", features = ["alloc"]}
 anyhow = "1.0"
-arrayvec = "0.7"
 bitmaps = "3.2.0"
 byteorder = { version = "1.5", features = ["std"] }
 bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
-crossbeam-utils = { version = "0.8", default-features = false }
 datadog-alloc = { path = "../datadog-alloc" }
 datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["prost_impls"] }
 ddcommon = {path = "../ddcommon" }
 futures = { version = "0.3", default-features = false }
-hashbrown = { version = "0.15"}
 http = "1.0"
 hyper = { workspace = true}
 http-body-util = "0.1"
 hyper-multipart-rfc7578 = "0.9.0"
-indexmap = "2.7"
+indexmap = "2.2"
 lz4_flex = { version = "0.9", default-features = false, features = ["std", "safe-encode", "frame"] }
 mime = "0.3.16"
-parking_lot = "0.12"
 prost = "0.13.5"
 rustc-hash = { version = "1.1", default-features = false }
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
 target-triple = "0.1.4"
-thiserror = "1"
-tokio = { version = "1.23", features = ["rt", "macros"] }
+tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
-hyper-util = "0.1.10"
 
 [dev-dependencies]
 bolero = "0.13"
-datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["bolero", "prost_impls"] }
-proptest = "1.5"
-uuid = { version = "1", features = ["v4"] }
+criterion = "0.5.1"

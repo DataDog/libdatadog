@@ -24,63 +24,73 @@ prefix = "ddog_prof_"
 renaming_overrides_prefixing = true
 
 [export.rename]
-# Common
 "ByteSlice" = "ddog_ByteSlice"
 "CharSlice" = "ddog_CharSlice"
 "Endpoint" = "ddog_Endpoint"
 "Error" = "ddog_Error"
 "HttpStatus" = "ddog_HttpStatus"
-"Option_Slice_Label" = "ddog_Option_Slice_Label"
 "Slice_CChar" = "ddog_Slice_CChar"
-"Slice_CharSlice" = "ddog_Slice_CharSlice"
 "Slice_I64" = "ddog_Slice_I64"
-"Slice_U64" = "ddog_Slice_U64"
 "Slice_U8" = "ddog_Slice_U8"
-"StringWrapper" = "ddog_StringWrapper"
-"StringWrapperResult" = "ddog_StringWrapperResult"
 "Tag" = "ddog_Tag"
 "Timespec" = "ddog_Timespec"
 "Vec_Tag" = "ddog_Vec_Tag"
 "Vec_U8" = "ddog_Vec_U8"
-"VoidResult" = "ddog_VoidResult"
-
-# Profiles
-"ArcHandle_ProfilesDictionary" = "ddog_prof_ProfilesDictionaryHandle"
-"ArcHandle_ScratchPad" = "ddog_prof_ScratchPadHandle"
-"ProfileHandle_PprofBuilder" = "ddog_prof_PprofBuilderHandle"
-"ProfileHandle_Profile" = "ddog_prof_ProfileHandle"
-"ProfileHandle_SampleBuilder" = "ddog_prof_SampleBuilderHandle"
-"ProfileStatus" = "ddog_prof_Status"
-"Vec_ProfileHandleProfile" = "ddog_prof_Vec_ProfileHandle"
 "Vec_Usize" = "ddog_Vec_Usize"
 
-# Exporter / Legacy
-"CompressorFinishResult" = "ddog_prof_Compressor_FinishResult"
+"ProfilingEndpoint" = "ddog_prof_Endpoint"
 "ExporterNewResult" = "ddog_prof_Exporter_NewResult"
 "File" = "ddog_prof_Exporter_File"
-"LabelsSetLookupResult" = "ddog_prof_LabelsSet_LookupResult"
-"ManagedStringId" = "ddog_prof_ManagedStringId"
-"ManagedStringStorage" = "ddog_prof_ManagedStringStorage"
-"ManagedStringStorageInternResult" = "ddog_prof_ManagedStringStorage_InternResult"
-"ManagedStringStorageNewResult" = "ddog_prof_ManagedStringStorage_NewResult"
-"ProfileBuilderBuildResult" = "ddog_prof_ProfileBuilder_BuildResult"
-"ProfileBuilderNewResult" = "ddog_prof_ProfileBuilder_NewResult"
-"ProfileError" = "ddog_prof_Profile_Error"
 "ProfileExporter" = "ddog_prof_Exporter"
 "ProfileNewResult" = "ddog_prof_Profile_NewResult"
 "ProfileResult" = "ddog_prof_Profile_Result"
-"ProfileVoidResult" = "ddog_prof_Profile_VoidResult"
-"ProfilingEndpoint" = "ddog_prof_Endpoint"
 "Request" = "ddog_prof_Exporter_Request"
 "RequestBuildResult" = "ddog_prof_Exporter_Request_BuildResult"
 "SendResult" = "ddog_prof_Exporter_SendResult"
 "SerializeResult" = "ddog_prof_Profile_SerializeResult"
-"Slice_File" = "ddog_prof_Slice_Exporter_File" # todo: rename back to ddog_prof_Exporter_Slice_File ?
-"SliceSetInsertResult" = "ddog_prof_LabelsSet_InsertResult"
-"StoreInsertResult" = "ddog_prof_Store_InsertResult"
-"StringTableInternResult" = "ddog_prof_StringTable_InternResult"
-"StringTableLookupResult" = "ddog_prof_StringTable_LookupResult"
-"StringTableNewResult" = "ddog_prof_StringTable_NewResult"
+"Slice_File" = "ddog_prof_Slice_Exporter_File"
+"ManagedStringStorage" = "ddog_prof_ManagedStringStorage"
+"ManagedStringId" = "ddog_prof_ManagedStringId"
+"StringWrapper" = "ddog_StringWrapper"
+"StringWrapperResult" = "ddog_StringWrapperResult"
+"VoidResult" = "ddog_VoidResult"
+
+"CbindgenIsDumbStringId" = "ddog_prof_StringId"
+
+"Slice_GenerationalIdLabelId" = "ddog_prof_Slice_LabelId"
+"Slice_GenerationalIdLocationId" = "ddog_prof_Slice_LocationId"
+
+"GenerationalId_FunctionId" = "ddog_prof_FunctionId"
+"Result_GenerationalIdFunctionId" = "ddog_prof_FunctionId_Result"
+"FunctionId" = "OpaqueFunctionId"
+
+"GenerationalId_LabelId" = "ddog_prof_LabelId"
+"Result_GenerationalIdLabelId" = "ddog_prof_LabelId_Result"
+"LabelId" = "OpaqueLabelId"
+
+"GenerationalId_LabelSetId" = "ddog_prof_LabelSetId"
+"Result_GenerationalIdLabelSetId" = "ddog_prof_LabelSetId_Result"
+"LabelSetId" = "OpaqueLabelSetId"
+
+"GenerationalId_LocationId" = "ddog_prof_LocationId"
+"Result_GenerationalIdLocationId" = "ddog_prof_LocationId_Result"
+"LocationId" = "OpaqueLocationId"
+
+"GenerationalId_MappingId" = "ddog_prof_MappingId"
+"Result_GenerationalIdMappingId" = "ddog_prof_MappingId_Result"
+"MappingId" = "OpaqueMappingId"
+
+"GenerationalId_StackTraceId" = "ddog_prof_StackTraceId"
+"Result_GenerationalIdStackTraceId" = "ddog_prof_StackTraceId_Result"
+"StackTraceId" = "OpaqueStackTraceId"
+
+"GenerationalId_StringId" = "ddog_prof_StringId"
+"Result_GenerationalIdStringId" = "ddog_prof_StringId_Result"
+
+# StringId is an alias of StringOffset, we need both to be `OpaqueStringId`
+# for the current interning API.
+"StringOffset" = "OpaqueStringId"
+"StringId" = "OpaqueStringId"
 
 "HandleProfileExporter" = "ddog_prof_ProfileExporter"
 "Handle_ProfileExporter" = "ddog_prof_ProfileExporter"
@@ -96,6 +106,40 @@ renaming_overrides_prefixing = true
 
 "CancellationToken" = "struct ddog_OpaqueCancellationToken"
 "Handle_TokioCancellationToken" = "ddog_CancellationToken"
+
+# Profiles 2
+"ArcHandle2_ProfilesDictionary2" = "ddog_prof2_ProfilesDictionaryHandle"
+"ArcHandle2_ScratchPad" = "ddog_prof2_ScratchPadHandle"
+"ProfileHandle2_PprofBuilder2" = "ddog_prof2_PprofBuilderHandle"
+"ProfileHandle2_Profile2" = "ddog_prof2_ProfileHandle"
+"ProfileHandle2_SampleBuilder2" = "ddog_prof2_SampleBuilderHandle"
+"ProfileStatus2" = "ddog_prof2_Status"
+"Vec_ProfileHandleProfile2" = "ddog_prof2_Vec_ProfileHandle"
+
+"Function2" = "ddog_prof2_Function"
+"FunctionId2" = "ddog_prof2_FunctionId"
+"GroupByLabel2" = "ddog_prof2_GroupByLabel"
+"Line2" = "ddog_prof2_Line"
+"Link2" = "ddog_prof2_Link"
+"LinkId2" = "ddog_prof2_LinkId"
+"Location2" = "ddog_prof2_Location"
+"LocationId2" = "ddog_prof2_LocationId"
+"Mapping2" = "ddog_prof2_Mapping"
+"MappingId2" = "ddog_prof2_MappingId"
+"OptionalFunctionId2" = "ddog_prof2_OptionalFunctionId"
+"OptionalMappingId2" = "ddog_prof2_OptionalMappingId"
+"ProportionalUpscalingRule2" = "ddog_prof2_ProportionalUpscalingRule"
+"PoissonUpscalingRule2" = "ddog_prof2_PoissonUpscalingRule"
+"PprofOptions2" = "ddog_prof2_PprofOptions"
+"ProfilesDictionary2" = "ddog_prof2_ProfilesDictionary"
+"ProfileAdapter2" = "ddog_prof2_ProfileAdapter"
+"Profile2" = "ddog_prof2_Profile"
+"SampleBuilder2" = "ddog_prof2_SampleBuilder"
+"StackId2" = "ddog_prof2_StackId"
+"StringId2" = "ddog_prof2_StringId"
+"ValueType2" = "ddog_prof2_ValueType"
+"Slice_LocationId2" = "ddog_prof2_Slice_LocationId"
+"Slice_ValueType2" = "ddog_prof2_Slice_ValueType"
 
 # Horrible cbindgen output on these >.<
 "Record_I64__2__OptZero" = "int64_t"
@@ -116,7 +160,6 @@ renaming_overrides_prefixing = true
 rename_types = "PascalCase"
 
 [enum]
-#merge_generic_tags = true
 prefix_with_name = true
 rename_variants = "ScreamingSnakeCase"
 
@@ -125,5 +168,5 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["ddcommon", "ddcommon-ffi", "datadog-profiling", "datadog-profiling-protobuf", "datadog-crashtracker"]
+include = ["ddcommon", "ddcommon-ffi", "datadog-profiling", "datadog-profiling2", "datadog-profiling-protobuf", "datadog-crashtracker"]
 

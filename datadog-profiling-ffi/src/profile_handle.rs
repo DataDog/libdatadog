@@ -6,11 +6,11 @@
 //! which panic, such as From because it has to Box, which may fail.
 //! This is an experiment to see how it works comparatively.
 //!
-//! To dispose of it, call [`ProfileHandle::take`] and drop the box.
+//! To dispose of it, call [`ProfileHandle2::take`] and drop the box.
 
 use allocator_api2::alloc::AllocError;
 use allocator_api2::boxed::Box;
-use datadog_profiling::profiles::ProfileError;
+use datadog_profiling2::profiles::ProfileError;
 use ddcommon::error::FfiSafeErrorMessage;
 use std::ffi::CStr;
 use std::fmt;
@@ -18,7 +18,7 @@ use std::ptr::NonNull;
 
 // Represents an object that should only be referred to by its handle.
 #[repr(transparent)]
-pub struct ProfileHandle<T> {
+pub struct ProfileHandle2<T> {
     /// A null pointer is a valid but almost useless handle as all operations
     /// will error or return None. It's still good for initialization and
     /// detecting some misuse. The pointer is only valid until it's dropped
@@ -30,15 +30,17 @@ pub struct ProfileHandle<T> {
 /// Note that this type is Copy because it's an FFI type; we cannot stop C code
 /// from copying it, so we are reflecting that fact. It is not recommended to
 /// copy a handle.
-impl<T> Copy for ProfileHandle<T> {}
+impl<T> Copy for ProfileHandle2<T> {}
 
-impl<T> Default for ProfileHandle<T> {
+impl<T> Default for ProfileHandle2<T> {
     fn default() -> Self {
-        Self { ptr: std::ptr::null_mut() }
+        Self {
+            ptr: std::ptr::null_mut(),
+        }
     }
 }
 
-impl<T> fmt::Debug for ProfileHandle<T> {
+impl<T> fmt::Debug for ProfileHandle2<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ProfileHandle")
             .field("ptr", &NonNull::new(self.ptr))
@@ -46,7 +48,7 @@ impl<T> fmt::Debug for ProfileHandle<T> {
     }
 }
 
-impl<T> Clone for ProfileHandle<T> {
+impl<T> Clone for ProfileHandle2<T> {
     fn clone(&self) -> Self {
         *self
     }
@@ -115,7 +117,7 @@ impl From<AllocHandleError> for ProfileError {
     }
 }
 
-impl<T> ProfileHandle<T> {
+impl<T> ProfileHandle2<T> {
     /// Tries to heap-allocate the provided value and provide a handle to it.
     /// Fails if the allocator fails.
     pub fn try_new(t: T) -> Result<Self, AllocHandleError> {
@@ -131,8 +133,8 @@ impl<T> ProfileHandle<T> {
     /// underlying resource. Example of issue:
     ///  1. A handle is copied.
     ///  2. Take is called on the original handle.
-    ///  3. Take is called on the copied handle, which isn't aware of the take
-    ///     from step 2, and so you get two Box<T> to the same value.
+    ///  3. Take is called on the copied handle, which isn't aware of the take from step 2, and so
+    ///     you get two Box<T> to the same value.
     ///
     /// Taking from the same handle multiple times is supported and safe.
     pub unsafe fn take(&mut self) -> Option<Box<T>> {
@@ -146,9 +148,8 @@ impl<T> ProfileHandle<T> {
     /// # Safety
     ///
     ///  1. The handle's underlying resource must still be alive.
-    ///  2. No mutable references to the same underlying resource must exist.
-    ///     This includes references from other handles to the same underlying
-    ///     resource.
+    ///  2. No mutable references to the same underlying resource must exist. This includes
+    ///     references from other handles to the same underlying resource.
     pub unsafe fn as_inner(&self) -> Result<&T, EmptyHandleError> {
         unsafe { self.ptr.cast::<T>().as_ref() }.ok_or(EmptyHandleError)
     }
@@ -158,14 +159,14 @@ impl<T> ProfileHandle<T> {
     /// # Safety
     ///
     ///  1. The handle's underlying resource must still be alive.
-    ///  2. No references to the same underlying resource must exist,
-    ///     even if it comes from a different handle to the same resource.
+    ///  2. No references to the same underlying resource must exist, even if it comes from a
+    ///     different handle to the same resource.
     pub unsafe fn as_inner_mut(&mut self) -> Result<&mut T, EmptyHandleError> {
         unsafe { self.ptr.cast::<T>().as_mut() }.ok_or(EmptyHandleError)
     }
 }
 
-impl<T> From<Box<T>> for ProfileHandle<T> {
+impl<T> From<Box<T>> for ProfileHandle2<T> {
     fn from(ptr: Box<T>) -> Self {
         let ptr = Box::into_raw(ptr).cast();
         Self { ptr }

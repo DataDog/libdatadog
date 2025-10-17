@@ -7,20 +7,22 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-mod arc_handle;
+#[cfg(all(feature = "symbolizer", not(target_os = "windows")))]
+pub use symbolizer_ffi::*;
+
 mod exporter;
+mod profiles;
+mod string_storage;
+
+mod arc_handle;
 mod profile_handle;
 mod profile_result;
-pub mod profiles;
 mod status;
 
 pub use arc_handle::*;
 pub use profile_handle::*;
 pub use profile_result::*;
 pub use status::*;
-
-#[cfg(all(feature = "symbolizer", not(target_os = "windows")))]
-pub use symbolizer_ffi::*;
 
 // re-export crashtracker ffi
 #[cfg(feature = "crashtracker-ffi")]

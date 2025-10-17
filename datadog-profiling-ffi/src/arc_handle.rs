@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::EmptyHandleError;
-use datadog_profiling::profiles::collections::Arc;
-use datadog_profiling::profiles::ProfileError;
+use datadog_profiling2::profiles::collections::Arc;
+use datadog_profiling2::profiles::ProfileError;
 use std::ptr::{null_mut, NonNull};
 
 /// Opaque FFI handle to an `Arc<T>`'s inner `T`.
@@ -14,21 +14,21 @@ use std::ptr::{null_mut, NonNull};
 /// - Use `as_inner()` to validate non-null before performing raw round-trips.
 #[repr(transparent)]
 #[derive(Debug)]
-pub struct ArcHandle<T>(*mut T);
+pub struct ArcHandle2<T>(*mut T);
 
-impl<T> Copy for ArcHandle<T> {}
-impl<T> Clone for ArcHandle<T> {
+impl<T> Copy for ArcHandle2<T> {}
+impl<T> Clone for ArcHandle2<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T> Default for ArcHandle<T> {
+impl<T> Default for ArcHandle2<T> {
     fn default() -> Self {
         Self(null_mut())
     }
 }
 
-impl<T> ArcHandle<T> {
+impl<T> ArcHandle2<T> {
     /// Constructs a new handle by allocating an `Arc<T>` and returning its
     /// inner pointer as a handle. Returns OutOfMemory on allocation failure.
     pub fn new(value: T) -> Result<Self, ProfileError> {

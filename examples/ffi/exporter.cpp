@@ -13,11 +13,11 @@ static ddog_CharSlice to_slice_c_char(const char *s) {
   return ddog_CharSlice{.ptr = s, .len = strlen(s)};
 }
 
-static void check_ok(ddog_prof_Status status, const char *ctx) {
+static void check_ok(ddog_prof2_Status status, const char *ctx) {
   if (status.flags != 0) {
     const char *msg = status.err ? status.err : "(unknown)";
     fprintf(stderr, "%s: %s\n", ctx, msg);
-    ddog_prof_Status_drop(&status);
+    ddog_prof2_Status_drop(&status);
     // this will cause leaks but this is just an example.
     exit(EXIT_FAILURE);
   }
@@ -36,81 +36,81 @@ int main(int argc, char **argv) {
   }
 
   // Core handles
-  ddog_prof_ProfilesDictionaryHandle dict = NULL;
-  check_ok(ddog_prof_ProfilesDictionary_new(&dict), "ProfilesDictionary_new");
+  ddog_prof2_ProfilesDictionaryHandle dict = NULL;
+  check_ok(ddog_prof2_ProfilesDictionary_new(&dict), "ProfilesDictionary_new");
 
-  ddog_prof_ScratchPadHandle scratch = NULL;
-  check_ok(ddog_prof_ScratchPad_new(&scratch), "ScratchPad_new");
+  ddog_prof2_ScratchPadHandle scratch = NULL;
+  check_ok(ddog_prof2_ScratchPad_new(&scratch), "ScratchPad_new");
 
   // ValueType: wall-time / nanoseconds
-  ddog_prof_ValueType vt = {DDOG_PROF_STRINGID_EMPTY, DDOG_PROF_STRINGID_EMPTY};
+  ddog_prof2_ValueType vt = {DDOG_PROF_STRINGID_EMPTY, DDOG_PROF_STRINGID_EMPTY};
   const ddog_CharSlice wall_time = DDOG_CHARSLICE_C_BARE("wall-time");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt.type_id, dict, wall_time,
+  check_ok(ddog_prof2_ProfilesDictionary_insert_str(&vt.type_id, dict, wall_time,
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(type)");
   const ddog_CharSlice nanoseconds = DDOG_CHARSLICE_C_BARE("nanoseconds");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&vt.unit_id, dict, nanoseconds,
+  check_ok(ddog_prof2_ProfilesDictionary_insert_str(&vt.unit_id, dict, nanoseconds,
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(unit)");
 
   // Insert a function and mapping in the dictionary
-  ddog_prof_Function func = {.name = DDOG_PROF_STRINGID_EMPTY,
+  ddog_prof2_Function func = {.name = DDOG_PROF_STRINGID_EMPTY,
                              .system_name = DDOG_PROF_STRINGID_EMPTY,
                              .file_name = DDOG_PROF_STRINGID_EMPTY};
   const ddog_CharSlice root_str = DDOG_CHARSLICE_C_BARE("<?php");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&func.name, dict, root_str,
+  check_ok(ddog_prof2_ProfilesDictionary_insert_str(&func.name, dict, root_str,
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(fn name)");
   const ddog_CharSlice filename = DDOG_CHARSLICE_C_BARE("/srv/example/index.php");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&func.file_name, dict, filename,
+  check_ok(ddog_prof2_ProfilesDictionary_insert_str(&func.file_name, dict, filename,
                                                    DDOG_PROF_UTF8_OPTION_VALIDATE),
            "insert_str(fn file)");
-  ddog_prof_FunctionId func_id = NULL;
-  check_ok(ddog_prof_ProfilesDictionary_insert_function(&func_id, dict, &func), "insert_function");
+  ddog_prof2_FunctionId func_id = NULL;
+  check_ok(ddog_prof2_ProfilesDictionary_insert_function(&func_id, dict, &func), "insert_function");
 
   // Insert a location and stack in the scratchpad
-  ddog_prof_Line line = {.line_number = 42, .function_id = func_id};
+  ddog_prof2_Line line = {.line_number = 42, .function_id = func_id};
   // No mapping id is valid, used in dynamic languages.
-  ddog_prof_Location loc = {.address = 0, .mapping_id = NULL, .line = line};
-  ddog_prof_LocationId locs[1] = {NULL};
-  check_ok(ddog_prof_ScratchPad_insert_location(locs, scratch, &loc), "ScratchPad_insert_location");
-  ddog_prof_Slice_LocationId loc_slice = {.ptr = locs, .len = 1};
-  ddog_prof_StackId stack_id = {0};
-  check_ok(ddog_prof_ScratchPad_insert_stack(&stack_id, scratch, loc_slice),
+  ddog_prof2_Location loc = {.address = 0, .mapping_id = NULL, .line = line};
+  ddog_prof2_LocationId locs[1] = {NULL};
+  check_ok(ddog_prof2_ScratchPad_insert_location(locs, scratch, &loc), "ScratchPad_insert_location");
+  ddog_prof2_Slice_LocationId loc_slice = {.ptr = locs, .len = 1};
+  ddog_prof2_StackId stack_id = {0};
+  check_ok(ddog_prof2_ScratchPad_insert_stack(&stack_id, scratch, loc_slice),
            "ScratchPad_insert_stack");
 
   // Create a profile and add sample type + period
-  ddog_prof_ProfileHandle profile = NULL;
-  check_ok(ddog_prof_Profile_new(&profile), "Profile_new");
-  check_ok(ddog_prof_Profile_add_sample_type(profile, vt), "Profile_add_sample_type");
-  check_ok(ddog_prof_Profile_add_period(profile, 10'000'000LL, vt),
+  ddog_prof2_ProfileHandle profile = NULL;
+  check_ok(ddog_prof2_Profile_new(&profile), "Profile_new");
+  check_ok(ddog_prof2_Profile_add_sample_type(profile, vt), "Profile_add_sample_type");
+  check_ok(ddog_prof2_Profile_add_period(profile, 10'000'000LL, vt),
            "Profile_add_period"); // 10ms tick
 
   // Build one sample via SampleBuilder with label language:php.
-  ddog_prof_StringId language_id = DDOG_PROF_STRINGID_EMPTY;
+  ddog_prof2_StringId language_id = DDOG_PROF_STRINGID_EMPTY;
   ddog_CharSlice language = DDOG_CHARSLICE_C_BARE("language");
   ddog_CharSlice language_php = DDOG_CHARSLICE_C_BARE("php");
-  check_ok(ddog_prof_ProfilesDictionary_insert_str(&language_id, dict, language,
+  check_ok(ddog_prof2_ProfilesDictionary_insert_str(&language_id, dict, language,
                                                    DDOG_PROF_UTF8_OPTION_ASSUME),
            "insert_str(sample label)");
 
-  ddog_prof_SampleBuilderHandle sb = NULL;
-  check_ok(ddog_prof_SampleBuilder_new(&sb, profile, scratch), "SampleBuilder_new");
-  check_ok(ddog_prof_SampleBuilder_stack_id(sb, stack_id), "SampleBuilder_stack_id");
-  check_ok(ddog_prof_SampleBuilder_value(sb, 10'000'000LL), "SampleBuilder_value");
-  check_ok(ddog_prof_SampleBuilder_attribute_str(sb, language_id, language_php,
+  ddog_prof2_SampleBuilderHandle sb = NULL;
+  check_ok(ddog_prof2_SampleBuilder_new(&sb, profile, scratch), "SampleBuilder_new");
+  check_ok(ddog_prof2_SampleBuilder_stack_id(sb, stack_id), "SampleBuilder_stack_id");
+  check_ok(ddog_prof2_SampleBuilder_value(sb, 10'000'000LL), "SampleBuilder_value");
+  check_ok(ddog_prof2_SampleBuilder_attribute_str(sb, language_id, language_php,
                                                  DDOG_PROF_UTF8_OPTION_ASSUME),
            "SampleBuilder_attribute_str");
-  check_ok(ddog_prof_SampleBuilder_finish(&sb), "SampleBuilder_finish");
+  check_ok(ddog_prof2_SampleBuilder_finish(&sb), "SampleBuilder_finish");
 
   // Build EncodedProfile with PprofBuilder
-  ddog_prof_PprofBuilderHandle pprof = NULL;
-  check_ok(ddog_prof_PprofBuilder_new(&pprof, dict, scratch), "PprofBuilder_new");
-  check_ok(ddog_prof_PprofBuilder_add_profile(pprof, profile), "PprofBuilder_add_profile");
+  ddog_prof2_PprofBuilderHandle pprof = NULL;
+  check_ok(ddog_prof2_PprofBuilder_new(&pprof, dict, scratch), "PprofBuilder_new");
+  check_ok(ddog_prof2_PprofBuilder_add_profile(pprof, profile), "PprofBuilder_add_profile");
   ddog_prof_EncodedProfile encoded = {0};
   ddog_Timespec start = {.seconds = 0, .nanoseconds = 0};
   ddog_Timespec end = {.seconds = 1, .nanoseconds = 0};
-  check_ok(ddog_prof_PprofBuilder_build_uncompressed(&encoded, pprof, 4096, start, end),
+  check_ok(ddog_prof2_PprofBuilder_build_uncompressed(&encoded, pprof, 4096, start, end),
            "PprofBuilder_build_uncompressed");
 
   // Build and send exporter request
@@ -169,9 +169,9 @@ int main(int argc, char **argv) {
   // Cleanup
   ddog_prof_Exporter_drop(&exporter);
   ddog_Vec_Tag_drop(tags);
-  ddog_prof_PprofBuilder_drop(&pprof);
-  ddog_prof_Profile_drop(&profile);
-  ddog_prof_ScratchPad_drop(&scratch);
-  ddog_prof_ProfilesDictionary_drop(&dict);
+  ddog_prof2_PprofBuilder_drop(&pprof);
+  ddog_prof2_Profile_drop(&profile);
+  ddog_prof2_ScratchPad_drop(&scratch);
+  ddog_prof2_ProfilesDictionary_drop(&dict);
   return 0;
 }
