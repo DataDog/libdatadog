@@ -2,9 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::profile_handle::ProfileHandle;
+use crate::wrap_with_ffi_result;
 use crate::{ensure_non_null_out_parameter, ProfileStatus};
+use datadog_profiling::exporter::EncodedProfile;
 use datadog_profiling::profiles::datatypes::{Profile, ValueType};
 use datadog_profiling::profiles::ProfileError;
+use ddcommon_ffi::slice::ByteSlice;
+use ddcommon_ffi::{Handle, ToInner};
+use function_name::named;
 
 /// Allocates a new `Profile` and writes a handle to `handle`.
 ///
@@ -232,5 +237,39 @@ mod tests {
                 unsafe { ddog_prof_ProfilesDictionary_drop(&mut dict) };
             }
         }
+    }
+}
+
+/// Given an EncodedProfile, get a slice representing the bytes in the pprof.
+/// This slice is valid for use until the encoded_profile is modified in any way (e.g. dropped or
+/// consumed).
+/// # Safety
+/// Only pass a reference to a valid `ddog_prof_EncodedProfile`.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_prof_EncodedProfile_bytes<'a>(
+    mut encoded_profile: *mut Handle<EncodedProfile>,
+) -> ddcommon_ffi::Result<ByteSlice<'a>> {
+    wrap_with_ffi_result!({
+        let slice = encoded_profile.to_inner_mut()?.buffer.as_slice();
+        // Rountdtrip through raw pointers to avoid Rust complaining about lifetimes.
+        let byte_slice = ByteSlice::from_raw_parts(slice.as_ptr(), slice.len());
+        anyhow::Ok(byte_slice)
+    })
+}
+
+/// # Safety
+/// Only pass a reference to a valid `ddog_prof_EncodedProfile`, or null. A
+/// valid reference also means that it hasn't already been dropped or exported (do not
+/// call this twice on the same object).
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
+    profile: *mut Handle<EncodedProfile>,
+) {
+    // Technically, this function has been designed so if it's double-dropped
+    // then it's okay, but it's not something that should be relied on.
+    if !profile.is_null() {
+        drop((*profile).take())
     }
 }
