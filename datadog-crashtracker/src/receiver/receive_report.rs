@@ -3,6 +3,7 @@
 
 use crate::{
     crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, Span, TelemetryCrashUploader},
+    runtime_callback::{RuntimeFrame, RuntimeStack},
     shared::constants::*,
     CrashtrackerConfiguration,
 };
@@ -54,6 +55,10 @@ pub(crate) enum StdinState {
     TraceIds,
     Ucontext,
     Waiting,
+    // StackFrame is always emitted as one stream of all the frames but StackString
+    // may have lines that we need to accumulate depending on runtime (e.g. Python)
+    RuntimeStackFrame,
+    RuntimeStackString(Vec<String>),
 }
 
 /// A state machine that processes data from the crash-tracker collector line by
@@ -130,7 +135,42 @@ fn process_line(
             builder.with_proc_info(proc_info)?;
             StdinState::ProcInfo
         }
-
+        StdinState::RuntimeStackFrame
+            if line.starts_with(DD_CRASHTRACK_END_RUNTIME_STACK_FRAME) =>
+        {
+            StdinState::Waiting
+        }
+        StdinState::RuntimeStackFrame => {
+            // Try to parse as frames array
+            if let Ok(runtime_frames) = serde_json::from_str::<Vec<RuntimeFrame>>(line) {
+                if !runtime_frames.is_empty() {
+                    let runtime_stack = RuntimeStack {
+                        format: "Datadog Runtime Callback 1.0".to_string(),
+                        frames: runtime_frames,
+                        stacktrace_string: None,
+                    };
+                    builder.with_experimental_runtime_stack(runtime_stack)?;
+                }
+            }
+            StdinState::RuntimeStackFrame
+        }
+        StdinState::RuntimeStackString(lines)
+            if line.starts_with(DD_CRASHTRACK_END_RUNTIME_STACK_STRING) =>
+        {
+            // Join all accumulated lines with newlines to reconstruct the full stack trace
+            let stacktrace_string = lines.join("\n");
+            let runtime_stack = RuntimeStack {
+                format: "Datadog Runtime Callback 1.0".to_string(),
+                frames: vec![],
+                stacktrace_string: Some(stacktrace_string),
+            };
+            builder.with_experimental_runtime_stack(runtime_stack)?;
+            StdinState::Waiting
+        }
+        StdinState::RuntimeStackString(mut lines) => {
+            lines.push(line.to_string());
+            StdinState::RuntimeStackString(lines)
+        }
         StdinState::SigInfo if line.starts_with(DD_CRASHTRACK_END_SIGINFO) => StdinState::Waiting,
         StdinState::SigInfo => {
             let sig_info: crate::SigInfo = serde_json::from_str(line)?;
@@ -202,6 +242,12 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_STACKTRACE) => {
             StdinState::StackTrace
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_RUNTIME_STACK_STRING) => {
+            StdinState::RuntimeStackString(vec![])
+        }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME) => {
+            StdinState::RuntimeStackFrame
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_TRACE_IDS) => {
             StdinState::TraceIds
