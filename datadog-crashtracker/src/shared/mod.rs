@@ -10,3 +10,5 @@ pub(crate) mod constants;
 
 #[cfg(feature = "benchmarking")]
 pub mod constants;
+
+pub mod unix_socket_communication;
