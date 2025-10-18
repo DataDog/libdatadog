@@ -9,6 +9,8 @@ fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<Profile> {
     use prost::Message;
     use std::io::Read;
 
+    // The zstd bindings use FFI so they don't work under miri. This means the
+    // buffer isn't compressed, so simply convert to a vec.
     #[cfg(miri)]
     let buf = encoded.to_vec();
     #[cfg(not(miri))]
