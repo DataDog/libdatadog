@@ -67,7 +67,10 @@ impl Write for SizeRestrictedBuffer {
             self.vec.extend(buf);
             Ok(additional)
         } else {
-            Err(io::ErrorKind::StorageFull.into())
+            Err(io::Error::new(
+                io::ErrorKind::StorageFull,
+                "no storage space: size-restricted buffer reached its maximum size",
+            ))
         }
     }
 
