@@ -77,8 +77,15 @@ impl Drop for ProfileAdapter<'_> {
     }
 }
 
+/// Clears the upscaling rules and samples, and replaces the scratchpad with
+/// the one provided. This function will try_clone the scratchpad and the
+/// adapter will drop it when the adapter is dropped.
+///
+/// # Safety
+/// If `adapter` is not null, it must point to a valid adapter.
+/// The `scratchpad` must be valid.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_ProfileAdapter_clear_scratchpad_data(
+pub unsafe extern "C" fn ddog_prof_ProfileAdapter_clear_samples_and_upscalings(
     adapter: Option<&mut ProfileAdapter<'_>>,
     scratchpad: ArcHandle<ScratchPad>,
 ) -> ProfileStatus {
@@ -86,7 +93,9 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_clear_scratchpad_data(
         return ProfileStatus::from(c"invalid input: null adapter passed to ddog_prof_ProfileAdapter_add_proportional_upscaling");
     };
 
-    let scratchpad = scratchpad.try_clone().expect("todo");
+    let Ok(scratchpad) = scratchpad.try_clone() else {
+        return ProfileStatus::from(c"reference count overflow: ddog_prof_ProfileAdapter_clear_scratchpad_data failed to clone the scratchpad");
+    };
 
     for x in adapter.proportional_upscaling_rules.iter_mut() {
         *x = Slice::empty();
