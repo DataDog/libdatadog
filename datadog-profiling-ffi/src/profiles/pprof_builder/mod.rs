@@ -296,13 +296,13 @@ where
 /// # Safety
 ///
 /// - If non-null, `handle` must point to a valid
-///   `ProfileHandle<PprofBuilder<'static>>`.
+///   `ProfileHandle<PprofBuilder<'_>>`.
 /// - The underlying resource must be dropped at most once across all copies
 ///   of the handle. Calling this on the same handle multiple times is ok.
 /// - Do not use other copies of the handle after the resource is dropped.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_PprofBuilder_drop(
-    handle: *mut ProfileHandle<PprofBuilder<'static>>,
+    handle: *mut ProfileHandle<PprofBuilder<'_>>,
 ) {
     if let Some(h) = handle.as_mut() {
         drop(h.take());

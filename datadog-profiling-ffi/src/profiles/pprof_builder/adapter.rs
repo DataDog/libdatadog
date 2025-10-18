@@ -5,10 +5,11 @@ use crate::profiles::{
     ddog_prof_PprofBuilder_add_profile,
     ddog_prof_PprofBuilder_add_profile_with_poisson_upscaling,
     ddog_prof_PprofBuilder_add_profile_with_proportional_upscaling,
-    ddog_prof_PprofBuilder_build_compressed, ddog_prof_PprofBuilder_new,
-    ddog_prof_SampleBuilder_drop, ddog_prof_SampleBuilder_new,
-    ddog_prof_SampleBuilder_value, ddog_prof_ScratchPad_drop,
-    PoissonUpscalingRule, ProportionalUpscalingRule, SampleBuilder, Utf8Option,
+    ddog_prof_PprofBuilder_build_compressed, ddog_prof_PprofBuilder_drop,
+    ddog_prof_PprofBuilder_new, ddog_prof_SampleBuilder_drop,
+    ddog_prof_SampleBuilder_new, ddog_prof_SampleBuilder_value,
+    ddog_prof_ScratchPad_drop, PoissonUpscalingRule, ProportionalUpscalingRule,
+    SampleBuilder, Utf8Option,
 };
 use crate::{
     ensure_non_null_out_parameter, profiles, ArcHandle, ProfileHandle,
@@ -526,13 +527,15 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_build_compressed(
     // This is a limit of protobuf itself, the function will limit to a
     // smaller value around the current intake limits.
     let max_capacity = i32::MAX as u32;
-    ddog_prof_PprofBuilder_build_compressed(
+    let result = ddog_prof_PprofBuilder_build_compressed(
         out_profile,
         pprof_builder,
         max_capacity,
         start,
         end,
-    )
+    );
+    ddog_prof_PprofBuilder_drop(&mut pprof_builder);
+    result
 }
 
 /// Frees the resources associated to the profile adapter handle, leaving an
