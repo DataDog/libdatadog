@@ -211,7 +211,9 @@ impl<T, A: Allocator> Drop for Arc<T, A> {
         let inner = self.inner();
         if inner.refcount.fetch_sub(1, Ordering::Release) == 1 {
             // Synchronize with other threads that might have modified the data
-            // before dropping the last strong reference
+            // before dropping the last strong reference.
+            // Raymond Chen wrote a little blog article about it:
+            // https://devblogs.microsoft.com/oldnewthing/20251015-00/?p=111686
             fence(Ordering::Acquire);
             // SAFETY: this was the last strong reference; reclaim allocation
             let ptr = self.ptr.as_ptr();
