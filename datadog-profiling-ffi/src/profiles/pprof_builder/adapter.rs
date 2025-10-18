@@ -7,8 +7,8 @@ use crate::profiles::{
     ddog_prof_PprofBuilder_add_profile_with_proportional_upscaling,
     ddog_prof_PprofBuilder_build_compressed, ddog_prof_PprofBuilder_new,
     ddog_prof_SampleBuilder_drop, ddog_prof_SampleBuilder_new,
-    ddog_prof_SampleBuilder_value, PoissonUpscalingRule,
-    ProportionalUpscalingRule, SampleBuilder, Utf8Option,
+    ddog_prof_SampleBuilder_value, ddog_prof_ScratchPad_drop,
+    PoissonUpscalingRule, ProportionalUpscalingRule, SampleBuilder, Utf8Option,
 };
 use crate::{
     ensure_non_null_out_parameter, profiles, ArcHandle, ProfileHandle,
@@ -75,6 +75,38 @@ impl Drop for ProfileAdapter<'_> {
         self.dictionary.drop_resource();
         self.scratchpad.drop_resource();
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_ProfileAdapter_clear_scratchpad_data(
+    adapter: Option<&mut ProfileAdapter<'_>>,
+    scratchpad: ArcHandle<ScratchPad>,
+) -> ProfileStatus {
+    let Some(adapter) = adapter else {
+        return ProfileStatus::from(c"invalid input: null adapter passed to ddog_prof_ProfileAdapter_add_proportional_upscaling");
+    };
+
+    let scratchpad = scratchpad.try_clone().expect("todo");
+
+    for x in adapter.proportional_upscaling_rules.iter_mut() {
+        *x = Slice::empty();
+    }
+
+    for x in adapter.poisson_upscaling_rules.iter_mut() {
+        x.sum_offset = 0;
+        x.count_offset = 0;
+        x.sampling_distance = 0;
+    }
+
+    for mapping in adapter.mappings.iter_mut() {
+        let profile = mapping.profile.as_inner_mut().expect("TODO");
+        profile.samples.clear();
+    }
+
+    ddog_prof_ScratchPad_drop(&mut adapter.scratchpad);
+    adapter.scratchpad = scratchpad;
+
+    ProfileStatus::OK
 }
 
 /// Creates an adapter that maps the legacy offset-based sample model
