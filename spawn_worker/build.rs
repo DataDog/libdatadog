@@ -10,7 +10,6 @@ fn main() {
         .warnings(true)
         .link_dynamically("dl")
         .warnings_into_errors(true)
-        .flag("-std=c99")
         .emit_rerun_if_env_changed(true);
 
     if !cfg!(target_os = "windows") {

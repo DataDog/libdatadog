@@ -162,6 +162,36 @@ impl TracerFlareManager {
         Ok(tracer_flare)
     }
 
+    /// Handle the `RemoteConfigData` and return the action the tracer flare
+    /// needs to perform. This function also updates the `TracerFlareManager`
+    /// state based on the received configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - RemoteConfigData.
+    /// * `tracer_flare` - TracerFlareManager object to update with the received configuration.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(ReturnAction)` - If successful.
+    /// * `FlareError(msg)` - If something fails.
+    pub fn handle_remote_config_data(
+        &mut self,
+        data: &RemoteConfigData,
+    ) -> Result<ReturnAction, FlareError> {
+        let action = data.try_into();
+        if let Ok(ReturnAction::Set(_)) = action {
+            if self.collecting {
+                return Ok(ReturnAction::None);
+            }
+            self.collecting = true;
+        } else if Ok(ReturnAction::None) != action {
+            // If action is Send, Unset or an error, we need to stop collecting
+            self.collecting = false;
+        }
+        action
+    }
+
     /// Handle the `RemoteConfigFile` and return the action that tracer flare needs
     /// to perform. This function also updates the `TracerFlareManager` state based on the
     /// received configuration.
@@ -179,17 +209,14 @@ impl TracerFlareManager {
         &mut self,
         file: RemoteConfigFile,
     ) -> Result<ReturnAction, FlareError> {
-        let action = file.try_into();
-        if let Ok(ReturnAction::Set(_)) = action {
-            if self.collecting {
-                return Ok(ReturnAction::None);
+        match file.contents().as_ref() {
+            Ok(data) => self.handle_remote_config_data(data),
+            Err(e) => {
+                // If encounter an error we need to stop collecting
+                self.collecting = false;
+                Err(FlareError::ParsingError(e.to_string()))
             }
-            self.collecting = true;
-        } else if Ok(ReturnAction::None) != action {
-            // If action is Send, Unset or an error, we need to stop collecting
-            self.collecting = false;
         }
-        action
     }
 }
 
@@ -292,28 +319,45 @@ impl TryFrom<RemoteConfigFile> for ReturnAction {
     /// * `Ok(ReturnAction)` - If successful.
     /// * `FlareError(msg)` - If something fail.
     fn try_from(file: RemoteConfigFile) -> Result<Self, Self::Error> {
-        let config = file.contents();
-        match config.as_ref() {
-            Ok(data) => match data {
-                RemoteConfigData::TracerFlareConfig(agent_config) => {
-                    if agent_config.name.starts_with("flare-log-level.") {
-                        if let Some(log_level) = &agent_config.config.log_level {
-                            let log_level = log_level.as_str().try_into()?;
-                            return Ok(ReturnAction::Set(log_level));
-                        }
-                    }
-                }
-                RemoteConfigData::TracerFlareTask(agent_task) => {
-                    if agent_task.task_type.eq("tracer_flare") {
-                        return Ok(ReturnAction::Send(agent_task.to_owned()));
-                    }
-                }
-                _ => return Ok(ReturnAction::None),
-            },
-            Err(e) => {
-                return Err(FlareError::ParsingError(e.to_string()));
-            }
+        match file.contents().as_ref() {
+            Ok(data) => data.try_into(),
+            Err(e) => Err(FlareError::ParsingError(e.to_string())),
         }
+    }
+}
+
+impl TryFrom<&RemoteConfigData> for ReturnAction {
+    type Error = FlareError;
+
+    /// Check the `&RemoteConfigData` and return the action the tracer flare
+    /// needs to perform.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - &RemoteConfigData
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(ReturnAction)` - If successful
+    /// * `FlareError(msg)` - If something fails
+    fn try_from(data: &RemoteConfigData) -> Result<Self, Self::Error> {
+        match data {
+            RemoteConfigData::TracerFlareConfig(agent_config) => {
+                if agent_config.name.starts_with("flare-log-level.") {
+                    if let Some(log_level) = &agent_config.config.log_level {
+                        let log_level = log_level.as_str().try_into()?;
+                        return Ok(ReturnAction::Set(log_level));
+                    }
+                }
+            }
+            RemoteConfigData::TracerFlareTask(agent_task) => {
+                if agent_task.task_type.eq("tracer_flare") {
+                    return Ok(ReturnAction::Send(agent_task.to_owned()));
+                }
+            }
+            _ => return Ok(ReturnAction::None),
+        }
+
         Ok(ReturnAction::None)
     }
 }
