@@ -340,8 +340,11 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_add_sample(
     profile_grouping: usize,
     values: Slice<'_, i64>,
 ) -> ProfileStatus {
-    assert!(!sample_builder.is_null());
-    assert!(profile_grouping < adapter.mappings.len());
+    ensure_non_null_out_parameter!(sample_builder);
+
+    if profile_grouping >= adapter.mappings.len() {
+        return ProfileStatus::from(c"invalid input: profile grouping passed to ddog_prof_ProfileAdapter_add_sample is out-of-range");
+    }
     if adapter.mappings.is_empty() {
         return ProfileStatus::from(c"invalid input: ddog_prof_ProfileAdapter_add_sample was called on an empty adapter");
     }
