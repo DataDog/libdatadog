@@ -421,18 +421,25 @@ unsafe fn profile_new(
     let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
     let period = period.map(Into::into);
 
-    let internal_profile = match string_storage {
-        None => internal::Profile::new(&types, period),
+    let result = match string_storage {
+        None => internal::Profile::try_new(&types, period)
+            .context("failed to initialize a profile without managed string storage"),
         Some(s) => {
             let string_storage = match get_inner_string_storage(s, true) {
                 Ok(string_storage) => string_storage,
                 Err(err) => return ProfileNewResult::Err(err.into()),
             };
-            internal::Profile::with_string_storage(&types, period, string_storage)
+            internal::Profile::try_with_string_storage(&types, period, string_storage)
+                .context("failed to initialize a profile with managed string storage")
         }
     };
-    let ffi_profile = Profile::new(internal_profile);
-    ProfileNewResult::Ok(ffi_profile)
+    match result {
+        Ok(internal_profile) => {
+            let ffi_profile = Profile::new(internal_profile);
+            ProfileNewResult::Ok(ffi_profile)
+        }
+        Err(err) => ProfileNewResult::Err(err.into()),
+    }
 }
 
 /// # Safety

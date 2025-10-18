@@ -47,7 +47,7 @@ fn main() {
     };
 
     // Intentionally use the current time.
-    let mut profile = Profile::new(&sample_types, Some(period));
+    let mut profile = Profile::try_new(&sample_types, Some(period)).unwrap();
 
     match profile.try_add_sample(sample, None) {
         Ok(_) => {}
