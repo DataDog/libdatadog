@@ -36,7 +36,14 @@ impl Observations {
         Ok(Observations {
             inner: Some(NonEmptyObservations {
                 aggregated_data: AggregatedObservations::new(observations_len),
-                timestamped_data: TimestampedObservations::try_new(observations_len)?,
+                timestamped_data: TimestampedObservations::try_new(observations_len).map_err(
+                    |err| {
+                        io::Error::new(
+                            err.kind(),
+                            format!("failed to create timestamped observations: {err}"),
+                        )
+                    },
+                )?,
                 obs_len: ObservationLength::new(observations_len),
                 timestamped_samples_count: 0,
             }),

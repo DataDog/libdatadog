@@ -275,16 +275,25 @@ impl Profile {
         write_locked_storage.get_seq_num(non_empty_string_id, &mut self.strings, cached_profile_id)
     }
 
-    /// Creates a profile with `start_time`.
+    /// This is used heavily enough in tests to make a helper.
+    #[cfg(test)]
+    pub fn new(sample_types: &[api::ValueType], period: Option<api::Period>) -> Self {
+        #[allow(clippy::unwrap_used)]
+        Self::try_new(sample_types, period).unwrap()
+    }
+
+    /// Tries to create a profile with the given `period`.
     /// Initializes the string table to hold:
     ///  - "" (the empty string)
     ///  - "local root span id"
     ///  - "trace endpoint"
     ///
     /// All other fields are default.
-    #[inline]
-    pub fn new(sample_types: &[api::ValueType], period: Option<api::Period>) -> Self {
-        Self::new_internal(
+    pub fn try_new(
+        sample_types: &[api::ValueType],
+        period: Option<api::Period>,
+    ) -> io::Result<Self> {
+        Self::try_new_internal(
             Self::backup_period(period),
             Self::backup_sample_types(sample_types),
             None,
@@ -292,12 +301,12 @@ impl Profile {
     }
 
     #[inline]
-    pub fn with_string_storage(
+    pub fn try_with_string_storage(
         sample_types: &[api::ValueType],
         period: Option<api::Period>,
         string_storage: Arc<Mutex<ManagedStringStorage>>,
-    ) -> Self {
-        Self::new_internal(
+    ) -> io::Result<Self> {
+        Self::try_new_internal(
             Self::backup_period(period),
             Self::backup_sample_types(sample_types),
             Some(string_storage),
@@ -314,11 +323,12 @@ impl Profile {
             "Can't rotate the profile, there are still active samples. Drain them and try again."
         );
 
-        let mut profile = Profile::new_internal(
+        let mut profile = Profile::try_new_internal(
             self.owned_period.take(),
             self.owned_sample_types.take(),
             self.string_storage.clone(),
-        );
+        )
+        .context("failed to initialize new profile")?;
 
         std::mem::swap(&mut *self, &mut profile);
         Ok(profile)
@@ -771,12 +781,11 @@ impl Profile {
 
     /// Creates a profile from the period, sample types, and start time using
     /// the owned values.
-    #[inline(never)]
-    fn new_internal(
+    fn try_new_internal(
         owned_period: Option<owned_types::Period>,
         owned_sample_types: Option<Box<[owned_types::ValueType]>>,
         string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
-    ) -> Self {
+    ) -> io::Result<Self> {
         let start_time = SystemTime::now();
         let mut profile = Self {
             owned_period,
@@ -785,6 +794,7 @@ impl Profile {
             endpoints: Default::default(),
             functions: Default::default(),
             generation: Generation::new(),
+
             labels: Default::default(),
             label_sets: Default::default(),
             locations: Default::default(),
@@ -838,8 +848,8 @@ impl Profile {
         };
         profile.owned_period = owned_period;
 
-        profile.observations = Observations::new(profile.sample_types.len());
-        profile
+        profile.observations = Observations::try_new(profile.sample_types.len())?;
+        Ok(profile)
     }
 
     #[cfg(debug_assertions)]
@@ -2546,7 +2556,8 @@ mod api_tests {
         }
 
         let sample_types = [api::ValueType::new("samples", "count")];
-        let mut profile = Profile::with_string_storage(&sample_types, None, storage.clone());
+        let mut profile =
+            Profile::try_with_string_storage(&sample_types, None, storage.clone()).unwrap();
 
         let location = api::StringIdLocation {
             function: api::StringIdFunction {
