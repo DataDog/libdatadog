@@ -109,8 +109,9 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_clear_samples_and_upscalings(
     }
 
     for mapping in adapter.mappings.iter_mut() {
-        let profile = mapping.profile.as_inner_mut().expect("TODO");
-        profile.samples.clear();
+        if let Ok(profile) = mapping.profile.as_inner_mut() {
+            profile.samples.clear();
+        }
     }
 
     ddog_prof_ScratchPad_drop(&mut adapter.scratchpad);
