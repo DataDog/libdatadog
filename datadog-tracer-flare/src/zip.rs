@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_remote_config::config::agent_task::AgentTaskFile;
-use ddcommon::{hyper_migration, Endpoint};
+use ddcommon::{hyper_migration, Endpoint, MutexExt};
 use hyper::{body::Bytes, Method};
 use std::{
     collections::HashMap,
@@ -237,7 +237,7 @@ async fn send(
 ) -> Result<(), FlareError> {
     let payload = generate_payload(
         zip,
-        &tracer_flare.language.lock().unwrap(),
+        &tracer_flare.language.lock_or_panic(),
         &log_level,
         &agent_task.args.case_id,
         &agent_task.args.hostname,
@@ -245,7 +245,7 @@ async fn send(
         &agent_task.uuid,
     )?;
 
-    let agent_url = tracer_flare.agent_url.lock().unwrap().clone() + "/tracer_flare/v1";
+    let agent_url = tracer_flare.agent_url.lock_or_panic().clone() + "/tracer_flare/v1";
     let agent_url = match hyper::Uri::from_str(&agent_url) {
         Ok(uri) => uri,
         Err(_) => {

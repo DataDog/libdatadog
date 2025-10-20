@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use datadog_remote_config::{
     config::agent_task::AgentTaskFile, file_storage::RawFile, RemoteConfigData,
 };
+use ddcommon::MutexExt;
 
 #[cfg(feature = "listener")]
 use {
@@ -183,7 +184,7 @@ impl TracerFlareManager {
     ) -> Result<ReturnAction, FlareError> {
         let action = data.try_into();
         {
-            let mut collecting = self.collecting.lock().unwrap();
+            let mut collecting = self.collecting.lock_or_panic();
             if let Ok(ReturnAction::Set(_)) = action {
                 if *collecting {
                     return Ok(ReturnAction::None);
@@ -218,7 +219,7 @@ impl TracerFlareManager {
             Ok(data) => self.handle_remote_config_data(data),
             Err(e) => {
                 // If encounter an error we need to stop collecting
-                *self.collecting.lock().unwrap() = false;
+                *self.collecting.lock_or_panic() = false;
                 Err(FlareError::ParsingError(e.to_string()))
             }
         }
@@ -396,7 +397,7 @@ impl TryFrom<&RemoteConfigData> for ReturnAction {
 /// #[tokio::main(flavor = "current_thread")]
 /// async fn main() {
 ///     // Setup the TracerFlareManager
-///     let mut tracer_flare = TracerFlareManager::new_with_listener(
+///     let tracer_flare = TracerFlareManager::new_with_listener(
 ///         "http://0.0.0.0:8126".to_string(),  // agent_url
 ///         "rust".to_string(),                 // language
 ///         "1.0.0".to_string(),                // tracer_version
@@ -420,7 +421,7 @@ impl TryFrom<&RemoteConfigData> for ReturnAction {
 pub async fn run_remote_config_listener(
     tracer_flare: &TracerFlareManager,
 ) -> Result<ReturnAction, FlareError> {
-    let mut l = tracer_flare.listener.lock().unwrap();
+    let mut l = tracer_flare.listener.lock_or_panic();
     let listener = match &mut *l {
         Some(listener) => listener,
         None => {
@@ -461,7 +462,7 @@ pub async fn run_remote_config_listener(
     }
 
     {
-        let mut collecting = tracer_flare.collecting.lock().unwrap();
+        let mut collecting = tracer_flare.collecting.lock_or_panic();
         if let ReturnAction::Set(_) = state {
             *collecting = true;
         } else if let ReturnAction::Send(_) = state {
@@ -483,6 +484,7 @@ mod tests {
         file_storage::ParsedFileStorage,
         RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
     };
+    use ddcommon::MutexExt;
     use std::{num::NonZeroU64, sync::Arc};
 
     #[test]
@@ -645,7 +647,7 @@ mod tests {
     #[test]
     fn test_handle_remote_config_file() {
         use crate::TracerFlareManager;
-        let mut tracer_flare = TracerFlareManager::new("http://localhost:8126", "rust");
+        let tracer_flare = TracerFlareManager::new("http://localhost:8126", "rust");
         let storage = ParsedFileStorage::default();
 
         let agent_config_file = storage
@@ -668,19 +670,19 @@ mod tests {
             .unwrap();
 
         // First AGENT_CONFIG
-        assert!(!*tracer_flare.collecting.lock().unwrap());
+        assert!(!*tracer_flare.collecting.lock_or_panic());
         let result = tracer_flare
             .handle_remote_config_file(agent_config_file.clone())
             .unwrap();
         assert_eq!(result, ReturnAction::Set(LogLevel::Info));
-        assert!(*tracer_flare.collecting.lock().unwrap());
+        assert!(*tracer_flare.collecting.lock_or_panic());
 
         // Second AGENT_CONFIG
         let result = tracer_flare
             .handle_remote_config_file(agent_config_file)
             .unwrap();
         assert_eq!(result, ReturnAction::None);
-        assert!(*tracer_flare.collecting.lock().unwrap());
+        assert!(*tracer_flare.collecting.lock_or_panic());
 
         // Non-None actions stop collecting
         let error_file = storage
@@ -697,7 +699,7 @@ mod tests {
             .unwrap();
 
         let _ = tracer_flare.handle_remote_config_file(error_file);
-        assert!(!*tracer_flare.collecting.lock().unwrap());
+        assert!(!*tracer_flare.collecting.lock_or_panic());
     }
 
     #[test]
