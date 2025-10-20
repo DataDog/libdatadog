@@ -1,8 +1,10 @@
-#![allow(unused_imports)]
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use criterion::{black_box, criterion_group, criterion_main, Bencher, Criterion};
 use datadog_ffe::rules_based::{EvaluationContext, UniversalFlagConfig};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fs, sync::Arc, time::SystemTime};
+use std::{collections::HashMap, fs, sync::Arc};
 
 use datadog_ffe::rules_based::{get_assignment, Attribute, Configuration, Str};
 
