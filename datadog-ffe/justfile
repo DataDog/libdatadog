@@ -1,0 +1,18 @@
+build:
+    bzl build ...
+
+test:
+    bzl test ...
+
+# Prepare test data by compiling JSON to FlatBuffers
+prepare-test-data:
+    just ufc-compile ~/dd/dd-source/domains/ffe/libs/flagging/rust/evaluation/tests/data/flags-v1.json ~/dd/dd-source/domains/ffe/libs/flagging/rust/evaluation/tests/data/flags-v1.fb
+
+# Compile UFC JSON to FlatBuffers format
+ufc-compile in_file out_file:
+    bzl run //domains/ffe/tools/ufc-converter:ufc-converter -- -input {{in_file}} -output {{out_file}} -format fb
+
+# Disassemble FlatBuffers UFC file and convert to JSON
+ufc-disasm file_fb="~/dd/dd-source/domains/ffe/libs/flagging/rust/evaluation/tests/data/flags-v1.fb":
+    bzl run //domains/ffe/tools/ufc_disassembler:ufc_disassembler -- {{file_fb}} > {{file_fb}}.s
+    flatc --json --raw-binary ~/dd/dd-source/domains/ffe/libs/flagging/core/ufc_v2/flatbuffers/ufc_v2.fbs -- {{file_fb}}
