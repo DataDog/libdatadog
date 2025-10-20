@@ -1,3 +1,6 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::rules_based::{
     ufc::{ComparisonOperator, Condition, ConditionCheck, RuleWire, TryParse},
     Attribute, EvaluationContext,

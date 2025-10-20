@@ -1,3 +1,6 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 //! Some string type helpers.
 //!
 //! Moved into a separate module, so we could experiment with different representations.
