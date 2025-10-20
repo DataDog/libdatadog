@@ -13,7 +13,7 @@ use crate::{
 
 use libdd_common::{hyper_migration, tag::Tag, worker::Worker};
 
-use std::fmt::Debug;
+use std::{collections::HashSet, fmt::Debug};
 use std::iter::Sum;
 use std::ops::Add;
 use std::{
@@ -121,7 +121,7 @@ struct TelemetryWorkerData {
     dependencies: store::Store<Dependency>,
     configurations: store::Store<data::Configuration>,
     integrations: store::Store<data::Integration>,
-    endpoints: Vec<data::Endpoint>,
+    endpoints: HashSet<data::Endpoint>,
     logs: store::QueueHashMap<LogIdentifier, Log>,
     metric_contexts: MetricContexts,
     metric_buckets: MetricBuckets,
@@ -413,7 +413,7 @@ impl TelemetryWorker {
             AddDependency(dep) => self.data.dependencies.insert(dep),
             AddIntegration(integration) => self.data.integrations.insert(integration),
             AddConfig(cfg) => self.data.configurations.insert(cfg),
-            AddEndpoint(endpoint) => self.data.endpoints.push(endpoint),
+            AddEndpoint(endpoint) => { self.data.endpoints.insert(endpoint); },
             AddLog((identifier, log)) => {
                 let (l, new) = self.data.logs.get_mut_or_insert(identifier, log);
                 if !new {
@@ -1037,7 +1037,7 @@ pub struct TelemetryWorkerBuilder {
     pub dependencies: store::Store<data::Dependency>,
     pub integrations: store::Store<data::Integration>,
     pub configurations: store::Store<data::Configuration>,
-    pub endpoints: Vec<data::Endpoint>,
+    pub endpoints: HashSet<data::Endpoint>,
     pub native_deps: bool,
     pub rust_shared_lib_deps: bool,
     pub config: Config,
@@ -1088,7 +1088,7 @@ impl TelemetryWorkerBuilder {
             dependencies: store::Store::new(MAX_ITEMS),
             integrations: store::Store::new(MAX_ITEMS),
             configurations: store::Store::new(MAX_ITEMS),
-            endpoints: Vec::new(),
+            endpoints: HashSet::new(),
             native_deps: true,
             rust_shared_lib_deps: false,
             config: Config::default(),

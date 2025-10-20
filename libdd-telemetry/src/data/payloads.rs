@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::hash::Hasher;
+
 use crate::data::metrics;
 
 use serde::{Deserialize, Serialize};
@@ -120,14 +122,28 @@ pub enum Method {
     Other = 9, //This is specified as "*" in the OpenAPI spec
 }
 
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Endpoint {
     #[serde(default)]
     pub method: Option<Method>,
     #[serde(default)]
     pub path: Option<String>,
     pub operation_name: String, 
-    pub resource_name: String   
+    pub resource_name: String
+}
+
+impl PartialEq for Endpoint {
+    fn eq(&self, other: &Self) -> bool {
+        self.resource_name == other.resource_name
+    }
+}
+
+impl Eq for Endpoint {}
+
+impl std::hash::Hash for Endpoint {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.resource_name.hash(state);
+    }
 }
 
 impl Endpoint {
