@@ -13,7 +13,6 @@ use crate::{
 
 use libdd_common::{hyper_migration, tag::Tag, worker::Worker};
 
-use std::{collections::HashSet, fmt::Debug};
 use std::iter::Sum;
 use std::ops::Add;
 use std::{
@@ -26,6 +25,7 @@ use std::{
     },
     time,
 };
+use std::{collections::HashSet, fmt::Debug};
 
 use crate::metrics::MetricBucketStats;
 use futures::{
@@ -413,7 +413,9 @@ impl TelemetryWorker {
             AddDependency(dep) => self.data.dependencies.insert(dep),
             AddIntegration(integration) => self.data.integrations.insert(integration),
             AddConfig(cfg) => self.data.configurations.insert(cfg),
-            AddEndpoint(endpoint) => { self.data.endpoints.insert(endpoint); },
+            AddEndpoint(endpoint) => {
+                self.data.endpoints.insert(endpoint);
+            }
             AddLog((identifier, log)) => {
                 let (l, new) = self.data.logs.get_mut_or_insert(identifier, log);
                 if !new {
@@ -559,18 +561,16 @@ impl TelemetryWorker {
             ))
         }
         if !self.data.endpoints.is_empty() {
-            payloads.push(data::Payload::AppEndpoints(
-                data::AppEndpoints {
-                    is_first: true,
-                    endpoints: self
-                        .data
-                        .endpoints
-                        .iter()
-                        .map(|e| e.to_json_value().unwrap_or_default())
-                        .filter(|e| e.is_object())
-                        .collect(),
-                },
-            ));
+            payloads.push(data::Payload::AppEndpoints(data::AppEndpoints {
+                is_first: true,
+                endpoints: self
+                    .data
+                    .endpoints
+                    .iter()
+                    .map(|e| e.to_json_value().unwrap_or_default())
+                    .filter(|e| e.is_object())
+                    .collect(),
+            }));
         }
         payloads
     }
@@ -674,7 +674,7 @@ impl TelemetryWorker {
                 .data
                 .configurations
                 .removed_flushed(p.configuration.len()),
-            AppEndpoints(p) => self.data.endpoints.clear(),
+            AppEndpoints(_) => self.data.endpoints.clear(),
             MessageBatch(batch) => {
                 for p in batch {
                     self.payload_sent_success(p);
