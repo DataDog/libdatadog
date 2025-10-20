@@ -1,12 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
-use serde::Serialize;
+use serde::Deserialize;
 
 use crate::rules_based::{
-    Error, EvaluationError, SdkMetadata, Str,
-    error::EvaluationFailure,
-    events::{AssignmentEventBase, EventMetaData},
-    sharder::PreSaltedSharder,
+    error::EvaluationFailure, sharder::PreSaltedSharder, Error, EvaluationError, Str,
 };
 
 use super::{
@@ -21,7 +18,8 @@ pub struct UniversalFlagConfig {
     pub(crate) compiled: CompiledFlagsConfig,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
+#[serde(from = "UniversalFlagConfigWire")]
 pub(crate) struct CompiledFlagsConfig {
     /// When configuration was last updated.
     #[allow(dead_code)]
@@ -42,41 +40,37 @@ pub(crate) struct Flag {
 
 #[derive(Debug)]
 pub(crate) struct Allocation {
-    #[allow(dead_code)]
-    pub key: Str, // key is here to support evaluation details
+    pub key: Str,
     pub start_at: Option<Timestamp>,
     pub end_at: Option<Timestamp>,
     pub rules: Box<[RuleWire]>,
     pub splits: Box<[Split]>,
+    pub do_log: bool,
 }
 
 #[derive(Debug)]
 pub(crate) struct Split {
     pub shards: Vec<Shard>,
-    #[allow(dead_code)]
-    pub variation_key: Str, // for evaluation details
-    pub extra_logging: Arc<HashMap<String, String>>, // for evaluation details
-    // This is a Result because it may still return a configuration error (invalid value for
-    // assignment type).
-    pub result: Result<(AssignmentValue, Option<Arc<AssignmentEventBase>>), EvaluationFailure>,
+    pub variation_key: Str,
+    pub extra_logging: Arc<HashMap<String, String>>,
+    pub value: AssignmentValue,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct Shard {
-    #[serde(skip)]
-    pub(crate) sharder: PreSaltedSharder,
+#[derive(Debug, Clone)]
+pub(crate) struct Shard {
+    pub sharder: PreSaltedSharder,
     pub ranges: Box<[ShardRange]>,
 }
 
 impl UniversalFlagConfig {
-    pub fn from_json(meta_data: SdkMetadata, json: Vec<u8>) -> Result<Self, Error> {
-        let config: UniversalFlagConfigWire = serde_json::from_slice(&json).map_err(|err| {
-            log::warn!(target: "eppo", "failed to compile flag configuration: {err:?}");
-            Error::EvaluationError(EvaluationError::UnexpectedConfigurationParseError)
+    pub fn from_json(json: Vec<u8>) -> Result<Self, Error> {
+        let config: CompiledFlagsConfig = serde_json::from_slice(&json).map_err(|err| {
+            log::warn!("failed to compile flag configuration: {err:?}");
+            Error::EvaluationError(EvaluationError::UnexpectedConfigurationError)
         })?;
         Ok(UniversalFlagConfig {
             wire_json: json,
-            compiled: compile_flag_configuration(meta_data.into(), config),
+            compiled: config,
         })
     }
 
@@ -85,103 +79,84 @@ impl UniversalFlagConfig {
     }
 }
 
-fn compile_flag_configuration(
-    meta_data: EventMetaData,
-    config: UniversalFlagConfigWire,
-) -> CompiledFlagsConfig {
-    let flags = config
-        .data
-        .attributes
-        .flags
-        .into_iter()
-        .map(|(key, flag)| {
-            (
-                key,
-                Option::from(flag)
-                    .ok_or(EvaluationFailure::Error(
-                        EvaluationError::UnexpectedConfigurationParseError,
-                    ))
-                    .and_then(|flag: FlagWire| {
-                        if flag.enabled {
-                            Ok(compile_flag(meta_data, flag))
-                        } else {
-                            Err(EvaluationFailure::FlagDisabled)
-                        }
-                    }),
-            )
-        })
-        .collect();
+impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
+    fn from(config: UniversalFlagConfigWire) -> Self {
+        let flags = config
+            .data
+            .attributes
+            .flags
+            .into_iter()
+            .map(|(key, flag)| {
+                (
+                    key,
+                    Option::from(flag)
+                        .ok_or(EvaluationFailure::Error(
+                            EvaluationError::UnexpectedConfigurationError,
+                        ))
+                        .and_then(compile_flag),
+                )
+            })
+            .collect();
 
-    CompiledFlagsConfig {
-        created_at: config.data.attributes.created_at.into(),
-        environment: config.data.attributes.environment,
-        flags,
+        CompiledFlagsConfig {
+            created_at: config.data.attributes.created_at.into(),
+            environment: config.data.attributes.environment,
+            flags,
+        }
     }
 }
 
-fn compile_flag(meta_data: EventMetaData, flag: FlagWire) -> Flag {
+fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationFailure> {
+    if !flag.enabled {
+        return Err(EvaluationFailure::FlagDisabled);
+    }
+
     let variation_values = flag
         .variations
         .into_values()
         .map(|variation| {
             let assignment_value = AssignmentValue::from_wire(flag.variation_type, variation.value)
-                .ok_or(EvaluationFailure::Error(
-                    EvaluationError::UnexpectedConfigurationError,
-                ));
+                .ok_or(EvaluationError::UnexpectedConfigurationError)?;
 
-            (variation.key, assignment_value)
+            Ok((variation.key, assignment_value))
         })
-        .collect::<HashMap<_, _>>();
+        .collect::<Result<HashMap<_, _>, EvaluationError>>()?;
 
     let allocations = flag
         .allocations
         .into_iter()
-        .map(|allocation| compile_allocation(meta_data, &flag.key, allocation, &variation_values))
-        .collect();
+        .map(|allocation| compile_allocation(allocation, &variation_values))
+        .collect::<Result<_, _>>()?;
 
-    Flag {
+    Ok(Flag {
         variation_type: flag.variation_type,
         allocations,
-    }
+    })
 }
 
 fn compile_allocation(
-    meta_data: EventMetaData,
-    flag_key: &Str,
     allocation: AllocationWire,
-    variation_values: &HashMap<Str, Result<AssignmentValue, EvaluationFailure>>,
-) -> Allocation {
+    variation_values: &HashMap<Str, AssignmentValue>,
+) -> Result<Allocation, EvaluationError> {
     let splits = allocation
         .splits
         .into_iter()
-        .map(|split| {
-            compile_split(
-                meta_data,
-                flag_key,
-                &allocation.key,
-                split,
-                variation_values,
-                allocation.do_log,
-            )
-        })
-        .collect();
-    Allocation {
+        .map(|split| compile_split(split, variation_values))
+        .collect::<Result<_, _>>()?;
+    Ok(Allocation {
         key: allocation.key,
         start_at: allocation.start_at,
         end_at: allocation.end_at,
         rules: allocation.rules.unwrap_or_default(),
         splits,
-    }
+        do_log: allocation.do_log,
+    })
 }
 
 fn compile_split(
-    meta_data: EventMetaData,
-    flag_key: &Str,
-    allocation_key: &Str,
     split: SplitWire,
-    variation_values: &HashMap<Str, Result<AssignmentValue, EvaluationFailure>>,
-    do_log: bool,
-) -> Split {
+    variation_values: &HashMap<Str, AssignmentValue>,
+) -> Result<Split, EvaluationError> {
     let shards = split
         .shards
         .into_iter()
@@ -197,29 +172,14 @@ fn compile_split(
     let result = variation_values
         .get(&split.variation_key)
         .cloned()
-        .unwrap_or(Err(EvaluationFailure::Error(
-            EvaluationError::UnexpectedConfigurationError,
-        )))
-        .map(|value| {
-            let event = do_log.then(|| {
-                Arc::new(AssignmentEventBase {
-                    experiment: format!("{flag_key}-{allocation_key}"),
-                    feature_flag: flag_key.clone(),
-                    allocation: allocation_key.clone(),
-                    variation: split.variation_key.clone(),
-                    meta_data,
-                    extra_logging: extra_logging.clone(),
-                })
-            });
-            (value, event)
-        });
+        .ok_or(EvaluationError::UnexpectedConfigurationError)?;
 
-    Split {
+    Ok(Split {
         shards,
         variation_key: split.variation_key,
         extra_logging,
-        result,
-    }
+        value: result,
+    })
 }
 
 fn compile_shard(shard: ShardWire) -> Option<Shard> {

@@ -4,16 +4,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::rules_based::ufc::VariationType;
 
-/// Represents a result type for operations in the Eppo SDK.
+/// Represents a result type for operations in the feature flagging SDK.
 ///
 /// This type alias is used throughout the SDK to indicate the result of operations that may return
-/// errors specific to the Eppo SDK.
+/// errors specific to the feature flagging SDK.
 ///
 /// This `Result` type is a standard Rust `Result` type where the error variant is defined by the
-/// eppo-specific [`Error`] enum.
+/// ffe-specific [`Error`] enum.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Enum representing possible errors that can occur in the Eppo SDK.
+/// Enum representing possible errors that can occur in the feature flagging SDK.
 #[derive(thiserror::Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum Error {
@@ -61,13 +61,8 @@ pub enum EvaluationError {
 
     /// Configuration received from the server is invalid for the SDK. This should normally never
     /// happen and is likely a signal that you should update SDK.
-    #[error("unexpected configuration received from the server, try upgrading Eppo SDK")]
+    #[error("unexpected configuration received from the server")]
     UnexpectedConfigurationError,
-
-    /// An error occurred while parsing the configuration (server sent unexpected response). It is
-    /// recommended to upgrade the Eppo SDK.
-    #[error("error parsing configuration, try upgrading Eppo SDK")]
-    UnexpectedConfigurationParseError,
 }
 
 /// Enum representing all possible reasons that could result in evaluation returning an error or
@@ -101,4 +96,10 @@ pub(crate) enum EvaluationFailure {
 
     #[error("no actions were supplied to bandit evaluation")]
     NoActionsSuppliedForBandit,
+}
+
+impl From<EvaluationError> for EvaluationFailure {
+    fn from(value: EvaluationError) -> EvaluationFailure {
+        EvaluationFailure::Error(value)
+    }
 }

@@ -2,9 +2,10 @@ use std::borrow::Cow;
 
 use chrono::{DateTime, Utc};
 
-use crate::rules_based::{Str, ufc::UniversalFlagConfig};
+use crate::rules_based::{ufc::UniversalFlagConfig, Str};
 
-/// Remote configuration for the eppo client. It's a central piece that defines client behavior.
+/// Remote configuration for the feature flagging client. It's a central piece that defines client
+/// behavior.
 #[derive(Debug)]
 pub struct Configuration {
     /// Timestamp when configuration was fetched by the SDK.
@@ -25,6 +26,14 @@ impl Configuration {
         }
     }
 
+    pub fn created_at(&self) -> DateTime<Utc> {
+        self.flags.compiled.created_at
+    }
+
+    pub fn environment(&self) -> &str {
+        &self.flags.compiled.environment.name
+    }
+
     /// Returns an iterator over all flag keys. Note that this may return both disabled flags and
     /// flags with bad configuration. Mostly useful for debugging.
     pub fn flag_keys(&self) -> impl Iterator<Item = &Str> {
@@ -33,9 +42,9 @@ impl Configuration {
 
     /// Returns bytes representing flags configuration.
     ///
-    /// The return value should be treated as opaque and passed on to another Eppo client for
-    /// initialization.
-    pub fn get_flags_configuration(&self) -> Option<Cow<[u8]>> {
+    /// The return value should be treated as opaque and passed on to another feature flagging
+    /// client for initialization.
+    pub fn get_flags_configuration(&self) -> Option<Cow<'_, [u8]>> {
         Some(Cow::Borrowed(self.flags.to_json()))
     }
 }

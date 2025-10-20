@@ -1,23 +1,12 @@
-use std::sync::Arc;
-
 use chrono::{DateTime, Utc};
 
 use crate::rules_based::{
-    Attributes, Configuration, Str,
     error::{EvaluationError, EvaluationFailure},
-    events::AssignmentEvent,
     ufc::{
         Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, Flag, Shard, Split,
         Timestamp, VariationType,
     },
-};
-
-use super::{
-    eval_visitor::{
-        EvalAllocationVisitor, EvalAssignmentVisitor, EvalRuleVisitor, EvalSplitVisitor,
-        NoopEvalVisitor,
-    },
-    subject::Subject,
+    Configuration, EvaluationContext,
 };
 
 /// Evaluate the specified feature flag for the given subject and return assigned variation and
@@ -25,118 +14,98 @@ use super::{
 pub fn get_assignment(
     configuration: Option<&Configuration>,
     flag_key: &str,
-    subject_key: &Str,
-    subject_attributes: &Arc<Attributes>,
+    subject: &EvaluationContext,
     expected_type: Option<VariationType>,
     now: DateTime<Utc>,
 ) -> Result<Option<Assignment>, EvaluationError> {
-    get_assignment_with_visitor(
-        configuration,
-        &mut NoopEvalVisitor,
-        flag_key,
-        subject_key,
-        subject_attributes,
-        expected_type,
-        now,
-    )
-}
-
-// Exposed for use in bandit evaluation.
-pub(super) fn get_assignment_with_visitor<V: EvalAssignmentVisitor>(
-    configuration: Option<&Configuration>,
-    visitor: &mut V,
-    flag_key: &str,
-    subject_key: &Str,
-    subject_attributes: &Arc<Attributes>,
-    expected_type: Option<VariationType>,
-    now: DateTime<Utc>,
-) -> Result<Option<Assignment>, EvaluationError> {
-    let result = if let Some(config) = configuration {
-        visitor.on_configuration(config);
-
-        config.flags.compiled.eval_flag(
-            visitor,
+    let Some(config) = configuration else {
+        log::trace!(
             flag_key,
-            subject_key,
-            subject_attributes,
-            expected_type,
-            now,
-        )
-    } else {
-        Err(EvaluationFailure::ConfigurationMissing)
+            targeting_key = subject.targeting_key();
+            "returning default assignment because of: {}", EvaluationFailure::ConfigurationMissing);
+        return Ok(None);
     };
 
-    visitor.on_result(&result);
+    config.eval_flag(flag_key, subject, expected_type, now)
+}
 
-    match result {
-        Ok(assignment) => {
-            log::trace!(target: "eppo",
+impl Configuration {
+    pub fn eval_flag(
+        &self,
+        flag_key: &str,
+        context: &EvaluationContext,
+        expected_type: Option<VariationType>,
+        now: DateTime<Utc>,
+    ) -> Result<Option<Assignment>, EvaluationError> {
+        let result = self
+            .flags
+            .compiled
+            .eval_flag(flag_key, context, expected_type, now);
+
+        match result {
+            Ok(assignment) => {
+                log::trace!(
+                flag_key,
+                targeting_key = context.targeting_key(),
+                assignment:serde = assignment.value;
+                "evaluated a flag");
+                Ok(Some(assignment))
+            }
+
+            Err(EvaluationFailure::ConfigurationMissing) => {
+                log::warn!(
+                flag_key,
+                targeting_key = context.targeting_key();
+                "evaluating a flag before flags configuration has been fetched");
+                Ok(None)
+            }
+
+            Err(EvaluationFailure::Error(err)) => {
+                log::warn!(
                     flag_key,
-                    subject_key,
-                    assignment:serde = assignment.value;
-                    "evaluated a flag");
-            Ok(Some(assignment))
-        }
+                    targeting_key = context.targeting_key();
+                    "error occurred while evaluating a flag: {err}",
+                );
+                Err(err)
+            }
 
-        Err(EvaluationFailure::ConfigurationMissing) => {
-            log::warn!(target: "eppo",
-                           flag_key,
-                           subject_key;
-                           "evaluating a flag before Eppo configuration has been fetched");
-            Ok(None)
-        }
-
-        Err(EvaluationFailure::Error(err)) => {
-            log::warn!(target: "eppo",
-                       flag_key,
-                       subject_key;
-                       "error occurred while evaluating a flag: {err}",
-            );
-            Err(err)
-        }
-
-        // Non-Error failures are considered normal conditions and usually don't need extra
-        // attention, so we remap them to Ok(None) before returning to the user.
-        Err(err) => {
-            log::trace!(target: "eppo",
-                           flag_key,
-                           subject_key;
-                           "returning default assignment because of: {err}");
-            Ok(None)
+            // Non-Error failures are considered normal conditions and usually don't need extra
+            // attention, so we remap them to Ok(None) before returning to the user.
+            Err(err) => {
+                log::trace!(
+                    flag_key,
+                    targeting_key = context.targeting_key();
+                    "returning default assignment because of: {err}");
+                Ok(None)
+            }
         }
     }
 }
 
 impl CompiledFlagsConfig {
     /// Evaluate the flag for the given subject, expecting `expected_type` type.
-    fn eval_flag<V: EvalAssignmentVisitor>(
+    fn eval_flag(
         &self,
-        visitor: &mut V,
         flag_key: &str,
-        subject_key: &Str,
-        subject_attributes: &Arc<Attributes>,
+        subject: &EvaluationContext,
         expected_type: Option<VariationType>,
         now: DateTime<Utc>,
     ) -> Result<Assignment, EvaluationFailure> {
         let flag = self.get_flag(flag_key)?;
 
-        visitor.on_flag_configuration(flag);
-
         if let Some(ty) = expected_type {
             flag.verify_type(ty)?;
         }
 
-        flag.eval(visitor, subject_key, subject_attributes, now)
+        flag.eval(subject, now)
     }
 
     fn get_flag(&self, flag_key: &str) -> Result<&Flag, EvaluationFailure> {
-        let flag = self
-            .flags
+        self.flags
             .get(flag_key)
             .ok_or(EvaluationFailure::FlagUnrecognizedOrDisabled)?
             .as_ref()
-            .map_err(Clone::clone)?;
-        Ok(flag)
+            .map_err(Clone::clone)
     }
 }
 
@@ -152,19 +121,13 @@ impl Flag {
         }
     }
 
-    fn eval<V: EvalAssignmentVisitor>(
+    fn eval(
         &self,
-        visitor: &mut V,
-        subject_key: &Str,
-        subject_attributes: &Arc<Attributes>,
+        subject: &EvaluationContext,
         now: DateTime<Utc>,
     ) -> Result<Assignment, EvaluationFailure> {
-        let subject = Subject::new(subject_key.clone(), subject_attributes.clone());
-
         let Some((allocation, (split, reason))) = self.allocations.iter().find_map(|allocation| {
-            let mut visitor = visitor.visit_allocation(allocation);
-            let result = allocation.get_matching_split(&mut visitor, &subject, now);
-            visitor.on_result(result.as_ref().map(|(split, _)| *split).map_err(|e| *e));
+            let result = allocation.get_matching_split(subject, now);
             result
                 .ok()
                 .map(|(split, reason)| (allocation, (split, reason)))
@@ -172,7 +135,7 @@ impl Flag {
             return Err(EvaluationFailure::DefaultAllocationNull);
         };
 
-        let (value, event_base) = split.result.clone()?;
+        let value = split.value.clone();
 
         Ok(Assignment {
             value,
@@ -180,12 +143,7 @@ impl Flag {
             allocation_key: allocation.key.clone(),
             extra_logging: split.extra_logging.clone(),
             reason,
-            event: event_base.map(|base| AssignmentEvent {
-                base,
-                subject: subject_key.clone(),
-                subject_attributes: subject_attributes.clone(),
-                timestamp: now,
-            }),
+            do_log: allocation.do_log,
         })
     }
 }
@@ -199,10 +157,9 @@ pub(super) enum AllocationNonMatchReason {
 }
 
 impl Allocation {
-    fn get_matching_split<V: EvalAllocationVisitor>(
+    fn get_matching_split(
         &self,
-        visitor: &mut V,
-        subject: &Subject,
+        subject: &EvaluationContext,
         now: Timestamp,
     ) -> Result<(&Split, AssignmentReason), AllocationNonMatchReason> {
         if self.start_at.is_some_and(|t| now < t) {
@@ -212,13 +169,8 @@ impl Allocation {
             return Err(AllocationNonMatchReason::AfterEndDate);
         }
 
-        let is_allowed_by_rules = self.rules.is_empty()
-            || self.rules.iter().any(|rule| {
-                let mut visitor = visitor.visit_rule(rule);
-                let result = rule.eval(&mut visitor, subject);
-                visitor.on_result(result);
-                result
-            });
+        let is_allowed_by_rules =
+            self.rules.is_empty() || self.rules.iter().any(|rule| rule.eval(subject));
         if !is_allowed_by_rules {
             return Err(AllocationNonMatchReason::FailingRule);
         }
@@ -227,9 +179,7 @@ impl Allocation {
             .splits
             .iter()
             .find(|split| {
-                let mut visitor = visitor.visit_split(split);
-                let matches = split.matches(&mut visitor, subject.key());
-                visitor.on_result(matches);
+                let matches = split.matches(subject.targeting_key());
                 matches
             })
             .ok_or(AllocationNonMatchReason::TrafficExposureMiss)?;
@@ -248,30 +198,27 @@ impl Allocation {
 }
 
 impl Split {
-    /// Return `true` if `subject_key` matches the given split.
+    /// Return `true` if `targeting_key` matches the given split.
     ///
     /// To match a split, subject must match all underlying shards.
-    fn matches<V: EvalSplitVisitor>(&self, visitor: &mut V, subject_key: &str) -> bool {
-        self.shards
-            .iter()
-            .all(|shard| shard.matches(visitor, subject_key))
+    fn matches(&self, targeting_key: &str) -> bool {
+        self.shards.iter().all(|shard| shard.matches(targeting_key))
     }
 }
 
 impl Shard {
-    /// Return `true` if `subject_key` matches the given shard.
-    fn matches<V: EvalSplitVisitor>(&self, visitor: &mut V, subject_key: &str) -> bool {
-        let h = self.sharder.shard(&[subject_key]);
+    /// Return `true` if `targeting_key` matches the given shard.
+    fn matches(&self, targeting_key: &str) -> bool {
+        let h = self.sharder.shard(&[targeting_key]);
 
-        let matches = self.ranges.iter().any(|range| range.contains(h));
-        visitor.on_shard_eval(self, h, matches);
-        matches
+        self.ranges.iter().any(|range| range.contains(h))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::HashMap,
         fs::{self, File},
         sync::Arc,
     };
@@ -280,9 +227,9 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use crate::rules_based::{
-        Attributes, Configuration, SdkMetadata, Str,
         eval::get_assignment,
         ufc::{AssignmentValue, UniversalFlagConfig, VariationType},
+        Attribute, Configuration, EvaluationContext, Str,
     };
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -292,7 +239,7 @@ mod tests {
         variation_type: VariationType,
         default_value: serde_json::Value,
         targeting_key: Str,
-        attributes: Arc<Attributes>,
+        attributes: Arc<HashMap<Str, Attribute>>,
         result: TestResult,
     }
 
@@ -305,30 +252,13 @@ mod tests {
     fn evaluation_sdk_test_data() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let config = UniversalFlagConfig::from_json(
-            SdkMetadata {
-                name: "test",
-                version: "0.1.0",
-            },
-            {
-                let path = if std::path::Path::new("tests/data/flags-v1.json").exists() {
-                    "tests/data/flags-v1.json"
-                } else {
-                    "domains/ffe/libs/flagging/rust/evaluation/tests/data/flags-v1.json"
-                };
-                std::fs::read(path).unwrap()
-            },
-        )
-        .unwrap();
+        let config =
+            UniversalFlagConfig::from_json(std::fs::read("tests/data/flags-v1.json").unwrap())
+                .unwrap();
         let config = Configuration::from_server_response(config);
         let now = Utc::now();
 
-        let test_dir = if std::path::Path::new("tests/data/tests/").exists() {
-            "tests/data/tests/"
-        } else {
-            "domains/ffe/libs/flagging/rust/evaluation/tests/data/tests/"
-        };
-        for entry in fs::read_dir(test_dir).unwrap() {
+        for entry in fs::read_dir("tests/data/tests/").unwrap() {
             let entry = entry.unwrap();
             println!("Processing test file: {:?}", entry.path());
 
@@ -341,11 +271,11 @@ mod tests {
                         .unwrap();
 
                 print!("test subject {:?} ... ", test_case.targeting_key);
+                let subject = EvaluationContext::new(test_case.targeting_key, test_case.attributes);
                 let result = get_assignment(
                     Some(&config),
                     &test_case.flag,
-                    &test_case.targeting_key,
-                    &test_case.attributes,
+                    &subject,
                     Some(test_case.variation_type),
                     now,
                 )

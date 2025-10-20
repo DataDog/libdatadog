@@ -294,7 +294,7 @@ impl TryFrom<ConditionWire> for Condition {
                             condition.operator
                         );
                         return Err(Error::EvaluationError(
-                            EvaluationError::UnexpectedConfigurationParseError,
+                            EvaluationError::UnexpectedConfigurationError,
                         ));
                     }
                 };
@@ -305,7 +305,7 @@ impl TryFrom<ConditionWire> for Condition {
                             "failed to parse condition: failed to compile regex {regex_string:?}: {err:?}"
                         );
                         return Err(Error::EvaluationError(
-                            EvaluationError::UnexpectedConfigurationParseError,
+                            EvaluationError::UnexpectedConfigurationError,
                         ));
                     }
                 };
@@ -335,7 +335,7 @@ impl TryFrom<ConditionWire> for Condition {
                         condition.value
                     );
                     return Err(Error::EvaluationError(
-                        EvaluationError::UnexpectedConfigurationParseError,
+                        EvaluationError::UnexpectedConfigurationError,
                     ));
                 };
                 ConditionCheck::Comparison {
@@ -353,7 +353,7 @@ impl TryFrom<ConditionWire> for Condition {
                             condition.value
                         );
                         return Err(Error::EvaluationError(
-                            EvaluationError::UnexpectedConfigurationParseError,
+                            EvaluationError::UnexpectedConfigurationError,
                         ));
                     }
                 };
@@ -369,7 +369,7 @@ impl TryFrom<ConditionWire> for Condition {
                         "failed to parse condition: IS_NULL condition with non-boolean condition value"
                     );
                     return Err(Error::EvaluationError(
-                        EvaluationError::UnexpectedConfigurationParseError,
+                        EvaluationError::UnexpectedConfigurationError,
                     ));
                 };
                 ConditionCheck::Null { expected_null }
@@ -399,8 +399,8 @@ pub(crate) enum ConditionOperator {
     OneOf,
     /// Not one of values. Condition value must be a list of strings. Match is case-sensitive.
     ///
-    /// Null/absent attributes fail this condition automatically. (i.e., `null NOT_ONE_OF ["hello"]`
-    /// is `false`)
+    /// Null/absent attributes fail this condition automatically. (i.e., `null NOT_ONE_OF
+    /// ["hello"]` is `false`)
     NotOneOf,
     /// Null check.
     ///

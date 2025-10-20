@@ -1,36 +1,32 @@
 use crate::rules_based::{
-    AttributeValue,
     ufc::{ComparisonOperator, Condition, ConditionCheck, RuleWire, TryParse},
+    Attribute, EvaluationContext,
 };
 
-use super::{eval_visitor::EvalRuleVisitor, subject::Subject};
-
 impl RuleWire {
-    pub(super) fn eval<V: EvalRuleVisitor>(&self, visitor: &mut V, subject: &Subject) -> bool {
+    pub(super) fn eval(&self, subject: &EvaluationContext) -> bool {
         self.conditions.iter().all(|condition| match condition {
-            TryParse::Parsed(condition) => condition.eval(visitor, subject),
+            TryParse::Parsed(condition) => condition.eval(subject),
             TryParse::ParseFailed(_) => false,
         })
     }
 }
 
 impl Condition {
-    fn eval<V: EvalRuleVisitor>(&self, visitor: &mut V, subject: &Subject) -> bool {
+    fn eval(&self, subject: &EvaluationContext) -> bool {
         let attribute = subject.get_attribute(self.attribute.as_ref());
-        let result = self.check.eval(attribute);
-        visitor.on_condition_eval(self, attribute, result);
-        result
+        self.check.eval(attribute)
     }
 }
 
 impl ConditionCheck {
     /// Check if `attribute` matches.
-    fn eval(&self, attribute: Option<&AttributeValue>) -> bool {
+    fn eval(&self, attribute: Option<&Attribute>) -> bool {
         self.try_eval(attribute).unwrap_or(false)
     }
 
     /// Try applying `Operator` to the values, returning `None` if the operator cannot be applied.
-    fn try_eval(&self, attribute: Option<&AttributeValue>) -> Option<bool> {
+    fn try_eval(&self, attribute: Option<&Attribute>) -> Option<bool> {
         let result = match self {
             ConditionCheck::Comparison {
                 operator,
@@ -74,8 +70,8 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use crate::rules_based::{
-        eval::{eval_visitor::NoopEvalVisitor, subject::Subject},
         ufc::{ComparisonOperator, Condition, ConditionCheck, RuleWire},
+        EvaluationContext,
     };
 
     #[test]
@@ -127,13 +123,11 @@ mod tests {
 
     #[test]
     fn one_of_int() {
-        assert!(
-            ConditionCheck::Membership {
-                expected_membership: true,
-                values: ["42".into()].into()
-            }
-            .eval(Some(&42.0.into()))
-        );
+        assert!(ConditionCheck::Membership {
+            expected_membership: true,
+            values: ["42".into()].into()
+        }
+        .eval(Some(&42.0.into())));
     }
 
     #[test]
@@ -156,34 +150,26 @@ mod tests {
 
     #[test]
     fn is_null() {
-        assert!(
-            ConditionCheck::Null {
-                expected_null: true
-            }
-            .eval(None)
-        );
-        assert!(
-            !ConditionCheck::Null {
-                expected_null: true
-            }
-            .eval(Some(&10.0.into()))
-        );
+        assert!(ConditionCheck::Null {
+            expected_null: true
+        }
+        .eval(None));
+        assert!(!ConditionCheck::Null {
+            expected_null: true
+        }
+        .eval(Some(&10.0.into())));
     }
 
     #[test]
     fn is_not_null() {
-        assert!(
-            !ConditionCheck::Null {
-                expected_null: false
-            }
-            .eval(None)
-        );
-        assert!(
-            ConditionCheck::Null {
-                expected_null: false
-            }
-            .eval(Some(&10.0.into()))
-        );
+        assert!(!ConditionCheck::Null {
+            expected_null: false
+        }
+        .eval(None));
+        assert!(ConditionCheck::Null {
+            expected_null: false
+        }
+        .eval(Some(&10.0.into())));
     }
 
     #[test]
@@ -226,33 +212,25 @@ mod tests {
     #[test]
     fn empty_rule() {
         let rule = RuleWire { conditions: vec![] };
-        assert!(rule.eval(
-            &mut NoopEvalVisitor,
-            &Subject::new("key".into(), Default::default())
-        ));
+        assert!(rule.eval(&EvaluationContext::new("key".into(), Default::default())));
     }
 
     #[test]
     fn single_condition_rule() {
         let rule = RuleWire {
-            conditions: vec![
-                Condition {
-                    attribute: "age".into(),
-                    check: ConditionCheck::Comparison {
-                        operator: ComparisonOperator::Gt,
-                        comparand: 10.0,
-                    },
-                }
-                .into(),
-            ],
+            conditions: vec![Condition {
+                attribute: "age".into(),
+                check: ConditionCheck::Comparison {
+                    operator: ComparisonOperator::Gt,
+                    comparand: 10.0,
+                },
+            }
+            .into()],
         };
-        assert!(rule.eval(
-            &mut NoopEvalVisitor,
-            &Subject::new(
-                "key".into(),
-                Arc::new(HashMap::from([("age".into(), 11.0.into())]))
-            )
-        ));
+        assert!(rule.eval(&EvaluationContext::new(
+            "key".into(),
+            Arc::new(HashMap::from([("age".into(), 11.0.into())]))
+        )));
     }
 
     #[test]
@@ -277,49 +255,35 @@ mod tests {
                 .into(),
             ],
         };
-        assert!(rule.eval(
-            &mut NoopEvalVisitor,
-            &Subject::new(
-                "key".into(),
-                Arc::new(HashMap::from([("age".into(), 20.0.into())]))
-            )
-        ));
-        assert!(!rule.eval(
-            &mut NoopEvalVisitor,
-            &Subject::new(
-                "key".into(),
-                Arc::new(HashMap::from([("age".into(), 17.0.into())]))
-            )
-        ));
-        assert!(!rule.eval(
-            &mut NoopEvalVisitor,
-            &Subject::new(
-                "key".into(),
-                Arc::new(HashMap::from([("age".into(), 110.0.into())]))
-            )
-        ));
+        assert!(rule.eval(&EvaluationContext::new(
+            "key".into(),
+            Arc::new(HashMap::from([("age".into(), 20.0.into())]))
+        )));
+        assert!(!rule.eval(&EvaluationContext::new(
+            "key".into(),
+            Arc::new(HashMap::from([("age".into(), 17.0.into())]))
+        )));
+        assert!(!rule.eval(&EvaluationContext::new(
+            "key".into(),
+            Arc::new(HashMap::from([("age".into(), 110.0.into())]))
+        )));
     }
 
     #[test]
     fn missing_attribute() {
         let rule = RuleWire {
-            conditions: vec![
-                Condition {
-                    attribute: "age".into(),
-                    check: ConditionCheck::Comparison {
-                        operator: ComparisonOperator::Gt,
-                        comparand: 10.0,
-                    },
-                }
-                .into(),
-            ],
+            conditions: vec![Condition {
+                attribute: "age".into(),
+                check: ConditionCheck::Comparison {
+                    operator: ComparisonOperator::Gt,
+                    comparand: 10.0,
+                },
+            }
+            .into()],
         };
-        assert!(!rule.eval(
-            &mut NoopEvalVisitor,
-            &Subject::new(
-                "key".into(),
-                Arc::new(HashMap::from([("name".into(), "alice".into())]))
-            )
-        ));
+        assert!(!rule.eval(&EvaluationContext::new(
+            "key".into(),
+            Arc::new(HashMap::from([("name".into(), "alice".into())]))
+        )));
     }
 }

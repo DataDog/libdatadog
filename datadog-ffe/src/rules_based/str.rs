@@ -104,7 +104,7 @@ impl std::borrow::Borrow<str> for Str {
 }
 
 impl log::kv::ToValue for Str {
-    fn to_value(&self) -> log::kv::Value {
+    fn to_value(&self) -> log::kv::Value<'_> {
         log::kv::Value::from_display(self)
     }
 }

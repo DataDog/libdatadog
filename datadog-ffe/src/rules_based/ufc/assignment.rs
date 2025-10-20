@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize};
 
-use crate::rules_based::{Str, events::AssignmentEvent};
+use crate::rules_based::Str;
 
 use super::VariationType;
 
@@ -20,16 +19,6 @@ pub enum AssignmentReason {
     Static,
 }
 
-impl std::fmt::Display for AssignmentReason {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AssignmentReason::TargetingMatch => write!(f, "TARGETING_MATCH"),
-            AssignmentReason::Split => write!(f, "SPLIT"),
-            AssignmentReason::Static => write!(f, "STATIC"),
-        }
-    }
-}
-
 /// Result of assignment evaluation.
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -40,12 +29,13 @@ pub struct Assignment {
     pub variation_key: Str,
     /// The allocation key that was matched for this assignment.
     pub allocation_key: Str,
-    /// Extra logging information for this assignment.
-    pub extra_logging: Arc<HashMap<String, String>>,
     /// The reason for this assignment.
     pub reason: AssignmentReason,
-    /// Optional assignment event that should be logged to storage.
-    pub event: Option<AssignmentEvent>,
+
+    /// Whether this assignment is part of an experiment and should be logged.
+    pub do_log: bool,
+    /// Extra logging information for this assignment.
+    pub extra_logging: Arc<HashMap<String, String>>,
 }
 
 /// Enum representing values assigned to a subject as a result of feature flag evaluation.
@@ -53,57 +43,26 @@ pub struct Assignment {
 /// # Serialization
 ///
 /// When serialized to JSON, serialized as a two-field object with `type` and `value`. Type is one
-/// of "STRING", "INTEGER", "NUMERIC", "BOOLEAN", or "JSON". Value is either string, number,
+/// of "STRING", "INTEGER", "FLOAT", "BOOLEAN", or "JSON". Value is either string, number,
 /// boolean, or arbitrary JSON value.
 ///
 /// Example:
 /// ```json
 /// {"type":"JSON","value":{"hello":"world"}}
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE", tag = "type", content = "value")]
 pub enum AssignmentValue {
     /// A string value.
     String(Str),
     /// An integer value.
     Integer(i64),
     /// A numeric value (floating-point).
-    Numeric(f64),
+    Float(f64),
     /// A boolean value.
     Boolean(bool),
     /// Arbitrary JSON value.
     Json(Arc<serde_json::Value>),
-}
-
-impl Serialize for AssignmentValue {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut state = serializer.serialize_struct("AssignmentValue", 2)?;
-        match self {
-            AssignmentValue::String(s) => {
-                state.serialize_field("type", "STRING")?;
-                state.serialize_field("value", s)?;
-            }
-            AssignmentValue::Integer(i) => {
-                state.serialize_field("type", "INTEGER")?;
-                state.serialize_field("value", i)?;
-            }
-            AssignmentValue::Numeric(n) => {
-                state.serialize_field("type", "NUMERIC")?;
-                state.serialize_field("value", n)?;
-            }
-            AssignmentValue::Boolean(b) => {
-                state.serialize_field("type", "BOOLEAN")?;
-                state.serialize_field("value", b)?;
-            }
-            AssignmentValue::Json(value) => {
-                state.serialize_field("type", "JSON")?;
-                state.serialize_field("value", &**value)?;
-            }
-        }
-        state.end()
-    }
 }
 
 impl AssignmentValue {
@@ -115,7 +74,7 @@ impl AssignmentValue {
         Some(match (ty, value) {
             (VariationType::String, Value::String(s)) => AssignmentValue::String(s.into()),
             (VariationType::Integer, Value::Number(n)) => AssignmentValue::Integer(n.as_i64()?),
-            (VariationType::Numeric, Value::Number(n)) => AssignmentValue::Numeric(n.as_f64()?),
+            (VariationType::Numeric, Value::Number(n)) => AssignmentValue::Float(n.as_f64()?),
             (VariationType::Boolean, Value::Bool(v)) => AssignmentValue::Boolean(v),
             (VariationType::Json, v) => AssignmentValue::Json(Arc::new(v)),
             // Type mismatch
@@ -130,7 +89,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use ffe_evaluation::rules_based::ufc::AssignmentValue;
+    /// # use datadog_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::String("example".into());
     /// assert_eq!(value.is_string(), true);
     /// ```
@@ -144,7 +103,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use ffe_evaluation::rules_based::ufc::AssignmentValue;
+    /// # use datadog_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::String("example".into());
     /// assert_eq!(value.as_str(), Some("example"));
     /// ```
@@ -162,7 +121,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use ffe_evaluation::rules_based::ufc::AssignmentValue;
+    /// # use datadog_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::String("example".into());
     /// assert_eq!(value.to_string(), Some("example".into()));
     /// ```
@@ -180,7 +139,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use ffe_evaluation::rules_based::ufc::AssignmentValue;
+    /// # use datadog_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::Integer(42);
     /// assert_eq!(value.is_integer(), true);
     /// ```
@@ -194,7 +153,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use ffe_evaluation::rules_based::ufc::AssignmentValue;
+    /// # use datadog_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::Integer(42);
     /// assert_eq!(value.as_integer(), Some(42));
     /// ```
@@ -212,12 +171,12 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use ffe_evaluation::rules_based::ufc::AssignmentValue;
-    /// let value = AssignmentValue::Numeric(3.14);
-    /// assert_eq!(value.is_numeric(), true);
+    /// # use datadog_ffe::rules_based::AssignmentValue;
+    /// let value = AssignmentValue::Float(3.14);
+    /// assert_eq!(value.is_float(), true);
     /// ```
-    pub fn is_numeric(&self) -> bool {
-        self.as_numeric().is_some()
+    pub fn is_float(&self) -> bool {
+        self.as_float().is_some()
     }
     /// Returns the assignment value as a numeric value if it is of type Numeric.
     ///
@@ -226,13 +185,13 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use ffe_evaluation::rules_based::ufc::AssignmentValue;
-    /// let value = AssignmentValue::Numeric(3.14);
-    /// assert_eq!(value.as_numeric(), Some(3.14));
+    /// # use datadog_ffe::rules_based::AssignmentValue;
+    /// let value = AssignmentValue::Float(3.14);
+    /// assert_eq!(value.as_float(), Some(3.14));
     /// ```
-    pub fn as_numeric(&self) -> Option<f64> {
+    pub fn as_float(&self) -> Option<f64> {
         match self {
-            Self::Numeric(n) => Some(*n),
+            Self::Float(n) => Some(*n),
             _ => None,
         }
     }
@@ -244,7 +203,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use ffe_evaluation::rules_based::ufc::AssignmentValue;
+    /// # use datadog_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::Boolean(true);
     /// assert_eq!(value.is_boolean(), true);
     /// ```
@@ -258,7 +217,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use ffe_evaluation::rules_based::ufc::AssignmentValue;
+    /// # use datadog_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::Boolean(true);
     /// assert_eq!(value.as_boolean(), Some(true));
     /// ```
@@ -300,12 +259,13 @@ impl AssignmentValue {
     /// Returns the type of the variation as a string.
     ///
     /// # Returns
-    /// - A string representing the type of the variation ("STRING", "INTEGER", "NUMERIC", "BOOLEAN", or "JSON").
+    /// - A string representing the type of the variation ("STRING", "INTEGER", "NUMERIC",
+    ///   "BOOLEAN", or "JSON").
     ///
     /// # Examples
     /// ```
-    /// # use ffe_evaluation::rules_based::ufc::AssignmentValue;
-    /// # use ffe_evaluation::rules_based::ufc::VariationType;
+    /// # use datadog_ffe::rules_based::AssignmentValue;
+    /// # use datadog_ffe::rules_based::VariationType;
     /// let value = AssignmentValue::String("example".into());
     /// assert_eq!(value.variation_type(), VariationType::String);
     /// ```
@@ -313,7 +273,7 @@ impl AssignmentValue {
         match self {
             AssignmentValue::String(_) => VariationType::String,
             AssignmentValue::Integer(_) => VariationType::Integer,
-            AssignmentValue::Numeric(_) => VariationType::Numeric,
+            AssignmentValue::Float(_) => VariationType::Numeric,
             AssignmentValue::Boolean(_) => VariationType::Boolean,
             AssignmentValue::Json(_) => VariationType::Json,
         }
@@ -323,12 +283,12 @@ impl AssignmentValue {
     ///
     /// # Returns
     /// - A JSON Value containing the variation value.
-    pub(crate) fn variation_value(&self) -> serde_json::Value {
+    pub fn variation_value(&self) -> serde_json::Value {
         use serde_json::{Number, Value};
         match self {
             AssignmentValue::String(s) => Value::String(s.to_string()),
             AssignmentValue::Integer(i) => Value::Number((*i).into()),
-            AssignmentValue::Numeric(n) => {
+            AssignmentValue::Float(n) => {
                 Value::Number(Number::from_f64(*n).expect("value should not be infinite/NaN"))
             }
             AssignmentValue::Boolean(b) => Value::Bool(*b),
