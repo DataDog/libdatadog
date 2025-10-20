@@ -59,7 +59,7 @@ pub struct TracerFlareManager {
     pub collecting: Arc<Mutex<bool>>,
     /// As a featured option so we can use the component with no Listener
     #[cfg(feature = "listener")]
-    pub listener: Arc<Mutex<Option<Listener>>>,
+    pub listener: Option<Listener>,
 }
 
 impl Default for TracerFlareManager {
@@ -69,7 +69,7 @@ impl Default for TracerFlareManager {
             language: Arc::new(Mutex::new("rust".to_string())),
             collecting: Arc::new(Mutex::new(false)),
             #[cfg(feature = "listener")]
-            listener: Arc::new(Mutex::new(None)),
+            listener: None,
         }
     }
 }
@@ -150,7 +150,7 @@ impl TracerFlareManager {
             capabilities: vec![],
         };
 
-        tracer_flare.listener = Arc::new(Mutex::new(Some(SingleChangesFetcher::new(
+        tracer_flare.listener = Some(SingleChangesFetcher::new(
             ParsedFileStorage::default(),
             Target {
                 service,
@@ -160,7 +160,7 @@ impl TracerFlareManager {
             },
             runtime_id,
             config_to_fetch,
-        ))));
+        ));
 
         Ok(tracer_flare)
     }
@@ -419,10 +419,9 @@ impl TryFrom<&RemoteConfigData> for ReturnAction {
 /// ```
 #[cfg(feature = "listener")]
 pub async fn run_remote_config_listener(
-    tracer_flare: &TracerFlareManager,
+    tracer_flare: &mut TracerFlareManager,
 ) -> Result<ReturnAction, FlareError> {
-    let mut l = tracer_flare.listener.lock_or_panic();
-    let listener = match &mut *l {
+    let listener = match &mut tracer_flare.listener {
         Some(listener) => listener,
         None => {
             return Err(FlareError::ListeningError(
