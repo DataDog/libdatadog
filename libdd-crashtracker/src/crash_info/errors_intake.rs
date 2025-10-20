@@ -113,7 +113,6 @@ impl ErrorsIntakeSettings {
 }
 
 impl ErrorsIntakeConfig {
-    // Implemented following same pattern as telemetry
     fn trace_agent_url_from_setting(settings: &ErrorsIntakeSettings) -> String {
         None.or_else(|| {
             settings
@@ -193,7 +192,6 @@ impl ErrorsIntakeConfig {
                 format!("https://{}.{}", PROD_ERRORS_INTAKE_SUBDOMAIN, site)
             }
         } else {
-            // For agent proxy, use existing logic
             Self::trace_agent_url_from_setting(settings)
         };
 
@@ -364,23 +362,20 @@ impl ErrorsIntakePayload {
             |ts| ts.timestamp_millis() as u64,
         );
 
-        // Extract metadata and build tags
         let metadata = ExtractedMetadata::from_metadata(&crash_info.metadata);
         let mut ddtags = String::new();
         metadata.append_base_tags(&mut ddtags);
         metadata.append_runtime_tags(&mut ddtags);
 
-        // Add crash-specific tags (same as telemetry extract_crash_info_tags)
         let crash_tags = build_crash_info_tags(crash_info);
         ddtags.push_str(&format!(",{crash_tags}"));
 
-        // Extract error info from signal
         let (error_type, error_message) = if let Some(sig_info) = &crash_info.sig_info {
             (
                 Some(format!("{:?}", sig_info.si_signo_human_readable)),
                 Some(format!(
-                    "Process terminated with {:?} ({:?})",
-                    sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+                    "Process terminated by signal {:?}",
+                    sig_info.si_signo_human_readable
                 )),
             )
         } else {
@@ -423,7 +418,6 @@ impl ErrorsIntakePayload {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
-        // Extract metadata and build tags (same order as telemetry crash ping)
         let extracted_metadata = ExtractedMetadata::from_metadata(metadata);
         let mut ddtags = format!(
             "uuid:{},is_crash_ping:true,service:{}",
@@ -437,7 +431,6 @@ impl ErrorsIntakePayload {
             ddtags.push_str(&format!(",version:{version}"));
         }
 
-        // Add signal information tags (same as telemetry crash ping)
         append_signal_tags(&mut ddtags, sig_info);
 
         Ok(Self {
@@ -494,7 +487,7 @@ impl ErrorsIntakeUploader {
             return Ok(());
         };
 
-        // Handle file endpoint for testing
+        // Handle file endpoint
         if endpoint.url.scheme_str() == Some("file") {
             let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
                 .context("errors intake file path is not valid")?;
@@ -571,22 +564,18 @@ mod tests {
 
         let ddtags = &payload.ddtags;
 
-        // Base metadata tags
         assert!(ddtags.contains("service:foo"));
         assert!(ddtags.contains("version:bar"));
         assert!(ddtags.contains("language_name:native"));
 
-        // Crash-specific tags (same as telemetry)
         assert!(ddtags.contains("data_schema_version:1.4"));
         assert!(ddtags.contains("incomplete:true"));
         assert!(ddtags.contains("is_crash:true"));
         assert!(ddtags.contains("uuid:1d6b97cb-968c-40c9-af6e-e4b4d71e8781"));
 
-        // Counter tags
         assert!(ddtags.contains("collecting_sample:1"));
         assert!(ddtags.contains("not_profiling:0"));
 
-        // Signal information tags
         assert!(ddtags.contains("si_addr:0x0000000000001234"));
         assert!(ddtags.contains("si_code:1"));
         assert!(ddtags.contains("si_code_human_readable:SEGV_BNDERR"));
@@ -610,18 +599,14 @@ mod tests {
 
         let ddtags = &payload.ddtags;
 
-        // Core crash ping tags (same order as telemetry)
         assert!(ddtags.contains("uuid:test-uuid-123"));
         assert!(ddtags.contains("is_crash_ping:true"));
         assert!(ddtags.contains("service:foo"));
 
-        // Runtime metadata tags (same as telemetry crash ping)
         assert!(ddtags.contains("language_name:native"));
 
-        // Base metadata tags
         assert!(ddtags.contains("version:bar"));
 
-        // Signal information tags (same as telemetry crash ping)
         assert!(ddtags.contains("si_code_human_readable:SEGV_BNDERR"));
         assert!(ddtags.contains("si_signo:11"));
         assert!(ddtags.contains("si_signo_human_readable:SIGSEGV"));
@@ -632,7 +617,6 @@ mod tests {
         let crash_info = CrashInfo::test_instance(1);
         let payload = ErrorsIntakePayload::from_crash_info(&crash_info).unwrap();
 
-        // This test ensures we have all the tags that telemetry extract_crash_info_tags produces
         let expected_crash_tags = [
             "data_schema_version:1.4",
             "incomplete:true",
@@ -647,11 +631,7 @@ mod tests {
             "si_signo_human_readable:SIGSEGV",
         ];
 
-        let expected_metadata_tags = [
-            "service:foo",
-            "version:bar", // service_version from test metadata
-            "language_name:native",
-        ];
+        let expected_metadata_tags = ["service:foo", "version:bar", "language_name:native"];
 
         for tag in expected_crash_tags
             .iter()
@@ -776,7 +756,6 @@ mod tests {
         std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
         std::env::remove_var("DD_SITE");
 
-        // Test agent proxy configuration (no API key or direct submission disabled)
         std::env::set_var("DD_TRACE_AGENT_URL", "http://localhost:9126");
 
         let cfg = ErrorsIntakeConfig::from_env();
@@ -788,7 +767,6 @@ mod tests {
         // Should use agent proxy path
         assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
 
-        // Clean up test environment
         std::env::remove_var("DD_TRACE_AGENT_URL");
         std::env::remove_var("DD_AGENT_HOST");
         std::env::remove_var("DD_TRACE_AGENT_PORT");
@@ -801,7 +779,6 @@ mod tests {
     fn test_errors_intake_config_agent_with_api_key_but_no_direct() {
         let _lock = ENV_TEST_LOCK.lock().unwrap();
 
-        // Clear all environment variables first to isolate test
         std::env::remove_var("DD_TRACE_AGENT_URL");
         std::env::remove_var("DD_AGENT_HOST");
         std::env::remove_var("DD_TRACE_AGENT_PORT");
@@ -809,11 +786,10 @@ mod tests {
         std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
         std::env::remove_var("DD_SITE");
 
-        // Test: API key is set but direct submission is NOT enabled
+        // API key is set but direct submission is NOT enabled
         // Should still use agent proxy
         std::env::set_var("DD_TRACE_AGENT_URL", "http://localhost:9126");
         std::env::set_var("DD_API_KEY", "test-key");
-        // Note: _DD_DIRECT_SUBMISSION_ENABLED is NOT set (defaults to false)
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -824,11 +800,8 @@ mod tests {
 
         // Should use agent proxy path, not direct path
         assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
-
-        // Should have no API key in endpoint since we're using agent proxy
         assert!(endpoint.api_key.is_none());
 
-        // Clean up test environment
         std::env::remove_var("DD_TRACE_AGENT_URL");
         std::env::remove_var("DD_API_KEY");
     }
