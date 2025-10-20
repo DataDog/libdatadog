@@ -47,6 +47,7 @@ hyper-util = "0.1.10"
 
 [dev-dependencies]
 bolero = "0.13"
-datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["bolero", "prost_impls"] }
+#datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["bolero", "prost_impls"] }
+datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["prost_impls"] }
 proptest = "1.5"
 uuid = { version = "1", features = ["v4"] }

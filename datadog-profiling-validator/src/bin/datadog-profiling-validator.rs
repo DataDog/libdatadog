@@ -9,6 +9,7 @@
 
 use clap::Parser;
 use datadog_profiling_protobuf::prost_impls::*;
+use prost::Message;
 use std::collections::HashSet;
 use std::io::{self, Read};
 use std::{fs, path};
