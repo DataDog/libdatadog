@@ -237,7 +237,7 @@ async fn send(
 ) -> Result<(), FlareError> {
     let payload = generate_payload(
         zip,
-        &tracer_flare.language,
+        &tracer_flare.language.lock().unwrap(),
         &log_level,
         &agent_task.args.case_id,
         &agent_task.args.hostname,
@@ -245,7 +245,7 @@ async fn send(
         &agent_task.uuid,
     )?;
 
-    let agent_url = tracer_flare.agent_url.clone() + "/tracer_flare/v1";
+    let agent_url = tracer_flare.agent_url.lock().unwrap().clone() + "/tracer_flare/v1";
     let agent_url = match hyper::Uri::from_str(&agent_url) {
         Ok(uri) => uri,
         Err(_) => {

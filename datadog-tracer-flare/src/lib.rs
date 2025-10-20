@@ -9,6 +9,8 @@
 pub mod error;
 pub mod zip;
 
+use std::sync::{Arc, Mutex};
+
 use datadog_remote_config::{
     config::agent_task::AgentTaskFile, file_storage::RawFile, RemoteConfigData,
 };
@@ -51,22 +53,22 @@ use crate::error::FlareError;
 /// 3. Handle returned [`ReturnAction`]: `Send(agent_task)`, `Set(log_level)`, `Unset`, or `None`
 /// 4. Use the `collecting` field to track current flare collection state
 pub struct TracerFlareManager {
-    pub agent_url: String,
-    pub language: String,
-    pub collecting: bool,
+    pub agent_url: Arc<Mutex<String>>,
+    pub language: Arc<Mutex<String>>,
+    pub collecting: Arc<Mutex<bool>>,
     /// As a featured option so we can use the component with no Listener
     #[cfg(feature = "listener")]
-    pub listener: Option<Listener>,
+    pub listener: Arc<Mutex<Option<Listener>>>,
 }
 
 impl Default for TracerFlareManager {
     fn default() -> Self {
         TracerFlareManager {
-            agent_url: hyper::Uri::default().to_string(),
-            language: "rust".to_string(),
-            collecting: false,
+            agent_url: Arc::new(Mutex::new(hyper::Uri::default().to_string())),
+            language: Arc::new(Mutex::new("rust".to_string())),
+            collecting: Arc::new(Mutex::new(false)),
             #[cfg(feature = "listener")]
-            listener: None,
+            listener: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -86,8 +88,8 @@ impl TracerFlareManager {
     /// For full RemoteConfig functionality, use `new_with_listener` instead.
     pub fn new(agent_url: &str, language: &str) -> Self {
         TracerFlareManager {
-            agent_url: agent_url.to_owned(),
-            language: language.to_owned(),
+            agent_url: Arc::new(Mutex::new(agent_url.to_owned())),
+            language: Arc::new(Mutex::new(language.to_owned())),
             ..Default::default()
         }
     }
@@ -147,7 +149,7 @@ impl TracerFlareManager {
             capabilities: vec![],
         };
 
-        tracer_flare.listener = Some(SingleChangesFetcher::new(
+        tracer_flare.listener = Arc::new(Mutex::new(Some(SingleChangesFetcher::new(
             ParsedFileStorage::default(),
             Target {
                 service,
@@ -157,7 +159,7 @@ impl TracerFlareManager {
             },
             runtime_id,
             config_to_fetch,
-        ));
+        ))));
 
         Ok(tracer_flare)
     }
@@ -176,18 +178,21 @@ impl TracerFlareManager {
     /// * `Ok(ReturnAction)` - If successful.
     /// * `FlareError(msg)` - If something fails.
     pub fn handle_remote_config_data(
-        &mut self,
+        &self,
         data: &RemoteConfigData,
     ) -> Result<ReturnAction, FlareError> {
         let action = data.try_into();
-        if let Ok(ReturnAction::Set(_)) = action {
-            if self.collecting {
-                return Ok(ReturnAction::None);
+        {
+            let mut collecting = self.collecting.lock().unwrap();
+            if let Ok(ReturnAction::Set(_)) = action {
+                if *collecting {
+                    return Ok(ReturnAction::None);
+                }
+                *collecting = true;
+            } else if Ok(ReturnAction::None) != action {
+                // If action is Send, Unset or an error, we need to stop collecting
+                *collecting = false;
             }
-            self.collecting = true;
-        } else if Ok(ReturnAction::None) != action {
-            // If action is Send, Unset or an error, we need to stop collecting
-            self.collecting = false;
         }
         action
     }
@@ -206,14 +211,14 @@ impl TracerFlareManager {
     /// * `Ok(ReturnAction)` - If successful.
     /// * `FlareError(msg)` - If something fail.
     pub fn handle_remote_config_file(
-        &mut self,
+        &self,
         file: RemoteConfigFile,
     ) -> Result<ReturnAction, FlareError> {
         match file.contents().as_ref() {
             Ok(data) => self.handle_remote_config_data(data),
             Err(e) => {
                 // If encounter an error we need to stop collecting
-                self.collecting = false;
+                *self.collecting.lock().unwrap() = false;
                 Err(FlareError::ParsingError(e.to_string()))
             }
         }
@@ -413,9 +418,10 @@ impl TryFrom<&RemoteConfigData> for ReturnAction {
 /// ```
 #[cfg(feature = "listener")]
 pub async fn run_remote_config_listener(
-    tracer_flare: &mut TracerFlareManager,
+    tracer_flare: &TracerFlareManager,
 ) -> Result<ReturnAction, FlareError> {
-    let listener = match &mut tracer_flare.listener {
+    let mut l = tracer_flare.listener.lock().unwrap();
+    let listener = match &mut *l {
         Some(listener) => listener,
         None => {
             return Err(FlareError::ListeningError(
@@ -454,12 +460,14 @@ pub async fn run_remote_config_listener(
         }
     }
 
-    if let ReturnAction::Set(_) = state {
-        tracer_flare.collecting = true;
-    } else if let ReturnAction::Send(_) = state {
-        tracer_flare.collecting = false;
+    {
+        let mut collecting = tracer_flare.collecting.lock().unwrap();
+        if let ReturnAction::Set(_) = state {
+            *collecting = true;
+        } else if let ReturnAction::Send(_) = state {
+            *collecting = false;
+        }
     }
-
     Ok(state)
 }
 
@@ -660,19 +668,19 @@ mod tests {
             .unwrap();
 
         // First AGENT_CONFIG
-        assert!(!tracer_flare.collecting);
+        assert!(!*tracer_flare.collecting.lock().unwrap());
         let result = tracer_flare
             .handle_remote_config_file(agent_config_file.clone())
             .unwrap();
         assert_eq!(result, ReturnAction::Set(LogLevel::Info));
-        assert!(tracer_flare.collecting);
+        assert!(*tracer_flare.collecting.lock().unwrap());
 
         // Second AGENT_CONFIG
         let result = tracer_flare
             .handle_remote_config_file(agent_config_file)
             .unwrap();
         assert_eq!(result, ReturnAction::None);
-        assert!(tracer_flare.collecting);
+        assert!(*tracer_flare.collecting.lock().unwrap());
 
         // Non-None actions stop collecting
         let error_file = storage
@@ -689,7 +697,7 @@ mod tests {
             .unwrap();
 
         let _ = tracer_flare.handle_remote_config_file(error_file);
-        assert!(!tracer_flare.collecting);
+        assert!(!*tracer_flare.collecting.lock().unwrap());
     }
 
     #[test]
