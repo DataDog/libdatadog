@@ -128,8 +128,8 @@ pub struct Endpoint {
     pub method: Option<Method>,
     #[serde(default)]
     pub path: Option<String>,
-    pub operation_name: String, 
-    pub resource_name: String
+    pub operation_name: String,
+    pub resource_name: String,
 }
 
 impl PartialEq for Endpoint {
