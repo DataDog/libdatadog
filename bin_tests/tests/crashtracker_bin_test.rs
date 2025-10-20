@@ -1289,6 +1289,8 @@ fn crash_tracking_empty_endpoint() {
         .spawn()
         .unwrap();
 
+    // With parallel crash ping and crash report emission to both telemetry and errors intake, we
+    // might receive requests in any order
     let (mut stream1, _) = listener.accept().unwrap();
     let body1 = read_http_request_body(&mut stream1);
 
@@ -1299,25 +1301,21 @@ fn crash_tracking_empty_endpoint() {
 
     let _ = stream2.write_all(b"HTTP/1.1 404\r\nContent-Length: 0\r\n\r\n");
 
-    // We expect up to 4 requests total (crash ping + crash report, each to telemetry + errors
-    // intake) Wait for 2 additional requests
-    let mut additional_bodies = Vec::new();
-    for _ in 3..=4 {
-        if let Ok((mut stream, _)) = listener.accept() {
-            let body = read_http_request_body(&mut stream);
-            additional_bodies.push(body);
-            // Send 200 OK response
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-                .unwrap();
-        } else {
-            break;
-        }
-    }
+    let (mut stream3, _) = listener.accept().unwrap();
+    let body3 = read_http_request_body(&mut stream3);
 
-    // Collect all requests (now expecting 4: 2 crash pings + 2 crash reports due to dual upload)
-    let mut all_bodies = vec![body1, body2];
-    all_bodies.extend(additional_bodies);
+    stream3
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        .unwrap();
+
+    let (mut stream4, _) = listener.accept().unwrap();
+    let body4 = read_http_request_body(&mut stream4);
+
+    stream4
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        .unwrap();
+
+    let all_bodies = [body1, body2, body3, body4];
 
     // Separate crash pings from crash reports
     let mut crash_pings = Vec::new();
@@ -1625,7 +1623,7 @@ fn test_crash_tracking_errors_intake_dual_upload(
         }
 
         // In dual upload mode, we expect at least the crash report
-        // Crash ping might not always be sent (e.g., file endpoints skip it)
+        // Crash ping might not always be sent
         assert!(
             found_crash_report,
             "Should have found crash report in errors intake"
