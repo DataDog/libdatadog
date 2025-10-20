@@ -264,6 +264,19 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_new(
         return ProfileStatus::from(c"out of memory: couldn't reserve memory for ProfileAdapter's poisson upscaling rules");
     }
 
+    // Drop any profiles created so far if we hit an error during construction.
+    #[cold]
+    #[inline(never)]
+    fn cleanup_mappings(
+        mappings: &mut ddcommon_ffi::vec::Vec<ProfileAdapterMapping>,
+    ) {
+        for mapping in mappings.iter_mut() {
+            // SAFETY: take drops the inner Box at most once, and we don't
+            // directly expose the handles to users for them to clone them.
+            unsafe { drop(mapping.profile.take()) };
+        }
+    }
+
     for run in RunsIter::new(groupings) {
         // Create a profile for this run
         let mut mapping = ProfileAdapterMapping {
@@ -272,6 +285,7 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_new(
         };
         let result = profiles::ddog_prof_Profile_new(&mut mapping.profile);
         if result.flags != 0 {
+            cleanup_mappings(&mut mappings);
             return result;
         }
         mapping.range = run.clone();
@@ -291,6 +305,7 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_new(
                 value_types[value_idx],
             );
             if status.flags != 0 {
+                cleanup_mappings(&mut mappings);
                 return status;
             }
         }
@@ -481,14 +496,13 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_build_compressed(
     let end = end.cloned().unwrap_or_else(|| Timespec::from(SystemTime::now()));
 
     let mut pprof_builder = ProfileHandle::default();
-    let Ok(dictionary) = adapter.dictionary.try_clone() else {
-        return ProfileStatus::from(c"reference count overflow: failed to increase refcount of profiles dictionary for ddog_prof_ProfileAdapter_build_compressed");
-    };
-    let Ok(scratchpad) = adapter.scratchpad.try_clone() else {
-        return ProfileStatus::from(c"reference count overflow: failed to increase refcount of scratchpad for ddog_prof_ProfileAdapter_build_compressed");
-    };
-    let status =
-        ddog_prof_PprofBuilder_new(&mut pprof_builder, dictionary, scratchpad);
+    // The pprof builder borrows the dictionary and scratchpad, and the adapter
+    // is keeping them alive already, so no need to clone them.
+    let status = ddog_prof_PprofBuilder_new(
+        &mut pprof_builder,
+        adapter.dictionary,
+        adapter.scratchpad,
+    );
     if status.flags != 0 {
         return status;
     }
@@ -505,6 +519,7 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_build_compressed(
                     Utf8Option::Assume,
                 );
             if status.flags != 0 {
+                ddog_prof_PprofBuilder_drop(&mut pprof_builder);
                 return status;
             }
         } else {
@@ -523,6 +538,7 @@ pub unsafe extern "C" fn ddog_prof_ProfileAdapter_build_compressed(
                 )
             };
             if status.flags != 0 {
+                ddog_prof_PprofBuilder_drop(&mut pprof_builder);
                 return status;
             }
         }
