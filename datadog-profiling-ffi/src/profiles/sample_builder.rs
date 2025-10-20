@@ -187,14 +187,19 @@ pub unsafe extern "C" fn ddog_prof_SampleBuilder_timestamp(
 pub unsafe extern "C" fn ddog_prof_SampleBuilder_finish(
     builder: *mut ProfileHandle<SampleBuilder>,
 ) -> ProfileStatus {
+    let mut builder = {
+        let Some(h) = builder.as_mut() else {
+            return ProfileStatus::from(c"invalid input: argument `builder` to ddog_prof_SampleBuilder_finish was null");
+        };
+        let Some(boxed) = h.take() else {
+            return ProfileStatus::from(c"internal error: argument `builder` to ddog_prof_SampleBuilder_finish was used with an interior null pointer");
+        };
+        boxed
+    };
     ProfileStatus::from(|| -> Result<(), ProfileError> {
-        let builder_handle =
-            builder.as_mut().ok_or(ProfileError::InvalidInput)?;
+        let sample = builder.builder.build()?;
         // todo: safety
-        let ffi_builder = unsafe { builder_handle.as_inner_mut()? };
-        let sample = ffi_builder.builder.build()?;
-        // todo: safety
-        let prof = unsafe { ffi_builder.profile.as_inner_mut()? };
+        let prof = unsafe { builder.profile.as_inner_mut()? };
         prof.add_sample(sample)
     }())
 }
