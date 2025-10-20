@@ -33,7 +33,7 @@ fn load_test_cases() -> Vec<TestCase> {
         for entry in entries.flatten() {
             if let Some(path_str) = entry.path().to_str() {
                 if path_str.ends_with(".json") {
-                    if let Ok(content) = fs::read_to_string(&entry.path()) {
+                    if let Ok(content) = fs::read_to_string(entry.path()) {
                         if let Ok(cases) = serde_json::from_str::<Vec<TestCase>>(&content) {
                             test_cases.extend(cases);
                         }
@@ -100,7 +100,7 @@ fn bench_single_flag_rules_based(b: &mut Bencher) {
     b.iter(|| {
         let _assignment = get_assignment(
             black_box(Some(&configuration)),
-            black_box(&"kill-switch"),
+            black_box("kill-switch"),
             black_box(&context),
             None,
             now,
