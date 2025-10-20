@@ -4,13 +4,14 @@
 #![allow(renamed_and_removed_lints)]
 #![allow(clippy::box_vec)]
 
-use datadog_profiling::exporter;
-use datadog_profiling::exporter::{ProfileExporter, Request};
-use datadog_profiling::internal::EncodedProfile;
+use datadog_profiling::exporter::{
+    self, EncodedProfile, ProfileExporter, Request,
+};
 use ddcommon::tag::Tag;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use ddcommon_ffi::{
-    wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResult,
+    wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result, ToInner,
+    VoidResult,
 };
 use function_name::named;
 use std::borrow::Cow;
@@ -35,7 +36,8 @@ pub struct File<'a> {
 
 #[must_use]
 #[no_mangle]
-pub extern "C" fn ddog_prof_Exporter_Slice_File_empty() -> Slice<'static, File<'static>> {
+pub extern "C" fn ddog_prof_Exporter_Slice_File_empty(
+) -> Slice<'static, File<'static>> {
     Slice::empty()
 }
 
@@ -48,7 +50,9 @@ pub struct HttpStatus(u16);
 /// # Arguments
 /// * `base_url` - Contains a URL with scheme, host, and port e.g. "https://agent:8126/".
 #[no_mangle]
-pub extern "C" fn ddog_prof_Endpoint_agent(base_url: CharSlice) -> ProfilingEndpoint {
+pub extern "C" fn ddog_prof_Endpoint_agent(
+    base_url: CharSlice,
+) -> ProfilingEndpoint {
     ProfilingEndpoint::Agent(base_url)
 }
 
@@ -86,7 +90,9 @@ unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
     Ok(hyper::Uri::from_str(str)?)
 }
 
-pub unsafe fn try_to_endpoint(endpoint: ProfilingEndpoint) -> anyhow::Result<ddcommon::Endpoint> {
+pub unsafe fn try_to_endpoint(
+    endpoint: ProfilingEndpoint,
+) -> anyhow::Result<ddcommon::Endpoint> {
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {
@@ -136,7 +142,8 @@ pub unsafe extern "C" fn ddog_prof_Exporter_new(
 ) -> Result<Handle<ProfileExporter>> {
     wrap_with_ffi_result!({
         let library_name = profiling_library_name.to_utf8_lossy().into_owned();
-        let library_version = profiling_library_version.to_utf8_lossy().into_owned();
+        let library_version =
+            profiling_library_version.to_utf8_lossy().into_owned();
         let family = family.to_utf8_lossy().into_owned();
         let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
         let tags = tags.map(|tags| tags.iter().cloned().collect());
@@ -174,13 +181,17 @@ pub unsafe extern "C" fn ddog_prof_Exporter_set_timeout(
 /// valid `ddog_prof_Exporter_Request` object made by the Rust Global
 /// allocator that has not already been dropped.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Exporter_drop(mut exporter: *mut Handle<ProfileExporter>) {
+pub unsafe extern "C" fn ddog_prof_Exporter_drop(
+    mut exporter: *mut Handle<ProfileExporter>,
+) {
     // Technically, this function has been designed so if it's double-dropped
     // then it's okay, but it's not something that should be relied on.
     drop(exporter.take())
 }
 
-unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> {
+unsafe fn into_vec_files<'a>(
+    slice: Slice<'a, File>,
+) -> Vec<exporter::File<'a>> {
     slice
         .into_slice()
         .iter()
@@ -224,11 +235,15 @@ pub unsafe extern "C" fn ddog_prof_Exporter_Request_build(
     wrap_with_ffi_result!({
         let exporter = exporter.to_inner_mut()?;
         let profile = *profile.take()?;
-        let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
-        let files_to_export_unmodified = into_vec_files(files_to_export_unmodified);
-        let tags = optional_additional_tags.map(|tags| tags.iter().cloned().collect());
+        let files_to_compress_and_export =
+            into_vec_files(files_to_compress_and_export);
+        let files_to_export_unmodified =
+            into_vec_files(files_to_export_unmodified);
+        let tags =
+            optional_additional_tags.map(|tags| tags.iter().cloned().collect());
 
-        let internal_metadata = parse_json("internal_metadata", optional_internal_metadata_json)?;
+        let internal_metadata =
+            parse_json("internal_metadata", optional_internal_metadata_json)?;
         let info = parse_json("info", optional_info_json)?;
 
         let request = exporter.build(
@@ -269,7 +284,9 @@ unsafe fn parse_json(
 /// pointer must point to a valid `ddog_prof_Exporter_Request` object made by
 /// the Rust Global allocator.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(mut request: *mut Handle<Request>) {
+pub unsafe extern "C" fn ddog_prof_Exporter_Request_drop(
+    mut request: *mut Handle<Request>,
+) {
     // Technically, this function has been designed so if it's double-dropped
     // then it's okay, but it's not something that should be relied on.
     drop(request.take())
@@ -307,7 +324,8 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send(
 /// different thread.
 #[no_mangle]
 #[must_use]
-pub extern "C" fn ddog_CancellationToken_new() -> Handle<TokioCancellationToken> {
+pub extern "C" fn ddog_CancellationToken_new() -> Handle<TokioCancellationToken>
+{
     TokioCancellationToken::new().into()
 }
 
@@ -403,7 +421,9 @@ mod tests {
         CharSlice::from(base_url())
     }
 
-    fn parsed_event_json(request: ddcommon_ffi::Result<Handle<Request>>) -> serde_json::Value {
+    fn parsed_event_json(
+        request: ddcommon_ffi::Result<Handle<Request>>,
+    ) -> serde_json::Value {
         // Safety: This is a test
         let request = unsafe { request.unwrap().take().unwrap() };
         // Really hacky way of getting the event.json file contents, because I didn't want to
@@ -412,9 +432,7 @@ mod tests {
         // in the profiling tests, please update there too :)
         let body = request.body();
         let body_bytes: String = String::from_utf8_lossy(
-            &futures::executor::block_on(body.collect())
-                .unwrap()
-                .to_bytes(),
+            &futures::executor::block_on(body.collect()).unwrap().to_bytes(),
         )
         .to_string();
         let event_json = body_bytes
@@ -444,7 +462,9 @@ mod tests {
         };
 
         match result {
-            Result::Ok(mut exporter) => unsafe { ddog_prof_Exporter_drop(&mut exporter) },
+            Result::Ok(mut exporter) => unsafe {
+                ddog_prof_Exporter_drop(&mut exporter)
+            },
             Result::Err(message) => {
                 drop(message);
                 panic!("Should not occur!")
@@ -472,7 +492,8 @@ mod tests {
         let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds).unwrap();
+            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds)
+                .unwrap();
         }
 
         let build_result = unsafe {
@@ -546,7 +567,8 @@ mod tests {
         let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds).unwrap();
+            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds)
+                .unwrap();
         }
 
         let raw_internal_metadata = CharSlice::from(
@@ -605,10 +627,12 @@ mod tests {
 
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds).unwrap();
+            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds)
+                .unwrap();
         }
 
-        let raw_internal_metadata = CharSlice::from("this is not a valid json string");
+        let raw_internal_metadata =
+            CharSlice::from("this is not a valid json string");
 
         let build_result = unsafe {
             ddog_prof_Exporter_Request_build(
@@ -648,7 +672,8 @@ mod tests {
         let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds).unwrap();
+            ddog_prof_Exporter_set_timeout(&mut exporter, timeout_milliseconds)
+                .unwrap();
         }
 
         let raw_info = CharSlice::from(
@@ -747,7 +772,8 @@ mod tests {
         let profile = &mut EncodedProfile::test_instance().unwrap().into();
         let timeout_milliseconds = 90;
         unsafe {
-            ddog_prof_Exporter_set_timeout(exporter, timeout_milliseconds).unwrap();
+            ddog_prof_Exporter_set_timeout(exporter, timeout_milliseconds)
+                .unwrap();
         }
 
         let raw_info = CharSlice::from("this is not a valid json string");
@@ -799,9 +825,9 @@ mod tests {
                 .unwrap_err()
                 .to_string();
             assert_eq!(
-                        "ddog_prof_Exporter_send failed: request: inner pointer was null, indicates use after free",
-                        error
-                    );
+                "ddog_prof_Exporter_send failed: request: handle's interior pointer is null, indicates use-after-free",
+                error
+            );
         }
     }
 }

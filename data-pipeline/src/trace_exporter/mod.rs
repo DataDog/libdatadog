@@ -1456,6 +1456,9 @@ mod tests {
                 // This is expected - no metrics should be sent when disabled
                 // WouldBlock on Unix, TimedOut on Windows
             }
+
+            // EINTR count in CI: 1; aka Interrupted system call (os error 4)
+            // If this happens again, we should attempt to handle interrupts.
             Err(e) => panic!("Unexpected error reading from socket: {e}"),
         }
     }

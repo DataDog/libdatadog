@@ -16,7 +16,8 @@ members = [
   "datadog-profiling",
   "datadog-profiling-ffi",
   "datadog-profiling-protobuf",
-  "datadog-profiling-replayer",
+  #"datadog-profiling-replayer", # todo: add back
+  "datadog-profiling-validator",
   "datadog-remote-config",
   "datadog-sidecar",
   "datadog-sidecar-ffi",

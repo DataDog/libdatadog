@@ -34,11 +34,13 @@ ddcommon-ffi = ["dep:ddcommon-ffi"]
 build_common = { path = "../build-common" }
 
 [dependencies]
+allocator-api2 = { version = "0.2", features = ["alloc"] }
 anyhow = "1.0"
 data-pipeline-ffi = { path = "../data-pipeline-ffi", default-features = false, optional = true }
 datadog-crashtracker-ffi = { path = "../datadog-crashtracker-ffi", default-features = false, optional = true}
 datadog-library-config-ffi = {  path = "../datadog-library-config-ffi", default-features = false, optional = true }
 datadog-profiling = { path = "../datadog-profiling" }
+datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf" }
 ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false, optional = true }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
@@ -48,6 +50,12 @@ futures = { version = "0.3", default-features = false }
 http-body-util = "0.1"
 hyper = { version = "1.6", features = ["http1", "client"] }
 libc = "0.2"
+rustc-hash = { version = "1", default-features = false }
 serde_json = { version = "1.0" }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
+thiserror = "1"
 tokio-util = "0.7.1"
+
+[dev-dependencies]
+datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["bolero", "prost_impls"] }
+proptest = "1"
