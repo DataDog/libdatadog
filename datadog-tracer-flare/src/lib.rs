@@ -182,16 +182,14 @@ impl TracerFlareManager {
         data: &RemoteConfigData,
     ) -> Result<ReturnAction, FlareError> {
         let action = data.try_into();
-        {
-            if let Ok(ReturnAction::Set(_)) = action {
-                if self.collecting.load(Ordering::Relaxed) {
-                    return Ok(ReturnAction::None);
-                }
-                self.collecting.store(true, Ordering::Relaxed);
-            } else if Ok(ReturnAction::None) != action {
-                // If action is Send, Unset or an error, we need to stop collecting
-                self.collecting.store(false, Ordering::Relaxed);
+        if let Ok(ReturnAction::Set(_)) = action {
+            if self.collecting.load(Ordering::Relaxed) {
+                return Ok(ReturnAction::None);
             }
+            self.collecting.store(true, Ordering::Relaxed);
+        } else if Ok(ReturnAction::None) != action {
+            // If action is Send, Unset or an error, we need to stop collecting
+            self.collecting.store(false, Ordering::Relaxed);
         }
         action
     }
