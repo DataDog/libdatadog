@@ -9,12 +9,11 @@
 pub mod error;
 pub mod zip;
 
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use datadog_remote_config::{
     config::agent_task::AgentTaskFile, file_storage::RawFile, RemoteConfigData,
 };
-use ddcommon::MutexExt;
 
 #[cfg(feature = "listener")]
 use {
@@ -54,9 +53,9 @@ use crate::error::FlareError;
 /// 3. Handle returned [`ReturnAction`]: `Send(agent_task)`, `Set(log_level)`, `Unset`, or `None`
 /// 4. Use the `collecting` field to track current flare collection state
 pub struct TracerFlareManager {
-    pub agent_url: Arc<Mutex<String>>,
-    pub language: Arc<Mutex<String>>,
-    pub collecting: Arc<Mutex<bool>>,
+    pub agent_url: String,
+    pub language: String,
+    pub collecting: AtomicBool,
     /// As a featured option so we can use the component with no Listener
     #[cfg(feature = "listener")]
     pub listener: Option<Listener>,
@@ -65,9 +64,9 @@ pub struct TracerFlareManager {
 impl Default for TracerFlareManager {
     fn default() -> Self {
         TracerFlareManager {
-            agent_url: Arc::new(Mutex::new(hyper::Uri::default().to_string())),
-            language: Arc::new(Mutex::new("rust".to_string())),
-            collecting: Arc::new(Mutex::new(false)),
+            agent_url: hyper::Uri::default().to_string(),
+            language: "rust".to_string(),
+            collecting: AtomicBool::new(false),
             #[cfg(feature = "listener")]
             listener: None,
         }
@@ -89,8 +88,8 @@ impl TracerFlareManager {
     /// For full RemoteConfig functionality, use `new_with_listener` instead.
     pub fn new(agent_url: &str, language: &str) -> Self {
         TracerFlareManager {
-            agent_url: Arc::new(Mutex::new(agent_url.to_owned())),
-            language: Arc::new(Mutex::new(language.to_owned())),
+            agent_url: agent_url.to_owned(),
+            language: language.to_owned(),
             ..Default::default()
         }
     }
@@ -184,15 +183,14 @@ impl TracerFlareManager {
     ) -> Result<ReturnAction, FlareError> {
         let action = data.try_into();
         {
-            let mut collecting = self.collecting.lock_or_panic();
             if let Ok(ReturnAction::Set(_)) = action {
-                if *collecting {
+                if self.collecting.load(Ordering::Relaxed) {
                     return Ok(ReturnAction::None);
                 }
-                *collecting = true;
+                self.collecting.store(true, Ordering::Relaxed);
             } else if Ok(ReturnAction::None) != action {
                 // If action is Send, Unset or an error, we need to stop collecting
-                *collecting = false;
+                self.collecting.store(false, Ordering::Relaxed);
             }
         }
         action
@@ -219,7 +217,7 @@ impl TracerFlareManager {
             Ok(data) => self.handle_remote_config_data(data),
             Err(e) => {
                 // If encounter an error we need to stop collecting
-                *self.collecting.lock_or_panic() = false;
+                self.collecting.store(false, Ordering::Relaxed);
                 Err(FlareError::ParsingError(e.to_string()))
             }
         }
@@ -460,14 +458,12 @@ pub async fn run_remote_config_listener(
         }
     }
 
-    {
-        let mut collecting = tracer_flare.collecting.lock_or_panic();
-        if let ReturnAction::Set(_) = state {
-            *collecting = true;
-        } else if let ReturnAction::Send(_) = state {
-            *collecting = false;
-        }
+    if let ReturnAction::Set(_) = state {
+        tracer_flare.collecting.store(true, Ordering::Relaxed);
+    } else if let ReturnAction::Send(_) = state {
+        tracer_flare.collecting.store(false, Ordering::Relaxed);
     }
+
     Ok(state)
 }
 
@@ -483,7 +479,7 @@ mod tests {
         file_storage::ParsedFileStorage,
         RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
     };
-    use ddcommon::MutexExt;
+    use std::sync::atomic::Ordering;
     use std::{num::NonZeroU64, sync::Arc};
 
     #[test]
@@ -669,19 +665,19 @@ mod tests {
             .unwrap();
 
         // First AGENT_CONFIG
-        assert!(!*tracer_flare.collecting.lock_or_panic());
+        assert!(!tracer_flare.collecting.load(Ordering::Relaxed));
         let result = tracer_flare
             .handle_remote_config_file(agent_config_file.clone())
             .unwrap();
         assert_eq!(result, ReturnAction::Set(LogLevel::Info));
-        assert!(*tracer_flare.collecting.lock_or_panic());
+        assert!(tracer_flare.collecting.load(Ordering::Relaxed));
 
         // Second AGENT_CONFIG
         let result = tracer_flare
             .handle_remote_config_file(agent_config_file)
             .unwrap();
         assert_eq!(result, ReturnAction::None);
-        assert!(*tracer_flare.collecting.lock_or_panic());
+        assert!(tracer_flare.collecting.load(Ordering::Relaxed));
 
         // Non-None actions stop collecting
         let error_file = storage
@@ -698,7 +694,7 @@ mod tests {
             .unwrap();
 
         let _ = tracer_flare.handle_remote_config_file(error_file);
-        assert!(!*tracer_flare.collecting.lock_or_panic());
+        assert!(!tracer_flare.collecting.load(Ordering::Relaxed));
     }
 
     #[test]
