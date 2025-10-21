@@ -9,7 +9,7 @@
 pub mod error;
 pub mod zip;
 
-use std::sync::Mutex;
+use std::{fmt::Display, sync::Mutex};
 
 use datadog_remote_config::{
     config::agent_task::AgentTaskFile, file_storage::RawFile, RemoteConfigData,
@@ -43,7 +43,9 @@ use crate::error::FlareError;
 ///
 /// - `agent_url`: The agent endpoint URL for flare transmission
 /// - `language`: The tracer language identifier
-/// - `collecting`: Current collection state (true when actively collecting)
+/// - `current_log_level`: Log level at which we are collecting if we are collecting
+/// - `original_log_level`: Log level of the tracers we need to restore once the Flare ends. Managed
+///   inside the integrations, not here.
 /// - `listener`: Optional remote config listener (requires "listener" feature)
 ///
 /// # Typical usage flow
@@ -54,13 +56,13 @@ use crate::error::FlareError;
 /// 3. Handle returned [`ReturnAction`]: `Send(agent_task)`, `Set(log_level)`, `Unset`, or `None`
 /// 4. Use the `collecting` field to track current flare collection state
 pub struct TracerFlareManager {
-    pub agent_url: String,
-    pub language: String,
-    // Option Some-ness tracks whether we are currently collecting metrics
+    agent_url: String,
+    language: String,
+    current_log_level: Mutex<LogLevel>,
     pub original_log_level: Mutex<Option<LogLevel>>,
     /// As a featured option so we can use the component with no Listener
     #[cfg(feature = "listener")]
-    pub listener: Option<Listener>,
+    listener: Option<Listener>,
 }
 
 impl Default for TracerFlareManager {
@@ -68,6 +70,7 @@ impl Default for TracerFlareManager {
         TracerFlareManager {
             agent_url: hyper::Uri::default().to_string(),
             language: "rust".to_string(),
+            current_log_level: Mutex::new(LogLevel::Off),
             original_log_level: Mutex::new(None),
             #[cfg(feature = "listener")]
             listener: None,
@@ -186,13 +189,13 @@ impl TracerFlareManager {
         let action = data.try_into();
         if let Ok(ReturnAction::Set(log_level)) = action {
             // If we are already collecting
-            if self.original_log_level.lock_or_panic().is_some() {
+            if *self.current_log_level.lock_or_panic() != LogLevel::Off {
                 return Ok(ReturnAction::None);
             }
-            *self.original_log_level.lock_or_panic() = Some(log_level);
+            *self.current_log_level.lock_or_panic() = log_level;
         } else if Ok(ReturnAction::None) != action {
             // If action is Send, Unset or an error, we need to stop collecting
-            *self.original_log_level.lock_or_panic() = None;
+            *self.current_log_level.lock_or_panic() = LogLevel::Off;
         }
         action
     }
@@ -218,7 +221,7 @@ impl TracerFlareManager {
             Ok(data) => self.handle_remote_config_data(data),
             Err(e) => {
                 // If encounter an error we need to stop collecting
-                *self.original_log_level.lock_or_panic() = None;
+                *self.current_log_level.lock_or_panic() = LogLevel::Off;
                 Err(FlareError::ParsingError(e.to_string()))
             }
         }
@@ -285,6 +288,24 @@ impl ReturnAction {
             }
             _ => other,
         }
+    }
+}
+
+impl Display for LogLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                LogLevel::Trace => String::from("trace"),
+                LogLevel::Debug => String::from("debug"),
+                LogLevel::Info => String::from("info"),
+                LogLevel::Warn => String::from("warn"),
+                LogLevel::Error => String::from("error"),
+                LogLevel::Critical => String::from("todo"),
+                LogLevel::Off => String::from("off"),
+            }
+        )
     }
 }
 
@@ -460,9 +481,9 @@ pub async fn run_remote_config_listener(
     }
 
     if let ReturnAction::Set(log_level) = state {
-        *tracer_flare.original_log_level.lock_or_panic() = Some(log_level);
+        *tracer_flare.current_log_level.lock_or_panic() = log_level;
     } else if let ReturnAction::Send(_) = state {
-        *tracer_flare.original_log_level.lock_or_panic() = None;
+        *tracer_flare.current_log_level.lock_or_panic() = LogLevel::Off;
     }
 
     Ok(state)
@@ -666,19 +687,19 @@ mod tests {
             .unwrap();
 
         // First AGENT_CONFIG
-        assert!(tracer_flare.original_log_level.lock_or_panic().is_none());
+        assert!(*tracer_flare.current_log_level.lock_or_panic() == LogLevel::Off);
         let result = tracer_flare
             .handle_remote_config_file(agent_config_file.clone())
             .unwrap();
         assert_eq!(result, ReturnAction::Set(LogLevel::Info));
-        assert!(tracer_flare.original_log_level.lock_or_panic().is_some());
+        assert!(*tracer_flare.current_log_level.lock_or_panic() == LogLevel::Info);
 
         // Second AGENT_CONFIG
         let result = tracer_flare
             .handle_remote_config_file(agent_config_file)
             .unwrap();
         assert_eq!(result, ReturnAction::None);
-        assert!(tracer_flare.original_log_level.lock_or_panic().is_some());
+        assert!(*tracer_flare.current_log_level.lock_or_panic() == LogLevel::Info);
 
         // Non-None actions stop collecting
         let error_file = storage
@@ -695,7 +716,7 @@ mod tests {
             .unwrap();
 
         let _ = tracer_flare.handle_remote_config_file(error_file);
-        assert!(tracer_flare.original_log_level.lock_or_panic().is_none());
+        assert!(*tracer_flare.current_log_level.lock_or_panic() == LogLevel::Off);
     }
 
     #[test]

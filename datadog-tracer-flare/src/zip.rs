@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_remote_config::config::agent_task::AgentTaskFile;
-use ddcommon::{hyper_migration, Endpoint};
+use ddcommon::{hyper_migration, Endpoint, MutexExt};
 use hyper::{body::Bytes, Method};
 use std::{
     collections::HashMap,
@@ -17,7 +17,7 @@ use tempfile::tempfile;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, ZipWriter};
 
-use crate::{error::FlareError, ReturnAction, TracerFlareManager};
+use crate::{error::FlareError, LogLevel, ReturnAction, TracerFlareManager};
 
 /// Adds a single file to the zip archive with the specified options and relative path
 fn add_file_to_zip(
@@ -151,7 +151,7 @@ const BOUNDARY: &str = "83CAD6AA-8A24-462C-8B3D-FF9CC683B51B";
 fn generate_payload(
     mut zip: File,
     language: &String,
-    log_level: &String,
+    log_level: &LogLevel,
     case_id: &NonZeroU64,
     hostname: &String,
     user_handle: &String,
@@ -231,7 +231,7 @@ fn generate_payload(
 /// - The agent returns a non-success HTTP status code
 async fn send(
     zip: File,
-    log_level: String,
+    log_level: LogLevel,
     agent_task: AgentTaskFile,
     tracer_flare: &TracerFlareManager,
 ) -> Result<(), FlareError> {
@@ -354,7 +354,7 @@ async fn send(
 ///         "/path/to/config.txt".to_string(),
 ///     ];
 ///
-///     match zip_and_send(files, "debug".to_string(), &tracer_flare, send_action).await {
+///     match zip_and_send(files, &tracer_flare, send_action).await {
 ///         Ok(_) => println!("Flare sent successfully"),
 ///         Err(e) => eprintln!("Failed to send flare: {}", e),
 ///     }
@@ -363,7 +363,6 @@ async fn send(
 /// ```
 pub async fn zip_and_send(
     files: Vec<String>,
-    log_level: String,
     tracer_flare: &TracerFlareManager,
     send_action: ReturnAction,
 ) -> Result<(), FlareError> {
@@ -380,6 +379,7 @@ pub async fn zip_and_send(
 
     // APMSP-2118 - TODO: Implement obfuscation of sensitive data
 
+    let log_level = *tracer_flare.current_log_level.lock_or_panic();
     send(zip, log_level, agent_task, tracer_flare).await
 }
 
