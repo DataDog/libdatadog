@@ -13,7 +13,7 @@ use http::{uri::PathAndQuery, Uri};
 use serde::Serialize;
 use std::{borrow::Cow, time::Duration};
 
-pub const DEFAULT_DD_SITE: &str = "datad0g.com";
+pub const DEFAULT_DD_SITE: &str = "datadoghq.com";
 pub const PROD_ERRORS_INTAKE_SUBDOMAIN: &str = "event-platform-intake";
 
 const DIRECT_ERRORS_INTAKE_URL_PATH: &str = "/api/v2/errorsintake";
@@ -696,10 +696,10 @@ mod tests {
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
 
-        // Should use event-platform-intake.datad0g.com for direct submission
+        // Should use event-platform-intake.datadoghq.com for direct submission
         assert_eq!(
             endpoint.url.host(),
-            Some("event-platform-intake.datad0g.com")
+            Some("event-platform-intake.datadoghq.com")
         );
         assert_eq!(endpoint.url.scheme_str(), Some("https"));
         assert!(endpoint.api_key.is_some());
