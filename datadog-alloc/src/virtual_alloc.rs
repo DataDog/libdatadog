@@ -8,7 +8,7 @@ use core::alloc::Layout;
 /// intended for large allocations only, such as working with other allocators
 /// to provide a large chunk for them.
 #[derive(Clone, Copy, Debug)]
-pub struct VirtualAllocator {}
+pub struct VirtualAllocator;
 
 #[cfg_attr(debug_assertions, track_caller)]
 #[inline]
@@ -205,7 +205,7 @@ mod tests {
         bolero::check!()
             .with_generator(allocs)
             .for_each(|size_align_vec| {
-                let allocator = VirtualAllocator {};
+                let allocator = VirtualAllocator;
 
                 for (size, align_bits, idx, val) in size_align_vec {
                     fuzzer_inner_loop(&allocator, *size, *align_bits, *idx, *val, MAX_SIZE)
@@ -215,10 +215,9 @@ mod tests {
 
     #[test]
     fn test_zero_sized() {
-        let alloc = VirtualAllocator {};
         assert_eq!(0, core::mem::size_of::<VirtualAllocator>());
         let zero_sized_layout = Layout::new::<VirtualAllocator>();
-        _ = alloc.allocate(zero_sized_layout).unwrap_err();
+        _ = VirtualAllocator.allocate(zero_sized_layout).unwrap_err();
     }
 
     #[test]
@@ -228,14 +227,13 @@ mod tests {
         let too_large_layout = Layout::from_size_align(1, too_large)
             .unwrap()
             .pad_to_align();
-        let alloc = VirtualAllocator {};
-        _ = alloc.allocate(too_large_layout).unwrap_err();
+        _ = VirtualAllocator.allocate(too_large_layout).unwrap_err();
     }
 
     #[test]
     fn test_small_cases() {
         let page_size = os::page_size().unwrap();
-        let alloc = VirtualAllocator {};
+        let alloc = VirtualAllocator;
 
         // Allocations get rounded up to page size.
         let small_cases = [1, page_size - 1];
@@ -266,9 +264,8 @@ mod tests {
     #[track_caller]
     fn realistic_size(size: usize) {
         let page_size = os::page_size().unwrap();
-        let alloc = VirtualAllocator {};
         let layout = Layout::from_size_align(size, page_size).unwrap();
-        let wide_ptr = alloc.allocate(layout).unwrap();
+        let wide_ptr = VirtualAllocator.allocate(layout).unwrap();
         let actual_size = wide_ptr.len();
 
         // Should be a multiple of page size.
@@ -277,7 +274,7 @@ mod tests {
         // Shouldn't ever be smaller than what was asked for.
         assert!(actual_size >= size);
 
-        unsafe { alloc.deallocate(wide_ptr.cast(), layout) };
+        unsafe { VirtualAllocator.deallocate(wide_ptr.cast(), layout) };
     }
 
     #[test]
