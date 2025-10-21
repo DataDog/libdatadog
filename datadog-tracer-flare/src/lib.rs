@@ -397,7 +397,7 @@ impl TryFrom<&RemoteConfigData> for ReturnAction {
 /// #[tokio::main(flavor = "current_thread")]
 /// async fn main() {
 ///     // Setup the TracerFlareManager
-///     let tracer_flare = TracerFlareManager::new_with_listener(
+///     let mut tracer_flare = TracerFlareManager::new_with_listener(
 ///         "http://0.0.0.0:8126".to_string(),  // agent_url
 ///         "rust".to_string(),                 // language
 ///         "1.0.0".to_string(),                // tracer_version
