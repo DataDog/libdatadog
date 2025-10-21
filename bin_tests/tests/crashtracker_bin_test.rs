@@ -1587,48 +1587,10 @@ fn test_crash_tracking_errors_intake_dual_upload(
         .context("reading errors intake payload")
         .unwrap();
 
-    // The errors intake might contain multiple JSON objects (crash ping + crash report)
-    // Try to parse as a single JSON first, if that fails, try line by line
-    if let Ok(single_payload) = serde_json::from_slice::<serde_json::Value>(&errors_intake_content)
-    {
-        // Single JSON payload - validate it
-        assert_errors_intake_payload(&single_payload, crash_typ);
-    } else {
-        // Multiple JSON objects - parse line by line
-        let content_str = String::from_utf8(errors_intake_content).unwrap();
-        let lines: Vec<&str> = content_str.lines().collect();
-        assert!(!lines.is_empty(), "Errors intake file should not be empty");
-
-        let mut _found_crash_ping = false;
-        let mut found_crash_report = false;
-
-        for line in lines {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            let payload: serde_json::Value = serde_json::from_str(line)
-                .context("parsing errors intake payload line")
-                .unwrap();
-
-            assert_errors_intake_payload(&payload, crash_typ);
-
-            // Check which type this is
-            let ddtags = payload["ddtags"].as_str().unwrap();
-            if ddtags.contains("is_crash_ping:true") {
-                _found_crash_ping = true;
-            } else {
-                found_crash_report = true;
-            }
-        }
-
-        // In dual upload mode, we expect at least the crash report
-        // Crash ping might not always be sent
-        assert!(
-            found_crash_report,
-            "Should have found crash report in errors intake"
-        );
-    }
+    let payload = serde_json::from_slice::<serde_json::Value>(&errors_intake_content)
+        .context("deserializing errors intake payload to json")
+        .unwrap();
+    assert_errors_intake_payload(&payload, crash_typ);
 
     // Also validate telemetry still works (dual upload)
     let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
