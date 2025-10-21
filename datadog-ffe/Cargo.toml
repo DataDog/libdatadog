@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 autobenches = false
 
+[lib]
+bench = false
+
 [dependencies]
 faststr = { version = "0.2.23", default-features = false, features = ["serde"] }
 serde = { version = "1.0", default-features = false, features = ["derive", "rc"] }
@@ -25,6 +28,6 @@ env_logger = "0.10"
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
-name = "main"
+name = "ffe-eval"
 harness = false
-path = "benches/main.rs"
+path = "benches/eval.rs"
