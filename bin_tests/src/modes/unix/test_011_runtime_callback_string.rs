@@ -60,15 +60,12 @@ mod tests {
 
     #[test]
     fn test_runtime_callback_string_registration() {
-        // Ensure clean state
         unsafe {
             clear_runtime_callback();
         }
 
-        // Test that no callback is initially registered
         assert!(!is_runtime_callback_registered());
 
-        // Test string mode registration
         let result = register_runtime_stack_callback(
             test_runtime_callback_string,
             CallbackType::StacktraceString,
@@ -82,7 +79,6 @@ mod tests {
             "Callback should be registered"
         );
 
-        // Clean up
         unsafe {
             clear_runtime_callback();
         }

@@ -55,8 +55,6 @@ impl std::str::FromStr for CallbackType {
 }
 
 /// Global storage for the runtime callback
-///
-/// Uses atomic pointer to ensure safe access from signal handlers
 static RUNTIME_CALLBACK: AtomicPtr<(RuntimeStackCallback, CallbackType)> =
     AtomicPtr::new(ptr::null_mut());
 
@@ -76,7 +74,8 @@ pub struct RuntimeStackFrame {
 
 /// Function signature for runtime stack collection callbacks
 ///
-/// This callback is invoked during crash handling in a signal context, so it must be signal-safe:
+/// This callback is invoked during crash handling in a signal context, so it must be best effort
+/// signal-safe:
 /// - No dynamic memory allocation
 /// - No mutex operations
 /// - No I/O operations
@@ -148,7 +147,7 @@ pub fn register_runtime_stack_callback(
     let previous = RUNTIME_CALLBACK.swap(callback_data, Ordering::SeqCst);
 
     if !previous.is_null() {
-        // Safety: previous was returned by Box::into_raw() above or in a previous call,
+        // Safety: previous was returned by Box::into_raw() above,
         // so it's guaranteed to be a valid Box pointer. We reconstruct the Box to drop it.
         let _ = unsafe { Box::from_raw(previous) };
     }
@@ -180,8 +179,7 @@ pub unsafe fn get_registered_callback_type_enum() -> Option<CallbackType> {
 
     // Safety: callback_ptr was checked to be non-null above, and was created by
     // Box::into_raw() in register_runtime_stack_callback(), so it's a valid pointer
-    // to a properly aligned, initialized tuple. The atomic load with SeqCst ordering
-    // ensures we see the pointer after it was stored.
+    // to a properly aligned, initialized tuple.
     let (_, callback_type) = &*callback_ptr;
     Some(*callback_type)
 }
@@ -256,7 +254,9 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
     use std::sync::atomic::{AtomicPtr, Ordering};
 
     // Thread-safe storage for the current callback context
-    // Store as raw data and meta pointers
+    // Store as raw data and vtable pointers
+    // We do this because trait objects are stored as raw pointers to its definition and also
+    // the vtable for its impls, so we need to store both.
     static CURRENT_WRITER_DATA: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
     static CURRENT_WRITER_VTABLE: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
     static CURRENT_FRAME_COUNT: AtomicPtr<usize> = AtomicPtr::new(ptr::null_mut());

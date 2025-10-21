@@ -151,6 +151,11 @@ fn process_line(
                     };
                     builder.with_experimental_runtime_stack(runtime_stack)?;
                 }
+            } else {
+                builder.with_log_message(
+                    format!("Unable to parse runtime stack frames: {line}"),
+                    true,
+                )?;
             }
             StdinState::RuntimeStackFrame
         }
@@ -158,6 +163,8 @@ fn process_line(
             if line.starts_with(DD_CRASHTRACK_END_RUNTIME_STACK_STRING) =>
         {
             // Join all accumulated lines with newlines to reconstruct the full stack trace
+            // This is necessary because although the stacktrace string is sent as a single string,
+            // there may be newlines in the string
             let stacktrace_string = lines.join("\n");
             let runtime_stack = RuntimeStack {
                 format: "Datadog Runtime Callback 1.0".to_string(),

@@ -46,9 +46,6 @@ unsafe extern "C" fn test_runtime_callback_frame(
     emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
     _emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
 ) {
-    // Use static null-terminated strings to avoid allocation in signal context
-    // In a real runtime, these would come from the runtime's managed string pool
-    // Using fully qualified function names that include module/class hierarchy
     static FUNCTION_NAME_1: &[u8] = b"test_module.TestClass.runtime_function_1\0";
     static FUNCTION_NAME_2: &[u8] = b"my_package.submodule.MyModule.runtime_function_2\0";
     static FUNCTION_NAME_3: &[u8] = b"__main__.runtime_main\0";
@@ -56,7 +53,6 @@ unsafe extern "C" fn test_runtime_callback_frame(
     static FILE_NAME_2: &[u8] = b"module.py\0";
     static FILE_NAME_3: &[u8] = b"main.py\0";
 
-    // Frame 1: test_module.TestClass.runtime_function_1 in script.py
     let frame1 = RuntimeStackFrame {
         function_name: FUNCTION_NAME_1.as_ptr() as *const c_char,
         file_name: FILE_NAME_1.as_ptr() as *const c_char,
@@ -65,7 +61,6 @@ unsafe extern "C" fn test_runtime_callback_frame(
     };
     emit_frame(&frame1);
 
-    // Frame 2: my_package.submodule.MyModule.runtime_function_2 in module.py
     let frame2 = RuntimeStackFrame {
         function_name: FUNCTION_NAME_2.as_ptr() as *const c_char,
         file_name: FILE_NAME_2.as_ptr() as *const c_char,
@@ -74,7 +69,6 @@ unsafe extern "C" fn test_runtime_callback_frame(
     };
     emit_frame(&frame2);
 
-    // Frame 3: __main__.runtime_main in main.py
     let frame3 = RuntimeStackFrame {
         function_name: FUNCTION_NAME_3.as_ptr() as *const c_char,
         file_name: FILE_NAME_3.as_ptr() as *const c_char,
@@ -96,10 +90,8 @@ mod tests {
             clear_runtime_callback();
         }
 
-        // Test that no callback is initially registered
         assert!(!is_runtime_callback_registered());
 
-        // Test frame mode registration
         let result =
             register_runtime_stack_callback(test_runtime_callback_frame, CallbackType::Frame);
         assert!(result.is_ok(), "Frame callback registration should succeed");
@@ -108,7 +100,6 @@ mod tests {
             "Callback should be registered"
         );
 
-        // Clean up
         unsafe {
             clear_runtime_callback();
         }

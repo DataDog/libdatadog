@@ -281,7 +281,6 @@ fn test_crash_tracking_bin_runtime_callback_frame_impl(
         p.wait().unwrap()
     });
 
-    // Runtime callback tests should crash like normal tests
     assert!(!exit_status.success());
 
     let stderr_path = format!("{0}/out.stderr", fixtures.output_dir.display());
@@ -369,8 +368,8 @@ fn validate_runtime_callback_frame_data(crash_payload: &Value) {
 
     let frames = frames.unwrap();
     assert!(
-        frames.len() >= 3,
-        "Should have at least 3 runtime frames, got {}",
+        frames.len() == 3,
+        "Should have 3 runtime frames, got {}",
         frames.len()
     );
 
@@ -384,7 +383,7 @@ fn validate_runtime_callback_frame_data(crash_payload: &Value) {
     let expected_lines = [42, 100, 10];
     let expected_columns = [15, 8, 1];
 
-    for (i, frame) in frames.iter().take(3).enumerate() {
+    for (i, frame) in frames.iter().enumerate() {
         if let Some(function) = frame.get("function") {
             assert_eq!(
                 function.as_str().unwrap(),

@@ -141,8 +141,6 @@ mod tests {
         let function_name = CString::new("TestModule.TestClass.test_function").unwrap();
         let file_name = CString::new("test.rb").unwrap();
 
-        // Create the internal RuntimeStackFrame directly; no conversion needed
-        // since both RuntimeStackFrame and ddog_RuntimeStackFrame have identical layouts
         let frame = RuntimeStackFrame {
             function_name: function_name.as_ptr(),
             file_name: file_name.as_ptr(),
@@ -157,34 +155,24 @@ mod tests {
     fn test_ffi_callback_registration() {
         let _guard = TEST_MUTEX.lock().unwrap();
         unsafe {
-            // Ensure clean state at start
             clear_runtime_callback();
-
-            // Test that no callback is initially registered
             assert!(!ddog_crasht_is_runtime_callback_registered());
 
-            // Test successful registration using type-safe enums
             let result = ddog_crasht_register_runtime_stack_callback(
                 test_runtime_callback,
                 CallbackType::Frame,
             );
 
             assert_eq!(result, CallbackResult::Ok);
-
-            // Verify callback is now registered
             assert!(ddog_crasht_is_runtime_callback_registered());
 
-            // Test duplicate registration fails
             let result = ddog_crasht_register_runtime_stack_callback(
                 test_runtime_callback,
                 CallbackType::Frame,
             );
             assert_eq!(result, CallbackResult::Ok);
-
-            // Callback should still be registered after successful re-registration
             assert!(ddog_crasht_is_runtime_callback_registered());
 
-            // Clean up - clear the registered callback for subsequent tests
             clear_runtime_callback();
         }
     }
@@ -195,10 +183,8 @@ mod tests {
         unsafe {
             clear_runtime_callback();
 
-            // Test that no callback is initially registered
             assert!(!ddog_crasht_is_runtime_callback_registered());
 
-            // Test registration with enum values - Python + StacktraceString
             let result = ddog_crasht_register_runtime_stack_callback(
                 test_runtime_callback,
                 CallbackType::StacktraceString,
@@ -207,7 +193,6 @@ mod tests {
             assert_eq!(result, CallbackResult::Ok);
             assert!(ddog_crasht_is_runtime_callback_registered());
 
-            // Verify callback type
             let callback_type_ptr = ddog_crasht_get_registered_callback_type();
             assert!(!callback_type_ptr.is_null());
             let callback_type_str = std::ffi::CStr::from_ptr(callback_type_ptr)
@@ -215,7 +200,6 @@ mod tests {
                 .unwrap();
             assert_eq!(callback_type_str, "stacktrace_string");
 
-            // Test re-registration with different values - Ruby + Frame
             let result = ddog_crasht_register_runtime_stack_callback(
                 test_runtime_callback,
                 CallbackType::Frame,
