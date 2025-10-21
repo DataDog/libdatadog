@@ -9,11 +9,12 @@
 pub mod error;
 pub mod zip;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use datadog_remote_config::{
     config::agent_task::AgentTaskFile, file_storage::RawFile, RemoteConfigData,
 };
+use ddcommon::MutexExt;
 
 #[cfg(feature = "listener")]
 use {
@@ -55,7 +56,8 @@ use crate::error::FlareError;
 pub struct TracerFlareManager {
     pub agent_url: String,
     pub language: String,
-    pub collecting: AtomicBool,
+    // Option Some-ness tracks whether we are currently collecting metrics
+    pub original_log_level: Mutex<Option<LogLevel>>,
     /// As a featured option so we can use the component with no Listener
     #[cfg(feature = "listener")]
     pub listener: Option<Listener>,
@@ -66,7 +68,7 @@ impl Default for TracerFlareManager {
         TracerFlareManager {
             agent_url: hyper::Uri::default().to_string(),
             language: "rust".to_string(),
-            collecting: AtomicBool::new(false),
+            original_log_level: Mutex::new(None),
             #[cfg(feature = "listener")]
             listener: None,
         }
@@ -182,14 +184,15 @@ impl TracerFlareManager {
         data: &RemoteConfigData,
     ) -> Result<ReturnAction, FlareError> {
         let action = data.try_into();
-        if let Ok(ReturnAction::Set(_)) = action {
-            if self.collecting.load(Ordering::Relaxed) {
+        if let Ok(ReturnAction::Set(log_level)) = action {
+            // If we are already collecting
+            if self.original_log_level.lock_or_panic().is_some() {
                 return Ok(ReturnAction::None);
             }
-            self.collecting.store(true, Ordering::Relaxed);
+            *self.original_log_level.lock_or_panic() = Some(log_level);
         } else if Ok(ReturnAction::None) != action {
             // If action is Send, Unset or an error, we need to stop collecting
-            self.collecting.store(false, Ordering::Relaxed);
+            *self.original_log_level.lock_or_panic() = None;
         }
         action
     }
@@ -215,7 +218,7 @@ impl TracerFlareManager {
             Ok(data) => self.handle_remote_config_data(data),
             Err(e) => {
                 // If encounter an error we need to stop collecting
-                self.collecting.store(false, Ordering::Relaxed);
+                *self.original_log_level.lock_or_panic() = None;
                 Err(FlareError::ParsingError(e.to_string()))
             }
         }
@@ -224,7 +227,7 @@ impl TracerFlareManager {
 
 /// Enum that holds the different log levels possible
 /// Do not change the order of the variants because we rely on Ord
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum LogLevel {
     Trace,
     Debug,
@@ -456,10 +459,10 @@ pub async fn run_remote_config_listener(
         }
     }
 
-    if let ReturnAction::Set(_) = state {
-        tracer_flare.collecting.store(true, Ordering::Relaxed);
+    if let ReturnAction::Set(log_level) = state {
+        *tracer_flare.original_log_level.lock_or_panic() = Some(log_level);
     } else if let ReturnAction::Send(_) = state {
-        tracer_flare.collecting.store(false, Ordering::Relaxed);
+        *tracer_flare.original_log_level.lock_or_panic() = None;
     }
 
     Ok(state)
@@ -477,7 +480,7 @@ mod tests {
         file_storage::ParsedFileStorage,
         RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
     };
-    use std::sync::atomic::Ordering;
+    use ddcommon::MutexExt;
     use std::{num::NonZeroU64, sync::Arc};
 
     #[test]
@@ -663,19 +666,19 @@ mod tests {
             .unwrap();
 
         // First AGENT_CONFIG
-        assert!(!tracer_flare.collecting.load(Ordering::Relaxed));
+        assert!(tracer_flare.original_log_level.lock_or_panic().is_none());
         let result = tracer_flare
             .handle_remote_config_file(agent_config_file.clone())
             .unwrap();
         assert_eq!(result, ReturnAction::Set(LogLevel::Info));
-        assert!(tracer_flare.collecting.load(Ordering::Relaxed));
+        assert!(tracer_flare.original_log_level.lock_or_panic().is_some());
 
         // Second AGENT_CONFIG
         let result = tracer_flare
             .handle_remote_config_file(agent_config_file)
             .unwrap();
         assert_eq!(result, ReturnAction::None);
-        assert!(tracer_flare.collecting.load(Ordering::Relaxed));
+        assert!(tracer_flare.original_log_level.lock_or_panic().is_some());
 
         // Non-None actions stop collecting
         let error_file = storage
@@ -692,7 +695,7 @@ mod tests {
             .unwrap();
 
         let _ = tracer_flare.handle_remote_config_file(error_file);
-        assert!(!tracer_flare.collecting.load(Ordering::Relaxed));
+        assert!(tracer_flare.original_log_level.lock_or_panic().is_none());
     }
 
     #[test]
