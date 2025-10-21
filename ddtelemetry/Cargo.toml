@@ -31,7 +31,8 @@ tracing = { version = "0.1", default-features = false }
 uuid = { version = "1.3", features = ["v4"] }
 hashbrown = "0.15"
 
-ddcommon = { path = "../ddcommon", default-features = false }
+ddcommon = { path = "../ddcommon", default-features = false}
+ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 datadog-ddsketch = { path = "../ddsketch" }
 
 [target."cfg(unix)".dependencies]

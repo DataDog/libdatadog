@@ -7,13 +7,11 @@ pub mod store;
 
 use crate::{
     config::Config,
-    data::{self, Application, Dependency, Host, Integration, Log, Payload, Telemetry},
+    data::{self, Application, Dependency, Endpoint, Host, Integration, Log, Payload, Telemetry},
     metrics::{ContextKey, MetricBuckets, MetricContexts},
 };
-use ddcommon::Endpoint;
 use ddcommon::{hyper_migration, tag::Tag, worker::Worker};
 
-use std::fmt::Debug;
 use std::iter::Sum;
 use std::ops::Add;
 use std::{
@@ -26,6 +24,7 @@ use std::{
     },
     time,
 };
+use std::{collections::HashSet, fmt::Debug};
 
 use crate::metrics::MetricBucketStats;
 use futures::{
@@ -89,6 +88,7 @@ pub enum TelemetryActions {
     AddDependency(Dependency),
     AddIntegration(Integration),
     AddLog((LogIdentifier, Log)),
+    AddEndpoint(Endpoint),
     Lifecycle(LifecycleAction),
     #[serde(skip)]
     CollectStats(oneshot::Sender<TelemetryWorkerStats>),
@@ -120,6 +120,7 @@ struct TelemetryWorkerData {
     dependencies: store::Store<Dependency>,
     configurations: store::Store<data::Configuration>,
     integrations: store::Store<data::Integration>,
+    endpoints: HashSet<data::Endpoint>,
     logs: store::QueueHashMap<LogIdentifier, Log>,
     metric_contexts: MetricContexts,
     metric_buckets: MetricBuckets,
@@ -350,7 +351,11 @@ impl TelemetryWorker {
                     }
                 }
             }
-            AddConfig(_) | AddDependency(_) | AddIntegration(_) | Lifecycle(ExtendedHeartbeat) => {}
+            AddConfig(_)
+            | AddDependency(_)
+            | AddIntegration(_)
+            | AddEndpoint(_)
+            | Lifecycle(ExtendedHeartbeat) => {}
             Lifecycle(Stop) => {
                 if !self.data.started {
                     return BREAK;
@@ -407,6 +412,9 @@ impl TelemetryWorker {
             AddDependency(dep) => self.data.dependencies.insert(dep),
             AddIntegration(integration) => self.data.integrations.insert(integration),
             AddConfig(cfg) => self.data.configurations.insert(cfg),
+            AddEndpoint(endpoint) => {
+                self.data.endpoints.insert(endpoint);
+            }
             AddLog((identifier, log)) => {
                 let (l, new) = self.data.logs.get_mut_or_insert(identifier, log);
                 if !new {
@@ -551,6 +559,18 @@ impl TelemetryWorker {
                 },
             ))
         }
+        if !self.data.endpoints.is_empty() {
+            payloads.push(data::Payload::AppEndpoints(data::AppEndpoints {
+                is_first: true,
+                endpoints: self
+                    .data
+                    .endpoints
+                    .iter()
+                    .map(|e| e.to_json_value().unwrap_or_default())
+                    .filter(|e| e.is_object())
+                    .collect(),
+            }));
+        }
         payloads
     }
 
@@ -653,6 +673,7 @@ impl TelemetryWorker {
                 .data
                 .configurations
                 .removed_flushed(p.configuration.len()),
+            AppEndpoints(_) => self.data.endpoints.clear(),
             MessageBatch(batch) => {
                 for p in batch {
                     self.payload_sent_success(p);
@@ -756,7 +777,7 @@ impl TelemetryWorker {
         let timeout_ms = if let Some(endpoint) = self.config.endpoint.as_ref() {
             endpoint.timeout_ms
         } else {
-            Endpoint::DEFAULT_TIMEOUT
+            ddcommon::Endpoint::DEFAULT_TIMEOUT
         };
 
         debug!(
@@ -995,7 +1016,7 @@ impl TelemetryWorkerHandle {
     }
 }
 
-/// How many dependencies/integrations/configs we keep in memory at most
+/// How many dependencies/integrations/configs/endpoints we keep in memory at most
 pub const MAX_ITEMS: usize = 5000;
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -1015,6 +1036,7 @@ pub struct TelemetryWorkerBuilder {
     pub dependencies: store::Store<data::Dependency>,
     pub integrations: store::Store<data::Integration>,
     pub configurations: store::Store<data::Configuration>,
+    pub endpoints: HashSet<data::Endpoint>,
     pub native_deps: bool,
     pub rust_shared_lib_deps: bool,
     pub config: Config,
@@ -1065,6 +1087,7 @@ impl TelemetryWorkerBuilder {
             dependencies: store::Store::new(MAX_ITEMS),
             integrations: store::Store::new(MAX_ITEMS),
             configurations: store::Store::new(MAX_ITEMS),
+            endpoints: HashSet::new(),
             native_deps: true,
             rust_shared_lib_deps: false,
             config: Config::default(),
@@ -1095,6 +1118,7 @@ impl TelemetryWorkerBuilder {
                 dependencies: self.dependencies,
                 integrations: self.integrations,
                 configurations: self.configurations,
+                endpoints: self.endpoints,
                 logs: store::QueueHashMap::default(),
                 metric_contexts: contexts.clone(),
                 metric_buckets: MetricBuckets::default(),
