@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, Span, TelemetryCrashUploader},
+    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, Span, CrashPingBuilder},
     shared::constants::*,
     CrashtrackerConfiguration,
 };
@@ -30,9 +30,14 @@ async fn send_crash_ping_to_url(
         return Ok(());
     }
 
-    let uploader = TelemetryCrashUploader::new(metadata, config.endpoint())?;
-    uploader.send_crash_ping(crash_uuid, sig_info).await?;
-    Ok(())
+    let crash_ping = CrashPingBuilder::new()
+        .with_crash_uuid(crash_uuid.to_string())
+        .with_sig_info(sig_info.clone())
+        .with_metadata(metadata.clone())
+        .with_endpoint(config.endpoint().clone())
+        .build()?;
+
+    crash_ping.upload().await
 }
 
 /// The crashtracker collector sends data in blocks.
