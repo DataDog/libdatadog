@@ -27,6 +27,8 @@ pub struct CrashPingBuilder {
     sig_info: Option<SigInfo>,
     endpoint: Option<Endpoint>,
     custom_message: Option<String>,
+    os_info: Option<super::OsInfo>,
+    proc_info: Option<super::ProcInfo>,
 }
 
 impl CrashPingBuilder {
@@ -36,6 +38,8 @@ impl CrashPingBuilder {
             sig_info: None,
             endpoint: None,
             custom_message: None,
+            os_info: None,
+            proc_info: None,
         }
     }
 
@@ -59,6 +63,34 @@ impl CrashPingBuilder {
         self
     }
 
+    /// Set the OS information (optional - for additional insight)
+    pub fn with_os_info(mut self, os_info: super::OsInfo) -> Self {
+        self.os_info = Some(os_info);
+        self
+    }
+
+    /// Set the OS information to current machine (optional - for additional insight)
+    pub fn with_os_info_this_machine(mut self) -> Self {
+        let os_info = ::os_info::get();
+        let crashtracker_os_info: super::OsInfo = os_info.into();
+        self.os_info = Some(crashtracker_os_info);
+        self
+    }
+
+    /// Set the process information (optional - for additional insight)
+    pub fn with_proc_info(mut self, proc_info: super::ProcInfo) -> Self {
+        self.proc_info = Some(proc_info);
+        self
+    }
+
+    /// Set the process information to current process (optional - for additional insight)
+    pub fn with_proc_info_this_process(mut self) -> Self {
+        let pid = std::process::id();
+        let proc_info = super::ProcInfo { pid };
+        self.proc_info = Some(proc_info);
+        self
+    }
+
     pub fn build(self) -> anyhow::Result<CrashPing> {
         let crash_uuid = self.crash_uuid.context("crash_uuid is required")?;
         let sig_info = self.sig_info.context("sig_info is required")?;
@@ -77,6 +109,8 @@ impl CrashPingBuilder {
             version: CrashPing::current_schema_version(),
             kind: "Crash ping".to_string(),
             endpoint: self.endpoint,
+            os_info: self.os_info,
+            proc_info: self.proc_info,
         })
     }
 }
@@ -96,6 +130,8 @@ pub struct CrashPing {
     kind: String,
     #[serde(skip)]
     endpoint: Option<Endpoint>,
+    os_info: Option<super::OsInfo>,
+    proc_info: Option<super::ProcInfo>,
 }
 
 impl CrashPing {
