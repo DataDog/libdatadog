@@ -57,7 +57,7 @@ pub(crate) enum StdinState {
     Waiting,
     // StackFrame is always emitted as one stream of all the frames but StackString
     // may have lines that we need to accumulate depending on runtime (e.g. Python)
-    RuntimeStackFrame,
+    RuntimeStackFrame(Vec<RuntimeFrame>),
     RuntimeStackString(Vec<String>),
 }
 
@@ -135,41 +135,29 @@ fn process_line(
             builder.with_proc_info(proc_info)?;
             StdinState::ProcInfo
         }
-        StdinState::RuntimeStackFrame
+        StdinState::RuntimeStackFrame(frames)
             if line.starts_with(DD_CRASHTRACK_END_RUNTIME_STACK_FRAME) =>
         {
+            let runtime_stack = RuntimeStack {
+                format: "Datadog Runtime Callback 1.0".to_string(),
+                frames,
+                stacktrace_string: None,
+            };
+            builder.with_experimental_runtime_stack(runtime_stack)?;
             StdinState::Waiting
         }
-        StdinState::RuntimeStackFrame => {
-            // Try to parse as frames array
-            if let Ok(runtime_frames) = serde_json::from_str::<Vec<RuntimeFrame>>(line) {
-                if !runtime_frames.is_empty() {
-                    let runtime_stack = RuntimeStack {
-                        format: "Datadog Runtime Callback 1.0".to_string(),
-                        frames: runtime_frames,
-                        stacktrace_string: None,
-                    };
-                    builder.with_experimental_runtime_stack(runtime_stack)?;
-                }
-            } else {
-                builder.with_log_message(
-                    format!("Unable to parse runtime stack frames: {line}"),
-                    true,
-                )?;
-            }
-            StdinState::RuntimeStackFrame
+        StdinState::RuntimeStackFrame(mut frames) => {
+            let frame = serde_json::from_str(line)?;
+            frames.push(frame);
+            StdinState::RuntimeStackFrame(frames)
         }
         StdinState::RuntimeStackString(lines)
             if line.starts_with(DD_CRASHTRACK_END_RUNTIME_STACK_STRING) =>
         {
-            // Join all accumulated lines with newlines to reconstruct the full stack trace
-            // This is necessary because although the stacktrace string is sent as a single string,
-            // there may be newlines in the string
-            let stacktrace_string = lines.join("\n");
             let runtime_stack = RuntimeStack {
                 format: "Datadog Runtime Callback 1.0".to_string(),
                 frames: vec![],
-                stacktrace_string: Some(stacktrace_string),
+                stacktrace_string: Some(lines.join("\n")),
             };
             builder.with_experimental_runtime_stack(runtime_stack)?;
             StdinState::Waiting
@@ -254,7 +242,7 @@ fn process_line(
             StdinState::RuntimeStackString(vec![])
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME) => {
-            StdinState::RuntimeStackFrame
+            StdinState::RuntimeStackFrame(vec![])
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_TRACE_IDS) => {
             StdinState::TraceIds

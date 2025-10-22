@@ -259,18 +259,13 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
     // the vtable for its impls, so we need to store both.
     static CURRENT_WRITER_DATA: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
     static CURRENT_WRITER_VTABLE: AtomicPtr<()> = AtomicPtr::new(ptr::null_mut());
-    static CURRENT_FRAME_COUNT: AtomicPtr<usize> = AtomicPtr::new(ptr::null_mut());
-
-    let mut frame_count = 0usize;
 
     let writer_trait_obj: *mut dyn std::io::Write = writer;
     let writer_parts: (*mut (), *mut ()) = unsafe { std::mem::transmute(writer_trait_obj) };
-    let frame_count_ptr = &mut frame_count as *mut usize;
 
     // Store components atomically
     CURRENT_WRITER_DATA.store(writer_parts.0, Ordering::SeqCst);
     CURRENT_WRITER_VTABLE.store(writer_parts.1, Ordering::SeqCst);
-    CURRENT_FRAME_COUNT.store(frame_count_ptr, Ordering::SeqCst);
 
     // Define the emit functions that read from the atomic storage
     unsafe extern "C" fn emit_frame_collector(frame: *const RuntimeStackFrame) {
@@ -280,9 +275,8 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
 
         let writer_data = CURRENT_WRITER_DATA.load(Ordering::SeqCst);
         let writer_vtable = CURRENT_WRITER_VTABLE.load(Ordering::SeqCst);
-        let frame_count_ptr = CURRENT_FRAME_COUNT.load(Ordering::SeqCst);
 
-        if writer_data.is_null() || writer_vtable.is_null() || frame_count_ptr.is_null() {
+        if writer_data.is_null() || writer_vtable.is_null() {
             return;
         }
 
@@ -290,18 +284,10 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
         let writer_trait_obj: *mut dyn std::io::Write =
             std::mem::transmute((writer_data, writer_vtable));
         let writer = &mut *writer_trait_obj;
-        let frame_count = &mut *frame_count_ptr;
-
-        // Add comma separator for frames after the first
-        if *frame_count > 0 {
-            let _ = write!(writer, ", ");
-        }
 
         // Write the frame as JSON
         let _ = emit_frame_as_json(writer, frame);
         let _ = writer.flush();
-
-        *frame_count += 1;
     }
 
     unsafe extern "C" fn emit_stacktrace_string_collector(stacktrace_string: *const c_char) {
@@ -339,7 +325,6 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
     // Clear atomic storage
     CURRENT_WRITER_DATA.store(ptr::null_mut(), Ordering::SeqCst);
     CURRENT_WRITER_VTABLE.store(ptr::null_mut(), Ordering::SeqCst);
-    CURRENT_FRAME_COUNT.store(ptr::null_mut(), Ordering::SeqCst);
 
     Ok(())
 }
@@ -411,7 +396,7 @@ unsafe fn emit_frame_as_json(
         write!(writer, "\"column\": {}", frame_ref.column_number)?;
     }
 
-    write!(writer, "}}")?;
+    writeln!(writer, "}}")?;
     Ok(())
 }
 

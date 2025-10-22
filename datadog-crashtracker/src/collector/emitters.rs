@@ -253,11 +253,7 @@ fn emit_runtime_stack_by_frames(w: &mut impl Write) -> Result<(), EmitterError> 
     writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME}")?;
 
     // JSON array for frames
-    write!(w, "[")?;
     unsafe { invoke_runtime_callback_with_writer(w)? };
-    write!(w, "]")?;
-
-    writeln!(w)?;
     writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_FRAME}")?;
     w.flush()?;
     Ok(())
@@ -268,7 +264,6 @@ fn emit_runtime_stack_by_stacktrace_string(w: &mut impl Write) -> Result<(), Emi
 
     // Emit the stacktrace string
     unsafe { invoke_runtime_callback_with_writer(w)? };
-
     writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_STRING}")?;
     w.flush()?;
     Ok(())
