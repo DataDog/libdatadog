@@ -379,7 +379,13 @@ pub async fn zip_and_send(
 
     // APMSP-2118 - TODO: Implement obfuscation of sensitive data
 
-    let log_level = *tracer_flare.current_log_level.lock_or_panic();
+    let log_level = tracer_flare
+        .current_log_level
+        .lock_or_panic()
+        .ok_or(FlareError::ZipError(String::from(
+            "Trying to send the flare when log_level is not set",
+        )))?;
+
     send(zip, log_level, agent_task, tracer_flare).await
 }
 
