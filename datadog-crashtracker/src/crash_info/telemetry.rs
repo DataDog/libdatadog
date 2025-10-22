@@ -944,6 +944,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_crash_ping_builder_validation() {
         // Test missing required fields
         let result = CrashPingBuilder::new().build();
