@@ -3,7 +3,7 @@ name = "dogstatsd-client"
 description = "A dogstatsd client for sending metrics to a dogstatsd server."
 rust-version.workspace = true
 edition.workspace = true
-version.workspace = true
+version= "1.0.0"
 license.workspace = true
 
 [lib]

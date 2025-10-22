@@ -3,7 +3,7 @@ name = "datadog-profiling-replayer"
 authors = ["Levi Morrison <levi.morrison@datadoghq.com>"]
 description = "Takes a pprof file and 'replays' it using libdatadog commands."
 edition.workspace = true
-version.workspace = true
+version = "1.0.0"
 rust-version.workspace = true
 license.workspace = true
 

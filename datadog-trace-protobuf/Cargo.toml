@@ -2,7 +2,7 @@
 name = "datadog-trace-protobuf"
 authors = ["David Lee <david.lee@datadoghq.com>"]
 edition.workspace = true
-version.workspace = true
+version = "1.0.0"
 rust-version.workspace = true
 license.workspace = true
 

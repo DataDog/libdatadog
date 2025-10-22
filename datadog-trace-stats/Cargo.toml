@@ -3,7 +3,7 @@ name = "datadog-trace-stats"
 description = "This crate provides utilities to compute stats from traces."
 rust-version.workspace = true
 edition.workspace = true
-version.workspace = true
+version = "1.0.0"
 license.workspace = true
 autobenches = false
 

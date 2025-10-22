@@ -3,7 +3,7 @@ name = "datadog-trace-normalization"
 authors = ["David Lee <david.lee@datadoghq.com>"]
 description = "A duplicate of trace normalization implemented in the agent in https://github.com/DataDog/datadog-agent/blob/main/pkg/trace/traceutil/normalize.go"
 edition.workspace = true
-version.workspace = true
+version = "1.0.0"
 rust-version.workspace = true
 license.workspace = true
 

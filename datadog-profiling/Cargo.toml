@@ -4,7 +4,7 @@
 [package]
 name = "datadog-profiling"
 edition.workspace = true
-version.workspace = true
+version = "1.0.0"
 rust-version.workspace = true
 license.workspace = true
 autobenches = false
