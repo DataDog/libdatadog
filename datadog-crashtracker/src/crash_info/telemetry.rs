@@ -92,11 +92,14 @@ impl CrashPingBuilder {
     }
 
     pub fn build(self) -> anyhow::Result<CrashPing> {
-        let crash_uuid = self.crash_uuid
+        let crash_uuid = self
+            .crash_uuid
             .ok_or_else(|| anyhow::anyhow!("crash_uuid is required"))?;
-        let sig_info = self.sig_info
+        let sig_info = self
+            .sig_info
             .ok_or_else(|| anyhow::anyhow!("sig_info is required"))?;
-        let metadata = self.metadata
+        let metadata = self
+            .metadata
             .ok_or_else(|| anyhow::anyhow!("metadata is required"))?;
 
         let message = self.custom_message.unwrap_or_else(|| {
@@ -106,11 +109,7 @@ impl CrashPingBuilder {
             )
         });
 
-        let crash_ping_msg = CrashPingMessage::new(
-            crash_uuid.clone(),
-            message,
-            sig_info.clone(),
-        );
+        let crash_ping_msg = CrashPingMessage::new(crash_uuid.clone(), message, sig_info.clone());
 
         let telemetry_metadata = Self::build_telemetry_metadata(&metadata)?;
 
@@ -124,7 +123,9 @@ impl CrashPingBuilder {
         })
     }
 
-    fn build_telemetry_metadata(crashtracker_metadata: &Metadata) -> anyhow::Result<TelemetryMetadata> {
+    fn build_telemetry_metadata(
+        crashtracker_metadata: &Metadata,
+    ) -> anyhow::Result<TelemetryMetadata> {
         let mut env: Option<&str> = None;
         let mut language_name: Option<&str> = None;
         let mut library_version: Option<&str> = None;
@@ -147,7 +148,7 @@ impl CrashPingBuilder {
                 "runtime-id" => runtime_id = Some(value),
                 "service_version" => service_version = Some(value),
                 "service" => service_name = Some(value),
-                _ => {},
+                _ => {}
             }
         }
 
@@ -226,19 +227,17 @@ impl CrashPing {
     /// Upload this crash ping to the configured endpoint
     pub async fn upload(self) -> anyhow::Result<()> {
         // Handle file endpoints for testing
-        let is_file_endpoint = self.endpoint
+        let is_file_endpoint = self
+            .endpoint
             .as_ref()
             .map(|e| e.url.scheme_str() == Some("file"))
             .unwrap_or(false);
 
         if is_file_endpoint {
-            // For file endpoints, write the telemetry payload to a .telemetry file
-            // This matches the behavior of the original TelemetryCrashUploader
             if let Some(endpoint) = &self.endpoint {
                 let base_path = ddcommon::decode_uri_path_in_authority(&endpoint.url)
                     .context("file path is not valid")?;
 
-                // Append .telemetry extension to match original behavior
                 let telemetry_path = format!("{}.telemetry", base_path.display());
 
                 let tracer_time = SystemTime::now()
@@ -313,7 +312,10 @@ impl CrashPing {
         Self::send_telemetry_payload(&cfg, &payload).await
     }
 
-    async fn send_telemetry_payload(cfg: &ddtelemetry::config::Config, payload: &data::Telemetry<'_>) -> anyhow::Result<()> {
+    async fn send_telemetry_payload(
+        cfg: &ddtelemetry::config::Config,
+        payload: &data::Telemetry<'_>,
+    ) -> anyhow::Result<()> {
         let client = ddtelemetry::worker::http_client::from_config(cfg);
         let req = request_builder(cfg)?
             .method(http::Method::POST)
@@ -633,7 +635,7 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{TelemetryCrashUploader, CrashPingBuilder};
+    use super::{CrashPingBuilder, TelemetryCrashUploader};
     use crate::crash_info::{test_utils::TestInstance, CrashInfo, Metadata};
     use ddcommon::Endpoint;
     use std::{collections::HashSet, fs};
@@ -864,7 +866,10 @@ mod tests {
             .with_crash_uuid(crash_uuid.to_string())
             .with_sig_info(sig_info.clone())
             .with_metadata(metadata)
-            .with_endpoint(Some(Endpoint::from_slice(&format!("file://{}", output_filename.to_str().unwrap()))))
+            .with_endpoint(Some(Endpoint::from_slice(&format!(
+                "file://{}",
+                output_filename.to_str().unwrap()
+            ))))
             .build()?;
 
         // Test getters
@@ -918,7 +923,10 @@ mod tests {
             .with_sig_info(sig_info)
             .with_metadata(metadata)
             .with_custom_message(custom_message.to_string())
-            .with_endpoint(Some(Endpoint::from_slice(&format!("file://{}", output_filename.to_str().unwrap()))))
+            .with_endpoint(Some(Endpoint::from_slice(&format!(
+                "file://{}",
+                output_filename.to_str().unwrap()
+            ))))
             .build()?;
 
         assert_eq!(crash_ping.message(), custom_message);
@@ -940,20 +948,29 @@ mod tests {
         // Test missing required fields
         let result = CrashPingBuilder::new().build();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("crash_uuid is required"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("crash_uuid is required"));
 
         let result = CrashPingBuilder::new()
             .with_crash_uuid("test".to_string())
             .build();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("sig_info is required"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("sig_info is required"));
 
         let result = CrashPingBuilder::new()
             .with_crash_uuid("test".to_string())
             .with_sig_info(crate::SigInfo::test_instance(1))
             .build();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("metadata is required"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("metadata is required"));
 
         let result = CrashPingBuilder::new()
             .with_crash_uuid("test".to_string())

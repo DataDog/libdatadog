@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, Span, CrashPingBuilder},
+    crash_info::{CrashInfo, CrashInfoBuilder, CrashPingBuilder, ErrorKind, Span},
     shared::constants::*,
     CrashtrackerConfiguration,
 };
