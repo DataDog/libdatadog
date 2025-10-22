@@ -10,9 +10,13 @@
 #[cfg(all(feature = "symbolizer", not(target_os = "windows")))]
 pub use symbolizer_ffi::*;
 
+mod arc_handle;
 mod exporter;
 mod profiles;
+mod status;
 mod string_storage;
+
+pub use status::*;
 
 // re-export crashtracker ffi
 #[cfg(feature = "crashtracker-ffi")]

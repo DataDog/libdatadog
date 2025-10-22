@@ -18,15 +18,18 @@ name = "main"
 harness = false
 
 [dependencies]
+allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"]}
 anyhow = "1.0"
 bitmaps = "3.2.0"
 byteorder = { version = "1.5", features = ["std"] }
 bytes = "1.1"
+crossbeam-utils = { version = "0.8.20" }
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
 datadog-alloc = { path = "../datadog-alloc" }
 datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["prost_impls"] }
 ddcommon = {path = "../ddcommon" }
 futures = { version = "0.3", default-features = false }
+hashbrown = { version = "0.16", default-features = false }
 http = "1.0"
 hyper = { workspace = true}
 http-body-util = "0.1"
@@ -34,14 +37,17 @@ hyper-multipart-rfc7578 = "0.9.0"
 indexmap = "2.2"
 lz4_flex = { version = "0.9", default-features = false, features = ["std", "safe-encode", "frame"] }
 mime = "0.3.16"
+parking_lot = { version = "0.12", default-features = false }
 prost = "0.13.5"
 rustc-hash = { version = "1.1", default-features = false }
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
 target-triple = "0.1.4"
+thiserror = "1"
 tokio = {version = "1.23", features = ["rt", "macros"]}
 tokio-util = "0.7.1"
 
 [dev-dependencies]
 bolero = "0.13"
 criterion = "0.5.1"
+proptest = "1"
