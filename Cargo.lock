@@ -1524,7 +1524,6 @@ name = "datadog-log"
 version = "22.1.0"
 dependencies = [
  "chrono",
- "ddcommon-ffi",
  "tempfile",
  "tracing",
  "tracing-appender",
