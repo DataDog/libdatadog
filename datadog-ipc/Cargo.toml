@@ -22,7 +22,7 @@ tinybytes = { path = "../tinybytes", optional = true }
 # tarpc needed extensions to allow 1 way communication and to export some internal structs
 tarpc = { path = "./tarpc", default-features = false, features = ["serde-transport"] }
 
-ddcommon = { path = "../ddcommon" }
+ddcommon = { version = "1.0.0", path = "../libdd-common/", package = "libdd-common" }
 datadog-ipc-macros = { path = "../datadog-ipc-macros" }
 
 [dev-dependencies]

@@ -510,8 +510,8 @@ dependencies = [
  "current_platform",
  "datadog-crashtracker",
  "datadog-profiling",
- "ddcommon",
  "libc",
+ "libdd-common",
  "nix",
  "once_cell",
  "serde_json",
@@ -849,7 +849,7 @@ dependencies = [
 
 [[package]]
 name = "cc_utils"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -1293,7 +1293,7 @@ dependencies = [
 
 [[package]]
 name = "data-pipeline"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1305,7 +1305,6 @@ dependencies = [
  "datadog-trace-protobuf",
  "datadog-trace-stats",
  "datadog-trace-utils",
- "ddcommon",
  "ddtelemetry",
  "dogstatsd-client",
  "either",
@@ -1314,6 +1313,7 @@ dependencies = [
  "httpmock",
  "hyper",
  "hyper-util",
+ "libdd-common",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1344,7 +1344,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-alloc"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "allocator-api2",
  "bolero",
@@ -1354,7 +1354,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-crashtracker"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "backtrace",
@@ -1363,11 +1363,11 @@ dependencies = [
  "cc_utils",
  "chrono",
  "criterion",
- "ddcommon",
  "ddtelemetry",
  "goblin",
  "http",
  "libc",
+ "libdd-common",
  "nix",
  "num-derive",
  "num-traits",
@@ -1394,10 +1394,10 @@ dependencies = [
  "anyhow",
  "build_common",
  "datadog-crashtracker",
- "ddcommon",
  "ddcommon-ffi",
  "function_name",
  "libc",
+ "libdd-common",
  "serde",
  "serde_json",
  "symbolic-common",
@@ -1408,7 +1408,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ddsketch"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -1443,11 +1443,11 @@ dependencies = [
  "bytes",
  "criterion",
  "datadog-ipc-macros",
- "ddcommon",
  "futures",
  "glibc_version",
  "io-lifetimes",
  "libc",
+ "libdd-common",
  "memfd",
  "nix",
  "page_size",
@@ -1478,7 +1478,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-library-config"
-version = "0.0.2"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "memfd",
@@ -1498,20 +1498,20 @@ dependencies = [
  "build_common",
  "constcat",
  "datadog-library-config",
- "ddcommon",
  "ddcommon-ffi",
+ "libdd-common",
  "tempfile",
 ]
 
 [[package]]
 name = "datadog-live-debugger"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "constcat",
- "ddcommon",
  "http-body-util",
  "hyper",
+ "libdd-common",
  "percent-encoding",
  "regex",
  "regex-automata 0.4.8",
@@ -1529,8 +1529,8 @@ version = "0.0.1"
 dependencies = [
  "build_common",
  "datadog-live-debugger",
- "ddcommon",
  "ddcommon-ffi",
+ "libdd-common",
  "log",
  "percent-encoding",
  "serde_json",
@@ -1541,7 +1541,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-log"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "tempfile",
@@ -1561,7 +1561,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bitmaps",
@@ -1572,13 +1572,13 @@ dependencies = [
  "criterion",
  "datadog-alloc",
  "datadog-profiling-protobuf",
- "ddcommon",
  "futures",
  "http",
  "http-body-util",
  "hyper",
  "hyper-multipart-rfc7578",
  "indexmap 2.6.0",
+ "libdd-common",
  "lz4_flex",
  "mime",
  "prost",
@@ -1601,7 +1601,6 @@ dependencies = [
  "datadog-library-config-ffi",
  "datadog-log-ffi",
  "datadog-profiling",
- "ddcommon",
  "ddcommon-ffi",
  "ddsketch-ffi",
  "ddtelemetry-ffi",
@@ -1610,6 +1609,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "libc",
+ "libdd-common",
  "serde_json",
  "symbolizer-ffi",
  "tokio-util",
@@ -1617,7 +1617,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-protobuf"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "bolero",
  "datadog-profiling-protobuf",
@@ -1626,7 +1626,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1638,20 +1638,20 @@ dependencies = [
 
 [[package]]
 name = "datadog-remote-config"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "datadog-live-debugger",
  "datadog-remote-config",
  "datadog-trace-protobuf",
- "ddcommon",
  "futures",
  "futures-util",
  "http",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "libdd-common",
  "manual_future",
  "serde",
  "serde_json",
@@ -1683,7 +1683,6 @@ dependencies = [
  "datadog-remote-config",
  "datadog-sidecar-macros",
  "datadog-trace-utils",
- "ddcommon",
  "ddcommon-ffi",
  "ddtelemetry",
  "dogstatsd-client",
@@ -1693,6 +1692,7 @@ dependencies = [
  "httpmock",
  "hyper",
  "libc",
+ "libdd-common",
  "manual_future",
  "memory-stats",
  "microseh",
@@ -1730,13 +1730,13 @@ dependencies = [
  "datadog-remote-config",
  "datadog-sidecar",
  "datadog-trace-utils",
- "ddcommon",
  "ddcommon-ffi",
  "ddtelemetry",
  "ddtelemetry-ffi",
  "dogstatsd-client",
  "http",
  "libc",
+ "libdd-common",
  "paste",
  "rmp-serde",
  "tempfile",
@@ -1754,7 +1754,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-normalization"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -1765,14 +1765,14 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-obfuscation"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "criterion",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
- "ddcommon",
  "duplicate",
+ "libdd-common",
  "log",
  "percent-encoding",
  "regex",
@@ -1783,7 +1783,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-protobuf"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "prost",
  "prost-build",
@@ -1796,7 +1796,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-stats"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "datadog-ddsketch",
@@ -1808,7 +1808,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-trace-utils"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bolero",
@@ -1819,13 +1819,13 @@ dependencies = [
  "datadog-trace-normalization",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
- "ddcommon",
  "flate2",
  "futures",
  "http-body-util",
  "httpmock",
  "hyper",
  "hyper-http-proxy",
+ "libdd-common",
  "prost",
  "rand 0.8.5",
  "rmp",
@@ -1843,53 +1843,18 @@ dependencies = [
 
 [[package]]
 name = "datadog-tracer-flare"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "datadog-remote-config",
  "datadog-trace-utils",
- "ddcommon",
  "hyper",
+ "libdd-common",
  "serde_json",
  "tempfile",
  "tokio",
  "walkdir",
  "zip",
-]
-
-[[package]]
-name = "ddcommon"
-version = "22.1.0"
-dependencies = [
- "anyhow",
- "cc",
- "const_format",
- "futures",
- "futures-core",
- "futures-util",
- "hex",
- "http",
- "http-body",
- "http-body-util",
- "hyper",
- "hyper-rustls",
- "hyper-util",
- "indexmap 2.6.0",
- "libc",
- "maplit",
- "nix",
- "pin-project",
- "regex",
- "rustls",
- "rustls-native-certs",
- "serde",
- "static_assertions",
- "tempfile",
- "thiserror 1.0.68",
- "tokio",
- "tokio-rustls",
- "tower-service",
- "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1901,8 +1866,8 @@ dependencies = [
  "build_common",
  "chrono",
  "crossbeam-queue",
- "ddcommon",
  "hyper",
+ "libdd-common",
  "serde",
 ]
 
@@ -1917,12 +1882,11 @@ dependencies = [
 
 [[package]]
 name = "ddtelemetry"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "datadog-ddsketch",
- "ddcommon",
  "futures",
  "hashbrown 0.15.1",
  "http",
@@ -1930,6 +1894,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libc",
+ "libdd-common",
  "serde",
  "serde_json",
  "sys-info",
@@ -1946,11 +1911,11 @@ name = "ddtelemetry-ffi"
 version = "22.1.0"
 dependencies = [
  "build_common",
- "ddcommon",
  "ddcommon-ffi",
  "ddtelemetry",
  "function_name",
  "libc",
+ "libdd-common",
  "paste",
  "tempfile",
 ]
@@ -2041,12 +2006,12 @@ dependencies = [
 
 [[package]]
 name = "dogstatsd-client"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "cadence",
- "ddcommon",
  "http",
+ "libdd-common",
  "serde",
  "tokio",
  "tracing",
@@ -3147,6 +3112,41 @@ name = "libc"
 version = "0.2.176"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58f929b4d672ea937a23a1ab494143d968337a5f47e56d0815df1e0890ddf174"
+
+[[package]]
+name = "libdd-common"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "const_format",
+ "futures",
+ "futures-core",
+ "futures-util",
+ "hex",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "indexmap 2.6.0",
+ "libc",
+ "maplit",
+ "nix",
+ "pin-project",
+ "regex",
+ "rustls",
+ "rustls-native-certs",
+ "serde",
+ "static_assertions",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tower-service",
+ "windows-sys 0.52.0",
+]
 
 [[package]]
 name = "libloading"
@@ -5186,7 +5186,7 @@ dependencies = [
 
 [[package]]
 name = "tinybytes"
-version = "22.1.0"
+version = "1.0.0"
 dependencies = [
  "once_cell",
  "pretty_assertions",

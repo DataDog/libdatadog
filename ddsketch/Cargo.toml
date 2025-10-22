@@ -2,7 +2,7 @@
 name = "datadog-ddsketch"
 description = "Minimal implementation of Datadog's DDSketch"
 edition.workspace = true
-version.workspace = true
+version = "1.0.0"
 rust-version.workspace = true
 license.workspace = true
 

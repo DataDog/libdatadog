@@ -3,7 +3,7 @@ name = "datadog-trace-obfuscation"
 authors = ["David Lee <david.lee@datadoghq.com>"]
 description = "A duplicate of trace obfuscator implemented in the agent and documented in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#trace-obfuscation"
 edition.workspace = true
-version.workspace = true
+version = "1.0.0"
 rust-version.workspace = true
 license.workspace = true
 
@@ -17,7 +17,7 @@ percent-encoding = "2.1"
 log = "0.4"
 datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
 datadog-trace-utils = { path = "../datadog-trace-utils" }
-ddcommon = { path = "../ddcommon" }
+ddcommon = { version = "1.0.0", path = "../libdd-common/", package = "libdd-common" }
 
 [dev-dependencies]
 duplicate = "0.4.1"

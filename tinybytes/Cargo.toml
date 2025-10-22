@@ -2,7 +2,7 @@
 name = "tinybytes"
 description = "Tiny implementation of a bytes::Bytes like type that supports AsRef<[u8]>"
 edition.workspace = true
-version.workspace = true
+version= "1.0.0"
 rust-version.workspace = true
 license.workspace = true
 

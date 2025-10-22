@@ -4,7 +4,7 @@
 
 #![cfg(unix)]
 
-use ddcommon::unix_utils::PreparedExecve;
+use libdd_common::unix_utils::PreparedExecve;
 use std::io::Read;
 use std::os::unix::io::FromRawFd;
 

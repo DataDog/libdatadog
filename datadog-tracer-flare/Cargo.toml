@@ -3,12 +3,12 @@ name = "datadog-tracer-flare"
 rust-version.workspace = true
 edition.workspace = true
 license.workspace = true
-version.workspace = true
+version = "1.0.0"
 autobenches = false
 
 [dependencies]
 anyhow = "1.0"
-ddcommon = { path = "../ddcommon" }
+ddcommon = { version = "1.0.0", path = "../libdd-common/", package = "libdd-common" }
 datadog-remote-config = { path = "../datadog-remote-config" }
 datadog-trace-utils = { path = "../datadog-trace-utils" }
 hyper = { workspace = true}

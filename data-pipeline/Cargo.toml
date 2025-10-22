@@ -3,7 +3,7 @@ name = "data-pipeline"
 description = "Trace exporter package allowing sending data from datadog SDKs to the Trace Agent."
 rust-version.workspace = true
 edition.workspace = true
-version.workspace = true
+version= "1.0.0"
 license.workspace = true
 autobenches = false
 
@@ -31,7 +31,7 @@ tokio = { version = "1.23", features = [
 uuid = { version = "1.10.0", features = ["v4"] }
 tokio-util = "0.7.11"
 
-ddcommon = { path = "../ddcommon", default-features = false }
+ddcommon = { version = "1.0.0", path = "../libdd-common/", package = "libdd-common", default-features = false }
 ddtelemetry = { path = "../ddtelemetry", default-features = false }
 datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
 datadog-trace-stats = { path = "../datadog-trace-stats"}

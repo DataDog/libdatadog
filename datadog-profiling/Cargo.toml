@@ -4,7 +4,7 @@
 [package]
 name = "datadog-profiling"
 edition.workspace = true
-version.workspace = true
+version = "1.0.0"
 rust-version.workspace = true
 license.workspace = true
 autobenches = false
@@ -25,7 +25,7 @@ bytes = "1.1"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
 datadog-alloc = { path = "../datadog-alloc" }
 datadog-profiling-protobuf = { path = "../datadog-profiling-protobuf", features = ["prost_impls"] }
-ddcommon = {path = "../ddcommon" }
+ddcommon = { version = "1.0.0", path = "../libdd-common/", package = "libdd-common" }
 futures = { version = "0.3", default-features = false }
 http = "1.0"
 hyper = { workspace = true}

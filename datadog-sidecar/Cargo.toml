@@ -16,7 +16,7 @@ tokio-console = ["tokio/full", "tokio/tracing", "console-subscriber"]
 anyhow = { version = "1.0" }
 arrayref = "0.3.7"
 priority-queue = "2.1.1"
-ddcommon = { path = "../ddcommon" }
+ddcommon = { version = "1.0.0", path = "../libdd-common/", package = "libdd-common" }
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 
 ddtelemetry = { path = "../ddtelemetry", features = ["tracing"] }

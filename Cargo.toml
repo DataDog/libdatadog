@@ -28,7 +28,7 @@ members = [
   "datadog-trace-utils",
   "datadog-trace-stats",
   "datadog-tracer-flare",
-  "ddcommon",
+  "libdd-common",
   "ddcommon-ffi",
   "ddtelemetry",
   "ddtelemetry-ffi",

@@ -2,11 +2,11 @@
 edition = "2021"
 license = "Apache 2.0"
 name = "datadog-live-debugger"
-version = "0.0.1"
+version = "1.0.0"
 
 [dependencies]
 anyhow = "1.0"
-ddcommon = { path = "../ddcommon" }
+ddcommon = { version = "1.0.0", path = "../libdd-common/", package = "libdd-common" }
 hyper = { workspace = true}
 http-body-util = "0.1"
 

@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "ddcommon"
+name = "libdd-common"
 edition.workspace = true
-version.workspace = true
+version = "1.0.0"
 rust-version.workspace = true
 license.workspace = true
 
