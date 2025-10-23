@@ -3,10 +3,10 @@
 
 #[cfg(test)]
 mod tracing_integration_tests {
-    use data_pipeline::agent_info;
-    use data_pipeline::agent_info::{fetch_info, AgentInfoFetcher};
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use ddcommon::{worker::Worker, Endpoint};
+    use libdd_data_pipeline::agent_info;
+    use libdd_data_pipeline::agent_info::{fetch_info, AgentInfoFetcher};
     use std::time::Duration;
 
     #[cfg_attr(miri, ignore)]

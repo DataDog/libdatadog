@@ -1292,57 +1292,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "data-pipeline"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "arc-swap",
- "bytes",
- "clap",
- "criterion",
- "datadog-log",
- "either",
- "http",
- "http-body-util",
- "httpmock",
- "hyper",
- "hyper-util",
- "libdd-common",
- "libdd-dogstatsd-client",
- "libdd-sketch",
- "libdd-telemetry",
- "libdd-tinybytes",
- "libdd-trace-protobuf",
- "libdd-trace-stats",
- "libdd-trace-utils",
- "rand 0.8.5",
- "regex",
- "rmp-serde",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "data-pipeline-ffi"
-version = "22.1.0"
-dependencies = [
- "build_common",
- "data-pipeline",
- "ddcommon-ffi",
- "httpmock",
- "libdd-tinybytes",
- "libdd-trace-utils",
- "rmp-serde",
- "tracing",
-]
-
-[[package]]
 name = "datadog-alloc"
 version = "1.0.0"
 dependencies = [
@@ -1567,7 +1516,6 @@ version = "22.1.0"
 dependencies = [
  "anyhow",
  "build_common",
- "data-pipeline-ffi",
  "datadog-crashtracker-ffi",
  "datadog-library-config-ffi",
  "datadog-log-ffi",
@@ -1581,6 +1529,7 @@ dependencies = [
  "hyper",
  "libc",
  "libdd-common",
+ "libdd-data-pipeline-ffi",
  "serde_json",
  "symbolizer-ffi",
  "tokio-util",
@@ -1645,7 +1594,6 @@ dependencies = [
  "bincode",
  "chrono",
  "console-subscriber",
- "data-pipeline",
  "datadog-crashtracker",
  "datadog-crashtracker-ffi",
  "datadog-ipc",
@@ -1661,6 +1609,7 @@ dependencies = [
  "hyper",
  "libc",
  "libdd-common",
+ "libdd-data-pipeline",
  "libdd-dogstatsd-client",
  "libdd-telemetry",
  "libdd-tinybytes",
@@ -2973,6 +2922,57 @@ dependencies = [
  "tokio-rustls",
  "tower-service",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "libdd-data-pipeline"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "bytes",
+ "clap",
+ "criterion",
+ "datadog-log",
+ "either",
+ "http",
+ "http-body-util",
+ "httpmock",
+ "hyper",
+ "hyper-util",
+ "libdd-common",
+ "libdd-dogstatsd-client",
+ "libdd-sketch",
+ "libdd-telemetry",
+ "libdd-tinybytes",
+ "libdd-trace-protobuf",
+ "libdd-trace-stats",
+ "libdd-trace-utils",
+ "rand 0.8.5",
+ "regex",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "libdd-data-pipeline-ffi"
+version = "22.1.0"
+dependencies = [
+ "build_common",
+ "ddcommon-ffi",
+ "httpmock",
+ "libdd-data-pipeline",
+ "libdd-tinybytes",
+ "libdd-trace-utils",
+ "rmp-serde",
+ "tracing",
 ]
 
 [[package]]

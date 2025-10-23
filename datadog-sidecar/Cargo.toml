@@ -20,7 +20,7 @@ ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-commo
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 
 ddtelemetry = { version = "1.0.0", path = "../libdd-telemetry", package = "libdd-telemetry", features = ["tracing"] }
-data-pipeline = { path = "../data-pipeline" }
+data-pipeline = { version = "1.0.0", path = "../libdd-data-pipeline", package = "libdd-data-pipeline" }
 datadog-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", package = "libdd-trace-utils" }
 datadog-remote-config = { path = "../datadog-remote-config" , features = ["live-debugger"]}
 datadog-live-debugger = { path = "../datadog-live-debugger" }

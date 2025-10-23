@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 #[cfg(test)]
 mod tracing_integration_tests {
-    use data_pipeline::trace_exporter::agent_response::AgentResponse;
-    use data_pipeline::trace_exporter::{
-        TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
-    };
     use datadog_trace_utils::span::v05::dict::SharedDict;
     use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use datadog_trace_utils::test_utils::{create_test_json_span, create_test_v05_span};
+    use libdd_data_pipeline::trace_exporter::agent_response::AgentResponse;
+    use libdd_data_pipeline::trace_exporter::{
+        TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
+    };
     use serde_json::json;
     use tokio::task;
 
