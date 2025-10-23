@@ -15,34 +15,34 @@ use ddcommon_ffi::CharSlice;
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
 #[no_mangle]
-pub static DDOG_PROF_STRINGID_EMPTY: StringId2 = StringId2::EMPTY;
+pub static DDOG_PROF_STRINGID2_EMPTY: StringId2 = StringId2::EMPTY;
 
 /// A StringId that represents the string "end_timestamp_ns".
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
 #[no_mangle]
-pub static DDOG_PROF_STRINGID_END_TIMESTAMP_NS: StringId2 =
+pub static DDOG_PROF_STRINGID2_END_TIMESTAMP_NS: StringId2 =
     unsafe { core::mem::transmute(StringRef::END_TIMESTAMP_NS) };
 
 /// A StringId that represents the string "local root span id".
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
 #[no_mangle]
-pub static DDOG_PROF_STRINGID_LOCAL_ROOT_SPAN_ID: StringId2 =
+pub static DDOG_PROF_STRINGID2_LOCAL_ROOT_SPAN_ID: StringId2 =
     unsafe { core::mem::transmute(StringRef::LOCAL_ROOT_SPAN_ID) };
 
 /// A StringId that represents the string "trace endpoint".
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
 #[no_mangle]
-pub static DDOG_PROF_STRINGID_TRACE_ENDPOINT: StringId2 =
+pub static DDOG_PROF_STRINGID2_TRACE_ENDPOINT: StringId2 =
     unsafe { core::mem::transmute(StringRef::TRACE_ENDPOINT) };
 
 /// A StringId that represents the string "span id".
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
 #[no_mangle]
-pub static DDOG_PROF_STRINGID_SPAN_ID: StringId2 =
+pub static DDOG_PROF_STRINGID2_SPAN_ID: StringId2 =
     unsafe { core::mem::transmute(StringRef::SPAN_ID) };
 
 /// Allocates a new `ProfilesDictionary` and writes a handle to it in `handle`.
