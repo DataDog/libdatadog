@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_profiling::exporter::{ProfileExporter, Request};
-use datadog_profiling::internal::EncodedProfile;
+use libdd_profiling::exporter::{ProfileExporter, Request};
+use libdd_profiling::internal::EncodedProfile;
 
 fn multipart(
     exporter: &mut ProfileExporter,
@@ -36,9 +36,9 @@ fn multipart(
 #[cfg(test)]
 mod tests {
     use crate::multipart;
-    use datadog_profiling::exporter::*;
     use ddcommon::tag;
     use http_body_util::BodyExt;
+    use libdd_profiling::exporter::*;
     use serde_json::json;
 
     fn default_tags() -> Vec<Tag> {
