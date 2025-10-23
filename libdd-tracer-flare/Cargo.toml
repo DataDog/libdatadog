@@ -1,5 +1,5 @@
 [package]
-name = "datadog-tracer-flare"
+name = "libdd-tracer-flare"
 rust-version.workspace = true
 edition.workspace = true
 license.workspace = true
