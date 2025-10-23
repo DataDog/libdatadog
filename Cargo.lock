@@ -1381,18 +1381,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-profiling-replayer"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "clap",
- "libdd-profiling",
- "libdd-profiling-protobuf",
- "prost",
- "sysinfo",
-]
-
-[[package]]
 name = "datadog-sidecar"
 version = "0.0.1"
 dependencies = [
@@ -2941,6 +2929,18 @@ dependencies = [
  "bolero",
  "libdd-profiling-protobuf",
  "prost",
+]
+
+[[package]]
+name = "libdd-profiling-replayer"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "libdd-profiling",
+ "libdd-profiling-protobuf",
+ "prost",
+ "sysinfo",
 ]
 
 [[package]]
