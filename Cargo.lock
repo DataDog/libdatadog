@@ -1301,7 +1301,6 @@ dependencies = [
  "clap",
  "criterion",
  "datadog-log",
- "datadog-trace-protobuf",
  "either",
  "http",
  "http-body-util",
@@ -1313,6 +1312,7 @@ dependencies = [
  "libdd-sketch",
  "libdd-telemetry",
  "libdd-tinybytes",
+ "libdd-trace-protobuf",
  "libdd-trace-stats",
  "libdd-trace-utils",
  "rand 0.8.5",
@@ -1615,7 +1615,6 @@ dependencies = [
  "base64 0.22.1",
  "datadog-live-debugger",
  "datadog-remote-config",
- "datadog-trace-protobuf",
  "futures",
  "futures-util",
  "http",
@@ -1623,6 +1622,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libdd-common",
+ "libdd-trace-protobuf",
  "manual_future",
  "serde",
  "serde_json",
@@ -1729,8 +1729,8 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "criterion",
- "datadog-trace-protobuf",
  "duplicate",
+ "libdd-trace-protobuf",
  "rand 0.8.5",
 ]
 
@@ -1740,9 +1740,9 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "criterion",
- "datadog-trace-protobuf",
  "duplicate",
  "libdd-common",
+ "libdd-trace-protobuf",
  "libdd-trace-utils",
  "log",
  "percent-encoding",
@@ -1750,19 +1750,6 @@ dependencies = [
  "serde",
  "serde_json",
  "url",
-]
-
-[[package]]
-name = "datadog-trace-protobuf"
-version = "1.0.0"
-dependencies = [
- "prost",
- "prost-build",
- "protoc-bin-vendored",
- "serde",
- "serde_bytes",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -3080,13 +3067,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-trace-protobuf"
+version = "1.0.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "libdd-trace-stats"
 version = "1.0.0"
 dependencies = [
  "criterion",
- "datadog-trace-protobuf",
  "hashbrown 0.15.1",
  "libdd-sketch",
+ "libdd-trace-protobuf",
  "libdd-trace-utils",
  "rand 0.8.5",
 ]
@@ -3102,7 +3102,6 @@ dependencies = [
  "cargo_metadata",
  "criterion",
  "datadog-trace-normalization",
- "datadog-trace-protobuf",
  "flate2",
  "futures",
  "http-body-util",
@@ -3111,6 +3110,7 @@ dependencies = [
  "hyper-http-proxy",
  "libdd-common",
  "libdd-tinybytes",
+ "libdd-trace-protobuf",
  "libdd-trace-utils",
  "prost",
  "rand 0.8.5",

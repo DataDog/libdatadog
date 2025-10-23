@@ -9,7 +9,7 @@ autobenches = false
 
 [dependencies]
 datadog-ddsketch = { version = "1.0.0", path = "../libdd-sketch", package = "libdd-sketch" }
-datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
+datadog-trace-protobuf = { version = "1.0.0", path = "../libdd-trace-protobuf", package = "libdd-trace-protobuf" }
 libdd-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", default-features = false }
 hashbrown = { version = "0.15" }
 

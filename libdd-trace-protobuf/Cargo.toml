@@ -1,5 +1,5 @@
 [package]
-name = "datadog-trace-protobuf"
+name = "libdd-trace-protobuf"
 authors = ["David Lee <david.lee@datadoghq.com>"]
 edition.workspace = true
 version = "1.0.0"

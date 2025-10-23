@@ -33,7 +33,7 @@ tokio-util = "0.7.11"
 
 ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common", default-features = false }
 ddtelemetry = { version = "1.0.0", path = "../libdd-telemetry", package = "libdd-telemetry", default-features = false }
-datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
+datadog-trace-protobuf = { version = "1.0.0", path = "../libdd-trace-protobuf", package = "libdd-trace-protobuf" }
 datadog-trace-stats = { version = "1.0.0", path = "../libdd-trace-stats", package = "libdd-trace-stats" }
 datadog-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", package = "libdd-trace-utils", default-features = false }
 datadog-ddsketch = { version = "1.0.0", path = "../libdd-sketch", package = "libdd-sketch" }
