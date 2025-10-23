@@ -382,9 +382,8 @@ pub async fn zip_and_send(
     let log_level = tracer_flare
         .current_log_level
         .lock_or_panic()
-        .ok_or(FlareError::ZipError(String::from(
-            "Trying to send the flare when log_level is not set",
-        )))?;
+        // Default log level
+        .unwrap_or(LogLevel::Debug);
 
     send(zip, log_level, agent_task, tracer_flare).await
 }
