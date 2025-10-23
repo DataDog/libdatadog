@@ -1305,7 +1305,6 @@ dependencies = [
  "datadog-trace-protobuf",
  "datadog-trace-stats",
  "datadog-trace-utils",
- "ddtelemetry",
  "dogstatsd-client",
  "either",
  "http",
@@ -1314,6 +1313,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libdd-common",
+ "libdd-telemetry",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1363,11 +1363,11 @@ dependencies = [
  "cc_utils",
  "chrono",
  "criterion",
- "ddtelemetry",
  "goblin",
  "http",
  "libc",
  "libdd-common",
+ "libdd-telemetry",
  "nix",
  "num-derive",
  "num-traits",
@@ -1684,7 +1684,6 @@ dependencies = [
  "datadog-sidecar-macros",
  "datadog-trace-utils",
  "ddcommon-ffi",
- "ddtelemetry",
  "dogstatsd-client",
  "futures",
  "http",
@@ -1693,6 +1692,7 @@ dependencies = [
  "hyper",
  "libc",
  "libdd-common",
+ "libdd-telemetry",
  "manual_future",
  "memory-stats",
  "microseh",
@@ -1731,12 +1731,12 @@ dependencies = [
  "datadog-sidecar",
  "datadog-trace-utils",
  "ddcommon-ffi",
- "ddtelemetry",
  "ddtelemetry-ffi",
  "dogstatsd-client",
  "http",
  "libc",
  "libdd-common",
+ "libdd-telemetry",
  "paste",
  "rmp-serde",
  "tempfile",
@@ -1881,41 +1881,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "ddtelemetry"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "datadog-ddsketch",
- "futures",
- "hashbrown 0.15.1",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "libc",
- "libdd-common",
- "serde",
- "serde_json",
- "sys-info",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "winver",
-]
-
-[[package]]
 name = "ddtelemetry-ffi"
 version = "22.1.0"
 dependencies = [
  "build_common",
  "ddcommon-ffi",
- "ddtelemetry",
  "function_name",
  "libc",
  "libdd-common",
+ "libdd-telemetry",
  "paste",
  "tempfile",
 ]
@@ -3146,6 +3120,32 @@ dependencies = [
  "tokio-rustls",
  "tower-service",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "libdd-telemetry"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "datadog-ddsketch",
+ "futures",
+ "hashbrown 0.15.1",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "libc",
+ "libdd-common",
+ "serde",
+ "serde_json",
+ "sys-info",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "winver",
 ]
 
 [[package]]

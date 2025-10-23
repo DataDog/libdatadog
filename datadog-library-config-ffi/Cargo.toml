@@ -11,7 +11,7 @@ crate-type = ["staticlib", "cdylib", "lib"]
 bench = false
 
 [dependencies]
-ddcommon = { version = "1.0.0", path = "../libdd-common/", package = "libdd-common" }
+ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 datadog-library-config = { path = "../datadog-library-config" }
 anyhow = "1.0"

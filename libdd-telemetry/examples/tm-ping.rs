@@ -6,13 +6,13 @@ use std::{
     time::SystemTime,
 };
 
-use ddtelemetry::{
+use http::header::CONTENT_TYPE;
+use libdd_telemetry::{
     build_host,
     config::Config,
     data::{self, AppStarted, Application, Telemetry},
     worker::http_client::request_builder,
 };
-use http::header::CONTENT_TYPE;
 
 fn build_app_started_payload() -> AppStarted {
     AppStarted {
@@ -44,7 +44,7 @@ fn build_request<'a>(
 
 pub async fn push_telemetry(telemetry: &Telemetry<'_>) -> anyhow::Result<()> {
     let config = Config::from_env();
-    let client = ddtelemetry::worker::http_client::from_config(&config);
+    let client = libdd_telemetry::worker::http_client::from_config(&config);
     let req = request_builder(&config)?
         .method(http::Method::POST)
         .header(CONTENT_TYPE, ddcommon::header::APPLICATION_JSON)
