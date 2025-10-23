@@ -60,7 +60,9 @@ renaming_overrides_prefixing = true
 "Slice_GenerationalIdLocationId" = "ddog_prof_Slice_LocationId"
 
 "GenerationalId_FunctionId" = "ddog_prof_FunctionId"
+"GenerationalId_InternalFunctionId" = "ddog_prof_FunctionId"
 "Result_GenerationalIdFunctionId" = "ddog_prof_FunctionId_Result"
+"Result_GenerationalIdInternalFunctionId" = "ddog_prof_FunctionId_Result"
 "FunctionId" = "OpaqueFunctionId"
 
 "GenerationalId_LabelId" = "ddog_prof_LabelId"
@@ -76,7 +78,9 @@ renaming_overrides_prefixing = true
 "LocationId" = "OpaqueLocationId"
 
 "GenerationalId_MappingId" = "ddog_prof_MappingId"
+"GenerationalId_InternalMappingId" = "ddog_prof_MappingId"
 "Result_GenerationalIdMappingId" = "ddog_prof_MappingId_Result"
+"Result_GenerationalIdInternalMappingId" = "ddog_prof_MappingId_Result"
 "MappingId" = "OpaqueMappingId"
 
 "GenerationalId_StackTraceId" = "ddog_prof_StackTraceId"
@@ -84,7 +88,11 @@ renaming_overrides_prefixing = true
 "StackTraceId" = "OpaqueStackTraceId"
 
 "GenerationalId_StringId" = "ddog_prof_StringId"
+"GenerationalId_InternalStringId" = "ddog_prof_StringId"
 "Result_GenerationalIdStringId" = "ddog_prof_StringId_Result"
+"Result_GenerationalIdInternalStringId" = "ddog_prof_StringId_Result"
+"MutSlice_GenerationalIdStringId" = "ddog_prof_MutSlice_StringId"
+"MutSlice_GenerationalIdInternalStringId" = "ddog_prof_MutSlice_StringId"
 
 # StringId is an alias of StringOffset, we need both to be `OpaqueStringId`
 # for the current interning API.
@@ -105,6 +113,9 @@ renaming_overrides_prefixing = true
 
 "CancellationToken" = "struct ddog_OpaqueCancellationToken"
 "Handle_TokioCancellationToken" = "ddog_CancellationToken"
+
+"ArcHandle_ProfilesDictionary" = "ddog_prof_ProfilesDictionaryHandle"
+"ProfileStatus" = "ddog_prof_Status"
 
 [export.mangle]
 rename_types = "PascalCase"
