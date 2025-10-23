@@ -23,7 +23,7 @@ tinybytes = { version = "1.0.0", path = "../libdd-tinybytes", package = "libdd-t
 tarpc = { path = "./tarpc", default-features = false, features = ["serde-transport"] }
 
 ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
-libdd-ipc-macros = { path = "../libdd-ipc-macros" }
+libdd-ipc-macros = { version = "0.0.1", path = "../libdd-ipc-macros" }
 
 [dev-dependencies]
 criterion = "0.5"

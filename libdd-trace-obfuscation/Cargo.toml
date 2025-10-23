@@ -22,7 +22,7 @@ ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-commo
 [dev-dependencies]
 duplicate = "0.4.1"
 criterion = { version = "0.5", features = [ "csv_output"] }
-datadog-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", package = "libdd-trace-utils", features = ["test-utils"] }
+datadog-trace-utils = { path = "../libdd-trace-utils", package = "libdd-trace-utils", features = ["test-utils"] }
 
 [lib]
 bench = false
