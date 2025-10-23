@@ -9,7 +9,7 @@ autobenches = false
 [dependencies]
 anyhow = "1.0"
 ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
-datadog-remote-config = { path = "../datadog-remote-config" }
+datadog-remote-config = { path = "../libdd-remote-config" , package = "libdd-remote-config" }
 datadog-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", package = "libdd-trace-utils" }
 hyper = { workspace = true}
 tokio = { version = "1.36.0", features = ["time"] }
@@ -22,7 +22,7 @@ tempfile = "3.8"
 bench = false
 
 [dev-dependencies]
-datadog-remote-config = { path = "../datadog-remote-config", features = ["test"] }
+datadog-remote-config = { path = "../libdd-remote-config" , package = "libdd-remote-config", features = ["test"] }
 
 [features]
 default = ["listener"]

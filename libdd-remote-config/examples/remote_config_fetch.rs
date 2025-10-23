@@ -1,13 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_remote_config::fetch::{ConfigInvariants, SingleChangesFetcher};
-use datadog_remote_config::file_change_tracker::{Change, FilePath};
-use datadog_remote_config::file_storage::ParsedFileStorage;
-use datadog_remote_config::RemoteConfigProduct::ApmTracing;
-use datadog_remote_config::{RemoteConfigData, Target};
 use ddcommon::tag::Tag;
 use ddcommon::Endpoint;
+use libdd_remote_config::fetch::{ConfigInvariants, SingleChangesFetcher};
+use libdd_remote_config::file_change_tracker::{Change, FilePath};
+use libdd_remote_config::file_storage::ParsedFileStorage;
+use libdd_remote_config::RemoteConfigProduct::ApmTracing;
+use libdd_remote_config::{RemoteConfigData, Target};
 use std::time::Duration;
 use tokio::time::sleep;
 

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "ddsketch-ffi"
+name = "libdd-sketch-ffi"
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true
