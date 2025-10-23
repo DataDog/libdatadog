@@ -1312,6 +1312,7 @@ dependencies = [
  "libdd-common",
  "libdd-sketch",
  "libdd-telemetry",
+ "libdd-tinybytes",
  "libdd-trace-stats",
  "libdd-trace-utils",
  "rand 0.8.5",
@@ -1321,7 +1322,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
- "tinybytes",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1336,9 +1336,9 @@ dependencies = [
  "data-pipeline",
  "ddcommon-ffi",
  "httpmock",
+ "libdd-tinybytes",
  "libdd-trace-utils",
  "rmp-serde",
- "tinybytes",
  "tracing",
 ]
 
@@ -1419,6 +1419,7 @@ dependencies = [
  "io-lifetimes",
  "libc",
  "libdd-common",
+ "libdd-tinybytes",
  "memfd",
  "nix",
  "page_size",
@@ -1429,7 +1430,6 @@ dependencies = [
  "spawn_worker",
  "tarpc",
  "tempfile",
- "tinybytes",
  "tokio",
  "tokio-serde",
  "tokio-util",
@@ -1663,6 +1663,7 @@ dependencies = [
  "libc",
  "libdd-common",
  "libdd-telemetry",
+ "libdd-tinybytes",
  "libdd-trace-utils",
  "manual_future",
  "memory-stats",
@@ -1679,7 +1680,6 @@ dependencies = [
  "simd-json",
  "spawn_worker",
  "tempfile",
- "tinybytes",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1707,11 +1707,11 @@ dependencies = [
  "libc",
  "libdd-common",
  "libdd-telemetry",
+ "libdd-tinybytes",
  "libdd-trace-utils",
  "paste",
  "rmp-serde",
  "tempfile",
- "tinybytes",
  "tracing",
 ]
 
@@ -3066,6 +3066,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-tinybytes"
+version = "1.0.0"
+dependencies = [
+ "libdd-tinybytes",
+ "once_cell",
+ "pretty_assertions",
+ "proptest",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "test-case",
+]
+
+[[package]]
 name = "libdd-trace-stats"
 version = "1.0.0"
 dependencies = [
@@ -3096,6 +3110,7 @@ dependencies = [
  "hyper",
  "hyper-http-proxy",
  "libdd-common",
+ "libdd-tinybytes",
  "libdd-trace-utils",
  "prost",
  "rand 0.8.5",
@@ -3105,7 +3120,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tinybytes",
  "tokio",
  "tracing",
  "urlencoding",
@@ -5162,20 +5176,6 @@ checksum = "3526739392ec93fd8b359c8e98514cb3e8e021beb4e5f597b00a0221f8ed8a49"
 dependencies = [
  "num-conv",
  "time-core",
-]
-
-[[package]]
-name = "tinybytes"
-version = "1.0.0"
-dependencies = [
- "once_cell",
- "pretty_assertions",
- "proptest",
- "rmp-serde",
- "serde",
- "serde_json",
- "test-case",
- "tinybytes",
 ]
 
 [[package]]
