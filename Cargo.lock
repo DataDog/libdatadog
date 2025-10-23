@@ -1471,8 +1471,6 @@ dependencies = [
  "datadog-library-config-ffi",
  "datadog-log-ffi",
  "datadog-profiling",
- "ddsketch-ffi",
- "ddtelemetry-ffi",
  "function_name",
  "futures",
  "http-body-util",
@@ -1482,6 +1480,8 @@ dependencies = [
  "libdd-common-ffi",
  "libdd-crashtracker-ffi",
  "libdd-data-pipeline-ffi",
+ "libdd-sketch-ffi",
+ "libdd-telemetry-ffi",
  "serde_json",
  "symbolizer-ffi",
  "tokio-util",
@@ -1509,34 +1509,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-remote-config"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "datadog-live-debugger",
- "datadog-remote-config",
- "futures",
- "futures-util",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "libdd-common",
- "libdd-trace-protobuf",
- "manual_future",
- "serde",
- "serde_json",
- "serde_with",
- "sha2",
- "time",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "datadog-sidecar"
 version = "0.0.1"
 dependencies = [
@@ -1549,7 +1521,6 @@ dependencies = [
  "datadog-ipc",
  "datadog-ipc-macros",
  "datadog-live-debugger",
- "datadog-remote-config",
  "datadog-sidecar-macros",
  "futures",
  "http",
@@ -1563,6 +1534,7 @@ dependencies = [
  "libdd-crashtracker-ffi",
  "libdd-data-pipeline",
  "libdd-dogstatsd-client",
+ "libdd-remote-config",
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-utils",
@@ -1598,16 +1570,16 @@ version = "0.0.1"
 dependencies = [
  "datadog-ipc",
  "datadog-live-debugger",
- "datadog-remote-config",
  "datadog-sidecar",
- "ddtelemetry-ffi",
  "http",
  "libc",
  "libdd-common",
  "libdd-common-ffi",
  "libdd-crashtracker-ffi",
  "libdd-dogstatsd-client",
+ "libdd-remote-config",
  "libdd-telemetry",
+ "libdd-telemetry-ffi",
  "libdd-tinybytes",
  "libdd-trace-utils",
  "paste",
@@ -1622,29 +1594,6 @@ version = "0.0.1"
 dependencies = [
  "quote",
  "syn 2.0.87",
-]
-
-[[package]]
-name = "ddsketch-ffi"
-version = "22.1.0"
-dependencies = [
- "build_common",
- "libdd-common-ffi",
- "libdd-sketch",
-]
-
-[[package]]
-name = "ddtelemetry-ffi"
-version = "22.1.0"
-dependencies = [
- "build_common",
- "function_name",
- "libc",
- "libdd-common",
- "libdd-common-ffi",
- "libdd-telemetry",
- "paste",
- "tempfile",
 ]
 
 [[package]]
@@ -2995,12 +2944,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-remote-config"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "datadog-live-debugger",
+ "futures",
+ "futures-util",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "libdd-common",
+ "libdd-remote-config",
+ "libdd-trace-protobuf",
+ "manual_future",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sha2",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "libdd-sketch"
 version = "1.0.0"
 dependencies = [
  "prost",
  "prost-build",
  "protoc-bin-vendored",
+]
+
+[[package]]
+name = "libdd-sketch-ffi"
+version = "22.1.0"
+dependencies = [
+ "build_common",
+ "libdd-common-ffi",
+ "libdd-sketch",
 ]
 
 [[package]]
@@ -3027,6 +3013,20 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "winver",
+]
+
+[[package]]
+name = "libdd-telemetry-ffi"
+version = "22.1.0"
+dependencies = [
+ "build_common",
+ "function_name",
+ "libc",
+ "libdd-common",
+ "libdd-common-ffi",
+ "libdd-telemetry",
+ "paste",
+ "tempfile",
 ]
 
 [[package]]
@@ -3137,9 +3137,9 @@ name = "libdd-tracer-flare"
 version = "1.0.0"
 dependencies = [
  "anyhow",
- "datadog-remote-config",
  "hyper",
  "libdd-common",
+ "libdd-remote-config",
  "libdd-trace-utils",
  "serde_json",
  "tempfile",

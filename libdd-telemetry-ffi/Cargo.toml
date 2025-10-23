@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "ddtelemetry-ffi"
+name = "libdd-telemetry-ffi"
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true

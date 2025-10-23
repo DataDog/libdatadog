@@ -1,7 +1,7 @@
 [package]
 edition = "2021"
 license = "Apache 2.0"
-name = "datadog-remote-config"
+name = "libdd-remote-config"
 version = "1.0.0"
 
 [features]
@@ -35,7 +35,7 @@ hyper-util = { workspace = true, features = ["service"], optional = true }
 
 [dev-dependencies]
 futures = "0.3"
-datadog-remote-config = { path = ".", features = ["test"] }
+libdd-remote-config = { path = ".", features = ["test"] }
 
 [lib]
 bench = false
