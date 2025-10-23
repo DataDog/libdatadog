@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #ifndef _WIN32
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <unistd.h>
 #else
 #include <windows.h>
@@ -23,6 +24,12 @@ static inline FILE *error_fd() {
     }
     return stderr;
 }
+
+struct trampoline_data {
+  int argc;
+  char **argv;
+  char **dependency_paths;
+};
 
 int main(int argc, char *argv[]) {
   if (argc > 3) {
@@ -43,14 +50,21 @@ int main(int argc, char *argv[]) {
 
     int additional_shared_libraries_args = argc - 4;
 
+    struct trampoline_data startup_data = {
+      .argc = argc,
+      .argv = argv,
+      .dependency_paths = NULL,
+    };
+
+    int i;
 #ifndef _WIN32
     void **handles = NULL;
 #ifdef __GLIBC__
     void *librt_handle = NULL;
 #endif
-
     if (additional_shared_libraries_args > 0) {
       handles = calloc(additional_shared_libraries_args, sizeof(void *));
+      startup_data.dependency_paths = calloc(additional_shared_libraries_args + 1, sizeof(char *));
 
 #ifdef __GLIBC__
       // appsec needs librt for shm_open, but doesn't declare needing it for compat with musl.
@@ -61,39 +75,63 @@ int main(int argc, char *argv[]) {
 
     int additional_shared_libraries_count = 0;
     bool unlink_next = false;
-    for (int i = 0; i < additional_shared_libraries_args; i++) {
+    for (i = 0; i < additional_shared_libraries_args; i++) {
       const char *lib_path = argv[3 + i];
       if (*lib_path == '-' && !lib_path[1]) {
-          unlink_next = true;
-          continue;
+        unlink_next = true;
+        continue;
       }
-#ifndef _WIN32
       bool already_loaded = false;
+#ifndef _WIN32
       char buf[30];
       // Redirect the symlinked /proc/self/X to the actual /proc/<pid>/X - as otherwise debugging tooling may try to read it
       // And reading /proc/self from the debugging tooling will usually lead to it reading from itself, which may be flatly wrong
       // E.g. gdb will just hang up for e.g. /proc/self/fd/4, which is an open pipe...
       if (strncmp(lib_path, "/proc/self/", strlen("/proc/self/")) == 0 && strlen(lib_path) < 20) {
         sprintf(buf, "/proc/%d/%s", getpid(), lib_path + strlen("/proc/self/"));
-        if ((handles[additional_shared_libraries_count++] = dlopen(buf, RTLD_LAZY | RTLD_GLOBAL))) {
-            already_loaded = true;
+        if ((handles[additional_shared_libraries_count] = dlopen(buf, RTLD_LAZY | RTLD_GLOBAL))) {
+          already_loaded = true;
         } else {
-            // We may have to retry this (via already_loaded = false) in environments where procfs updates have some delay
-            // Like observed on google cloud run platforms: /proc/self/ exists, but /proc/<pid>/ does not yet.
-            // clear any previous errors
-            (void)dlerror();
+          // We may have to retry this (via already_loaded = false) in environments where procfs updates have some delay
+          // Like observed on google cloud run platforms: /proc/self/ exists, but /proc/<pid>/ does not yet.
+          // clear any previous errors
+          (void)dlerror();
+        }
+      } else if (unlink_next) {
+        // try to keep the shared library alive as a file descriptor for later use
+        int fd = open(lib_path, O_RDONLY);
+        sprintf(buf, "/proc/%d/fd/%d", getpid(), fd);
+        if ((handles[additional_shared_libraries_count] = dlopen(buf, RTLD_LAZY | RTLD_GLOBAL))) {
+          already_loaded = true;
+        } else {
+          // clear any previous errors, and clean this up
+          (void)dlerror();
+          close(fd);
         }
       }
-      if (!already_loaded)
+      if (already_loaded) {
+        startup_data.dependency_paths[additional_shared_libraries_count] = strdup(buf);
+      }
 #endif
-      if (!(handles[additional_shared_libraries_count++] = dlopen(lib_path, RTLD_LAZY | RTLD_GLOBAL))) {
+      if (!already_loaded) {
+        if (!(handles[additional_shared_libraries_count] = dlopen(lib_path, RTLD_LAZY | RTLD_GLOBAL))) {
           fputs(dlerror(), error_fd());
           return 9;
+        }
+        if (!unlink_next) {
+          startup_data.dependency_paths[additional_shared_libraries_count] = strdup(lib_path);
+        } else {
+          startup_data.dependency_paths[additional_shared_libraries_count] = NULL;
+        }
       }
       if (unlink_next) {
         unlink(lib_path);
         unlink_next = false;
       }
+      ++additional_shared_libraries_count;
+    }
+    if (startup_data.dependency_paths) {
+      startup_data.dependency_paths[additional_shared_libraries_count] = NULL;
     }
 
     void *handle = dlopen(library_path, RTLD_LAZY | RTLD_GLOBAL);
@@ -105,7 +143,7 @@ int main(int argc, char *argv[]) {
     // clear any previous errors
     (void)dlerror();
 
-    void (*fn)() = dlsym(handle, symbol_name);
+    void (*fn)(struct trampoline_data *) = dlsym(handle, symbol_name);
     char *error = NULL;
 
     if ((error = dlerror()) != NULL) {
@@ -118,12 +156,15 @@ int main(int argc, char *argv[]) {
       return 12;
     }
 
-    (*fn)();
+    (*fn)(&startup_data);
     dlclose(handle);
 
     if (handles != NULL) {
-      for (int i = 0; i < additional_shared_libraries_count; i++) {
+      for (i = 0; i < additional_shared_libraries_count; i++) {
         dlclose(handles[i]);
+        if (startup_data.dependency_paths[i]) {
+          free(startup_data.dependency_paths[i]);
+        }
       }
       free(handles);
     }
@@ -133,7 +174,7 @@ int main(int argc, char *argv[]) {
     }
 #endif
 #else
-    for (int i = 0; i < additional_shared_libraries_args; i++) {
+    for (i = 0; i < additional_shared_libraries_args; i++) {
         const char *lib_path = argv[3 + i];
         HINSTANCE handle = LoadLibrary(lib_path);
         if (!handle) {
@@ -150,7 +191,7 @@ int main(int argc, char *argv[]) {
         return 10;
     } 
 
-    void (*fn)() = (void(*)())GetProcAddress(handle, symbol_name);
+    void (*fn)(struct trampoline_data *) = (void(*)(struct trampoline_data *))GetProcAddress(handle, symbol_name);
 
     if (!fn) {
         DWORD res = GetLastError();
@@ -158,7 +199,7 @@ int main(int argc, char *argv[]) {
         return 11;
     }
 
-    (*fn)();
+    (*fn)(&startup_data);
 #endif
     return 0;
   }

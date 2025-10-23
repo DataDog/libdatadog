@@ -195,7 +195,7 @@ impl StackFrame {
             let (file_offset, meta_idx) = normed.outputs[0];
             let meta = &normed.meta[meta_idx];
             let elf = meta.as_elf().context("Not elf")?;
-            let resolver = elf_resolvers.get(&elf.path)?;
+            let resolver = elf_resolvers.get_or_insert(&elf.path)?;
             let virt_address = resolver
                 .file_offset_to_virt_offset(file_offset)?
                 .context("No matching segment found")?;
@@ -412,12 +412,13 @@ mod unix_test {
         let mut frame = StackFrame::new();
         frame.ip = Some(address);
 
+        let mut symbolizer = Symbolizer::new();
         let normalizer = Normalizer::new();
         frame
             .normalize_ip(
                 &normalizer,
                 Pid::from(std::process::id()),
-                &mut CachedElfResolvers::default(),
+                &mut CachedElfResolvers::new(&mut symbolizer),
             )
             .unwrap();
 
@@ -446,12 +447,13 @@ mod unix_test {
         let mut frame = StackFrame::new();
         frame.ip = Some(address);
 
+        let mut symbolizer = blazesym::symbolize::Symbolizer::new();
         let normalizer = Normalizer::new();
         frame
             .normalize_ip(
                 &normalizer,
                 Pid::from(std::process::id()),
-                &mut CachedElfResolvers::default(),
+                &mut CachedElfResolvers::new(&mut symbolizer),
             )
             .unwrap();
 

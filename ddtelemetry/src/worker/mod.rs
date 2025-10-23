@@ -28,7 +28,6 @@ use std::{
 };
 
 use crate::metrics::MetricBucketStats;
-use anyhow::Result;
 use futures::{
     channel::oneshot,
     future::{self},
@@ -41,7 +40,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, warn};
+use tracing::debug;
 
 const CONTINUE: ControlFlow<()> = ControlFlow::Continue(());
 const BREAK: ControlFlow<()> = ControlFlow::Break(());
@@ -57,7 +56,7 @@ fn time_now() -> f64 {
 macro_rules! telemetry_worker_log {
     ($worker:expr , ERROR , $fmt_str:tt, $($arg:tt)*) => {
         {
-            error!(
+            debug!(
                 worker.runtime_id = %$worker.runtime_id,
                 worker.debug_logging = $worker.config.telemetry_debug_logging_enabled,
                 $fmt_str,
@@ -679,7 +678,7 @@ impl TelemetryWorker {
         self.seq_id.fetch_add(1, Ordering::Release)
     }
 
-    async fn send_payload(&self, payload: &data::Payload) -> Result<()> {
+    async fn send_payload(&self, payload: &data::Payload) -> anyhow::Result<()> {
         debug!(
             worker.runtime_id = %self.runtime_id,
             payload.type = payload.request_type(),
@@ -689,22 +688,26 @@ impl TelemetryWorker {
         let req = self.build_request(payload)?;
         let result = self.send_request(req).await;
         match &result {
-            Ok(()) => debug!(
+            Ok(resp) => debug!(
                 worker.runtime_id = %self.runtime_id,
                 payload.type = payload.request_type(),
+                response.status = resp.status().as_u16(),
                 "Successfully sent telemetry payload"
             ),
-            Err(e) => error!(
+            Err(e) => debug!(
                 worker.runtime_id = %self.runtime_id,
                 payload.type = payload.request_type(),
-                error = %e,
+                error = ?e,
                 "Failed to send telemetry payload"
             ),
         }
-        result
+        Ok(())
     }
 
-    fn build_request(&self, payload: &data::Payload) -> Result<hyper_migration::HttpRequest> {
+    fn build_request(
+        &self,
+        payload: &data::Payload,
+    ) -> anyhow::Result<hyper_migration::HttpRequest> {
         let seq_id = self.next_seq_id();
         let tel = Telemetry {
             api_version: data::ApiVersion::V2,
@@ -746,7 +749,10 @@ impl TelemetryWorker {
         Ok(req.body(body)?)
     }
 
-    async fn send_request(&self, req: hyper_migration::HttpRequest) -> Result<()> {
+    async fn send_request(
+        &self,
+        req: hyper_migration::HttpRequest,
+    ) -> Result<hyper_migration::HttpResponse, hyper_migration::Error> {
         let timeout_ms = if let Some(endpoint) = self.config.endpoint.as_ref() {
             endpoint.timeout_ms
         } else {
@@ -761,35 +767,26 @@ impl TelemetryWorker {
 
         tokio::select! {
             _ = self.cancellation_token.cancelled() => {
-                warn!(
+                debug!(
                     worker.runtime_id = %self.runtime_id,
                     "Telemetry request cancelled"
                 );
-                Err(anyhow::anyhow!("Request cancelled"))
+                Err(hyper_migration::Error::Other(anyhow::anyhow!("Request cancelled")))
             },
             _ = tokio::time::sleep(time::Duration::from_millis(timeout_ms)) => {
-                warn!(
+                debug!(
                     worker.runtime_id = %self.runtime_id,
                     http.timeout_ms = timeout_ms,
                     "Telemetry request timed out"
                 );
-                Err(anyhow::anyhow!("Request timed out"))
+                Err(hyper_migration::Error::Other(anyhow::anyhow!("Request timed out")))
             },
             r = self.client.request(req) => {
                 match r {
-                    Ok(_) => {
-                        debug!(
-                            worker.runtime_id = %self.runtime_id,
-                            "HTTP request completed successfully"
-                        );
-                        Ok(())
+                    Ok(resp) => {
+                        Ok(resp)
                     }
                     Err(e) => {
-                        error!(
-                            worker.runtime_id = %self.runtime_id,
-                            error = %e,
-                            "HTTP request failed"
-                        );
                         Err(e)
                     },
                 }
@@ -868,15 +865,15 @@ impl TelemetryWorkerHandle {
             .register_metric_context(name, tags, metric_type, common, namespace)
     }
 
-    pub fn try_send_msg(&self, msg: TelemetryActions) -> Result<()> {
+    pub fn try_send_msg(&self, msg: TelemetryActions) -> anyhow::Result<()> {
         Ok(self.sender.try_send(msg)?)
     }
 
-    pub async fn send_msg(&self, msg: TelemetryActions) -> Result<()> {
+    pub async fn send_msg(&self, msg: TelemetryActions) -> anyhow::Result<()> {
         Ok(self.sender.send(msg).await?)
     }
 
-    pub async fn send_msgs<T>(&self, msgs: T) -> Result<()>
+    pub async fn send_msgs<T>(&self, msgs: T) -> anyhow::Result<()>
     where
         T: IntoIterator<Item = TelemetryActions>,
     {
@@ -891,17 +888,17 @@ impl TelemetryWorkerHandle {
         &self,
         msg: TelemetryActions,
         timeout: time::Duration,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         Ok(self.sender.send_timeout(msg, timeout).await?)
     }
 
-    pub fn send_start(&self) -> Result<()> {
+    pub fn send_start(&self) -> anyhow::Result<()> {
         Ok(self
             .sender
             .try_send(TelemetryActions::Lifecycle(LifecycleAction::Start))?)
     }
 
-    pub fn send_stop(&self) -> Result<()> {
+    pub fn send_stop(&self) -> anyhow::Result<()> {
         Ok(self
             .sender
             .try_send(TelemetryActions::Lifecycle(LifecycleAction::Stop))?)
@@ -921,7 +918,7 @@ impl TelemetryWorkerHandle {
         self.wait_for_shutdown()
     }
 
-    pub fn add_dependency(&self, name: String, version: Option<String>) -> Result<()> {
+    pub fn add_dependency(&self, name: String, version: Option<String>) -> anyhow::Result<()> {
         self.sender
             .try_send(TelemetryActions::AddDependency(Dependency {
                 name,
@@ -937,7 +934,7 @@ impl TelemetryWorkerHandle {
         version: Option<String>,
         compatible: Option<bool>,
         auto_enabled: Option<bool>,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         self.sender
             .try_send(TelemetryActions::AddIntegration(Integration {
                 name,
@@ -955,7 +952,7 @@ impl TelemetryWorkerHandle {
         message: String,
         level: data::LogLevel,
         stack_trace: Option<String>,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         let mut hasher = DefaultHasher::new();
         identifier.hash(&mut hasher);
         self.sender.try_send(TelemetryActions::AddLog((
@@ -975,7 +972,12 @@ impl TelemetryWorkerHandle {
         Ok(())
     }
 
-    pub fn add_point(&self, value: f64, context: &ContextKey, extra_tags: Vec<Tag>) -> Result<()> {
+    pub fn add_point(
+        &self,
+        value: f64,
+        context: &ContextKey,
+        extra_tags: Vec<Tag>,
+    ) -> anyhow::Result<()> {
         self.sender
             .try_send(TelemetryActions::AddPoint((value, *context, extra_tags)))?;
         Ok(())
@@ -985,7 +987,7 @@ impl TelemetryWorkerHandle {
         self.shutdown.wait_for_shutdown();
     }
 
-    pub fn stats(&self) -> Result<oneshot::Receiver<TelemetryWorkerStats>> {
+    pub fn stats(&self) -> anyhow::Result<oneshot::Receiver<TelemetryWorkerStats>> {
         let (sender, receiver) = oneshot::channel();
         self.sender
             .try_send(TelemetryActions::CollectStats(sender))?;
@@ -1145,7 +1147,7 @@ impl TelemetryWorkerBuilder {
     }
 
     /// Spawns a telemetry worker in a new thread and returns a handle to interact with it
-    pub fn run(self) -> Result<TelemetryWorkerHandle> {
+    pub fn run(self) -> anyhow::Result<TelemetryWorkerHandle> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
