@@ -3,25 +3,12 @@
 
 [workspace]
 members = [
-<<<<<<< HEAD
-  "datadog-alloc",
-  "datadog-crashtracker",
-  "datadog-crashtracker-ffi",
+  "builder",
   "datadog-ffe",
-  "datadog-ipc",
-  "datadog-ipc-macros",
-||||||| parent of 9de705a4 (Move datadog-ipc and datadog-ipc-macros)
-  "datadog-ipc",
-  "datadog-ipc-macros",
-=======
->>>>>>> 9de705a4 (Move datadog-ipc and datadog-ipc-macros)
-  "datadog-live-debugger",
-  "datadog-live-debugger-ffi",
   "datadog-sidecar",
   "datadog-sidecar-ffi",
   "datadog-sidecar-macros",
   "libdd-alloc",
-  "libdd-builder",
   "libdd-common",
   "libdd-common-ffi",
   "libdd-crashtracker",
@@ -33,6 +20,8 @@ members = [
   "libdd-ipc-macros",
   "libdd-library-config",
   "libdd-library-config-ffi",
+  "libdd-live-debugger",
+  "libdd-live-debugger-ffi",
   "libdd-profiling",
   "libdd-profiling-ffi",
   "libdd-profiling-protobuf",

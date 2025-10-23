@@ -13,7 +13,7 @@ test = ["hyper/server", "hyper-util"]
 anyhow = { version = "1.0" }
 ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
 datadog-trace-protobuf = { version = "1.0.0", path = "../libdd-trace-protobuf", package = "libdd-trace-protobuf" }
-datadog-live-debugger = { path = "../datadog-live-debugger", optional = true }
+datadog-live-debugger = { path = "../libdd-live-debugger", package = "libdd-live-debugger", optional = true }
 hyper = { workspace = true }
 http-body-util = "0.1"
 http = "1.0"

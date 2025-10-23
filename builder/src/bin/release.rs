@@ -5,13 +5,13 @@ use std::env;
 
 use build_common::{determine_paths, OutPaths};
 
-use libdd_builder::builder::Builder;
-use libdd_builder::common::Common;
+use builder::builder::Builder;
+use builder::common::Common;
 #[cfg(feature = "crashtracker")]
-use libdd_builder::crashtracker::CrashTracker;
+use builder::crashtracker::CrashTracker;
 #[cfg(feature = "profiling")]
-use libdd_builder::profiling::Profiling;
-use libdd_builder::utils::project_root;
+use builder::profiling::Profiling;
+use builder::utils::project_root;
 
 #[derive(Debug)]
 struct ReleaseArgs {

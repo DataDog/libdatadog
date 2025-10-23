@@ -23,7 +23,7 @@ ddtelemetry = { version = "1.0.0", path = "../libdd-telemetry", package = "libdd
 data-pipeline = { version = "1.0.0", path = "../libdd-data-pipeline", package = "libdd-data-pipeline" }
 datadog-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", package = "libdd-trace-utils" }
 datadog-remote-config = { path = "../libdd-remote-config" , package = "libdd-remote-config", features = ["live-debugger"]}
-datadog-live-debugger = { path = "../datadog-live-debugger" }
+datadog-live-debugger = { path = "../libdd-live-debugger", package = "libdd-live-debugger" }
 datadog-crashtracker = { version = "1.0.0", path = "../libdd-crashtracker", package = "libdd-crashtracker" }
 dogstatsd-client = { version = "1.0.0", path = "../libdd-dogstatsd-client", package = "libdd-dogstatsd-client" }
 tinybytes = { version = "1.0.0", path = "../libdd-tinybytes", package = "libdd-tinybytes" }
@@ -34,8 +34,8 @@ http = "1.0"
 hyper = { workspace = true}
 http-body-util = "0.1"
 
-datadog-ipc = { path = "../libdd-ipc", package = "libdd-ipc", features = ["tiny-bytes"] }
-datadog-ipc-macros = { path = "../libdd-ipc-macros", package = "libdd-ipc-macros" }
+datadog-ipc = { version = "0.1.0", path = "../libdd-ipc", package = "libdd-ipc", features = ["tiny-bytes"] }
+datadog-ipc-macros = { version = "0.0.1", path = "../libdd-ipc-macros", package = "libdd-ipc-macros" }
 
 rand = "0.8.3"
 serde = { version = "1.0", features = ["derive", "rc"] }
