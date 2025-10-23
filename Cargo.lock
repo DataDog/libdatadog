@@ -1735,24 +1735,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-trace-obfuscation"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "criterion",
- "duplicate",
- "libdd-common",
- "libdd-trace-protobuf",
- "libdd-trace-utils",
- "log",
- "percent-encoding",
- "regex",
- "serde",
- "serde_json",
- "url",
-]
-
-[[package]]
 name = "ddcommon-ffi"
 version = "22.1.0"
 dependencies = [
@@ -3064,6 +3046,24 @@ dependencies = [
  "serde",
  "serde_json",
  "test-case",
+]
+
+[[package]]
+name = "libdd-trace-obfuscation"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "criterion",
+ "duplicate",
+ "libdd-common",
+ "libdd-trace-protobuf",
+ "libdd-trace-utils",
+ "log",
+ "percent-encoding",
+ "regex",
+ "serde",
+ "serde_json",
+ "url",
 ]
 
 [[package]]

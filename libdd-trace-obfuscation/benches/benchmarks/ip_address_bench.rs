@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::{black_box, criterion_group, Criterion};
-use datadog_trace_obfuscation::ip_address;
+use libdd_trace_obfuscation::ip_address;
 use std::borrow::Cow;
 
 fn quantize_peer_ip_address_benchmark(c: &mut Criterion) {

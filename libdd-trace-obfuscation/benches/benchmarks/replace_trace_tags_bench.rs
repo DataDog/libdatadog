@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 
 use criterion::{black_box, criterion_group, Criterion};
-use datadog_trace_obfuscation::replacer;
 use datadog_trace_protobuf::pb;
+use libdd_trace_obfuscation::replacer;
 
 fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("tags");

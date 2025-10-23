@@ -1,5 +1,5 @@
 [package]
-name = "datadog-trace-obfuscation"
+name = "libdd-trace-obfuscation"
 authors = ["David Lee <david.lee@datadoghq.com>"]
 description = "A duplicate of trace obfuscator implemented in the agent and documented in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#trace-obfuscation"
 edition.workspace = true
