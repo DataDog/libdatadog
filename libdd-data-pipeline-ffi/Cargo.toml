@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "data-pipeline-ffi"
+name = "libdd-data-pipeline-ffi"
 rust-version.workspace = true
 edition.workspace = true
 version.workspace = true
@@ -28,7 +28,7 @@ rmp-serde = "1.1.1"
 datadog-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", package = "libdd-trace-utils" }
 
 [dependencies]
-data-pipeline = { path = "../data-pipeline" }
+data-pipeline = { version = "1.0.0", path = "../libdd-data-pipeline", package = "libdd-data-pipeline" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 tinybytes = { version = "1.0.0", path = "../libdd-tinybytes", package = "libdd-tinybytes" }
 tracing = { version = "0.1", default-features = false }

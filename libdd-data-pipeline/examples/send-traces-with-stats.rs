@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
-use data_pipeline::trace_exporter::{
-    TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
-};
 use datadog_log::logger::{
     logger_configure_std, logger_set_log_level, LogEventLevel, StdConfig, StdTarget,
 };
 use datadog_trace_protobuf::pb;
+use libdd_data_pipeline::trace_exporter::{
+    TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
+};
 use std::{
     collections::HashMap,
     time::{Duration, UNIX_EPOCH},

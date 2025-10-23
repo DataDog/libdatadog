@@ -1,5 +1,5 @@
 [package]
-name = "data-pipeline"
+name = "libdd-data-pipeline"
 description = "Trace exporter package allowing sending data from datadog SDKs to the Trace Agent."
 rust-version.workspace = true
 edition.workspace = true
