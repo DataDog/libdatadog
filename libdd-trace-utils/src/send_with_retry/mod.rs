@@ -99,7 +99,7 @@ impl std::error::Error for RequestError {}
 /// ```rust, no_run
 /// # use ddcommon::Endpoint;
 /// # use std::collections::HashMap;
-/// # use datadog_trace_utils::send_with_retry::*;
+/// # use libdd_trace_utils::send_with_retry::*;
 /// # async fn run() -> SendWithRetryResult {
 /// let payload: Vec<u8> = vec![0, 1, 2, 3];
 /// let target = Endpoint {

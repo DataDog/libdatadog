@@ -70,7 +70,7 @@ impl TracerPayloadCollection {
     ///
     /// ```rust
     /// use datadog_trace_protobuf::pb::TracerPayload;
-    /// use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
+    /// use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
     /// let mut col1 = TracerPayloadCollection::V07(vec![TracerPayload::default()]);
     /// let mut col2 = TracerPayloadCollection::V07(vec![TracerPayload::default()]);
     /// col1.append(&mut col2);
@@ -99,7 +99,7 @@ impl TracerPayloadCollection {
     ///
     /// ```rust
     /// use datadog_trace_protobuf::pb::TracerPayload;
-    /// use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
+    /// use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
     /// let mut col1 =
     ///     TracerPayloadCollection::V07(vec![TracerPayload::default(), TracerPayload::default()]);
     /// col1.merge();
@@ -128,7 +128,7 @@ impl TracerPayloadCollection {
     ///
     /// ```rust
     /// use datadog_trace_protobuf::pb::TracerPayload;
-    /// use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
+    /// use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
     /// let col1 = TracerPayloadCollection::V07(vec![TracerPayload::default()]);
     /// col1.size();
     /// ```
@@ -155,7 +155,7 @@ impl TracerPayloadCollection {
 ///
 /// ```rust
 /// use datadog_trace_protobuf::pb::{Span, TraceChunk};
-/// use datadog_trace_utils::tracer_payload::TraceChunkProcessor;
+/// use libdd_trace_utils::tracer_payload::TraceChunkProcessor;
 /// use std::collections::HashMap;
 ///
 /// struct CustomTagProcessor {
@@ -204,8 +204,8 @@ impl TraceChunkProcessor for DefaultTraceChunkProcessor {
 ///
 /// ```rust
 /// use datadog_trace_protobuf::pb;
-/// use datadog_trace_utils::trace_utils::TracerHeaderTags;
-/// use datadog_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
+/// use libdd_trace_utils::trace_utils::TracerHeaderTags;
+/// use libdd_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
 /// use std::convert::TryInto;
 /// use tinybytes;
 /// // This will likely be a &[u8] slice in practice.

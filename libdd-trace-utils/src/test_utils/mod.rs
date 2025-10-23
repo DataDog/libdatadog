@@ -379,7 +379,7 @@ pub fn create_test_json_span(
 /// # Examples
 ///
 /// ```
-/// use datadog_trace_utils::test_utils::poll_for_mock_hit;
+/// use libdd_trace_utils::test_utils::poll_for_mock_hit;
 /// use httpmock::MockServer;
 ///
 /// #[cfg_attr(miri, ignore)]
@@ -453,7 +453,7 @@ pub async fn poll_for_mock_hit(
 /// # Examples
 ///
 /// ```
-/// use datadog_trace_utils::test_utils::create_send_data;
+/// use libdd_trace_utils::test_utils::create_send_data;
 /// use ddcommon::Endpoint;
 ///
 /// let size = 512;

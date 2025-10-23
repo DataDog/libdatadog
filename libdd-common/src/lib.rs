@@ -50,7 +50,7 @@ pub mod worker;
 /// # Examples
 ///
 /// ```
-/// use ddcommon::MutexExt;
+/// use libdd_common::MutexExt;
 /// use std::sync::{Arc, Mutex};
 ///
 /// let data = Arc::new(Mutex::new(5));

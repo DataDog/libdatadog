@@ -43,8 +43,8 @@ fn to_writer<W: RmpWrite, T: SpanText, S: AsRef<[Span<T>]>>(
 /// # Examples
 ///
 /// ```
-/// use datadog_trace_utils::msgpack_encoder::v04::write_to_slice;
-/// use datadog_trace_utils::span::Span;
+/// use libdd_trace_utils::msgpack_encoder::v04::write_to_slice;
+/// use libdd_trace_utils::span::Span;
 ///
 /// let mut buffer = vec![0u8; 1024];
 /// let span = Span {
@@ -75,8 +75,8 @@ pub fn write_to_slice<T: SpanText, S: AsRef<[Span<T>]>>(
 /// # Examples
 ///
 /// ```
-/// use datadog_trace_utils::msgpack_encoder::v04::to_vec;
-/// use datadog_trace_utils::span::Span;
+/// use libdd_trace_utils::msgpack_encoder::v04::to_vec;
+/// use libdd_trace_utils::span::Span;
 ///
 /// let span = Span {
 ///     name: "test-span",
@@ -105,8 +105,8 @@ pub fn to_vec<T: SpanText, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u8> {
 /// # Examples
 ///
 /// ```
-/// use datadog_trace_utils::msgpack_encoder::v04::to_vec_with_capacity;
-/// use datadog_trace_utils::span::Span;
+/// use libdd_trace_utils::msgpack_encoder::v04::to_vec_with_capacity;
+/// use libdd_trace_utils::span::Span;
 ///
 /// let span = Span {
 ///     name: "test-span",
@@ -164,8 +164,8 @@ impl std::io::Write for CountLength {
 /// # Examples
 ///
 /// ```
-/// use datadog_trace_utils::msgpack_encoder::v04::to_len;
-/// use datadog_trace_utils::span::Span;
+/// use libdd_trace_utils::msgpack_encoder::v04::to_len;
+/// use libdd_trace_utils::span::Span;
 ///
 /// let span = Span {
 ///     name: "test-span",

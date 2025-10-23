@@ -4,7 +4,6 @@
 [workspace]
 members = [
   "builder",
-  "datadog-ffe",
   "datadog-sidecar",
   "datadog-sidecar-ffi",
   "datadog-sidecar-macros",
@@ -16,6 +15,7 @@ members = [
   "libdd-data-pipeline",
   "libdd-data-pipeline-ffi",
   "libdd-dogstatsd-client",
+  "libdd-ffe",
   "libdd-ipc",
   "libdd-ipc-macros",
   "libdd-library-config",

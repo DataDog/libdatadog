@@ -5,7 +5,7 @@ use criterion::{black_box, criterion_group, criterion_main, Bencher, Criterion};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs, sync::Arc};
 
-use datadog_ffe::rules_based::{
+use libdd_ffe::rules_based::{
     get_assignment, Attribute, Configuration, EvaluationContext, Str, UniversalFlagConfig,
 };
 

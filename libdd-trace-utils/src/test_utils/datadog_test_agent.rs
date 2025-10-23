@@ -192,10 +192,10 @@ impl DatadogAgentContainerBuilder {
 /// Basic usage:
 ///
 /// ```no_run
-/// use datadog_trace_utils::send_data::SendData;
-/// use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
-/// use datadog_trace_utils::trace_utils::TracerHeaderTags;
-/// use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
+/// use libdd_trace_utils::send_data::SendData;
+/// use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
+/// use libdd_trace_utils::trace_utils::TracerHeaderTags;
+/// use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
 /// use ddcommon::Endpoint;
 ///
 /// use tokio;
@@ -385,7 +385,7 @@ impl DatadogTestAgent {
     /// Basic usage:
     ///
     /// ```no_run
-    /// use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
+    /// use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     /// use serde_json::to_string_pretty;
     ///
     /// #[tokio::main]
@@ -442,7 +442,7 @@ impl DatadogTestAgent {
     /// Basic usage:
     ///
     /// ```no_run
-    /// use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
+    /// use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     ///
     /// #[tokio::main]
     /// async fn main() {

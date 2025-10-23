@@ -92,7 +92,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use datadog_ffe::rules_based::AssignmentValue;
+    /// # use libdd_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::String("example".into());
     /// assert_eq!(value.is_string(), true);
     /// ```
@@ -106,7 +106,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use datadog_ffe::rules_based::AssignmentValue;
+    /// # use libdd_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::String("example".into());
     /// assert_eq!(value.as_str(), Some("example"));
     /// ```
@@ -124,7 +124,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use datadog_ffe::rules_based::AssignmentValue;
+    /// # use libdd_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::String("example".into());
     /// assert_eq!(value.to_string(), Some("example".into()));
     /// ```
@@ -142,7 +142,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use datadog_ffe::rules_based::AssignmentValue;
+    /// # use libdd_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::Integer(42);
     /// assert_eq!(value.is_integer(), true);
     /// ```
@@ -156,7 +156,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use datadog_ffe::rules_based::AssignmentValue;
+    /// # use libdd_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::Integer(42);
     /// assert_eq!(value.as_integer(), Some(42));
     /// ```
@@ -174,7 +174,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use datadog_ffe::rules_based::AssignmentValue;
+    /// # use libdd_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::Float(3.14);
     /// assert_eq!(value.is_float(), true);
     /// ```
@@ -188,7 +188,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use datadog_ffe::rules_based::AssignmentValue;
+    /// # use libdd_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::Float(3.14);
     /// assert_eq!(value.as_float(), Some(3.14));
     /// ```
@@ -206,7 +206,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use datadog_ffe::rules_based::AssignmentValue;
+    /// # use libdd_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::Boolean(true);
     /// assert_eq!(value.is_boolean(), true);
     /// ```
@@ -220,7 +220,7 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use datadog_ffe::rules_based::AssignmentValue;
+    /// # use libdd_ffe::rules_based::AssignmentValue;
     /// let value = AssignmentValue::Boolean(true);
     /// assert_eq!(value.as_boolean(), Some(true));
     /// ```
@@ -267,8 +267,8 @@ impl AssignmentValue {
     ///
     /// # Examples
     /// ```
-    /// # use datadog_ffe::rules_based::AssignmentValue;
-    /// # use datadog_ffe::rules_based::VariationType;
+    /// # use libdd_ffe::rules_based::AssignmentValue;
+    /// # use libdd_ffe::rules_based::VariationType;
     /// let value = AssignmentValue::String("example".into());
     /// assert_eq!(value.variation_type(), VariationType::String);
     /// ```

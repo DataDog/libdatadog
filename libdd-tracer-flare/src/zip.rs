@@ -326,8 +326,8 @@ async fn send(
 /// # Examples
 ///
 /// ```rust no_run
-/// use datadog_tracer_flare::zip::zip_and_send;
-/// use datadog_tracer_flare::{TracerFlareManager, ReturnAction};
+/// use libdd_tracer_flare::zip::zip_and_send;
+/// use libdd_tracer_flare::{TracerFlareManager, ReturnAction};
 /// use datadog_remote_config::config::agent_task::{AgentTaskFile, AgentTask};
 /// use std::num::NonZeroU64;
 ///
