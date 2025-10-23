@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use core::slice;
-use ddcommon::error::FfiSafeErrorMessage;
+use libdd_common::error::FfiSafeErrorMessage;
 use serde::ser::Error;
 use serde::Serializer;
 use std::borrow::Cow;

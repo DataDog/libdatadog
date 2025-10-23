@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "datadog-crashtracker-ffi"
+name = "libdd-crashtracker-ffi"
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true
@@ -36,9 +36,9 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow = "1.0"
-datadog-crashtracker = { path = "../datadog-crashtracker" }
+datadog-crashtracker = { path = "../libdd-crashtracker", package = "libdd-crashtracker" }
 ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
-ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+ddcommon-ffi = { path = "../libdd-common-ffi", package = "libdd-common-ffi", default-features = false }
 symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"], optional = true }
 symbolic-common = { version = "12.8.0", default-features = false, optional = true }
 function_name = "0.3.0"

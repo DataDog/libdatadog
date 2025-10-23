@@ -21,6 +21,6 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 datadog-ddsketch = { version = "1.0.0", path = "../libdd-sketch", package = "libdd-sketch" }
-ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+ddcommon-ffi = { path = "../libdd-common-ffi", package = "libdd-common-ffi", default-features = false }
 
 [dev-dependencies]

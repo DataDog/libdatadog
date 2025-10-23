@@ -19,4 +19,4 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 datadog-log = { path = "../datadog-log" }
-ddcommon-ffi = { path = "../ddcommon-ffi" }
+ddcommon-ffi = { path = "../libdd-common-ffi", package = "libdd-common-ffi" }

@@ -6,5 +6,5 @@ fn main() {}
 
 #[cfg(unix)]
 fn main() -> anyhow::Result<()> {
-    datadog_crashtracker::receiver_entry_point_stdin()
+    libdd_crashtracker::receiver_entry_point_stdin()
 }

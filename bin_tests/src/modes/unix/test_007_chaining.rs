@@ -10,8 +10,8 @@
 use crate::modes::behavior::Behavior;
 
 use crate::modes::behavior::{atom_to_clone, file_append_msg, remove_permissive, set_atomic};
-use datadog_crashtracker::CrashtrackerConfiguration;
 use libc;
+use libdd_crashtracker::CrashtrackerConfiguration;
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicPtr, Ordering::SeqCst};

@@ -16,7 +16,7 @@ datadog-sidecar = { path = "../datadog-sidecar" }
 datadog-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", package = "libdd-trace-utils" }
 datadog-ipc = { path = "../datadog-ipc" }
 ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
-ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+ddcommon-ffi = { path = "../libdd-common-ffi", package = "libdd-common-ffi", default-features = false }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false }
 datadog-remote-config = { path = "../datadog-remote-config" }
 datadog-live-debugger = { path = "../datadog-live-debugger" }
@@ -29,7 +29,7 @@ rmp-serde = "1.1.1"
 
 
 [target.'cfg(windows)'.dependencies]
-datadog-crashtracker-ffi = { path = "../datadog-crashtracker-ffi", features = ["collector", "collector_windows"] }
+datadog-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", package = "libdd-crashtracker-ffi", features = ["collector", "collector_windows"] }
 
 [dev-dependencies]
 http = "1.0"
