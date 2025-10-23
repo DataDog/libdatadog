@@ -633,7 +633,7 @@ mod tests {
                             BytesString::from_slice(metric_key.as_ref()).unwrap(),
                             metric_value.parse::<f64>().unwrap_or_default(),
                         )]),
-                        trace_id,
+                        trace_id: trace_id as u128,
                         span_id,
                         parent_id,
                         start,

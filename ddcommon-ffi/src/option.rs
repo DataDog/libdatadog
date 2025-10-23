@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::fmt::Debug;
+
 #[repr(C)]
 #[derive(Debug, PartialEq, Eq)]
 #[must_use]
@@ -28,10 +30,14 @@ impl<T> Option<T> {
         }
     }
 
-    pub fn unwrap_none(self) {
+    #[track_caller]
+    pub fn unwrap_none(self)
+    where
+        T: Debug,
+    {
         match self {
             #[allow(clippy::panic)]
-            Option::Some(_) => panic!("Called ffi::Option::unwrap_none but option was Some(_)"),
+            Option::Some(s) => panic!("Called ffi::Option::unwrap_none but option was Some({s:?})"),
             Option::None => {}
         }
     }

@@ -24,7 +24,7 @@ fn get_span(now: SystemTime, trace_id: u64, span_id: u64) -> SpanBytes {
         meta.insert("bucket_s3".into(), "aws_bucket".into());
     }
     SpanBytes {
-        trace_id,
+        trace_id: trace_id as u128,
         span_id,
         service: "test-service".into(),
         name: "test-name".into(),
