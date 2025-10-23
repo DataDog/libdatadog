@@ -1300,7 +1300,6 @@ dependencies = [
  "bytes",
  "clap",
  "criterion",
- "datadog-ddsketch",
  "datadog-log",
  "datadog-trace-protobuf",
  "datadog-trace-stats",
@@ -1313,6 +1312,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libdd-common",
+ "libdd-sketch",
  "libdd-telemetry",
  "rand 0.8.5",
  "regex",
@@ -1404,35 +1404,6 @@ dependencies = [
  "symbolic-demangle",
  "tempfile",
  "windows 0.59.0",
-]
-
-[[package]]
-name = "datadog-ddsketch"
-version = "1.0.0"
-dependencies = [
- "prost",
- "prost-build",
- "protoc-bin-vendored",
-]
-
-[[package]]
-name = "datadog-ffe"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "criterion",
- "derive_more",
- "env_logger",
- "faststr",
- "log",
- "md5",
- "regex",
- "serde",
- "serde-bool",
- "serde_json",
- "serde_with",
- "thiserror 2.0.17",
- "url",
 ]
 
 [[package]]
@@ -1799,10 +1770,10 @@ name = "datadog-trace-stats"
 version = "1.0.0"
 dependencies = [
  "criterion",
- "datadog-ddsketch",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
  "hashbrown 0.15.1",
+ "libdd-sketch",
  "rand 0.8.5",
 ]
 
@@ -1876,8 +1847,8 @@ name = "ddsketch-ffi"
 version = "22.1.0"
 dependencies = [
  "build_common",
- "datadog-ddsketch",
  "ddcommon-ffi",
+ "libdd-sketch",
 ]
 
 [[package]]
@@ -3123,12 +3094,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-sketch"
+version = "1.0.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+]
+
+[[package]]
 name = "libdd-telemetry"
 version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "datadog-ddsketch",
  "futures",
  "hashbrown 0.15.1",
  "http",
@@ -3137,6 +3116,7 @@ dependencies = [
  "hyper-util",
  "libc",
  "libdd-common",
+ "libdd-sketch",
  "serde",
  "serde_json",
  "sys-info",
