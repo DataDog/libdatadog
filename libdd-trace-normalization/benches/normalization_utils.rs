@@ -6,9 +6,9 @@ use criterion::Throughput::Elements;
 use criterion::{
     criterion_group, criterion_main, BatchSize, BenchmarkGroup, BenchmarkId, Criterion,
 };
-use datadog_trace_normalization::normalize_utils::{normalize_name, normalize_service};
-use datadog_trace_normalization::normalizer::normalize_trace;
 use datadog_trace_protobuf::pb;
+use libdd_trace_normalization::normalize_utils::{normalize_name, normalize_service};
+use libdd_trace_normalization::normalizer::normalize_trace;
 use std::hint::black_box;
 use std::{collections::HashMap, time::Duration};
 
