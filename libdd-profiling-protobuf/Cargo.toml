@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "datadog-profiling-protobuf"
+name = "libdd-profiling-protobuf"
 rust-version.workspace = true
 edition.workspace = true
 version = "1.0.0"
@@ -21,4 +21,4 @@ bolero = { version = "0.13", default-features = false, optional = true }
 
 [dev-dependencies]
 bolero = "0.13"
-datadog-profiling-protobuf = { path = ".", features = ["bolero", "prost_impls"] }
+libdd-profiling-protobuf = { path = ".", features = ["bolero", "prost_impls"] }
