@@ -1724,17 +1724,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-trace-normalization"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "criterion",
- "duplicate",
- "libdd-trace-protobuf",
- "rand 0.8.5",
-]
-
-[[package]]
 name = "ddcommon-ffi"
 version = "22.1.0"
 dependencies = [
@@ -3049,6 +3038,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-trace-normalization"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "criterion",
+ "duplicate",
+ "libdd-trace-protobuf",
+ "rand 0.8.5",
+]
+
+[[package]]
 name = "libdd-trace-obfuscation"
 version = "1.0.0"
 dependencies = [
@@ -3101,7 +3101,6 @@ dependencies = [
  "cargo-platform",
  "cargo_metadata",
  "criterion",
- "datadog-trace-normalization",
  "flate2",
  "futures",
  "http-body-util",
@@ -3110,6 +3109,7 @@ dependencies = [
  "hyper-http-proxy",
  "libdd-common",
  "libdd-tinybytes",
+ "libdd-trace-normalization",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
  "prost",
