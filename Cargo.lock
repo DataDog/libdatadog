@@ -1292,7 +1292,6 @@ dependencies = [
  "bytes",
  "clap",
  "criterion",
- "datadog-ddsketch",
  "datadog-log",
  "datadog-trace-protobuf",
  "datadog-trace-stats",
@@ -1306,6 +1305,7 @@ dependencies = [
  "httpmock",
  "hyper",
  "hyper-util",
+ "libdd-sketch",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1395,15 +1395,6 @@ dependencies = [
  "symbolic-demangle",
  "tempfile",
  "windows 0.59.0",
-]
-
-[[package]]
-name = "datadog-ddsketch"
-version = "22.1.0"
-dependencies = [
- "prost",
- "prost-build",
- "protoc-bin-vendored",
 ]
 
 [[package]]
@@ -1791,10 +1782,10 @@ name = "datadog-trace-stats"
 version = "22.1.0"
 dependencies = [
  "criterion",
- "datadog-ddsketch",
  "datadog-trace-protobuf",
  "datadog-trace-utils",
  "hashbrown 0.15.1",
+ "libdd-sketch",
  "rand 0.8.5",
 ]
 
@@ -1902,8 +1893,8 @@ name = "ddsketch-ffi"
 version = "22.1.0"
 dependencies = [
  "build_common",
- "datadog-ddsketch",
  "ddcommon-ffi",
+ "libdd-sketch",
 ]
 
 [[package]]
@@ -1912,7 +1903,6 @@ version = "22.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "datadog-ddsketch",
  "ddcommon",
  "futures",
  "hashbrown 0.15.1",
@@ -1921,6 +1911,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libc",
+ "libdd-sketch",
  "serde",
  "serde_json",
  "sys-info",
@@ -3118,6 +3109,15 @@ name = "libc"
 version = "0.2.176"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58f929b4d672ea937a23a1ab494143d968337a5f47e56d0815df1e0890ddf174"
+
+[[package]]
+name = "libdd-sketch"
+version = "1.0.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+]
 
 [[package]]
 name = "libloading"

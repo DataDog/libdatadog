@@ -1,8 +1,10 @@
 [package]
-name = "datadog-ddsketch"
+name = "libdd-sketch"
+version = "1.0.0"
 description = "Minimal implementation of Datadog's DDSketch"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-sketch"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-sketch"
 edition.workspace = true
-version.workspace = true
 rust-version.workspace = true
 license.workspace = true
 

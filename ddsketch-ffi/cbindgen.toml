@@ -16,7 +16,7 @@ includes = ["common.h"]
 
 [parse]
 parse_deps = true
-include = ["ddcommon-ffi", "datadog-ddsketch"]
+include = ["ddcommon-ffi", "libdd-sketch"]
 
 [export]
 include = ["ddsketch-ffi"]
