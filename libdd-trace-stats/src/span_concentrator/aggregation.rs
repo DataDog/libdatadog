@@ -6,8 +6,8 @@
 //! span.
 
 use datadog_trace_protobuf::pb;
-use datadog_trace_utils::span::SpanText;
 use hashbrown::HashMap;
+use libdd_trace_utils::span::SpanText;
 
 use crate::span_concentrator::StatSpan;
 
@@ -301,7 +301,7 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
 
 #[cfg(test)]
 mod tests {
-    use datadog_trace_utils::span::{SpanBytes, SpanSlice};
+    use libdd_trace_utils::span::{SpanBytes, SpanSlice};
 
     use super::*;
     use std::{collections::HashMap, hash::Hash};

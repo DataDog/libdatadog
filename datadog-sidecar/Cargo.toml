@@ -21,7 +21,7 @@ datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 
 ddtelemetry = { version = "1.0.0", path = "../libdd-telemetry", package = "libdd-telemetry", features = ["tracing"] }
 data-pipeline = { path = "../data-pipeline" }
-datadog-trace-utils = { path = "../datadog-trace-utils" }
+datadog-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", package = "libdd-trace-utils" }
 datadog-remote-config = { path = "../datadog-remote-config" , features = ["live-debugger"]}
 datadog-live-debugger = { path = "../datadog-live-debugger" }
 datadog-crashtracker = { path = "../datadog-crashtracker" }
@@ -101,7 +101,7 @@ libc = { version = "0.2" }
 tempfile = { version = "3.3" }
 httpmock = "0.8.0-alpha.1"
 datadog-remote-config = { path = "../datadog-remote-config", features = ["test"] }
-datadog-trace-utils = { path = "../datadog-trace-utils", features = ["test-utils"] }
+datadog-trace-utils = { path = "../libdd-trace-utils", package = "libdd-trace-utils", features = ["test-utils"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
