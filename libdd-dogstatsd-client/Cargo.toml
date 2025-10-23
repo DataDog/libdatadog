@@ -1,5 +1,5 @@
 [package]
-name = "dogstatsd-client"
+name = "libdd-dogstatsd-client"
 description = "A dogstatsd client for sending metrics to a dogstatsd server."
 rust-version.workspace = true
 edition.workspace = true

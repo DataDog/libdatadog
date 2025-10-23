@@ -1302,7 +1302,6 @@ dependencies = [
  "criterion",
  "datadog-log",
  "datadog-trace-protobuf",
- "dogstatsd-client",
  "either",
  "http",
  "http-body-util",
@@ -1310,6 +1309,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libdd-common",
+ "libdd-dogstatsd-client",
  "libdd-sketch",
  "libdd-telemetry",
  "libdd-tinybytes",
@@ -1654,7 +1654,6 @@ dependencies = [
  "datadog-remote-config",
  "datadog-sidecar-macros",
  "ddcommon-ffi",
- "dogstatsd-client",
  "futures",
  "http",
  "http-body-util",
@@ -1662,6 +1661,7 @@ dependencies = [
  "hyper",
  "libc",
  "libdd-common",
+ "libdd-dogstatsd-client",
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-utils",
@@ -1702,10 +1702,10 @@ dependencies = [
  "datadog-sidecar",
  "ddcommon-ffi",
  "ddtelemetry-ffi",
- "dogstatsd-client",
  "http",
  "libc",
  "libdd-common",
+ "libdd-dogstatsd-client",
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-utils",
@@ -1884,19 +1884,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.87",
-]
-
-[[package]]
-name = "dogstatsd-client"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "cadence",
- "http",
- "libdd-common",
- "serde",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -3028,6 +3015,19 @@ dependencies = [
  "tokio-rustls",
  "tower-service",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "libdd-dogstatsd-client"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "cadence",
+ "http",
+ "libdd-common",
+ "serde",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
