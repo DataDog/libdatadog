@@ -1813,22 +1813,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-tracer-flare"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "datadog-remote-config",
- "datadog-trace-utils",
- "hyper",
- "libdd-common",
- "serde_json",
- "tempfile",
- "tokio",
- "walkdir",
- "zip",
-]
-
-[[package]]
 name = "ddcommon-ffi"
 version = "22.1.0"
 dependencies = [
@@ -3126,6 +3110,22 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "winver",
+]
+
+[[package]]
+name = "libdd-tracer-flare"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "datadog-remote-config",
+ "datadog-trace-utils",
+ "hyper",
+ "libdd-common",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "walkdir",
+ "zip",
 ]
 
 [[package]]
