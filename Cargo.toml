@@ -26,6 +26,7 @@ members = [
   "datadog-trace-obfuscation",
   "datadog-trace-protobuf",
   "libdd-common",
+  "libdd-dogstatsd-client",
   "libdd-sketch",
   "libdd-telemetry",
   "libdd-tinybytes",
@@ -43,7 +44,6 @@ members = [
   "data-pipeline",
   "data-pipeline-ffi",
   "ddsketch-ffi",
-  "dogstatsd-client",
   "datadog-log",
   "datadog-log-ffi",
 ]
