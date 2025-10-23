@@ -27,7 +27,6 @@ tower-service = "0.3"
 cc = "1.1.31"
 pin-project = "1"
 regex = "1.5"
-rustls = { version = "0.23", default-features = false, optional = true }
 rustls-native-certs = { version = "0.8.1", optional = true }
 thiserror = "1.0"
 tokio = { version = "1.23", features = ["rt", "macros"] }
@@ -42,6 +41,7 @@ version = "0.52"
 features = ["Win32_Foundation", "Win32_System_Performance"]
 
 [target.'cfg(unix)'.dependencies]
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"], optional = true }
 hyper-rustls = { version = "0.27", default-features = false, features = [
     "native-tokio",
     "http1",
@@ -50,6 +50,7 @@ hyper-rustls = { version = "0.27", default-features = false, features = [
 ], optional = true }
 
 [target.'cfg(not(unix))'.dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring"], optional = true }
 hyper-rustls = { version = "0.27", default-features = false, features = [
     "native-tokio",
     "http1",
