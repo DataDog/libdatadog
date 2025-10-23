@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::writers::{FileWriter, StdWriter};
-use ddcommon_ffi::Error;
 use std::sync::{LazyLock, Mutex};
 use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::{Layered, SubscriberExt};
 use tracing_subscriber::reload::Handle;
 use tracing_subscriber::{fmt, reload, EnvFilter, Layer, Registry};
+
+pub type Error = String;
 
 /// Log level for filtering log events.
 #[repr(C)]
@@ -115,6 +116,7 @@ impl Logger {
                     file_config: None,
                     std_config: None,
                 }),
+
                 Err(_e) => Err(Error::from("Failed to set global default subscriber")),
             }
         } else {
