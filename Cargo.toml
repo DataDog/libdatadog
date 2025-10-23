@@ -22,6 +22,8 @@ members = [
   "libdd-library-config-ffi",
   "libdd-live-debugger",
   "libdd-live-debugger-ffi",
+  "libdd-log",
+  "libdd-log-ffi",
   "libdd-profiling",
   "libdd-profiling-ffi",
   "libdd-profiling-protobuf",
@@ -44,8 +46,6 @@ members = [
   "spawn_worker",
   "tests/spawn_from_lib",
   "bin_tests",
-  "datadog-log",
-  "datadog-log-ffi",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html

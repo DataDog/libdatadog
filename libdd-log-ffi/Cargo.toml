@@ -1,5 +1,5 @@
 [package]
-name = "datadog-log-ffi"
+name = "libdd-log-ffi"
 rust-version.workspace = true
 edition.workspace = true
 version.workspace = true
@@ -18,5 +18,5 @@ expanded_builder_macros = []
 build_common = { path = "../build-common" }
 
 [dependencies]
-datadog-log = { path = "../datadog-log" }
+libdd-log = { path = "../libdd-log" }
 ddcommon-ffi = { path = "../libdd-common-ffi", package = "libdd-common-ffi" }

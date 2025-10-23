@@ -47,7 +47,7 @@ tinybytes = { version = "1.0.0", path = "../libdd-tinybytes", package = "libdd-t
 bench = false
 
 [dev-dependencies]
-datadog-log = { path = "../datadog-log" }
+datadog-log = { path = "../libdd-log", package = "libdd-log" }
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5.1"
 datadog-trace-utils = { path = "../libdd-trace-utils", package = "libdd-trace-utils", features = [
