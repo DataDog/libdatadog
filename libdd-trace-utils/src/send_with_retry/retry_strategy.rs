@@ -65,7 +65,7 @@ impl RetryStrategy {
     /// # Examples
     ///
     /// ```rust
-    /// use datadog_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
+    /// use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
     /// use std::time::Duration;
     ///
     /// let retry_strategy = RetryStrategy::new(5, 100, RetryBackoffType::Exponential, Some(50));

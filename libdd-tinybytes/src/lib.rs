@@ -100,7 +100,7 @@ impl Bytes {
     /// # Examples
     ///
     /// ```
-    /// use tinybytes::Bytes;
+    /// use libdd_tinybytes::Bytes;
     ///
     /// let bytes = Bytes::copy_from_slice(b"hello world");
     /// let slice = bytes.slice(0..5);
@@ -156,7 +156,7 @@ impl Bytes {
     /// # Examples
     ///
     /// ```
-    /// use tinybytes::Bytes;
+    /// use libdd_tinybytes::Bytes;
     ///
     /// let bytes = Bytes::copy_from_slice(b"hello world");
     /// let subset = &bytes.as_ref()[0..5];

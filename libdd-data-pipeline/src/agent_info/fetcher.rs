@@ -61,7 +61,7 @@ pub async fn fetch_info_with_state(
 /// // Define the endpoint
 /// let endpoint = ddcommon::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Fetch the info
-/// let agent_info = data_pipeline::agent_info::fetch_info(&endpoint)
+/// let agent_info = libdd_data_pipeline::agent_info::fetch_info(&endpoint)
 ///     .await
 ///     .unwrap();
 /// println!("Agent version is {}", agent_info.info.version.unwrap());
@@ -113,10 +113,10 @@ async fn fetch_and_hash_response(info_endpoint: &Endpoint) -> Result<(String, by
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
-/// use data_pipeline::agent_info;
+/// use libdd_data_pipeline::agent_info;
 /// let endpoint = ddcommon::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Create the fetcher
-/// let (mut fetcher, _response_observer) = data_pipeline::agent_info::AgentInfoFetcher::new(
+/// let (mut fetcher, _response_observer) = libdd_data_pipeline::agent_info::AgentInfoFetcher::new(
 ///     endpoint,
 ///     std::time::Duration::from_secs(5 * 60),
 /// );

@@ -39,7 +39,7 @@ pub struct AgentConfig {
 /// # Examples
 ///
 /// ```
-/// use datadog_remote_config::config::agent_config::parse_json;
+/// use libdd_remote_config::config::agent_config::parse_json;
 ///
 /// let json_data = r#"{
 ///     "name": "flare-log-level.debug",

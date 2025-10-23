@@ -386,7 +386,7 @@ impl TryFrom<&RemoteConfigData> for ReturnAction {
 /// Implementing and using the tracer flare to fetch RemoteConfig from the agent
 ///
 /// ```rust no_run
-/// use datadog_tracer_flare::{TracerFlareManager, run_remote_config_listener};
+/// use libdd_tracer_flare::{TracerFlareManager, run_remote_config_listener};
 /// use std::time::Duration;
 /// use tokio::time::sleep;
 ///

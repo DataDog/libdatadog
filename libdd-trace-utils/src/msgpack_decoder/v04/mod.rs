@@ -31,7 +31,7 @@ use crate::span::{SpanBytes, SpanSlice};
 ///
 /// ```
 /// use datadog_trace_protobuf::pb::Span;
-/// use datadog_trace_utils::msgpack_decoder::v04::from_bytes;
+/// use libdd_trace_utils::msgpack_decoder::v04::from_bytes;
 /// use rmp_serde::to_vec_named;
 /// use tinybytes;
 ///
@@ -91,7 +91,7 @@ pub fn from_bytes(data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize)
 ///
 /// ```
 /// use datadog_trace_protobuf::pb::Span;
-/// use datadog_trace_utils::msgpack_decoder::v04::from_slice;
+/// use libdd_trace_utils::msgpack_decoder::v04::from_slice;
 /// use rmp_serde::to_vec_named;
 /// use tinybytes;
 ///

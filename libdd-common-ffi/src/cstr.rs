@@ -76,7 +76,7 @@ impl CString {
     /// # Examples
     ///
     /// ```
-    /// use ddcommon_ffi::CString;
+    /// use libdd_common_ffi::CString;
     ///
     /// let good = CString::new_or_empty("hello world");
     /// assert_eq!(good.as_cstr().into_std().to_str().unwrap(), "hello world");

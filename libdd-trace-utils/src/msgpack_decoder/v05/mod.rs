@@ -35,7 +35,7 @@ const SPAN_ELEM_COUNT: u32 = 12;
 /// # Examples
 ///
 /// ```
-/// use datadog_trace_utils::msgpack_decoder::v05::from_bytes;
+/// use libdd_trace_utils::msgpack_decoder::v05::from_bytes;
 /// use rmp_serde::to_vec;
 /// use std::collections::HashMap;
 /// use tinybytes;
@@ -107,7 +107,7 @@ pub fn from_bytes(data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize)
 /// # Examples
 ///
 /// ```
-/// use datadog_trace_utils::msgpack_decoder::v05::from_slice;
+/// use libdd_trace_utils::msgpack_decoder::v05::from_slice;
 /// use rmp_serde::to_vec;
 /// use std::collections::HashMap;
 /// use tinybytes;

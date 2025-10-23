@@ -48,7 +48,7 @@ pub struct AgentTask {
 /// # Examples
 ///
 /// ```
-/// use datadog_remote_config::config::agent_task::parse_json;
+/// use libdd_remote_config::config::agent_task::parse_json;
 ///
 /// let json_data = r#"{
 ///     "args": {

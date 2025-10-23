@@ -35,12 +35,12 @@ use zstd::stream::write::Encoder;
 ///
 /// ```rust
 /// use datadog_trace_protobuf::pb::TracerPayload;
-/// use datadog_trace_utils::send_data::{
+/// use libdd_trace_utils::send_data::{
 ///     SendData,
 /// };
-/// use datadog_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
-/// use datadog_trace_utils::trace_utils::TracerHeaderTags;
-/// use datadog_trace_utils::tracer_payload::TracerPayloadCollection;
+/// use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
+/// use libdd_trace_utils::trace_utils::TracerHeaderTags;
+/// use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
 /// use ddcommon::Endpoint;
 ///
 /// #[cfg_attr(miri, ignore)]
