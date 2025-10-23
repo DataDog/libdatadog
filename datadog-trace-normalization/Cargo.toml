@@ -12,7 +12,7 @@ bench = false
 
 [dependencies]
 anyhow = "1.0"
-datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
+datadog-trace-protobuf = { version = "1.0.0", path = "../libdd-trace-protobuf", package = "libdd-trace-protobuf" }
 
 [dev-dependencies]
 rand = "0.8.5"
