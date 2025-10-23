@@ -1,12 +1,12 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_log::logger;
-use datadog_log::logger::{
+use ddcommon_ffi::{CharSlice, Error};
+use libdd_log::logger;
+use libdd_log::logger::{
     logger_configure_file, logger_configure_std, logger_disable_file, logger_disable_std,
     logger_set_log_level,
 };
-use ddcommon_ffi::{CharSlice, Error};
 
 /// Configuration for standard stream output.
 #[repr(C)]

@@ -43,7 +43,7 @@ datadog-profiling = { path = "../libdd-profiling", package = "libdd-profiling" }
 ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
 ddcommon-ffi = { path = "../libdd-common-ffi", package = "libdd-common-ffi", default-features = false, optional = true }
 ddtelemetry-ffi = { path = "../libdd-telemetry-ffi", package = "libdd-telemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
-datadog-log-ffi = { path = "../datadog-log-ffi", default-features = false, optional = true }
+datadog-log-ffi = { path = "../libdd-log-ffi", package = "libdd-log-ffi", default-features = false, optional = true }
 ddsketch-ffi = { path = "../libdd-sketch-ffi", package = "libdd-sketch-ffi", default-features = false, optional = true }
 function_name = "0.3.0"
 futures = { version = "0.3", default-features = false }

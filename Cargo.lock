@@ -1130,26 +1130,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-log"
-version = "1.0.0"
-dependencies = [
- "chrono",
- "tempfile",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "datadog-log-ffi"
-version = "22.1.0"
-dependencies = [
- "build_common",
- "datadog-log",
- "libdd-common-ffi",
-]
-
-[[package]]
 name = "datadog-sidecar"
 version = "0.0.1"
 dependencies = [
@@ -2482,7 +2462,6 @@ dependencies = [
  "bytes",
  "clap",
  "criterion",
- "datadog-log",
  "either",
  "http",
  "http-body-util",
@@ -2491,6 +2470,7 @@ dependencies = [
  "hyper-util",
  "libdd-common",
  "libdd-dogstatsd-client",
+ "libdd-log",
  "libdd-sketch",
  "libdd-telemetry",
  "libdd-tinybytes",
@@ -2642,6 +2622,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-log"
+version = "1.0.0"
+dependencies = [
+ "chrono",
+ "tempfile",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "libdd-log-ffi"
+version = "22.1.0"
+dependencies = [
+ "build_common",
+ "libdd-common-ffi",
+ "libdd-log",
+]
+
+[[package]]
 name = "libdd-profiling"
 version = "1.0.0"
 dependencies = [
@@ -2678,7 +2678,6 @@ version = "22.1.0"
 dependencies = [
  "anyhow",
  "build_common",
- "datadog-log-ffi",
  "function_name",
  "futures",
  "http-body-util",
@@ -2689,6 +2688,7 @@ dependencies = [
  "libdd-crashtracker-ffi",
  "libdd-data-pipeline-ffi",
  "libdd-library-config-ffi",
+ "libdd-log-ffi",
  "libdd-profiling",
  "libdd-sketch-ffi",
  "libdd-telemetry-ffi",
