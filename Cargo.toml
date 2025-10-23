@@ -3,7 +3,6 @@
 
 [workspace]
 members = [
-  "builder",
   "datadog-alloc",
   "datadog-crashtracker",
   "datadog-crashtracker-ffi",
@@ -19,6 +18,7 @@ members = [
   "datadog-sidecar",
   "datadog-sidecar-ffi",
   "datadog-sidecar-macros",
+  "libdd-builder",
   "libdd-common",
   "libdd-common-ffi",
   "libdd-crashtracker",
@@ -34,12 +34,12 @@ members = [
   "libdd-telemetry",
   "libdd-telemetry-ffi",
   "libdd-tinybytes",
-  "libdd-tracer-flare",
   "libdd-trace-normalization",
   "libdd-trace-obfuscation",
   "libdd-trace-protobuf",
   "libdd-trace-stats",
   "libdd-trace-utils",
+  "libdd-tracer-flare",
   "tools",
   "tools/cc_utils",
   "tools/sidecar_mockgen",
