@@ -30,7 +30,7 @@ bytes = "1.6.0"
 rmpv = { version = "1.3.0", default-features = false }
 rmp = { version = "0.8.14", default-features = false }
 
-libdd-common = { path = "../libdd-common", default-features = false }
+ddcommon = { version = "1.0.0", path = "../libdd-common/", package = "libdd-common", default-features = false }
 datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
 datadog-trace-normalization = { path = "../datadog-trace-normalization" }
 tinybytes = { path = "../tinybytes", features = [
@@ -65,8 +65,8 @@ tempfile = "3.3.0"
 
 [features]
 default = ["https"]
-https = ["libdd-common/https"]
-mini_agent = ["proxy", "compression", "libdd-common/use_webpki_roots"]
+https = ["ddcommon/https"]
+mini_agent = ["proxy", "compression", "ddcommon/use_webpki_roots"]
 test-utils = [
     "hyper/server",
     "httpmock",
@@ -77,4 +77,4 @@ test-utils = [
 proxy = ["hyper-http-proxy"]
 compression = ["zstd", "flate2"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
-fips = ["libdd-common/fips"]
+fips = ["ddcommon/fips"]
