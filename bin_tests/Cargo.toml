@@ -14,7 +14,7 @@ anyhow = "1.0"
 current_platform = "0.2.0"
 datadog-profiling = { path = "../datadog-profiling" }
 datadog-crashtracker = { path = "../datadog-crashtracker" }
-ddcommon = { version = "1.0.0", path = "../libdd-common/", package = "libdd-common" }
+ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
 tempfile = "3.3"
 serde_json = { version = "1.0" }
 strum = { version = "0.26.2", features = ["derive"] }
