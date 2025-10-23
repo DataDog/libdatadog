@@ -1,13 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
-    error::Error,
-    time::{Duration, Instant},
-};
+use std::{error::Error, time::Duration, time::Instant};
 
 use ddcommon::tag;
-use ddtelemetry::{data, worker};
+use libdd_telemetry::{data, worker};
 
 macro_rules! timeit {
     ($op_name:literal, $op:block) => {{
@@ -35,16 +32,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         "1.56".into(),
         "none".into(),
     );
+    builder.config = libdd_telemetry::config::Config::from_env();
     builder.config.telemetry_debug_logging_enabled = true;
-    builder.config = ddtelemetry::config::Config::from_env();
     builder
         .config
-        .set_endpoint(ddcommon::Endpoint {
-            url: ddcommon::parse_uri("file://./tm-worker-test.output").unwrap(),
-            ..Default::default()
-        })
+        .set_endpoint(ddcommon::Endpoint::from_slice(
+            "file://./tm-metrics-worker-test.output",
+        ))
         .unwrap();
     builder.config.telemetry_heartbeat_interval = Duration::from_secs(1);
+    builder.config.debug_enabled = true;
+    builder.flavor = worker::TelemetryWorkerFlavor::MetricsLogs;
 
     let handle = builder.run()?;
 

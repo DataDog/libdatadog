@@ -10,13 +10,13 @@ use std::{
 };
 
 use ddcommon::Endpoint;
-use ddtelemetry::{
+use http::{header::CONTENT_TYPE, Uri};
+use libdd_telemetry::{
     build_host,
     config::Config,
     data::{self, metrics::Distribution, Application, Telemetry},
     worker::http_client::request_builder,
 };
-use http::{header::CONTENT_TYPE, Uri};
 
 fn seq_id() -> u64 {
     static SEQ_ID: AtomicU64 = AtomicU64::new(1);
@@ -41,7 +41,7 @@ fn build_request<'a>(
 }
 
 pub async fn push_telemetry(config: &Config, telemetry: &Telemetry<'_>) -> anyhow::Result<()> {
-    let client = ddtelemetry::worker::http_client::from_config(config);
+    let client = libdd_telemetry::worker::http_client::from_config(config);
     let req = request_builder(config)?
         .method(http::Method::POST)
         .header(CONTENT_TYPE, ddcommon::header::APPLICATION_JSON)

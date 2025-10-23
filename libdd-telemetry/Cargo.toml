@@ -1,5 +1,5 @@
 [package]
-name = "ddtelemetry"
+name = "libdd-telemetry"
 description = "Telemetry client allowing to send data as described in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#telemetry-collection"
 edition.workspace = true
 version= "1.0.0"
