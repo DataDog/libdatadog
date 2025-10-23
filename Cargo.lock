@@ -717,6 +717,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "builder"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "cmake",
+ "pico-args",
+ "serde",
+ "tar",
+ "toml",
+ "tools",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2579,20 +2593,6 @@ dependencies = [
  "bolero",
  "libc",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "libdd-builder"
-version = "22.1.0"
-dependencies = [
- "anyhow",
- "build_common",
- "cmake",
- "pico-args",
- "serde",
- "tar",
- "toml",
- "tools",
 ]
 
 [[package]]

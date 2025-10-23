@@ -3,15 +3,12 @@
 
 [workspace]
 members = [
-  "datadog-alloc",
-  "datadog-crashtracker",
-  "datadog-crashtracker-ffi",
+  "builder",
   "datadog-ffe",
   "datadog-sidecar",
   "datadog-sidecar-ffi",
   "datadog-sidecar-macros",
   "libdd-alloc",
-  "libdd-builder",
   "libdd-common",
   "libdd-common-ffi",
   "libdd-crashtracker",
