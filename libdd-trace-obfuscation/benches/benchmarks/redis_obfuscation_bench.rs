@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::{black_box, criterion_group, Criterion};
-use datadog_trace_obfuscation::redis;
+use libdd_trace_obfuscation::redis;
 
 fn obfuscate_redis_string_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("redis");

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::{black_box, criterion_group, Criterion};
-use datadog_trace_obfuscation::sql::obfuscate_sql_string;
+use libdd_trace_obfuscation::sql::obfuscate_sql_string;
 
 fn sql_obfuscation(c: &mut Criterion) {
     let mut group = c.benchmark_group("sql");
