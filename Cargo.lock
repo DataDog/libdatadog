@@ -1278,42 +1278,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-live-debugger"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "constcat",
- "http-body-util",
- "hyper",
- "libdd-common",
- "percent-encoding",
- "regex",
- "regex-automata 0.4.8",
- "serde",
- "serde_json",
- "smallvec",
- "sys-info",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "datadog-live-debugger-ffi"
-version = "0.0.1"
-dependencies = [
- "build_common",
- "datadog-live-debugger",
- "libdd-common",
- "libdd-common-ffi",
- "log",
- "percent-encoding",
- "serde_json",
- "tokio",
- "tokio-util",
- "uuid",
-]
-
-[[package]]
 name = "datadog-log"
 version = "1.0.0"
 dependencies = [
@@ -1349,7 +1313,6 @@ dependencies = [
  "bincode",
  "chrono",
  "console-subscriber",
- "datadog-live-debugger",
  "datadog-sidecar-macros",
  "futures",
  "http",
@@ -1365,6 +1328,7 @@ dependencies = [
  "libdd-dogstatsd-client",
  "libdd-ipc",
  "libdd-ipc-macros",
+ "libdd-live-debugger",
  "libdd-remote-config",
  "libdd-telemetry",
  "libdd-tinybytes",
@@ -1399,7 +1363,6 @@ dependencies = [
 name = "datadog-sidecar-ffi"
 version = "0.0.1"
 dependencies = [
- "datadog-live-debugger",
  "datadog-sidecar",
  "http",
  "libc",
@@ -1408,6 +1371,7 @@ dependencies = [
  "libdd-crashtracker-ffi",
  "libdd-dogstatsd-client",
  "libdd-ipc",
+ "libdd-live-debugger",
  "libdd-remote-config",
  "libdd-telemetry",
  "libdd-telemetry-ffi",
@@ -2867,6 +2831,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-live-debugger"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "constcat",
+ "http-body-util",
+ "hyper",
+ "libdd-common",
+ "percent-encoding",
+ "regex",
+ "regex-automata 0.4.8",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "sys-info",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "libdd-live-debugger-ffi"
+version = "0.0.1"
+dependencies = [
+ "build_common",
+ "libdd-common",
+ "libdd-common-ffi",
+ "libdd-live-debugger",
+ "log",
+ "percent-encoding",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "libdd-profiling"
 version = "1.0.0"
 dependencies = [
@@ -2949,7 +2949,6 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "datadog-live-debugger",
  "futures",
  "futures-util",
  "http",
@@ -2957,6 +2956,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libdd-common",
+ "libdd-live-debugger",
  "libdd-remote-config",
  "libdd-trace-protobuf",
  "manual_future",

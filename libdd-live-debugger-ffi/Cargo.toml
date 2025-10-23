@@ -2,7 +2,7 @@
 # This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 [package]
-name = "datadog-live-debugger-ffi"
+name = "libdd-live-debugger-ffi"
 version = "0.0.1"
 edition = "2021"
 
@@ -11,7 +11,7 @@ crate-type = ["lib", "staticlib", "cdylib"]
 bench = false
 
 [dependencies]
-datadog-live-debugger = { path = "../datadog-live-debugger" }
+datadog-live-debugger = { path = "../libdd-live-debugger", package = "libdd-live-debugger" }
 ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
 ddcommon-ffi = { path = "../libdd-common-ffi", package = "libdd-common-ffi", default-features = false }
 percent-encoding = "2.1"
