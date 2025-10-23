@@ -1343,33 +1343,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-library-config"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "memfd",
- "rand 0.8.5",
- "rmp",
- "rmp-serde",
- "serde",
- "serde_yaml",
- "tempfile",
-]
-
-[[package]]
-name = "datadog-library-config-ffi"
-version = "0.0.2"
-dependencies = [
- "anyhow",
- "build_common",
- "constcat",
- "datadog-library-config",
- "libdd-common",
- "libdd-common-ffi",
- "tempfile",
-]
-
-[[package]]
 name = "datadog-live-debugger"
 version = "1.0.0"
 dependencies = [
@@ -1468,7 +1441,6 @@ version = "22.1.0"
 dependencies = [
  "anyhow",
  "build_common",
- "datadog-library-config-ffi",
  "datadog-log-ffi",
  "datadog-profiling",
  "function_name",
@@ -1480,6 +1452,7 @@ dependencies = [
  "libdd-common-ffi",
  "libdd-crashtracker-ffi",
  "libdd-data-pipeline-ffi",
+ "libdd-library-config-ffi",
  "libdd-sketch-ffi",
  "libdd-telemetry-ffi",
  "serde_json",
@@ -2941,6 +2914,33 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "libdd-library-config"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "memfd",
+ "rand 0.8.5",
+ "rmp",
+ "rmp-serde",
+ "serde",
+ "serde_yaml",
+ "tempfile",
+]
+
+[[package]]
+name = "libdd-library-config-ffi"
+version = "0.0.2"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "constcat",
+ "libdd-common",
+ "libdd-common-ffi",
+ "libdd-library-config",
+ "tempfile",
 ]
 
 [[package]]
