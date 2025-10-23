@@ -20,7 +20,7 @@ cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 build_common = { path = "../build-common" }
 
 [dependencies]
-datadog-ddsketch = { path = "../ddsketch" }
+datadog-ddsketch = { version = "1.0.0", path = "../libdd-sketch", package = "libdd-sketch" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 
 [dev-dependencies]
