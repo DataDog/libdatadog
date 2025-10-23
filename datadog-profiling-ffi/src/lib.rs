@@ -12,10 +12,13 @@ pub use symbolizer_ffi::*;
 
 mod arc_handle;
 mod exporter;
+mod profile_handle;
 mod profiles;
 mod status;
 mod string_storage;
 
+pub use arc_handle::*;
+pub use profile_handle::*;
 pub use status::*;
 
 // re-export crashtracker ffi

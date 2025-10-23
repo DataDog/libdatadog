@@ -5,20 +5,20 @@ mod generational_ids;
 pub use generational_ids::*;
 
 use crate::api::ManagedStringId;
-use crate::collections::identifiable::{Dedup, StringId};
+use crate::collections::identifiable::{Dedup, InternalStringId};
 use crate::internal::{
-    Function, FunctionId, Label, LabelId, LabelSet, LabelSetId, Location, LocationId, Mapping,
-    MappingId, Profile, Sample, StackTrace, StackTraceId, Timestamp,
+    Function, InternalFunctionId, InternalLabel, InternalMappingId, LabelId, LabelSet, LabelSetId,
+    Location, LocationId, Mapping, Profile, Sample, StackTrace, StackTraceId, Timestamp,
 };
 use std::sync::atomic::Ordering::SeqCst;
 
 impl Profile {
     pub fn intern_function(
         &mut self,
-        name: GenerationalId<StringId>,
-        system_name: GenerationalId<StringId>,
-        filename: GenerationalId<StringId>,
-    ) -> anyhow::Result<GenerationalId<FunctionId>> {
+        name: GenerationalId<InternalStringId>,
+        system_name: GenerationalId<InternalStringId>,
+        filename: GenerationalId<InternalStringId>,
+    ) -> anyhow::Result<GenerationalId<InternalFunctionId>> {
         let function = Function {
             name: name.get(self.generation)?,
             system_name: system_name.get(self.generation)?,
@@ -30,24 +30,24 @@ impl Profile {
 
     pub fn intern_label_num(
         &mut self,
-        key: GenerationalId<StringId>,
+        key: GenerationalId<InternalStringId>,
         val: i64,
-        unit: GenerationalId<StringId>,
+        unit: GenerationalId<InternalStringId>,
     ) -> anyhow::Result<GenerationalId<LabelId>> {
         let key = key.get(self.generation)?;
         let unit = unit.get(self.generation)?;
-        let id = self.labels.dedup(Label::num(key, val, unit));
+        let id = self.labels.dedup(InternalLabel::num(key, val, unit));
         Ok(GenerationalId::new(id, self.generation))
     }
 
     pub fn intern_label_str(
         &mut self,
-        key: GenerationalId<StringId>,
-        val: GenerationalId<StringId>,
+        key: GenerationalId<InternalStringId>,
+        val: GenerationalId<InternalStringId>,
     ) -> anyhow::Result<GenerationalId<LabelId>> {
         let key = key.get(self.generation)?;
         let val = val.get(self.generation)?;
-        let id = self.labels.dedup(Label::str(key, val));
+        let id = self.labels.dedup(InternalLabel::str(key, val));
         Ok(GenerationalId::new(id, self.generation))
     }
 
@@ -66,8 +66,8 @@ impl Profile {
 
     pub fn intern_location(
         &mut self,
-        mapping_id: Option<GenerationalId<MappingId>>,
-        function_id: GenerationalId<FunctionId>,
+        mapping_id: Option<GenerationalId<InternalMappingId>>,
+        function_id: GenerationalId<InternalFunctionId>,
         address: u64,
         line: i64,
     ) -> anyhow::Result<GenerationalId<LocationId>> {
@@ -84,7 +84,7 @@ impl Profile {
     pub fn intern_managed_string(
         &mut self,
         s: ManagedStringId,
-    ) -> anyhow::Result<GenerationalId<StringId>> {
+    ) -> anyhow::Result<GenerationalId<InternalStringId>> {
         let id = self.resolve(s)?;
         Ok(GenerationalId::new(id, self.generation))
     }
@@ -92,7 +92,7 @@ impl Profile {
     pub fn intern_managed_strings(
         &mut self,
         s: &[ManagedStringId],
-        out: &mut [GenerationalId<StringId>],
+        out: &mut [GenerationalId<InternalStringId>],
     ) -> anyhow::Result<()> {
         anyhow::ensure!(s.len() == out.len());
         for i in 0..s.len() {
@@ -106,9 +106,9 @@ impl Profile {
         memory_start: u64,
         memory_limit: u64,
         file_offset: u64,
-        filename: GenerationalId<StringId>,
-        build_id: GenerationalId<StringId>,
-    ) -> anyhow::Result<GenerationalId<MappingId>> {
+        filename: GenerationalId<InternalStringId>,
+        build_id: GenerationalId<InternalStringId>,
+    ) -> anyhow::Result<GenerationalId<InternalMappingId>> {
         let mapping = Mapping {
             memory_start,
             memory_limit,
@@ -154,10 +154,10 @@ impl Profile {
         Ok(GenerationalId::new(id, self.generation))
     }
 
-    pub const INTERNED_EMPTY_STRING: GenerationalId<StringId> =
-        GenerationalId::new_immortal(StringId::ZERO);
+    pub const INTERNED_EMPTY_STRING: GenerationalId<InternalStringId> =
+        GenerationalId::new_immortal(InternalStringId::ZERO);
 
-    pub fn intern_string(&mut self, s: &str) -> anyhow::Result<GenerationalId<StringId>> {
+    pub fn intern_string(&mut self, s: &str) -> anyhow::Result<GenerationalId<InternalStringId>> {
         if s.is_empty() {
             Ok(Self::INTERNED_EMPTY_STRING)
         } else {
@@ -168,7 +168,7 @@ impl Profile {
     pub fn intern_strings(
         &mut self,
         s: &[&str],
-        out: &mut [GenerationalId<StringId>],
+        out: &mut [GenerationalId<InternalStringId>],
     ) -> anyhow::Result<()> {
         anyhow::ensure!(s.len() == out.len());
         for i in 0..s.len() {

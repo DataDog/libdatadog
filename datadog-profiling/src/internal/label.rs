@@ -5,66 +5,69 @@ use super::*;
 use datadog_profiling_protobuf::{prost_impls, Record, StringOffset};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub enum LabelValue {
-    Str(StringId),
-    Num { num: i64, num_unit: StringId },
+pub enum InternalLabelValue {
+    Str(InternalStringId),
+    Num {
+        num: i64,
+        num_unit: InternalStringId,
+    },
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
-pub struct Label {
-    key: StringId,
-    value: LabelValue,
+pub struct InternalLabel {
+    key: InternalStringId,
+    value: InternalLabelValue,
 }
 
-impl Label {
+impl InternalLabel {
     pub fn has_num_value(&self) -> bool {
-        matches!(self.value, LabelValue::Num { .. })
+        matches!(self.value, InternalLabelValue::Num { .. })
     }
 
     pub fn has_string_value(&self) -> bool {
-        matches!(self.value, LabelValue::Str(_))
+        matches!(self.value, InternalLabelValue::Str(_))
     }
 
-    pub fn get_key(&self) -> StringId {
+    pub fn get_key(&self) -> InternalStringId {
         self.key
     }
 
-    pub fn get_value(&self) -> &LabelValue {
+    pub fn get_value(&self) -> &InternalLabelValue {
         &self.value
     }
 
-    pub fn num(key: StringId, num: i64, num_unit: StringId) -> Self {
+    pub fn num(key: InternalStringId, num: i64, num_unit: InternalStringId) -> Self {
         Self {
             key,
-            value: LabelValue::Num { num, num_unit },
+            value: InternalLabelValue::Num { num, num_unit },
         }
     }
 
-    pub fn str(key: StringId, v: StringId) -> Self {
+    pub fn str(key: InternalStringId, v: InternalStringId) -> Self {
         Self {
             key,
-            value: LabelValue::Str(v),
+            value: InternalLabelValue::Str(v),
         }
     }
 }
 
-impl From<Label> for prost_impls::Label {
-    fn from(l: Label) -> Self {
+impl From<InternalLabel> for prost_impls::Label {
+    fn from(l: InternalLabel) -> Self {
         Self::from(&l)
     }
 }
 
-impl From<&Label> for prost_impls::Label {
-    fn from(l: &Label) -> prost_impls::Label {
+impl From<&InternalLabel> for prost_impls::Label {
+    fn from(l: &InternalLabel) -> prost_impls::Label {
         let key = l.key.to_raw_id();
         match l.value {
-            LabelValue::Str(str) => Self {
+            InternalLabelValue::Str(str) => Self {
                 key,
                 str: str.to_raw_id(),
                 num: 0,
                 num_unit: 0,
             },
-            LabelValue::Num { num, num_unit } => Self {
+            InternalLabelValue::Num { num, num_unit } => Self {
                 key,
                 str: 0,
                 num,
@@ -74,17 +77,17 @@ impl From<&Label> for prost_impls::Label {
     }
 }
 
-impl From<Label> for datadog_profiling_protobuf::Label {
-    fn from(label: Label) -> Self {
+impl From<InternalLabel> for datadog_profiling_protobuf::Label {
+    fn from(label: InternalLabel) -> Self {
         Self::from(&label)
     }
 }
 
-impl From<&Label> for datadog_profiling_protobuf::Label {
-    fn from(label: &Label) -> Self {
+impl From<&InternalLabel> for datadog_profiling_protobuf::Label {
+    fn from(label: &InternalLabel) -> Self {
         let (str, num, num_unit) = match label.value {
-            LabelValue::Str(str) => (str, 0, StringOffset::ZERO),
-            LabelValue::Num { num, num_unit } => (StringOffset::ZERO, num, num_unit),
+            InternalLabelValue::Str(str) => (str, 0, StringOffset::ZERO),
+            InternalLabelValue::Num { num, num_unit } => (StringOffset::ZERO, num, num_unit),
         };
         Self {
             key: Record::from(label.key),
@@ -95,7 +98,7 @@ impl From<&Label> for datadog_profiling_protobuf::Label {
     }
 }
 
-impl Item for Label {
+impl Item for InternalLabel {
     type Id = LabelId;
 }
 

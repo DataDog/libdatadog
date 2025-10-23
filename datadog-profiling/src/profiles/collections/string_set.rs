@@ -16,61 +16,75 @@ type Hasher = hash::BuildHasherDefault<rustc_hash::FxHasher>;
 /// The exact representation is not a public detail; it is only available so
 /// that it is known for FFI size and alignment.
 ///
-/// Some [`StringId`]s refer to well-known strings, which always exist in
+/// Some [`StringRef`]s refer to well-known strings, which always exist in
 /// every string table.
 ///
 /// The caller needs to ensure the string set it was created from always exists
 /// when a StringId is dereferenced.
-#[repr(C)]
+#[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct StringId(pub ThinStr<'static>);
+pub struct StringRef(pub ThinStr<'static>);
 
-impl StringId {
+impl StringRef {
     pub fn into_raw(self) -> NonNull<c_void> {
         self.0.into_raw()
     }
 
-    /// Re-creates a [`StringId`] created by [`StringId::into_raw`].
+    /// Re-creates a [`StringRef`] created by [`StringRef::into_raw`].
     ///
     /// # Safety
     ///
-    /// `this` needs to be created from [``StringId::into_raw`] and the set
+    /// `this` needs to be created from [``StringRef::into_raw`] and the set
     /// it belongs to should still be alive.
     pub unsafe fn from_raw(this: NonNull<c_void>) -> Self {
         Self(ThinStr::from_raw(this))
     }
 }
 
-impl From<&StringId> for StringId {
-    fn from(value: &StringId) -> Self {
+impl From<&StringRef> for StringRef {
+    fn from(value: &StringRef) -> Self {
         *value
     }
 }
 
-impl Default for StringId {
+impl Default for StringRef {
     fn default() -> Self {
         Self::EMPTY
     }
 }
 
-impl StringId {
-    pub const EMPTY: StringId = StringId(ThinStr::new());
-    pub const END_TIMESTAMP_NS: StringId = StringId(ThinStr::end_timestamp_ns());
-    pub const LOCAL_ROOT_SPAN_ID: StringId = StringId(ThinStr::local_root_span_id());
-    pub const TRACE_ENDPOINT: StringId = StringId(ThinStr::trace_endpoint());
-    pub const SPAN_ID: StringId = StringId(ThinStr::span_id());
+impl StringRef {
+    pub const EMPTY: StringRef = StringRef(ThinStr::new());
+    pub const END_TIMESTAMP_NS: StringRef = StringRef(ThinStr::end_timestamp_ns());
+    pub const LOCAL_ROOT_SPAN_ID: StringRef = StringRef(ThinStr::local_root_span_id());
+    pub const TRACE_ENDPOINT: StringRef = StringRef(ThinStr::trace_endpoint());
+    pub const SPAN_ID: StringRef = StringRef(ThinStr::span_id());
 }
 
-/// Holds unique strings and provides [`StringId`]s to fetch them later.
+// Safe conversion from FFI-facing StringId2 to internal StringRef.
+// Maps the null/empty StringId2 to the non-null well-known EMPTY StringRef.
+impl From<crate::api2::StringId2> for StringRef {
+    fn from(id: crate::api2::StringId2) -> Self {
+        if id.is_empty() {
+            StringRef::EMPTY
+        } else {
+            // SAFETY: Non-empty StringId2 values originate from this string set and
+            // carry a valid pointer to a length-prefixed ThinStr in our storage.
+            unsafe { core::mem::transmute::<crate::api2::StringId2, StringRef>(id) }
+        }
+    }
+}
+
+/// Holds unique strings and provides [`StringRef`]s to fetch them later.
 /// This is a newtype around SliceSet<u8> to enforce UTF-8 invariants.
 pub struct UnsyncStringSet(SliceSet<u8>);
 
-pub const WELL_KNOWN_STRING_IDS: [StringId; 5] = [
-    StringId::EMPTY,
-    StringId::END_TIMESTAMP_NS,
-    StringId::LOCAL_ROOT_SPAN_ID,
-    StringId::TRACE_ENDPOINT,
-    StringId::SPAN_ID,
+pub const WELL_KNOWN_STRING_IDS: [StringRef; 5] = [
+    StringRef::EMPTY,
+    StringRef::END_TIMESTAMP_NS,
+    StringRef::LOCAL_ROOT_SPAN_ID,
+    StringRef::TRACE_ENDPOINT,
+    StringRef::SPAN_ID,
 ];
 
 impl UnsyncStringSet {
@@ -92,20 +106,20 @@ impl UnsyncStringSet {
         Self::try_with_capacity(28)
     }
 
-    unsafe fn find_with_hash(&self, hash: u64, str: &str) -> Option<StringId> {
+    unsafe fn find_with_hash(&self, hash: u64, str: &str) -> Option<StringRef> {
         let interned_str = self.0.slices.find(hash, |thin_slice| {
             // SAFETY: We only store valid UTF-8 in string sets
             let slice_str = unsafe { std::str::from_utf8_unchecked(thin_slice.as_slice()) };
             slice_str == str
         })?;
-        Some(StringId((*interned_str).into()))
+        Some(StringRef((*interned_str).into()))
     }
 
     /// # Safety
     ///  1. The hash must be the same as if the str was re-hashed with the hasher the string set
     ///     would use.
     ///  2. The string must be unique within the set.
-    pub unsafe fn insert_unique_uncontended(&mut self, str: &str) -> Result<StringId, SetError> {
+    pub unsafe fn insert_unique_uncontended(&mut self, str: &str) -> Result<StringRef, SetError> {
         let hash = Hasher::default().hash_one(str.as_bytes());
         self.insert_unique_uncontended_with_hash(hash, str)
     }
@@ -121,16 +135,16 @@ impl UnsyncStringSet {
         &mut self,
         hash: u64,
         str: &str,
-    ) -> Result<StringId, SetError> {
+    ) -> Result<StringRef, SetError> {
         let new_slice = self
             .0
             .insert_unique_uncontended_with_hash(hash, str.as_bytes())?;
-        Ok(StringId(new_slice.into()))
+        Ok(StringRef(new_slice.into()))
     }
 
     /// Adds the string to the string set if it isn't present already, and
     /// returns a handle to the string that can be used to retrieve it later.
-    pub fn try_insert(&mut self, str: &str) -> Result<StringId, SetError> {
+    pub fn try_insert(&mut self, str: &str) -> Result<StringRef, SetError> {
         let hash = Hasher::default().hash_one(str.as_bytes());
         unsafe { self.try_insert_with_hash(hash, str) }
     }
@@ -145,7 +159,7 @@ impl UnsyncStringSet {
         &mut self,
         hash: u64,
         str: &str,
-    ) -> Result<StringId, SetError> {
+    ) -> Result<StringRef, SetError> {
         // SAFETY: the string's hash is correct, we use the same hasher as
         // StringSet uses.
         if let Some(id) = self.find_with_hash(hash, str) {
@@ -156,9 +170,9 @@ impl UnsyncStringSet {
         self.insert_unique_uncontended_with_hash(hash, str)
     }
 
-    /// Returns an iterator over all strings in the set as [`StringId`]s.
-    pub fn string_ids(&self) -> impl Iterator<Item = StringId> + '_ {
-        self.0.slices.iter().map(|slice| StringId((*slice).into()))
+    /// Returns an iterator over all strings in the set as [`StringRef`]s.
+    pub fn string_ids(&self) -> impl Iterator<Item = StringRef> + '_ {
+        self.0.slices.iter().map(|slice| StringRef((*slice).into()))
     }
 
     pub fn len(&self) -> usize {
@@ -176,7 +190,7 @@ impl UnsyncStringSet {
     /// # Safety
     /// The caller must ensure that the `StringId` was obtained from this set
     /// (or is a well-known id) and that the set outlives the returned `&str`.
-    pub unsafe fn get_string(&self, id: StringId) -> &str {
+    pub unsafe fn get_string(&self, id: StringRef) -> &str {
         // SAFETY: safe as long as caller respects this function's safety.
         unsafe { core::mem::transmute::<&str, &str>(id.0.deref()) }
     }

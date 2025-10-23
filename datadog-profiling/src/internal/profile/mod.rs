@@ -8,12 +8,15 @@ pub mod interning_api;
 
 use self::api::UpscalingInfo;
 use super::*;
-use crate::api;
 use crate::api::ManagedStringId;
+use crate::api2::{FunctionId2, MappingId2, StringId2};
 use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
 use crate::collections::string_table::{self, StringTable};
 use crate::iter::{IntoLendingIterator, LendingIterator};
+use crate::profiles::collections::{SetId, StringRef};
+use crate::profiles::datatypes::{self as dt, ProfilesDictionary};
+use crate::{api, api2};
 use anyhow::Context;
 use datadog_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
 use interning_api::Generation;
@@ -25,7 +28,15 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
+struct ProfilesDictionaryTranslator {
+    profiles_dictionary: crate::profiles::collections::Arc<ProfilesDictionary>,
+    mappings: FxIndexMap<SetId<dt::Mapping>, Option<InternalMappingId>>,
+    functions: FxIndexMap<SetId<dt::Function>, InternalFunctionId>,
+    strings: FxIndexMap<StringRef, InternalStringId>,
+}
+
 pub struct Profile {
+    profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
     /// When profiles are reset, the sample-types need to be preserved. This
     /// maintains them in a way that does not depend on the string table. The
     /// Option part is this is taken from the old profile and moved to the new
@@ -38,7 +49,7 @@ pub struct Profile {
     endpoints: Endpoints,
     functions: FxIndexSet<Function>,
     generation: interning_api::Generation,
-    labels: FxIndexSet<Label>,
+    labels: FxIndexSet<InternalLabel>,
     label_sets: FxIndexSet<LabelSet>,
     locations: FxIndexSet<Location>,
     mappings: FxIndexSet<Mapping>,
@@ -50,7 +61,7 @@ pub struct Profile {
     strings: StringTable,
     string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
     string_storage_cached_profile_id: Option<CachedProfileId>,
-    timestamp_key: StringId,
+    timestamp_key: InternalStringId,
     upscaling_rules: UpscalingRules,
 }
 
@@ -116,6 +127,173 @@ impl Profile {
         Ok(())
     }
 
+    fn translate_mapping(
+        &mut self,
+        mapping_id: MappingId2,
+    ) -> anyhow::Result<Option<InternalMappingId>> {
+        let Some(mapping2) = (unsafe { mapping_id.read() }) else {
+            return Ok(None);
+        };
+
+        let set_id = unsafe { core::mem::transmute::<MappingId2, SetId<dt::Mapping>>(mapping_id) };
+
+        {
+            let translator_ref = self
+                .profiles_dictionary_translator
+                .as_ref()
+                .context("profiles dictionary not set")?;
+            if let Some(internal) = translator_ref.mappings.get(&set_id) {
+                return Ok(*internal);
+            }
+        }
+
+        let filename = self.translate_string(mapping2.filename)?;
+        let build_id = self.translate_string(mapping2.build_id)?;
+        let mapping = Mapping {
+            memory_start: mapping2.memory_start,
+            memory_limit: mapping2.memory_limit,
+            file_offset: mapping2.file_offset,
+            filename,
+            build_id,
+        };
+        let internal_id = self.mappings.dedup(mapping);
+        let translator_mut = self
+            .profiles_dictionary_translator
+            .as_mut()
+            .context("profiles dictionary not set")?;
+        translator_mut.mappings.try_reserve(1)?;
+        translator_mut.mappings.insert(set_id, Some(internal_id));
+        Ok(Some(internal_id))
+    }
+
+    fn translate_function(
+        &mut self,
+        function_id: FunctionId2,
+    ) -> anyhow::Result<InternalFunctionId> {
+        let function2 = (unsafe { function_id.read() }).unwrap_or_default();
+        let set_id =
+            unsafe { core::mem::transmute::<FunctionId2, SetId<dt::Function>>(function_id) };
+
+        {
+            let translator_ref = self
+                .profiles_dictionary_translator
+                .as_ref()
+                .context("profiles dictionary not set")?;
+            if let Some(internal) = translator_ref.functions.get(&set_id) {
+                return Ok(*internal);
+            }
+        }
+
+        let name = self.translate_string(function2.name)?;
+        let system_name = self.translate_string(function2.system_name)?;
+        let filename = self.translate_string(function2.file_name)?;
+        let function = Function {
+            name,
+            system_name,
+            filename,
+        };
+        let internal_id = self.functions.dedup(function);
+        let translator_mut = self
+            .profiles_dictionary_translator
+            .as_mut()
+            .context("profiles dictionary not set")?;
+        translator_mut.functions.try_reserve(1)?;
+        translator_mut.functions.insert(set_id, internal_id);
+        Ok(internal_id)
+    }
+
+    fn translate_string(&mut self, string_id: StringId2) -> anyhow::Result<InternalStringId> {
+        if string_id.is_empty() {
+            return Ok(InternalStringId::ZERO);
+        }
+        let string_ref = StringRef::from(string_id);
+
+        {
+            let translator_ref = self
+                .profiles_dictionary_translator
+                .as_ref()
+                .context("profiles dictionary not set")?;
+            if let Some(internal_id) = translator_ref.strings.get(&string_ref).copied() {
+                return Ok(internal_id);
+            }
+        }
+
+        let dict = self
+            .profiles_dictionary_translator
+            .as_ref()
+            .map(|t| t.profiles_dictionary.try_clone())
+            .transpose()?
+            .context("profiles dictionary not set")?;
+        let str = unsafe { dict.strings().get(string_ref) };
+        // SAFETY: we're keeping these lifetimes in proper sync. I think. TODO
+        // BUT longer-term we want to avoid copying them entirely, so this should
+        // go away.
+        let decouple_str = unsafe { core::mem::transmute::<&str, &str>(str) };
+        let internal_id = self.try_intern(decouple_str)?;
+        let translator_mut = self
+            .profiles_dictionary_translator
+            .as_mut()
+            .context("profiles dictionary not set")?;
+        translator_mut.strings.try_reserve(1)?;
+        translator_mut.strings.insert(string_ref, internal_id);
+        Ok(internal_id)
+    }
+
+    /// Tries to add a sample using `api2` structures.
+    pub fn try_add_sample2(
+        &mut self,
+        locations: &[api2::Location2],
+        values: &[i64],
+        labels: &[api2::Label2],
+        timestamp: Option<Timestamp>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.profiles_dictionary_translator.is_some(),
+            "profiles dictionary not set"
+        );
+        #[cfg(debug_assertions)]
+        {
+            self.validate_sample_labels2(labels)?;
+        }
+
+        let labels = {
+            let mut lbls = Vec::new();
+            lbls.try_reserve_exact(labels.len())?;
+            for label in labels {
+                let key = self.try_intern_string_id(label.key)?;
+                let internal_label = if !label.str.is_empty() {
+                    let str = self.try_intern_string_id(label.str)?;
+                    InternalLabel::str(key, str)
+                } else {
+                    let num = label.num;
+                    let num_unit = self.try_intern_string_id(label.num_unit)?;
+                    InternalLabel::num(key, num, num_unit)
+                };
+
+                let id = self.labels.try_dedup(internal_label)?;
+                lbls.push(id);
+            }
+            lbls.into_boxed_slice()
+        };
+
+        let mut internal_locations = Vec::new();
+        internal_locations
+            .try_reserve_exact(locations.len())
+            .context("failed to reserve memory for sample locations")?;
+        for location in locations {
+            let l = Location {
+                mapping_id: self.translate_mapping(location.mapping)?,
+                function_id: self.translate_function(location.function)?,
+                address: location.address,
+                line: location.line,
+            };
+            let location_id = self.locations.checked_dedup(l)?;
+            internal_locations.push(location_id);
+        }
+
+        self.try_add_sample_internal(values, labels, internal_locations, timestamp)
+    }
+
     pub fn try_add_sample(
         &mut self,
         sample: api::Sample,
@@ -133,11 +311,11 @@ impl Profile {
                 let key = self.try_intern(label.key)?;
                 let internal_label = if !label.str.is_empty() {
                     let str = self.try_intern(label.str)?;
-                    Label::str(key, str)
+                    InternalLabel::str(key, str)
                 } else {
                     let num = label.num;
                     let num_unit = self.try_intern(label.num_unit)?;
-                    Label::num(key, num, num_unit)
+                    InternalLabel::num(key, num, num_unit)
                 };
 
                 let id = self.labels.try_dedup(internal_label)?;
@@ -176,11 +354,11 @@ impl Profile {
                 let key = self.resolve(label.key)?;
                 let internal_label = if label.str != ManagedStringId::empty() {
                     let str = self.resolve(label.str)?;
-                    Label::str(key, str)
+                    InternalLabel::str(key, str)
                 } else {
                     let num = label.num;
                     let num_unit = self.resolve(label.num_unit)?;
-                    Label::num(key, num, num_unit)
+                    InternalLabel::num(key, num, num_unit)
                 };
 
                 self.labels.try_dedup(internal_label)
@@ -242,11 +420,11 @@ impl Profile {
         Ok(self.generation)
     }
 
-    pub fn resolve(&mut self, id: ManagedStringId) -> anyhow::Result<StringId> {
+    pub fn resolve(&mut self, id: ManagedStringId) -> anyhow::Result<InternalStringId> {
         let non_empty_string_id = if let Some(valid_id) = NonZeroU32::new(id.value) {
             valid_id
         } else {
-            return Ok(StringId::ZERO); // Both string tables use zero for the empty string
+            return Ok(InternalStringId::ZERO); // Both string tables use zero for the empty string
         };
 
         let string_storage = self.string_storage
@@ -299,6 +477,19 @@ impl Profile {
         )
     }
 
+    /// Sets the profiles dictionary to enable `api2` operations.
+    pub fn set_profiles_dictionary(
+        &mut self,
+        profiles_dictionary: crate::profiles::collections::Arc<ProfilesDictionary>,
+    ) {
+        self.profiles_dictionary_translator = Some(ProfilesDictionaryTranslator {
+            profiles_dictionary,
+            mappings: Default::default(),
+            functions: Default::default(),
+            strings: Default::default(),
+        });
+    }
+
     /// Resets all data except the sample types and period.
     /// Returns the previous Profile on success.
     #[inline]
@@ -308,12 +499,21 @@ impl Profile {
             current_active_samples == 0,
             "Can't rotate the profile, there are still active samples. Drain them and try again."
         );
+        let dict_opt = self
+            .profiles_dictionary_translator
+            .as_ref()
+            .map(|t| t.profiles_dictionary.try_clone())
+            .transpose()?;
 
         let mut profile = Profile::new_internal(
             self.owned_period.take(),
             self.owned_sample_types.take(),
             self.string_storage.clone(),
         );
+
+        if let Some(dict) = dict_opt {
+            profile.set_profiles_dictionary(dict);
+        }
 
         std::mem::swap(&mut *self, &mut profile);
         Ok(profile)
@@ -371,7 +571,8 @@ impl Profile {
             .as_nanos()
             .min(i64::MAX as u128) as i64;
 
-        let mut extended_label_sets: Vec<Vec<Label>> = Vec::with_capacity(self.label_sets.len());
+        let mut extended_label_sets: Vec<Vec<InternalLabel>> =
+            Vec::with_capacity(self.label_sets.len());
 
         for label_set in std::mem::take(&mut self.label_sets) {
             let endpoint_label = self.get_endpoint_for_label_set(&label_set)?;
@@ -401,7 +602,11 @@ impl Profile {
 
             // Use the extra slot in the labels vector to store the timestamp without any reallocs.
             if let Some(ts) = timestamp {
-                labels.push(Label::num(self.timestamp_key, ts.get(), StringId::ZERO))
+                labels.push(InternalLabel::num(
+                    self.timestamp_key,
+                    ts.get(),
+                    InternalStringId::ZERO,
+                ))
             }
             let pprof_labels: Vec<_> = labels.iter().map(protobuf::Label::from).collect();
             if timestamp.is_some() {
@@ -451,7 +656,11 @@ impl Profile {
         for (offset, item) in self.locations.into_iter().enumerate() {
             let location = protobuf::Location {
                 id: Record::from((offset + 1) as u64),
-                mapping_id: Record::from(item.mapping_id.map(MappingId::into_raw_id).unwrap_or(0)),
+                mapping_id: Record::from(
+                    item.mapping_id
+                        .map(InternalMappingId::into_raw_id)
+                        .unwrap_or(0),
+                ),
                 address: Record::from(item.address),
                 line: Record::from(protobuf::Line {
                     function_id: Record::from(item.function_id.into_raw_id()),
@@ -530,7 +739,7 @@ impl Profile {
 
 /// Private helper functions
 impl Profile {
-    fn try_add_function(&mut self, function: &api::Function) -> anyhow::Result<FunctionId> {
+    fn try_add_function(&mut self, function: &api::Function) -> anyhow::Result<InternalFunctionId> {
         let name = self.try_intern(function.name)?;
         let system_name = self.try_intern(function.system_name)?;
         let filename = self.try_intern(function.filename)?;
@@ -545,7 +754,7 @@ impl Profile {
     fn add_string_id_function(
         &mut self,
         function: &api::StringIdFunction,
-    ) -> anyhow::Result<FunctionId> {
+    ) -> anyhow::Result<InternalFunctionId> {
         let name = self.resolve(function.name)?;
         let system_name = self.resolve(function.system_name)?;
         let filename = self.resolve(function.filename)?;
@@ -582,7 +791,10 @@ impl Profile {
         })
     }
 
-    fn try_add_mapping(&mut self, mapping: &api::Mapping) -> anyhow::Result<Option<MappingId>> {
+    fn try_add_mapping(
+        &mut self,
+        mapping: &api::Mapping,
+    ) -> anyhow::Result<Option<InternalMappingId>> {
         #[inline]
         fn is_zero_mapping(mapping: &api::Mapping) -> bool {
             // - PHP, Python, and Ruby use a mapping only as required.
@@ -622,7 +834,7 @@ impl Profile {
     fn add_string_id_mapping(
         &mut self,
         mapping: &api::StringIdMapping,
-    ) -> anyhow::Result<Option<MappingId>> {
+    ) -> anyhow::Result<Option<InternalMappingId>> {
         #[inline]
         fn is_zero_mapping(mapping: &api::StringIdMapping) -> bool {
             // See the other is_zero_mapping for more info, but only Ruby is
@@ -669,7 +881,10 @@ impl Profile {
     /// Fetches the endpoint information for the label. There may be errors,
     /// but there may also be no endpoint information for a given endpoint.
     /// Hence, the return type of Result<Option<_>, _>.
-    fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<Label>> {
+    fn get_endpoint_for_label(
+        &self,
+        label: &InternalLabel,
+    ) -> anyhow::Result<Option<InternalLabel>> {
         anyhow::ensure!(
             label.get_key() == self.endpoints.local_root_span_id_label,
             "bug: get_endpoint_for_label should only be called on labels with the key \"local root span id\""
@@ -681,7 +896,7 @@ impl Profile {
             label
         );
 
-        let local_root_span_id = if let LabelValue::Num { num, .. } = label.get_value() {
+        let local_root_span_id = if let InternalLabelValue::Num { num, .. } = label.get_value() {
             // Safety: the value is an u64, but pprof only has signed values, so we
             // transmute it; the backend does the same.
             #[allow(
@@ -701,10 +916,13 @@ impl Profile {
             .endpoints
             .mappings
             .get(&local_root_span_id)
-            .map(|v| Label::str(self.endpoints.endpoint_label, *v)))
+            .map(|v| InternalLabel::str(self.endpoints.endpoint_label, *v)))
     }
 
-    fn get_endpoint_for_label_set(&self, label_set: &LabelSet) -> anyhow::Result<Option<Label>> {
+    fn get_endpoint_for_label_set(
+        &self,
+        label_set: &LabelSet,
+    ) -> anyhow::Result<Option<InternalLabel>> {
         if let Some(label) = label_set.iter().find_map(|id| {
             if let Ok(label) = self.get_label(*id) {
                 if label.get_key() == self.endpoints.local_root_span_id_label {
@@ -719,7 +937,7 @@ impl Profile {
         }
     }
 
-    fn get_label(&self, id: LabelId) -> anyhow::Result<&Label> {
+    fn get_label(&self, id: LabelId) -> anyhow::Result<&InternalLabel> {
         self.labels
             .get_index(id.to_offset())
             .context("LabelId to have a valid interned index")
@@ -739,17 +957,39 @@ impl Profile {
     }
 
     /// Interns the `str` as a string, returning the id in the string table.
-    /// The empty string is guaranteed to have an id of [StringId::ZERO].
+    /// The empty string is guaranteed to have an id of [InternalStringId::ZERO].
     #[inline]
-    fn intern(&mut self, item: &str) -> StringId {
+    fn intern(&mut self, item: &str) -> InternalStringId {
         self.strings.intern(item)
     }
 
     /// Interns the `str` as a string, returning the id in the string table.
-    /// The empty string is guaranteed to have an id of [StringId::ZERO].
+    /// The empty string is guaranteed to have an id of [InternalStringId::ZERO].
     #[inline]
-    fn try_intern(&mut self, item: &str) -> Result<StringId, string_table::Error> {
+    fn try_intern(&mut self, item: &str) -> Result<InternalStringId, string_table::Error> {
         self.strings.try_intern(item)
+    }
+
+    /// todo: document function and unsafe code
+    #[inline]
+    fn try_intern_string_id(&mut self, item: StringId2) -> anyhow::Result<InternalStringId> {
+        let dict = self
+            .profiles_dictionary_translator
+            .as_ref()
+            .map(|t| t.profiles_dictionary.try_clone())
+            .transpose()?
+            .context("profiles dictionary not set")?;
+
+        let string_ref = StringRef::from(item);
+        let str = unsafe { dict.strings().get(string_ref) };
+        let internal = self.try_intern(str)?;
+        let translator_mut = self
+            .profiles_dictionary_translator
+            .as_mut()
+            .context("profiles dictionary not set")?;
+        translator_mut.strings.try_reserve(1)?;
+        translator_mut.strings.insert(string_ref, internal);
+        Ok(internal)
     }
 
     /// Creates a profile from the period, sample types, and start time using
@@ -762,6 +1002,7 @@ impl Profile {
     ) -> Self {
         let start_time = SystemTime::now();
         let mut profile = Self {
+            profiles_dictionary_translator: None,
             owned_period,
             owned_sample_types,
             active_samples: Default::default(),
@@ -786,7 +1027,7 @@ impl Profile {
         };
 
         let _id = profile.intern("");
-        debug_assert!(_id == StringId::ZERO);
+        debug_assert!(_id == InternalStringId::ZERO);
 
         profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
         profile.endpoints.endpoint_label = profile.intern("trace endpoint");
@@ -849,6 +1090,31 @@ impl Profile {
         Ok(())
     }
 
+    #[cfg(debug_assertions)]
+    fn validate_sample_labels2(&mut self, labels: &[api2::Label2]) -> anyhow::Result<()> {
+        let mut seen: HashMap<StringRef, &api2::Label2> = HashMap::with_capacity(labels.len());
+
+        for label in labels.iter() {
+            let key = StringRef::from(label.key);
+            if let Some(duplicate) = seen.insert(key, label) {
+                anyhow::bail!("Duplicate label on sample: {duplicate:?} {label:?}");
+            }
+
+            if key == StringRef::LOCAL_ROOT_SPAN_ID {
+                anyhow::ensure!(
+                    label.str.is_empty() && label.num != 0,
+                    "Invalid \"local root span id\" label: {label:?}"
+                );
+            }
+
+            anyhow::ensure!(
+                key != StringRef::END_TIMESTAMP_NS,
+                "Timestamp should not be passed as a label {label:?}"
+            );
+        }
+        Ok(())
+    }
+
     fn validate_string_id_sample_labels(
         &mut self,
         sample: &api::StringIdSample,
@@ -860,7 +1126,7 @@ impl Profile {
                 anyhow::bail!("Duplicate label on sample: {:?} {:?}", duplicate, label);
             }
 
-            let key_id: StringId = self.resolve(label.key)?;
+            let key_id: InternalStringId = self.resolve(label.key)?;
 
             if key_id == self.endpoints.local_root_span_id_label {
                 anyhow::ensure!(
@@ -908,9 +1174,10 @@ mod api_tests {
     #[test]
     fn interning() {
         let sample_types = [api::ValueType::new("samples", "count")];
+
         let mut profiles = Profile::new(&sample_types, None);
 
-        let expected_id = StringId::from_offset(profiles.interned_strings_count());
+        let expected_id = InternalStringId::from_offset(profiles.interned_strings_count());
 
         let string = "a";
         let id1 = profiles.intern(string);

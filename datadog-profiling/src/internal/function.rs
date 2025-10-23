@@ -8,20 +8,20 @@ use super::*;
 ///  - ids for linked objects use 32-bit numbers instead of 64 bit ones.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct Function {
-    pub name: StringId,
-    pub system_name: StringId,
-    pub filename: StringId,
+    pub name: InternalStringId,
+    pub system_name: InternalStringId,
+    pub filename: InternalStringId,
 }
 
 impl Item for Function {
-    type Id = FunctionId;
+    type Id = InternalFunctionId;
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[repr(C)]
-pub struct FunctionId(NonZeroU32);
+pub struct InternalFunctionId(NonZeroU32);
 
-impl Id for FunctionId {
+impl Id for InternalFunctionId {
     type RawId = u64;
 
     fn from_offset(offset: usize) -> Self {

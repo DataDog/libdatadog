@@ -4,9 +4,9 @@
 use super::*;
 use datadog_profiling_protobuf::StringOffset;
 
-pub type StringId = StringOffset;
+pub type InternalStringId = StringOffset;
 
-impl Id for StringId {
+impl Id for InternalStringId {
     type RawId = i64;
 
     fn from_offset(inner: usize) -> Self {

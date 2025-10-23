@@ -1,8 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profiles::collections::{ParallelSet, StringId};
-use std::ffi::c_void;
+use crate::profiles::collections::{ParallelSet, StringRef};
 
 /// A representation of a mapping that is an intersection of the Otel and Pprof
 /// representations. Omits boolean attributes because Datadog doesn't use them
@@ -13,15 +12,10 @@ pub struct Mapping {
     pub memory_start: u64,
     pub memory_limit: u64,
     pub file_offset: u64,
-    pub filename: StringId,
-    pub build_id: StringId, // missing in Otel, is it made into an attribute?
+    pub filename: StringRef,
+    pub build_id: StringRef, // missing in Otel, is it made into an attribute?
 }
 
-// Avoid NonNull<()> in FFI; see PR:
-// https://github.com/mozilla/cbindgen/pull/1098
-pub type MappingId = std::ptr::NonNull<c_void>;
-
-// cbindgen didn't understand Option<MappingId> :'(
-pub type OptionalMappingId = *mut c_void;
+pub use crate::api2::MappingId2;
 
 pub type MappingSet = ParallelSet<Mapping, 2>;

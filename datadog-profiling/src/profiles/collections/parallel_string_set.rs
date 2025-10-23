@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::parallel_slice_set::ParallelSliceSet;
-use super::string_set::{StringId, WELL_KNOWN_STRING_IDS};
+use super::string_set::{StringRef, WELL_KNOWN_STRING_IDS};
 use super::{Arc, ParallelSliceStorage};
 use super::{ArcOverflow, SetError};
 use core::ptr;
@@ -71,16 +71,16 @@ impl ParallelStringSet {
     /// # Safety
     /// The string must not have been inserted yet, as it skips checking if
     /// the string is already present.
-    pub unsafe fn insert_unique_uncontended(&self, str: &str) -> Result<StringId, SetError> {
+    pub unsafe fn insert_unique_uncontended(&self, str: &str) -> Result<StringRef, SetError> {
         let thin_slice = self.inner.insert_unique_uncontended(str.as_bytes())?;
-        Ok(StringId(thin_slice.into()))
+        Ok(StringRef(thin_slice.into()))
     }
 
     /// Adds the string to the string set if it isn't present already, and
     /// returns a handle to the string that can be used to retrieve it later.
-    pub fn try_insert(&self, str: &str) -> Result<StringId, SetError> {
+    pub fn try_insert(&self, str: &str) -> Result<StringRef, SetError> {
         let thin_slice = self.inner.try_insert(str.as_bytes())?;
-        Ok(StringId(thin_slice.into()))
+        Ok(StringRef(thin_slice.into()))
     }
 
     /// Selects which shard a hash should go to (0-3 for 4 shards).
@@ -90,7 +90,7 @@ impl ParallelStringSet {
 
     /// # Safety
     /// The caller must ensure that the StringId is valid for this set.
-    pub unsafe fn get(&self, id: StringId) -> &str {
+    pub unsafe fn get(&self, id: StringRef) -> &str {
         // SAFETY: safe as long as caller respects this function's safety.
         unsafe { core::mem::transmute::<&str, &str>(id.0.deref()) }
     }
@@ -128,36 +128,36 @@ mod tests {
         let set = ParallelStringSet::try_new().unwrap();
         // SAFETY: these are all well-known strings.
         unsafe {
-            let str = set.get(StringId::EMPTY);
+            let str = set.get(StringRef::EMPTY);
             assert_eq!(str, "");
 
-            let str = set.get(StringId::END_TIMESTAMP_NS);
+            let str = set.get(StringRef::END_TIMESTAMP_NS);
             assert_eq!(str, "end_timestamp_ns");
 
-            let str = set.get(StringId::LOCAL_ROOT_SPAN_ID);
+            let str = set.get(StringRef::LOCAL_ROOT_SPAN_ID);
             assert_eq!(str, "local root span id");
 
-            let str = set.get(StringId::TRACE_ENDPOINT);
+            let str = set.get(StringRef::TRACE_ENDPOINT);
             assert_eq!(str, "trace endpoint");
 
-            let str = set.get(StringId::SPAN_ID);
+            let str = set.get(StringRef::SPAN_ID);
             assert_eq!(str, "span id");
         };
 
         let id = set.try_insert("").unwrap();
-        assert_eq!(&*id.0, &*StringId::EMPTY.0);
+        assert_eq!(&*id.0, &*StringRef::EMPTY.0);
 
         let id = set.try_insert("end_timestamp_ns").unwrap();
-        assert_eq!(&*id.0, &*StringId::END_TIMESTAMP_NS.0);
+        assert_eq!(&*id.0, &*StringRef::END_TIMESTAMP_NS.0);
 
         let id = set.try_insert("local root span id").unwrap();
-        assert_eq!(&*id.0, &*StringId::LOCAL_ROOT_SPAN_ID.0);
+        assert_eq!(&*id.0, &*StringRef::LOCAL_ROOT_SPAN_ID.0);
 
         let id = set.try_insert("trace endpoint").unwrap();
-        assert_eq!(&*id.0, &*StringId::TRACE_ENDPOINT.0);
+        assert_eq!(&*id.0, &*StringRef::TRACE_ENDPOINT.0);
 
         let id = set.try_insert("span id").unwrap();
-        assert_eq!(&*id.0, &*StringId::SPAN_ID.0);
+        assert_eq!(&*id.0, &*StringRef::SPAN_ID.0);
     }
 
     #[test]

@@ -1596,6 +1596,7 @@ dependencies = [
 name = "datadog-profiling-ffi"
 version = "22.1.0"
 dependencies = [
+ "allocator-api2",
  "anyhow",
  "build_common",
  "data-pipeline-ffi",

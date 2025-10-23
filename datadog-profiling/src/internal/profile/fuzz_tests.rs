@@ -523,6 +523,7 @@ fn test_fuzz_add_sample() {
                 .iter()
                 .map(api::ValueType::from)
                 .collect();
+
             let mut expected_profile = Profile::new(&sample_types, None);
             let mut samples_with_timestamps = Vec::new();
             let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
@@ -580,6 +581,7 @@ fn fuzz_add_sample_with_fixed_sample_length() {
         })
         .for_each(|(sample_types, samples)| {
             let api_sample_types: Vec<_> = sample_types.iter().map(api::ValueType::from).collect();
+
             let mut profile = Profile::new(&api_sample_types, None);
             let mut samples_with_timestamps = Vec::new();
             let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =

@@ -65,3 +65,14 @@ impl<T> ArcHandle<T> {
         }
     }
 }
+
+impl<T> TryFrom<ArcHandle<T>> for Arc<T> {
+    type Error = EmptyHandleError;
+
+    fn try_from(value: ArcHandle<T>) -> Result<Self, Self::Error> {
+        match NonNull::new(value.0) {
+            None => Err(EmptyHandleError),
+            Some(ptr) => Ok(unsafe { Arc::from_raw(ptr) }),
+        }
+    }
+}

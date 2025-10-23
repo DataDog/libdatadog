@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::string_storage::{get_inner_string_storage, ManagedStringStorage};
+use crate::ArcHandle;
 use anyhow::Context;
-use datadog_profiling::api;
-use datadog_profiling::api::ManagedStringId;
+use datadog_profiling::api::{self, ManagedStringId};
+use datadog_profiling::api2;
 use datadog_profiling::internal;
+use datadog_profiling::profiles::datatypes::ProfilesDictionary;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use ddcommon_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
 use function_name::named;
@@ -155,7 +157,6 @@ pub struct Function<'a> {
     pub filename: CharSlice<'a>,
     pub filename_id: ManagedStringId,
 }
-
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct Location<'a> {
@@ -214,6 +215,25 @@ pub struct Sample<'a> {
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
     pub labels: Slice<'a, Label<'a>>,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct Sample2<'a> {
+    /// The leaf is at locations[0].
+    pub locations: Slice<'a, api2::Location2>,
+
+    /// The type and unit of each value is defined by the corresponding
+    /// entry in Profile.sample_type. All samples must have the same
+    /// number of values, the same as the length of Profile.sample_type.
+    /// When aggregating multiple samples into a single sample, the
+    /// result has a list of values that is the element-wise sum of the
+    /// lists of the originals.
+    pub values: Slice<'a, i64>,
+
+    /// label includes additional context for this sample. It can include
+    /// things like a thread id, allocation size, etc
+    pub labels: Slice<'a, api2::Label2>,
 }
 
 impl<'a> TryFrom<&'a Mapping<'a>> for api::Mapping<'a> {
@@ -390,7 +410,7 @@ impl<'a> From<Sample<'a>> for api::StringIdSample<'a> {
 ///   time.
 ///
 /// # Safety
-/// All slices must be have pointers that are suitably aligned for their type
+/// All slices must have pointers that are suitably aligned for their type
 /// and must have the correct number of elements for the slice.
 #[no_mangle]
 #[must_use]
@@ -435,6 +455,26 @@ unsafe fn profile_new(
     ProfileNewResult::Ok(ffi_profile)
 }
 
+/// Set the profiles dictionary on an existing profile.
+/// # Safety
+/// - `profile` must be a valid pointer to a Profile created by this module.
+/// - `profiles_dictionary` must be a valid handle to a live ProfilesDictionary.
+#[must_use]
+#[named]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_set_profiles_dictionary(
+    profile: *mut Profile,
+    profiles_dictionary: ArcHandle<ProfilesDictionary>,
+) -> ddcommon_ffi::VoidResult {
+    ddcommon_ffi::wrap_with_void_ffi_result!({
+        let inner = profile_ptr_to_inner(profile)?;
+        let dict = datadog_profiling::profiles::collections::Arc::try_from(
+            profiles_dictionary.try_clone()?,
+        )?;
+        inner.set_profiles_dictionary(dict);
+    })
+}
+
 /// # Safety
 /// The `profile` can be null, but if non-null it must point to a Profile
 /// made by this module, which has not previously been dropped.
@@ -475,9 +515,6 @@ impl From<ProfileNewResult> for Result<Profile, Error> {
 /// If successful, it returns the Ok variant.
 /// On error, it holds an error message in the error variant.
 ///
-/// # Safety
-/// The `profile` ptr must point to a valid Profile object created by this
-/// module.
 /// This call is _NOT_ thread-safe.
 #[must_use]
 #[no_mangle]
@@ -498,6 +535,35 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
         } else {
             profile.try_add_sample(sample.try_into()?, timestamp)
         }
+    })()
+    .context("ddog_prof_Profile_add failed")
+    .into()
+}
+
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module. All pointers inside the `sample` need to be valid for the duration
+/// of this call.
+///
+/// If successful, it returns the Ok variant.
+/// On error, it holds an error message in the error variant.
+///
+/// This call is _NOT_ thread-safe.
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_add2(
+    profile: *mut Profile,
+    sample: Sample2,
+    timestamp: Option<NonZeroI64>,
+) -> ProfileResult {
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+
+        let locations = sample.locations.try_as_slice()?;
+        let values = sample.values.try_as_slice()?;
+        let labels = sample.labels.try_as_slice()?;
+
+        profile.try_add_sample2(locations, values, labels, timestamp)
     })()
     .context("ddog_prof_Profile_add failed")
     .into()

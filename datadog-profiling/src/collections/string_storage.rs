@@ -8,13 +8,13 @@ use std::hash::BuildHasherDefault;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 
-use super::identifiable::StringId;
+use super::identifiable::InternalStringId;
 use super::string_table::StringTable;
 
 #[derive(PartialEq, Debug)]
 struct ManagedStringData {
     str: Rc<str>,
-    cached_seq_num: Cell<Option<(InternalCachedProfileId, StringId)>>,
+    cached_seq_num: Cell<Option<(InternalCachedProfileId, InternalStringId)>>,
     usage_count: Cell<u32>,
 }
 
@@ -170,7 +170,7 @@ impl ManagedStringStorage {
         id: NonZeroU32,
         profile_strings: &mut StringTable,
         cached_profile_id: &CachedProfileId,
-    ) -> anyhow::Result<StringId> {
+    ) -> anyhow::Result<InternalStringId> {
         let data = self.get_data(id.into())?;
 
         match data.cached_seq_num.get() {

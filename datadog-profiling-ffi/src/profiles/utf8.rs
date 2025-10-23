@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_profiling::profiles::collections::{ParallelStringSet, StringId};
+use datadog_profiling::profiles::collections::{ParallelStringSet, StringRef};
 use datadog_profiling::profiles::ProfileError;
 use ddcommon::error::FfiSafeErrorMessage;
 use ddcommon_ffi::slice::{AsBytes, CharSlice, SliceConversionError};
@@ -133,7 +133,7 @@ pub fn insert_str(
     set: &ParallelStringSet,
     str: CharSlice<'_>,
     utf8_options: Utf8Option,
-) -> Result<StringId, ProfileError> {
+) -> Result<StringRef, ProfileError> {
     let bytes = str.try_as_bytes().map_err(ProfileError::from_thin_error)?;
     let string = match utf8_options {
         Utf8Option::Assume => {

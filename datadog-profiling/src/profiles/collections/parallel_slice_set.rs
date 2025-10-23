@@ -135,7 +135,7 @@ impl<T: Copy + hash::Hash + Eq + 'static> ParallelSliceSet<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::profiles::collections::string_set::{StringId, UnsyncStringSet};
+    use crate::profiles::collections::string_set::{StringRef, UnsyncStringSet};
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -143,12 +143,12 @@ mod tests {
     /// This tests that the generic slice infrastructure works with composite types.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     struct Function {
-        file_name: StringId,
-        function_name: StringId,
+        file_name: StringRef,
+        function_name: StringRef,
     }
 
     impl Function {
-        fn new(file_name: StringId, function_name: StringId) -> Self {
+        fn new(file_name: StringRef, function_name: StringRef) -> Self {
             Self {
                 file_name,
                 function_name,

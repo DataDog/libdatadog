@@ -11,13 +11,14 @@ mod profile_index;
 mod replayer;
 
 use clap::{command, Arg, ArgAction};
+use datadog_profiling::profiles::collections::Arc;
+use datadog_profiling::profiles::datatypes::ProfilesDictionary;
 use prost::Message;
+pub use replayer::*;
 use std::borrow::Cow;
 use std::io::Cursor;
 use std::time::Instant;
 use sysinfo::{Pid, ProcessExt, RefreshKind, System, SystemExt};
-
-pub use replayer::*;
 
 /// Returns (_, true) if the midpoint is odd.
 fn midpoint(values: &[usize]) -> Option<(usize, bool)> {

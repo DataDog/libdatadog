@@ -5,10 +5,9 @@ use crate::arc_handle::ArcHandle;
 use crate::profiles::utf8::Utf8Option;
 use crate::profiles::{ensure_non_null_insert, ensure_non_null_out_parameter};
 use crate::ProfileStatus;
-use datadog_profiling::profiles::collections::StringId;
-use datadog_profiling::profiles::datatypes::{
-    Function, FunctionId, Mapping, MappingId, ProfilesDictionary,
-};
+use datadog_profiling::api2::{Function2, FunctionId2, Mapping2, MappingId2, StringId2};
+use datadog_profiling::profiles::collections::{SetId, StringRef};
+use datadog_profiling::profiles::datatypes::{self as dt, ProfilesDictionary};
 use datadog_profiling::profiles::ProfileError;
 use ddcommon_ffi::CharSlice;
 
@@ -16,31 +15,35 @@ use ddcommon_ffi::CharSlice;
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
 #[no_mangle]
-pub static DDOG_PROF_STRINGID_EMPTY: StringId = StringId::EMPTY;
+pub static DDOG_PROF_STRINGID_EMPTY: StringId2 = StringId2::EMPTY;
 
 /// A StringId that represents the string "end_timestamp_ns".
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
 #[no_mangle]
-pub static DDOG_PROF_STRINGID_END_TIMESTAMP_NS: StringId = StringId::END_TIMESTAMP_NS;
+pub static DDOG_PROF_STRINGID_END_TIMESTAMP_NS: StringId2 =
+    unsafe { core::mem::transmute(StringRef::END_TIMESTAMP_NS) };
 
 /// A StringId that represents the string "local root span id".
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
 #[no_mangle]
-pub static DDOG_PROF_STRINGID_LOCAL_ROOT_SPAN_ID: StringId = StringId::LOCAL_ROOT_SPAN_ID;
+pub static DDOG_PROF_STRINGID_LOCAL_ROOT_SPAN_ID: StringId2 =
+    unsafe { core::mem::transmute(StringRef::LOCAL_ROOT_SPAN_ID) };
 
 /// A StringId that represents the string "trace endpoint".
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
 #[no_mangle]
-pub static DDOG_PROF_STRINGID_TRACE_ENDPOINT: StringId = StringId::TRACE_ENDPOINT;
+pub static DDOG_PROF_STRINGID_TRACE_ENDPOINT: StringId2 =
+    unsafe { core::mem::transmute(StringRef::TRACE_ENDPOINT) };
 
 /// A StringId that represents the string "span id".
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
 #[no_mangle]
-pub static DDOG_PROF_STRINGID_SPAN_ID: StringId = StringId::SPAN_ID;
+pub static DDOG_PROF_STRINGID_SPAN_ID: StringId2 =
+    unsafe { core::mem::transmute(StringRef::SPAN_ID) };
 
 /// Allocates a new `ProfilesDictionary` and writes a handle to it in `handle`.
 ///
@@ -95,16 +98,22 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_try_clone(
 /// - `function` must be non-null and point to a valid `Function` for the duration of the call.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_function(
-    function_id: *mut FunctionId,
+    function_id: *mut FunctionId2,
     handle: ArcHandle<ProfilesDictionary>,
-    function: *const Function,
+    function: *const Function2,
 ) -> ProfileStatus {
     ensure_non_null_out_parameter!(function_id);
     ensure_non_null_insert!(function);
     ProfileStatus::from(|| -> Result<(), ProfileError> {
         let dict = handle.as_inner()?;
-        let id = dict.functions().try_insert(*function)?;
-        unsafe { function_id.write(id.into_raw()) };
+        let f2: Function2 = unsafe { *function };
+        let func = dt::Function {
+            name: StringRef::from(f2.name),
+            system_name: StringRef::from(f2.system_name),
+            file_name: StringRef::from(f2.file_name),
+        };
+        let id = dict.functions().try_insert(func)?;
+        unsafe { function_id.write(core::mem::transmute::<SetId<dt::Function>, FunctionId2>(id)) };
         Ok(())
     }())
 }
@@ -118,16 +127,24 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_function(
 /// - `mapping` must be non-null and point to a valid `Mapping` for the duration of the call.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_mapping(
-    mapping_id: *mut MappingId,
+    mapping_id: *mut MappingId2,
     handle: ArcHandle<ProfilesDictionary>,
-    mapping: *const Mapping,
+    mapping: *const Mapping2,
 ) -> ProfileStatus {
     ensure_non_null_out_parameter!(mapping_id);
     ensure_non_null_insert!(mapping);
     ProfileStatus::from(|| -> Result<(), ProfileError> {
         let dict = handle.as_inner()?;
-        let id = dict.mappings().try_insert(*mapping)?;
-        unsafe { mapping_id.write(id.into_raw()) };
+        let m2: Mapping2 = unsafe { *mapping };
+        let map = dt::Mapping {
+            memory_start: m2.memory_start,
+            memory_limit: m2.memory_limit,
+            file_offset: m2.file_offset,
+            filename: StringRef::from(m2.filename),
+            build_id: StringRef::from(m2.build_id),
+        };
+        let id = dict.mappings().try_insert(map)?;
+        unsafe { mapping_id.write(core::mem::transmute::<SetId<dt::Mapping>, MappingId2>(id)) };
         Ok(())
     }())
 }
@@ -142,7 +159,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_mapping(
 ///   `byte_slice`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_str(
-    string_id: *mut StringId,
+    string_id: *mut StringId2,
     handle: ArcHandle<ProfilesDictionary>,
     byte_slice: CharSlice,
     utf8_option: Utf8Option,
@@ -151,7 +168,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_str(
     ProfileStatus::from(|| -> Result<(), ProfileError> {
         let dict = handle.as_inner()?;
         crate::profiles::utf8::insert_str(dict.strings(), byte_slice, utf8_option)
-            .map(|id| unsafe { string_id.write(id) })
+            .map(|id| unsafe { string_id.write(core::mem::transmute::<StringRef, StringId2>(id)) })
     }())
 }
 
@@ -172,16 +189,17 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_str(
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_get_str(
     result: *mut CharSlice<'static>,
     handle: ArcHandle<ProfilesDictionary>,
-    string_id: StringId,
+    string_id: StringId2,
 ) -> ProfileStatus {
     ensure_non_null_out_parameter!(result);
     ProfileStatus::from(handle.as_inner().map(|dict| {
+        let string_ref = StringRef::from(string_id);
         // SAFETY: It's not actually safe--as indicated in the docs
         // for this function, the caller needs to be sure the string
         // set in the dictionary outlives the slice.
         result.write(unsafe {
             std::mem::transmute::<CharSlice<'_>, CharSlice<'static>>(CharSlice::from(
-                dict.strings().get(string_id),
+                dict.strings().get(string_ref),
             ))
         })
     }))
@@ -210,7 +228,6 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_drop(
 mod tests {
     use super::*;
     use crate::profiles::utf8::Utf8Option;
-    use std::ptr::NonNull;
 
     #[test]
     fn test_basics_including_drop() {
@@ -218,7 +235,7 @@ mod tests {
         unsafe {
             Result::from(ddog_prof_ProfilesDictionary_new(&mut handle)).unwrap();
 
-            let mut string_id = StringId::default();
+            let mut string_id = StringId2::default();
             Result::from(ddog_prof_ProfilesDictionary_insert_str(
                 &mut string_id,
                 handle,
@@ -227,8 +244,8 @@ mod tests {
             ))
             .unwrap();
 
-            let mut function_id = NonNull::dangling();
-            let function = Function {
+            let mut function_id = FunctionId2::default();
+            let function = Function2 {
                 name: string_id,
                 system_name: Default::default(),
                 file_name: Default::default(),
