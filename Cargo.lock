@@ -1278,47 +1278,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-ipc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "criterion",
- "datadog-ipc-macros",
- "futures",
- "glibc_version",
- "io-lifetimes",
- "libc",
- "libdd-common",
- "libdd-tinybytes",
- "memfd",
- "nix",
- "page_size",
- "pin-project",
- "pretty_assertions",
- "sendfd",
- "serde",
- "spawn_worker",
- "tarpc",
- "tempfile",
- "tokio",
- "tokio-serde",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "winapi 0.3.9",
- "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "datadog-ipc-macros"
-version = "0.0.1"
-dependencies = [
- "quote",
- "syn 2.0.87",
-]
-
-[[package]]
 name = "datadog-live-debugger"
 version = "1.0.0"
 dependencies = [
@@ -1390,8 +1349,6 @@ dependencies = [
  "bincode",
  "chrono",
  "console-subscriber",
- "datadog-ipc",
- "datadog-ipc-macros",
  "datadog-live-debugger",
  "datadog-sidecar-macros",
  "futures",
@@ -1406,6 +1363,8 @@ dependencies = [
  "libdd-crashtracker-ffi",
  "libdd-data-pipeline",
  "libdd-dogstatsd-client",
+ "libdd-ipc",
+ "libdd-ipc-macros",
  "libdd-remote-config",
  "libdd-telemetry",
  "libdd-tinybytes",
@@ -1440,7 +1399,6 @@ dependencies = [
 name = "datadog-sidecar-ffi"
 version = "0.0.1"
 dependencies = [
- "datadog-ipc",
  "datadog-live-debugger",
  "datadog-sidecar",
  "http",
@@ -1449,6 +1407,7 @@ dependencies = [
  "libdd-common-ffi",
  "libdd-crashtracker-ffi",
  "libdd-dogstatsd-client",
+ "libdd-ipc",
  "libdd-remote-config",
  "libdd-telemetry",
  "libdd-telemetry-ffi",
@@ -2837,6 +2796,47 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "libdd-ipc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "criterion",
+ "futures",
+ "glibc_version",
+ "io-lifetimes",
+ "libc",
+ "libdd-common",
+ "libdd-ipc-macros",
+ "libdd-tinybytes",
+ "memfd",
+ "nix",
+ "page_size",
+ "pin-project",
+ "pretty_assertions",
+ "sendfd",
+ "serde",
+ "spawn_worker",
+ "tarpc",
+ "tempfile",
+ "tokio",
+ "tokio-serde",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "winapi 0.3.9",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "libdd-ipc-macros"
+version = "0.0.1"
+dependencies = [
+ "quote",
+ "syn 2.0.87",
 ]
 
 [[package]]

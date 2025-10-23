@@ -4,9 +4,9 @@
 #[cfg(not(windows))]
 use criterion::{criterion_group, criterion_main, Criterion};
 #[cfg(all(not(windows), not(target_arch = "aarch64")))]
-use datadog_ipc::example_interface::ExampleInterfaceResponse;
+use libdd_ipc::example_interface::ExampleInterfaceResponse;
 #[cfg(not(windows))]
-use datadog_ipc::{
+use libdd_ipc::{
     example_interface::{ExampleInterfaceRequest, ExampleServer, ExampleTransport},
     platform::Channel,
 };

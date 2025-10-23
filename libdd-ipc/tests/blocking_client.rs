@@ -9,10 +9,10 @@ use std::{
 
 use tokio::runtime;
 
-use datadog_ipc::example_interface::{
+use libdd_ipc::example_interface::{
     ExampleInterfaceRequest, ExampleInterfaceResponse, ExampleServer, ExampleTransport,
 };
-use datadog_ipc::platform::Channel;
+use libdd_ipc::platform::Channel;
 
 #[test]
 #[cfg_attr(miri, ignore)]

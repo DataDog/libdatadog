@@ -20,7 +20,7 @@ use super::{
 
 extern crate self as datadog_ipc;
 
-#[datadog_ipc_macros::impl_transfer_handles]
+#[libdd_ipc_macros::impl_transfer_handles]
 #[tarpc::service]
 pub trait ExampleInterface {
     async fn notify() -> ();
