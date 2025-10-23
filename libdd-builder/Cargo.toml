@@ -1,5 +1,5 @@
 [package]
-name = "builder"
+name = "libdd-builder"
 build = "build/main.rs"
 rust-version.workspace = true
 edition.workspace = true
