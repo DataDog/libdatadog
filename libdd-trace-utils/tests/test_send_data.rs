@@ -3,17 +3,17 @@
 
 #[cfg(test)]
 mod tracing_integration_tests {
-    use datadog_trace_utils::send_data::SendData;
-    use datadog_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
-    use datadog_trace_utils::test_utils::{create_test_json_span, create_test_no_alloc_span};
-    use datadog_trace_utils::trace_utils::TracerHeaderTags;
-    use datadog_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
     #[cfg(target_os = "linux")]
     use ddcommon::connector::uds::socket_path_to_uri;
     use ddcommon::{hyper_migration, Endpoint};
     use http_body_util::BodyExt;
     #[cfg(target_os = "linux")]
     use hyper::Uri;
+    use libdd_trace_utils::send_data::SendData;
+    use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
+    use libdd_trace_utils::test_utils::{create_test_json_span, create_test_no_alloc_span};
+    use libdd_trace_utils::trace_utils::TracerHeaderTags;
+    use libdd_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
     use serde_json::json;
     use std::collections::HashMap;
     #[cfg(target_os = "linux")]
@@ -82,7 +82,7 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_trace_snapshot_test() {
-        let relative_snapshot_path = "datadog-trace-utils/tests/snapshots/";
+        let relative_snapshot_path = "libdd-trace-utils/tests/snapshots/";
         let snapshot_name = "compare_send_data_v04_trace_snapshot_test";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
 
@@ -124,7 +124,7 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_trace_meta_struct_snapshot_test() {
-        let relative_snapshot_path = "datadog-trace-utils/tests/snapshots/";
+        let relative_snapshot_path = "libdd-trace-utils/tests/snapshots/";
         let snapshot_name = "compare_send_data_v04_trace_meta_struct_snapshot_test";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
 
@@ -255,7 +255,7 @@ mod tracing_integration_tests {
     #[cfg(target_os = "linux")]
     // Validate that we can correctly send traces to the agent via UDS
     async fn uds_snapshot_test() {
-        let relative_snapshot_path = "datadog-trace-utils/tests/snapshots/";
+        let relative_snapshot_path = "libdd-trace-utils/tests/snapshots/";
         let snapshot_name = "compare_send_data_v04_trace_snapshot_uds_test";
         // Create a temporary directory for the socket to be mounted in the test agent container
         let socket_dir = tempfile::Builder::new()

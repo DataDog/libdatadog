@@ -34,8 +34,8 @@ tokio-util = "0.7.11"
 ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common", default-features = false }
 ddtelemetry = { version = "1.0.0", path = "../libdd-telemetry", package = "libdd-telemetry", default-features = false }
 datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
-datadog-trace-stats = { path = "../datadog-trace-stats"}
-datadog-trace-utils = { path = "../datadog-trace-utils", default-features = false }
+datadog-trace-stats = { version = "1.0.0", path = "../libdd-trace-stats", package = "libdd-trace-stats" }
+datadog-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", package = "libdd-trace-utils", default-features = false }
 datadog-ddsketch = { version = "1.0.0", path = "../libdd-sketch", package = "libdd-sketch" }
 dogstatsd-client = { path = "../dogstatsd-client", default-features = false }
 tinybytes = { path = "../tinybytes", features = [
@@ -50,7 +50,7 @@ bench = false
 datadog-log = { path = "../datadog-log" }
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5.1"
-datadog-trace-utils = { path = "../datadog-trace-utils", features = [
+datadog-trace-utils = { path = "../libdd-trace-utils", package = "libdd-trace-utils", features = [
     "test-utils",
 ] }
 httpmock = "0.8.0-alpha.1"

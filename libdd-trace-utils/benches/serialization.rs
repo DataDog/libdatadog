@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::{black_box, criterion_group, Criterion};
-use datadog_trace_utils::msgpack_decoder;
-use datadog_trace_utils::msgpack_encoder;
+use libdd_trace_utils::msgpack_decoder;
+use libdd_trace_utils::msgpack_encoder;
 use serde_json::{json, Value};
 
 fn generate_spans(num_spans: usize, trace_id: u64) -> Vec<Value> {
