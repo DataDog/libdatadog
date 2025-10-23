@@ -3,8 +3,8 @@
 
 pub mod tracer_metadata;
 
-use datadog_library_config::{self as lib_config, LibraryConfigSource};
 use ddcommon_ffi::{self as ffi, slice::AsBytes, CString, CharSlice, Error};
+use libdd_library_config::{self as lib_config, LibraryConfigSource};
 
 #[cfg(all(feature = "catch_panic", panic = "unwind"))]
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -100,10 +100,10 @@ impl LibraryConfig {
     }
 
     fn logged_result_to_ffi_with_messages(
-        result: datadog_library_config::LoggedResult<Vec<lib_config::LibraryConfig>, anyhow::Error>,
+        result: libdd_library_config::LoggedResult<Vec<lib_config::LibraryConfig>, anyhow::Error>,
     ) -> LibraryConfigLoggedResult {
         match result {
-            datadog_library_config::LoggedResult::Ok(configs, logs) => {
+            libdd_library_config::LoggedResult::Ok(configs, logs) => {
                 match Self::rs_vec_to_ffi(configs) {
                     Ok(ffi_configs) => {
                         let messages = logs.join("\n");
@@ -116,7 +116,7 @@ impl LibraryConfig {
                     Err(err) => LibraryConfigLoggedResult::Err(err.into()),
                 }
             }
-            datadog_library_config::LoggedResult::Err(err) => {
+            libdd_library_config::LoggedResult::Err(err) => {
                 LibraryConfigLoggedResult::Err(err.into())
             }
         }

@@ -1,10 +1,10 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(target_os = "linux")]
-use datadog_library_config::tracer_metadata::AnonymousFileHandle;
-use datadog_library_config::tracer_metadata::{self, TracerMetadata};
 use ddcommon_ffi::Result;
+#[cfg(target_os = "linux")]
+use libdd_library_config::tracer_metadata::AnonymousFileHandle;
+use libdd_library_config::tracer_metadata::{self, TracerMetadata};
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 

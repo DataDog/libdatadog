@@ -2,7 +2,7 @@
 # This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 [package]
-name = "datadog-library-config-ffi"
+name = "libdd-library-config-ffi"
 version = "0.0.2"
 edition = "2021"
 
@@ -13,7 +13,7 @@ bench = false
 [dependencies]
 ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
 ddcommon-ffi = { path = "../libdd-common-ffi", package = "libdd-common-ffi", default-features = false }
-datadog-library-config = { path = "../datadog-library-config" }
+libdd-library-config = { path = "../libdd-library-config" }
 anyhow = "1.0"
 constcat = "0.4.1"
 

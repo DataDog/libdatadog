@@ -2,7 +2,7 @@
 # This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 [package]
-name = "datadog-library-config"
+name = "libdd-library-config"
 version = "1.0.0"
 edition = "2021"
 
