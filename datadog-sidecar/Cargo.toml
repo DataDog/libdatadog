@@ -34,8 +34,8 @@ http = "1.0"
 hyper = { workspace = true}
 http-body-util = "0.1"
 
-datadog-ipc = { path = "../datadog-ipc", features = ["tiny-bytes"] }
-datadog-ipc-macros = { path = "../datadog-ipc-macros" }
+datadog-ipc = { path = "../libdd-ipc", package = "libdd-ipc", features = ["tiny-bytes"] }
+datadog-ipc-macros = { path = "../libdd-ipc-macros", package = "libdd-ipc-macros" }
 
 rand = "0.8.3"
 serde = { version = "1.0", features = ["derive", "rc"] }

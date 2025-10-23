@@ -1,6 +1,6 @@
 [package]
 edition = "2021"
-name = "datadog-ipc"
+name = "libdd-ipc"
 version = "0.1.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -23,7 +23,7 @@ tinybytes = { version = "1.0.0", path = "../libdd-tinybytes", package = "libdd-t
 tarpc = { path = "./tarpc", default-features = false, features = ["serde-transport"] }
 
 ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
-datadog-ipc-macros = { path = "../datadog-ipc-macros" }
+libdd-ipc-macros = { path = "../libdd-ipc-macros" }
 
 [dev-dependencies]
 criterion = "0.5"
