@@ -1110,26 +1110,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-ffe"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "criterion",
- "derive_more",
- "env_logger",
- "faststr",
- "log",
- "md5",
- "regex",
- "serde",
- "serde-bool",
- "serde_json",
- "serde_with",
- "thiserror 2.0.17",
- "url",
-]
-
-[[package]]
 name = "datadog-sidecar"
 version = "0.0.1"
 dependencies = [
@@ -2515,6 +2495,26 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "libdd-ffe"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "criterion",
+ "derive_more",
+ "env_logger",
+ "faststr",
+ "log",
+ "md5",
+ "regex",
+ "serde",
+ "serde-bool",
+ "serde_json",
+ "serde_with",
+ "thiserror 2.0.17",
+ "url",
 ]
 
 [[package]]
