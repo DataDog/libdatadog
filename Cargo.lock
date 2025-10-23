@@ -508,10 +508,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "current_platform",
- "datadog-crashtracker",
  "datadog-profiling",
  "libc",
  "libdd-common",
+ "libdd-crashtracker",
  "nix",
  "once_cell",
  "serde_json",
@@ -1302,60 +1302,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-crashtracker"
-version = "1.0.0"
-dependencies = [
- "anyhow",
- "backtrace",
- "blazesym",
- "cc",
- "cc_utils",
- "chrono",
- "criterion",
- "goblin",
- "http",
- "libc",
- "libdd-common",
- "libdd-telemetry",
- "nix",
- "num-derive",
- "num-traits",
- "os_info",
- "page_size",
- "portable-atomic",
- "rand 0.8.5",
- "schemars",
- "serde",
- "serde_json",
- "symbolic-common",
- "symbolic-demangle",
- "tempfile",
- "thiserror 1.0.68",
- "tokio",
- "uuid",
- "windows 0.59.0",
-]
-
-[[package]]
-name = "datadog-crashtracker-ffi"
-version = "22.1.0"
-dependencies = [
- "anyhow",
- "build_common",
- "datadog-crashtracker",
- "ddcommon-ffi",
- "function_name",
- "libc",
- "libdd-common",
- "serde",
- "serde_json",
- "symbolic-common",
- "symbolic-demangle",
- "tempfile",
- "windows 0.59.0",
-]
-
-[[package]]
 name = "datadog-ipc"
 version = "0.1.0"
 dependencies = [
@@ -1418,8 +1364,8 @@ dependencies = [
  "build_common",
  "constcat",
  "datadog-library-config",
- "ddcommon-ffi",
  "libdd-common",
+ "libdd-common-ffi",
  "tempfile",
 ]
 
@@ -1449,8 +1395,8 @@ version = "0.0.1"
 dependencies = [
  "build_common",
  "datadog-live-debugger",
- "ddcommon-ffi",
  "libdd-common",
+ "libdd-common-ffi",
  "log",
  "percent-encoding",
  "serde_json",
@@ -1464,6 +1410,12 @@ name = "datadog-log"
 version = "1.0.0"
 dependencies = [
  "chrono",
+<<<<<<< HEAD
+||||||| parent of 3bdfc1c2 (move crashtracker, crashtracker-ffi and ddcommon-ffi)
+ "ddcommon-ffi",
+=======
+ "libdd-common-ffi",
+>>>>>>> 3bdfc1c2 (move crashtracker, crashtracker-ffi and ddcommon-ffi)
  "tempfile",
  "tracing",
  "tracing-appender",
@@ -1476,7 +1428,7 @@ version = "22.1.0"
 dependencies = [
  "build_common",
  "datadog-log",
- "ddcommon-ffi",
+ "libdd-common-ffi",
 ]
 
 [[package]]
@@ -1516,11 +1468,9 @@ version = "22.1.0"
 dependencies = [
  "anyhow",
  "build_common",
- "datadog-crashtracker-ffi",
  "datadog-library-config-ffi",
  "datadog-log-ffi",
  "datadog-profiling",
- "ddcommon-ffi",
  "ddsketch-ffi",
  "ddtelemetry-ffi",
  "function_name",
@@ -1529,6 +1479,8 @@ dependencies = [
  "hyper",
  "libc",
  "libdd-common",
+ "libdd-common-ffi",
+ "libdd-crashtracker-ffi",
  "libdd-data-pipeline-ffi",
  "serde_json",
  "symbolizer-ffi",
@@ -1594,14 +1546,11 @@ dependencies = [
  "bincode",
  "chrono",
  "console-subscriber",
- "datadog-crashtracker",
- "datadog-crashtracker-ffi",
  "datadog-ipc",
  "datadog-ipc-macros",
  "datadog-live-debugger",
  "datadog-remote-config",
  "datadog-sidecar-macros",
- "ddcommon-ffi",
  "futures",
  "http",
  "http-body-util",
@@ -1609,6 +1558,9 @@ dependencies = [
  "hyper",
  "libc",
  "libdd-common",
+ "libdd-common-ffi",
+ "libdd-crashtracker",
+ "libdd-crashtracker-ffi",
  "libdd-data-pipeline",
  "libdd-dogstatsd-client",
  "libdd-telemetry",
@@ -1644,16 +1596,16 @@ dependencies = [
 name = "datadog-sidecar-ffi"
 version = "0.0.1"
 dependencies = [
- "datadog-crashtracker-ffi",
  "datadog-ipc",
  "datadog-live-debugger",
  "datadog-remote-config",
  "datadog-sidecar",
- "ddcommon-ffi",
  "ddtelemetry-ffi",
  "http",
  "libc",
  "libdd-common",
+ "libdd-common-ffi",
+ "libdd-crashtracker-ffi",
  "libdd-dogstatsd-client",
  "libdd-telemetry",
  "libdd-tinybytes",
@@ -1673,25 +1625,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "ddcommon-ffi"
-version = "22.1.0"
-dependencies = [
- "anyhow",
- "bolero",
- "build_common",
- "chrono",
- "crossbeam-queue",
- "hyper",
- "libdd-common",
- "serde",
-]
-
-[[package]]
 name = "ddsketch-ffi"
 version = "22.1.0"
 dependencies = [
  "build_common",
- "ddcommon-ffi",
+ "libdd-common-ffi",
  "libdd-sketch",
 ]
 
@@ -1700,10 +1638,10 @@ name = "ddtelemetry-ffi"
 version = "22.1.0"
 dependencies = [
  "build_common",
- "ddcommon-ffi",
  "function_name",
  "libc",
  "libdd-common",
+ "libdd-common-ffi",
  "libdd-telemetry",
  "paste",
  "tempfile",
@@ -2925,6 +2863,74 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-common-ffi"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "bolero",
+ "build_common",
+ "chrono",
+ "crossbeam-queue",
+ "hyper",
+ "libdd-common",
+ "serde",
+]
+
+[[package]]
+name = "libdd-crashtracker"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "backtrace",
+ "blazesym",
+ "cc",
+ "cc_utils",
+ "chrono",
+ "criterion",
+ "goblin",
+ "http",
+ "libc",
+ "libdd-common",
+ "libdd-telemetry",
+ "nix",
+ "num-derive",
+ "num-traits",
+ "os_info",
+ "page_size",
+ "portable-atomic",
+ "rand 0.8.5",
+ "schemars",
+ "serde",
+ "serde_json",
+ "symbolic-common",
+ "symbolic-demangle",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "uuid",
+ "windows 0.59.0",
+]
+
+[[package]]
+name = "libdd-crashtracker-ffi"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "function_name",
+ "libc",
+ "libdd-common",
+ "libdd-common-ffi",
+ "libdd-crashtracker",
+ "serde",
+ "serde_json",
+ "symbolic-common",
+ "symbolic-demangle",
+ "tempfile",
+ "windows 0.59.0",
+]
+
+[[package]]
 name = "libdd-data-pipeline"
 version = "1.0.0"
 dependencies = [
@@ -2966,8 +2972,8 @@ name = "libdd-data-pipeline-ffi"
 version = "22.1.0"
 dependencies = [
  "build_common",
- "ddcommon-ffi",
  "httpmock",
+ "libdd-common-ffi",
  "libdd-data-pipeline",
  "libdd-tinybytes",
  "libdd-trace-utils",

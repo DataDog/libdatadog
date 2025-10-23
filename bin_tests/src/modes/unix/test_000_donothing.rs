@@ -5,7 +5,7 @@
 // crashtracker in a fairly normal configuration, generates a crash, and then ensures that the
 // crashtracker has recorded the situation as expected.
 use crate::modes::behavior::Behavior;
-use datadog_crashtracker::CrashtrackerConfiguration;
+use libdd_crashtracker::CrashtrackerConfiguration;
 use std::path::Path;
 
 pub struct Test;

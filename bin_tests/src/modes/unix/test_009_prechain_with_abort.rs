@@ -16,8 +16,8 @@
 //  Basically, this test fails if this test's SIGABRT handler fails to trigger
 use crate::modes::behavior::Behavior;
 
-use datadog_crashtracker::CrashtrackerConfiguration;
 use libc;
+use libdd_crashtracker::CrashtrackerConfiguration;
 use nix::{
     sys::signal::{self, kill, SaFlags, SigAction, SigHandler, SigSet, Signal},
     unistd::Pid,

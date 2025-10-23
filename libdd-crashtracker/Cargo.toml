@@ -1,5 +1,5 @@
 [package]
-name = "datadog-crashtracker"
+name = "libdd-crashtracker"
 authors = ["Daniel Schwartz-Narbonne <dsn@datadoghq.com>"]
 description = "Detects program crashes and reports them to datadog backend."
 edition.workspace = true

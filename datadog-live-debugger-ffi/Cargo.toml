@@ -13,7 +13,7 @@ bench = false
 [dependencies]
 datadog-live-debugger = { path = "../datadog-live-debugger" }
 ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
-ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+ddcommon-ffi = { path = "../libdd-common-ffi", package = "libdd-common-ffi", default-features = false }
 percent-encoding = "2.1"
 uuid = { version = "1.7.0", features = ["v4"] }
 serde_json = "1.0"

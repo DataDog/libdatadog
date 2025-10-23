@@ -3,7 +3,7 @@
 
 use crate::slice::{AsBytes, CharSlice};
 use crate::Error;
-use ddcommon::tag::{parse_tags, Tag};
+use libdd_common::tag::{parse_tags, Tag};
 
 #[must_use]
 #[no_mangle]

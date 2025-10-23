@@ -3,8 +3,8 @@
 
 use crate::slice::AsBytes;
 use crate::Error;
-use ddcommon::{parse_uri, Endpoint};
 use hyper::http::uri::{Authority, Parts};
+use libdd_common::{parse_uri, Endpoint};
 use std::borrow::Cow;
 use std::str::FromStr;
 
