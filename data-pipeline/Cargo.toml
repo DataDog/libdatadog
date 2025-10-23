@@ -38,7 +38,7 @@ datadog-trace-stats = { version = "1.0.0", path = "../libdd-trace-stats", packag
 datadog-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", package = "libdd-trace-utils", default-features = false }
 datadog-ddsketch = { version = "1.0.0", path = "../libdd-sketch", package = "libdd-sketch" }
 dogstatsd-client = { path = "../dogstatsd-client", default-features = false }
-tinybytes = { path = "../tinybytes", features = [
+tinybytes = { version = "1.0.0", path = "../libdd-tinybytes", package = "libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }

@@ -30,5 +30,5 @@ datadog-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", packag
 [dependencies]
 data-pipeline = { path = "../data-pipeline" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
-tinybytes = { path = "../tinybytes" }
+tinybytes = { version = "1.0.0", path = "../libdd-tinybytes", package = "libdd-tinybytes" }
 tracing = { version = "0.1", default-features = false }
