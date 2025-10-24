@@ -1403,6 +1403,7 @@ dependencies = [
  "symbolic-common",
  "symbolic-demangle",
  "tempfile",
+ "tokio",
  "windows 0.59.0",
 ]
 
