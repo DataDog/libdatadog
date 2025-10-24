@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "datadog-sidecar-ffi"
+name = "libdd-sidecar-ffi"
 version = "0.0.1"
 edition = "2021"
 
@@ -12,7 +12,7 @@ bench = false
 
 [dependencies]
 ddtelemetry = { version = "1.0.0", path = "../libdd-telemetry", package = "libdd-telemetry" }
-datadog-sidecar = { path = "../datadog-sidecar" }
+datadog-sidecar = { path = "../libdd-sidecar", package = "libdd-sidecar" }
 datadog-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", package = "libdd-trace-utils" }
 datadog-ipc = { version = "0.1.0", path = "../libdd-ipc", package = "libdd-ipc" }
 ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }

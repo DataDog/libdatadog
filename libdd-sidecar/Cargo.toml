@@ -1,7 +1,7 @@
 [package]
 edition = "2021"
 license = "Apache 2.0"
-name = "datadog-sidecar"
+name = "libdd-sidecar"
 version = "0.0.1"
 
 [lib]
@@ -17,7 +17,7 @@ anyhow = { version = "1.0" }
 arrayref = "0.3.7"
 priority-queue = "2.1.1"
 ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
-datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
+datadog-sidecar-macros = { path = "../libdd-sidecar-macros" }
 
 ddtelemetry = { version = "1.0.0", path = "../libdd-telemetry", package = "libdd-telemetry", features = ["tracing"] }
 data-pipeline = { version = "1.0.0", path = "../libdd-data-pipeline", package = "libdd-data-pipeline" }

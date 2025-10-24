@@ -21,7 +21,7 @@ impl QueueId {
     /// # Examples
     ///
     /// ```
-    /// use datadog_sidecar::service::QueueId;
+    /// use libdd_sidecar::service::QueueId;
     ///
     /// let queue_id = QueueId::new_unique();
     /// ```

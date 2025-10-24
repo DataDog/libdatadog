@@ -4,9 +4,9 @@
 [workspace]
 members = [
   "builder",
-  "datadog-sidecar",
-  "datadog-sidecar-ffi",
-  "datadog-sidecar-macros",
+  "libdd-sidecar",
+  "libdd-sidecar-ffi",
+  "libdd-sidecar-macros",
   "libdd-alloc",
   "libdd-common",
   "libdd-common-ffi",

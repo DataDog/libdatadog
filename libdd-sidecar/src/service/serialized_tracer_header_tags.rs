@@ -21,8 +21,8 @@ pub struct SerializedTracerHeaderTags {
 ///
 /// ```
 /// use bincode;
-/// use datadog_sidecar::service::SerializedTracerHeaderTags;
 /// use datadog_trace_utils::trace_utils::TracerHeaderTags;
+/// use libdd_sidecar::service::SerializedTracerHeaderTags;
 /// use std::convert::TryInto;
 ///
 /// let tracer_header_tags = TracerHeaderTags {
@@ -61,8 +61,8 @@ impl<'a> TryFrom<&'a SerializedTracerHeaderTags> for TracerHeaderTags<'a> {
 /// # Examples
 ///
 /// ```
-/// use datadog_sidecar::service::SerializedTracerHeaderTags;
 /// use datadog_trace_utils::trace_utils::TracerHeaderTags;
+/// use libdd_sidecar::service::SerializedTracerHeaderTags;
 /// use std::convert::TryInto;
 ///
 /// let tracer_header_tags = TracerHeaderTags {
