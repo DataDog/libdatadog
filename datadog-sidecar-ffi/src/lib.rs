@@ -40,6 +40,18 @@ use libdd_common_ffi::{self as ffi, MaybeError};
 use libdd_crashtracker_ffi::Metadata;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_telemetry::{
+#[cfg(unix)]
+use datadog_sidecar::{connect_worker_unix, start_master_listener_unix};
+#[cfg(windows)]
+use datadog_sidecar::{
+    connect_worker_windows, start_master_listener_windows, transport_from_owned_handle,
+};
+use datadog_trace_utils::msgpack_encoder;
+use ddcommon::tag::Tag;
+use ddcommon::Endpoint;
+use ddcommon_ffi::slice::{AsBytes, CharSlice};
+use ddcommon_ffi::{self as ffi, MaybeError};
+use ddtelemetry::{
     data::{self, Dependency, Integration},
     worker::{LifecycleAction, LogIdentifier, TelemetryActions},
 };
@@ -295,8 +307,6 @@ pub extern "C" fn ddog_remote_config_reader_drop(_: Box<RemoteConfigReader>) {}
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_transport_drop(_: Box<SidecarTransport>) {}
 
-/// # Safety
-/// Caller must ensure the process is safe to fork, at the time when this method is called
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -> MaybeError {
     let cfg = datadog_sidecar::config::FromEnv::config();
@@ -304,6 +314,38 @@ pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -
     let stream = Box::new(try_c!(datadog_sidecar::start_or_connect_to_sidecar(cfg)));
     *connection = Box::into_raw(stream);
 
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_connect_master(master_pid: i32) -> MaybeError {
+    #[cfg(unix)]
+    {
+        try_c!(start_master_listener_unix(master_pid));
+    }
+    #[cfg(windows)]
+    {
+        try_c!(start_master_listener_windows(master_pid));
+    }
+    MaybeError::None
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_connect_worker(
+    master_pid: i32,
+    connection: &mut *mut SidecarTransport,
+) -> MaybeError {
+    #[cfg(unix)]
+    {
+        let transport = Box::new(try_c!(connect_worker_unix(master_pid)));
+        *connection = Box::into_raw(transport);
+    }
+    #[cfg(windows)]
+    {
+        let handle = try_c!(connect_worker_windows(master_pid));
+        let transport = Box::new(try_c!(transport_from_owned_handle(handle)));
+        *connection = Box::into_raw(transport);
+    }
     MaybeError::None
 }
 

@@ -89,6 +89,10 @@ impl Liaison for SharedDirLiaison {
         let liason_path = env::temp_dir().join(format!("libdatadog.{}.{pid}", *PROCESS_RANDOM_ID));
         Self::new(liason_path)
     }
+
+    fn for_master_pid(master_pid: u32) -> Self {
+        Self::new(env::temp_dir().join(format!("libdatadog.{}", master_pid)))
+    }
 }
 
 impl SharedDirLiaison {
@@ -141,7 +145,7 @@ mod linux {
     pub struct AbstractUnixSocketLiaison {
         path: PathBuf,
     }
-    pub type DefaultLiason = AbstractUnixSocketLiaison;
+    pub type DefaultLiaison = AbstractUnixSocketLiaison;
 
     impl Liaison for AbstractUnixSocketLiaison {
         fn connect_to_server(&self) -> io::Result<Channel> {
@@ -173,6 +177,14 @@ mod linux {
             ));
             Self { path }
         }
+
+        fn for_master_pid(master_pid: u32) -> Self {
+            let path = PathBuf::from(format!(
+                concat!("libdatadog/", crate::sidecar_version!(), ".{}.sock"),
+                master_pid
+            ));
+            Self { path }
+        }
     }
 
     impl Default for AbstractUnixSocketLiaison {
@@ -193,7 +205,7 @@ mod linux {
 pub use linux::*;
 
 #[cfg(target_os = "macos")]
-pub type DefaultLiason = SharedDirLiaison;
+pub type DefaultLiaison = SharedDirLiaison;
 
 #[cfg(test)]
 mod tests {

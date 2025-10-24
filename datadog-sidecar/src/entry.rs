@@ -218,8 +218,8 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
 
 pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTransport> {
     let liaison = match cfg.ipc_mode {
-        config::IpcMode::Shared => setup::DefaultLiason::ipc_shared(),
-        config::IpcMode::InstancePerProcess => setup::DefaultLiason::ipc_per_process(),
+        config::IpcMode::Shared => setup::DefaultLiaison::ipc_shared(),
+        config::IpcMode::InstancePerProcess => setup::DefaultLiaison::ipc_per_process(),
     };
 
     let err = match liaison.attempt_listen() {

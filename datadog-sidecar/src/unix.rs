@@ -3,6 +3,8 @@
 
 use spawn_worker::{getpid, SpawnWorker, Stdio, TrampolineData};
 
+use crate::service::blocking::SidecarTransport;
+use crate::setup::{DefaultLiaison, Liaison};
 use std::ffi::CString;
 use std::os::unix::net::UnixListener as StdUnixListener;
 
@@ -13,6 +15,7 @@ use nix::sys::socket::{shutdown, Shutdown};
 use std::io;
 use std::os::fd::RawFd;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::thread;
 use std::time::Instant;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::select;
@@ -31,6 +34,41 @@ use spawn_worker::{entrypoint, get_dl_path_raw};
 use std::ffi::CStr;
 #[cfg(target_os = "linux")]
 use tracing::warn;
+
+pub fn start_master_listener_unix(master_pid: i32) -> io::Result<()> {
+    let liaison = DefaultLiaison::for_master_pid(master_pid as u32);
+
+    // Try to acquire the listening endpoint via the liaison
+    let std_listener = match liaison.attempt_listen()? {
+        Some(l) => l,
+        None => return Ok(()),
+    };
+
+    let _ = thread::Builder::new()
+        .name("dd-sidecar".into())
+        .spawn(move || {
+            let acquire_listener = move || -> io::Result<_> {
+                std_listener.set_nonblocking(true)?;
+                let listener = UnixListener::from_std(std_listener.try_clone()?)?;
+                let cancel = {
+                    let fd = listener.as_raw_fd();
+                    move || stop_listening(fd)
+                };
+                Ok((move |handler| accept_socket_loop(listener, handler), cancel))
+            };
+
+            let _ = enter_listener_loop(acquire_listener);
+        })
+        .map_err(io::Error::other)?;
+
+    Ok(())
+}
+
+pub fn connect_worker_unix(master_pid: i32) -> io::Result<SidecarTransport> {
+    let liaison = DefaultLiaison::for_master_pid(master_pid as u32);
+    let channel = liaison.connect_to_server()?;
+    Ok(channel.into())
+}
 
 #[no_mangle]
 #[allow(unused)]
