@@ -138,7 +138,6 @@ macro_rules! parse_tags {
 pub struct TelemetryCrashUploader {
     metadata: TelemetryMetadata,
     cfg: ddtelemetry::config::Config,
-    errors_intake_uploader: Option<ErrorsIntakeUploader>,
 }
 
 impl TelemetryCrashUploader {
@@ -214,15 +213,6 @@ impl TelemetryCrashUploader {
 
         let host = build_host();
 
-        let errors_intake_uploader =
-            match ErrorsIntakeUploader::new(crashtracker_metadata, endpoint) {
-                Ok(uploader) => Some(uploader),
-                Err(e) => {
-                    eprintln!("Failed to create errors intake uploader: {e}");
-                    None
-                }
-            };
-
         let s = Self {
             metadata: TelemetryMetadata {
                 host,
@@ -230,7 +220,6 @@ impl TelemetryCrashUploader {
                 runtime_id: runtime_id.unwrap_or("unknown").to_owned(),
             },
             cfg,
-            errors_intake_uploader,
         };
         Ok(s)
     }
@@ -347,22 +336,7 @@ impl TelemetryCrashUploader {
             origin: Some("Crashtracker"),
         };
 
-        let telemetry_future = self.send_telemetry_payload(&payload);
-
-        let errors_intake_future = async {
-            if let Some(errors_uploader) = &self.errors_intake_uploader {
-                let errors_intake_result =
-                    errors_uploader.upload_to_errors_intake(crash_info).await;
-                if let Err(e) = errors_intake_result {
-                    eprintln!("Failed to send crash report to errors intake: {e}");
-                }
-            } else {
-                eprintln!("No errors intake uploader available for crash report");
-            }
-        };
-
-        let (telemetry_result, _) = tokio::join!(telemetry_future, errors_intake_future);
-        telemetry_result
+        self.send_telemetry_payload(&payload).await
     }
 
     async fn send_telemetry_payload(&self, payload: &data::Telemetry<'_>) -> anyhow::Result<()> {
