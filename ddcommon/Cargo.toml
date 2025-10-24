@@ -24,7 +24,7 @@ http = "1.0"
 http-body = "1.0"
 http-body-util = "0.1"
 tower-service = "0.3"
-cc = "1.0"
+cc = "1.1.31"
 pin-project = "1"
 regex = "1.5"
 rustls = { version = "0.23", default-features = false, optional = true }
