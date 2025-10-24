@@ -1,10 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub use cc_utils::cc;
+pub use ddcommon::cc_utils::cc;
 
 fn main() {
-    let mut builder = cc_utils::ImprovedBuild::new();
+    let mut builder = ddcommon::cc_utils::ImprovedBuild::new();
     builder
         .file("src/trampoline.c")
         .warnings(true)
@@ -28,7 +28,7 @@ fn main() {
     builder.try_compile_executable("trampoline.bin").unwrap();
 
     if !cfg!(target_os = "windows") {
-        cc_utils::ImprovedBuild::new()
+        ddcommon::cc_utils::ImprovedBuild::new()
             .file("src/ld_preload_trampoline.c")
             .link_dynamically("dl")
             .warnings(true)
@@ -40,7 +40,7 @@ fn main() {
 
     #[cfg(target_os = "windows")]
     {
-        cc_utils::ImprovedBuild::new()
+        ddcommon::cc_utils::ImprovedBuild::new()
             .file("src/crashtracking_trampoline.cpp") // Path to your C++ file
             .warnings(true)
             .warnings_into_errors(true)

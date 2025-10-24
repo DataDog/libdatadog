@@ -16,6 +16,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 pub mod azure_app_services;
+pub mod cc_utils;
 pub mod connector;
 pub mod entity_id;
 #[macro_use]
