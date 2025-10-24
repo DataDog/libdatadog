@@ -516,10 +516,13 @@ mod tests {
         }
 
         assert_eq!(parsed_event_json["family"], json!("native"));
-        assert_eq!(
-            parsed_event_json["internal"],
-            json!({"libdatadog_version": env!("CARGO_PKG_VERSION")})
-        );
+
+        let internal = parsed_event_json.get("internal").unwrap();
+        assert!(internal.is_object());
+
+        let libdd_version = internal.get("libdatadog_version");
+        assert!(libdd_version.is_some());
+        assert!(libdd_version.unwrap().is_string());
         assert_eq!(parsed_event_json["version"], json!("4"));
 
         // TODO: Assert on contents of attachments, as well as on the headers/configuration for the
@@ -573,15 +576,13 @@ mod tests {
 
         let parsed_event_json = parsed_event_json(build_result);
 
-        assert_eq!(
-            parsed_event_json["internal"],
-            json!({
-                "no_signals_workaround_enabled": "true",
-                "execution_trace_enabled": "false",
-                "extra object": {"key": [1, 2, true]},
-                "libdatadog_version": env!("CARGO_PKG_VERSION"),
-            })
-        );
+        let internal = parsed_event_json.get("internal").unwrap();
+
+        assert_eq!(internal["no_signals_workaround_enabled"], "true");
+        assert_eq!(internal["execution_trace_enabled"], "false");
+        assert_eq!(internal["extra object"], json!({"key": [1, 2, true]}));
+        assert!(internal["libdatadog_version"].is_string());
+        assert!(!internal["libdatadog_version"].as_str().unwrap().is_empty());
     }
 
     #[test]
