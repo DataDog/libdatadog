@@ -104,7 +104,7 @@ pub static ENTITY_ID: LazyLock<Option<&'static str>> = LazyLock::new(|| {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use regex::Regex;
+    use regex_lite::Regex;
 
     static IN_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"in-\d+").unwrap());
     static CI_REGEX: LazyLock<Regex> = LazyLock::new(|| {
