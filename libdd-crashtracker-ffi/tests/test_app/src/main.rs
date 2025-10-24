@@ -37,9 +37,9 @@ fn main() {
 
 #[cfg(windows)]
 fn init_crashtracking(crash_path: &str, module_name: &str) -> bool {
-    use datadog_crashtracker_ffi::Metadata;
     use ddcommon::Endpoint;
     use ddcommon_ffi::CharSlice;
+    use libdd_crashtracker_ffi::Metadata;
     use std::path::Path;
     use windows::Win32::System::Diagnostics::Debug::{SetErrorMode, THREAD_ERROR_MODE};
 
@@ -66,7 +66,7 @@ fn init_crashtracking(crash_path: &str, module_name: &str) -> bool {
     };
 
     let module_name_str = module_name;
-    datadog_crashtracker_ffi::ddog_crasht_init_windows(
+    libdd_crashtracker_ffi::ddog_crasht_init_windows(
         CharSlice::from(module_name_str),
         Some(&endpoint),
         metadata,

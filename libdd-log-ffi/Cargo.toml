@@ -4,6 +4,7 @@ rust-version.workspace = true
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish = false
 
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]

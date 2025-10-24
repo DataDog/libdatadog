@@ -7,6 +7,7 @@ edition.workspace = true
 version.workspace = true
 rust-version.workspace = true
 license.workspace = true
+publish = false
 
 [lib]
 # LTO is ignored if "lib" is added as crate type

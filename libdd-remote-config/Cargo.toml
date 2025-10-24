@@ -3,6 +3,7 @@ edition = "2021"
 license = "Apache 2.0"
 name = "libdd-remote-config"
 version = "1.0.0"
+publish = false
 
 [features]
 default = []
