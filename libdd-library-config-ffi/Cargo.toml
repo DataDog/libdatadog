@@ -5,6 +5,7 @@
 name = "libdd-library-config-ffi"
 version = "0.0.2"
 edition = "2021"
+publish = false
 
 [lib]
 crate-type = ["staticlib", "cdylib", "lib"]

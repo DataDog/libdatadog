@@ -3,6 +3,7 @@ edition = "2021"
 license = "Apache 2.0"
 name = "libdd-live-debugger"
 version = "1.0.0"
+publish = false
 
 [dependencies]
 anyhow = "1.0"
