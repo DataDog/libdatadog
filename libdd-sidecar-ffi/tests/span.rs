@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_sidecar_ffi::span::*;
+use libdd_sidecar_ffi::span::*;
 use datadog_trace_utils::span::*;
 use ddcommon_ffi::slice::*;
 use std::collections::HashMap;

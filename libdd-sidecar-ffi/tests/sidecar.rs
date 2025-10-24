@@ -1,6 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use datadog_sidecar_ffi::*;
+use libdd_sidecar_ffi::*;
 
 macro_rules! assert_maybe_no_error {
     ($maybe_erroring:expr) => {
