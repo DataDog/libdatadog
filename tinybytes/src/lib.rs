@@ -212,14 +212,17 @@ impl Bytes {
     #[inline]
     fn safe_slice_ref(&self, start: usize, end: usize) -> Self {
         if !(start <= end && end <= self.len) {
-            panic!("Out of bound slicing of Bytes instance")
+            #[allow(clippy::panic)]
+            {
+                panic!("Out of bound slicing of Bytes instance")
+            }
         }
-        // SAFETY: 
-        // * start is less than len, so the resulting pointer is 
+        // SAFETY:
+        // * start is less than len, so the resulting pointer is
         // going either inside the allocation or one past
         // * we have 0 <= start <= end <= len so 0 <= end - start <= len - start. Since the new ptr
-        // points to ptr + start, then memory span is between ptr + start and (ptr + start) + (len - start) =
-        // ptr + len
+        // points to ptr + start, then memory span is between ptr + start and (ptr + start) + (len -
+        // start) = ptr + len
         Self {
             ptr: unsafe { self.ptr.add(start) },
             len: end - start,
