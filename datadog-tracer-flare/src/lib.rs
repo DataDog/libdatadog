@@ -9,7 +9,13 @@
 pub mod error;
 pub mod zip;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    fmt::Display,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
+};
 
 use datadog_remote_config::{
     config::agent_task::AgentTaskFile, file_storage::RawFile, RemoteConfigData,
@@ -43,6 +49,10 @@ use crate::error::FlareError;
 /// - `agent_url`: The agent endpoint URL for flare transmission
 /// - `language`: The tracer language identifier
 /// - `collecting`: Current collection state (true when actively collecting)
+/// - `current_log_level`: Log level at which we are collecting if we are collecting (Managed by the
+///   integrater code)
+/// - `original_log_level`: Log level of the tracers we need to restore once the Flare ends (Managed
+///   by the integrater code)
 /// - `listener`: Optional remote config listener (requires "listener" feature)
 ///
 /// # Typical usage flow
@@ -53,12 +63,14 @@ use crate::error::FlareError;
 /// 3. Handle returned [`ReturnAction`]: `Send(agent_task)`, `Set(log_level)`, `Unset`, or `None`
 /// 4. Use the `collecting` field to track current flare collection state
 pub struct TracerFlareManager {
-    pub agent_url: String,
-    pub language: String,
-    pub collecting: AtomicBool,
+    agent_url: String,
+    language: String,
+    collecting: AtomicBool,
+    pub current_log_level: Mutex<Option<LogLevel>>,
+    pub original_log_level: Mutex<Option<LogLevel>>,
     /// As a featured option so we can use the component with no Listener
     #[cfg(feature = "listener")]
-    pub listener: Option<Listener>,
+    listener: Option<Listener>,
 }
 
 impl Default for TracerFlareManager {
@@ -67,6 +79,8 @@ impl Default for TracerFlareManager {
             agent_url: hyper::Uri::default().to_string(),
             language: "rust".to_string(),
             collecting: AtomicBool::new(false),
+            current_log_level: Mutex::new(None),
+            original_log_level: Mutex::new(None),
             #[cfg(feature = "listener")]
             listener: None,
         }
@@ -224,7 +238,7 @@ impl TracerFlareManager {
 
 /// Enum that holds the different log levels possible
 /// Do not change the order of the variants because we rely on Ord
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub enum LogLevel {
     Trace,
     Debug,
@@ -282,6 +296,24 @@ impl ReturnAction {
             }
             _ => other,
         }
+    }
+}
+
+impl Display for LogLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                LogLevel::Trace => String::from("trace"),
+                LogLevel::Debug => String::from("debug"),
+                LogLevel::Info => String::from("info"),
+                LogLevel::Warn => String::from("warn"),
+                LogLevel::Error => String::from("error"),
+                LogLevel::Critical => String::from("todo"),
+                LogLevel::Off => String::from("off"),
+            }
+        )
     }
 }
 
@@ -477,8 +509,10 @@ mod tests {
         file_storage::ParsedFileStorage,
         RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
     };
-    use std::sync::atomic::Ordering;
-    use std::{num::NonZeroU64, sync::Arc};
+    use std::{
+        num::NonZeroU64,
+        sync::{atomic::Ordering, Arc},
+    };
 
     #[test]
     fn test_try_from_string_to_return_action() {
