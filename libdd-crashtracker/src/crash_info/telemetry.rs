@@ -4,7 +4,7 @@ use std::{fmt::Write, time::SystemTime};
 
 use crate::SigInfo;
 
-use super::{build_crash_ping_message, CrashInfo, ErrorsIntakeUploader, Metadata};
+use super::{CrashInfo, Metadata};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use libdd_common::Endpoint;
@@ -164,29 +164,6 @@ pub struct TelemetryCrashUploader {
 }
 
 impl TelemetryCrashUploader {
-    fn telemetry_metadata_to_crashtracker_metadata(&self) -> Metadata {
-        let metadata = &self.metadata;
-        let mut tags = vec![
-            format!("service:{}", metadata.application.service_name),
-            format!("language:{}", metadata.application.language_name),
-            format!("language_version:{}", metadata.application.language_version),
-            format!("profiler_version:{}", metadata.application.tracer_version),
-        ];
-
-        if let Some(env) = &metadata.application.env {
-            tags.push(format!("env:{}", env));
-        }
-        if let Some(version) = &metadata.application.service_version {
-            tags.push(format!("version:{}", version));
-        }
-
-        Metadata {
-            library_name: metadata.application.language_name.clone(),
-            library_version: metadata.application.tracer_version.clone(),
-            family: "crashtracker".to_string(),
-            tags,
-        }
-    }
     pub fn new(
         crashtracker_metadata: &Metadata,
         endpoint: &Option<Endpoint>,
@@ -236,15 +213,6 @@ impl TelemetryCrashUploader {
 
         let host = build_host();
 
-        let errors_intake_uploader =
-            match ErrorsIntakeUploader::new(crashtracker_metadata, endpoint) {
-                Ok(uploader) => Some(uploader),
-                Err(e) => {
-                    eprintln!("Failed to create errors intake uploader: {e}");
-                    None
-                }
-            };
-
         let s = Self {
             metadata: TelemetryMetadata {
                 host,
@@ -252,7 +220,6 @@ impl TelemetryCrashUploader {
                 runtime_id: runtime_id.unwrap_or("unknown").to_owned(),
             },
             cfg,
-            errors_intake_uploader,
         };
         Ok(s)
     }
@@ -365,22 +332,7 @@ impl TelemetryCrashUploader {
             origin: Some("Crashtracker"),
         };
 
-        let telemetry_future = self.send_telemetry_payload(&payload);
-
-        let errors_intake_future = async {
-            if let Some(errors_uploader) = &self.errors_intake_uploader {
-                let errors_intake_result =
-                    errors_uploader.upload_to_errors_intake(crash_info).await;
-                if let Err(e) = errors_intake_result {
-                    eprintln!("Failed to send crash report to errors intake: {e}");
-                }
-            } else {
-                eprintln!("No errors intake uploader available for crash report");
-            }
-        };
-
-        let (telemetry_result, _) = tokio::join!(telemetry_future, errors_intake_future);
-        telemetry_result
+        self.send_telemetry_payload(&payload).await
     }
 
     async fn send_telemetry_payload(&self, payload: &data::Telemetry<'_>) -> anyhow::Result<()> {
