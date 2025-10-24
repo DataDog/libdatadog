@@ -14,7 +14,7 @@ use crate::error::ffe_error;
 ///
 /// # Safety
 /// - `config` must be a valid Configuration handle
-/// - `context` must be a valid EvaluationContext handle  
+/// - `context` must be a valid EvaluationContext handle
 /// - `flag_key` must be a valid null-terminated C string
 /// - `assignment_out` must point to valid uninitialized memory for a Handle<Assignment>
 #[no_mangle]
