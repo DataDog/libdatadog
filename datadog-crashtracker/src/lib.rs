@@ -59,6 +59,7 @@ mod common;
 mod crash_info;
 #[cfg(all(unix, feature = "receiver"))]
 mod receiver;
+mod runtime_callback;
 
 // Keep this module private to avoid exposing blazesym to users of the crate
 #[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
@@ -82,6 +83,7 @@ pub use collector::{
 pub use collector_windows::api::{exception_event_callback, init_crashtracking_windows};
 
 pub use crash_info::*;
+pub use runtime_callback::*;
 
 #[cfg(all(unix, feature = "receiver"))]
 pub use receiver::{
