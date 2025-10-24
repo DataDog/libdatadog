@@ -410,7 +410,7 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
         let filter = MULTI_LOG_FILTER.add(config.log_level.clone());
         _ = PERMANENT_MIN_LOG_LEVEL.set(filter);
     }
-    MULTI_LOG_WRITER.add(config.log_method); // same than MULTI_LOG_FILTER
+    MULTI_LOG_WRITER.add(config.log_method.clone()); // same than MULTI_LOG_FILTER
 
     LogTracer::init()?;
 

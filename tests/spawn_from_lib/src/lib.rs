@@ -3,14 +3,14 @@
 
 use std::io::Write;
 
-use spawn_worker::entrypoint;
 use spawn_worker::SpawnWorker;
+use spawn_worker::{entrypoint, TrampolineData};
 
 #[cfg(not(target_os = "windows"))]
 use spawn_worker::recv_passed_fd;
 
 #[no_mangle]
-pub extern "C" fn exported_entrypoint() {
+pub extern "C" fn exported_entrypoint(_trampoline_data: &TrampolineData) {
     println!("stdout_works_as_expected");
     eprintln!("stderr_works_as_expected");
     #[cfg(not(target_os = "windows"))]

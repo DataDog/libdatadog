@@ -33,7 +33,7 @@ use std::ffi::CString;
 use std::path::PathBuf;
 
 pub struct Entrypoint {
-    pub ptr: extern "C" fn(),
+    pub ptr: extern "C" fn(&TrampolineData),
     pub symbol_name: CString,
 }
 pub enum Target {
@@ -65,4 +65,11 @@ macro_rules! entrypoint {
             symbol_name: unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(bytes) }.to_owned(),
         }
     }};
+}
+
+#[repr(C)]
+pub struct TrampolineData {
+    pub argc: i32,
+    pub argv: *const *const libc::c_char,
+    pub dependency_paths: *const *const libc::c_char,
 }

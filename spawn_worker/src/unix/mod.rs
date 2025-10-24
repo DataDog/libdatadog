@@ -25,9 +25,7 @@ use crate::{Entrypoint, ENV_PASS_FD_KEY};
 ///
 /// # Safety
 /// addr must be a valid address accepted by dladdr(2)
-pub(crate) unsafe fn get_dl_path_raw(
-    addr: *const libc::c_void,
-) -> (Option<CString>, Option<CString>) {
+pub unsafe fn get_dl_path_raw(addr: *const libc::c_void) -> (Option<CString>, Option<CString>) {
     let mut info = libc::Dl_info {
         dli_fname: ptr::null(),
         dli_fbase: ptr::null_mut(),

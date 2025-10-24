@@ -240,6 +240,7 @@ impl From<hyper_migration::Error> for TraceExporterError {
     fn from(err: hyper_migration::Error) -> Self {
         match err {
             hyper_migration::Error::Hyper(e) => e.into(),
+            hyper_migration::Error::Legacy(e) => e.into(),
             hyper_migration::Error::Other(e) => TraceExporterError::Network(NetworkError {
                 kind: NetworkErrorKind::Unknown,
                 source: e,

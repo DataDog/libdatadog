@@ -1,12 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use ddcommon::Endpoint;
 use http::uri::{PathAndQuery, Scheme};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf, time::Duration};
-
-use ddcommon::Endpoint;
 use spawn_worker::LibDependency;
+use std::sync::LazyLock;
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 const ENV_SIDECAR_IPC_MODE: &str = "_DD_DEBUG_SIDECAR_IPC_MODE";
 const SIDECAR_IPC_MODE_SHARED: &str = "shared";
@@ -27,6 +27,8 @@ const DEFAULT_IDLE_LINGER_TIME: Duration = Duration::from_secs(60);
 const ENV_SIDECAR_SELF_TELEMETRY: &str = "_DD_SIDECAR_SELF_TELEMETRY";
 
 const ENV_SIDECAR_WATCHDOG_MAX_MEMORY: &str = "_DD_SIDECAR_WATCHDOG_MAX_MEMORY";
+
+const ENV_SIDECAR_CRASHTRACKER_ENDPOINT: &str = "_DD_SIDECAR_CRASHTRACKER_ENDPOINT";
 
 const ENV_SIDECAR_APPSEC_SHARED_LIB_PATH: &str = "_DD_SIDECAR_APPSEC_SHARED_LIB_PATH";
 const ENV_SIDECAR_APPSEC_SOCKET_FILE_PATH: &str = "_DD_SIDECAR_APPSEC_SOCKET_FILE_PATH";
@@ -89,6 +91,7 @@ pub struct Config {
     pub self_telemetry: bool,
     pub library_dependencies: Vec<LibDependency>,
     pub child_env: HashMap<std::ffi::OsString, std::ffi::OsString>,
+    pub crashtracker_endpoint: Option<Endpoint>,
     pub appsec_config: Option<AppSecConfig>,
     pub max_memory: usize,
 }
@@ -102,9 +105,11 @@ pub struct AppSecConfig {
     pub log_level: String,
 }
 
+static ENV_CONFIG: LazyLock<Config> = LazyLock::new(FromEnv::config);
+
 impl Config {
-    pub fn get() -> Self {
-        FromEnv::config()
+    pub fn get() -> &'static Self {
+        &ENV_CONFIG
     }
 
     pub fn to_env(&self) -> HashMap<&'static str, std::ffi::OsString> {
@@ -120,6 +125,9 @@ impl Config {
                 self.self_telemetry.to_string().into(),
             ),
         ]);
+        if let Ok(json) = serde_json::to_string(&self.crashtracker_endpoint) {
+            res.insert(ENV_SIDECAR_CRASHTRACKER_ENDPOINT, json.into());
+        }
         if self.appsec_config.is_some() {
             #[allow(clippy::unwrap_used)]
             res.extend(self.appsec_config.as_ref().unwrap().to_env());
@@ -225,6 +233,12 @@ impl FromEnv {
             .unwrap_or(0)
     }
 
+    fn crashtracker_endpoint() -> Option<Endpoint> {
+        std::env::var(ENV_SIDECAR_CRASHTRACKER_ENDPOINT)
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok())
+    }
+
     pub fn config() -> Config {
         Config {
             ipc_mode: Self::ipc_mode(),
@@ -234,12 +248,13 @@ impl FromEnv {
             self_telemetry: Self::self_telemetry(),
             library_dependencies: vec![],
             child_env: std::env::vars_os().collect(),
+            crashtracker_endpoint: Self::crashtracker_endpoint(),
             appsec_config: Self::appsec_config(),
             max_memory: Self::max_memory(),
         }
     }
 
-    pub fn appsec_config() -> Option<AppSecConfig> {
+    fn appsec_config() -> Option<AppSecConfig> {
         let shared_lib_path = std::env::var_os(ENV_SIDECAR_APPSEC_SHARED_LIB_PATH)?;
         let socket_file_path = std::env::var_os(ENV_SIDECAR_APPSEC_SOCKET_FILE_PATH)?;
         let lock_file_path = std::env::var_os(ENV_SIDECAR_APPSEC_LOCK_FILE_PATH)?;

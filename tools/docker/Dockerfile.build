@@ -114,6 +114,7 @@ COPY "data-pipeline-ffi/Cargo.toml" "data-pipeline-ffi/"
 COPY "bin_tests/Cargo.toml"  "bin_tests/"
 COPY "tinybytes/Cargo.toml" "tinybytes/"
 COPY "builder/Cargo.toml"  "builder/"
+COPY "datadog-ffe/Cargo.toml" "datadog-ffe/"
 RUN find -name "Cargo.toml" | sed -e s#Cargo.toml#src/lib.rs#g | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs
 RUN echo \
     bin_tests/src/bin/crashtracker_bin_test.rs \

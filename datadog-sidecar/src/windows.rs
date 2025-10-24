@@ -13,7 +13,7 @@ use ddcommon::MutexExt;
 use ddcommon_ffi::CharSlice;
 use futures::FutureExt;
 use manual_future::ManualFuture;
-use spawn_worker::{write_crashtracking_trampoline, SpawnWorker, Stdio};
+use spawn_worker::{write_crashtracking_trampoline, SpawnWorker, Stdio, TrampolineData};
 use std::ffi::CStr;
 use std::io::{self, Error};
 use std::os::windows::io::{AsRawHandle, IntoRawHandle, OwnedHandle};
@@ -42,7 +42,7 @@ use winapi::{
 
 /// cbindgen:ignore
 #[no_mangle]
-pub extern "C" fn ddog_daemon_entry_point() {
+pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {
     #[cfg(feature = "tracing")]
     crate::log::enable_logging().ok();
 

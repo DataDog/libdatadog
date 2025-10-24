@@ -20,7 +20,9 @@ datadog-remote-config       @Datadog/libdatadog-php @Datadog/libdatadog-apm @Dat
 datadog-sidecar             @Datadog/libdatadog-php @Datadog/libdatadog-apm
 datadog-sidecar-ffi         @Datadog/libdatadog-php @Datadog/libdatadog-apm
 data-pipeline*/             @Datadog/libdatadog-apm
+datadog-tracer-flare        @Datadog/libdatadog-apm
 ddsketch                    @Datadog/libdatadog-apm @Datadog/libdatadog-telemetry
+datadog-ffe                 @Datadog/feature-flagging-and-experimentation-sdk
 
 # Most of the bin_tests are owned by the profiling team, but some are owned by the core team
 bin_tests/                  @Datadog/libdatadog-profiling

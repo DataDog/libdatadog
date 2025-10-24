@@ -7,7 +7,8 @@ use datadog_ipc::platform::NamedShmHandle;
 use datadog_trace_utils::trace_utils;
 use datadog_trace_utils::trace_utils::SendData;
 use datadog_trace_utils::trace_utils::SendDataResult;
-use ddcommon::{Endpoint, MutexExt};
+use ddcommon::hyper_migration::new_default_client;
+use ddcommon::{Endpoint, HttpClient, MutexExt};
 use futures::future::join_all;
 use http_body_util::BodyExt;
 use manual_future::{ManualFuture, ManualFutureCompleter};
@@ -95,6 +96,7 @@ pub(crate) struct TraceFlusher {
     pub(crate) min_force_drop_size_bytes: AtomicU32, // put a limit on memory usage
     remote_config: Mutex<AgentRemoteConfigs>,
     pub metrics: Mutex<TraceFlusherMetrics>,
+    client: HttpClient,
 }
 impl Default for TraceFlusher {
     fn default() -> Self {
@@ -105,6 +107,7 @@ impl Default for TraceFlusher {
             min_force_drop_size_bytes: AtomicU32::new(trace_utils::MAX_PAYLOAD_SIZE as u32),
             remote_config: Mutex::new(Default::default()),
             metrics: Mutex::new(Default::default()),
+            client: new_default_client(),
         }
     }
 }
@@ -246,7 +249,7 @@ impl TraceFlusher {
 
     async fn send_and_handle_trace(&self, send_data: SendData) {
         let endpoint = send_data.get_target().clone();
-        let response = send_data.send().await;
+        let response = send_data.send(&self.client).await;
         self.metrics.lock_or_panic().update(&response);
         match response.last_result {
             Ok(response) => {

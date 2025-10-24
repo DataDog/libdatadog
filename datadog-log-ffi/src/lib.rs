@@ -33,7 +33,9 @@ impl From<StdConfig> for logger::StdConfig {
 #[no_mangle]
 pub extern "C" fn ddog_logger_configure_std(config: StdConfig) -> Option<Box<Error>> {
     let config = logger::StdConfig::from(config);
-    logger_configure_std(config).err().map(Box::new)
+    logger_configure_std(config)
+        .err()
+        .map(|e| Box::new(Error::from(e)))
 }
 
 /// Disables logging by configuring a no-op logger.
@@ -42,7 +44,7 @@ pub extern "C" fn ddog_logger_configure_std(config: StdConfig) -> Option<Box<Err
 /// Returns an error if the logger cannot be configured.
 #[no_mangle]
 pub extern "C" fn ddog_logger_disable_std() -> Option<Box<Error>> {
-    logger_disable_std().err().map(Box::new)
+    logger_disable_std().err().map(|e| Box::new(Error::from(e)))
 }
 
 /// Configuration for file output.
@@ -79,7 +81,9 @@ impl<'a> From<FileConfig<'a>> for logger::FileConfig {
 #[no_mangle]
 pub extern "C" fn ddog_logger_configure_file(config: FileConfig) -> Option<Box<Error>> {
     let config = logger::FileConfig::from(config);
-    logger_configure_file(config).err().map(Box::new)
+    logger_configure_file(config)
+        .err()
+        .map(|e| Box::new(Error::from(e)))
 }
 
 /// Disables file logging by configuring a no-op file writer.
@@ -88,7 +92,9 @@ pub extern "C" fn ddog_logger_configure_file(config: FileConfig) -> Option<Box<E
 /// Returns an error if the logger cannot be configured.
 #[no_mangle]
 pub extern "C" fn ddog_logger_disable_file() -> Option<Box<Error>> {
-    logger_disable_file().err().map(Box::new)
+    logger_disable_file()
+        .err()
+        .map(|e| Box::new(Error::from(e)))
 }
 
 /// Sets the global log level.
@@ -104,7 +110,9 @@ pub extern "C" fn ddog_logger_set_log_level(
 ) -> Option<Box<Error>> {
     let level_value = log_level as i8;
     if level_value >= 0 && level_value <= logger::LogEventLevel::Error as i8 {
-        logger_set_log_level(log_level).err().map(Box::new)
+        logger_set_log_level(log_level)
+            .err()
+            .map(|e| Box::new(Error::from(e)))
     } else {
         Some(Box::new(Error::from("Invalid log level")))
     }
