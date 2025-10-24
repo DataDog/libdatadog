@@ -1110,86 +1110,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-sidecar"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "arrayref",
- "base64 0.22.1",
- "bincode",
- "chrono",
- "console-subscriber",
- "datadog-sidecar-macros",
- "futures",
- "http",
- "http-body-util",
- "httpmock",
- "hyper",
- "libc",
- "libdd-common",
- "libdd-common-ffi",
- "libdd-crashtracker",
- "libdd-crashtracker-ffi",
- "libdd-data-pipeline",
- "libdd-dogstatsd-client",
- "libdd-ipc",
- "libdd-ipc-macros",
- "libdd-live-debugger",
- "libdd-remote-config",
- "libdd-telemetry",
- "libdd-tinybytes",
- "libdd-trace-utils",
- "manual_future",
- "memory-stats",
- "microseh",
- "nix 0.29.0",
- "prctl",
- "priority-queue",
- "rand 0.8.5",
- "sendfd",
- "serde",
- "serde_json",
- "serde_with",
- "sha2",
- "simd-json",
- "spawn_worker",
- "tempfile",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-log",
- "tracing-subscriber",
- "winapi 0.3.9",
- "windows 0.51.1",
- "windows-sys 0.52.0",
- "zwohash",
-]
-
-[[package]]
-name = "datadog-sidecar-ffi"
-version = "0.0.1"
-dependencies = [
- "datadog-sidecar",
- "http",
- "libc",
- "libdd-common",
- "libdd-common-ffi",
- "libdd-crashtracker-ffi",
- "libdd-dogstatsd-client",
- "libdd-ipc",
- "libdd-live-debugger",
- "libdd-remote-config",
- "libdd-telemetry",
- "libdd-telemetry-ffi",
- "libdd-tinybytes",
- "libdd-trace-utils",
- "paste",
- "rmp-serde",
- "tempfile",
- "tracing",
-]
-
-[[package]]
 name = "datadog-sidecar-macros"
 version = "0.0.1"
 dependencies = [
@@ -2744,6 +2664,86 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "libdd-sidecar"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "arrayref",
+ "base64 0.22.1",
+ "bincode",
+ "chrono",
+ "console-subscriber",
+ "datadog-sidecar-macros",
+ "futures",
+ "http",
+ "http-body-util",
+ "httpmock",
+ "hyper",
+ "libc",
+ "libdd-common",
+ "libdd-common-ffi",
+ "libdd-crashtracker",
+ "libdd-crashtracker-ffi",
+ "libdd-data-pipeline",
+ "libdd-dogstatsd-client",
+ "libdd-ipc",
+ "libdd-ipc-macros",
+ "libdd-live-debugger",
+ "libdd-remote-config",
+ "libdd-telemetry",
+ "libdd-tinybytes",
+ "libdd-trace-utils",
+ "manual_future",
+ "memory-stats",
+ "microseh",
+ "nix 0.29.0",
+ "prctl",
+ "priority-queue",
+ "rand 0.8.5",
+ "sendfd",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sha2",
+ "simd-json",
+ "spawn_worker",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+ "winapi 0.3.9",
+ "windows 0.51.1",
+ "windows-sys 0.52.0",
+ "zwohash",
+]
+
+[[package]]
+name = "libdd-sidecar-ffi"
+version = "0.0.1"
+dependencies = [
+ "http",
+ "libc",
+ "libdd-common",
+ "libdd-common-ffi",
+ "libdd-crashtracker-ffi",
+ "libdd-dogstatsd-client",
+ "libdd-ipc",
+ "libdd-live-debugger",
+ "libdd-remote-config",
+ "libdd-sidecar",
+ "libdd-telemetry",
+ "libdd-telemetry-ffi",
+ "libdd-tinybytes",
+ "libdd-trace-utils",
+ "paste",
+ "rmp-serde",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]

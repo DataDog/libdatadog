@@ -379,8 +379,8 @@ pub fn create_test_json_span(
 /// # Examples
 ///
 /// ```
-/// use libdd_trace_utils::test_utils::poll_for_mock_hit;
 /// use httpmock::MockServer;
+/// use libdd_trace_utils::test_utils::poll_for_mock_hit;
 ///
 /// #[cfg_attr(miri, ignore)]
 /// async fn test_with_poll() {
@@ -453,8 +453,8 @@ pub async fn poll_for_mock_hit(
 /// # Examples
 ///
 /// ```
-/// use libdd_trace_utils::test_utils::create_send_data;
 /// use ddcommon::Endpoint;
+/// use libdd_trace_utils::test_utils::create_send_data;
 ///
 /// let size = 512;
 /// let target_endpoint = Endpoint {

@@ -26,7 +26,7 @@ impl RuntimeMetadata {
     /// # Examples
     ///
     /// ```
-    /// use datadog_sidecar::service::RuntimeMetadata;
+    /// use libdd_sidecar::service::RuntimeMetadata;
     ///
     /// let metadata = RuntimeMetadata::new("Rust", "1.55.0", "0.1.0");
     /// ```

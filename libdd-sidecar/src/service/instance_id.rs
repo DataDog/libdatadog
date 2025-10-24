@@ -23,7 +23,7 @@ impl InstanceId {
     /// # Examples
     ///
     /// ```
-    /// use datadog_sidecar::service::InstanceId;
+    /// use libdd_sidecar::service::InstanceId;
     /// let instance_id = InstanceId::new("test_session", "test_runtime");
     /// ```
     pub fn new<T>(session_id: T, runtime_id: T) -> Self
