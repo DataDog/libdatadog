@@ -36,8 +36,14 @@ async fn send_crash_ping_to_url(
         .with_endpoint(config.endpoint().clone())
         .build()?;
 
-    let uploader = crate::TelemetryCrashUploader::new(metadata, config.endpoint())?;
-    uploader.upload_crash_ping(&crash_ping).await
+    let telemetry_uploader = crate::TelemetryCrashUploader::new(metadata, config.endpoint())?;
+    let errors_intake_uploader = crate::ErrorsIntakeUploader::new(config.endpoint())?;
+    let telemetry_future = telemetry_uploader.upload_crash_ping(&crash_ping);
+    let errors_intake_future =
+        errors_intake_uploader.send_crash_ping(crash_uuid, sig_info, metadata);
+    let (_telemetry_result, _errors_intake_result) =
+        tokio::join!(telemetry_future, errors_intake_future);
+    Ok(())
 }
 
 /// The crashtracker collector sends data in blocks.

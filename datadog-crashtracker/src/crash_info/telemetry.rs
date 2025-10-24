@@ -4,8 +4,8 @@ use std::{fmt::Write, time::SystemTime};
 
 use crate::SigInfo;
 
-use super::{CrashInfo, Metadata};
-use anyhow::{Context, Ok};
+use super::{build_crash_ping_message, CrashInfo, ErrorsIntakeUploader, Metadata};
+use anyhow::Context;
 use chrono::{DateTime, Utc};
 use ddcommon::Endpoint;
 use ddtelemetry::{
@@ -141,6 +141,29 @@ pub struct TelemetryCrashUploader {
 }
 
 impl TelemetryCrashUploader {
+    fn telemetry_metadata_to_crashtracker_metadata(&self) -> Metadata {
+        let metadata = &self.metadata;
+        let mut tags = vec![
+            format!("service:{}", metadata.application.service_name),
+            format!("language:{}", metadata.application.language_name),
+            format!("language_version:{}", metadata.application.language_version),
+            format!("profiler_version:{}", metadata.application.tracer_version),
+        ];
+
+        if let Some(env) = &metadata.application.env {
+            tags.push(format!("env:{}", env));
+        }
+        if let Some(version) = &metadata.application.service_version {
+            tags.push(format!("version:{}", version));
+        }
+
+        Metadata {
+            library_name: metadata.application.language_name.clone(),
+            library_version: metadata.application.tracer_version.clone(),
+            family: "crashtracker".to_string(),
+            tags,
+        }
+    }
     pub fn new(
         crashtracker_metadata: &Metadata,
         endpoint: &Option<Endpoint>,
