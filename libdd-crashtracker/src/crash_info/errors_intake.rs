@@ -455,10 +455,7 @@ pub struct ErrorsIntakeUploader {
 }
 
 impl ErrorsIntakeUploader {
-    pub fn new(
-        _crashtracker_metadata: &Metadata,
-        endpoint: &Option<Endpoint>,
-    ) -> anyhow::Result<Self> {
+    pub fn new(endpoint: &Option<Endpoint>) -> anyhow::Result<Self> {
         let mut cfg = ErrorsIntakeConfig::from_env();
 
         if let Some(endpoint) = endpoint {

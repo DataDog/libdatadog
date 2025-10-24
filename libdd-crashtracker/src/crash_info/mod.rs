@@ -143,12 +143,22 @@ impl CrashInfo {
             }
         }
 
-        self.upload_to_telemetry(endpoint).await
+        let telemetry_future = self.upload_to_telemetry(endpoint);
+        let errors_intake_future = self.upload_to_errors_intake(endpoint);
+        let (_telemetry_result, _errors_intake_result) =
+            tokio::join!(telemetry_future, errors_intake_future);
+        Ok(())
     }
 
     async fn upload_to_telemetry(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
         let uploader = TelemetryCrashUploader::new(&self.metadata, endpoint)?;
         uploader.upload_to_telemetry(self).await?;
+        Ok(())
+    }
+
+    async fn upload_to_errors_intake(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+        let uploader = ErrorsIntakeUploader::new(endpoint)?;
+        uploader.upload_to_errors_intake(self).await?;
         Ok(())
     }
 }
