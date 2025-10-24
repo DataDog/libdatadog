@@ -20,7 +20,8 @@ use serde::Serialize;
 /// Immutable bytes type with zero copy cloning and slicing.
 #[derive(Clone)]
 pub struct Bytes {
-    slice: &'static [u8],
+    ptr: NonNull<u8>,
+    len: usize,
     // The `bytes`` field is used to ensure that the underlying bytes are freed when there are no
     // more references to the `Bytes` object. For static buffers the field is `None`.
     bytes: Option<RefCountedCell>,
@@ -48,10 +49,9 @@ impl Bytes {
         len: usize,
         refcount: RefCountedCell,
     ) -> Self {
-        // SAFETY: The caller must ensure that the pointer is valid and that the length is correct.
-        let slice = unsafe { std::slice::from_raw_parts(ptr.as_ptr(), len) };
         Self {
-            slice,
+            ptr,
+            len,
             bytes: Some(refcount),
         }
     }
@@ -65,8 +65,12 @@ impl Bytes {
     /// Creates `Bytes` from a static slice.
     #[inline]
     pub const fn from_static(value: &'static [u8]) -> Self {
-        let slice: &[u8] = value;
-        Self { slice, bytes: None }
+        Self {
+            // SAFETY: static slice always have a valid pointer and length
+            ptr: unsafe { NonNull::new_unchecked(value.as_ptr().cast_mut()) },
+            len: value.len(),
+            bytes: None,
+        }
     }
 
     /// Creates `Bytes` from a slice, by copying.
@@ -77,13 +81,13 @@ impl Bytes {
     /// Returns the length of the `Bytes`.
     #[inline]
     pub const fn len(&self) -> usize {
-        self.slice.len()
+        self.len
     }
 
     /// Returns `true` if the `Bytes` is empty.
     #[inline]
     pub const fn is_empty(&self) -> bool {
-        self.slice.is_empty()
+        self.len == 0
     }
 
     /// Returns a slice of self for the provided range.
@@ -178,8 +182,8 @@ impl Bytes {
 
         let subset_start = subset.as_ptr() as usize;
         let subset_end = subset_start + subset.len();
-        let self_start = self.slice.as_ptr() as usize;
-        let self_end = self_start + self.slice.len();
+        let self_start = self.ptr.as_ptr() as usize;
+        let self_end = self_start + self.len;
         if subset_start >= self_start && subset_end <= self_end {
             Some(self.safe_slice_ref(subset_start - self_start, subset_end - self_start))
         } else {
@@ -187,45 +191,46 @@ impl Bytes {
         }
     }
 
-    /// Returns a mutable reference to the slice of self.
-    /// Allows for fast unchecked shrinking of the slice.
-    ///
-    /// # Safety
-    ///
-    /// Callers of that function must make sure that they only put subslices of the slice into the
-    /// returned reference.
-    /// They also need to make sure to not persist the slice reference for longer than the struct
-    /// lives.
-    #[inline]
-    pub unsafe fn as_mut_slice(&mut self) -> &mut &'static [u8] {
-        &mut self.slice
-    }
-
-    pub fn from_underlying(value: impl UnderlyingBytes) -> Self {
+    pub fn from_underlying<T: UnderlyingBytes>(value: T) -> Self {
         unsafe {
+            let refcounted = make_refcounted(value);
+            let a = refcounted.data.cast::<CustomArc<T>>().as_ptr();
+
             // SAFETY:
             // * the pointer associated with a slice is non null and valid for the length of the
             //   slice
-            // * it stays valid as long as value is not dopped
+            // * it stays valid as long as value is not dropped
+            let data: &T = &(*a).data;
             let (ptr, len) = {
-                let s = value.as_ref();
+                let s = data.as_ref();
                 (NonNull::new_unchecked(s.as_ptr().cast_mut()), s.len())
             };
-            Self::from_raw_refcount(ptr, len, make_refcounted(value))
+            Self::from_raw_refcount(ptr, len, refcounted)
         }
     }
 
     #[inline]
     fn safe_slice_ref(&self, start: usize, end: usize) -> Self {
+        if !(start <= end && end <= self.len) {
+            panic!("Out of bound slicing of Bytes instance")
+        }
+        // SAFETY: 
+        // * start is less than len, so the resulting pointer is 
+        // going either inside the allocation or one past
+        // * we have 0 <= start <= end <= len so 0 <= end - start <= len - start. Since the new ptr
+        // points to ptr + start, then memory span is between ptr + start and (ptr + start) + (len - start) =
+        // ptr + len
         Self {
-            slice: &self.slice[start..end],
+            ptr: unsafe { self.ptr.add(start) },
+            len: end - start,
             bytes: self.bytes.clone(),
         }
     }
 
     #[inline]
     fn as_slice(&self) -> &[u8] {
-        self.slice
+        // SAFETY: ptr is valid for the associated length
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr().cast_const(), self.len()) }
     }
 }
 
@@ -357,21 +362,21 @@ pub struct RefCountedCellVTable {
     pub drop: unsafe fn(NonNull<()>),
 }
 
+/// A custom Arc implementation that contains only the strong count
+///
+/// This struct is not exposed to the outside of this functions and is
+/// only interacted with through the `RefCountedCell` API.
+struct CustomArc<T> {
+    rc: AtomicUsize,
+    #[allow(unused)]
+    data: T,
+}
+
 /// Creates a refcounted cell.
 ///
 /// The data passed to this cell will only be dopped when the last
 /// clone of the cell is dropped.
 fn make_refcounted<T: Send + Sync + 'static>(data: T) -> RefCountedCell {
-    /// A custom Arc implementation that contains only the strong count
-    ///
-    /// This struct is not exposed to the outside of this functions and is
-    /// only interacted with through the `RefCountedCell` API.
-    struct CustomArc<T> {
-        rc: AtomicUsize,
-        #[allow(unused)]
-        data: T,
-    }
-
     unsafe fn custom_arc_clone<T>(data: NonNull<()>) -> RefCountedCell {
         let custom_arc = data.cast::<CustomArc<T>>().as_ref();
         custom_arc
