@@ -1436,6 +1436,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "datadog-ffe-ffi"
+version = "22.1.0"
+dependencies = [
+ "build_common",
+ "datadog-ffe",
+ "ddcommon-ffi",
+]
+
+[[package]]
 name = "datadog-ipc"
 version = "0.1.0"
 dependencies = [
