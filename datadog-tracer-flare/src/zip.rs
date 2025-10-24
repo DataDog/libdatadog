@@ -283,13 +283,7 @@ impl TracerFlareManager {
 
         // APMSP-2118 - TODO: Implement obfuscation of sensitive data
 
-        let log_level = self
-            .current_log_level
-            .lock_or_panic()
-            // Default log level
-            .unwrap_or(LogLevel::Debug);
-
-        self.send(zip, log_level, agent_task).await
+        self.send(zip, agent_task).await
     }
 
     /// Sends a zip file to the agent via a POST request.
@@ -316,12 +310,13 @@ impl TracerFlareManager {
     /// - The agent URL is invalid
     /// - The HTTP request fails after retries
     /// - The agent returns a non-success HTTP status code
-    async fn send(
-        &self,
-        zip: File,
-        log_level: LogLevel,
-        agent_task: AgentTaskFile,
-    ) -> Result<(), FlareError> {
+    async fn send(&self, zip: File, agent_task: AgentTaskFile) -> Result<(), FlareError> {
+        let log_level = self
+            .current_log_level
+            .lock_or_panic()
+            // Default log level
+            .unwrap_or(LogLevel::Debug);
+
         let payload = generate_payload(
             zip,
             &self.language,
