@@ -9,7 +9,7 @@ use datadog_ffe::rules_based::{Attribute, EvaluationContext, Str};
 use ddcommon_ffi::{Handle, ToInner};
 
 /// Creates a new EvaluationContext with the given targeting key
-/// 
+///
 /// # Safety
 /// `targeting_key` must be a valid null-terminated C string
 #[no_mangle]
@@ -33,7 +33,7 @@ pub unsafe extern "C" fn ddog_ffe_evaluation_context_new(
 }
 
 /// Creates a new EvaluationContext with the given targeting key and a single string attribute
-/// 
+///
 /// # Safety
 /// `targeting_key`, `attr_name`, and `attr_value` must be valid null-terminated C strings
 #[no_mangle]
@@ -74,7 +74,7 @@ pub unsafe extern "C" fn ddog_ffe_evaluation_context_new_with_attribute(
 }
 
 /// Frees an EvaluationContext
-/// 
+///
 /// # Safety
 /// `context` must be a valid EvaluationContext handle created by `ddog_ffe_evaluation_context_new`
 #[no_mangle]

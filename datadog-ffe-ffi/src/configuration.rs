@@ -7,7 +7,7 @@ use datadog_ffe::rules_based::{Configuration, UniversalFlagConfig};
 use ddcommon_ffi::{Handle, ToInner};
 
 /// Creates a new Configuration from JSON bytes
-/// 
+///
 /// # Safety
 /// `json_str` must be a valid null-terminated C string containing valid JSON
 #[no_mangle]
@@ -35,7 +35,7 @@ pub unsafe extern "C" fn ddog_ffe_configuration_new(
 }
 
 /// Frees a Configuration
-/// 
+///
 /// # Safety
 /// `config` must be a valid Configuration handle created by `ddog_ffe_configuration_new`
 #[no_mangle]

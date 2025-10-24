@@ -10,8 +10,8 @@ use ddcommon_ffi::{Handle, ToInner, VoidResult};
 use crate::error::ffe_error;
 
 /// Evaluates a feature flag and returns success/failure via VoidResult
-/// If successful, writes the assignment to the output parameter 
-/// 
+/// If successful, writes the assignment to the output parameter
+///
 /// # Safety
 /// - `config` must be a valid Configuration handle
 /// - `context` must be a valid EvaluationContext handle  
@@ -46,13 +46,8 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment(
         Err(_) => return VoidResult::Err(ffe_error("flag_key must be valid UTF-8")),
     };
 
-    let assignment_result = get_assignment(
-        Some(config_ref),
-        flag_key_str,
-        context_ref,
-        None,
-        now(),
-    );
+    let assignment_result =
+        get_assignment(Some(config_ref), flag_key_str, context_ref, None, now());
 
     match assignment_result {
         Ok(Some(assignment)) => {
@@ -68,7 +63,7 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment(
 }
 
 /// Frees an Assignment handle
-/// 
+///
 /// # Safety
 /// `assignment` must be a valid Assignment handle
 #[no_mangle]
