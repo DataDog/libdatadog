@@ -353,7 +353,7 @@ mod tests {
         // This keeps alive for scope
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
-            let mut p = tmp.into_path();
+            let mut p = tmp.keep();
             p.push("crash_info");
             p
         };
@@ -414,7 +414,7 @@ mod tests {
         // This keeps alive for scope
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
-            let mut p = tmp.into_path();
+            let mut p = tmp.keep();
             p.push("crash_ping_info");
             p
         };
@@ -473,7 +473,7 @@ mod tests {
         // This keeps alive for scope
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
-            let mut p = tmp.into_path();
+            let mut p = tmp.keep();
             p.push("enhanced_crash_ping_info");
             p
         };

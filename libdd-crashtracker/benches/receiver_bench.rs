@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
-use datadog_crashtracker::benchmark::receiver_entry_point;
-use datadog_crashtracker::shared::constants::*;
-use datadog_crashtracker::{
+use libdd_crashtracker::benchmark::receiver_entry_point;
+use libdd_crashtracker::shared::constants::*;
+use libdd_crashtracker::{
     default_signals, get_data_folder_path, CrashtrackerConfiguration, SharedLibrary,
     StacktraceCollection,
 };
