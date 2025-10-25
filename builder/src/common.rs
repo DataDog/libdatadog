@@ -10,6 +10,9 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::rc::Rc;
 
+const COMMON_CRATE_NAME: &str = "libdd-common-ffi";
+const DEFAULT_FEATURES: &str = "cbindgen";
+
 pub struct Common {
     pub arch: Rc<str>,
     pub source_include: Rc<str>,
@@ -24,9 +27,9 @@ impl Module for Common {
             .args([
                 "build",
                 "-p",
-                "ddcommon-ffi",
+                COMMON_CRATE_NAME,
                 "--features",
-                "cbindgen",
+                DEFAULT_FEATURES,
                 "--target",
                 &self.arch,
             ])

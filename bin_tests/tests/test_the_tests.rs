@@ -25,10 +25,12 @@ fn test_the_tests_inner(profile: BuildProfile) {
         build_profile: profile,
         artifact_type: ArtifactType::Bin,
         triple_target: None,
+        ..Default::default()
     };
     let crates = &[
         &ArtifactsBuild {
             name: "libdd-profiling-ffi".to_owned(),
+            lib_name_override: Some("datadog_profiling_ffi".to_owned()),
             build_profile: profile,
             artifact_type: ArtifactType::CDylib,
             triple_target: None,

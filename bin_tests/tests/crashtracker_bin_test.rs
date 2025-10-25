@@ -155,6 +155,7 @@ fn test_crash_tracking_callstack() {
         build_profile: BuildProfile::Debug,
         artifact_type: ArtifactType::Bin,
         triple_target: None,
+        ..Default::default()
     };
 
     let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashing_app]);
@@ -686,12 +687,14 @@ fn setup_crashtracking_crates(
         build_profile: crash_tracking_receiver_profile,
         artifact_type: ArtifactType::Bin,
         triple_target: None,
+        ..Default::default()
     };
     let crashtracker_receiver = ArtifactsBuild {
         name: "crashtracker_receiver".to_owned(),
         build_profile: crash_tracking_receiver_profile,
         artifact_type: ArtifactType::Bin,
         triple_target: None,
+        ..Default::default()
     };
     (crashtracker_bin, crashtracker_receiver)
 }

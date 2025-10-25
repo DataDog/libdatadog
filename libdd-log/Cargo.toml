@@ -12,7 +12,7 @@ license.workspace = true
 bench = false
 
 [dependencies]
-tracing = { version = "0.1", default-features = false }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.18", default-features = false, features = ["json", "env-filter"] }
 tracing-appender = "0.2.3"
 chrono = { version = "0.4.38", default-features = false, features = ["clock", "std"] }

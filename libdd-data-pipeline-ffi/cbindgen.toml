@@ -36,4 +36,4 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["ddcommon", "ddcommon-ffi", "data-pipeline"]
+include = ["libdd-common", "libdd-common-ffi", "libdd-data-pipeline"]

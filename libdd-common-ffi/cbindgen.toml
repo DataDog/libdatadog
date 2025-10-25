@@ -70,4 +70,4 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["ddcommon"]
+include = ["libdd-common"]

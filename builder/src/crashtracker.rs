@@ -26,7 +26,7 @@ impl CrashTracker {
             datadog_root.push(self.target_dir.as_ref());
 
             let mut crashtracker_dir = project_root();
-            crashtracker_dir.push("datadog-crashtracker");
+            crashtracker_dir.push("libdd-crashtracker");
             let mut config = cmake::Config::new(crashtracker_dir.to_str().unwrap());
             let config = config
                 .define("Datadog_ROOT", datadog_root.to_str().unwrap())
@@ -41,7 +41,58 @@ impl CrashTracker {
                 config
             };
 
-            let _dst = config.build();
+            let dst = config.build();
+
+            // Copy the built binary to the target bin directory
+            let binary_name = "libdatadog-crashtracking-receiver";
+            let target_binary = PathBuf::from(self.target_dir.as_ref())
+                .join("bin")
+                .join(binary_name);
+
+            // The CMake install location depends on whether target_dir is absolute or relative
+            let cmake_installed_binary = if PathBuf::from(self.target_dir.as_ref()).is_absolute() {
+                // For absolute paths, CMake installs directly to target_dir/bin
+                PathBuf::from(self.target_dir.as_ref())
+                    .join("bin")
+                    .join(binary_name)
+            } else {
+                // For relative paths, CMake installs to build/target_dir/bin
+                dst.join("build")
+                    .join(self.target_dir.as_ref())
+                    .join("bin")
+                    .join(binary_name)
+            };
+
+            // Check if source and target are the same path
+            if cmake_installed_binary == target_binary {
+                let metadata = fs::metadata(&cmake_installed_binary)?;
+                anyhow::ensure!(
+                    metadata.len() > 0,
+                    "CMake built {} but it's empty",
+                    binary_name
+                );
+                return Ok(());
+            }
+
+            if cmake_installed_binary.exists() {
+                let metadata = fs::metadata(&cmake_installed_binary)?;
+                anyhow::ensure!(
+                    metadata.len() > 0,
+                    "CMake built {} but it's empty",
+                    binary_name
+                );
+
+                fs::copy(&cmake_installed_binary, &target_binary)?;
+
+                let target_metadata = fs::metadata(&target_binary)?;
+                anyhow::ensure!(target_metadata.len() > 0, "Copied {} is empty", binary_name);
+            } else {
+                anyhow::bail!(
+                    "CMake did not produce {} at {}",
+                    binary_name,
+                    cmake_installed_binary.display()
+                );
+            }
         }
 
         Ok(())

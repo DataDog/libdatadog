@@ -14,6 +14,7 @@ publish = false
 # cf. https://github.com/rust-lang/rust/issues/51009
 crate-type = ["lib", "staticlib", "cdylib"]
 bench = false
+name = "datadog_profiling_ffi"
 
 [features]
 default = ["ddcommon-ffi"]
