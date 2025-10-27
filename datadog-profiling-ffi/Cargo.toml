@@ -4,6 +4,7 @@
 [package]
 name = "datadog-profiling-ffi"
 edition.workspace = true
+# Ensure package.version match datadog-profiling version.
 version.workspace = true
 rust-version.workspace = true
 license.workspace = true
