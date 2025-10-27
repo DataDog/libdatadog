@@ -1,9 +1,11 @@
 [package]
 name = "libdd-trace-normalization"
+version = "1.0.0"
 authors = ["David Lee <david.lee@datadoghq.com>"]
 description = "A duplicate of trace normalization implemented in the agent in https://github.com/DataDog/datadog-agent/blob/main/pkg/trace/traceutil/normalize.go"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-normalization"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-normalization"
 edition.workspace = true
-version = "1.0.0"
 rust-version.workspace = true
 license.workspace = true
 

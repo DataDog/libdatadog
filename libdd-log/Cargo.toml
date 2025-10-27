@@ -1,9 +1,11 @@
 [package]
 name = "libdd-log"
+version = "1.0.0"
 description = "A bridge from Rust to {language} logging"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-log"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-log"
 rust-version.workspace = true
 edition.workspace = true
-version = "1.0.0"
 license.workspace = true
 
 [lib]

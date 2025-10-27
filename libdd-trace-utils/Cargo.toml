@@ -1,7 +1,10 @@
 [package]
 name = "libdd-trace-utils"
-edition.workspace = true
 version = "1.0.0"
+description = "Trace utilities including span processing, MessagePack encoding/decoding, payload handling, and HTTP transport with retry logic for Datadog APM"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
+edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 autobenches = false

@@ -1,8 +1,10 @@
 [package]
 name = "libdd-tinybytes"
-description = "Tiny implementation of a bytes::Bytes like type that supports AsRef<[u8]>"
-edition.workspace = true
 version= "1.0.0"
+description = "Tiny implementation of a bytes::Bytes like type that supports AsRef<[u8]>"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-tinybytes"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-tinybytes"
+edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 

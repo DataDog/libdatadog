@@ -3,8 +3,11 @@
 
 [package]
 name = "libdd-profiling"
-edition.workspace = true
 version = "1.0.0"
+description = "Continuous profiling library supporting pprof format collection and export to Datadog"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling"
+edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 autobenches = false

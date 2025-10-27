@@ -1,9 +1,11 @@
 [package]
 name = "libdd-trace-stats"
-description = "This crate provides utilities to compute stats from traces."
+version = "1.0.0"
+description = "This crate provides utilities to compute stats from Datadog traces."
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-stats"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-stats"
 rust-version.workspace = true
 edition.workspace = true
-version = "1.0.0"
 license.workspace = true
 autobenches = false
 

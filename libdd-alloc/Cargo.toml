@@ -3,8 +3,11 @@
 
 [package]
 name = "libdd-alloc"
-edition.workspace = true
 version = "1.0.0"
+description = "Custom memory allocators for specialized allocation patterns in profiling and signal-safe contexts"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-alloc"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-alloc"
+edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 

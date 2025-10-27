@@ -1,8 +1,10 @@
 [package]
 name = "libdd-telemetry"
-description = "Telemetry client allowing to send data as described in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#telemetry-collection"
-edition.workspace = true
 version= "1.0.0"
+description = "Telemetry client allowing to send data as described in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#telemetry-collection"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-telemetry"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-telemetry"
+edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 

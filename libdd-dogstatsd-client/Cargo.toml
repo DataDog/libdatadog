@@ -1,9 +1,11 @@
 [package]
 name = "libdd-dogstatsd-client"
+version= "1.0.0"
 description = "A dogstatsd client for sending metrics to a dogstatsd server."
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-dogstatsd-client"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-dogstatsd-client"
 rust-version.workspace = true
 edition.workspace = true
-version= "1.0.0"
 license.workspace = true
 
 [lib]

@@ -1,8 +1,11 @@
 [package]
 name = "libdd-trace-protobuf"
-authors = ["David Lee <david.lee@datadoghq.com>"]
-edition.workspace = true
 version = "1.0.0"
+authors = ["David Lee <david.lee@datadoghq.com>"]
+description = "Protobuf utils for Datadog's traces serialization"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-protobuf"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-protobuf"
+edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 

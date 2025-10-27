@@ -3,9 +3,12 @@
 
 [package]
 name = "libdd-profiling-protobuf"
+version = "1.0.0"
+description = "Protobuf utils for Datadog's continuous profiling library"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-protobuf"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-protobuf"
 rust-version.workspace = true
 edition.workspace = true
-version = "1.0.0"
 license.workspace = true
 
 [lib]
