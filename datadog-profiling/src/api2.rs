@@ -90,12 +90,11 @@ pub struct Location2 {
 }
 
 #[derive(Copy, Clone, Debug, Default)]
-#[repr(C)]
-pub struct Label2 {
+pub struct Label<'a> {
     pub key: StringId2,
 
     /// At most one of `.str` and `.num` should not be empty.
-    pub str: StringId2,
+    pub str: &'a str,
     pub num: i64,
 
     /// Should only be present when num is present.
@@ -105,7 +104,7 @@ pub struct Label2 {
     /// Consumers may also  interpret units like "bytes" and "kilobytes" as memory
     /// units and units like "seconds" and "nanoseconds" as time units,
     /// and apply appropriate unit conversions to these.
-    pub num_unit: StringId2,
+    pub num_unit: &'a str,
 }
 
 /// Represents a pointer to a string's header. Its definition is intentionally obscured.

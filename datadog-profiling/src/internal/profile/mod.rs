@@ -24,6 +24,7 @@ use lz4_flex::frame::FrameEncoder;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io;
+use std::ops::Deref;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -240,33 +241,40 @@ impl Profile {
     }
 
     /// Tries to add a sample using `api2` structures.
-    pub fn try_add_sample2(
+    pub fn try_add_sample2<'a, L: ExactSizeIterator<Item = anyhow::Result<api2::Label<'a>>>>(
         &mut self,
         locations: &[api2::Location2],
         values: &[i64],
-        labels: &[api2::Label2],
+        labels: L,
         timestamp: Option<Timestamp>,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
-            self.profiles_dictionary_translator.is_some(),
+            self.get_profiles_dictionary().is_some(),
             "profiles dictionary not set"
         );
+
+        // In debug builds, we iterate over the labels twice. That's not
+        // something the trait bounds support, so we collect into a vector.
+        // Since this is debug-only, the performance is fine.
+        #[cfg(debug_assertions)]
+        let labels = labels.collect::<Vec<_>>();
         #[cfg(debug_assertions)]
         {
-            self.validate_sample_labels2(labels)?;
+            self.validate_sample_labels2(labels.as_slice())?;
         }
 
         let labels = {
             let mut lbls = Vec::new();
             lbls.try_reserve_exact(labels.len())?;
             for label in labels {
+                let label = label.context("profile label failed to convert")?;
                 let key = self.try_intern_string_id(label.key)?;
                 let internal_label = if !label.str.is_empty() {
-                    let str = self.try_intern_string_id(label.str)?;
+                    let str = self.try_intern(label.str)?;
                     InternalLabel::str(key, str)
                 } else {
                     let num = label.num;
-                    let num_unit = self.try_intern_string_id(label.num_unit)?;
+                    let num_unit = self.try_intern(label.num_unit)?;
                     InternalLabel::num(key, num, num_unit)
                 };
 
@@ -488,6 +496,13 @@ impl Profile {
             functions: Default::default(),
             strings: Default::default(),
         });
+    }
+
+    /// Gets the profiles dictionary, may be needed for `api2` operations.
+    pub fn get_profiles_dictionary(&self) -> Option<&ProfilesDictionary> {
+        self.profiles_dictionary_translator
+            .as_ref()
+            .map(|p| p.profiles_dictionary.deref())
     }
 
     /// Resets all data except the sample types and period.
@@ -1091,10 +1106,16 @@ impl Profile {
     }
 
     #[cfg(debug_assertions)]
-    fn validate_sample_labels2(&mut self, labels: &[api2::Label2]) -> anyhow::Result<()> {
-        let mut seen: HashMap<StringRef, &api2::Label2> = HashMap::with_capacity(labels.len());
+    fn validate_sample_labels2(
+        &mut self,
+        labels: &[anyhow::Result<api2::Label>],
+    ) -> anyhow::Result<()> {
+        let mut seen: HashMap<StringRef, &api2::Label> = HashMap::with_capacity(labels.len());
 
         for label in labels.iter() {
+            let Ok(label) = label.as_ref() else {
+                anyhow::bail!("profiling FFI label string failed to convert")
+            };
             let key = StringRef::from(label.key);
             if let Some(duplicate) = seen.insert(key, label) {
                 anyhow::bail!("Duplicate label on sample: {duplicate:?} {label:?}");

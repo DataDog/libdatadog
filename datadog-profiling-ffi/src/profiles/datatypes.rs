@@ -6,6 +6,7 @@ use crate::ArcHandle;
 use anyhow::Context;
 use datadog_profiling::api::{self, ManagedStringId};
 use datadog_profiling::api2;
+use datadog_profiling::api2::StringId2;
 use datadog_profiling::internal;
 use datadog_profiling::profiles::datatypes::ProfilesDictionary;
 use ddcommon_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
@@ -217,6 +218,25 @@ pub struct Sample<'a> {
     pub labels: Slice<'a, Label<'a>>,
 }
 
+#[derive(Copy, Clone, Debug, Default)]
+#[repr(C)]
+pub struct Label2<'a> {
+    pub key: StringId2,
+
+    /// At most one of `.str` and `.num` should not be empty.
+    pub str: CharSlice<'a>,
+    pub num: i64,
+
+    /// Should only be present when num is present.
+    /// Specifies the units of num.
+    /// Use arbitrary string (for example, "requests") as a custom count unit.
+    /// If no unit is specified, consumer may apply heuristic to deduce the unit.
+    /// Consumers may also  interpret units like "bytes" and "kilobytes" as memory
+    /// units and units like "seconds" and "nanoseconds" as time units,
+    /// and apply appropriate unit conversions to these.
+    pub num_unit: CharSlice<'a>,
+}
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Sample2<'a> {
@@ -233,7 +253,7 @@ pub struct Sample2<'a> {
 
     /// label includes additional context for this sample. It can include
     /// things like a thread id, allocation size, etc
-    pub labels: Slice<'a, api2::Label2>,
+    pub labels: Slice<'a, Label2<'a>>,
 }
 
 impl<'a> TryFrom<&'a Mapping<'a>> for api::Mapping<'a> {
@@ -563,7 +583,15 @@ pub unsafe extern "C" fn ddog_prof_Profile_add2(
         let values = sample.values.try_as_slice()?;
         let labels = sample.labels.try_as_slice()?;
 
-        profile.try_add_sample2(locations, values, labels, timestamp)
+        let labels_iter = labels.iter().map(|label| -> anyhow::Result<api2::Label> {
+            Ok(api2::Label {
+                key: label.key,
+                str: core::str::from_utf8(label.str.try_as_bytes()?)?,
+                num: label.num,
+                num_unit: core::str::from_utf8(label.str.try_as_bytes()?)?,
+            })
+        });
+        profile.try_add_sample2(locations, values, labels_iter, timestamp)
     })()
     .context("ddog_prof_Profile_add failed")
     .into()
