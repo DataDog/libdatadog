@@ -1,0 +1,8 @@
+[package]
+name = "cgroup-parse-bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+regex = "1"
+regex-lite = "0.1"

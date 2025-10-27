@@ -46,6 +46,10 @@ members = [
   "datadog-log-ffi",
 ]
 
+exclude = [
+  "regex-experiments"
+]
+
 # https://doc.rust-lang.org/cargo/reference/resolver.html
 resolver = "2"
 
