@@ -102,7 +102,7 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_trace_snapshot_test() {
-        let relative_snapshot_path = "data-pipeline/tests/snapshots/";
+        let relative_snapshot_path = "libdd-data-pipeline/tests/snapshots/";
         let snapshot_name = "compare_exporter_v04_trace_snapshot_test";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
         let url = test_agent.get_base_uri().await;
@@ -154,7 +154,7 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_to_v05_trace_snapshot_test() {
-        let relative_snapshot_path = "data-pipeline/tests/snapshots/";
+        let relative_snapshot_path = "libdd-data-pipeline/tests/snapshots/";
         let snapshot_name = "compare_exporter_v04_to_v05_trace_snapshot_test";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
         let url = test_agent.get_base_uri().await;
@@ -200,7 +200,7 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v05_trace_snapshot_test() {
-        let relative_snapshot_path = "data-pipeline/tests/snapshots/";
+        let relative_snapshot_path = "libdd-data-pipeline/tests/snapshots/";
         let snapshot_name = "compare_exporter_v05_trace_snapshot_test";
         let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
         let url = test_agent.get_base_uri().await;
@@ -254,7 +254,7 @@ mod tracing_integration_tests {
         use std::fs::Permissions;
         use std::os::unix::fs::PermissionsExt;
 
-        let relative_snapshot_path = "data-pipeline/tests/snapshots/";
+        let relative_snapshot_path = "libdd-data-pipeline/tests/snapshots/";
         let snapshot_name = "compare_exporter_v04_trace_snapshot_uds_test";
         // Create a temporary directory for the socket to be mounted in the test agent container
         let socket_dir = tempfile::Builder::new()
