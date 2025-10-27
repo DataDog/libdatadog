@@ -28,7 +28,7 @@ fn test_the_tests_inner(profile: BuildProfile) {
     };
     let crates = &[
         &ArtifactsBuild {
-            name: "datadog-profiling-ffi".to_owned(),
+            name: "libdd-profiling-ffi".to_owned(),
             build_profile: profile,
             artifact_type: ArtifactType::CDylib,
             triple_target: None,
