@@ -75,6 +75,12 @@ impl From<crate::api2::StringId2> for StringRef {
     }
 }
 
+impl From<StringRef> for crate::api2::StringId2 {
+    fn from(id: StringRef) -> Self {
+        unsafe { core::mem::transmute::<StringRef, crate::api2::StringId2>(id) }
+    }
+}
+
 /// Holds unique strings and provides [`StringRef`]s to fetch them later.
 /// This is a newtype around SliceSet<u8> to enforce UTF-8 invariants.
 pub struct UnsyncStringSet(SliceSet<u8>);
