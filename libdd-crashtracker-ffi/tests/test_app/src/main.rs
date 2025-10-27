@@ -24,7 +24,7 @@ fn main() {
     // Get the directory of the current exe
     let exe_path = std::env::current_exe().unwrap();
     let exe_dir = exe_path.parent().unwrap();
-    let lib_path = exe_dir.join("datadog_crashtracker_ffi.dll");
+    let lib_path = exe_dir.join("libdd_crashtracker_ffi.dll");
 
     init_crashtracking(crash_path, lib_path.to_str().unwrap());
 
