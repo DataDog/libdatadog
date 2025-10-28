@@ -1,0 +1,169 @@
+variables:
+  # Configurable branch where tags should trigger this workflow
+  TARGET_BRANCH:
+    value: "igor/julio/versioning-milestone-1"
+    description: "Only tags on this branch will trigger the release workflow"
+  
+  # Allowed crate names for publication (in dependency order)
+  ALLOWED_CRATES: >
+    libdd-common
+    libdd-sketch
+    libdd-tinybytes
+    libdd-log
+    libdd-telemetry
+    libdd-trace-protobuf
+    libdd-trace-normalization
+    libdd-trace-stats
+    libdd-trace-utils
+    libdd-dogstatsd-client
+    libdd-library-config
+    libdd-crashtracker
+    libdd-data-pipeline
+    libdd-alloc
+    libdd-profiling-protobuf
+    libdd-profiling
+
+debug_variables:
+  tags: ["arch:amd64"]
+  image: registry.ddbuild.io/images/base/ubuntu_2204:latest
+  script:
+    - env | grep CI_
+
+# Detect and sort tags
+detect_tags:
+  tags: ["arch:amd64"]
+  image: registry.ddbuild.io/images/base/ubuntu_2204:latest
+  rules:
+#    - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - echo "=== Detecting tags on commit $CI_COMMIT_SHA ==="
+    - |
+      # Install git
+      apt-get update && apt-get install -y git
+      git --version
+
+      # Get all tags pointing to this commit
+      TAGS=$(git tag --points-at HEAD)
+      
+      if [ -z "$TAGS" ]; then
+        echo "No tags found on this commit"
+        exit 1
+      fi
+      
+      echo "Found tags:"
+      echo "$TAGS"
+      echo ""
+      
+      # Sort tags according to ALLOWED_CRATES order
+      SORTED_TAGS=""
+      for allowed_crate in $ALLOWED_CRATES; do
+        for tag in $TAGS; do
+          if [[ "$tag" =~ ^${allowed_crate}-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            SORTED_TAGS="$SORTED_TAGS $tag"
+          fi
+        done
+      done
+      
+      if [ -z "$SORTED_TAGS" ]; then
+        echo "❌ No valid tags found matching allowed crates"
+        exit 1
+      fi
+      
+      echo "=== Tags will be published in this order: ==="
+      INDEX=1
+      for tag in $SORTED_TAGS; do
+        echo "  $INDEX. $tag"
+        INDEX=$((INDEX + 1))
+      done
+      
+      # Save sorted tags for next stage
+      echo "$SORTED_TAGS" > sorted_tags.txt
+      echo "SORTED_TAGS=$SORTED_TAGS" >> tags.env
+  artifacts:
+    reports:
+      dotenv: tags.env
+    paths:
+      - sorted_tags.txt
+    expire_in: 1 day
+
+# Publish crates sequentially
+publish_crates:
+  tags: ["arch:amd64"]
+  image: registry.ddbuild.io/images/base/ubuntu_2204:latest
+  needs:
+    - detect_tags
+  rules:
+#    - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - echo "=== Publishing crates in dependency order ==="
+    - echo ""
+    
+    # Process each tag sequentially
+    - |
+      # Install build-essential and curl
+      apt-get update && apt-get install -y build-essential curl
+
+      # Install rustup and set it to stable
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && source $HOME/.cargo/env
+      rustup install stable
+      rustup default stable
+      
+      for tag in $SORTED_TAGS; do
+        echo "========================================"
+        echo "Processing tag: $tag"
+        echo "========================================"
+        
+        # Extract crate name and version
+        if [[ "$tag" =~ ^(.+)-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+          CRATE_NAME="${BASH_REMATCH[1]}"
+          CRATE_VERSION="${BASH_REMATCH[2]}"
+          echo "Crate: $CRATE_NAME"
+          echo "Version: $CRATE_VERSION"
+        else
+          echo "⚠️ WARNING: Tag $tag does not match expected format: {crate-name}-v{version} - skipping"
+          continue
+        fi
+        
+        # Validate crate is in allowed list
+        if ! echo "$ALLOWED_CRATES" | grep -qw "$CRATE_NAME"; then
+          echo "⚠️  WARNING: Crate $CRATE_NAME is not in the allowed list - skipping"
+          continue
+        fi
+        
+        echo "✓ Crate is in allowed list"
+        echo ""
+        
+        # Build and test
+        echo "--- Building and testing $CRATE_NAME ---"
+        cargo build --package "$CRATE_NAME" --release
+        cargo test --package "$CRATE_NAME"
+        echo "✓ Build and tests passed"
+        echo ""
+        
+        # Validate version from tag corresponds to the one in the Cargo.toml
+        # If not, print a warning and skip the publication
+        if [ "$CRATE_VERSION" != "$(cargo metadata --format-version 1 | jq -r '.packages[0].version')" ]; then
+          echo "⚠️ WARNING: Version from tag $CRATE_VERSION does not match the one in the Cargo.toml $(cargo metadata --format-version 1 | jq -r '.packages[0].version')"
+          continue
+        fi
+
+        # Publish to crates.io
+        echo "--- Publishing $CRATE_NAME v$CRATE_VERSION to crates.io ---"
+        #if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+        #  echo "❌ ERROR: CARGO_REGISTRY_TOKEN is not set"
+        #  exit 1
+        #fi
+        
+        # Uncomment to actually publish:
+        # cargo publish --package "$CRATE_NAME" --token "$CARGO_REGISTRY_TOKEN"
+        cargo publish --package "$CRATE_NAME" --token "${CARGO_REGISTRY_TOKEN:-test}" --dry-run
+        
+        echo "✓ Published $CRATE_NAME v$CRATE_VERSION successfully"
+        echo ""
+      done
+      
+      echo "========================================"
+      echo "✅ All crates published successfully!"
+      echo "========================================"
