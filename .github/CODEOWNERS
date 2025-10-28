@@ -3,11 +3,11 @@
 libdd-alloc/                @Datadog/libdatadog-profiling
 libdd-crashtracking*/       @Datadog/libdatadog-profiling
 libdd-profiling*/           @Datadog/libdatadog-profiling
-libdd-telemetry*/           @Datadog/libdatadog-telemetry
+libdd-telemetry*/           @Datadog/apm-common-components-core
 ruby/                       @Datadog/libdatadog-ruby
 Cargo.*                     @Datadog/libdatadog
 .gitignore                  @Datadog/libdatadog
-.gitlab-ci.yaml             @Datadog/libdatadog
+.gitlab-ci.yml              @Datadog/libdatadog
 LICENSE*                    @Datadog/libdatadog
 NOTICE                      @Datadog/libdatadog
 rustfmt.toml                @Datadog/libdatadog
@@ -21,11 +21,24 @@ datadog-sidecar             @Datadog/libdatadog-php @Datadog/libdatadog-apm
 datadog-sidecar-ffi         @Datadog/libdatadog-php @Datadog/libdatadog-apm
 libdd-data-pipeline*/       @Datadog/libdatadog-apm
 datadog-tracer-flare        @Datadog/libdatadog-apm
-libdd-ddsketch*/            @Datadog/libdatadog-apm @Datadog/libdatadog-telemetry
+libdd-ddsketch*/            @Datadog/libdatadog-apm @Datadog/apm-common-components-core
 datadog-ffe                 @Datadog/feature-flagging-and-experimentation-sdk
 datadog-ffe-ffi             @Datadog/feature-flagging-and-experimentation-sdk
+libdd-common*/              @Datadog/libdatadog
+builder                     @Datadog/apm-common-components-core
+libdd-log*/                 @Datadog/apm-common-components-core
+libdd-trace-stats           @Datadog/apm-common-components-core
+libdd-tinybytes             @Datadog/apm-common-components-core
+docs                        @Datadog/libdatadog
+examples                    @Datadog/libdatadog
+repository.datadog.yml      @Datadog/apm-common-components-core
+.codecov.yml                @Datadog/apm-common-components-core
+.config/nextest.toml        @Datadog/apm-common-components-core
+.devcontainer               @Datadog/apm-common-components-core
+datadog-sidecar-macros      @Datadog/libdatadog-php
+datadog-ipc                 @Datadog/libdatadog-php
 
 # Most of the bin_tests are owned by the profiling team, but some are owned by the core team
-bin_tests/                  @Datadog/libdatadog-profiling
+bin_tests/                          @Datadog/libdatadog-profiling
 bin_tests/tests/test_the_tests.rs   @Datadog/libdatadog-core
 bin_tests/src/bin/test_the_tests.rs @Datadog/libdatadog-core
