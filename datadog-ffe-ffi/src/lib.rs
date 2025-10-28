@@ -9,10 +9,8 @@
 
 mod assignment;
 mod configuration;
-mod error;
 mod evaluation_context;
 
 pub use assignment::*;
 pub use configuration::*;
-pub use error::*;
 pub use evaluation_context::*;

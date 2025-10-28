@@ -1439,9 +1439,11 @@ dependencies = [
 name = "datadog-ffe-ffi"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "build_common",
  "datadog-ffe",
  "ddcommon-ffi",
+ "function_name",
 ]
 
 [[package]]
