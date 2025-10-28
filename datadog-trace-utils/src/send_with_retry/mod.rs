@@ -11,7 +11,7 @@ use bytes::Bytes;
 use ddcommon::{hyper_migration, Endpoint, HttpRequestBuilder};
 use hyper::Method;
 use std::{collections::HashMap, time::Duration};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error};
 
 pub type Attempts = u32;
 
@@ -161,7 +161,7 @@ pub async fn send_with_retry(
                 debug!(status = %status, attempt = request_attempt, "Received response");
 
                 if status.is_client_error() || status.is_server_error() {
-                    warn!(
+                    debug!(
                         status = %status,
                         attempt = request_attempt,
                         max_retries = retry_strategy.max_retries(),
@@ -169,7 +169,7 @@ pub async fn send_with_retry(
                     );
 
                     if request_attempt < retry_strategy.max_retries() {
-                        info!(
+                        debug!(
                             attempt = request_attempt,
                             remaining_retries = retry_strategy.max_retries() - request_attempt,
                             "Retrying after error status code"
@@ -185,7 +185,7 @@ pub async fn send_with_retry(
                         return Err(SendWithRetryError::Http(response, request_attempt));
                     }
                 } else {
-                    info!(
+                    debug!(
                         status = %status,
                         attempts = request_attempt,
                         "Request succeeded"
@@ -194,7 +194,7 @@ pub async fn send_with_retry(
                 }
             }
             Err(e) => {
-                warn!(
+                debug!(
                     error = %e,
                     attempt = request_attempt,
                     max_retries = retry_strategy.max_retries(),
@@ -202,7 +202,7 @@ pub async fn send_with_retry(
                 );
 
                 if request_attempt < retry_strategy.max_retries() {
-                    info!(
+                    debug!(
                         attempt = request_attempt,
                         remaining_retries = retry_strategy.max_retries() - request_attempt,
                         "Retrying after request error"

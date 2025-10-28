@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{debug, error};
 
 use super::add_path;
 
@@ -171,11 +171,11 @@ pub(crate) fn handle_stats_disabled_by_agent(
             agent_info.info.peer_tags.clone().unwrap_or_default(),
         );
         match status {
-            Ok(()) => info!("Client-side stats enabled"),
+            Ok(()) => debug!("Client-side stats enabled"),
             Err(_) => error!("Failed to start stats computation"),
         }
     } else {
-        info!("Client-side stats computation has been disabled by the agent")
+        debug!("Client-side stats computation has been disabled by the agent")
     }
 }
 
@@ -193,7 +193,7 @@ pub(crate) fn handle_stats_enabled(
         concentrator.set_peer_tags(agent_info.info.peer_tags.clone().unwrap_or_default());
     } else {
         stop_stats_computation(ctx, client_side_stats, workers);
-        info!("Client-side stats computation has been disabled by the agent")
+        debug!("Client-side stats computation has been disabled by the agent")
     }
 }
 

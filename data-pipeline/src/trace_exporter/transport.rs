@@ -12,7 +12,7 @@ use ddcommon::{tag, tag::Tag};
 use http_body_util::BodyExt;
 use hyper::{Method, Uri};
 use std::collections::HashMap;
-use tracing::{error, info, warn};
+use tracing::{debug, error, warn};
 
 /// Transport client for trace exporter operations
 pub(super) struct TransportClient<'a> {
@@ -75,7 +75,7 @@ impl<'a> TransportClient<'a> {
     ) -> Result<AgentResponse, TraceExporterError> {
         match response.into_body().collect().await {
             Ok(body) => {
-                info!(trace_count, "Traces sent successfully to agent");
+                debug!(trace_count, "Traces sent successfully to agent");
                 self.emit_metric(
                     HealthMetric::Count(
                         health_metrics::TRANSPORT_TRACES_SUCCESSFUL,
