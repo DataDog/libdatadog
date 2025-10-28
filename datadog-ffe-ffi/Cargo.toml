@@ -20,7 +20,7 @@ cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 build_common = { path = "../build-common" }
 
 [dependencies]
-datadog-ffe = { path = "../datadog-ffe" }
+datadog-ffe = { path = "../datadog-ffe", version = "=0.1.0" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 
 [dev-dependencies]
