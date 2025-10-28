@@ -987,10 +987,6 @@ impl Profile {
         self.strings.try_intern(item)
     }
 
-    /// todo: document function and unsafe code
-    #[inline]
-    fn try_intern_string_id(&mut self, item: StringId2) -> anyhow::Result<InternalStringId> {}
-
     /// Creates a profile from the period, sample types, and start time using
     /// the owned values.
     #[inline(never)]
