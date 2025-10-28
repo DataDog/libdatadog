@@ -269,7 +269,8 @@ impl Profile {
             lbls.try_reserve_exact(labels.len())?;
             for label in labels {
                 let label = label.context("profile label failed to convert")?;
-                let key = self.try_intern_string_id(label.key)?;
+                // SAFETY: ensured above that the profiles dictionary is set.
+                let key = unsafe { self.translate_string(label.key)? };
                 let internal_label = if !label.str.is_empty() {
                     let str = self.try_intern(label.str)?;
                     InternalLabel::str(key, str)
@@ -988,25 +989,7 @@ impl Profile {
 
     /// todo: document function and unsafe code
     #[inline]
-    fn try_intern_string_id(&mut self, item: StringId2) -> anyhow::Result<InternalStringId> {
-        let dict = self
-            .profiles_dictionary_translator
-            .as_ref()
-            .map(|t| t.profiles_dictionary.try_clone())
-            .transpose()?
-            .context("profiles dictionary not set")?;
-
-        let string_ref = StringRef::from(item);
-        let str = unsafe { dict.strings().get(string_ref) };
-        let internal = self.try_intern(str)?;
-        let translator_mut = self
-            .profiles_dictionary_translator
-            .as_mut()
-            .context("profiles dictionary not set")?;
-        translator_mut.strings.try_reserve(1)?;
-        translator_mut.strings.insert(string_ref, internal);
-        Ok(internal)
-    }
+    fn try_intern_string_id(&mut self, item: StringId2) -> anyhow::Result<InternalStringId> {}
 
     /// Creates a profile from the period, sample types, and start time using
     /// the owned values.
