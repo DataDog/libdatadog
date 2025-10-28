@@ -19,6 +19,7 @@ use crate::profiles::datatypes::{self as dt, ProfilesDictionary};
 use crate::{api, api2};
 use anyhow::Context;
 use datadog_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
+use indexmap::map::Entry;
 use interning_api::Generation;
 use lz4_flex::frame::FrameEncoder;
 use std::borrow::Cow;
@@ -207,37 +208,27 @@ impl Profile {
         if string_id.is_empty() {
             return Ok(InternalStringId::ZERO);
         }
-        let string_ref = StringRef::from(string_id);
 
-        {
-            let translator_ref = self
-                .profiles_dictionary_translator
-                .as_ref()
-                .context("profiles dictionary not set")?;
-            if let Some(internal_id) = translator_ref.strings.get(&string_ref).copied() {
-                return Ok(internal_id);
-            }
-        }
-
-        let dict = self
-            .profiles_dictionary_translator
-            .as_ref()
-            .map(|t| t.profiles_dictionary.try_clone())
-            .transpose()?
-            .context("profiles dictionary not set")?;
-        let str = unsafe { dict.strings().get(string_ref) };
-        // SAFETY: we're keeping these lifetimes in proper sync. I think. TODO
-        // BUT longer-term we want to avoid copying them entirely, so this should
-        // go away.
-        let decouple_str = unsafe { core::mem::transmute::<&str, &str>(str) };
-        let internal_id = self.try_intern(decouple_str)?;
-        let translator_mut = self
+        let translator = self
             .profiles_dictionary_translator
             .as_mut()
             .context("profiles dictionary not set")?;
-        translator_mut.strings.try_reserve(1)?;
-        translator_mut.strings.insert(string_ref, internal_id);
-        Ok(internal_id)
+
+        let string_ref = StringRef::from(string_id);
+        translator.strings.try_reserve(1)?;
+        match translator.strings.entry(string_ref) {
+            Entry::Occupied(o) => Ok(*o.get()),
+            Entry::Vacant(v) => {
+                let str = unsafe { translator.profiles_dictionary.strings().get(string_ref) };
+                // SAFETY: we're keeping these lifetimes in proper sync. I think. TODO
+                // BUT longer-term we want to avoid copying them entirely, so this should
+                // go away.
+                let decouple_str = unsafe { core::mem::transmute::<&str, &str>(str) };
+                let internal_id = self.strings.try_intern(decouple_str)?;
+                v.insert(internal_id);
+                Ok(internal_id)
+            }
+        }
     }
 
     /// Tries to add a sample using `api2` structures.
