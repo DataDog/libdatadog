@@ -133,3 +133,24 @@ jobs:
           name: LICENSE-3rdparty.yml
           path: /tmp/CI.yaml
           overwrite: true
+
+  codeowners-validator:
+    runs-on: ubuntu-latest
+    name: "Validate CODEOWNERS"
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: GitHub CODEOWNERS Validator
+        uses: mszostok/codeowners-validator@7f3f5e28c6d7b8dfae5731e54ce2272ca384592f #v0.7.4
+        # input parameters
+        with:
+          github_app_id: ${{ secrets.CODEOWNERS_VALIDATOR_APP_ID }}
+          github_app_installation_id: ${{ secrets.CODEOWNERS_VALIDATOR_APP_INSTALLATION_ID }}
+          github_app_private_key: ${{ secrets.CODEOWNERS_VALIDATOR_APP_PRIVATE_KEY }}
+
+          # "The list of checks that will be executed. By default, all checks are executed. Possible values: files,owners,duppatterns,syntax"
+          checks: "files,duppatterns,syntax"
+          # "The comma-separated list of experimental checks that should be executed. By default, all experimental checks are turned off. Possible values: notowned."
+          experimental_checks: "notowned"
+          # The repository path in which CODEOWNERS file should be validated."
+          repository_path: "."
