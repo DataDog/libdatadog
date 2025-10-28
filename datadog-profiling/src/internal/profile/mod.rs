@@ -136,21 +136,21 @@ impl Profile {
         let Some(mapping2) = (unsafe { mapping_id.read() }) else {
             return Ok(None);
         };
+        let translator = self
+            .profiles_dictionary_translator
+            .as_mut()
+            .context("profiles dictionary not set")?;
 
         let set_id = unsafe { core::mem::transmute::<MappingId2, SetId<dt::Mapping>>(mapping_id) };
 
-        {
-            let translator_ref = self
-                .profiles_dictionary_translator
-                .as_ref()
-                .context("profiles dictionary not set")?;
-            if let Some(internal) = translator_ref.mappings.get(&set_id) {
-                return Ok(*internal);
-            }
+        if let Some(internal) = translator.mappings.get(&set_id) {
+            return Ok(*internal);
         }
 
-        let filename = self.translate_string(mapping2.filename)?;
-        let build_id = self.translate_string(mapping2.build_id)?;
+        // SAFETY: ensured a translator above.
+        let filename = unsafe { self.translate_string(mapping2.filename)? };
+        // SAFETY: ensured a translator above.
+        let build_id = unsafe { self.translate_string(mapping2.build_id)? };
         let mapping = Mapping {
             memory_start: mapping2.memory_start,
             memory_limit: mapping2.memory_limit,
@@ -186,9 +186,14 @@ impl Profile {
             }
         }
 
-        let name = self.translate_string(function2.name)?;
-        let system_name = self.translate_string(function2.system_name)?;
-        let filename = self.translate_string(function2.file_name)?;
+        // SAFETY: ensured a translator above.
+        let (name, system_name, filename) = unsafe {
+            (
+                self.translate_string(function2.name)?,
+                self.translate_string(function2.system_name)?,
+                self.translate_string(function2.file_name)?,
+            )
+        };
         let function = Function {
             name,
             system_name,
@@ -204,15 +209,20 @@ impl Profile {
         Ok(internal_id)
     }
 
-    fn translate_string(&mut self, string_id: StringId2) -> anyhow::Result<InternalStringId> {
+    unsafe fn translate_string(
+        &mut self,
+        string_id: StringId2,
+    ) -> anyhow::Result<InternalStringId> {
         if string_id.is_empty() {
             return Ok(InternalStringId::ZERO);
         }
 
-        let translator = self
-            .profiles_dictionary_translator
-            .as_mut()
-            .context("profiles dictionary not set")?;
+        // SAFETY: callers must ensure there is a translator
+        let translator = unsafe {
+            self.profiles_dictionary_translator
+                .as_mut()
+                .unwrap_unchecked()
+        };
 
         let string_ref = StringRef::from(string_id);
         translator.strings.try_reserve(1)?;
