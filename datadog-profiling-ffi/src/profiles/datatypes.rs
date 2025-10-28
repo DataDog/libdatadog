@@ -475,7 +475,11 @@ unsafe fn profile_new(
     ProfileNewResult::Ok(ffi_profile)
 }
 
-/// Set the profiles dictionary on an existing profile.
+/// Set the profiles dictionary on an existing profile. Note that this removes
+/// a caching layer which doesn't affect correctness, but will affect
+/// performance. If your string dictionary instance hasn't changed, then you
+/// probably only want to call this when you make a fresh profile.
+///
 /// # Safety
 /// - `profile` must be a valid pointer to a Profile created by this module.
 /// - `profiles_dictionary` must be a valid handle to a live ProfilesDictionary.
