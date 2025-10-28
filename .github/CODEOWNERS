@@ -1,4 +1,5 @@
-*                           @Datadog/libdatadog-core
+.github/CODEOWNERS
+
 libdd-alloc/                @Datadog/libdatadog-profiling
 libdd-crashtracking*/       @Datadog/libdatadog-profiling
 libdd-profiling*/           @Datadog/libdatadog-profiling
