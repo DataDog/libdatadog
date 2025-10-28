@@ -49,7 +49,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
 use tokio::runtime::Runtime;
-use tracing::{error, info, warn};
+use tracing::{debug, error, warn};
 
 const INFO_ENDPOINT: &str = "/info";
 
@@ -605,7 +605,7 @@ impl TraceExporter {
             );
             TraceExporterError::Deserialization(e)
         })?;
-        info!(
+        debug!(
             trace_count = traces.len(),
             "Trace deserialization completed successfully"
         );
@@ -890,7 +890,7 @@ impl TraceExporter {
         body: String,
         payload_version_changed: bool,
     ) -> Result<AgentResponse, TraceExporterError> {
-        info!(
+        debug!(
             chunks = chunks,
             status = %status,
             "Trace chunks sent successfully to agent"
