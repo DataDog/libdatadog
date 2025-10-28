@@ -2,64 +2,43 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::ffi::{c_char, CStr};
-use std::mem::MaybeUninit;
+
+use anyhow::ensure;
+use function_name::named;
 
 use datadog_ffe::rules_based::{get_assignment, now, Assignment, Configuration, EvaluationContext};
-use ddcommon_ffi::{Handle, ToInner, VoidResult};
+use ddcommon_ffi::{wrap_with_ffi_result, Handle, Result, ToInner};
 
-use crate::error::ffe_error;
-
-/// Evaluates a feature flag and returns success/failure via VoidResult
-/// If successful, writes the assignment to the output parameter
+/// Evaluates a feature flag.
 ///
 /// # Safety
 /// - `config` must be a valid Configuration handle
 /// - `context` must be a valid EvaluationContext handle
 /// - `flag_key` must be a valid null-terminated C string
-/// - `assignment_out` must point to valid uninitialized memory for a Handle<Assignment>
 #[no_mangle]
+#[named]
 pub unsafe extern "C" fn ddog_ffe_get_assignment(
-    mut config: *mut Handle<Configuration>,
+    mut config: Handle<Configuration>,
     flag_key: *const c_char,
-    mut context: *mut Handle<EvaluationContext>,
-    assignment_out: *mut MaybeUninit<Handle<Assignment>>,
-) -> VoidResult {
-    if flag_key.is_null() {
-        return VoidResult::Err(ffe_error("flag_key cannot be null"));
-    }
-    if assignment_out.is_null() {
-        return VoidResult::Err(ffe_error("assignment_out cannot be null"));
-    }
+    mut context: Handle<EvaluationContext>,
+) -> Result<Handle<Assignment>> {
+    wrap_with_ffi_result!({
+        ensure!(!flag_key.is_null(), "flag_key must not be NULL");
 
-    let config_ref = match config.to_inner_mut() {
-        Ok(c) => c,
-        Err(e) => return VoidResult::Err(ffe_error(&e.to_string())),
-    };
+        let config = config.to_inner_mut()?;
+        let context = context.to_inner_mut()?;
+        let flag_key = CStr::from_ptr(flag_key).to_str()?;
 
-    let context_ref = match context.to_inner_mut() {
-        Ok(c) => c,
-        Err(e) => return VoidResult::Err(ffe_error(&e.to_string())),
-    };
+        let assignment_result = get_assignment(Some(config), flag_key, context, None, now())?;
 
-    let flag_key_str = match CStr::from_ptr(flag_key).to_str() {
-        Ok(s) => s,
-        Err(_) => return VoidResult::Err(ffe_error("flag_key must be valid UTF-8")),
-    };
+        let handle = if let Some(assignment) = assignment_result {
+            Handle::from(assignment)
+        } else {
+            Handle::empty()
+        };
 
-    let assignment_result =
-        get_assignment(Some(config_ref), flag_key_str, context_ref, None, now());
-
-    match assignment_result {
-        Ok(Some(assignment)) => {
-            assignment_out.write(MaybeUninit::new(Handle::from(assignment)));
-            VoidResult::Ok
-        }
-        Ok(None) => {
-            assignment_out.write(MaybeUninit::new(Handle::empty()));
-            VoidResult::Ok
-        }
-        Err(_) => VoidResult::Err(ffe_error("assignment evaluation failed")),
-    }
+        Ok(handle)
+    })
 }
 
 /// Frees an Assignment handle
