@@ -111,22 +111,26 @@ where
     let mut dropped_p0_spans = 0;
 
     traces.retain_mut(|chunk| {
+        // ErrorSampler
+        if chunk.iter().any(|s| s.error == 1) {
+            // We send chunks containing an error
+            return true;
+        }
+
+        // PrioritySampler and NoPrioritySampler
+        let chunk_priority = chunk
+            .iter()
+            .find_map(|s| s.metrics.get(SAMPLING_PRIORITY_KEY));
+        if chunk_priority.is_none_or(|p| *p > 0.0) {
+            // We send chunks with positive priority or no priority
+            return true;
+        }
+
+        // SingleSpanSampler and AnalyzedSpansSampler
         // List of spans to keep even if the chunk is dropped
         let mut sampled_indexes = Vec::new();
         for (index, span) in chunk.iter().enumerate() {
-            // ErrorSampler
-            if span.error == 1 {
-                // We send chunks containing an error
-                return true;
-            }
-            // PrioritySampler and NoPrioritySampler
-            let priority = span.metrics.get(SAMPLING_PRIORITY_KEY);
-            if has_top_level(span) && (priority.is_none() || priority.is_some_and(|p| *p > 0.0)) {
-                // We send chunks with positive priority or no priority
-                return true;
-            }
-            // SingleSpanSampler and AnalyzedSpansSampler
-            else if span
+            if span
                 .metrics
                 .get(SAMPLING_SINGLE_SPAN_MECHANISM)
                 .is_some_and(|m| *m == 8.0)
@@ -293,6 +297,27 @@ mod tests {
                 ..Default::default()
             },
         ];
+        let chunk_with_multiple_top_level = vec![
+            SpanBytes {
+                span_id: 1,
+                metrics: HashMap::from([
+                    (SAMPLING_PRIORITY_KEY.into(), -1.0),
+                    (TRACER_TOP_LEVEL_KEY.into(), 1.0),
+                ]),
+                ..Default::default()
+            },
+            SpanBytes {
+                span_id: 2,
+                parent_id: 1,
+                ..Default::default()
+            },
+            SpanBytes {
+                span_id: 4,
+                parent_id: 3,
+                metrics: HashMap::from([(TRACER_TOP_LEVEL_KEY.into(), 1.0)]),
+                ..Default::default()
+            },
+        ];
         let chunk_with_error = vec![
             SpanBytes {
                 span_id: 1,
@@ -346,6 +371,7 @@ mod tests {
             (chunk_with_priority, 2),
             (chunk_with_null_priority, 0),
             (chunk_without_priority, 2),
+            (chunk_with_multiple_top_level, 0),
             (chunk_with_error, 2),
             (chunk_with_a_single_span, 1),
             (chunk_with_analyzed_span, 1),
