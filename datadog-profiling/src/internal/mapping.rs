@@ -27,14 +27,14 @@ pub struct Mapping {
 }
 
 impl Item for Mapping {
-    type Id = InternalMappingId;
+    type Id = MappingId;
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[repr(C)]
-pub struct InternalMappingId(NonZeroU32);
+pub struct MappingId(NonZeroU32);
 
-impl Id for InternalMappingId {
+impl Id for MappingId {
     type RawId = u64;
 
     fn from_offset(offset: usize) -> Self {

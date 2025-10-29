@@ -7,8 +7,8 @@ pub use generational_ids::*;
 use crate::api::ManagedStringId;
 use crate::collections::identifiable::{Dedup, StringId};
 use crate::internal::{
-    Function, InternalFunctionId, InternalLabel, InternalMappingId, LabelId, LabelSet, LabelSetId,
-    Location, LocationId, Mapping, Profile, Sample, StackTrace, StackTraceId, Timestamp,
+    Function, FunctionId, InternalLabel, LabelId, LabelSet, LabelSetId, Location, LocationId,
+    Mapping, MappingId, Profile, Sample, StackTrace, StackTraceId, Timestamp,
 };
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -18,7 +18,7 @@ impl Profile {
         name: GenerationalId<StringId>,
         system_name: GenerationalId<StringId>,
         filename: GenerationalId<StringId>,
-    ) -> anyhow::Result<GenerationalId<InternalFunctionId>> {
+    ) -> anyhow::Result<GenerationalId<FunctionId>> {
         let function = Function {
             name: name.get(self.generation)?,
             system_name: system_name.get(self.generation)?,
@@ -66,8 +66,8 @@ impl Profile {
 
     pub fn intern_location(
         &mut self,
-        mapping_id: Option<GenerationalId<InternalMappingId>>,
-        function_id: GenerationalId<InternalFunctionId>,
+        mapping_id: Option<GenerationalId<MappingId>>,
+        function_id: GenerationalId<FunctionId>,
         address: u64,
         line: i64,
     ) -> anyhow::Result<GenerationalId<LocationId>> {
@@ -108,7 +108,7 @@ impl Profile {
         file_offset: u64,
         filename: GenerationalId<StringId>,
         build_id: GenerationalId<StringId>,
-    ) -> anyhow::Result<GenerationalId<InternalMappingId>> {
+    ) -> anyhow::Result<GenerationalId<MappingId>> {
         let mapping = Mapping {
             memory_start,
             memory_limit,

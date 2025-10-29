@@ -14,14 +14,14 @@ pub struct Function {
 }
 
 impl Item for Function {
-    type Id = InternalFunctionId;
+    type Id = FunctionId;
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 #[repr(C)]
-pub struct InternalFunctionId(NonZeroU32);
+pub struct FunctionId(NonZeroU32);
 
-impl Id for InternalFunctionId {
+impl Id for FunctionId {
     type RawId = u64;
 
     fn from_offset(offset: usize) -> Self {

@@ -32,8 +32,8 @@ use std::time::{Duration, SystemTime};
 
 struct ProfilesDictionaryTranslator {
     profiles_dictionary: crate::profiles::collections::Arc<ProfilesDictionary>,
-    mappings: FxIndexMap<SetId<dt::Mapping>, Option<InternalMappingId>>,
-    functions: FxIndexMap<SetId<dt::Function>, InternalFunctionId>,
+    mappings: FxIndexMap<SetId<dt::Mapping>, Option<MappingId>>,
+    functions: FxIndexMap<SetId<dt::Function>, FunctionId>,
     strings: FxIndexMap<StringRef, StringId>,
 }
 
@@ -129,10 +129,7 @@ impl Profile {
         Ok(())
     }
 
-    fn translate_mapping(
-        &mut self,
-        mapping_id: MappingId2,
-    ) -> anyhow::Result<Option<InternalMappingId>> {
+    fn translate_mapping(&mut self, mapping_id: MappingId2) -> anyhow::Result<Option<MappingId>> {
         let Some(mapping2) = (unsafe { mapping_id.read() }) else {
             return Ok(None);
         };
@@ -168,10 +165,7 @@ impl Profile {
         Ok(Some(internal_id))
     }
 
-    fn translate_function(
-        &mut self,
-        function_id: FunctionId2,
-    ) -> anyhow::Result<InternalFunctionId> {
+    fn translate_function(&mut self, function_id: FunctionId2) -> anyhow::Result<FunctionId> {
         let function2 = (unsafe { function_id.read() }).unwrap_or_default();
         let set_id =
             unsafe { core::mem::transmute::<FunctionId2, SetId<dt::Function>>(function_id) };
@@ -673,11 +667,7 @@ impl Profile {
         for (offset, item) in self.locations.into_iter().enumerate() {
             let location = protobuf::Location {
                 id: Record::from((offset + 1) as u64),
-                mapping_id: Record::from(
-                    item.mapping_id
-                        .map(InternalMappingId::into_raw_id)
-                        .unwrap_or(0),
-                ),
+                mapping_id: Record::from(item.mapping_id.map(MappingId::into_raw_id).unwrap_or(0)),
                 address: Record::from(item.address),
                 line: Record::from(protobuf::Line {
                     function_id: Record::from(item.function_id.into_raw_id()),
@@ -756,7 +746,7 @@ impl Profile {
 
 /// Private helper functions
 impl Profile {
-    fn try_add_function(&mut self, function: &api::Function) -> anyhow::Result<InternalFunctionId> {
+    fn try_add_function(&mut self, function: &api::Function) -> anyhow::Result<FunctionId> {
         let name = self.try_intern(function.name)?;
         let system_name = self.try_intern(function.system_name)?;
         let filename = self.try_intern(function.filename)?;
@@ -771,7 +761,7 @@ impl Profile {
     fn add_string_id_function(
         &mut self,
         function: &api::StringIdFunction,
-    ) -> anyhow::Result<InternalFunctionId> {
+    ) -> anyhow::Result<FunctionId> {
         let name = self.resolve(function.name)?;
         let system_name = self.resolve(function.system_name)?;
         let filename = self.resolve(function.filename)?;
@@ -808,10 +798,7 @@ impl Profile {
         })
     }
 
-    fn try_add_mapping(
-        &mut self,
-        mapping: &api::Mapping,
-    ) -> anyhow::Result<Option<InternalMappingId>> {
+    fn try_add_mapping(&mut self, mapping: &api::Mapping) -> anyhow::Result<Option<MappingId>> {
         #[inline]
         fn is_zero_mapping(mapping: &api::Mapping) -> bool {
             // - PHP, Python, and Ruby use a mapping only as required.
@@ -851,7 +838,7 @@ impl Profile {
     fn add_string_id_mapping(
         &mut self,
         mapping: &api::StringIdMapping,
-    ) -> anyhow::Result<Option<InternalMappingId>> {
+    ) -> anyhow::Result<Option<MappingId>> {
         #[inline]
         fn is_zero_mapping(mapping: &api::StringIdMapping) -> bool {
             // See the other is_zero_mapping for more info, but only Ruby is

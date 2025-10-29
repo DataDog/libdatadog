@@ -10,7 +10,7 @@ use datadog_profiling::{
     internal::{
         self,
         interning_api::{Generation, GenerationalId},
-        InternalFunctionId, InternalMappingId, LabelId, LabelSetId, LocationId, StackTraceId,
+        FunctionId, LabelId, LabelSetId, LocationId, MappingId, StackTraceId,
     },
 };
 use ddcommon_ffi::{
@@ -46,7 +46,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_function(
     name: GenerationalId<StringId>,
     system_name: GenerationalId<StringId>,
     filename: GenerationalId<StringId>,
-) -> Result<GenerationalId<InternalFunctionId>> {
+) -> Result<GenerationalId<FunctionId>> {
     wrap_with_ffi_result!({
         profile_ptr_to_inner(profile)?.intern_function(name, system_name, filename)
     })
@@ -162,7 +162,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_labelset(
 #[named]
 pub unsafe extern "C" fn ddog_prof_Profile_intern_location(
     profile: *mut Profile,
-    function_id: GenerationalId<InternalFunctionId>,
+    function_id: GenerationalId<FunctionId>,
     address: u64,
     line: i64,
 ) -> Result<GenerationalId<LocationId>> {
@@ -187,8 +187,8 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_location(
 #[named]
 pub unsafe extern "C" fn ddog_prof_Profile_intern_location_with_mapping_id(
     profile: *mut Profile,
-    mapping_id: GenerationalId<InternalMappingId>,
-    function_id: GenerationalId<InternalFunctionId>,
+    mapping_id: GenerationalId<MappingId>,
+    function_id: GenerationalId<FunctionId>,
     address: u64,
     line: i64,
 ) -> Result<GenerationalId<LocationId>> {
@@ -265,7 +265,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_mapping(
     file_offset: u64,
     filename: GenerationalId<StringId>,
     build_id: GenerationalId<StringId>,
-) -> Result<GenerationalId<InternalMappingId>> {
+) -> Result<GenerationalId<MappingId>> {
     wrap_with_ffi_result!({
         profile_ptr_to_inner(profile)?.intern_mapping(
             memory_start,

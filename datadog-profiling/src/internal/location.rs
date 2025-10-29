@@ -10,8 +10,8 @@ use super::*;
 ///    struct.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct Location {
-    pub mapping_id: Option<InternalMappingId>,
-    pub function_id: InternalFunctionId,
+    pub mapping_id: Option<MappingId>,
+    pub function_id: FunctionId,
     pub address: u64,
     pub line: i64,
 }
