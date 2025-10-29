@@ -106,4 +106,3 @@ codegen-units = 1
 # so benchmarks are not measuring the same thing as the release build. This patch removes
 # the default dependency on libm. A PR will be opened to proptest to make this optional.
 proptest = { git = 'https://github.com/bantonsson/proptest.git', branch = "ban/avoid-libm-in-std" }
-C
