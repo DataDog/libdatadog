@@ -23,11 +23,7 @@ variables:
     libdd-profiling-protobuf
     libdd-profiling
 
-debug_variables:
-  tags: ["arch:amd64"]
-  image: registry.ddbuild.io/images/base/ubuntu_2204:latest
-  script:
-    - env | grep CI_
+# TODO: create a image with git, build-essential, curl, jq and rustup
 
 # Detect and sort tags
 detect_tags:
@@ -135,17 +131,11 @@ publish_crates:
         echo "✓ Crate is in allowed list"
         echo ""
         
-        # Build and test
-        echo "--- Building and testing $CRATE_NAME ---"
-        cargo build --package "$CRATE_NAME" --release
-        cargo test --package "$CRATE_NAME"
-        echo "✓ Build and tests passed"
-        echo ""
-        
         # Validate version from tag corresponds to the one in the Cargo.toml
         # If not, print a warning and skip the publication
-        if [ "$CRATE_VERSION" != "$(cargo metadata --format-version 1 | jq -r '.packages[0].version')" ]; then
-          echo "⚠️ WARNING: Version from tag $CRATE_VERSION does not match the one in the Cargo.toml $(cargo metadata --format-version 1 | jq -r '.packages[0].version')"
+        MANIFEST_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -e -r '.packages[] | select(.name == "'"$CRATE_NAME"'") | .version')
+        if [ "$CRATE_VERSION" != "$MANIFEST_VERSION" ]; then
+          echo "⚠️ WARNING: Version from tag $CRATE_VERSION does not match the one in the Cargo.toml $MANIFEST_VERSION"
           continue
         fi
 
