@@ -1538,7 +1538,7 @@ fn test_crash_tracking_bin_with_errors_intake(
     let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
-    assert_telemetry_message(&crash_telemetry, crash_typ);
+    assert_telemetry_message(&crash_telemetry, crash_typ, TelemetryKind::CrashReport);
 }
 
 fn test_crash_tracking_errors_intake_dual_upload(
@@ -1596,7 +1596,7 @@ fn test_crash_tracking_errors_intake_dual_upload(
     let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
         .context("reading crashtracker telemetry payload")
         .unwrap();
-    assert_telemetry_message(&crash_telemetry, crash_typ);
+    assert_telemetry_message(&crash_telemetry, crash_typ, TelemetryKind::CrashReport);
 }
 
 fn assert_errors_intake_payload(payload: &Value, crash_typ: &str) {
