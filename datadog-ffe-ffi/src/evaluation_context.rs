@@ -8,30 +8,6 @@ use std::sync::Arc;
 use datadog_ffe::rules_based::{Attribute, EvaluationContext, Str};
 use ddcommon_ffi::{Handle, ToInner};
 
-/// Creates a new EvaluationContext with the given targeting key
-///
-/// # Safety
-/// `targeting_key` must be a valid null-terminated C string
-#[no_mangle]
-pub unsafe extern "C" fn ddog_ffe_evaluation_context_new(
-    targeting_key: *const c_char,
-) -> Handle<EvaluationContext> {
-    if targeting_key.is_null() {
-        return Handle::empty();
-    }
-
-    let key_cstr = match CStr::from_ptr(targeting_key).to_str() {
-        Ok(s) => s,
-        Err(_) => return Handle::empty(),
-    };
-
-    let key = Str::from(key_cstr.to_string());
-    let attributes = Arc::new(HashMap::<Str, Attribute>::new());
-    let context = EvaluationContext::new(key, attributes);
-
-    Handle::from(context)
-}
-
 /// Represents a key-value pair for attributes
 #[repr(C)]
 pub struct AttributePair {
@@ -39,7 +15,7 @@ pub struct AttributePair {
     pub value: *const c_char,
 }
 
-/// Creates a new EvaluationContext with the given targeting key and multiple attributes
+/// Creates a new EvaluationContext with the given targeting key and attributes
 ///
 /// # Safety
 /// - `targeting_key` must be a valid null-terminated C string
@@ -48,7 +24,7 @@ pub struct AttributePair {
 /// - Each `AttributePair.name` and `AttributePair.value` must be valid null-terminated C strings
 /// - `attributes_count` must accurately represent the length of the `attributes` array
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ffe_evaluation_context_new_with_attributes(
+pub unsafe extern "C" fn ddog_ffe_evaluation_context_new(
     targeting_key: *const c_char,
     attributes: *const AttributePair,
     attributes_count: usize,

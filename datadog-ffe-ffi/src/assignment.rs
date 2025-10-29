@@ -13,14 +13,14 @@ use ddcommon_ffi::{wrap_with_ffi_result, Handle, Result, ToInner};
 ///
 /// # Safety
 /// - `config` must be a valid Configuration handle pointer
-/// - `context` must be a valid EvaluationContext handle
+/// - `context` must be a valid EvaluationContext handle pointer
 /// - `flag_key` must be a valid null-terminated C string
 #[no_mangle]
 #[named]
 pub unsafe extern "C" fn ddog_ffe_get_assignment(
     mut config: *mut Handle<Configuration>,
     flag_key: *const c_char,
-    mut context: Handle<EvaluationContext>,
+    mut context: *mut Handle<EvaluationContext>,
 ) -> Result<Handle<Assignment>> {
     wrap_with_ffi_result!({
         ensure!(!flag_key.is_null(), "flag_key must not be NULL");
