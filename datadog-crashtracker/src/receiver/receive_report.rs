@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, Span, TelemetryCrashUploader},
+    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, Metadata, SigInfo, Span},
     shared::constants::*,
     CrashtrackerConfiguration,
 };
@@ -17,8 +17,8 @@ use uuid::Uuid;
 async fn send_crash_ping_to_url(
     config: &CrashtrackerConfiguration,
     crash_uuid: &str,
-    metadata: &crate::crash_info::Metadata,
-    sig_info: &crate::crash_info::SigInfo,
+    metadata: &Metadata,
+    sig_info: &SigInfo,
 ) -> anyhow::Result<()> {
     let is_file_endpoint = config
         .endpoint()
@@ -30,9 +30,14 @@ async fn send_crash_ping_to_url(
         return Ok(());
     }
 
-    let uploader = TelemetryCrashUploader::new(metadata, config.endpoint())?;
-    uploader.send_crash_ping(crash_uuid, sig_info).await?;
-    Ok(())
+    let crash_ping = crate::CrashPingBuilder::new()
+        .with_crash_uuid(crash_uuid.to_string())
+        .with_sig_info(sig_info.clone())
+        .with_endpoint(config.endpoint().clone())
+        .build()?;
+
+    let uploader = crate::TelemetryCrashUploader::new(metadata, config.endpoint())?;
+    uploader.upload_crash_ping(&crash_ping).await
 }
 
 /// The crashtracker collector sends data in blocks.
@@ -133,7 +138,7 @@ fn process_line(
 
         StdinState::SigInfo if line.starts_with(DD_CRASHTRACK_END_SIGINFO) => StdinState::Waiting,
         StdinState::SigInfo => {
-            let sig_info: crate::SigInfo = serde_json::from_str(line)?;
+            let sig_info: SigInfo = serde_json::from_str(line)?;
             // By convention, siginfo is the first thing sent.
             let message = format!(
                 "Process terminated with {:?} ({:?})",

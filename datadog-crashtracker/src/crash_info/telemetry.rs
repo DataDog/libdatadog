@@ -15,30 +15,100 @@ use ddtelemetry::{
 };
 use serde::Serialize;
 
+#[derive(Debug)]
 struct TelemetryMetadata {
     application: ddtelemetry::data::Application,
     host: ddtelemetry::data::Host,
     runtime_id: String,
 }
 
-#[derive(Serialize)]
-struct CrashPingMessage {
+pub struct CrashPingBuilder {
+    crash_uuid: Option<String>,
+    sig_info: Option<SigInfo>,
+    endpoint: Option<Endpoint>,
+    custom_message: Option<String>,
+}
+
+impl CrashPingBuilder {
+    pub fn new() -> Self {
+        Self {
+            crash_uuid: None,
+            sig_info: None,
+            endpoint: None,
+            custom_message: None,
+        }
+    }
+
+    pub fn with_crash_uuid(mut self, uuid: String) -> Self {
+        self.crash_uuid = Some(uuid);
+        self
+    }
+
+    pub fn with_sig_info(mut self, sig_info: SigInfo) -> Self {
+        self.sig_info = Some(sig_info);
+        self
+    }
+
+    pub fn with_endpoint(mut self, endpoint: Option<Endpoint>) -> Self {
+        self.endpoint = endpoint;
+        self
+    }
+
+    pub fn with_custom_message(mut self, message: String) -> Self {
+        self.custom_message = Some(message);
+        self
+    }
+
+    pub fn build(self) -> anyhow::Result<CrashPing> {
+        let crash_uuid = self.crash_uuid.context("crash_uuid is required")?;
+        let sig_info = self.sig_info.context("sig_info is required")?;
+
+        let message = self.custom_message.unwrap_or_else(|| {
+            format!(
+                "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
+                sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+            )
+        });
+
+        Ok(CrashPing {
+            crash_uuid,
+            siginfo: sig_info,
+            message,
+            version: CrashPing::current_schema_version(),
+            kind: "Crash ping".to_string(),
+            endpoint: self.endpoint,
+        })
+    }
+}
+
+impl Default for CrashPingBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct CrashPing {
     crash_uuid: String,
     siginfo: SigInfo,
     message: String,
     version: String,
     kind: String,
+    #[serde(skip)]
+    endpoint: Option<Endpoint>,
 }
 
-impl CrashPingMessage {
-    fn new(crash_uuid: String, message: String, siginfo: SigInfo) -> Self {
-        Self {
-            crash_uuid,
-            siginfo,
-            message,
-            version: Self::current_schema_version(),
-            kind: "Crash ping".to_string(),
-        }
+impl CrashPing {
+    pub fn crash_uuid(&self) -> &str {
+        &self.crash_uuid
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    pub fn endpoint(&self) -> &Option<Endpoint> {
+        &self.endpoint
     }
 
     fn current_schema_version() -> String {
@@ -131,27 +201,55 @@ impl TelemetryCrashUploader {
         Ok(s)
     }
 
-    pub async fn send_crash_ping(
+    pub async fn upload_crash_ping(&self, crash_ping: &CrashPing) -> anyhow::Result<()> {
+        self.upload_crash_ping_internal(crash_ping, &crash_ping.crash_uuid, &crash_ping.siginfo)
+            .await
+    }
+
+    async fn upload_crash_ping_internal(
         &self,
+        crash_ping: &CrashPing,
         crash_uuid: &str,
         sig_info: &SigInfo,
     ) -> anyhow::Result<()> {
-        let metadata = &self.metadata;
-
+        let tags = self.build_crash_ping_tags(crash_uuid, sig_info);
         let tracer_time = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
+        let message = serde_json::to_string(crash_ping)?;
 
+        self.send_log_payload(
+            message,
+            tags,
+            tracer_time,
+            LogLevel::Debug,
+            false, // is_sensitive
+            false, // is_crash
+        )
+        .await
+    }
+
+    fn build_crash_ping_tags(&self, crash_uuid: &str, sig_info: &SigInfo) -> String {
+        let metadata = &self.metadata;
         let mut tags = format!(
-            "uuid:{},is_crash_ping:true,service:{},language_name:{},language_version:{},tracer_version:{}",
+            "uuid:{},is_crash_ping:true,service:{},language_name:{},language_version:{},tracer_version:{},si_code_human_readable:{:?},si_signo:{},si_signo_human_readable:{:?}",
             crash_uuid,
             metadata.application.service_name,
             metadata.application.language_name,
             metadata.application.language_version,
-            metadata.application.tracer_version
+            metadata.application.tracer_version,
+            sig_info.si_code_human_readable,
+            sig_info.si_signo,
+            sig_info.si_signo_human_readable
         );
 
+        self.append_optional_tags(&mut tags);
+        tags
+    }
+
+    fn append_optional_tags(&self, tags: &mut String) {
+        let metadata = &self.metadata;
         if let Some(env) = &metadata.application.env {
             tags.push_str(&format!(",env:{env}"));
         }
@@ -161,56 +259,11 @@ impl TelemetryCrashUploader {
         if let Some(runtime_version) = &metadata.application.runtime_version {
             tags.push_str(&format!(",runtime_version:{runtime_version}"));
         }
-
-        // Add signal information to tags
-        tags.push_str(&format!(
-            ",si_code_human_readable:{:?}",
-            sig_info.si_code_human_readable
-        ));
-        tags.push_str(&format!(",si_signo:{}", sig_info.si_signo));
-        tags.push_str(&format!(
-            ",si_signo_human_readable:{:?}",
-            sig_info.si_signo_human_readable
-        ));
-
-        let crash_ping_msg = CrashPingMessage::new(
-            crash_uuid.to_string(),
-            format!(
-                "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
-                sig_info.si_code_human_readable, sig_info.si_signo_human_readable
-            ),
-            sig_info.clone(),
-        );
-
-        let payload = data::Telemetry {
-            tracer_time,
-            api_version: ddtelemetry::data::ApiVersion::V2,
-            runtime_id: &metadata.runtime_id,
-            seq_id: 1,
-            application: &metadata.application,
-            host: &metadata.host,
-            payload: &data::Payload::Logs(vec![data::Log {
-                message: serde_json::to_string(&crash_ping_msg)?,
-                level: LogLevel::Debug,
-                stack_trace: None,
-                tags,
-                is_sensitive: false,
-                count: 1,
-                is_crash: false,
-            }]),
-            origin: Some("Crashtracker"),
-        };
-
-        self.send_telemetry_payload(&payload).await
     }
 
     pub async fn upload_to_telemetry(&self, crash_info: &CrashInfo) -> anyhow::Result<()> {
-        let metadata = &self.metadata;
-
         let message = serde_json::to_string(crash_info)?;
-
         let tags = extract_crash_info_tags(crash_info).unwrap_or_default();
-
         let tracer_time = crash_info.timestamp.parse::<DateTime<Utc>>().map_or_else(
             |_| {
                 SystemTime::now()
@@ -221,22 +274,41 @@ impl TelemetryCrashUploader {
             |ts| ts.timestamp() as u64,
         );
 
+        self.send_log_payload(
+            message,
+            tags,
+            tracer_time,
+            LogLevel::Error,
+            true, // is_sensitive
+            true, // is_crash
+        )
+        .await
+    }
+
+    async fn send_log_payload(
+        &self,
+        message: String,
+        tags: String,
+        tracer_time: u64,
+        level: LogLevel,
+        is_sensitive: bool,
+        is_crash: bool,
+    ) -> anyhow::Result<()> {
         let payload = data::Telemetry {
             tracer_time,
             api_version: ddtelemetry::data::ApiVersion::V2,
-            runtime_id: &metadata.runtime_id,
+            runtime_id: &self.metadata.runtime_id,
             seq_id: 1,
-            application: &metadata.application,
-            host: &metadata.host,
+            application: &self.metadata.application,
+            host: &self.metadata.host,
             payload: &data::Payload::Logs(vec![data::Log {
                 message,
-                level: LogLevel::Error,
-                // The stacktrace is already included in the `crash_info` inside `message`.
+                level,
                 stack_trace: None,
                 tags,
-                is_sensitive: true,
+                is_sensitive,
                 count: 1,
-                is_crash: true,
+                is_crash,
             }]),
             origin: Some("Crashtracker"),
         };
@@ -317,7 +389,7 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::TelemetryCrashUploader;
+    use super::{CrashPingBuilder, TelemetryCrashUploader};
     use crate::crash_info::{test_utils::TestInstance, CrashInfo, Metadata};
     use ddcommon::Endpoint;
     use std::{collections::HashSet, fs};
@@ -428,7 +500,13 @@ mod tests {
         let crash_uuid = "test-uuid-12345";
         let sig_info = crate::SigInfo::test_instance(42);
 
-        t.send_crash_ping(crash_uuid, &sig_info).await.unwrap();
+        // Build crash ping and upload using the new pattern
+        let crash_ping = CrashPingBuilder::new()
+            .with_crash_uuid(crash_uuid.to_string())
+            .with_sig_info(sig_info.clone())
+            .build()
+            .unwrap();
+        t.upload_crash_ping(&crash_ping).await.unwrap();
 
         let payload: serde_json::value::Value =
             serde_json::de::from_str(&fs::read_to_string(&output_filename).unwrap()).unwrap();
@@ -487,7 +565,12 @@ mod tests {
         let crash_uuid = "test-enhanced-uuid-67890";
         let sig_info = crate::SigInfo::test_instance(123);
 
-        t.send_crash_ping(crash_uuid, &sig_info).await.unwrap();
+        let crash_ping = CrashPingBuilder::new()
+            .with_crash_uuid(crash_uuid.to_string())
+            .with_sig_info(sig_info.clone())
+            .build()
+            .unwrap();
+        t.upload_crash_ping(&crash_ping).await.unwrap();
 
         let payload: serde_json::value::Value =
             serde_json::de::from_str(&fs::read_to_string(&output_filename).unwrap()).unwrap();
@@ -528,5 +611,106 @@ mod tests {
         assert!(tags.contains("tracer_version:"));
 
         Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_crash_ping_builder_basic() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir().unwrap();
+        let output_filename = {
+            let mut p = tmp.into_path();
+            p.push("crash_ping_builder_test");
+            p
+        };
+
+        let crash_uuid = "builder-test-uuid-12345";
+        let sig_info = crate::SigInfo::test_instance(42);
+        let metadata = Metadata::test_instance(1);
+
+        let crash_ping = CrashPingBuilder::new()
+            .with_crash_uuid(crash_uuid.to_string())
+            .with_sig_info(sig_info.clone())
+            .with_endpoint(Some(Endpoint::from_slice(&format!(
+                "file://{}",
+                output_filename.to_str().unwrap()
+            ))))
+            .build()?;
+
+        // Test getters
+        assert_eq!(crash_ping.crash_uuid(), crash_uuid);
+        assert!(crash_ping.message().contains("crash processing started"));
+
+        // Use TelemetryCrashUploader to upload the crash ping
+        let mut uploader = TelemetryCrashUploader::new(&metadata, crash_ping.endpoint())?;
+        uploader
+            .cfg
+            .set_host_from_url(&format!(
+                "file://{}.telemetry",
+                output_filename.to_str().unwrap()
+            ))
+            .unwrap();
+
+        let crash_ping = CrashPingBuilder::new()
+            .with_crash_uuid(crash_uuid.to_string())
+            .with_sig_info(sig_info.clone())
+            .build()?;
+        uploader.upload_crash_ping(&crash_ping).await?;
+
+        // Verify the .telemetry file was created with correct content
+        let telemetry_filename = format!("{}.telemetry", output_filename.to_str().unwrap());
+        let payload: serde_json::value::Value =
+            serde_json::de::from_str(&std::fs::read_to_string(&telemetry_filename)?)?;
+
+        assert_eq!(payload["api_version"], "v2");
+        assert_eq!(payload["request_type"], "logs");
+        assert_eq!(payload["origin"], "Crashtracker");
+
+        let log_entry = &payload["payload"][0];
+        assert_eq!(log_entry["level"], "DEBUG");
+        assert_eq!(log_entry["is_sensitive"], false);
+        assert_eq!(log_entry["is_crash"], false);
+
+        let message_json: serde_json::Value =
+            serde_json::from_str(log_entry["message"].as_str().unwrap())?;
+        assert_eq!(message_json["crash_uuid"], crash_uuid);
+        assert_eq!(message_json["version"], "1.0");
+        assert_eq!(message_json["kind"], "Crash ping");
+
+        Ok(())
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_crash_ping_builder_validation() {
+        // Test missing required fields
+        let result = CrashPingBuilder::new().build();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("crash_uuid is required"));
+
+        let result = CrashPingBuilder::new()
+            .with_crash_uuid("test".to_string())
+            .build();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("sig_info is required"));
+
+        let result = CrashPingBuilder::new()
+            .with_crash_uuid("test".to_string())
+            .with_sig_info(crate::SigInfo::test_instance(1))
+            .build();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_crash_ping_builder_default() {
+        let builder = CrashPingBuilder::default();
+        let result = builder.build();
+        assert!(result.is_err());
     }
 }
