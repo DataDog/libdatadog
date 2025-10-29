@@ -102,9 +102,9 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
     let frames2 = frames.map(|f| {
         let set_id = functions
             .try_insert(Function {
-                name: strings.try_insert(f.file_name).unwrap().into(),
+                name: strings.try_insert(f.file_name).unwrap(),
                 system_name: Default::default(),
-                file_name: strings.try_insert(f.file_name).unwrap().into(),
+                file_name: strings.try_insert(f.file_name).unwrap(),
             })
             .unwrap();
         Frame2 {
