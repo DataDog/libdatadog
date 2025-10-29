@@ -529,6 +529,9 @@ impl Profile {
         );
 
         if let Some(dict) = dict_opt {
+            // todo: should we maybe pre-reserve memory for the new mappings,
+            //       functions, strings, based on the the old data? Maybe use
+            //       1/4 to 1/2?
             profile.set_profiles_dictionary(dict);
         }
 
