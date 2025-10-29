@@ -36,9 +36,5 @@ pub unsafe extern "C" fn ddog_ffe_configuration_new(
 /// `config` must be a valid Configuration handle created by `ddog_ffe_configuration_new`
 #[no_mangle]
 pub unsafe extern "C" fn ddog_ffe_configuration_drop(mut config: *mut Handle<Configuration>) {
-    // Handle take() errors gracefully to prevent malloc corruption from double-free
-    // or use-after-free scenarios. If take() fails, silently ignore to avoid panics.
-    if let Ok(inner) = config.take() {
-        drop(inner);
-    }
+    drop(config.take());
 }

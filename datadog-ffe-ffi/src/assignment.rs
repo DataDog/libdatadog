@@ -12,13 +12,13 @@ use ddcommon_ffi::{wrap_with_ffi_result, Handle, Result, ToInner};
 /// Evaluates a feature flag.
 ///
 /// # Safety
-/// - `config` must be a valid Configuration handle
+/// - `config` must be a valid Configuration handle pointer
 /// - `context` must be a valid EvaluationContext handle
 /// - `flag_key` must be a valid null-terminated C string
 #[no_mangle]
 #[named]
 pub unsafe extern "C" fn ddog_ffe_get_assignment(
-    mut config: Handle<Configuration>,
+    mut config: *mut Handle<Configuration>,
     flag_key: *const c_char,
     mut context: Handle<EvaluationContext>,
 ) -> Result<Handle<Assignment>> {
@@ -47,9 +47,5 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment(
 /// `assignment` must be a valid Assignment handle
 #[no_mangle]
 pub unsafe extern "C" fn ddog_ffe_assignment_drop(mut assignment: *mut Handle<Assignment>) {
-    // Handle take() errors gracefully to prevent malloc corruption from double-free
-    // or use-after-free scenarios. If take() fails, silently ignore to avoid panics.
-    if let Ok(inner) = assignment.take() {
-        drop(inner);
-    }
+    drop(assignment.take());
 }
