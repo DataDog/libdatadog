@@ -37,6 +37,9 @@ struct ProfilesDictionaryTranslator {
     strings: FxIndexMap<StringRef, StringId>,
 }
 
+// SAFETY: the profiles_dictionary keeps the storage for Ids alive.
+unsafe impl Send for ProfilesDictionaryTranslator {}
+
 pub struct Profile {
     profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
     /// When profiles are reset, the sample-types need to be preserved. This
