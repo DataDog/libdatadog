@@ -127,6 +127,26 @@ pub struct Label<'a> {
     pub num_unit: &'a str,
 }
 
+impl<'a> Label<'a> {
+    pub const fn str(key: StringId2, str: &'a str) -> Label<'a> {
+        Label {
+            key,
+            str,
+            num: 0,
+            num_unit: "",
+        }
+    }
+
+    pub const fn num(key: StringId2, num: i64, num_unit: &'a str) -> Label<'a> {
+        Label {
+            key,
+            str: "",
+            num,
+            num_unit,
+        }
+    }
+}
+
 /// Represents a pointer to a string's header. Its definition is intentionally obscured.
 #[derive(Clone, Copy, Debug)]
 pub struct StringHeader(());
