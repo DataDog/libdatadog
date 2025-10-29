@@ -24,9 +24,16 @@ pub struct Mapping2 {
     pub build_id: StringId2,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
 pub struct MappingId2(*mut Mapping2);
+
+// todo: when MSRV is 1.88.0+, derive Default
+impl Default for MappingId2 {
+    fn default() -> Self {
+        Self(core::ptr::null_mut())
+    }
+}
 
 impl MappingId2 {
     pub fn is_empty(self) -> bool {
@@ -59,9 +66,16 @@ pub struct Function2 {
     pub file_name: StringId2,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
 pub struct FunctionId2(*mut Function2);
+
+// todo: when MSRV is 1.88.0+, derive Default
+impl Default for FunctionId2 {
+    fn default() -> Self {
+        Self(core::ptr::null_mut())
+    }
+}
 
 impl FunctionId2 {
     pub fn is_empty(self) -> bool {
