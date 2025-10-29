@@ -47,5 +47,9 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment(
 /// `assignment` must be a valid Assignment handle
 #[no_mangle]
 pub unsafe extern "C" fn ddog_ffe_assignment_drop(mut assignment: *mut Handle<Assignment>) {
-    drop(assignment.take());
+    // Handle take() errors gracefully to prevent malloc corruption from double-free
+    // or use-after-free scenarios. If take() fails, silently ignore to avoid panics.
+    if let Ok(inner) = assignment.take() {
+        drop(inner);
+    }
 }
