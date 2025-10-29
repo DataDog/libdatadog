@@ -43,7 +43,8 @@ pub struct AttributePair {
 ///
 /// # Safety
 /// - `targeting_key` must be a valid null-terminated C string
-/// - `attributes` must point to a valid array of `AttributePair` structs (can be null if attributes_count is 0)
+/// - `attributes` must point to a valid array of `AttributePair` structs (can be null if
+///   attributes_count is 0)
 /// - Each `AttributePair.name` and `AttributePair.value` must be valid null-terminated C strings
 /// - `attributes_count` must accurately represent the length of the `attributes` array
 #[no_mangle]
