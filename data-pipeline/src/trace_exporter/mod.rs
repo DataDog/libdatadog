@@ -314,7 +314,13 @@ impl TraceExporter {
                 };
             });
         }
-        // Drop runtime to shutdown all threads
+        // When the info fetcher is paused, the trigger channel keeps a reference to the runtime's IoStack as a waker.
+        // This prevents the IoStack from being dropped when shutting down runtime. By manually sending a message to the trigger
+        // channel we trigger the waker releasing the reference to the IoStack.
+        if let PausableWorker::Paused { worker } = &mut self.workers.lock_or_panic().info {
+            self.info_response_observer.manual_trigger();
+            worker.drain();
+        }
         drop(runtime);
     }
 
@@ -462,7 +468,7 @@ impl TraceExporter {
     /// 2) It's not guaranteed to not block forever, since the /info endpoint might not be
     ///    available.
     ///
-    /// The `send`` function will check agent_info when running, which will only be available if the
+    /// The `send` function will check agent_info when running, which will only be available if the
     /// fetcher had time to reach to the agent.
     /// Since agent_info can enable CSS computation, waiting for this during testing can make
     /// snapshots non-deterministic.
