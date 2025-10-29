@@ -67,7 +67,7 @@ pub unsafe extern "C" fn ddog_ffe_evaluation_context_new_with_attributes(
     // Process attributes array
     for i in 0..attributes_count {
         let attr_pair = &*attributes.add(i);
-        
+
         if attr_pair.name.is_null() || attr_pair.value.is_null() {
             continue; // Skip invalid pairs
         }
