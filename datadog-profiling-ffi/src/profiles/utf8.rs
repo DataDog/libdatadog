@@ -12,6 +12,7 @@ use std::str::Utf8Error;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[allow(dead_code)] // these are made through ffi
 pub enum Utf8Option {
     /// The string is assumed to be valid UTF-8. If it's not, the behavior
     /// is undefined.
@@ -23,6 +24,7 @@ pub enum Utf8Option {
     Validate,
 }
 
+#[allow(dead_code)]
 pub enum Utf8ConversionError {
     OutOfMemory(TryReserveError),
     SliceConversionError(SliceConversionError),
@@ -134,16 +136,10 @@ pub fn insert_str(
     str: CharSlice<'_>,
     utf8_options: Utf8Option,
 ) -> Result<StringRef, ProfileError> {
-    let bytes = str.try_as_bytes().map_err(ProfileError::from_thin_error)?;
-    let string = match utf8_options {
-        Utf8Option::Assume => {
-            // SAFETY: the caller is asserting the data is valid UTF-8.
-            Cow::Borrowed(unsafe { std::str::from_utf8_unchecked(bytes) })
-        }
-        Utf8Option::ConvertLossy => try_from_utf8_lossy(bytes)?,
-        Utf8Option::Validate => {
-            Cow::Borrowed(std::str::from_utf8(bytes).map_err(|_| ProfileError::InvalidInput)?)
-        }
-    };
+    let string = unsafe { utf8_options.try_as_bytes_convert(str) }.map_err(|err| match err {
+        Utf8ConversionError::OutOfMemory(_) => ProfileError::OutOfMemory,
+        Utf8ConversionError::SliceConversionError(_) => ProfileError::InvalidInput,
+        Utf8ConversionError::Utf8Error(_) => ProfileError::InvalidInput,
+    })?;
     Ok(set.try_insert(string.as_ref())?)
 }

@@ -11,8 +11,6 @@ mod profile_index;
 mod replayer;
 
 use clap::{command, Arg, ArgAction};
-use datadog_profiling::profiles::collections::Arc;
-use datadog_profiling::profiles::datatypes::ProfilesDictionary;
 use prost::Message;
 pub use replayer::*;
 use std::borrow::Cow;

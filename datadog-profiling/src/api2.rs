@@ -33,6 +33,9 @@ impl MappingId2 {
         self.0.is_null()
     }
 
+    /// # Safety
+    /// The pointer object must still be alive. In general this means the
+    /// profiles dictionary it came from must be alive.
     pub unsafe fn read(self) -> Option<Mapping2> {
         if self.is_empty() {
             None
@@ -65,6 +68,9 @@ impl FunctionId2 {
         self.0.is_null()
     }
 
+    /// # Safety
+    /// The pointer object must still be alive. In general this means the
+    /// profiles dictionary it came from must be alive.
     pub unsafe fn read(self) -> Option<Function2> {
         if self.is_empty() {
             None

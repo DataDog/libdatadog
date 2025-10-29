@@ -6,9 +6,6 @@ mod interning_api;
 mod profiling_dictionary;
 mod utf8;
 
-pub use profiling_dictionary::*;
-pub use utf8::*;
-
 use std::ffi::CStr;
 
 // Shared error message helpers and null-check macros reused by FFI modules.
