@@ -10,7 +10,7 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use libdd_common::{config::parse_env, parse_uri, Endpoint};
 use http::{uri::PathAndQuery, Uri};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, time::Duration};
 
 pub const DEFAULT_DD_SITE: &str = "datadoghq.com";
@@ -22,11 +22,12 @@ const AGENT_ERRORS_INTAKE_URL_PATH: &str = "/evp_proxy/v4/api/v2/errorsintake";
 const DEFAULT_AGENT_HOST: &str = "localhost";
 const DEFAULT_AGENT_PORT: u16 = 8126;
 
-#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ErrorsIntakeConfig {
     pub(crate) endpoint: Option<Endpoint>,
     pub direct_submission_enabled: bool,
     pub debug_enabled: bool,
+    pub errors_intake_enabled: bool,
 }
 
 fn endpoint_with_errors_intake_path(
@@ -65,6 +66,7 @@ pub struct ErrorsIntakeSettings {
     pub site: Option<String>,
     pub errors_intake_dd_url: Option<String>,
     pub shared_lib_debug: bool,
+    pub errors_intake_enabled: bool,
 
     // Filesystem check
     pub agent_uds_socket_found: bool,
@@ -86,6 +88,9 @@ impl ErrorsIntakeSettings {
     // Debug configuration
     const _DD_SHARED_LIB_DEBUG: &'static str = "_DD_SHARED_LIB_DEBUG";
 
+    // Feature flags
+    const _DD_ERRORS_INTAKE_ENABLED: &'static str = "_DD_ERRORS_INTAKE_ENABLED";
+
     pub fn from_env() -> Self {
         let default = Self::default();
         Self {
@@ -101,6 +106,7 @@ impl ErrorsIntakeSettings {
             site: parse_env::str_not_empty(Self::DD_SITE),
             errors_intake_dd_url: parse_env::str_not_empty(Self::DD_ERRORS_INTAKE_DD_URL),
             shared_lib_debug: parse_env::bool(Self::_DD_SHARED_LIB_DEBUG).unwrap_or(false),
+            errors_intake_enabled: parse_env::bool(Self::_DD_ERRORS_INTAKE_ENABLED).unwrap_or(true),
 
             agent_uds_socket_found: (|| {
                 #[cfg(unix)]
@@ -164,6 +170,10 @@ impl ErrorsIntakeConfig {
         self.endpoint.as_ref()
     }
 
+    pub fn is_errors_intake_enabled(&self) -> bool {
+        self.errors_intake_enabled
+    }
+
     pub fn set_endpoint(&mut self, endpoint: Endpoint) -> anyhow::Result<()> {
         self.endpoint = Some(endpoint_with_errors_intake_path(
             endpoint,
@@ -179,6 +189,7 @@ impl ErrorsIntakeConfig {
             endpoint: None,
             direct_submission_enabled: settings.direct_submission_enabled,
             debug_enabled: settings.shared_lib_debug,
+            errors_intake_enabled: settings.errors_intake_enabled,
         };
 
         // For direct submission, construct the proper intake URL
@@ -221,7 +232,7 @@ impl ErrorsIntakeConfig {
     }
 }
 
-#[derive(Serialize, Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct ErrorObject {
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub error_type: Option<String>,
@@ -237,7 +248,7 @@ pub struct ErrorObject {
     pub source_type: Option<String>,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct ErrorsIntakePayload {
     pub timestamp: u64,
     pub ddsource: String,
@@ -464,7 +475,11 @@ impl ErrorsIntakeUploader {
         Ok(Self { cfg })
     }
 
-    pub async fn send_crash_ping(
+    pub fn is_enabled(&self) -> bool {
+        self.cfg.is_errors_intake_enabled()
+    }
+
+    pub async fn upload_crash_ping(
         &self,
         crash_uuid: &str,
         sig_info: &SigInfo,
@@ -801,5 +816,35 @@ mod tests {
 
         std::env::remove_var("DD_TRACE_AGENT_URL");
         std::env::remove_var("DD_API_KEY");
+    }
+
+    #[test]
+    fn test_errors_intake_enabled_flag() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap();
+
+        // Test default behavior (should be enabled)
+        std::env::remove_var("_DD_ERRORS_INTAKE_ENABLED");
+        let cfg = ErrorsIntakeConfig::from_env();
+        assert!(cfg.is_errors_intake_enabled());
+
+        // Test explicitly enabled
+        std::env::set_var("_DD_ERRORS_INTAKE_ENABLED", "true");
+        let cfg = ErrorsIntakeConfig::from_env();
+        assert!(cfg.is_errors_intake_enabled());
+
+        // Test explicitly disabled
+        std::env::set_var("_DD_ERRORS_INTAKE_ENABLED", "false");
+        let cfg = ErrorsIntakeConfig::from_env();
+        assert!(!cfg.is_errors_intake_enabled());
+
+        // Test with uploader
+        let uploader = ErrorsIntakeUploader::new(&None).unwrap();
+        assert!(!uploader.is_enabled());
+
+        std::env::set_var("_DD_ERRORS_INTAKE_ENABLED", "true");
+        let uploader = ErrorsIntakeUploader::new(&None).unwrap();
+        assert!(uploader.is_enabled());
+
+        std::env::remove_var("_DD_ERRORS_INTAKE_ENABLED");
     }
 }
