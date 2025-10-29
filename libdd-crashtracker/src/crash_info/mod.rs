@@ -158,7 +158,9 @@ impl CrashInfo {
 
     async fn upload_to_errors_intake(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
         let uploader = ErrorsIntakeUploader::new(endpoint)?;
-        uploader.upload_to_errors_intake(self).await?;
+        if uploader.is_enabled() {
+            uploader.upload_to_errors_intake(self).await?;
+        }
         Ok(())
     }
 }
