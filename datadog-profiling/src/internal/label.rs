@@ -6,16 +6,13 @@ use datadog_profiling_protobuf::{prost_impls, Record, StringOffset};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum InternalLabelValue {
-    Str(InternalStringId),
-    Num {
-        num: i64,
-        num_unit: InternalStringId,
-    },
+    Str(StringId),
+    Num { num: i64, num_unit: StringId },
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct InternalLabel {
-    key: InternalStringId,
+    key: StringId,
     value: InternalLabelValue,
 }
 
@@ -28,7 +25,7 @@ impl InternalLabel {
         matches!(self.value, InternalLabelValue::Str(_))
     }
 
-    pub fn get_key(&self) -> InternalStringId {
+    pub fn get_key(&self) -> StringId {
         self.key
     }
 
@@ -36,14 +33,14 @@ impl InternalLabel {
         &self.value
     }
 
-    pub fn num(key: InternalStringId, num: i64, num_unit: InternalStringId) -> Self {
+    pub fn num(key: StringId, num: i64, num_unit: StringId) -> Self {
         Self {
             key,
             value: InternalLabelValue::Num { num, num_unit },
         }
     }
 
-    pub fn str(key: InternalStringId, v: InternalStringId) -> Self {
+    pub fn str(key: StringId, v: StringId) -> Self {
         Self {
             key,
             value: InternalLabelValue::Str(v),

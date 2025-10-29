@@ -4,9 +4,9 @@
 use super::*;
 
 pub struct Endpoints {
-    pub endpoint_label: InternalStringId,
-    pub local_root_span_id_label: InternalStringId,
-    pub mappings: FxIndexMap<u64, InternalStringId>,
+    pub endpoint_label: StringId,
+    pub local_root_span_id_label: StringId,
+    pub mappings: FxIndexMap<u64, StringId>,
     pub stats: ProfiledEndpointsStats,
 }
 

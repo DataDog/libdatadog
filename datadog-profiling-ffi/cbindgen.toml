@@ -88,11 +88,8 @@ renaming_overrides_prefixing = true
 "StackTraceId" = "OpaqueStackTraceId"
 
 "GenerationalId_StringId" = "ddog_prof_StringId"
-"GenerationalId_InternalStringId" = "ddog_prof_StringId"
 "Result_GenerationalIdStringId" = "ddog_prof_StringId_Result"
-"Result_GenerationalIdInternalStringId" = "ddog_prof_StringId_Result"
 "MutSlice_GenerationalIdStringId" = "ddog_prof_MutSlice_StringId"
-"MutSlice_GenerationalIdInternalStringId" = "ddog_prof_MutSlice_StringId"
 
 # StringId is an alias of StringOffset, we need both to be `OpaqueStringId`
 # for the current interning API.

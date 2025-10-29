@@ -56,7 +56,7 @@ impl UpscalingRule {
 
 #[derive(Default)]
 pub struct UpscalingRules {
-    rules: FxIndexMap<(InternalStringId, InternalStringId), Vec<UpscalingRule>>,
+    rules: FxIndexMap<(StringId, StringId), Vec<UpscalingRule>>,
     // this is just an optimization in the case where we check collisions (when adding
     // a by-value rule) against by-label rules
     // 32 should be enough for the size of the bitmap
@@ -67,8 +67,8 @@ impl UpscalingRules {
     pub fn add(
         &mut self,
         values_offset: &[usize],
-        label_name: (&str, InternalStringId),
-        label_value: (&str, InternalStringId),
+        label_name: (&str, StringId),
+        label_value: (&str, StringId),
         upscaling_info: UpscalingInfo,
         max_offset: usize,
     ) -> anyhow::Result<()> {
@@ -109,8 +109,8 @@ impl UpscalingRules {
     fn check_collisions(
         &self,
         values_offset: &[usize],
-        label_name: (&str, InternalStringId),
-        label_value: (&str, InternalStringId),
+        label_name: (&str, StringId),
+        label_value: (&str, StringId),
         upscaling_info: &UpscalingInfo,
     ) -> anyhow::Result<()> {
         // Check for duplicates
@@ -146,10 +146,7 @@ impl UpscalingRules {
                 "The by-value rule is colliding with at least one by-label rule at offset {collision_offset:?}\n\
                 by-value rule values offset(s) {values_offset:?}",
             )
-        } else if let Some(rules) = self
-            .rules
-            .get(&(InternalStringId::ZERO, InternalStringId::ZERO))
-        {
+        } else if let Some(rules) = self.rules.get(&(StringId::ZERO, StringId::ZERO)) {
             let collide_with_byvalue_rule = rules
                 .iter()
                 .find(|rule| is_overlapping(&rule.values_offset, values_offset));
@@ -160,7 +157,7 @@ impl UpscalingRules {
         Ok(())
     }
 
-    pub fn get(&self, k: &(InternalStringId, InternalStringId)) -> Option<&Vec<UpscalingRule>> {
+    pub fn get(&self, k: &(StringId, StringId)) -> Option<&Vec<UpscalingRule>> {
         self.rules.get(k)
     }
 
@@ -182,15 +179,14 @@ impl UpscalingRules {
                         label.get_key(),
                         match label.get_value() {
                             InternalLabelValue::Str(str) => *str,
-                            InternalLabelValue::Num { .. } => InternalStringId::ZERO,
+                            InternalLabelValue::Num { .. } => StringId::ZERO,
                         },
                     ))
                 })
                 .collect::<Vec<&Vec<UpscalingRule>>>();
 
             // get byvalue rules if any
-            if let Some(byvalue_rules) = self.get(&(InternalStringId::ZERO, InternalStringId::ZERO))
-            {
+            if let Some(byvalue_rules) = self.get(&(StringId::ZERO, StringId::ZERO)) {
                 group_of_rules.push(byvalue_rules);
             }
 

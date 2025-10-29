@@ -7,7 +7,7 @@ use datadog_profiling::collections::string_table::wordpress_test_data::WORDPRESS
 /// This version is the one we used before having datadog-alloc.
 #[allow(unused)]
 mod old_version {
-    use datadog_profiling::collections::identifiable::{FxIndexSet, Id, InternalStringId};
+    use datadog_profiling::collections::identifiable::{FxIndexSet, Id, StringId};
     pub struct StringTable {
         strings: FxIndexSet<Box<str>>,
     }
@@ -19,7 +19,7 @@ mod old_version {
             Self { strings }
         }
 
-        pub fn intern(&mut self, item: &str) -> InternalStringId {
+        pub fn intern(&mut self, item: &str) -> StringId {
             // For performance, delay converting the [&str] to a [String] until
             // after it has been determined to not exist in the set. This avoids
             // temporary allocations.
@@ -31,7 +31,7 @@ mod old_version {
                     index
                 }
             };
-            InternalStringId::from_offset(index)
+            StringId::from_offset(index)
         }
 
         #[inline]

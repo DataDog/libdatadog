@@ -34,7 +34,7 @@ struct ProfilesDictionaryTranslator {
     profiles_dictionary: crate::profiles::collections::Arc<ProfilesDictionary>,
     mappings: FxIndexMap<SetId<dt::Mapping>, Option<InternalMappingId>>,
     functions: FxIndexMap<SetId<dt::Function>, InternalFunctionId>,
-    strings: FxIndexMap<StringRef, InternalStringId>,
+    strings: FxIndexMap<StringRef, StringId>,
 }
 
 pub struct Profile {
@@ -63,7 +63,7 @@ pub struct Profile {
     strings: StringTable,
     string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
     string_storage_cached_profile_id: Option<CachedProfileId>,
-    timestamp_key: InternalStringId,
+    timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
 }
 
@@ -209,12 +209,9 @@ impl Profile {
         Ok(internal_id)
     }
 
-    unsafe fn translate_string(
-        &mut self,
-        string_id: StringId2,
-    ) -> anyhow::Result<InternalStringId> {
+    unsafe fn translate_string(&mut self, string_id: StringId2) -> anyhow::Result<StringId> {
         if string_id.is_empty() {
-            return Ok(InternalStringId::ZERO);
+            return Ok(StringId::ZERO);
         }
 
         // SAFETY: callers must ensure there is a translator
@@ -430,11 +427,11 @@ impl Profile {
         Ok(self.generation)
     }
 
-    pub fn resolve(&mut self, id: ManagedStringId) -> anyhow::Result<InternalStringId> {
+    pub fn resolve(&mut self, id: ManagedStringId) -> anyhow::Result<StringId> {
         let non_empty_string_id = if let Some(valid_id) = NonZeroU32::new(id.value) {
             valid_id
         } else {
-            return Ok(InternalStringId::ZERO); // Both string tables use zero for the empty string
+            return Ok(StringId::ZERO); // Both string tables use zero for the empty string
         };
 
         let string_storage = self.string_storage
@@ -625,7 +622,7 @@ impl Profile {
                 labels.push(InternalLabel::num(
                     self.timestamp_key,
                     ts.get(),
-                    InternalStringId::ZERO,
+                    StringId::ZERO,
                 ))
             }
             let pprof_labels: Vec<_> = labels.iter().map(protobuf::Label::from).collect();
@@ -977,16 +974,16 @@ impl Profile {
     }
 
     /// Interns the `str` as a string, returning the id in the string table.
-    /// The empty string is guaranteed to have an id of [InternalStringId::ZERO].
+    /// The empty string is guaranteed to have an id of [StringId::ZERO].
     #[inline]
-    fn intern(&mut self, item: &str) -> InternalStringId {
+    fn intern(&mut self, item: &str) -> StringId {
         self.strings.intern(item)
     }
 
     /// Interns the `str` as a string, returning the id in the string table.
-    /// The empty string is guaranteed to have an id of [InternalStringId::ZERO].
+    /// The empty string is guaranteed to have an id of [StringId::ZERO].
     #[inline]
-    fn try_intern(&mut self, item: &str) -> Result<InternalStringId, string_table::Error> {
+    fn try_intern(&mut self, item: &str) -> Result<StringId, string_table::Error> {
         self.strings.try_intern(item)
     }
 
@@ -1025,7 +1022,7 @@ impl Profile {
         };
 
         let _id = profile.intern("");
-        debug_assert!(_id == InternalStringId::ZERO);
+        debug_assert!(_id == StringId::ZERO);
 
         profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
         profile.endpoints.endpoint_label = profile.intern("trace endpoint");
@@ -1130,7 +1127,7 @@ impl Profile {
                 anyhow::bail!("Duplicate label on sample: {:?} {:?}", duplicate, label);
             }
 
-            let key_id: InternalStringId = self.resolve(label.key)?;
+            let key_id: StringId = self.resolve(label.key)?;
 
             if key_id == self.endpoints.local_root_span_id_label {
                 anyhow::ensure!(
@@ -1181,7 +1178,7 @@ mod api_tests {
 
         let mut profiles = Profile::new(&sample_types, None);
 
-        let expected_id = InternalStringId::from_offset(profiles.interned_strings_count());
+        let expected_id = StringId::from_offset(profiles.interned_strings_count());
 
         let string = "a";
         let id1 = profiles.intern(string);

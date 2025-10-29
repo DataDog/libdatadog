@@ -6,7 +6,7 @@ use std::num::NonZeroI64;
 use super::datatypes::{profile_ptr_to_inner, Profile};
 use datadog_profiling::{
     api::ManagedStringId,
-    collections::identifiable::InternalStringId,
+    collections::identifiable::StringId,
     internal::{
         self,
         interning_api::{Generation, GenerationalId},
@@ -20,7 +20,7 @@ use ddcommon_ffi::{
 use function_name::named;
 
 // Cbindgen was putting invalid C types on the static, this workaround seems to fix it.
-type CbindgenIsDumbStringId = GenerationalId<InternalStringId>;
+type CbindgenIsDumbStringId = GenerationalId<StringId>;
 
 #[no_mangle]
 #[used]
@@ -43,9 +43,9 @@ pub static ddog_INTERNED_EMPTY_STRING: CbindgenIsDumbStringId =
 #[named]
 pub unsafe extern "C" fn ddog_prof_Profile_intern_function(
     profile: *mut Profile,
-    name: GenerationalId<InternalStringId>,
-    system_name: GenerationalId<InternalStringId>,
-    filename: GenerationalId<InternalStringId>,
+    name: GenerationalId<StringId>,
+    system_name: GenerationalId<StringId>,
+    filename: GenerationalId<StringId>,
 ) -> Result<GenerationalId<InternalFunctionId>> {
     wrap_with_ffi_result!({
         profile_ptr_to_inner(profile)?.intern_function(name, system_name, filename)
@@ -68,14 +68,14 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_function(
 #[named]
 pub unsafe extern "C" fn ddog_prof_Profile_intern_label_num(
     profile: *mut Profile,
-    key: GenerationalId<InternalStringId>,
+    key: GenerationalId<StringId>,
     val: i64,
 ) -> Result<GenerationalId<LabelId>> {
     wrap_with_ffi_result!({
         profile_ptr_to_inner(profile)?.intern_label_num(
             key,
             val,
-            GenerationalId::new_immortal(InternalStringId::ZERO),
+            GenerationalId::new_immortal(StringId::ZERO),
         )
     })
 }
@@ -96,9 +96,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_label_num(
 #[named]
 pub unsafe extern "C" fn ddog_prof_Profile_intern_label_num_with_unit(
     profile: *mut Profile,
-    key: GenerationalId<InternalStringId>,
+    key: GenerationalId<StringId>,
     val: i64,
-    unit: GenerationalId<InternalStringId>,
+    unit: GenerationalId<StringId>,
 ) -> Result<GenerationalId<LabelId>> {
     wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_label_num(key, val, unit) })
 }
@@ -119,8 +119,8 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_label_num_with_unit(
 #[named]
 pub unsafe extern "C" fn ddog_prof_Profile_intern_label_str(
     profile: *mut Profile,
-    key: GenerationalId<InternalStringId>,
-    val: GenerationalId<InternalStringId>,
+    key: GenerationalId<StringId>,
+    val: GenerationalId<StringId>,
 ) -> Result<GenerationalId<LabelId>> {
     wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_label_str(key, val) })
 }
@@ -214,7 +214,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_location_with_mapping_id(
 pub unsafe extern "C" fn ddog_prof_Profile_intern_managed_string(
     profile: *mut Profile,
     s: ManagedStringId,
-) -> Result<GenerationalId<InternalStringId>> {
+) -> Result<GenerationalId<StringId>> {
     wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_managed_string(s) })
 }
 
@@ -235,7 +235,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_managed_string(
 pub unsafe extern "C" fn ddog_prof_Profile_intern_managed_strings(
     profile: *mut Profile,
     strings: Slice<ManagedStringId>,
-    mut out: MutSlice<GenerationalId<InternalStringId>>,
+    mut out: MutSlice<GenerationalId<StringId>>,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
         anyhow::ensure!(strings.len() == out.len());
@@ -263,8 +263,8 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_mapping(
     memory_start: u64,
     memory_limit: u64,
     file_offset: u64,
-    filename: GenerationalId<InternalStringId>,
-    build_id: GenerationalId<InternalStringId>,
+    filename: GenerationalId<StringId>,
+    build_id: GenerationalId<StringId>,
 ) -> Result<GenerationalId<InternalMappingId>> {
     wrap_with_ffi_result!({
         profile_ptr_to_inner(profile)?.intern_mapping(
@@ -349,7 +349,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_stacktrace(
 pub unsafe extern "C" fn ddog_prof_Profile_intern_string(
     profile: *mut Profile,
     s: CharSlice,
-) -> Result<GenerationalId<InternalStringId>> {
+) -> Result<GenerationalId<StringId>> {
     wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_string(s.try_to_utf8()?) })
 }
 
@@ -358,8 +358,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_string(
 /// # Safety
 /// No preconditions
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Profile_interned_empty_string(
-) -> GenerationalId<InternalStringId> {
+pub unsafe extern "C" fn ddog_prof_Profile_interned_empty_string() -> GenerationalId<StringId> {
     internal::Profile::INTERNED_EMPTY_STRING
 }
 
@@ -380,7 +379,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_interned_empty_string(
 pub unsafe extern "C" fn ddog_prof_Profile_intern_strings(
     profile: *mut Profile,
     strings: Slice<CharSlice>,
-    mut out: MutSlice<GenerationalId<InternalStringId>>,
+    mut out: MutSlice<GenerationalId<StringId>>,
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
         anyhow::ensure!(strings.len() == out.len());

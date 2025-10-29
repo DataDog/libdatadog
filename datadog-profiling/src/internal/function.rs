@@ -8,9 +8,9 @@ use super::*;
 ///  - ids for linked objects use 32-bit numbers instead of 64 bit ones.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct Function {
-    pub name: InternalStringId,
-    pub system_name: InternalStringId,
-    pub filename: InternalStringId,
+    pub name: StringId,
+    pub system_name: StringId,
+    pub filename: StringId,
 }
 
 impl Item for Function {

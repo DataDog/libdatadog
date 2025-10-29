@@ -7,7 +7,7 @@ pub mod wordpress_test_data;
 
 pub use error::*;
 
-use crate::collections::identifiable::InternalStringId;
+use crate::collections::identifiable::StringId;
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use datadog_alloc::{AllocError, Allocator, ChainAllocator, VirtualAllocator};
 use std::alloc::Layout;
@@ -54,7 +54,7 @@ impl<A: Allocator + Clone> ArenaAllocator for ChainAllocator<A> {}
 type Hasher = core::hash::BuildHasherDefault<rustc_hash::FxHasher>;
 type HashSet<K> = indexmap::IndexSet<K, Hasher>;
 
-/// Holds unique strings and provides [InternalStringId]s that correspond to the order
+/// Holds unique strings and provides [StringId]s that correspond to the order
 /// that the strings were inserted.
 pub struct StringTable {
     /// The bytes of each string stored in `strings` are allocated here.
@@ -121,34 +121,33 @@ impl StringTable {
     }
 
     /// Adds the string to the string table if it isn't present already, and
-    /// returns a [InternalStringId] that corresponds to the order that this string
+    /// returns a [StringId] that corresponds to the order that this string
     /// was originally inserted.
     ///
     /// # Panics
     ///
     /// Panics if an allocator fails, or if the number of strings would exceed
     /// [`u32::MAX`].
-    pub fn intern(&mut self, str: &str) -> InternalStringId {
+    pub fn intern(&mut self, str: &str) -> StringId {
         #[allow(clippy::expect_used)]
         self.try_intern(str).expect("failed to intern string")
     }
 
     /// Adds the string to the string table if it isn't present already, and
-    /// returns a [`InternalStringId`] that corresponds to the order that this string
+    /// returns a [`StringId`] that corresponds to the order that this string
     /// was originally inserted.
     ///
     /// Fails if an allocator fails, or if the number of strings would exceed
     /// [`u32::MAX`].
-    pub fn try_intern(&mut self, str: &str) -> Result<InternalStringId, Error> {
+    pub fn try_intern(&mut self, str: &str) -> Result<StringId, Error> {
         let set = &mut self.strings;
         match set.get_index_of(str) {
             // SAFETY: if it already exists, it must fit in the range.
-            Some(offset) => Ok(unsafe { InternalStringId::try_from(offset).unwrap_unchecked() }),
+            Some(offset) => Ok(unsafe { StringId::try_from(offset).unwrap_unchecked() }),
             None => {
                 // No match. Get the current size of the table, which
                 // corresponds to the StringId it will have when inserted.
-                let string_id =
-                    InternalStringId::try_from(set.len()).map_err(|_| Error::StorageFull)?;
+                let string_id = StringId::try_from(set.len()).map_err(|_| Error::StorageFull)?;
 
                 // Make a new string in the arena, and fudge its lifetime
                 // to appease the borrow checker.
@@ -302,11 +301,11 @@ mod tests {
         let mut table = StringTable::new();
         // The empty string should already be present.
         assert_eq!(1, table.len());
-        assert_eq!(InternalStringId::ZERO, table.intern(""));
+        assert_eq!(StringId::ZERO, table.intern(""));
 
         // Intern a string literal to ensure ?Sized works.
         let string = table.intern("datadog");
-        assert_eq!(InternalStringId::from_offset(1), string);
+        assert_eq!(StringId::from_offset(1), string);
         assert_eq!(2, table.len());
     }
 
