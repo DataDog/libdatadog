@@ -103,7 +103,7 @@ publish_crates:
     # Process each tag sequentially
     - |
       # Install build-essential and curl
-      apt-get update && apt-get install -y build-essential curl
+      apt-get update && apt-get install -y build-essential curl jq
 
       # Install rustup and set it to stable
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && source $HOME/.cargo/env
@@ -163,7 +163,3 @@ publish_crates:
         echo "✓ Published $CRATE_NAME v$CRATE_VERSION successfully"
         echo ""
       done
-      
-      echo "========================================"
-      echo "✅ All crates published successfully!"
-      echo "========================================"
