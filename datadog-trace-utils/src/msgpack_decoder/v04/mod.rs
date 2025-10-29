@@ -50,8 +50,7 @@ use crate::span::{SpanBytes, SpanSlice};
 /// assert_eq!("test-span", decoded_span.name.as_str());
 /// ```
 pub fn from_bytes(data: tinybytes::Bytes) -> Result<(Vec<Vec<SpanBytes>>, usize), DecodeError> {
-    let mut parsed_data = data.clone();
-    let (traces_ref, size) = from_slice(unsafe { parsed_data.as_mut_slice() })?;
+    let (traces_ref, size) = from_slice(data.as_ref())?;
 
     #[allow(clippy::unwrap_used)]
     let traces_owned = traces_ref

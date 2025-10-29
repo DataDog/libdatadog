@@ -1,13 +1,16 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use spawn_worker::{getpid, SpawnWorker, Stdio};
+use spawn_worker::{entrypoint, get_dl_path_raw, getpid, SpawnWorker, Stdio, TrampolineData};
 
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::os::unix::net::UnixListener as StdUnixListener;
 
-use crate::config::FromEnv;
+use crate::config::{Config, LogMethod};
 use crate::enter_listener_loop;
+use datadog_crashtracker::{
+    CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata, StacktraceCollection,
+};
 use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
 use nix::sys::socket::{shutdown, Shutdown};
 use std::io;
@@ -20,7 +23,7 @@ use tokio::signal::unix::{signal, SignalKind};
 use tracing::{error, info};
 
 #[no_mangle]
-pub extern "C" fn ddog_daemon_entry_point() {
+pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
     #[cfg(feature = "tracing")]
     crate::log::enable_logging().ok();
 
@@ -30,6 +33,11 @@ pub extern "C" fn ddog_daemon_entry_point() {
 
     #[cfg(target_os = "linux")]
     let _ = prctl::set_name("dd-ipc-helper");
+
+    #[cfg(target_os = "linux")]
+    if let Err(e) = init_crashtracker(trampoline_data.dependency_paths) {
+        tracing::warn!("Failed to initialize crashtracker: {e}");
+    }
 
     let now = Instant::now();
 
@@ -118,7 +126,7 @@ pub fn primary_sidecar_identifier() -> u32 {
 }
 
 fn maybe_start_appsec() -> bool {
-    let cfg = FromEnv::appsec_config();
+    let cfg = &Config::get().appsec_config;
     if cfg.is_none() {
         return false;
     }
@@ -164,4 +172,81 @@ fn shutdown_appsec() -> bool {
 
     info!("Appsec helper shutdown");
     true
+}
+
+fn init_crashtracker(dependency_paths: *const *const libc::c_char) -> anyhow::Result<()> {
+    let entrypoint = entrypoint!(ddog_crashtracker_entry_point);
+    let entrypoint_path = match unsafe { get_dl_path_raw(entrypoint.ptr as *const libc::c_void) } {
+        (Some(path), _) => path,
+        _ => anyhow::bail!("Failed to find crashtracker entrypoint"),
+    };
+
+    let mut receiver_args = vec![
+        "crashtracker_receiver".to_string(),
+        "".to_string(),
+        entrypoint_path.into_string()?,
+    ];
+
+    unsafe {
+        let mut descriptors = dependency_paths;
+        if !descriptors.is_null() {
+            loop {
+                if (*descriptors).is_null() {
+                    break;
+                }
+                receiver_args.push(CStr::from_ptr(*descriptors).to_string_lossy().into_owned());
+                descriptors = descriptors.add(1);
+            }
+        }
+    }
+    receiver_args.push(entrypoint.symbol_name.into_string()?);
+
+    let output = match &Config::get().log_method {
+        LogMethod::Stdout => Some(format!("/proc/{}/fd/1", unsafe { libc::getpid() })),
+        LogMethod::Stderr => Some(format!("/proc/{}/fd/2", unsafe { libc::getpid() })),
+        LogMethod::File(file) => file.to_str().map(|s| s.to_string()),
+        LogMethod::Disabled => None,
+    };
+
+    datadog_crashtracker::init(
+        CrashtrackerConfiguration::new(
+            vec![],
+            true,
+            true,
+            Config::get().crashtracker_endpoint.clone(),
+            StacktraceCollection::EnabledWithSymbolsInReceiver,
+            vec![],
+            None,
+            None,
+            true,
+        )?,
+        CrashtrackerReceiverConfig::new(
+            receiver_args,
+            vec![],
+            format!("/proc/{}/exe", unsafe { libc::getpid() }),
+            output,
+            None,
+        )?,
+        Metadata::new(
+            "libdatadog".to_string(),
+            crate::sidecar_version!().to_string(),
+            "SIDECAR".to_string(),
+            vec![
+                "is_crash:true".to_string(),
+                "severity:crash".to_string(),
+                format!("library_version:{}", crate::sidecar_version!()),
+                "library:sidecar".to_string(),
+            ],
+        ),
+    )
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_crashtracker_entry_point(_trampoline_data: &TrampolineData) {
+    unsafe {
+        if let Err(e) = datadog_crashtracker::receiver_entry_point_stdin() {
+            eprintln!("{e}");
+            libc::exit(1)
+        }
+    }
 }

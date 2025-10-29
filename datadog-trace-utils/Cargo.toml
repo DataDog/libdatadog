@@ -38,11 +38,6 @@ tinybytes = { path = "../tinybytes", features = [
     "serialization",
 ] }
 
-# Proxy feature
-hyper-http-proxy = { version = "1.1.0", default-features = false, features = [
-    "rustls-tls-webpki-roots",
-], optional = true }
-
 # Compression feature
 flate2 = { version = "1.0", optional = true }
 zstd = { version = "0.13.3", default-features = false, optional = true }
@@ -67,7 +62,7 @@ tempfile = "3.3.0"
 [features]
 default = ["https"]
 https = ["ddcommon/https"]
-mini_agent = ["proxy", "compression", "ddcommon/use_webpki_roots"]
+mini_agent = ["compression", "ddcommon/use_webpki_roots"]
 test-utils = [
     "hyper/server",
     "httpmock",
@@ -75,7 +70,6 @@ test-utils = [
     "cargo-platform",
     "urlencoding",
 ]
-proxy = ["hyper-http-proxy"]
 compression = ["zstd", "flate2"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["ddcommon/fips"]
