@@ -5,6 +5,7 @@ variables:
     description: "Only tags on this branch will trigger the release workflow"
   
   # Allowed crate names for publication (in dependency order)
+  # TODO: generate dynamically from the workspace
   ALLOWED_CRATES: >
     libdd-common
     libdd-sketch
@@ -29,9 +30,10 @@ variables:
 detect_tags:
   tags: ["arch:amd64"]
   image: registry.ddbuild.io/images/base/ubuntu_2204:latest
+  stage: publish
   rules:
-#    - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
-    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
+      when: on_success
   script:
     - echo "=== Detecting tags on commit $CI_COMMIT_SHA ==="
     - |
@@ -97,9 +99,10 @@ publish_crates:
   image: registry.ddbuild.io/images/base/ubuntu_2204:latest
   needs:
     - detect_tags
+  stage: publish
   rules:
-#    - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
-    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
+      when: on_success
   script:
     - echo "=== Publishing crates in dependency order ==="
     - echo ""

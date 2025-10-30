@@ -9,6 +9,10 @@ include:
   - local: .gitlab/benchmarks.yml
   - local: .gitlab/publish.yml
 
+stages:
+  - publish
+  - test
+
 trigger_internal_build:
   variables:
     LIBDATADOG_COMMIT_BRANCH: $CI_COMMIT_BRANCH
