@@ -10,13 +10,9 @@ use crate::rules_based::Str;
 
 use super::VariationType;
 
-#[cfg(feature = "pyo3")]
-use pyo3::prelude::*;
-
 /// Reason for assignment evaluation result.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-#[cfg_attr(feature = "pyo3", pyo3::pyclass(eq, eq_int))]
 pub enum AssignmentReason {
     /// Assignment was made based on targeting rules or time bounds.
     TargetingMatch,
@@ -28,7 +24,6 @@ pub enum AssignmentReason {
 
 /// Result of assignment evaluation.
 #[derive(Debug, Serialize, Clone)]
-#[cfg_attr(feature = "pyo3", pyo3::pyclass(frozen))]
 #[serde(rename_all = "camelCase")]
 pub struct Assignment {
     /// Assignment value that should be returned to the user.
@@ -312,6 +307,7 @@ mod pyo3_impl {
 
     use pyo3::{
         exceptions::PyValueError,
+        prelude::*,
         types::{PyDict, PyList},
     };
 
@@ -371,43 +367,5 @@ mod pyo3_impl {
             }
         };
         Ok(v)
-    }
-
-    #[pymethods]
-    impl Assignment {
-        // pyo3 refuses to implement IntoPyObject for Arc, so we need to dereference it here in the
-        // getter.
-        //
-        // And because of https://github.com/PyO3/pyo3/issues/1003 we now need to re-implement all
-        // getter here.
-        #[getter]
-        fn extra_logging(&self) -> &HashMap<String, String> {
-            &self.extra_logging
-        }
-
-        #[getter]
-        fn value(&self) -> &AssignmentValue {
-            &self.value
-        }
-
-        #[getter]
-        fn variation_key(&self) -> &Str {
-            &self.variation_key
-        }
-
-        #[getter]
-        fn allocation_key(&self) -> &Str {
-            &self.allocation_key
-        }
-
-        #[getter]
-        fn reason(&self) -> AssignmentReason {
-            self.reason
-        }
-
-        #[getter]
-        fn do_log(&self) -> bool {
-            self.do_log
-        }
     }
 }
