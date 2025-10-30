@@ -9,6 +9,8 @@
 pub mod error;
 pub mod zip;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use datadog_remote_config::{
     config::agent_task::AgentTaskFile, file_storage::RawFile, RemoteConfigData,
 };
@@ -53,7 +55,7 @@ use crate::error::FlareError;
 pub struct TracerFlareManager {
     pub agent_url: String,
     pub language: String,
-    pub collecting: bool,
+    pub collecting: AtomicBool,
     /// As a featured option so we can use the component with no Listener
     #[cfg(feature = "listener")]
     pub listener: Option<Listener>,
@@ -64,7 +66,7 @@ impl Default for TracerFlareManager {
         TracerFlareManager {
             agent_url: hyper::Uri::default().to_string(),
             language: "rust".to_string(),
-            collecting: false,
+            collecting: AtomicBool::new(false),
             #[cfg(feature = "listener")]
             listener: None,
         }
@@ -176,18 +178,18 @@ impl TracerFlareManager {
     /// * `Ok(ReturnAction)` - If successful.
     /// * `FlareError(msg)` - If something fails.
     pub fn handle_remote_config_data(
-        &mut self,
+        &self,
         data: &RemoteConfigData,
     ) -> Result<ReturnAction, FlareError> {
         let action = data.try_into();
         if let Ok(ReturnAction::Set(_)) = action {
-            if self.collecting {
+            if self.collecting.load(Ordering::Relaxed) {
                 return Ok(ReturnAction::None);
             }
-            self.collecting = true;
+            self.collecting.store(true, Ordering::Relaxed);
         } else if Ok(ReturnAction::None) != action {
             // If action is Send, Unset or an error, we need to stop collecting
-            self.collecting = false;
+            self.collecting.store(false, Ordering::Relaxed);
         }
         action
     }
@@ -206,14 +208,14 @@ impl TracerFlareManager {
     /// * `Ok(ReturnAction)` - If successful.
     /// * `FlareError(msg)` - If something fail.
     pub fn handle_remote_config_file(
-        &mut self,
+        &self,
         file: RemoteConfigFile,
     ) -> Result<ReturnAction, FlareError> {
         match file.contents().as_ref() {
             Ok(data) => self.handle_remote_config_data(data),
             Err(e) => {
                 // If encounter an error we need to stop collecting
-                self.collecting = false;
+                self.collecting.store(false, Ordering::Relaxed);
                 Err(FlareError::ParsingError(e.to_string()))
             }
         }
@@ -455,9 +457,9 @@ pub async fn run_remote_config_listener(
     }
 
     if let ReturnAction::Set(_) = state {
-        tracer_flare.collecting = true;
+        tracer_flare.collecting.store(true, Ordering::Relaxed);
     } else if let ReturnAction::Send(_) = state {
-        tracer_flare.collecting = false;
+        tracer_flare.collecting.store(false, Ordering::Relaxed);
     }
 
     Ok(state)
@@ -475,6 +477,7 @@ mod tests {
         file_storage::ParsedFileStorage,
         RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
     };
+    use std::sync::atomic::Ordering;
     use std::{num::NonZeroU64, sync::Arc};
 
     #[test]
@@ -637,7 +640,7 @@ mod tests {
     #[test]
     fn test_handle_remote_config_file() {
         use crate::TracerFlareManager;
-        let mut tracer_flare = TracerFlareManager::new("http://localhost:8126", "rust");
+        let tracer_flare = TracerFlareManager::new("http://localhost:8126", "rust");
         let storage = ParsedFileStorage::default();
 
         let agent_config_file = storage
@@ -660,19 +663,19 @@ mod tests {
             .unwrap();
 
         // First AGENT_CONFIG
-        assert!(!tracer_flare.collecting);
+        assert!(!tracer_flare.collecting.load(Ordering::Relaxed));
         let result = tracer_flare
             .handle_remote_config_file(agent_config_file.clone())
             .unwrap();
         assert_eq!(result, ReturnAction::Set(LogLevel::Info));
-        assert!(tracer_flare.collecting);
+        assert!(tracer_flare.collecting.load(Ordering::Relaxed));
 
         // Second AGENT_CONFIG
         let result = tracer_flare
             .handle_remote_config_file(agent_config_file)
             .unwrap();
         assert_eq!(result, ReturnAction::None);
-        assert!(tracer_flare.collecting);
+        assert!(tracer_flare.collecting.load(Ordering::Relaxed));
 
         // Non-None actions stop collecting
         let error_file = storage
@@ -689,7 +692,7 @@ mod tests {
             .unwrap();
 
         let _ = tracer_flare.handle_remote_config_file(error_file);
-        assert!(!tracer_flare.collecting);
+        assert!(!tracer_flare.collecting.load(Ordering::Relaxed));
     }
 
     #[test]

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// HTTP header containing the agent state hash.
 const DATADOG_AGENT_STATE: HeaderName = HeaderName::from_static("datadog-agent-state");
@@ -166,6 +166,14 @@ impl AgentInfoFetcher {
 
         (fetcher, response_observer)
     }
+
+    /// Drain message from the trigger channel.
+    pub fn drain(&mut self) {
+        // We read only once as the channel has a capacity of 1
+        if let Some(rx) = &mut self.trigger_rx {
+            let _ = rx.try_recv();
+        }
+    }
 }
 
 impl Worker for AgentInfoFetcher {
@@ -219,11 +227,11 @@ impl AgentInfoFetcher {
         let res = fetch_info_with_state(&self.info_endpoint, current_hash).await;
         match res {
             Ok(FetchInfoStatus::NewState(new_info)) => {
-                info!("New /info state received");
+                debug!("New /info state received");
                 AGENT_INFO_CACHE.store(Some(Arc::new(*new_info)));
             }
             Ok(FetchInfoStatus::SameState) => {
-                info!("Agent info is up-to-date")
+                debug!("Agent info is up-to-date")
             }
             Err(err) => {
                 warn!(?err, "Error while fetching /info");
@@ -271,6 +279,11 @@ impl ResponseObserver {
                 }
             }
         }
+    }
+
+    /// Manually send a message to the trigger channel.
+    pub fn manual_trigger(&self) {
+        let _ = self.trigger_tx.try_send(());
     }
 }
 

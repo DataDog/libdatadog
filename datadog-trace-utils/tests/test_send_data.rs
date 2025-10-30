@@ -10,6 +10,7 @@ mod tracing_integration_tests {
     use datadog_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
     #[cfg(target_os = "linux")]
     use ddcommon::connector::uds::socket_path_to_uri;
+    use ddcommon::hyper_migration::new_default_client;
     use ddcommon::{hyper_migration, Endpoint};
     use http_body_util::BodyExt;
     #[cfg(target_os = "linux")]
@@ -116,7 +117,8 @@ mod tracing_integration_tests {
             &endpoint,
         );
 
-        let _result = data.send().await;
+        let client = new_default_client();
+        let _result = data.send(&client).await;
 
         test_agent.assert_snapshot(snapshot_name).await;
     }
@@ -208,7 +210,8 @@ mod tracing_integration_tests {
             &endpoint,
         );
 
-        let _result = data.send().await;
+        let client = new_default_client();
+        let _result = data.send(&client).await;
 
         test_agent.assert_snapshot(snapshot_name).await;
     }
@@ -245,7 +248,8 @@ mod tracing_integration_tests {
             &endpoint,
         );
 
-        let result = data.send().await;
+        let client = new_default_client();
+        let result = data.send(&client).await;
 
         assert!(result.last_result.is_ok());
     }
@@ -326,7 +330,8 @@ mod tracing_integration_tests {
             &endpoint,
         );
 
-        let _result = data.send().await;
+        let client = new_default_client();
+        let _result = data.send(&client).await;
 
         test_agent.assert_snapshot(snapshot_name).await;
     }
