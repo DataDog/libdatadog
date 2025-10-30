@@ -32,7 +32,8 @@ detect_tags:
   image: registry.ddbuild.io/images/base/ubuntu_2204:latest
   stage: publish
   rules:
-    - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
+    # - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
+    - if: '$CI_COMMIT_TAG'
       when: on_success
   script:
     - echo "=== Detecting tags on commit $CI_COMMIT_SHA ==="
@@ -101,7 +102,8 @@ publish_crates:
     - detect_tags
   stage: publish
   rules:
-    - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
+    # - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
+    - if: '$CI_COMMIT_TAG'
       when: on_success
   script:
     - echo "=== Publishing crates in dependency order ==="
