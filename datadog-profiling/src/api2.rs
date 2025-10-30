@@ -149,6 +149,7 @@ impl<'a> Label<'a> {
 
 /// Represents a pointer to a string's header. Its definition is intentionally obscured.
 #[derive(Clone, Copy, Debug)]
+#[repr(C)]
 pub struct StringHeader(());
 
 #[repr(transparent)]
