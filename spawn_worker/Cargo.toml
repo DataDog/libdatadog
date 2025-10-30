@@ -15,7 +15,7 @@ libc = "0.2"
 
 [build-dependencies]
 cc = "1.0"
-ddcommon = { path = "../ddcommon" }
+ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
 
 [dependencies.windows]
 features = [
