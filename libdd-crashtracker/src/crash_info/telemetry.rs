@@ -618,7 +618,7 @@ mod tests {
     async fn test_crash_ping_builder_basic() -> anyhow::Result<()> {
         let tmp = tempfile::tempdir().unwrap();
         let output_filename = {
-            let mut p = tmp.into_path();
+            let mut p = tmp.keep();
             p.push("crash_ping_builder_test");
             p
         };
