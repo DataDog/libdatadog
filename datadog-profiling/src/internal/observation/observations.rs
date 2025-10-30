@@ -71,7 +71,6 @@ impl Observations {
             values.len()
         );
 
-        #[allow(clippy::expect_used)]
         if let Some(ts) = timestamp {
             observations.timestamped_data.add(sample, ts, values)?;
             observations.timestamped_samples_count += 1;
