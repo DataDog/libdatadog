@@ -10,9 +10,13 @@ use crate::rules_based::Str;
 
 use super::VariationType;
 
+#[cfg(feature = "pyo3")]
+use pyo3::prelude::*;
+
 /// Reason for assignment evaluation result.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(eq, eq_int))]
 pub enum AssignmentReason {
     /// Assignment was made based on targeting rules or time bounds.
     TargetingMatch,
@@ -24,6 +28,7 @@ pub enum AssignmentReason {
 
 /// Result of assignment evaluation.
 #[derive(Debug, Serialize, Clone)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(frozen))]
 #[serde(rename_all = "camelCase")]
 pub struct Assignment {
     /// Assignment value that should be returned to the user.
@@ -296,6 +301,113 @@ impl AssignmentValue {
             }
             AssignmentValue::Boolean(b) => Value::Bool(*b),
             AssignmentValue::Json(value) => value.as_ref().clone(),
+        }
+    }
+}
+
+#[cfg(feature = "pyo3")]
+mod pyo3_impl {
+
+    use super::*;
+
+    use pyo3::{
+        exceptions::PyValueError,
+        types::{PyDict, PyList},
+    };
+
+    impl<'py> IntoPyObject<'py> for &AssignmentValue {
+        type Target = PyAny;
+        type Output = Bound<'py, PyAny>;
+        type Error = PyErr;
+
+        #[inline]
+        fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+            let obj = match self {
+                AssignmentValue::String(v) => v.into_pyobject(py)?.into_any(),
+                AssignmentValue::Integer(v) => v.into_pyobject(py)?.into_any(),
+                AssignmentValue::Float(v) => v.into_pyobject(py)?.into_any(),
+                AssignmentValue::Boolean(v) => v.into_pyobject(py)?.to_owned().into_any(),
+                AssignmentValue::Json(v) => json_to_pyobject(v, py)?,
+            };
+            Ok(obj)
+        }
+    }
+
+    fn json_to_pyobject<'py>(
+        value: &serde_json::Value,
+        py: Python<'py>,
+    ) -> Result<Bound<'py, PyAny>, PyErr> {
+        use serde_json::Value;
+        let v = match value {
+            Value::Null => py.None().into_bound(py),
+            Value::Bool(v) => v.into_pyobject(py)?.to_owned().into_any(),
+            Value::Number(number) => {
+                if let Some(v) = number.as_u128() {
+                    v.into_pyobject(py)?.into_any()
+                } else if let Some(v) = number.as_i128() {
+                    v.into_pyobject(py)?.into_any()
+                } else if let Some(v) = number.as_f64() {
+                    v.into_pyobject(py)?.into_any()
+                } else {
+                    // NOTE: this can only happen if serde_json is compiled with arbitrary-precision
+                    // and it failed to parse the number / the number is larger than f64::MAX.
+                    return Err(PyValueError::new_err("unable to convert number to python"));
+                }
+            }
+            Value::String(s) => s.into_pyobject(py)?.into_any(),
+            Value::Array(values) => {
+                let vals = values
+                    .iter()
+                    .map(|it| json_to_pyobject(it, py))
+                    .collect::<Result<Vec<_>, _>>()?;
+                PyList::new(py, vals)?.into_any()
+            }
+            Value::Object(map) => {
+                let dict = PyDict::new(py);
+                for (key, value) in map {
+                    dict.set_item(key, json_to_pyobject(value, py)?)?;
+                }
+                dict.into_any()
+            }
+        };
+        Ok(v)
+    }
+
+    #[pymethods]
+    impl Assignment {
+        // pyo3 refuses to implement IntoPyObject for Arc, so we need to dereference it here in the
+        // getter.
+        //
+        // And because of https://github.com/PyO3/pyo3/issues/1003 we now need to re-implement all
+        // getter here.
+        #[getter]
+        fn extra_logging(&self) -> &HashMap<String, String> {
+            &self.extra_logging
+        }
+
+        #[getter]
+        fn value(&self) -> &AssignmentValue {
+            &self.value
+        }
+
+        #[getter]
+        fn variation_key(&self) -> &Str {
+            &self.variation_key
+        }
+
+        #[getter]
+        fn allocation_key(&self) -> &Str {
+            &self.allocation_key
+        }
+
+        #[getter]
+        fn reason(&self) -> AssignmentReason {
+            self.reason
+        }
+
+        #[getter]
+        fn do_log(&self) -> bool {
+            self.do_log
         }
     }
 }

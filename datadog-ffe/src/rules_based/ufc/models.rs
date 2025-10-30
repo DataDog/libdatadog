@@ -503,6 +503,51 @@ impl ShardRange {
     }
 }
 
+#[cfg(feature = "pyo3")]
+mod pyo3_impl {
+    use super::*;
+
+    use pyo3::{exceptions::PyValueError, prelude::*, types::PyString};
+
+    /// Convert `VariationType` from Python string.
+    ///
+    /// The value must be one of:
+    /// ```python
+    /// # Preferred:
+    /// "string"
+    /// "integer"
+    /// "float"
+    /// "boolean"
+    /// "object"
+    ///
+    /// # Legacy (for compatibility):
+    /// "STRING"
+    /// "INTEGER"
+    /// "NUMERIC"
+    /// "BOOLEAN"
+    /// "JSON"
+    /// ```
+    impl<'py> FromPyObject<'py> for VariationType {
+        #[inline]
+        fn extract_bound(value: &Bound<'py, PyAny>) -> PyResult<Self> {
+            let s = value.downcast::<PyString>()?.to_cow()?;
+            let ty = match s.as_ref() {
+                "string" | "STRING" => VariationType::String,
+                "integer" | "INTEGER" => VariationType::Integer,
+                "float" | "NUMERIC" => VariationType::Numeric,
+                "boolean" | "BOOLEAN" => VariationType::Boolean,
+                "object" | "JSON" => VariationType::Json,
+                _ => {
+                    return Err(PyValueError::new_err(format!(
+                        "unexpected value for VariationType: {s:?}"
+                    )))
+                }
+            };
+            Ok(ty)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{TryParse, UniversalFlagConfigWire};
