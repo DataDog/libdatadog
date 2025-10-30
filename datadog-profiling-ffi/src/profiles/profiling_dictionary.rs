@@ -107,13 +107,8 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_function(
     ProfileStatus::from(|| -> Result<(), ProfileError> {
         let dict = handle.as_inner()?;
         let f2: Function2 = unsafe { *function };
-        let func = dt::Function {
-            name: StringRef::from(f2.name),
-            system_name: StringRef::from(f2.system_name),
-            file_name: StringRef::from(f2.file_name),
-        };
-        let id = dict.functions().try_insert(func)?;
-        unsafe { function_id.write(core::mem::transmute::<SetId<dt::Function>, FunctionId2>(id)) };
+        let id = dict.try_insert_function2(f2)?;
+        unsafe { function_id.write(id) };
         Ok(())
     }())
 }
@@ -135,16 +130,9 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_mapping(
     ensure_non_null_insert!(mapping);
     ProfileStatus::from(|| -> Result<(), ProfileError> {
         let dict = handle.as_inner()?;
-        let m2: Mapping2 = unsafe { *mapping };
-        let map = dt::Mapping {
-            memory_start: m2.memory_start,
-            memory_limit: m2.memory_limit,
-            file_offset: m2.file_offset,
-            filename: StringRef::from(m2.filename),
-            build_id: StringRef::from(m2.build_id),
-        };
-        let id = dict.mappings().try_insert(map)?;
-        unsafe { mapping_id.write(core::mem::transmute::<SetId<dt::Mapping>, MappingId2>(id)) };
+        let m2 = unsafe { *mapping };
+        let id = dict.try_insert_mapping2(m2)?;
+        unsafe { mapping_id.write(id) };
         Ok(())
     }())
 }
@@ -168,7 +156,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_str(
     ProfileStatus::from(|| -> Result<(), ProfileError> {
         let dict = handle.as_inner()?;
         crate::profiles::utf8::insert_str(dict.strings(), byte_slice, utf8_option)
-            .map(|id| unsafe { string_id.write(core::mem::transmute::<StringRef, StringId2>(id)) })
+            .map(|id| unsafe { string_id.write(id.into()) })
     }())
 }
 
