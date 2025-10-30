@@ -29,7 +29,7 @@ pub enum EvaluationError {
 /// default assignment.
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub(crate) enum EvaluationFailure {
+pub enum EvaluationFailure {
     /// True evaluation error that should be returned to the user.
     #[error(transparent)]
     Error(EvaluationError),

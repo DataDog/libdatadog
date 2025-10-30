@@ -20,13 +20,13 @@ pub fn get_assignment(
     subject: &EvaluationContext,
     expected_type: Option<VariationType>,
     now: DateTime<Utc>,
-) -> Result<Option<Assignment>, EvaluationError> {
+) -> Result<Assignment, EvaluationFailure> {
     let Some(config) = configuration else {
         log::trace!(
             flag_key,
             targeting_key = subject.targeting_key();
             "returning default assignment because of: {}", EvaluationFailure::ConfigurationMissing);
-        return Ok(None);
+        return Err(EvaluationFailure::ConfigurationMissing);
     };
 
     config.eval_flag(flag_key, subject, expected_type, now)
@@ -39,28 +39,26 @@ impl Configuration {
         context: &EvaluationContext,
         expected_type: Option<VariationType>,
         now: DateTime<Utc>,
-    ) -> Result<Option<Assignment>, EvaluationError> {
+    ) -> Result<Assignment, EvaluationFailure> {
         let result = self
             .flags
             .compiled
             .eval_flag(flag_key, context, expected_type, now);
 
-        match result {
+        match &result {
             Ok(assignment) => {
                 log::trace!(
-                flag_key,
-                targeting_key = context.targeting_key(),
-                assignment:serde = assignment.value;
-                "evaluated a flag");
-                Ok(Some(assignment))
+                    flag_key,
+                    targeting_key = context.targeting_key(),
+                    assignment:serde = assignment.value;
+                    "evaluated a flag");
             }
 
             Err(EvaluationFailure::ConfigurationMissing) => {
                 log::warn!(
-                flag_key,
-                targeting_key = context.targeting_key();
-                "evaluating a flag before flags configuration has been fetched");
-                Ok(None)
+                    flag_key,
+                    targeting_key = context.targeting_key();
+                    "evaluating a flag before flags configuration has been fetched");
             }
 
             Err(EvaluationFailure::Error(err)) => {
@@ -69,19 +67,16 @@ impl Configuration {
                     targeting_key = context.targeting_key();
                     "error occurred while evaluating a flag: {err}",
                 );
-                Err(err)
             }
-
-            // Non-Error failures are considered normal conditions and usually don't need extra
-            // attention, so we remap them to Ok(None) before returning to the user.
             Err(err) => {
                 log::trace!(
                     flag_key,
                     targeting_key = context.targeting_key();
                     "returning default assignment because of: {err}");
-                Ok(None)
             }
         }
+
+        result
     }
 }
 
@@ -281,8 +276,7 @@ mod tests {
                     &subject,
                     Some(test_case.variation_type),
                     now,
-                )
-                .unwrap_or(None);
+                );
 
                 let result_assingment = result
                     .as_ref()
