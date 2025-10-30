@@ -35,9 +35,17 @@ detect_tags:
   script:
     - echo "=== Detecting tags on commit $CI_COMMIT_SHA ==="
     - |
-      # Install git
-      apt-get update && apt-get install -y git
-      git --version
+      # Install git and jq  
+      apt-get update && apt-get install -y git jq
+
+      # Check if there's already a pipeline running for this commit
+      # RUNNING_PIPELINES=$(curl -s --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" \
+      #   "$CI_API_V4_URL/projects/$CI_PROJECT_ID/pipelines?sha=$CI_COMMIT_SHA&status=running" | jq length)
+      
+      # if [ "$RUNNING_PIPELINES" -gt 1 ]; then
+      #   echo "Another pipeline is already running for this commit. Skipping..."
+      #   exit 0
+      # fi
 
       # Get all tags pointing to this commit
       TAGS=$(git tag --points-at HEAD)
