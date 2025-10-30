@@ -565,6 +565,19 @@ mod tests {
     // Mutex to ensure environment variable tests run sequentially
     static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+    fn clear_errors_intake_env() {
+        std::env::remove_var("DD_TRACE_AGENT_URL");
+        std::env::remove_var("DD_AGENT_HOST");
+        std::env::remove_var("DD_TRACE_AGENT_PORT");
+        std::env::remove_var("DD_TRACE_PIPE_NAME");
+        std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
+        std::env::remove_var("DD_API_KEY");
+        std::env::remove_var("DD_SITE");
+        std::env::remove_var("DD_ERRORS_INTAKE_DD_URL");
+        std::env::remove_var("_DD_SHARED_LIB_DEBUG");
+        std::env::remove_var("_DD_ERRORS_INTAKE_ENABLED");
+    }
+
     #[test]
     fn test_errors_payload_from_crash_info() {
         let crash_info = CrashInfo::test_instance(1);
@@ -691,15 +704,9 @@ mod tests {
 
     #[test]
     fn test_errors_intake_config_from_env() {
-        let _lock = ENV_TEST_LOCK.lock().unwrap();
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Clear all environment variables first to isolate test
-        std::env::remove_var("DD_TRACE_AGENT_URL");
-        std::env::remove_var("DD_AGENT_HOST");
-        std::env::remove_var("DD_TRACE_AGENT_PORT");
-        std::env::remove_var("DD_API_KEY");
-        std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
-        std::env::remove_var("DD_SITE");
+        clear_errors_intake_env();
 
         // Test direct submission configuration
         std::env::set_var("DD_API_KEY", "test-key");
@@ -718,21 +725,13 @@ mod tests {
 
         // With direct submission enabled and API key, should use direct path
         assert_eq!(endpoint.url.path(), DIRECT_ERRORS_INTAKE_URL_PATH);
-
-        std::env::remove_var("DD_API_KEY");
-        std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
     }
 
     #[test]
     fn test_errors_intake_config_custom_site() {
-        let _lock = ENV_TEST_LOCK.lock().unwrap();
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
-        std::env::remove_var("DD_TRACE_AGENT_URL");
-        std::env::remove_var("DD_AGENT_HOST");
-        std::env::remove_var("DD_TRACE_AGENT_PORT");
-        std::env::remove_var("DD_API_KEY");
-        std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
-        std::env::remove_var("DD_SITE");
+        clear_errors_intake_env();
 
         // Test direct submission with custom site
         std::env::set_var("DD_API_KEY", "test-key");
@@ -750,23 +749,13 @@ mod tests {
         assert_eq!(endpoint.url.scheme_str(), Some("https"));
         assert!(endpoint.api_key.is_some());
         assert_eq!(endpoint.url.path(), DIRECT_ERRORS_INTAKE_URL_PATH);
-
-        std::env::remove_var("DD_API_KEY");
-        std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
-        std::env::remove_var("DD_SITE");
     }
 
     #[test]
     fn test_errors_intake_config_agent_proxy() {
-        let _lock = ENV_TEST_LOCK.lock().unwrap();
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Clear all environment variables first to isolate test
-        std::env::remove_var("DD_TRACE_AGENT_URL");
-        std::env::remove_var("DD_AGENT_HOST");
-        std::env::remove_var("DD_TRACE_AGENT_PORT");
-        std::env::remove_var("DD_API_KEY");
-        std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
-        std::env::remove_var("DD_SITE");
+        clear_errors_intake_env();
 
         std::env::set_var("DD_TRACE_AGENT_URL", "http://localhost:9126");
 
@@ -778,25 +767,13 @@ mod tests {
 
         // Should use agent proxy path
         assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
-
-        std::env::remove_var("DD_TRACE_AGENT_URL");
-        std::env::remove_var("DD_AGENT_HOST");
-        std::env::remove_var("DD_TRACE_AGENT_PORT");
-        std::env::remove_var("DD_API_KEY");
-        std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
-        std::env::remove_var("DD_SITE");
     }
 
     #[test]
     fn test_errors_intake_config_agent_with_api_key_but_no_direct() {
-        let _lock = ENV_TEST_LOCK.lock().unwrap();
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
-        std::env::remove_var("DD_TRACE_AGENT_URL");
-        std::env::remove_var("DD_AGENT_HOST");
-        std::env::remove_var("DD_TRACE_AGENT_PORT");
-        std::env::remove_var("DD_API_KEY");
-        std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
-        std::env::remove_var("DD_SITE");
+        clear_errors_intake_env();
 
         // API key is set but direct submission is NOT enabled
         // Should still use agent proxy
@@ -813,17 +790,14 @@ mod tests {
         // Should use agent proxy path, not direct path
         assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
         assert!(endpoint.api_key.is_none());
-
-        std::env::remove_var("DD_TRACE_AGENT_URL");
-        std::env::remove_var("DD_API_KEY");
     }
 
     #[test]
     fn test_errors_intake_enabled_flag() {
-        let _lock = ENV_TEST_LOCK.lock().unwrap();
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         // Test default behavior (should be enabled)
-        std::env::remove_var("_DD_ERRORS_INTAKE_ENABLED");
+        clear_errors_intake_env();
         let cfg = ErrorsIntakeConfig::from_env();
         assert!(cfg.is_errors_intake_enabled());
 
@@ -844,7 +818,191 @@ mod tests {
         std::env::set_var("_DD_ERRORS_INTAKE_ENABLED", "true");
         let uploader = ErrorsIntakeUploader::new(&None).unwrap();
         assert!(uploader.is_enabled());
+    }
 
-        std::env::remove_var("_DD_ERRORS_INTAKE_ENABLED");
+    #[test]
+    #[cfg(unix)]
+    fn test_errors_intake_config_uds_socket() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        clear_errors_intake_env();
+
+        // Test UDS socket configuration
+        // We need to mock the UDS socket check since we can't guarantee the socket exists
+        let settings = ErrorsIntakeSettings {
+            agent_uds_socket_found: true,
+            ..Default::default()
+        };
+
+        let cfg = ErrorsIntakeConfig::from_settings(&settings);
+        let endpoint = cfg.endpoint().unwrap();
+
+        assert_eq!(endpoint.url.scheme_str(), Some("unix"));
+        // The original socket path is preserved in authority for unix:// URLs (URL encoded)
+        let decoded_path = ddcommon::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        assert_eq!(
+            decoded_path.to_string_lossy(),
+            "/var/run/datadog/apm.socket"
+        );
+
+        // Should use agent proxy path
+        assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
+        assert!(endpoint.api_key.is_none());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_errors_intake_config_named_pipe() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        clear_errors_intake_env();
+
+        // Test named pipe configuration
+        std::env::set_var("DD_TRACE_PIPE_NAME", "my_custom_pipe");
+
+        let cfg = ErrorsIntakeConfig::from_env();
+        let endpoint = cfg.endpoint().unwrap();
+
+        assert_eq!(endpoint.url.scheme_str(), Some("windows"));
+        assert!(endpoint
+            .url
+            .authority()
+            .unwrap()
+            .as_str()
+            .contains("my_custom_pipe"));
+
+        // Should use agent proxy path
+        assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
+        assert!(endpoint.api_key.is_none());
+    }
+
+    #[test]
+    fn test_errors_intake_config_unix_url() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        clear_errors_intake_env();
+
+        // Test unix:// URL in DD_TRACE_AGENT_URL
+        std::env::set_var("DD_TRACE_AGENT_URL", "unix:///tmp/custom.socket");
+
+        let cfg = ErrorsIntakeConfig::from_env();
+        let endpoint = cfg.endpoint().unwrap();
+
+        assert_eq!(endpoint.url.scheme_str(), Some("unix"));
+        let decoded_path = ddcommon::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        assert_eq!(decoded_path.to_string_lossy(), "/tmp/custom.socket");
+
+        // Should use agent proxy path
+        assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
+        assert!(endpoint.api_key.is_none());
+    }
+
+    #[test]
+    fn test_errors_intake_endpoint_priority_order() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        clear_errors_intake_env();
+
+        // Test 1: DD_TRACE_AGENT_URL takes highest priority
+        std::env::set_var("DD_TRACE_AGENT_URL", "http://priority-url:9999");
+        std::env::set_var("DD_AGENT_HOST", "ignored-host");
+        std::env::set_var("DD_TRACE_AGENT_PORT", "1111");
+
+        let cfg = ErrorsIntakeConfig::from_env();
+        let endpoint = cfg.endpoint().unwrap();
+
+        assert_eq!(endpoint.url.host(), Some("priority-url"));
+        assert_eq!(endpoint.url.port_u16(), Some(9999));
+
+        clear_errors_intake_env();
+
+        // Test 2: DD_AGENT_HOST + DD_TRACE_AGENT_PORT used when no DD_TRACE_AGENT_URL
+        std::env::set_var("DD_AGENT_HOST", "custom-host");
+        std::env::set_var("DD_TRACE_AGENT_PORT", "7777");
+
+        let cfg = ErrorsIntakeConfig::from_env();
+        let endpoint = cfg.endpoint().unwrap();
+
+        assert_eq!(endpoint.url.host(), Some("custom-host"));
+        assert_eq!(endpoint.url.port_u16(), Some(7777));
+
+        clear_errors_intake_env();
+
+        // Test 3: Default fallback when nothing is set
+        let cfg = ErrorsIntakeConfig::from_env();
+        let endpoint = cfg.endpoint().unwrap();
+
+        assert_eq!(endpoint.url.host(), Some(DEFAULT_AGENT_HOST));
+        assert_eq!(endpoint.url.port_u16(), Some(DEFAULT_AGENT_PORT));
+    }
+
+    #[test]
+    fn test_errors_intake_direct_submission_vs_agent_priority() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        clear_errors_intake_env();
+
+        // Test that direct submission takes priority over agent configuration
+        std::env::set_var("DD_TRACE_AGENT_URL", "http://agent-host:8888");
+        std::env::set_var("DD_API_KEY", "test-key");
+        std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true");
+
+        let cfg = ErrorsIntakeConfig::from_env();
+        let endpoint = cfg.endpoint().unwrap();
+
+        // Should use direct submission URL, not agent URL
+        assert_eq!(
+            endpoint.url.host(),
+            Some("error-tracking-intake.datadoghq.com")
+        );
+        assert_eq!(endpoint.url.scheme_str(), Some("https"));
+        assert!(endpoint.api_key.is_some());
+        assert_eq!(endpoint.url.path(), DIRECT_ERRORS_INTAKE_URL_PATH);
+
+        clear_errors_intake_env();
+
+        // Test that without direct submission enabled, agent URL is used
+        std::env::set_var("DD_TRACE_AGENT_URL", "http://agent-host:8888");
+        std::env::set_var("DD_API_KEY", "test-key");
+        // _DD_DIRECT_SUBMISSION_ENABLED not set (defaults to false)
+
+        let cfg = ErrorsIntakeConfig::from_env();
+        let endpoint = cfg.endpoint().unwrap();
+
+        // Should use agent URL
+        assert_eq!(endpoint.url.host(), Some("agent-host"));
+        assert_eq!(endpoint.url.port_u16(), Some(8888));
+        assert!(endpoint.api_key.is_none());
+        assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_errors_intake_uds_priority_over_host_port() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        clear_errors_intake_env();
+
+        // Test that UDS socket takes priority over DD_AGENT_HOST/DD_TRACE_AGENT_PORT
+        std::env::set_var("DD_AGENT_HOST", "ignored-host");
+        std::env::set_var("DD_TRACE_AGENT_PORT", "9999");
+
+        let settings = ErrorsIntakeSettings {
+            agent_host: Some("ignored-host".to_string()),
+            trace_agent_port: Some(9999),
+            agent_uds_socket_found: true,
+            ..Default::default()
+        };
+
+        let cfg = ErrorsIntakeConfig::from_settings(&settings);
+        let endpoint = cfg.endpoint().unwrap();
+
+        // Should use UDS socket, not host/port
+        assert_eq!(endpoint.url.scheme_str(), Some("unix"));
+        let decoded_path = ddcommon::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        assert_eq!(
+            decoded_path.to_string_lossy(),
+            "/var/run/datadog/apm.socket"
+        );
     }
 }
