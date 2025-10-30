@@ -41,7 +41,6 @@ members = [
   "libdd-trace-utils",
   "libdd-tracer-flare",
   "tools",
-  "tools/cc_utils",
   "tools/sidecar_mockgen",
   "spawn_worker",
   "tests/spawn_from_lib",

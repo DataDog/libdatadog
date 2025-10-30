@@ -75,4 +75,4 @@ tempfile = { version = "3.3" }
 [build-dependencies]
 # If we use a newer version of cc, CI fails on alpine.
 cc = "1.1.31"
-cc_utils = {path = "../tools/cc_utils"}
+ddcommon = { path = "../ddcommon" }

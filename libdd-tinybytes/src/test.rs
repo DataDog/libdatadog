@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use core::str;
+use std::hint::black_box;
 use std::sync::atomic::{self, AtomicUsize};
 use std::sync::Arc;
 
@@ -20,6 +21,20 @@ fn hello() -> Bytes {
 
 fn hello_slice(range: impl RangeBounds<usize>) -> Bytes {
     hello().slice(range)
+}
+
+#[test]
+fn test_from_underlying_vec() {
+    let b = Bytes::from_underlying(vec![1, 2, 3]);
+    let b1 = b.clone();
+    for i in b1.as_slice() {
+        black_box(i);
+    }
+    for i in b.as_slice() {
+        black_box(i);
+    }
+    drop(b);
+    drop(b1);
 }
 
 #[test]

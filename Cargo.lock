@@ -667,6 +667,7 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "cc_utils"
 version = "1.0.0"
 dependencies = [
@@ -675,6 +676,17 @@ dependencies = [
 ]
 
 [[package]]
+||||||| a2667281
+name = "cc_utils"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+]
+
+[[package]]
+=======
+>>>>>>> main
 name = "cexpr"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1106,7 +1118,918 @@ checksum = "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81"
 dependencies = [
  "darling_core",
  "quote",
+<<<<<<< HEAD
  "syn 2.0.108",
+||||||| a2667281
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "data-pipeline"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "bytes",
+ "clap",
+ "criterion",
+ "datadog-ddsketch",
+ "datadog-log",
+ "datadog-trace-protobuf",
+ "datadog-trace-stats",
+ "datadog-trace-utils",
+ "ddcommon",
+ "ddtelemetry",
+ "dogstatsd-client",
+ "either",
+ "http",
+ "http-body-util",
+ "httpmock",
+ "hyper",
+ "hyper-util",
+ "rand 0.8.5",
+ "regex",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tinybytes",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "data-pipeline-ffi"
+version = "22.1.0"
+dependencies = [
+ "build_common",
+ "data-pipeline",
+ "datadog-trace-utils",
+ "ddcommon-ffi",
+ "httpmock",
+ "rmp-serde",
+ "tinybytes",
+ "tracing",
+]
+
+[[package]]
+name = "datadog-alloc"
+version = "22.1.0"
+dependencies = [
+ "allocator-api2",
+ "bolero",
+ "libc",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "datadog-crashtracker"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "backtrace",
+ "blazesym",
+ "cc",
+ "cc_utils",
+ "chrono",
+ "criterion",
+ "ddcommon",
+ "ddtelemetry",
+ "goblin",
+ "http",
+ "libc",
+ "nix",
+ "num-derive",
+ "num-traits",
+ "os_info",
+ "page_size",
+ "portable-atomic",
+ "rand 0.8.5",
+ "schemars",
+ "serde",
+ "serde_json",
+ "symbolic-common",
+ "symbolic-demangle",
+ "tempfile",
+ "thiserror 1.0.68",
+ "tokio",
+ "uuid",
+ "windows 0.59.0",
+]
+
+[[package]]
+name = "datadog-crashtracker-ffi"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "datadog-crashtracker",
+ "ddcommon",
+ "ddcommon-ffi",
+ "function_name",
+ "libc",
+ "serde",
+ "serde_json",
+ "symbolic-common",
+ "symbolic-demangle",
+ "tempfile",
+ "windows 0.59.0",
+]
+
+[[package]]
+name = "datadog-ddsketch"
+version = "22.1.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+]
+
+[[package]]
+name = "datadog-ffe"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "criterion",
+ "derive_more",
+ "env_logger",
+ "faststr",
+ "log",
+ "md5",
+ "regex",
+ "serde",
+ "serde-bool",
+ "serde_json",
+ "serde_with",
+ "thiserror 2.0.17",
+ "url",
+]
+
+[[package]]
+name = "datadog-ipc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "criterion",
+ "datadog-ipc-macros",
+ "ddcommon",
+ "futures",
+ "glibc_version",
+ "io-lifetimes",
+ "libc",
+ "memfd",
+ "nix",
+ "page_size",
+ "pin-project",
+ "pretty_assertions",
+ "sendfd",
+ "serde",
+ "spawn_worker",
+ "tarpc",
+ "tempfile",
+ "tinybytes",
+ "tokio",
+ "tokio-serde",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "winapi 0.3.9",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "datadog-ipc-macros"
+version = "0.0.1"
+dependencies = [
+ "quote",
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "datadog-library-config"
+version = "0.0.2"
+dependencies = [
+ "anyhow",
+ "memfd",
+ "rand 0.8.5",
+ "rmp",
+ "rmp-serde",
+ "serde",
+ "serde_yaml",
+ "tempfile",
+]
+
+[[package]]
+name = "datadog-library-config-ffi"
+version = "0.0.2"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "constcat",
+ "datadog-library-config",
+ "ddcommon",
+ "ddcommon-ffi",
+ "tempfile",
+]
+
+[[package]]
+name = "datadog-live-debugger"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "constcat",
+ "ddcommon",
+ "http-body-util",
+ "hyper",
+ "percent-encoding",
+ "regex",
+ "regex-automata 0.4.8",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "sys-info",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "datadog-live-debugger-ffi"
+version = "0.0.1"
+dependencies = [
+ "build_common",
+ "datadog-live-debugger",
+ "ddcommon",
+ "ddcommon-ffi",
+ "log",
+ "percent-encoding",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
+name = "datadog-log"
+version = "22.1.0"
+dependencies = [
+ "chrono",
+ "tempfile",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "datadog-log-ffi"
+version = "22.1.0"
+dependencies = [
+ "build_common",
+ "datadog-log",
+ "ddcommon-ffi",
+]
+
+[[package]]
+name = "datadog-profiling"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "bitmaps",
+ "bolero",
+ "byteorder",
+ "bytes",
+ "chrono",
+ "criterion",
+ "datadog-alloc",
+ "datadog-profiling-protobuf",
+ "ddcommon",
+ "futures",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-multipart-rfc7578",
+ "indexmap 2.6.0",
+ "lz4_flex",
+ "mime",
+ "prost",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "target-triple",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "datadog-profiling-ffi"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "data-pipeline-ffi",
+ "datadog-crashtracker-ffi",
+ "datadog-library-config-ffi",
+ "datadog-log-ffi",
+ "datadog-profiling",
+ "ddcommon",
+ "ddcommon-ffi",
+ "ddsketch-ffi",
+ "ddtelemetry-ffi",
+ "function_name",
+ "futures",
+ "http-body-util",
+ "hyper",
+ "libc",
+ "serde_json",
+ "symbolizer-ffi",
+ "tokio-util",
+]
+
+[[package]]
+name = "datadog-profiling-protobuf"
+version = "22.1.0"
+dependencies = [
+ "bolero",
+ "datadog-profiling-protobuf",
+ "prost",
+]
+
+[[package]]
+name = "datadog-profiling-replayer"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "datadog-profiling",
+ "datadog-profiling-protobuf",
+ "prost",
+ "sysinfo",
+]
+
+[[package]]
+name = "datadog-remote-config"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "datadog-live-debugger",
+ "datadog-remote-config",
+ "datadog-trace-protobuf",
+ "ddcommon",
+ "futures",
+ "futures-util",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "manual_future",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sha2",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "datadog-sidecar"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "arrayref",
+ "base64 0.22.1",
+ "bincode",
+ "chrono",
+ "console-subscriber",
+ "data-pipeline",
+ "datadog-crashtracker",
+ "datadog-crashtracker-ffi",
+ "datadog-ipc",
+ "datadog-ipc-macros",
+ "datadog-live-debugger",
+ "datadog-remote-config",
+ "datadog-sidecar-macros",
+ "datadog-trace-utils",
+ "ddcommon",
+ "ddcommon-ffi",
+ "ddtelemetry",
+ "dogstatsd-client",
+ "futures",
+ "http",
+ "http-body-util",
+ "httpmock",
+ "hyper",
+ "libc",
+ "manual_future",
+ "memory-stats",
+ "microseh",
+ "nix",
+ "prctl",
+ "priority-queue",
+ "rand 0.8.5",
+ "sendfd",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sha2",
+ "simd-json",
+ "spawn_worker",
+ "tempfile",
+ "tinybytes",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+ "winapi 0.3.9",
+ "windows 0.51.1",
+ "windows-sys 0.52.0",
+ "zwohash",
+]
+
+[[package]]
+name = "datadog-sidecar-ffi"
+version = "0.0.1"
+dependencies = [
+ "datadog-crashtracker-ffi",
+ "datadog-ipc",
+ "datadog-live-debugger",
+ "datadog-remote-config",
+ "datadog-sidecar",
+ "datadog-trace-utils",
+ "ddcommon",
+ "ddcommon-ffi",
+ "ddtelemetry",
+ "ddtelemetry-ffi",
+ "dogstatsd-client",
+ "http",
+ "libc",
+ "paste",
+ "rmp-serde",
+ "tempfile",
+ "tinybytes",
+ "tracing",
+=======
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "data-pipeline"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "bytes",
+ "clap",
+ "criterion",
+ "datadog-ddsketch",
+ "datadog-log",
+ "datadog-trace-protobuf",
+ "datadog-trace-stats",
+ "datadog-trace-utils",
+ "ddcommon",
+ "ddtelemetry",
+ "dogstatsd-client",
+ "either",
+ "http",
+ "http-body-util",
+ "httpmock",
+ "hyper",
+ "hyper-util",
+ "rand 0.8.5",
+ "regex",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tinybytes",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "data-pipeline-ffi"
+version = "22.1.0"
+dependencies = [
+ "build_common",
+ "data-pipeline",
+ "datadog-trace-utils",
+ "ddcommon-ffi",
+ "httpmock",
+ "rmp-serde",
+ "tinybytes",
+ "tracing",
+]
+
+[[package]]
+name = "datadog-alloc"
+version = "22.1.0"
+dependencies = [
+ "allocator-api2",
+ "bolero",
+ "libc",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "datadog-crashtracker"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "backtrace",
+ "blazesym",
+ "cc",
+ "chrono",
+ "criterion",
+ "ddcommon",
+ "ddtelemetry",
+ "goblin",
+ "http",
+ "libc",
+ "nix",
+ "num-derive",
+ "num-traits",
+ "os_info",
+ "page_size",
+ "portable-atomic",
+ "rand 0.8.5",
+ "schemars",
+ "serde",
+ "serde_json",
+ "symbolic-common",
+ "symbolic-demangle",
+ "tempfile",
+ "thiserror 1.0.68",
+ "tokio",
+ "uuid",
+ "windows 0.59.0",
+]
+
+[[package]]
+name = "datadog-crashtracker-ffi"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "datadog-crashtracker",
+ "ddcommon",
+ "ddcommon-ffi",
+ "function_name",
+ "libc",
+ "serde",
+ "serde_json",
+ "symbolic-common",
+ "symbolic-demangle",
+ "tempfile",
+ "windows 0.59.0",
+]
+
+[[package]]
+name = "datadog-ddsketch"
+version = "22.1.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+]
+
+[[package]]
+name = "datadog-ffe"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "criterion",
+ "derive_more",
+ "env_logger",
+ "faststr",
+ "log",
+ "md5",
+ "regex",
+ "serde",
+ "serde-bool",
+ "serde_json",
+ "serde_with",
+ "thiserror 2.0.17",
+ "url",
+]
+
+[[package]]
+name = "datadog-ipc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "criterion",
+ "datadog-ipc-macros",
+ "ddcommon",
+ "futures",
+ "glibc_version",
+ "io-lifetimes",
+ "libc",
+ "memfd",
+ "nix",
+ "page_size",
+ "pin-project",
+ "pretty_assertions",
+ "sendfd",
+ "serde",
+ "spawn_worker",
+ "tarpc",
+ "tempfile",
+ "tinybytes",
+ "tokio",
+ "tokio-serde",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "winapi 0.3.9",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "datadog-ipc-macros"
+version = "0.0.1"
+dependencies = [
+ "quote",
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "datadog-library-config"
+version = "0.0.2"
+dependencies = [
+ "anyhow",
+ "memfd",
+ "rand 0.8.5",
+ "rmp",
+ "rmp-serde",
+ "serde",
+ "serde_yaml",
+ "tempfile",
+]
+
+[[package]]
+name = "datadog-library-config-ffi"
+version = "0.0.2"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "constcat",
+ "datadog-library-config",
+ "ddcommon",
+ "ddcommon-ffi",
+ "tempfile",
+]
+
+[[package]]
+name = "datadog-live-debugger"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "constcat",
+ "ddcommon",
+ "http-body-util",
+ "hyper",
+ "percent-encoding",
+ "regex",
+ "regex-automata 0.4.8",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "sys-info",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "datadog-live-debugger-ffi"
+version = "0.0.1"
+dependencies = [
+ "build_common",
+ "datadog-live-debugger",
+ "ddcommon",
+ "ddcommon-ffi",
+ "log",
+ "percent-encoding",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
+name = "datadog-log"
+version = "22.1.0"
+dependencies = [
+ "chrono",
+ "tempfile",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "datadog-log-ffi"
+version = "22.1.0"
+dependencies = [
+ "build_common",
+ "datadog-log",
+ "ddcommon-ffi",
+]
+
+[[package]]
+name = "datadog-profiling"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "bitmaps",
+ "bolero",
+ "byteorder",
+ "bytes",
+ "chrono",
+ "criterion",
+ "datadog-alloc",
+ "datadog-profiling-protobuf",
+ "ddcommon",
+ "futures",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-multipart-rfc7578",
+ "indexmap 2.6.0",
+ "lz4_flex",
+ "mime",
+ "prost",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "target-triple",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "datadog-profiling-ffi"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "data-pipeline-ffi",
+ "datadog-crashtracker-ffi",
+ "datadog-library-config-ffi",
+ "datadog-log-ffi",
+ "datadog-profiling",
+ "ddcommon",
+ "ddcommon-ffi",
+ "ddsketch-ffi",
+ "ddtelemetry-ffi",
+ "function_name",
+ "futures",
+ "http-body-util",
+ "hyper",
+ "libc",
+ "serde_json",
+ "symbolizer-ffi",
+ "tokio-util",
+]
+
+[[package]]
+name = "datadog-profiling-protobuf"
+version = "22.1.0"
+dependencies = [
+ "bolero",
+ "datadog-profiling-protobuf",
+ "prost",
+]
+
+[[package]]
+name = "datadog-profiling-replayer"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "datadog-profiling",
+ "datadog-profiling-protobuf",
+ "prost",
+ "sysinfo",
+]
+
+[[package]]
+name = "datadog-remote-config"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "datadog-live-debugger",
+ "datadog-remote-config",
+ "datadog-trace-protobuf",
+ "ddcommon",
+ "futures",
+ "futures-util",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "manual_future",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sha2",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "datadog-sidecar"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "arrayref",
+ "base64 0.22.1",
+ "bincode",
+ "chrono",
+ "console-subscriber",
+ "data-pipeline",
+ "datadog-crashtracker",
+ "datadog-crashtracker-ffi",
+ "datadog-ipc",
+ "datadog-ipc-macros",
+ "datadog-live-debugger",
+ "datadog-remote-config",
+ "datadog-sidecar-macros",
+ "datadog-trace-utils",
+ "ddcommon",
+ "ddcommon-ffi",
+ "ddtelemetry",
+ "dogstatsd-client",
+ "futures",
+ "http",
+ "http-body-util",
+ "httpmock",
+ "hyper",
+ "libc",
+ "manual_future",
+ "memory-stats",
+ "microseh",
+ "nix",
+ "prctl",
+ "priority-queue",
+ "rand 0.8.5",
+ "sendfd",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sha2",
+ "simd-json",
+ "spawn_worker",
+ "tempfile",
+ "tinybytes",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
+ "winapi 0.3.9",
+ "windows 0.51.1",
+ "windows-sys 0.52.0",
+ "zwohash",
+]
+
+[[package]]
+name = "datadog-sidecar-ffi"
+version = "0.0.1"
+dependencies = [
+ "datadog-crashtracker-ffi",
+ "datadog-ipc",
+ "datadog-live-debugger",
+ "datadog-remote-config",
+ "datadog-sidecar",
+ "datadog-trace-utils",
+ "ddcommon",
+ "ddcommon-ffi",
+ "ddtelemetry",
+ "ddtelemetry-ffi",
+ "dogstatsd-client",
+ "http",
+ "libc",
+ "paste",
+ "rmp-serde",
+ "tempfile",
+ "tinybytes",
+ "tracing",
+>>>>>>> main
 ]
 
 [[package]]
@@ -1114,7 +2037,418 @@ name = "datadog-sidecar-macros"
 version = "0.0.1"
 dependencies = [
  "quote",
+<<<<<<< HEAD
  "syn 2.0.108",
+||||||| a2667281
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "datadog-trace-normalization"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "criterion",
+ "datadog-trace-protobuf",
+ "duplicate",
+ "rand 0.8.5",
+]
+
+[[package]]
+name = "datadog-trace-obfuscation"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "criterion",
+ "datadog-trace-protobuf",
+ "datadog-trace-utils",
+ "ddcommon",
+ "duplicate",
+ "log",
+ "percent-encoding",
+ "regex",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "datadog-trace-protobuf"
+version = "22.1.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "datadog-trace-stats"
+version = "22.1.0"
+dependencies = [
+ "criterion",
+ "datadog-ddsketch",
+ "datadog-trace-protobuf",
+ "datadog-trace-utils",
+ "hashbrown 0.15.1",
+ "rand 0.8.5",
+]
+
+[[package]]
+name = "datadog-trace-utils"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "bolero",
+ "bytes",
+ "cargo-platform",
+ "cargo_metadata",
+ "criterion",
+ "datadog-trace-normalization",
+ "datadog-trace-protobuf",
+ "datadog-trace-utils",
+ "ddcommon",
+ "flate2",
+ "futures",
+ "http-body-util",
+ "httpmock",
+ "hyper",
+ "hyper-http-proxy",
+ "prost",
+ "rand 0.8.5",
+ "rmp",
+ "rmp-serde",
+ "rmpv",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tinybytes",
+ "tokio",
+ "tracing",
+ "urlencoding",
+ "zstd",
+]
+
+[[package]]
+name = "datadog-tracer-flare"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "datadog-remote-config",
+ "datadog-trace-utils",
+ "ddcommon",
+ "hyper",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "walkdir",
+ "zip",
+]
+
+[[package]]
+name = "ddcommon"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "const_format",
+ "futures",
+ "futures-core",
+ "futures-util",
+ "hex",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "indexmap 2.6.0",
+ "libc",
+ "maplit",
+ "nix",
+ "pin-project",
+ "regex",
+ "rustls",
+ "rustls-native-certs",
+ "serde",
+ "static_assertions",
+ "tempfile",
+ "thiserror 1.0.68",
+ "tokio",
+ "tokio-rustls",
+ "tower-service",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "ddcommon-ffi"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "bolero",
+ "build_common",
+ "chrono",
+ "crossbeam-queue",
+ "ddcommon",
+ "hyper",
+ "serde",
+]
+
+[[package]]
+name = "ddsketch-ffi"
+version = "22.1.0"
+dependencies = [
+ "build_common",
+ "datadog-ddsketch",
+ "ddcommon-ffi",
+]
+
+[[package]]
+name = "ddtelemetry"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "datadog-ddsketch",
+ "ddcommon",
+ "futures",
+ "hashbrown 0.15.1",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "libc",
+ "serde",
+ "serde_json",
+ "sys-info",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "winver",
+]
+
+[[package]]
+name = "ddtelemetry-ffi"
+version = "22.1.0"
+dependencies = [
+ "build_common",
+ "ddcommon",
+ "ddcommon-ffi",
+ "ddtelemetry",
+ "function_name",
+ "libc",
+ "paste",
+ "tempfile",
+=======
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "datadog-trace-normalization"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "criterion",
+ "datadog-trace-protobuf",
+ "duplicate",
+ "rand 0.8.5",
+]
+
+[[package]]
+name = "datadog-trace-obfuscation"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "criterion",
+ "datadog-trace-protobuf",
+ "datadog-trace-utils",
+ "ddcommon",
+ "duplicate",
+ "log",
+ "percent-encoding",
+ "regex",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "datadog-trace-protobuf"
+version = "22.1.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "datadog-trace-stats"
+version = "22.1.0"
+dependencies = [
+ "criterion",
+ "datadog-ddsketch",
+ "datadog-trace-protobuf",
+ "datadog-trace-utils",
+ "hashbrown 0.15.1",
+ "rand 0.8.5",
+]
+
+[[package]]
+name = "datadog-trace-utils"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "bolero",
+ "bytes",
+ "cargo-platform",
+ "cargo_metadata",
+ "criterion",
+ "datadog-trace-normalization",
+ "datadog-trace-protobuf",
+ "datadog-trace-utils",
+ "ddcommon",
+ "flate2",
+ "futures",
+ "http-body-util",
+ "httpmock",
+ "hyper",
+ "prost",
+ "rand 0.8.5",
+ "rmp",
+ "rmp-serde",
+ "rmpv",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tinybytes",
+ "tokio",
+ "tracing",
+ "urlencoding",
+ "zstd",
+]
+
+[[package]]
+name = "datadog-tracer-flare"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "datadog-remote-config",
+ "datadog-trace-utils",
+ "ddcommon",
+ "hyper",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "walkdir",
+ "zip",
+]
+
+[[package]]
+name = "ddcommon"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "const_format",
+ "futures",
+ "futures-core",
+ "futures-util",
+ "hex",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "indexmap 2.6.0",
+ "libc",
+ "maplit",
+ "nix",
+ "pin-project",
+ "regex",
+ "rustls",
+ "rustls-native-certs",
+ "serde",
+ "static_assertions",
+ "tempfile",
+ "thiserror 1.0.68",
+ "tokio",
+ "tokio-rustls",
+ "tower-service",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "ddcommon-ffi"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "bolero",
+ "build_common",
+ "chrono",
+ "crossbeam-queue",
+ "ddcommon",
+ "hyper",
+ "serde",
+]
+
+[[package]]
+name = "ddsketch-ffi"
+version = "22.1.0"
+dependencies = [
+ "build_common",
+ "datadog-ddsketch",
+ "ddcommon-ffi",
+]
+
+[[package]]
+name = "ddtelemetry"
+version = "22.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "datadog-ddsketch",
+ "ddcommon",
+ "futures",
+ "hashbrown 0.15.1",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "libc",
+ "serde",
+ "serde_json",
+ "sys-info",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "winver",
+]
+
+[[package]]
+name = "ddtelemetry-ffi"
+version = "22.1.0"
+dependencies = [
+ "build_common",
+ "ddcommon",
+ "ddcommon-ffi",
+ "ddtelemetry",
+ "function_name",
+ "libc",
+ "paste",
+ "tempfile",
+>>>>>>> main
 ]
 
 [[package]]
@@ -1872,6 +3206,7 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "hyper-http-proxy"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1892,6 +3227,29 @@ dependencies = [
 ]
 
 [[package]]
+||||||| a2667281
+name = "hyper-http-proxy"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ad4b0a1e37510028bc4ba81d0e38d239c39671b0f0ce9e02dfa93a8133f7c08"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "headers",
+ "http",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "pin-project-lite",
+ "tokio",
+ "tokio-rustls",
+ "tower-service",
+ "webpki-roots",
+]
+
+[[package]]
+=======
+>>>>>>> main
 name = "hyper-multipart-rfc7578"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4557,7 +5915,8 @@ name = "spawn_worker"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "cc_utils",
+ "cc",
+ "ddcommon",
  "fastrand",
  "io-lifetimes",
  "kernel32-sys",
