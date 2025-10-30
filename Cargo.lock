@@ -517,6 +517,7 @@ dependencies = [
  "serde_json",
  "strum",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

@@ -828,7 +828,6 @@ mod tests {
         clear_errors_intake_env();
 
         // Test UDS socket configuration
-        // We need to mock the UDS socket check since we can't guarantee the socket exists
         let settings = ErrorsIntakeSettings {
             agent_uds_socket_found: true,
             ..Default::default()
@@ -864,12 +863,9 @@ mod tests {
         let endpoint = cfg.endpoint().unwrap();
 
         assert_eq!(endpoint.url.scheme_str(), Some("windows"));
-        assert!(endpoint
-            .url
-            .authority()
-            .unwrap()
-            .as_str()
-            .contains("my_custom_pipe"));
+        // For windows: scheme, the pipe name is URL-encoded in the authority
+        let decoded_path = ddcommon::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        assert_eq!(decoded_path.to_string_lossy(), "my_custom_pipe");
 
         // Should use agent proxy path
         assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
