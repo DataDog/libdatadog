@@ -1,13 +1,45 @@
-# data-pipeline
+# libdd-data-pipeline
+
+Data pipeline for processing and exporting APM data to Datadog.
+
+## Overview
+
+`libdd-data-pipeline` provides a high-performance pipeline for processing distributed tracing data, applying normalization and obfuscation, computing statistics, and exporting to Datadog backends.
 
 ## Status
 Currently the project is a proof of concept so the API is not definitive and possible frequent changes should be
 expected. 
 
+## Features
+
+- **Trace Processing**: Normalize and validate trace data
+- **Statistics Computation**: Compute trace statistics with time-bucketing
+- **Obfuscation**: Remove sensitive data from traces
+- **Compression**: Zstd and gzip compression support
+- **Batching**: Efficient payload batching
+- **Export**: HTTP/HTTPS export to Datadog intake
+- **Retry Logic**: Automatic retry with backoff
+- **Metrics**: Built-in pipeline metrics
+- **Remote Config**: Support for remote configuration
+
+## Pipeline Stages
+
+1. **Ingestion**: Receive traces from applications
+2. **Normalization**: Apply span normalization rules
+3. **Obfuscation**: Remove sensitive information
+4. **Stats Computation**: Aggregate into statistics buckets
+5. **Serialization**: Encode in MessagePack or Protobuf
+6. **Compression**: Compress payloads
+7. **Export**: Send to Datadog backend with retry
+
 ## Modules
 
-- **TraceExporter**: provides a minimum viable product (MVP) to send traces to agents. The aim of the project at this
-state is to provide a basic API in order to test its viability and integration in different languages.
+- `trace_exporter`: Main trace export functionality. Provides a minimum viable product (MVP) to send traces to agents. The aim of the project at this state is to provide a basic API in order to test its viability and integration in different languages.
+- `stats`: Statistics computation
+- `normalize`: Trace normalization
+- `obfuscate`: Sensitive data obfuscation
+- `serialize`: Payload serialization
+- `http`: HTTP client and transport
 
 ## Requirements
 The current implementation assumes the following requisites must be met by the tracer:
@@ -97,3 +129,34 @@ The building and artifact generation process will depend heavily on the framewor
 - Asynchronous interface.
 - Handle transformations between different protocol versions.
 - Agent API discovery.
+
+
+## Example Usage
+
+```rust
+use libdd_data_pipeline;
+
+// Create pipeline
+// let pipeline = TracePipeline::new(config)?;
+
+// Process traces
+// pipeline.send_traces(traces).await?;
+
+// Pipeline automatically:
+// - Normalizes spans
+// - Computes statistics  
+// - Obfuscates sensitive data
+// - Batches and compresses
+// - Exports to Datadog
+```
+
+## Configuration
+
+The pipeline supports configuration for:
+- Normalization rules
+- Obfuscation settings
+- Statistics bucketing
+- Compression levels
+- Batch sizes
+- Retry policies
+- Backend endpoints
