@@ -6,8 +6,8 @@ use crate::profiles::utf8::Utf8Option;
 use crate::profiles::{ensure_non_null_insert, ensure_non_null_out_parameter};
 use crate::ProfileStatus;
 use datadog_profiling::api2::{Function2, FunctionId2, Mapping2, MappingId2, StringId2};
-use datadog_profiling::profiles::collections::{SetId, StringRef};
-use datadog_profiling::profiles::datatypes::{self as dt, ProfilesDictionary};
+use datadog_profiling::profiles::collections::StringRef;
+use datadog_profiling::profiles::datatypes::ProfilesDictionary;
 use datadog_profiling::profiles::ProfileError;
 use ddcommon_ffi::CharSlice;
 
