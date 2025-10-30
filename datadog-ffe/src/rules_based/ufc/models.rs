@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::rules_based::{Error, EvaluationError, Str};
+use crate::rules_based::{EvaluationError, Str};
 
 #[allow(missing_docs)]
 pub type Timestamp = crate::rules_based::timestamp::Timestamp;
@@ -281,7 +281,7 @@ impl From<ConditionWire> for Option<Condition> {
 }
 
 impl TryFrom<ConditionWire> for Condition {
-    type Error = Error;
+    type Error = EvaluationError;
 
     fn try_from(condition: ConditionWire) -> Result<Self, Self::Error> {
         let attribute = condition.attribute;
@@ -296,9 +296,7 @@ impl TryFrom<ConditionWire> for Condition {
                             "failed to parse condition: {:?} condition with non-string condition value",
                             condition.operator
                         );
-                        return Err(Error::EvaluationError(
-                            EvaluationError::UnexpectedConfigurationError,
-                        ));
+                        return Err(EvaluationError::UnexpectedConfigurationError);
                     }
                 };
                 let regex = match Regex::new(&regex_string) {
@@ -307,9 +305,7 @@ impl TryFrom<ConditionWire> for Condition {
                         log::warn!(
                             "failed to parse condition: failed to compile regex {regex_string:?}: {err:?}"
                         );
-                        return Err(Error::EvaluationError(
-                            EvaluationError::UnexpectedConfigurationError,
-                        ));
+                        return Err(EvaluationError::UnexpectedConfigurationError);
                     }
                 };
 
@@ -337,9 +333,7 @@ impl TryFrom<ConditionWire> for Condition {
                         "failed to parse condition: comparison value is not a number: {:?}",
                         condition.value
                     );
-                    return Err(Error::EvaluationError(
-                        EvaluationError::UnexpectedConfigurationError,
-                    ));
+                    return Err(EvaluationError::UnexpectedConfigurationError);
                 };
                 ConditionCheck::Comparison {
                     operator,
@@ -355,9 +349,7 @@ impl TryFrom<ConditionWire> for Condition {
                             "failed to parse condition: membership condition with non-array value: {:?}",
                             condition.value
                         );
-                        return Err(Error::EvaluationError(
-                            EvaluationError::UnexpectedConfigurationError,
-                        ));
+                        return Err(EvaluationError::UnexpectedConfigurationError);
                     }
                 };
                 ConditionCheck::Membership {
@@ -371,9 +363,7 @@ impl TryFrom<ConditionWire> for Condition {
                     log::warn!(
                         "failed to parse condition: IS_NULL condition with non-boolean condition value"
                     );
-                    return Err(Error::EvaluationError(
-                        EvaluationError::UnexpectedConfigurationError,
-                    ));
+                    return Err(EvaluationError::UnexpectedConfigurationError);
                 };
                 ConditionCheck::Null { expected_null }
             }

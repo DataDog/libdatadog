@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 use serde::Deserialize;
 
 use crate::rules_based::{
-    error::EvaluationFailure, sharder::PreSaltedSharder, Error, EvaluationError, Str,
+    error::EvaluationFailure, sharder::PreSaltedSharder, EvaluationError, Str,
 };
 
 use super::{
@@ -66,11 +66,8 @@ pub(crate) struct Shard {
 }
 
 impl UniversalFlagConfig {
-    pub fn from_json(json: Vec<u8>) -> Result<Self, Error> {
-        let config: CompiledFlagsConfig = serde_json::from_slice(&json).map_err(|err| {
-            log::warn!("failed to compile flag configuration: {err:?}");
-            Error::EvaluationError(EvaluationError::UnexpectedConfigurationError)
-        })?;
+    pub fn from_json(json: Vec<u8>) -> Result<Self, serde_json::Error> {
+        let config: CompiledFlagsConfig = serde_json::from_slice(&json)?;
         Ok(UniversalFlagConfig {
             wire_json: json,
             compiled: config,
