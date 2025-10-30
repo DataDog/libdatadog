@@ -187,6 +187,17 @@ fn test_crash_tracking_errors_intake_crash_ping() {
     test_crash_tracking_errors_intake_dual_upload(BuildProfile::Release, "donothing", "null_deref");
 }
 
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(unix)]
+fn test_crash_tracking_errors_intake_uds_socket() {
+    test_crash_tracking_bin_with_errors_intake_uds(
+        BuildProfile::Release,
+        "donothing",
+        "null_deref",
+    );
+}
+
 // This test is disabled for now on x86_64 musl and macos
 // It seems that on aarch64 musl, libc has CFI which allows
 // unwinding passed the signal frame.
@@ -1597,6 +1608,165 @@ fn test_crash_tracking_errors_intake_dual_upload(
         .context("reading crashtracker telemetry payload")
         .unwrap();
     assert_telemetry_message(&crash_telemetry, crash_typ, TelemetryKind::CrashReport);
+}
+
+#[cfg(unix)]
+fn test_crash_tracking_bin_with_errors_intake_uds(
+    crash_tracking_receiver_profile: BuildProfile,
+    mode: &str,
+    crash_typ: &str,
+) {
+    let (crashtracker_bin, crashtracker_receiver) =
+        setup_crashtracking_crates(crash_tracking_receiver_profile);
+    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
+
+    // Try to create the standard agent UDS socket for testing
+    let socket_path = std::path::Path::new("/var/run/datadog/apm.socket");
+
+    // Create directory if it doesn't exist
+    if let Some(parent) = socket_path.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            // Skip test if we can't create the directory (permission issues)
+            eprintln!("Skipping UDS test - cannot create /var/run/datadog directory");
+            return;
+        }
+    }
+
+    // Remove socket if it exists from a previous run
+    let _ = std::fs::remove_file(socket_path);
+
+    // Create the Unix socket at the standard agent location
+    let listener = match std::os::unix::net::UnixListener::bind(socket_path) {
+        Ok(l) => l,
+        Err(_) => {
+            eprintln!("Skipping UDS test - cannot create socket at /var/run/datadog/apm.socket");
+            return;
+        }
+    };
+
+    let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
+        .arg("") // Empty endpoint so both use agent detection
+        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
+        .arg(&fixtures.output_dir)
+        .arg(mode)
+        .arg(crash_typ)
+        // Don't set DD_TRACE_AGENT_URL - let it auto-detect the UDS socket
+        .spawn()
+        .unwrap();
+
+    let exit_status = bin_tests::timeit!("exit after signal", {
+        eprintln!("Waiting for exit");
+        p.wait().unwrap()
+    });
+
+    match crash_typ {
+        "kill_sigabrt" | "kill_sigill" | "null_deref" | "raise_sigabrt" | "raise_sigill" => {
+            assert!(!exit_status.success())
+        }
+        "kill_sigbus" | "kill_sigsegv" | "raise_sigbus" | "raise_sigsegv" => {
+            assert!(exit_status.success())
+        }
+        _ => unreachable!("{crash_typ} shouldn't happen"),
+    }
+
+    // Handle HTTP requests on the Unix socket - expect 4 requests total
+    // 2 from telemetry (crash ping + crash report) and 2 from errors intake (crash ping + crash
+    // report)
+    let (mut stream1, _) = listener.accept().unwrap();
+    let body1 = read_http_request_body(&mut stream1);
+    stream1
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        .unwrap();
+
+    let (mut stream2, _) = listener.accept().unwrap();
+    let body2 = read_http_request_body(&mut stream2);
+    stream2
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        .unwrap();
+
+    let (mut stream3, _) = listener.accept().unwrap();
+    let body3 = read_http_request_body(&mut stream3);
+    stream3
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        .unwrap();
+
+    let (mut stream4, _) = listener.accept().unwrap();
+    let body4 = read_http_request_body(&mut stream4);
+    stream4
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        .unwrap();
+
+    let all_bodies = [body1, body2, body3, body4];
+
+    // Separate crash pings from crash reports
+    let mut crash_pings = Vec::new();
+    let mut crash_reports = Vec::new();
+
+    for (i, body) in all_bodies.iter().enumerate() {
+        if body.contains("is_crash_ping:true") {
+            crash_pings.push((i + 1, body));
+        } else if body.contains("is_crash:true") {
+            crash_reports.push((i + 1, body));
+        }
+    }
+
+    assert_eq!(
+        crash_pings.len(),
+        2,
+        "Expected 2 crash pings (telemetry + errors intake), got {}",
+        crash_pings.len()
+    );
+    assert_eq!(
+        crash_reports.len(),
+        2,
+        "Expected 2 crash reports (telemetry + errors intake), got {}",
+        crash_reports.len()
+    );
+
+    // Find telemetry requests (contain api_version and request_type)
+    let telemetry_crash_ping = crash_pings
+        .iter()
+        .find(|(_, body)| body.contains("api_version") && body.contains("request_type"))
+        .expect("Should have telemetry crash ping");
+    validate_crash_ping_telemetry(telemetry_crash_ping.1);
+
+    let telemetry_crash_report = crash_reports
+        .iter()
+        .find(|(_, body)| body.contains("api_version") && body.contains("request_type"))
+        .expect("Should have telemetry crash report");
+    assert_telemetry_message(telemetry_crash_report.1.as_bytes(), crash_typ);
+
+    // Find errors intake requests (contain ddsource: crashtracker but no api_version)
+    let errors_crash_ping = crash_pings
+        .iter()
+        .find(|(_, body)| {
+            body.contains("\"ddsource\":\"crashtracker\"") && !body.contains("api_version")
+        })
+        .expect("Should have errors intake crash ping");
+
+    let errors_crash_report = crash_reports
+        .iter()
+        .find(|(_, body)| {
+            body.contains("\"ddsource\":\"crashtracker\"") && !body.contains("api_version")
+        })
+        .expect("Should have errors intake crash report");
+
+    // Parse and validate errors intake payloads
+    let errors_ping_payload: serde_json::Value = serde_json::from_str(errors_crash_ping.1).unwrap();
+    let errors_report_payload: serde_json::Value =
+        serde_json::from_str(errors_crash_report.1).unwrap();
+
+    // Validate errors intake crash ping (is_crash: false)
+    assert_eq!(errors_ping_payload["ddsource"], "crashtracker");
+    assert_eq!(errors_ping_payload["error"]["is_crash"], false);
+
+    // Validate errors intake crash report (is_crash: true)
+    assert_eq!(errors_report_payload["ddsource"], "crashtracker");
+    assert_eq!(errors_report_payload["error"]["is_crash"], true);
+
+    // Clean up
+    drop(listener);
+    let _ = std::fs::remove_file(socket_path);
 }
 
 fn assert_errors_intake_payload(payload: &Value, crash_typ: &str) {
