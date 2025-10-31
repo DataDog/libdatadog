@@ -121,6 +121,11 @@ fn main() {
         let test_name = format!("evaluation_sdk_{}", test_file.replace('-', "_"));
 
         writeln!(file, "#[test]").unwrap();
+        writeln!(
+            file,
+            "#[cfg_attr(miri, ignore)] // these tests are way too slow on miri"
+        )
+        .unwrap();
         writeln!(file, "fn {}() {{", test_name).unwrap();
         writeln!(
             file,
