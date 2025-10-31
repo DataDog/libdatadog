@@ -7,9 +7,9 @@ use crate::rules_based::{
     error::{EvaluationError, EvaluationFailure},
     ufc::{
         Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, Flag, Shard, Split,
-        Timestamp, VariationType,
+        VariationType,
     },
-    Configuration, EvaluationContext,
+    Configuration, EvaluationContext, Timestamp,
 };
 
 /// Evaluate the specified feature flag for the given subject and return assigned variation and

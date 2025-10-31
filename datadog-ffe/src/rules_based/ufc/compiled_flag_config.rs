@@ -6,12 +6,12 @@ use std::{collections::HashMap, sync::Arc};
 use serde::Deserialize;
 
 use crate::rules_based::{
-    error::EvaluationFailure, sharder::PreSaltedSharder, EvaluationError, Str,
+    error::EvaluationFailure, sharder::PreSaltedSharder, EvaluationError, Str, Timestamp,
 };
 
 use super::{
     AllocationWire, AssignmentValue, Environment, FlagWire, RuleWire, ShardRange, ShardWire,
-    SplitWire, Timestamp, UniversalFlagConfigWire, VariationType,
+    SplitWire, UniversalFlagConfigWire, VariationType,
 };
 
 #[derive(Debug)]
@@ -25,7 +25,6 @@ pub struct UniversalFlagConfig {
 #[serde(from = "UniversalFlagConfigWire")]
 pub(crate) struct CompiledFlagsConfig {
     /// When configuration was last updated.
-    #[allow(dead_code)]
     pub created_at: Timestamp,
     /// Environment this configuration belongs to.
     pub environment: Environment,
@@ -82,8 +81,6 @@ impl UniversalFlagConfig {
 impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
     fn from(config: UniversalFlagConfigWire) -> Self {
         let flags = config
-            .data
-            .attributes
             .flags
             .into_iter()
             .map(|(key, flag)| {
@@ -99,8 +96,8 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
             .collect();
 
         CompiledFlagsConfig {
-            created_at: config.data.attributes.created_at.into(),
-            environment: config.data.attributes.environment,
+            created_at: config.created_at.into(),
+            environment: config.environment,
             flags,
         }
     }
