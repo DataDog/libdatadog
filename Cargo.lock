@@ -1579,6 +1579,7 @@ dependencies = [
  "target-triple",
  "tokio",
  "tokio-util",
+ "zstd",
 ]
 
 [[package]]
