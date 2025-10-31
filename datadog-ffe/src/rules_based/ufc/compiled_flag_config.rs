@@ -96,7 +96,7 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
             .collect();
 
         CompiledFlagsConfig {
-            created_at: config.created_at.into(),
+            created_at: config.created_at,
             environment: config.environment,
             flags,
         }
