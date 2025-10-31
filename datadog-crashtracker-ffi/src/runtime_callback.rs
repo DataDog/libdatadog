@@ -51,7 +51,6 @@ impl From<CallbackError> for CallbackResult {
 /// ```c
 /// static void my_runtime_callback(
 ///     void (*emit_frame)(const ddog_RuntimeStackFrame*),
-///     void (*emit_stacktrace_string)(const char*)
 /// ) {
 ///     // Collect runtime frames and call emit_frame for each one
 ///     const char* function_name = "MyModule.MyClass.my_function";
