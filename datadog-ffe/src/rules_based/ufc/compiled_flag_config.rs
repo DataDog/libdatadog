@@ -82,8 +82,6 @@ impl UniversalFlagConfig {
 impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
     fn from(config: UniversalFlagConfigWire) -> Self {
         let flags = config
-            .data
-            .attributes
             .flags
             .into_iter()
             .map(|(key, flag)| {
@@ -99,8 +97,8 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
             .collect();
 
         CompiledFlagsConfig {
-            created_at: config.data.attributes.created_at.into(),
-            environment: config.data.attributes.environment,
+            created_at: config.created_at.into(),
+            environment: config.environment,
             flags,
         }
     }

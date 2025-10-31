@@ -31,28 +31,12 @@ impl From<WireTimestamp> for Timestamp {
 }
 
 /// JSON API wrapper for Universal Flag Configuration.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct UniversalFlagConfigWire {
-    /// JSON API data envelope.
-    pub data: UniversalFlagConfigData,
-}
-
-/// JSON API data structure for Universal Flag Configuration.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct UniversalFlagConfigData {
-    /// JSON API type field.
-    #[serde(rename = "type")]
-    pub data_type: String,
-    /// JSON API id field.
-    pub id: String,
-    /// JSON API attributes containing the actual UFC data.
-    pub attributes: UniversalFlagConfigAttributes,
-}
-
-/// Universal Flag Configuration attributes. This contains the actual flag configuration data.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+/// Supports both the new flat format and the legacy nested format for backward compatibility.
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct UniversalFlagConfigAttributes {
+pub(crate) struct UniversalFlagConfigWire {
+    /// Configuration id field.
+    pub id: String,
     /// When configuration was last updated.
     pub created_at: WireTimestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -64,6 +48,74 @@ pub(crate) struct UniversalFlagConfigAttributes {
     /// Value is wrapped in `TryParse` so that if we fail to parse one flag (e.g., new server
     /// format), we can still serve other flags.
     pub flags: HashMap<Str, TryParse<FlagWire>>,
+}
+
+// Support both flat and nested formats during deserialization
+impl<'de> Deserialize<'de> for UniversalFlagConfigWire {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum UniversalFlagConfigWireHelper {
+            // New flat format (preferred)
+            Flat {
+                id: String,
+                #[serde(rename = "createdAt")]
+                created_at: WireTimestamp,
+                #[serde(default)]
+                format: Option<ConfigurationFormat>,
+                environment: Environment,
+                flags: HashMap<Str, TryParse<FlagWire>>,
+            },
+            // Legacy nested format (for backward compatibility)
+            Nested {
+                data: UniversalFlagConfigDataLegacy,
+            },
+        }
+        
+        #[derive(Deserialize)]
+        struct UniversalFlagConfigDataLegacy {
+            #[serde(rename = "type")]
+            _data_type: String,
+            id: String,
+            attributes: UniversalFlagConfigAttributesLegacy,
+        }
+        
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct UniversalFlagConfigAttributesLegacy {
+            created_at: WireTimestamp,
+            #[serde(default)]
+            format: Option<ConfigurationFormat>,
+            environment: Environment,
+            flags: HashMap<Str, TryParse<FlagWire>>,
+        }
+        
+        let helper = UniversalFlagConfigWireHelper::deserialize(deserializer)?;
+        
+        match helper {
+            UniversalFlagConfigWireHelper::Flat { id, created_at, format, environment, flags } => {
+                Ok(UniversalFlagConfigWire {
+                    id,
+                    created_at,
+                    format,
+                    environment,
+                    flags,
+                })
+            }
+            UniversalFlagConfigWireHelper::Nested { data } => {
+                Ok(UniversalFlagConfigWire {
+                    id: data.id,
+                    created_at: data.attributes.created_at,
+                    format: data.attributes.format,
+                    environment: data.attributes.environment,
+                    flags: data.attributes.flags,
+                })
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -461,14 +513,76 @@ impl From<Vec<String>> for ConditionValue {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 #[allow(missing_docs)]
 pub(crate) struct SplitWire {
     pub shards: Vec<ShardWire>,
     pub variation_key: Str,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_extra_logging",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub extra_logging: Option<Arc<HashMap<String, String>>>,
+}
+
+fn deserialize_extra_logging<'de, D>(
+    deserializer: D,
+) -> Result<Option<Arc<HashMap<String, String>>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) if s == "None" => Ok(None),
+        Some(serde_json::Value::Object(map)) => {
+            let mut result = HashMap::new();
+            for (k, v) in map {
+                if let serde_json::Value::String(s) = v {
+                    result.insert(k, s);
+                } else {
+                    return Err(D::Error::custom(format!(
+                        "extraLogging values must be strings, got: {:?}",
+                        v
+                    )));
+                }
+            }
+            Ok(Some(Arc::new(result)))
+        }
+        Some(other) => Err(D::Error::custom(format!(
+            "extraLogging must be null, \"None\", or an object, got: {:?}",
+            other
+        ))),
+    }
+}
+
+// Manual Deserialize implementation for SplitWire
+impl<'de> serde::Deserialize<'de> for SplitWire {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct SplitWireHelper {
+            shards: Vec<ShardWire>,
+            variation_key: Str,
+            #[serde(default, deserialize_with = "deserialize_extra_logging")]
+            extra_logging: Option<Arc<HashMap<String, String>>>,
+        }
+
+        let helper = SplitWireHelper::deserialize(deserializer)?;
+        Ok(SplitWire {
+            shards: helper.shards,
+            variation_key: helper.variation_key,
+            extra_logging: helper.extra_logging,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -515,29 +629,24 @@ mod tests {
         let ufc: UniversalFlagConfigWire = serde_json::from_str(
             r#"
               {
-                "data": {
-                  "type": "universal-flag-configuration",
-                  "id": "1",
-                  "attributes": {
-                    "createdAt": "2024-07-18T00:00:00Z",
-                    "format": "SERVER",
-                    "environment": {"name": "test"},
-                    "flags": {
-                      "success": {
-                        "key": "success",
-                        "enabled": true,
-                        "variationType": "BOOLEAN",
-                        "variations": {},
-                        "allocations": []
-                      },
-                      "fail_parsing": {
-                        "key": "fail_parsing",
-                        "enabled": true,
-                        "variationType": "NEW_TYPE",
-                        "variations": {},
-                        "allocations": []
-                      }
-                    }
+                "id": "1",
+                "createdAt": "2024-07-18T00:00:00Z",
+                "format": "SERVER",
+                "environment": {"name": "test"},
+                "flags": {
+                  "success": {
+                    "key": "success",
+                    "enabled": true,
+                    "variationType": "BOOLEAN",
+                    "variations": {},
+                    "allocations": []
+                  },
+                  "fail_parsing": {
+                    "key": "fail_parsing",
+                    "enabled": true,
+                    "variationType": "NEW_TYPE",
+                    "variations": {},
+                    "allocations": []
                   }
                 }
               }
@@ -546,19 +655,108 @@ mod tests {
         .unwrap();
         assert!(
             matches!(
-                ufc.data.attributes.flags.get("success").unwrap(),
+                ufc.flags.get("success").unwrap(),
                 TryParse::Parsed(_)
             ),
             "{:?} should match TryParse::Parsed(_)",
-            ufc.data.attributes.flags.get("success").unwrap()
+            ufc.flags.get("success").unwrap()
         );
         assert!(
             matches!(
-                ufc.data.attributes.flags.get("fail_parsing").unwrap(),
+                ufc.flags.get("fail_parsing").unwrap(),
                 TryParse::ParseFailed(_)
             ),
             "{:?} should match TryParse::ParseFailed(_)",
-            ufc.data.attributes.flags.get("fail_parsing").unwrap()
+            ufc.flags.get("fail_parsing").unwrap()
         );
+    }
+
+    #[test]
+    fn parse_data_json() {
+        // Test parsing the actual data.json file with the new flat structure
+        let json_content = {
+            let path = if std::path::Path::new("tests/data.json").exists() {
+                "tests/data.json"
+            } else if std::path::Path::new("datadog-ffe/tests/data.json").exists() {
+                "datadog-ffe/tests/data.json"
+            } else {
+                return; // Skip test if file not found
+            };
+            std::fs::read_to_string(path).unwrap()
+        };
+        let ufc: UniversalFlagConfigWire = serde_json::from_str(&json_content)
+            .expect("Failed to parse data.json");
+        
+        // Verify basic structure
+        assert_eq!(ufc.id, "1");
+        assert_eq!(&ufc.environment.name as &str, "staging");
+        assert!(ufc.flags.len() > 0, "Should have at least one flag");
+        
+        // Verify a specific flag exists and is parsed correctly
+        let flag = match ufc.flags.get("alberto-flag").unwrap() {
+            TryParse::Parsed(f) => f,
+            TryParse::ParseFailed(v) => panic!("Failed to parse alberto-flag: {:?}", v),
+        };
+        assert_eq!(&flag.key as &str, "alberto-flag");
+        assert_eq!(flag.enabled, true);
+    }
+
+    #[test]
+    fn parse_extra_logging_as_string_none() {
+        let ufc: UniversalFlagConfigWire = serde_json::from_str(
+            r#"
+              {
+                "id": "1",
+                "createdAt": "2024-07-18T00:00:00Z",
+                "format": "SERVER",
+                "environment": {"name": "test"},
+                "flags": {
+                  "aaron-s-hand-modified-cool-flag-with-emoji-in-name-great": {
+                    "key": "aaron-s-hand-modified-cool-flag-with-emoji-in-name-great",
+                    "enabled": true,
+                    "variationType": "BOOLEAN",
+                    "variations": {
+                      "false": {
+                        "key": "false",
+                        "value": false
+                      },
+                      "true": {
+                        "key": "true",
+                        "value": true
+                      }
+                    },
+                    "allocations": [
+                      {
+                        "key": "allocation-default",
+                        "rules": [],
+                        "splits": [
+                          {
+                            "shards": [],
+                            "variationKey": "true",
+                            "extraLogging": "None"
+                          }
+                        ],
+                        "doLog": true
+                      }
+                    ]
+                  }
+                }
+              }
+            "#,
+        )
+        .unwrap();
+        
+        let flag = match ufc.flags.get("aaron-s-hand-modified-cool-flag-with-emoji-in-name-great").unwrap() {
+            TryParse::Parsed(f) => f,
+            TryParse::ParseFailed(_) => panic!("Failed to parse flag"),
+        };
+        
+        assert_eq!(&flag.key as &str, "aaron-s-hand-modified-cool-flag-with-emoji-in-name-great");
+        assert_eq!(flag.enabled, true);
+        assert_eq!(flag.allocations.len(), 1);
+        assert_eq!(flag.allocations[0].splits.len(), 1);
+        
+        // extraLogging should be None when the JSON contains "None" as a string
+        assert!(flag.allocations[0].splits[0].extra_logging.is_none());
     }
 }
