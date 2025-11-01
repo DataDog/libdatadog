@@ -247,6 +247,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // this test is way too slow on miri
     fn evaluation_sdk_test_data() {
         let _ = env_logger::builder().is_test(true).try_init();
 
