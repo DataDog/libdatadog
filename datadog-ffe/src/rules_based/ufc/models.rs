@@ -508,6 +508,7 @@ mod tests {
     use super::{TryParse, UniversalFlagConfigWire};
 
     #[test]
+    #[cfg_attr(miri, ignore)] // this test is way too slow on miri
     fn parse_flags_v1() {
         let json_content = {
             let path = if std::path::Path::new("tests/data/flags-v1.json").exists() {
