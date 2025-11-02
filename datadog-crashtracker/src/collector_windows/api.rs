@@ -10,10 +10,12 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use core::mem::size_of;
 use ddcommon::Endpoint;
+use rangemap::RangeInclusiveMap;
 use serde::{Deserialize, Serialize};
 use std::ffi::{c_void, OsString};
 use std::fmt;
 use std::mem::MaybeUninit;
+use std::ops::RangeInclusive;
 use std::os::windows::ffi::OsStringExt;
 use std::ptr::{addr_of, read_unaligned};
 use std::sync::Mutex;
@@ -339,7 +341,7 @@ struct AlignedContext {
 fn walk_thread_stack(
     process_handle: HANDLE,
     thread_id: u32,
-    modules: &[ModuleInfo],
+    modules: &RangeInclusiveMap<usize, ModuleInfo>,
 ) -> Result<StackTrace> {
     let mut stacktrace = StackTrace::new_incomplete();
     let thread_handle = unsafe { OpenThread(THREAD_ALL_ACCESS, false, thread_id)? };
@@ -403,10 +405,7 @@ fn walk_thread_stack(
         frame.sp = Some(format!("{:x}", native_frame.AddrStack.Offset));
 
         // Find the module
-        let module = modules.iter().find(|module| {
-            module.base_address <= native_frame.AddrPC.Offset
-                && native_frame.AddrPC.Offset < module.base_address + module.size
-        });
+        let module = modules.get(&(native_frame.AddrPC.Offset as usize));
 
         if let Some(module) = module {
             frame.module_base_address = Some(format!("{:x}", module.base_address));
@@ -417,7 +416,8 @@ fn walk_thread_stack(
             frame.path.clone_from(&module.path);
 
             if let Some(pdb_info) = &module.pdb_info {
-                frame.build_id = Some(format!("{:x}{:x}", pdb_info.signature, pdb_info.age));
+                // in the backend we expect the AGE to be a uppercase hex number
+                frame.build_id = Some(format!("{:x}{:X}", pdb_info.signature, pdb_info.age));
                 frame.build_id_type = Some(BuildIdType::PDB);
                 frame.file_type = Some(FileType::PE);
             }
@@ -432,6 +432,7 @@ fn walk_thread_stack(
     Ok(stacktrace)
 }
 
+#[derive(Clone, Eq, PartialEq)]
 struct ModuleInfo {
     base_address: u64,
     size: u64,
@@ -439,14 +440,15 @@ struct ModuleInfo {
     pdb_info: Option<PdbInfo>,
 }
 
+#[derive(Clone, Eq, PartialEq)]
 struct PdbInfo {
     age: u32,
     signature: Guid,
 }
 
-fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>> {
+fn list_modules(process_handle: HANDLE) -> anyhow::Result<RangeInclusiveMap<usize, ModuleInfo>> {
     // Use EnumProcessModules to get a list of modules
-    let mut module_infos = Vec::new();
+    let mut module_infos: RangeInclusiveMap<usize, ModuleInfo> = RangeInclusiveMap::new();
 
     // Get the number of bytes required to store the array of module handles
     let mut cb_needed = 0;
@@ -494,12 +496,18 @@ fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>> {
 
         let module_path = get_module_path(process_handle, hmodule);
 
-        module_infos.push(ModuleInfo {
-            base_address: module_info.lpBaseOfDll as u64,
-            size: module_info.SizeOfImage as u64,
-            path: module_path.ok(),
-            pdb_info: get_pdb_info(process_handle, module_info.lpBaseOfDll as u64).ok(),
-        });
+        module_infos.insert(
+            RangeInclusive::new(
+                module_info.lpBaseOfDll as usize,
+                (module_info.lpBaseOfDll as usize).saturating_add(module_info.SizeOfImage as usize),
+            ),
+            ModuleInfo {
+                base_address: module_info.lpBaseOfDll as u64,
+                size: module_info.SizeOfImage as u64,
+                path: module_path.ok(),
+                pdb_info: get_pdb_info(process_handle, module_info.lpBaseOfDll as u64).ok(),
+            },
+        );
     }
 
     Ok(module_infos)
@@ -564,7 +572,7 @@ struct ImageNtHeadersGeneric {
 }
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 struct Guid {
     pub data1: u32,
     pub data2: u16,
