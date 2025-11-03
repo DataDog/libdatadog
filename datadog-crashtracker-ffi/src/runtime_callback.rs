@@ -9,10 +9,11 @@
 use datadog_crashtracker::{
     get_registered_callback_type_ptr, is_runtime_callback_registered,
     register_runtime_frame_callback, register_runtime_stacktrace_string_callback, CallbackError,
-    RuntimeFrameCallback, RuntimeStacktraceStringCallback,
+    RuntimeStacktraceStringCallback,
 };
 
 pub use datadog_crashtracker::RuntimeStackFrame as ddog_RuntimeStackFrame;
+use ddcommon_ffi::CharSlice;
 
 /// Result type for runtime callback registration
 #[cfg(unix)]
@@ -27,6 +28,78 @@ pub enum CallbackResult {
 impl From<CallbackError> for CallbackResult {
     fn from(_error: CallbackError) -> Self {
         CallbackResult::Error
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct RuntimeStackFrameFFI {
+    /// Line number in source file (0 if unknown)
+    pub line: u32,
+    /// Column number in source file (0 if unknown)
+    pub column: u32,
+    /// Function name (fully qualified if possible)
+    pub function: CharSlice<'static>,
+    /// Source file name
+    pub file: CharSlice<'static>,
+    /// Type name (class/module/namespace/etc.)
+    pub type_name: CharSlice<'static>,
+}
+
+pub type RuntimeStackFrameCallback =
+    unsafe extern "C" fn(emit_frame: unsafe extern "C" fn(*const RuntimeStackFrameFFI));
+
+/// Global storage for the FFI callback
+#[cfg(unix)]
+static mut STORED_FFI_CALLBACK: Option<RuntimeStackFrameCallback> = None;
+
+/// Global storage for the core emit function during callback execution
+#[cfg(unix)]
+static mut STORED_CORE_EMIT: Option<
+    unsafe extern "C" fn(&datadog_crashtracker::RuntimeStackFrame),
+> = None;
+
+#[cfg(unix)]
+fn convert_ffi_to_core_frame(
+    ffi_frame: &RuntimeStackFrameFFI,
+) -> datadog_crashtracker::RuntimeStackFrame<'_> {
+    use ddcommon_ffi::slice::AsBytes;
+
+    datadog_crashtracker::RuntimeStackFrame {
+        line: ffi_frame.line,
+        column: ffi_frame.column,
+        function: ffi_frame.function.as_bytes(),
+        file: ffi_frame.file.as_bytes(),
+        type_name: ffi_frame.type_name.as_bytes(),
+    }
+}
+
+#[cfg(unix)]
+unsafe extern "C" fn emit_ffi_frame(ffi_frame_ptr: *const RuntimeStackFrameFFI) {
+    if ffi_frame_ptr.is_null() {
+        return;
+    }
+
+    if let Some(core_emit) = STORED_CORE_EMIT {
+        let ffi_frame = &*ffi_frame_ptr;
+        let core_frame = convert_ffi_to_core_frame(ffi_frame);
+        core_emit(&core_frame);
+    }
+}
+
+/// Wrapper function that bridges FFI callback to core callback
+#[cfg(unix)]
+unsafe extern "C" fn ffi_callback_wrapper(
+    emit_core_frame: unsafe extern "C" fn(&datadog_crashtracker::RuntimeStackFrame),
+) {
+    if let Some(ffi_callback) = STORED_FFI_CALLBACK {
+        STORED_CORE_EMIT = Some(emit_core_frame);
+
+        // Call the original FFI callback with our converting emit function
+        ffi_callback(emit_ffi_frame);
+
+        // Clear the stored function
+        STORED_CORE_EMIT = None;
     }
 }
 
@@ -89,9 +162,12 @@ impl From<CallbackError> for CallbackResult {
 #[cfg(unix)]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_crasht_register_runtime_frame_callback(
-    callback: RuntimeFrameCallback,
+    callback: RuntimeStackFrameCallback,
 ) -> CallbackResult {
-    match register_runtime_frame_callback(callback) {
+    STORED_FFI_CALLBACK = Some(callback);
+
+    // Register the wrapper with the core crate
+    match register_runtime_frame_callback(ffi_callback_wrapper) {
         Ok(()) => CallbackResult::Ok,
         Err(e) => e.into(),
     }
@@ -153,9 +229,7 @@ pub unsafe extern "C" fn ddog_crasht_get_registered_callback_type() -> *const st
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use datadog_crashtracker::{clear_runtime_callback, RuntimeStackFrame};
-    use ddcommon_ffi::CharSlice;
-    use std::ffi::c_char;
+    use datadog_crashtracker::clear_runtime_callback;
     use std::sync::Mutex;
 
     // Use a mutex to ensure tests run sequentially to avoid race conditions
@@ -163,27 +237,50 @@ mod tests {
     static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     unsafe extern "C" fn test_frame_callback(
-        emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
+        emit_frame: unsafe extern "C" fn(*const RuntimeStackFrameFFI),
     ) {
         let function_name = "TestModule.TestClass.test_function";
         let file_name = "test.rb";
 
-        let frame = RuntimeStackFrame {
-            type_name: &CharSlice::from("TestModule.TestClass"),
-            function_name: CharSlice::from(function_name),
-            file_name: CharSlice::from(file_name),
-            line_number: 42,
-            column_number: 10,
+        let frame = RuntimeStackFrameFFI {
+            type_name: CharSlice::from("TestModule.TestClass"),
+            function: CharSlice::from(function_name),
+            file: CharSlice::from(file_name),
+            line: 42,
+            column: 10,
         };
 
         emit_frame(&frame);
     }
 
     unsafe extern "C" fn test_stacktrace_string_callback(
-        emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
+        emit_stacktrace_string: unsafe extern "C" fn(*const std::ffi::c_char),
     ) {
         let stacktrace_string = "test_stacktrace_string\0";
-        emit_stacktrace_string(stacktrace_string.as_ptr() as *const c_char);
+        emit_stacktrace_string(stacktrace_string.as_ptr() as *const std::ffi::c_char);
+    }
+
+    #[test]
+    fn test_callback_invocation() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        unsafe {
+            clear_runtime_callback();
+
+            // Register our test callback
+            let result = ddog_crasht_register_runtime_frame_callback(test_frame_callback);
+            assert_eq!(result, CallbackResult::Ok);
+
+            // Test that the wrapper can be invoked successfully
+            unsafe extern "C" fn mock_emit_core_frame(
+                _frame: &datadog_crashtracker::RuntimeStackFrame,
+            ) {
+                // Callback invoked successfully
+            }
+
+            ffi_callback_wrapper(mock_emit_core_frame);
+
+            clear_runtime_callback();
+        }
     }
 
     #[test]

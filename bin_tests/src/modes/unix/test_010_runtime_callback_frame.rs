@@ -12,7 +12,6 @@ use datadog_crashtracker::{
     clear_runtime_callback, register_runtime_frame_callback, CrashtrackerConfiguration,
     RuntimeStackFrame,
 };
-use ddcommon_ffi::CharSlice;
 use std::path::Path;
 
 pub struct Test;
@@ -43,7 +42,7 @@ impl Behavior for Test {
 
 // Signal-safe test callback that emits mock runtime stack frames
 unsafe extern "C" fn test_runtime_callback_frame(
-    emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
+    emit_frame: unsafe extern "C" fn(&RuntimeStackFrame),
 ) {
     static FUNCTION_NAME_1: &str = "runtime_function_1";
     static FUNCTION_NAME_2: &str = "runtime_function_2";
@@ -55,29 +54,29 @@ unsafe extern "C" fn test_runtime_callback_frame(
     static TYPE_NAME_2: &str = "MyPackage.Submodule.MyModule";
 
     let frame1 = RuntimeStackFrame {
-        type_name: &CharSlice::from(TYPE_NAME_1),
-        function_name: CharSlice::from(FUNCTION_NAME_1),
-        file_name: CharSlice::from(FILE_NAME_1),
-        line_number: 42,
-        column_number: 15,
+        type_name: TYPE_NAME_1.as_bytes(),
+        function: FUNCTION_NAME_1.as_bytes(),
+        file: FILE_NAME_1.as_bytes(),
+        line: 42,
+        column: 15,
     };
     emit_frame(&frame1);
 
     let frame2 = RuntimeStackFrame {
-        type_name: &CharSlice::from(TYPE_NAME_2),
-        function_name: CharSlice::from(FUNCTION_NAME_2),
-        file_name: CharSlice::from(FILE_NAME_2),
-        line_number: 100,
-        column_number: 8,
+        type_name: TYPE_NAME_2.as_bytes(),
+        function: FUNCTION_NAME_2.as_bytes(),
+        file: FILE_NAME_2.as_bytes(),
+        line: 100,
+        column: 8,
     };
     emit_frame(&frame2);
 
     let frame3 = RuntimeStackFrame {
-        type_name: std::ptr::null(),
-        function_name: CharSlice::from(FUNCTION_NAME_3),
-        file_name: CharSlice::from(FILE_NAME_3),
-        line_number: 10,
-        column_number: 1,
+        type_name: b"", // Empty for null case
+        function: FUNCTION_NAME_3.as_bytes(),
+        file: FILE_NAME_3.as_bytes(),
+        line: 10,
+        column: 1,
     };
     emit_frame(&frame3);
 }

@@ -1307,7 +1307,6 @@ dependencies = [
  "chrono",
  "criterion",
  "ddcommon",
- "ddcommon-ffi",
  "ddtelemetry",
  "goblin",
  "http",

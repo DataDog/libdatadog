@@ -7,7 +7,6 @@
 //! callbacks that can provide runtime-specific stack traces during crash handling.
 
 use crate::crash_info::StackFrame;
-use ddcommon_ffi::{slice::AsBytes, CharSlice};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::ffi::c_char;
@@ -15,6 +14,7 @@ use std::ffi::c_char;
 #[cfg(unix)]
 use std::{
     ptr,
+    str::from_utf8,
     sync::atomic::{AtomicPtr, Ordering},
 };
 use thiserror::Error;
@@ -36,60 +36,18 @@ enum CallbackData {
 #[cfg(unix)]
 static RUNTIME_CALLBACK: AtomicPtr<CallbackData> = AtomicPtr::new(ptr::null_mut());
 
-#[repr(C)]
 #[derive(Debug, Clone)]
-pub struct RuntimeStackFrame {
+pub struct RuntimeStackFrame<'a> {
     /// Line number in source file (0 if unknown)
-    pub line_number: u32,
+    pub line: u32,
     /// Column number in source file (0 if unknown)
-    pub column_number: u32,
+    pub column: u32,
     /// Function name (fully qualified if possible)
-    pub function_name: CharSlice<'static>,
-    /// Source file name (length-prefixed string slice)
-    pub file_name: CharSlice<'static>,
+    pub function: &'a [u8],
+    /// Source file name
+    pub file: &'a [u8],
     /// Type name (class/module/namespace/etc.)
-    pub type_name: *const CharSlice<'static>,
-}
-
-impl From<&RuntimeStackFrame> for StackFrame {
-    /// Convert RuntimeStackFrame (C FFI) to StackFrame (internal representation)
-    fn from(rsf: &RuntimeStackFrame) -> Self {
-        let mut stack_frame = StackFrame::new();
-
-        // Convert CharSlice to Rust strings and populate StackFrame
-        if let Ok(Some(function_name)) = rsf.function_name.try_to_string_option() {
-            // If type_name is not null, combine it with function_name
-            if !rsf.type_name.is_null() {
-                // Safety: We just checked that the pointer is not null
-                let type_name_slice = unsafe { &*rsf.type_name };
-                if let Ok(Some(type_name)) = type_name_slice.try_to_string_option() {
-                    if !type_name.is_empty() {
-                        stack_frame.function = Some(format!("{}::{}", type_name, function_name));
-                    } else {
-                        stack_frame.function = Some(function_name);
-                    }
-                } else {
-                    stack_frame.function = Some(function_name);
-                }
-            } else {
-                stack_frame.function = Some(function_name);
-            }
-        }
-
-        if let Ok(Some(file_name)) = rsf.file_name.try_to_string_option() {
-            stack_frame.file = Some(file_name);
-        }
-
-        if rsf.line_number != 0 {
-            stack_frame.line = Some(rsf.line_number);
-        }
-
-        if rsf.column_number != 0 {
-            stack_frame.column = Some(rsf.column_number);
-        }
-
-        stack_frame
-    }
+    pub type_name: &'a [u8],
 }
 
 /// Function signature for runtime frame collection callbacks
@@ -108,7 +66,7 @@ impl From<&RuntimeStackFrame> for StackFrame {
 /// - It receives function pointers that take raw pointers as parameters
 /// - The callback must ensure any pointers it passes to these functions are valid
 pub type RuntimeFrameCallback =
-    unsafe extern "C" fn(emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame));
+    unsafe extern "C" fn(emit_frame: unsafe extern "C" fn(&RuntimeStackFrame));
 
 /// Function signature for runtime stacktrace string collection callbacks
 ///
@@ -310,11 +268,7 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
     CURRENT_WRITER_FAT_PTR.store(fat_ptr_bits, Ordering::SeqCst);
 
     // Define the emit functions that read from the atomic storage
-    unsafe extern "C" fn emit_frame_collector(frame: *const RuntimeStackFrame) {
-        if frame.is_null() {
-            return;
-        }
-
+    unsafe extern "C" fn emit_frame_collector(frame: &RuntimeStackFrame) {
         let fat_ptr_bits = CURRENT_WRITER_FAT_PTR.load(Ordering::SeqCst);
         if fat_ptr_bits == 0 {
             return;
@@ -388,70 +342,52 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
 #[cfg(all(unix, feature = "collector"))]
 unsafe fn emit_frame_as_json(
     writer: &mut dyn std::io::Write,
-    frame: *const RuntimeStackFrame,
+    frame: &RuntimeStackFrame,
 ) -> std::io::Result<()> {
-    if frame.is_null() {
-        return Ok(());
-    }
-
-    // Safety: frame was checked to be non-null above. The caller guarantees it points
-    // to a valid RuntimeStackFrame.
-    let frame_ref = &*frame;
-
     write!(writer, "{{")?;
 
     let mut first_field = true;
 
-    if let Ok(Some(function_name)) = frame_ref.function_name.try_to_string_option() {
-        write!(
-            writer,
-            "\"function_name\": \"{}\"",
-            function_name.replace('"', "\\\"")
-        )?;
-        first_field = false;
-    }
-
-    if !frame_ref.type_name.is_null() {
-        // Safety: We just checked that the pointer is not null
-        let type_name_slice = unsafe { &*frame_ref.type_name };
-        if let Ok(Some(type_name)) = type_name_slice.try_to_string_option() {
-            if !first_field {
-                write!(writer, ", ")?;
-            }
-            write!(
-                writer,
-                "\"type_name\": \"{}\"",
-                type_name.replace('"', "\\\"")
-            )?;
+    if !frame.function.is_empty() {
+        if let Ok(function_name) = from_utf8(frame.function) {
+            write!(writer, "\"function\": \"{}\"", function_name)?;
             first_field = false;
         }
     }
 
-    if let Ok(Some(file_name)) = frame_ref.file_name.try_to_string_option() {
+    if !frame.type_name.is_empty() {
+        if let Ok(type_name) = from_utf8(frame.type_name) {
+            if !first_field {
+                write!(writer, ", ")?;
+            }
+            write!(writer, "\"type_name\": \"{}\"", type_name)?;
+            first_field = false;
+        }
+    }
+
+    if !frame.file.is_empty() {
+        if let Ok(file_name) = from_utf8(frame.file) {
+            if !first_field {
+                write!(writer, ", ")?;
+            }
+            write!(writer, "\"file\": \"{}\"", file_name)?;
+            first_field = false;
+        }
+    }
+
+    if frame.line != 0 {
         if !first_field {
             write!(writer, ", ")?;
         }
-        write!(
-            writer,
-            "\"file_name\": \"{}\"",
-            file_name.replace('"', "\\\"")
-        )?;
+        write!(writer, "\"line\": {}", frame.line)?;
         first_field = false;
     }
 
-    if frame_ref.line_number != 0 {
+    if frame.column != 0 {
         if !first_field {
             write!(writer, ", ")?;
         }
-        write!(writer, "\"line_number\": {}", frame_ref.line_number)?;
-        first_field = false;
-    }
-
-    if frame_ref.column_number != 0 {
-        if !first_field {
-            write!(writer, ", ")?;
-        }
-        write!(writer, "\"column_number\": {}", frame_ref.column_number)?;
+        write!(writer, "\"column\": {}", frame.column)?;
     }
 
     writeln!(writer, "}}")?;
@@ -469,20 +405,19 @@ mod tests {
     static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     unsafe extern "C" fn test_emit_frame_callback(
-        emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
+        emit_frame: unsafe extern "C" fn(&RuntimeStackFrame),
     ) {
         let function_name = "TestModule.TestClass.test_function";
         let file_name = "test.rb";
 
         let frame = RuntimeStackFrame {
-            type_name: &CharSlice::from("TestModule.TestClass"),
-            function_name: CharSlice::from(function_name),
-            file_name: CharSlice::from(file_name),
-            line_number: 42,
-            column_number: 10,
+            type_name: "TestModule.TestClass".as_bytes(),
+            function: function_name.as_bytes(),
+            file: file_name.as_bytes(),
+            line: 42,
+            column: 10,
         };
 
-        // Safety: frame is a valid RuntimeStackFrame with valid CharSlice data
         emit_frame(&frame);
     }
 
@@ -546,8 +481,8 @@ mod tests {
 
         // Should contain the frame data as JSON
         assert!(
-            json_output.contains("\"function_name\""),
-            "Missing function_name field"
+            json_output.contains("\"function\""),
+            "Missing function field"
         );
         assert!(
             json_output.contains("TestModule.TestClass.test_function"),
@@ -559,21 +494,13 @@ mod tests {
         );
         assert!(
             json_output.contains("TestModule.TestClass"),
-            "Missing type name"
+            "Missing type_name name"
         );
-        assert!(
-            json_output.contains("\"file_name\""),
-            "Missing file_name field"
-        );
+        assert!(json_output.contains("\"file\""), "Missing file field");
         assert!(json_output.contains("test.rb"), "Missing file name");
+        assert!(json_output.contains("\"line\": 42"), "Missing line number");
         assert!(
-            json_output.contains("\"line_number\":42")
-                || json_output.contains("\"line_number\": 42"),
-            "Missing line number"
-        );
-        assert!(
-            json_output.contains("\"column_number\":10")
-                || json_output.contains("\"column_number\": 10"),
+            json_output.contains("\"column\": 10"),
             "Missing column number"
         );
 
@@ -650,10 +577,9 @@ mod tests {
 
         // Convert buffer to string and check JSON format
         let json_output = String::from_utf8(buffer).expect("Invalid UTF-8 in output");
-
         assert!(
-            json_output.contains("\"function_name\""),
-            "Missing function_name field"
+            json_output.contains("\"function\""),
+            "Missing function field"
         );
         assert!(
             json_output.contains("TestModule.TestClass.test_function"),
@@ -667,19 +593,11 @@ mod tests {
             json_output.contains("TestModule.TestClass"),
             "Missing type name"
         );
-        assert!(
-            json_output.contains("\"file_name\""),
-            "Missing file_name field"
-        );
+        assert!(json_output.contains("\"file\""), "Missing file field");
         assert!(json_output.contains("test.rb"), "Missing file name");
+        assert!(json_output.contains("\"line\": 42"), "Missing line number");
         assert!(
-            json_output.contains("\"line_number\":42")
-                || json_output.contains("\"line_number\": 42"),
-            "Missing line number"
-        );
-        assert!(
-            json_output.contains("\"column_number\":10")
-                || json_output.contains("\"column_number\": 10"),
+            json_output.contains("\"column\": 10"),
             "Missing column number"
         );
 

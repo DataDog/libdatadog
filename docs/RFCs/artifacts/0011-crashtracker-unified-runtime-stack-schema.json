@@ -510,6 +510,12 @@
             "string",
             "null"
           ]
+        },
+        "type_name": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },

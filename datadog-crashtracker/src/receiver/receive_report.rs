@@ -8,8 +8,6 @@ use crate::{
     CrashtrackerConfiguration,
 };
 use anyhow::Context;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
 
@@ -124,8 +122,8 @@ fn process_line(
             StdinState::Waiting
         }
         StdinState::RuntimeStackFrame(mut frames) => {
-            let frame_json: RuntimeStackFrameJson = serde_json::from_str(line)?;
-            frames.push(frame_json.into());
+            let frame_json: StackFrame = serde_json::from_str(line)?;
+            frames.push(frame_json);
             StdinState::RuntimeStackFrame(frames)
         }
         StdinState::RuntimeStackString(lines)
