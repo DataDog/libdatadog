@@ -21,22 +21,25 @@ use once_cell::sync::OnceCell;
 /// item, or a `cargo run` command to be able to locate artifacts built by cargo from the position
 /// of the current binary.
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum ArtifactType {
+    #[default]
     ExecutablePackage,
     CDylib,
     Bin,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum BuildProfile {
+    #[default]
     Debug,
     Release,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
 pub struct ArtifactsBuild {
     pub name: String,
+    pub lib_name_override: Option<String>,
     pub artifact_type: ArtifactType,
     pub build_profile: BuildProfile,
     pub triple_target: Option<String>,
@@ -97,13 +100,16 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
         ArtifactType::ExecutablePackage | ArtifactType::Bin => artifact_path.push(&c.name),
         ArtifactType::CDylib => {
             let name = "lib".to_owned()
-                + &c.name.replace('-', "_")
+                + c.lib_name_override
+                    .as_deref()
+                    .unwrap_or(&c.name.replace('-', "_"))
                 + "."
                 + shared_lib_extension(
                     c.triple_target
                         .as_deref()
                         .unwrap_or(current_platform::CURRENT_PLATFORM),
                 )?;
+            println!("NAME: {}", name);
             artifact_path.push(name);
         }
     };

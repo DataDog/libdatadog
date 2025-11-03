@@ -1,0 +1,27 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-sketch-ffi"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+bench = false
+
+[features]
+default = ["cbindgen"]
+cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
+[dependencies]
+datadog-ddsketch = { version = "1.0.0", path = "../libdd-sketch", package = "libdd-sketch" }
+ddcommon-ffi = { path = "../libdd-common-ffi", package = "libdd-common-ffi", default-features = false }
+
+[dev-dependencies]

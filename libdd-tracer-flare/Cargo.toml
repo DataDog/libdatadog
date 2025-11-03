@@ -1,0 +1,30 @@
+[package]
+name = "libdd-tracer-flare"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+version = "1.0.0"
+autobenches = false
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+ddcommon = { version = "1.0.0", path = "../libdd-common", package = "libdd-common" }
+datadog-remote-config = { path = "../libdd-remote-config" , package = "libdd-remote-config" }
+datadog-trace-utils = { version = "1.0.0", path = "../libdd-trace-utils", package = "libdd-trace-utils" }
+hyper = { workspace = true}
+tokio = { version = "1.36.0", features = ["time"] }
+serde_json = "1.0"
+zip = "4.0.0"
+walkdir = "2.4"
+tempfile = "3.8"
+
+[lib]
+bench = false
+
+[dev-dependencies]
+datadog-remote-config = { path = "../libdd-remote-config" , package = "libdd-remote-config", features = ["test"] }
+
+[features]
+default = ["listener"]
+listener = []

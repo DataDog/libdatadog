@@ -16,10 +16,10 @@ mod unix {
     use std::env;
     use std::time::Duration;
 
-    use datadog_crashtracker::{
+    use ddcommon::{tag, Endpoint};
+    use libdd_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata,
     };
-    use ddcommon::{tag, Endpoint};
 
     const TEST_COLLECTOR_TIMEOUT: Duration = Duration::from_secs(10);
 

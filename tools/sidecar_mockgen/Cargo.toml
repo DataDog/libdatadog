@@ -2,6 +2,7 @@
 edition = "2021"
 name = "sidecar_mockgen"
 version = "0.1.0"
+publish = false
 
 [lib]
 bench = false

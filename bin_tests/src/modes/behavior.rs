@@ -3,7 +3,7 @@
 
 #![cfg(unix)]
 use anyhow::{Context, Result};
-use datadog_crashtracker::CrashtrackerConfiguration;
+use libdd_crashtracker::CrashtrackerConfiguration;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
