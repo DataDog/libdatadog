@@ -44,7 +44,7 @@ ddcommon = { path = "../ddcommon" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false, optional = true }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
 datadog-log-ffi = { path = "../datadog-log-ffi", default-features = false, optional = true }
-ddsketch-ffi = { path = "../libdd-sketch-ffi/", default-features = false, optional = true, package = "libdd-sketch-ffi" }
+ddsketch-ffi = { path = "../libdd-sketch-ffi", default-features = false, optional = true, package = "libdd-sketch-ffi" }
 function_name = "0.3.0"
 futures = { version = "0.3", default-features = false }
 http-body-util = "0.1"

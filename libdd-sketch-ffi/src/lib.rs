@@ -7,9 +7,9 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-use datadog_ddsketch::DDSketch;
 use ddcommon_ffi as ffi;
 use ddcommon_ffi::{Error, Handle, ToInner, VoidResult};
+use libdd_sketch::DDSketch;
 use std::mem::MaybeUninit;
 
 const NULL_POINTER_ERROR: &str = "null pointer provided";

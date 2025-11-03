@@ -32,7 +32,7 @@ uuid = { version = "1.3", features = ["v4"] }
 hashbrown = "0.15"
 
 ddcommon = { path = "../ddcommon", default-features = false }
-datadog-ddsketch = { path = "../libdd-sketch/", package = "libdd-sketch" }
+datadog-ddsketch = { path = "../libdd-sketch", package = "libdd-sketch" }
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.176"

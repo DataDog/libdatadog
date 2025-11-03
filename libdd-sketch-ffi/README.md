@@ -1,48 +1,23 @@
 # libdd-sketch-ffi
 
-C FFI bindings for libdd-sketch DDSketch implementation.
+C FFI bindings for the `libdd-sketch` crate.
 
 ## Overview
 
-`libdd-sketch-ffi` provides C-compatible FFI bindings for `libdd-sketch`, allowing DDSketch usage from C, C++, and other languages for accurate quantile estimation.
+Provides C-compatible bindings for DDSketch, a data structure for accurate quantile estimation with configurable relative error guarantees.
 
-## Features
+## Main Features
 
-- **C API**: Complete C bindings for DDSketch
-- **Sketch Creation**: Create sketches with configurable accuracy
-- **Value Addition**: Add values to sketches
-- **Quantile Queries**: Query percentiles (p50, p95, p99, etc.)
-- **Sketch Merging**: Combine multiple sketches
-- **Serialization**: Serialize sketches to protobuf
-- **Memory Safety**: Safe memory management
+- **Sketch Management**: Create and destroy DDSketch instances
+- **Data Insertion**: Add values to sketches with optional counts/weights
+- **Metrics**: Query total count of points in a sketch
+- **Serialization**: Encode sketches to protobuf format for transmission
 
-## Example Usage
+## Building
 
-```c
-#include <datadog/ddsketch.h>
-
-int main() {
-    // Create sketch with 2% relative error
-    ddog_ddsketch_t* sketch = ddog_ddsketch_new(0.02);
-    
-    // Add values
-    ddog_ddsketch_add(sketch, 42.0);
-    ddog_ddsketch_add(sketch, 100.0);
-    ddog_ddsketch_add(sketch, 250.0);
-    
-    // Query quantiles
-    double p50 = ddog_ddsketch_quantile(sketch, 0.5);
-    double p99 = ddog_ddsketch_quantile(sketch, 0.99);
-    
-    // Cleanup
-    ddog_ddsketch_free(sketch);
-    return 0;
-}
+This crate currently is not intended to use it as-is so it is compiled and its methods re-exported through the builder artifacts.
+```bash
+cargo run --bin release --features ddsketch -- --out libdatadog
 ```
 
-## Use Cases
-
-- Latency monitoring from C/C++ applications
-- Request size distributions
-- Any metric requiring quantile tracking
-
+This generates C headers and builds the library as a dynamic library for use in C/C++ applications.
