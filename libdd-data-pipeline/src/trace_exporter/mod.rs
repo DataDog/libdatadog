@@ -592,7 +592,24 @@ impl TraceExporter {
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
-        self.send_trace_chunks_inner(trace_chunks)
+        self.runtime()?
+            .block_on(async { self.send_trace_chunks_inner(trace_chunks).await })
+    }
+
+    /// Send a list of trace chunks to the agent, asynchronously
+    ///
+    /// # Arguments
+    /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
+    ///
+    /// # Returns
+    /// * Ok(String): The response from the agent
+    /// * Err(TraceExporterError): An error detailing what went wrong in the process
+    pub async fn send_trace_chunks_async<T: SpanText>(
+        &self,
+        trace_chunks: Vec<Vec<Span<T>>>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        self.check_agent_info();
+        self.send_trace_chunks_inner(trace_chunks).await
     }
 
     /// Deserializes, processes and sends trace chunks to the agent
@@ -622,7 +639,8 @@ impl TraceExporter {
             None,
         );
 
-        self.send_trace_chunks_inner(traces)
+        self.runtime()?
+            .block_on(async { self.send_trace_chunks_inner(traces).await })
     }
 
     /// Send traces payload to agent with retry and telemetry reporting
@@ -669,7 +687,7 @@ impl TraceExporter {
         self.handle_send_result(result, chunks, payload_len).await
     }
 
-    fn send_trace_chunks_inner<T: SpanText>(
+    async fn send_trace_chunks_inner<T: SpanText>(
         &self,
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -694,15 +712,13 @@ impl TraceExporter {
             ..self.endpoint.clone()
         };
 
-        self.runtime()?.block_on(async {
-            self.send_traces_with_telemetry(
-                &endpoint,
-                prepared.data,
-                prepared.headers,
-                prepared.chunk_count,
-            )
-            .await
-        })
+        self.send_traces_with_telemetry(
+            &endpoint,
+            prepared.data,
+            prepared.headers,
+            prepared.chunk_count,
+        )
+        .await
     }
 
     /// Handle the result of sending traces to the agent
