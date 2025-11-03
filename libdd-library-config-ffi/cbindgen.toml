@@ -36,4 +36,4 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["libdd-common", "libdd-common-ffi", "libdd-library-config"]
+include = ["ddcommon", "ddcommon-ffi", "libdd-library-config"]

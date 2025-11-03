@@ -1468,33 +1468,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-library-config"
-version = "0.0.2"
-dependencies = [
- "anyhow",
- "memfd",
- "rand 0.8.5",
- "rmp",
- "rmp-serde",
- "serde",
- "serde_yaml",
- "tempfile",
-]
-
-[[package]]
-name = "datadog-library-config-ffi"
-version = "0.0.2"
-dependencies = [
- "anyhow",
- "build_common",
- "constcat",
- "datadog-library-config",
- "ddcommon",
- "ddcommon-ffi",
- "tempfile",
-]
-
-[[package]]
 name = "datadog-live-debugger"
 version = "0.0.1"
 dependencies = [
@@ -1590,7 +1563,6 @@ dependencies = [
  "build_common",
  "data-pipeline-ffi",
  "datadog-crashtracker-ffi",
- "datadog-library-config-ffi",
  "datadog-log-ffi",
  "datadog-profiling",
  "ddcommon",
@@ -1602,6 +1574,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "libc",
+ "libdd-library-config-ffi",
  "serde_json",
  "symbolizer-ffi",
  "tokio-util",
