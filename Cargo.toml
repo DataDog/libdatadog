@@ -4,7 +4,7 @@
 [workspace]
 members = [
   "builder",
-  "datadog-alloc",
+  "libdd-alloc",
   "datadog-crashtracker",
   "datadog-crashtracker-ffi",
   "datadog-ffe",

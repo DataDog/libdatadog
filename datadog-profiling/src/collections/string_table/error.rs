@@ -19,8 +19,8 @@ impl core::fmt::Display for Error {
 
 impl core::error::Error for Error {}
 
-impl From<datadog_alloc::AllocError> for Error {
-    fn from(_: datadog_alloc::AllocError) -> Error {
+impl From<libdd_alloc::AllocError> for Error {
+    fn from(_: libdd_alloc::AllocError) -> Error {
         Error::OutOfMemory
     }
 }
