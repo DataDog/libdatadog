@@ -10,7 +10,6 @@ license.workspace = true
 bench = false
 
 [dependencies]
-ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3.18", default-features = false, features = ["json", "env-filter"] }
 tracing-appender = "0.2.3"

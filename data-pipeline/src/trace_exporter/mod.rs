@@ -36,9 +36,9 @@ use datadog_trace_utils::send_with_retry::{
 };
 use datadog_trace_utils::span::{Span, SpanText};
 use datadog_trace_utils::trace_utils::TracerHeaderTags;
-use ddcommon::MutexExt;
 use ddcommon::{hyper_migration, Endpoint};
 use ddcommon::{tag, tag::Tag};
+use ddcommon::{HttpClient, MutexExt};
 use ddtelemetry::worker::TelemetryWorker;
 use dogstatsd_client::Client;
 use http_body_util::BodyExt;
@@ -49,7 +49,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{borrow::Borrow, collections::HashMap, str::FromStr};
 use tokio::runtime::Runtime;
-use tracing::{error, info, warn};
+use tracing::{debug, error, warn};
 
 const INFO_ENDPOINT: &str = "/info";
 
@@ -208,6 +208,7 @@ pub struct TraceExporter {
     health_metrics_enabled: bool,
     workers: Arc<Mutex<TraceExporterWorkers>>,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
+    http_client: HttpClient,
 }
 
 impl TraceExporter {
@@ -313,7 +314,15 @@ impl TraceExporter {
                 };
             });
         }
-        // Drop runtime to shutdown all threads
+        // When the info fetcher is paused, the trigger channel keeps a reference to the runtime's
+        // IoStack as a waker. This prevents the IoStack from being dropped when shutting
+        // down runtime. By manually sending a message to the trigger channel we trigger the
+        // waker releasing the reference to the IoStack. Finally we drain the channel to
+        // avoid triggering a fetch when the info fetcher is restarted.
+        if let PausableWorker::Paused { worker } = &mut self.workers.lock_or_panic().info {
+            self.info_response_observer.manual_trigger();
+            worker.drain();
+        }
         drop(runtime);
     }
 
@@ -424,6 +433,7 @@ impl TraceExporter {
                             &agent_info,
                             &self.client_side_stats,
                             &self.workers,
+                            self.http_client.clone(),
                         );
                     }
                     StatsComputationStatus::Enabled {
@@ -460,7 +470,7 @@ impl TraceExporter {
     /// 2) It's not guaranteed to not block forever, since the /info endpoint might not be
     ///    available.
     ///
-    /// The `send`` function will check agent_info when running, which will only be available if the
+    /// The `send` function will check agent_info when running, which will only be available if the
     /// fetcher had time to reach to the agent.
     /// Since agent_info can enable CSS computation, waiting for this during testing can make
     /// snapshots non-deterministic.
@@ -603,7 +613,7 @@ impl TraceExporter {
             );
             TraceExporterError::Deserialization(e)
         })?;
-        info!(
+        debug!(
             trace_count = traces.len(),
             "Trace deserialization completed successfully"
         );
@@ -627,7 +637,8 @@ impl TraceExporter {
         let payload_len = mp_payload.len();
 
         // Send traces to the agent
-        let result = send_with_retry(endpoint, mp_payload, &headers, &strategy, None).await;
+        let result =
+            send_with_retry(&self.http_client, endpoint, mp_payload, &headers, &strategy).await;
 
         // Emit http.requests health metric based on number of attempts
         let requests_count = match &result {
@@ -887,7 +898,7 @@ impl TraceExporter {
         body: String,
         payload_version_changed: bool,
     ) -> Result<AgentResponse, TraceExporterError> {
-        info!(
+        debug!(
             chunks = chunks,
             status = %status,
             "Trace chunks sent successfully to agent"

@@ -16,12 +16,12 @@ use crate::collections::string_table::{self, StringTable};
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::profiles::collections::{SetId, StringRef};
 use crate::profiles::datatypes::{self as dt, ProfilesDictionary};
+use crate::profiles::{Compressor, DefaultProfileCodec};
 use crate::{api, api2};
 use anyhow::Context;
 use datadog_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
 use indexmap::map::Entry;
 use interning_api::Generation;
-use lz4_flex::frame::FrameEncoder;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io;
@@ -110,6 +110,11 @@ impl EncodedProfile {
 
 /// Public API
 impl Profile {
+    /// When testing on some profiles that can't be shared publicly,
+    /// level 1 provided better compressed files while taking less or equal
+    /// time compared to lz4.
+    pub const COMPRESSION_LEVEL: i32 = 1;
+
     /// Add the endpoint data to the endpoint mappings.
     /// The `endpoint` string will be interned.
     pub fn add_endpoint(
@@ -452,16 +457,25 @@ impl Profile {
         write_locked_storage.get_seq_num(non_empty_string_id, &mut self.strings, cached_profile_id)
     }
 
-    /// Creates a profile with `start_time`.
+    /// This is used heavily enough in tests to make a helper.
+    #[cfg(test)]
+    pub fn new(sample_types: &[api::ValueType], period: Option<api::Period>) -> Self {
+        #[allow(clippy::unwrap_used)]
+        Self::try_new(sample_types, period).unwrap()
+    }
+
+    /// Tries to create a profile with the given `period`.
     /// Initializes the string table to hold:
     ///  - "" (the empty string)
     ///  - "local root span id"
     ///  - "trace endpoint"
     ///
     /// All other fields are default.
-    #[inline]
-    pub fn new(sample_types: &[api::ValueType], period: Option<api::Period>) -> Self {
-        Self::new_internal(
+    pub fn try_new(
+        sample_types: &[api::ValueType],
+        period: Option<api::Period>,
+    ) -> io::Result<Self> {
+        Self::try_new_internal(
             Self::backup_period(period),
             Self::backup_sample_types(sample_types),
             None,
@@ -469,12 +483,12 @@ impl Profile {
     }
 
     #[inline]
-    pub fn with_string_storage(
+    pub fn try_with_string_storage(
         sample_types: &[api::ValueType],
         period: Option<api::Period>,
         string_storage: Arc<Mutex<ManagedStringStorage>>,
-    ) -> Self {
-        Self::new_internal(
+    ) -> io::Result<Self> {
+        Self::try_new_internal(
             Self::backup_period(period),
             Self::backup_sample_types(sample_types),
             Some(string_storage),
@@ -516,11 +530,12 @@ impl Profile {
             .map(|t| t.profiles_dictionary.try_clone())
             .transpose()?;
 
-        let mut profile = Profile::new_internal(
+        let mut profile = Profile::try_new_internal(
             self.owned_period.take(),
             self.owned_sample_types.take(),
             self.string_storage.clone(),
-        );
+        )
+        .context("failed to initialize new profile")?;
 
         if let Some(dict) = dict_opt {
             // todo: should we maybe pre-reserve memory for the new mappings,
@@ -550,13 +565,24 @@ impl Profile {
         // using libdatadog (all?) there is only 1 profile, so this is a good
         // proxy for the compressed, final size of the profiles.
         // We found that for all languages using libdatadog, the average
-        // tarball was at least 18 KiB. Since these archives are compressed,
-        // and because profiles compress well, especially ones with timeline
-        // enabled (over 9x for some analyzed timeline profiles), this initial
-        // size of 32KiB should definitely outperform starting at zero for
-        // time consumed, allocator pressure, and allocator fragmentation.
+        // tarball was at least 18 KiB. This initial size of 32KiB should
+        // definitely outperform starting at zero for time consumed, allocator
+        // pressure, and allocator fragmentation.
         const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
-        let mut compressor = FrameEncoder::new(Vec::with_capacity(INITIAL_PPROF_BUFFER_SIZE));
+
+        // 2025-10-16: a profile larger than 10 MiB will be skipped, but a
+        // higher limit is accepted for upload. A limit of 16 MiB allows us to
+        // be a little bit decoupled from the exact limit so that if the
+        // backend decides to accept larger pprofs, clients don't have to be
+        // recompiled. But setting a much higher limit would be wasteful.
+        const MAX_PROFILE_SIZE: usize = 16 * 1024 * 1024;
+
+        let mut compressor = Compressor::<DefaultProfileCodec>::try_new(
+            INITIAL_PPROF_BUFFER_SIZE,
+            MAX_PROFILE_SIZE,
+            Self::COMPRESSION_LEVEL,
+        )
+        .context("failed to create compressor")?;
 
         let mut encoded_profile = self.encode(&mut compressor, end_time, duration)?;
         encoded_profile.buffer = compressor.finish()?;
@@ -603,7 +629,8 @@ impl Profile {
             extended_label_sets.push(labels);
         }
 
-        for (sample, timestamp, mut values) in std::mem::take(&mut self.observations).into_iter() {
+        let iter = std::mem::take(&mut self.observations).try_into_iter()?;
+        for (sample, timestamp, mut values) in iter {
             let labels = &mut extended_label_sets[sample.labels.to_raw_id()];
             let location_ids: Vec<_> = self
                 .get_stacktrace(sample.stacktrace)?
@@ -979,12 +1006,11 @@ impl Profile {
 
     /// Creates a profile from the period, sample types, and start time using
     /// the owned values.
-    #[inline(never)]
-    fn new_internal(
+    fn try_new_internal(
         owned_period: Option<owned_types::Period>,
         owned_sample_types: Option<Box<[owned_types::ValueType]>>,
         string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
-    ) -> Self {
+    ) -> io::Result<Self> {
         let start_time = SystemTime::now();
         let mut profile = Self {
             profiles_dictionary_translator: None,
@@ -994,6 +1020,7 @@ impl Profile {
             endpoints: Default::default(),
             functions: Default::default(),
             generation: Generation::new(),
+
             labels: Default::default(),
             label_sets: Default::default(),
             locations: Default::default(),
@@ -1047,8 +1074,8 @@ impl Profile {
         };
         profile.owned_period = owned_period;
 
-        profile.observations = Observations::new(profile.sample_types.len());
-        profile
+        profile.observations = Observations::try_new(profile.sample_types.len())?;
+        Ok(profile)
     }
 
     #[cfg(debug_assertions)]
@@ -2787,7 +2814,8 @@ mod api_tests {
         }
 
         let sample_types = [api::ValueType::new("samples", "count")];
-        let mut profile = Profile::with_string_storage(&sample_types, None, storage.clone());
+        let mut profile =
+            Profile::try_with_string_storage(&sample_types, None, storage.clone()).unwrap();
 
         let location = api::StringIdLocation {
             function: api::StringIdFunction {
