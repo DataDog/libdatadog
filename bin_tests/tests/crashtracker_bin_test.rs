@@ -378,9 +378,9 @@ fn validate_runtime_callback_frame_data(crash_payload: &Value) {
 
     // Validate the expected test frames
     let expected_functions = [
-        "test_module.TestClass.runtime_function_1",
-        "my_package.submodule.MyModule.runtime_function_2",
-        "__main__.runtime_main",
+        "TestModule.TestClass::runtime_function_1",
+        "MyPackage.Submodule.MyModule::runtime_function_2",
+        "runtime_main",
     ];
     let expected_files = ["script.py", "module.py", "main.py"];
     let expected_lines = [42, 100, 10];

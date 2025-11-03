@@ -45,14 +45,17 @@ impl Behavior for Test {
 unsafe extern "C" fn test_runtime_callback_frame(
     emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
 ) {
-    static FUNCTION_NAME_1: &str = "test_module.TestClass.runtime_function_1";
-    static FUNCTION_NAME_2: &str = "my_package.submodule.MyModule.runtime_function_2";
-    static FUNCTION_NAME_3: &str = "__main__.runtime_main";
+    static FUNCTION_NAME_1: &str = "runtime_function_1";
+    static FUNCTION_NAME_2: &str = "runtime_function_2";
+    static FUNCTION_NAME_3: &str = "runtime_main";
     static FILE_NAME_1: &str = "script.py";
     static FILE_NAME_2: &str = "module.py";
     static FILE_NAME_3: &str = "main.py";
+    static TYPE_NAME_1: &str = "TestModule.TestClass";
+    static TYPE_NAME_2: &str = "MyPackage.Submodule.MyModule";
 
     let frame1 = RuntimeStackFrame {
+        type_name: &CharSlice::from(TYPE_NAME_1),
         function_name: CharSlice::from(FUNCTION_NAME_1),
         file_name: CharSlice::from(FILE_NAME_1),
         line_number: 42,
@@ -61,6 +64,7 @@ unsafe extern "C" fn test_runtime_callback_frame(
     emit_frame(&frame1);
 
     let frame2 = RuntimeStackFrame {
+        type_name: &CharSlice::from(TYPE_NAME_2),
         function_name: CharSlice::from(FUNCTION_NAME_2),
         file_name: CharSlice::from(FILE_NAME_2),
         line_number: 100,
@@ -69,6 +73,7 @@ unsafe extern "C" fn test_runtime_callback_frame(
     emit_frame(&frame2);
 
     let frame3 = RuntimeStackFrame {
+        type_name: std::ptr::null(),
         function_name: CharSlice::from(FUNCTION_NAME_3),
         file_name: CharSlice::from(FILE_NAME_3),
         line_number: 10,

@@ -39,15 +39,16 @@ static RUNTIME_CALLBACK: AtomicPtr<CallbackData> = AtomicPtr::new(ptr::null_mut(
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct RuntimeStackFrame {
-    /// Fully qualified function/method name (length-prefixed string slice)
-    /// Examples: "my_package.submodule.TestClass.method", "MyClass::method", "namespace::function"
-    pub function_name: CharSlice<'static>,
-    /// Source file name (length-prefixed string slice)
-    pub file_name: CharSlice<'static>,
     /// Line number in source file (0 if unknown)
     pub line_number: u32,
     /// Column number in source file (0 if unknown)
     pub column_number: u32,
+    /// Function name (fully qualified if possible)
+    pub function_name: CharSlice<'static>,
+    /// Source file name (length-prefixed string slice)
+    pub file_name: CharSlice<'static>,
+    /// Type name (class/module/namespace/etc.)
+    pub type_name: *const CharSlice<'static>,
 }
 
 impl From<&RuntimeStackFrame> for StackFrame {
@@ -57,7 +58,22 @@ impl From<&RuntimeStackFrame> for StackFrame {
 
         // Convert CharSlice to Rust strings and populate StackFrame
         if let Ok(Some(function_name)) = rsf.function_name.try_to_string_option() {
-            stack_frame.function = Some(function_name);
+            // If type_name is not null, combine it with function_name
+            if !rsf.type_name.is_null() {
+                // Safety: We just checked that the pointer is not null
+                let type_name_slice = unsafe { &*rsf.type_name };
+                if let Ok(Some(type_name)) = type_name_slice.try_to_string_option() {
+                    if !type_name.is_empty() {
+                        stack_frame.function = Some(format!("{}::{}", type_name, function_name));
+                    } else {
+                        stack_frame.function = Some(function_name);
+                    }
+                } else {
+                    stack_frame.function = Some(function_name);
+                }
+            } else {
+                stack_frame.function = Some(function_name);
+            }
         }
 
         if let Ok(Some(file_name)) = rsf.file_name.try_to_string_option() {
@@ -389,17 +405,37 @@ unsafe fn emit_frame_as_json(
     if let Ok(Some(function_name)) = frame_ref.function_name.try_to_string_option() {
         write!(
             writer,
-            "\"function\": \"{}\"",
+            "\"function_name\": \"{}\"",
             function_name.replace('"', "\\\"")
         )?;
         first_field = false;
+    }
+
+    if !frame_ref.type_name.is_null() {
+        // Safety: We just checked that the pointer is not null
+        let type_name_slice = unsafe { &*frame_ref.type_name };
+        if let Ok(Some(type_name)) = type_name_slice.try_to_string_option() {
+            if !first_field {
+                write!(writer, ", ")?;
+            }
+            write!(
+                writer,
+                "\"type_name\": \"{}\"",
+                type_name.replace('"', "\\\"")
+            )?;
+            first_field = false;
+        }
     }
 
     if let Ok(Some(file_name)) = frame_ref.file_name.try_to_string_option() {
         if !first_field {
             write!(writer, ", ")?;
         }
-        write!(writer, "\"file\": \"{}\"", file_name.replace('"', "\\\""))?;
+        write!(
+            writer,
+            "\"file_name\": \"{}\"",
+            file_name.replace('"', "\\\"")
+        )?;
         first_field = false;
     }
 
@@ -407,7 +443,7 @@ unsafe fn emit_frame_as_json(
         if !first_field {
             write!(writer, ", ")?;
         }
-        write!(writer, "\"line\": {}", frame_ref.line_number)?;
+        write!(writer, "\"line_number\": {}", frame_ref.line_number)?;
         first_field = false;
     }
 
@@ -415,7 +451,7 @@ unsafe fn emit_frame_as_json(
         if !first_field {
             write!(writer, ", ")?;
         }
-        write!(writer, "\"column\": {}", frame_ref.column_number)?;
+        write!(writer, "\"column_number\": {}", frame_ref.column_number)?;
     }
 
     writeln!(writer, "}}")?;
@@ -439,6 +475,7 @@ mod tests {
         let file_name = "test.rb";
 
         let frame = RuntimeStackFrame {
+            type_name: &CharSlice::from("TestModule.TestClass"),
             function_name: CharSlice::from(function_name),
             file_name: CharSlice::from(file_name),
             line_number: 42,
@@ -509,21 +546,34 @@ mod tests {
 
         // Should contain the frame data as JSON
         assert!(
-            json_output.contains("\"function\""),
-            "Missing function field"
+            json_output.contains("\"function_name\""),
+            "Missing function_name field"
         );
         assert!(
             json_output.contains("TestModule.TestClass.test_function"),
-            "Missing fully qualified function name"
+            "Missing function name"
         );
-        assert!(json_output.contains("\"file\""), "Missing file field");
+        assert!(
+            json_output.contains("\"type_name\""),
+            "Missing type_name field"
+        );
+        assert!(
+            json_output.contains("TestModule.TestClass"),
+            "Missing type name"
+        );
+        assert!(
+            json_output.contains("\"file_name\""),
+            "Missing file_name field"
+        );
         assert!(json_output.contains("test.rb"), "Missing file name");
         assert!(
-            json_output.contains("\"line\":42") || json_output.contains("\"line\": 42"),
+            json_output.contains("\"line_number\":42")
+                || json_output.contains("\"line_number\": 42"),
             "Missing line number"
         );
         assert!(
-            json_output.contains("\"column\":10") || json_output.contains("\"column\": 10"),
+            json_output.contains("\"column_number\":10")
+                || json_output.contains("\"column_number\": 10"),
             "Missing column number"
         );
 
@@ -602,21 +652,34 @@ mod tests {
         let json_output = String::from_utf8(buffer).expect("Invalid UTF-8 in output");
 
         assert!(
-            json_output.contains("\"function\""),
-            "Missing function field"
+            json_output.contains("\"function_name\""),
+            "Missing function_name field"
         );
         assert!(
             json_output.contains("TestModule.TestClass.test_function"),
-            "Missing fully qualified function name"
+            "Missing function name"
         );
-        assert!(json_output.contains("\"file\""), "Missing file field");
+        assert!(
+            json_output.contains("\"type_name\""),
+            "Missing type_name field"
+        );
+        assert!(
+            json_output.contains("TestModule.TestClass"),
+            "Missing type name"
+        );
+        assert!(
+            json_output.contains("\"file_name\""),
+            "Missing file_name field"
+        );
         assert!(json_output.contains("test.rb"), "Missing file name");
         assert!(
-            json_output.contains("\"line\":42") || json_output.contains("\"line\": 42"),
+            json_output.contains("\"line_number\":42")
+                || json_output.contains("\"line_number\": 42"),
             "Missing line number"
         );
         assert!(
-            json_output.contains("\"column\":10") || json_output.contains("\"column\": 10"),
+            json_output.contains("\"column_number\":10")
+                || json_output.contains("\"column_number\": 10"),
             "Missing column number"
         );
 

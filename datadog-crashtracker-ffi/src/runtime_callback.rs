@@ -53,9 +53,11 @@ impl From<CallbackError> for CallbackResult {
 ///     void (*emit_frame)(const ddog_RuntimeStackFrame*),
 /// ) {
 ///     // Collect runtime frames and call emit_frame for each one
-///     const char* function_name = "MyModule.MyClass.my_function";
+///     const char* function_name = "my_function";
 ///     const char* file_name = "script.rb";
+///     ddog_CharSlice type_name = DDOG_CHARSLICE_FROM_CSTR("MyModule.MyClass");
 ///     ddog_crasht_RuntimeStackFrame frame = {
+///         .type_name = &type_name,
 ///         .function_name = DDOG_CHARSLICE_FROM_CSTR(function_name),
 ///         .file_name = DDOG_CHARSLICE_FROM_CSTR(file_name),
 ///         .line_number = 42,
@@ -167,6 +169,7 @@ mod tests {
         let file_name = "test.rb";
 
         let frame = RuntimeStackFrame {
+            type_name: &CharSlice::from("TestModule.TestClass"),
             function_name: CharSlice::from(function_name),
             file_name: CharSlice::from(file_name),
             line_number: 42,
