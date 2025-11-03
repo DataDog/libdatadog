@@ -14,7 +14,6 @@ C FFI bindings for libdd-common shared utilities.
 - **String Utilities**: Safe string handling across FFI
 - **Vec Types**: C-compatible vector types
 - **Slice Types**: Safe slice handling
-- **Memory Management**: RAII-style memory management for C
 
 ## API Types
 
