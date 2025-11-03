@@ -62,14 +62,26 @@ detect_tags:
       echo "$TAGS"
       echo ""
       
-      # Sort tags according to ALLOWED_CRATES order
+      # Sort tags according to ALLOWED_CRATES order and detect invalid tags
       SORTED_TAGS=""
-      for allowed_crate in $ALLOWED_CRATES; do
-        for tag in $TAGS; do
+      INVALID_TAGS=""
+      
+      for tag in $TAGS; do
+        MATCHED=false
+        
+        # Check if tag matches any allowed crate
+        for allowed_crate in $ALLOWED_CRATES; do
           if [[ "$tag" =~ ^${allowed_crate}-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             SORTED_TAGS="$SORTED_TAGS $tag"
+            MATCHED=true
+            break
           fi
         done
+        
+        # If no match found, add to invalid tags
+        if [ "$MATCHED" = false ]; then
+          INVALID_TAGS="$INVALID_TAGS $tag"
+        fi
       done
       
       if [ -z "$SORTED_TAGS" ]; then
@@ -84,22 +96,73 @@ detect_tags:
         INDEX=$((INDEX + 1))
       done
       
-      # Save sorted tags for next stage
+      # Save sorted tags and invalid tags for next stage
       echo "$SORTED_TAGS" > sorted_tags.txt
+      echo "$INVALID_TAGS" > invalid_tags.txt
       echo "SORTED_TAGS=$SORTED_TAGS" >> tags.env
+      echo "INVALID_TAGS=$INVALID_TAGS" >> tags.env
   artifacts:
     reports:
       dotenv: tags.env
     paths:
       - sorted_tags.txt
+      - invalid_tags.txt
     expire_in: 1 day
+
+# Manual confirmation step - review tags before publishing
+confirm_publication:
+  tags: ["arch:amd64"]
+  image: registry.ddbuild.io/images/base/ubuntu_2204:latest
+  stage: publish
+  needs:
+    - detect_tags
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: manual
+  script:
+    - |
+      echo "=========================================="
+      echo "⚠️  PUBLICATION CONFIRMATION REQUIRED"
+      echo "=========================================="
+      echo ""
+      
+      # Check for invalid tags
+      INVALID_TAGS=$(cat invalid_tags.txt)
+      if [ -n "$INVALID_TAGS" ]; then
+        echo "⚠️  WARNING: The following tags were found but will NOT be published:"
+        echo ""
+        echo "$INVALID_TAGS" | tr ' ' '\n' | sed 's/^/  ❌ /'
+        echo ""
+        echo "Reasons:"
+        echo "  • Tag does not match format: {crate-name}-v{version}"
+        echo "  • OR crate name is not in the ALLOWED_CRATES list"
+        echo ""
+        echo "=========================================="
+        echo ""
+      fi
+      
+      echo "The following tags WILL be published to crates.io:"
+      echo ""
+      cat sorted_tags.txt | tr ' ' '\n' | nl -w2 -s'. '
+      echo ""
+      echo "Total tags to publish: $(cat sorted_tags.txt | wc -w)"
+      echo ""
+      echo "✓ Manual approval granted - proceeding with publication"
+  artifacts:
+    reports:
+      dotenv: tags.env
+    paths:
+      - sorted_tags.txt
+      - invalid_tags.txt
+    expire_in: 1 day
+  allow_failure: false
 
 # Publish crates sequentially
 publish_crates:
   tags: ["arch:amd64"]
   image: registry.ddbuild.io/images/base/ubuntu_2204:latest
   needs:
-    - detect_tags
+    - confirm_publication
   stage: publish
   rules:
     # - if: '$CI_COMMIT_TAG && $CI_COMMIT_BRANCH == $TARGET_BRANCH'
