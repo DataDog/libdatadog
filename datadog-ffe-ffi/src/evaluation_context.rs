@@ -60,8 +60,8 @@ pub unsafe extern "C" fn ddog_ffe_evaluation_context_new(
         };
 
         attr_map.insert(
-            Str::from(name_str.to_string()),
-            Attribute::from(value_str.to_string()),
+            Str::from(name_str),
+            Attribute::from(value_str),
         );
     }
 
