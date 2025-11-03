@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "ddsketch-ffi"
+name = "libdd-sketch-ffi"
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true
@@ -21,6 +21,6 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 datadog-ddsketch = { version = "1.0.0", path = "../libdd-sketch", package = "libdd-sketch" }
-ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
+ddcommon-ffi = { path = "../ddcommon-ffi/", default-features = false }
 
 [dev-dependencies]

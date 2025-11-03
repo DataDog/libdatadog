@@ -1586,13 +1586,13 @@ dependencies = [
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
- "ddsketch-ffi",
  "ddtelemetry-ffi",
  "function_name",
  "futures",
  "http-body-util",
  "hyper",
  "libc",
+ "libdd-sketch-ffi",
  "serde_json",
  "symbolizer-ffi",
  "tokio-util",
@@ -1886,15 +1886,6 @@ dependencies = [
  "ddcommon",
  "hyper",
  "serde",
-]
-
-[[package]]
-name = "ddsketch-ffi"
-version = "22.1.0"
-dependencies = [
- "build_common",
- "ddcommon-ffi",
- "libdd-sketch",
 ]
 
 [[package]]
@@ -3117,6 +3108,15 @@ dependencies = [
  "prost",
  "prost-build",
  "protoc-bin-vendored",
+]
+
+[[package]]
+name = "libdd-sketch-ffi"
+version = "22.1.0"
+dependencies = [
+ "build_common",
+ "ddcommon-ffi",
+ "libdd-sketch",
 ]
 
 [[package]]

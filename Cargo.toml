@@ -40,7 +40,7 @@ members = [
   "data-pipeline",
   "data-pipeline-ffi",
   "libdd-sketch",
-  "ddsketch-ffi",
+  "libdd-sketch-ffi",
   "tinybytes",
   "dogstatsd-client",
   "datadog-log",
