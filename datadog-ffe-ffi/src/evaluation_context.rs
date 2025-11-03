@@ -59,10 +59,7 @@ pub unsafe extern "C" fn ddog_ffe_evaluation_context_new(
             Err(_) => continue, // Skip invalid UTF-8
         };
 
-        attr_map.insert(
-            Str::from(name_str),
-            Attribute::from(value_str),
-        );
+        attr_map.insert(Str::from(name_str), Attribute::from(value_str));
     }
 
     let attributes_arc = Arc::new(attr_map);
