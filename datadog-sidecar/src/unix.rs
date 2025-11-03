@@ -1,16 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use spawn_worker::{entrypoint, get_dl_path_raw, getpid, SpawnWorker, Stdio, TrampolineData};
+use spawn_worker::{getpid, SpawnWorker, Stdio, TrampolineData};
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::os::unix::net::UnixListener as StdUnixListener;
 
-use crate::config::{Config, LogMethod};
+use crate::config::Config;
 use crate::enter_listener_loop;
-use datadog_crashtracker::{
-    CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata, StacktraceCollection,
-};
 use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
 use nix::sys::socket::{shutdown, Shutdown};
 use std::io;
@@ -20,10 +17,23 @@ use std::time::Instant;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::select;
 use tokio::signal::unix::{signal, SignalKind};
-use tracing::log::warn;
 use tracing::{error, info};
 
+#[cfg(target_os = "linux")]
+use crate::config::LogMethod;
+#[cfg(target_os = "linux")]
+use datadog_crashtracker::{
+    CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata, StacktraceCollection,
+};
+#[cfg(target_os = "linux")]
+use spawn_worker::{entrypoint, get_dl_path_raw};
+#[cfg(target_os = "linux")]
+use std::ffi::CStr;
+#[cfg(target_os = "linux")]
+use tracing::warn;
+
 #[no_mangle]
+#[allow(unused)]
 pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
     #[cfg(feature = "tracing")]
     crate::log::enable_logging().ok();
@@ -175,6 +185,7 @@ fn shutdown_appsec() -> bool {
     true
 }
 
+#[cfg(target_os = "linux")]
 fn init_crashtracker(dependency_paths: *const *const libc::c_char) -> anyhow::Result<()> {
     let entrypoint = entrypoint!(ddog_crashtracker_entry_point);
     let entrypoint_path = match unsafe { get_dl_path_raw(entrypoint.ptr as *const libc::c_void) } {
