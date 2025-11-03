@@ -50,11 +50,10 @@ int main(int argc, char *argv[]) {
 
     int additional_shared_libraries_args = argc - 4;
 
-    struct trampoline_data startup_data = {
-      .argc = argc,
-      .argv = argv,
-      .dependency_paths = NULL,
-    };
+    struct trampoline_data startup_data;
+    startup_data.argc = argc;
+    startup_data.argv = argv;
+    startup_data.dependency_paths = NULL;
 
     int i;
 #ifndef _WIN32
