@@ -47,7 +47,7 @@ tinybytes = { path = "../tinybytes", features = [
 bench = false
 
 [dev-dependencies]
-datadog-log = { path = "../datadog-log" }
+libdd-log = { path = "../libdd-log" }
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5.1"
 datadog-trace-utils = { path = "../datadog-trace-utils", features = [

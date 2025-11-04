@@ -1300,7 +1300,6 @@ dependencies = [
  "bytes",
  "clap",
  "criterion",
- "datadog-log",
  "datadog-trace-protobuf",
  "datadog-trace-stats",
  "datadog-trace-utils",
@@ -1314,6 +1313,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libdd-ddsketch",
+ "libdd-log",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1340,16 +1340,6 @@ dependencies = [
  "rmp-serde",
  "tinybytes",
  "tracing",
-]
-
-[[package]]
-name = "datadog-alloc"
-version = "23.0.0"
-dependencies = [
- "allocator-api2",
- "bolero",
- "libc",
- "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1530,26 +1520,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-log"
-version = "23.0.0"
-dependencies = [
- "chrono",
- "tempfile",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "datadog-log-ffi"
-version = "23.0.0"
-dependencies = [
- "build_common",
- "datadog-log",
- "ddcommon-ffi",
-]
-
-[[package]]
 name = "datadog-profiling"
 version = "23.0.0"
 dependencies = [
@@ -1560,7 +1530,6 @@ dependencies = [
  "bytes",
  "chrono",
  "criterion",
- "datadog-alloc",
  "datadog-profiling-protobuf",
  "ddcommon",
  "futures",
@@ -1569,6 +1538,7 @@ dependencies = [
  "hyper",
  "hyper-multipart-rfc7578",
  "indexmap 2.6.0",
+ "libdd-alloc",
  "lz4_flex",
  "mime",
  "prost",
@@ -1590,7 +1560,6 @@ dependencies = [
  "data-pipeline-ffi",
  "datadog-crashtracker-ffi",
  "datadog-library-config-ffi",
- "datadog-log-ffi",
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
@@ -1601,6 +1570,7 @@ dependencies = [
  "hyper",
  "libc",
  "libdd-ddsketch-ffi",
+ "libdd-log-ffi",
  "serde_json",
  "symbolizer-ffi",
  "tokio-util",
@@ -3110,6 +3080,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58f929b4d672ea937a23a1ab494143d968337a5f47e56d0815df1e0890ddf174"
 
 [[package]]
+name = "libdd-alloc"
+version = "1.0.0"
+dependencies = [
+ "allocator-api2",
+ "bolero",
+ "libc",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "libdd-ddsketch"
 version = "1.0.0"
 dependencies = [
@@ -3125,6 +3105,26 @@ dependencies = [
  "build_common",
  "ddcommon-ffi",
  "libdd-ddsketch",
+]
+
+[[package]]
+name = "libdd-log"
+version = "1.0.0"
+dependencies = [
+ "chrono",
+ "tempfile",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "libdd-log-ffi"
+version = "23.0.0"
+dependencies = [
+ "build_common",
+ "ddcommon-ffi",
+ "libdd-log",
 ]
 
 [[package]]

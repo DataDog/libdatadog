@@ -4,7 +4,7 @@
 [workspace]
 members = [
   "builder",
-  "datadog-alloc",
+  "libdd-alloc",
   "datadog-crashtracker",
   "datadog-crashtracker-ffi",
   "datadog-ffe",
@@ -44,8 +44,8 @@ members = [
   "libdd-ddsketch-ffi",
   "tinybytes",
   "dogstatsd-client",
-  "datadog-log",
-  "datadog-log-ffi",
+  "libdd-log",
+  "libdd-log-ffi",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html

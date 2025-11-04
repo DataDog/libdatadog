@@ -1,0 +1,23 @@
+[package]
+name = "libdd-log-ffi"
+rust-version.workspace = true
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+bench = false
+
+[features]
+default = ["cbindgen", "expanded_builder_macros"]
+cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen", "expanded_builder_macros"]
+expanded_builder_macros = []
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
+[dependencies]
+libdd-log = { path = "../libdd-log" }
+ddcommon-ffi = { path = "../ddcommon-ffi" }
