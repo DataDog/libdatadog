@@ -5,9 +5,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use serde::Deserialize;
 
-use crate::rules_based::{
-    error::EvaluationFailure, sharder::PreSaltedSharder, EvaluationError, Str, Timestamp,
-};
+use crate::rules_based::{error::EvaluationError, sharder::PreSaltedSharder, Str, Timestamp};
 
 use super::{
     AllocationWire, AssignmentValue, Environment, FlagWire, RuleWire, ShardRange, ShardWire,
@@ -31,7 +29,7 @@ pub(crate) struct CompiledFlagsConfig {
     /// Flags configuration.
     ///
     /// For flags that failed to parse or are disabled, we store the evaluation failure directly.
-    pub flags: HashMap<Str, Result<Flag, EvaluationFailure>>,
+    pub flags: HashMap<Str, Result<Flag, EvaluationError>>,
 }
 
 #[derive(Debug)]
@@ -87,9 +85,7 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
                 (
                     key,
                     Option::from(flag)
-                        .ok_or(EvaluationFailure::Error(
-                            EvaluationError::UnexpectedConfigurationError,
-                        ))
+                        .ok_or(EvaluationError::ConfigurationParseError)
                         .and_then(compile_flag),
                 )
             })
@@ -103,9 +99,9 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
     }
 }
 
-fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationFailure> {
+fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationError> {
     if !flag.enabled {
-        return Err(EvaluationFailure::FlagDisabled);
+        return Err(EvaluationError::FlagDisabled);
     }
 
     let variation_values = flag
@@ -113,7 +109,7 @@ fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationFailure> {
         .into_values()
         .map(|variation| {
             let assignment_value = AssignmentValue::from_wire(flag.variation_type, variation.value)
-                .ok_or(EvaluationError::UnexpectedConfigurationError)?;
+                .ok_or(EvaluationError::ConfigurationParseError)?;
 
             Ok((variation.key, assignment_value))
         })
@@ -169,7 +165,7 @@ fn compile_split(
     let result = variation_values
         .get(&split.variation_key)
         .cloned()
-        .ok_or(EvaluationError::UnexpectedConfigurationError)?;
+        .ok_or(EvaluationError::ConfigurationParseError)?;
 
     Ok(Split {
         shards,

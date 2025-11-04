@@ -4,7 +4,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::rules_based::{
-    error::{EvaluationError, EvaluationFailure},
+    error::EvaluationError,
     ufc::{
         Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, Flag, Shard, Split,
         VariationType,
@@ -20,13 +20,13 @@ pub fn get_assignment(
     subject: &EvaluationContext,
     expected_type: Option<VariationType>,
     now: DateTime<Utc>,
-) -> Result<Assignment, EvaluationFailure> {
+) -> Result<Assignment, EvaluationError> {
     let Some(config) = configuration else {
         log::trace!(
             flag_key,
             targeting_key = subject.targeting_key();
-            "returning default assignment because of: {}", EvaluationFailure::ConfigurationMissing);
-        return Err(EvaluationFailure::ConfigurationMissing);
+            "returning default assignment because of: {}", EvaluationError::ConfigurationMissing);
+        return Err(EvaluationError::ConfigurationMissing);
     };
 
     config.eval_flag(flag_key, subject, expected_type, now)
@@ -39,7 +39,7 @@ impl Configuration {
         context: &EvaluationContext,
         expected_type: Option<VariationType>,
         now: DateTime<Utc>,
-    ) -> Result<Assignment, EvaluationFailure> {
+    ) -> Result<Assignment, EvaluationError> {
         let result = self
             .flags
             .compiled
@@ -54,20 +54,6 @@ impl Configuration {
                     "evaluated a flag");
             }
 
-            Err(EvaluationFailure::ConfigurationMissing) => {
-                log::warn!(
-                    flag_key,
-                    targeting_key = context.targeting_key();
-                    "evaluating a flag before flags configuration has been fetched");
-            }
-
-            Err(EvaluationFailure::Error(err)) => {
-                log::warn!(
-                    flag_key,
-                    targeting_key = context.targeting_key();
-                    "error occurred while evaluating a flag: {err}",
-                );
-            }
             Err(err) => {
                 log::trace!(
                     flag_key,
@@ -88,7 +74,7 @@ impl CompiledFlagsConfig {
         subject: &EvaluationContext,
         expected_type: Option<VariationType>,
         now: DateTime<Utc>,
-    ) -> Result<Assignment, EvaluationFailure> {
+    ) -> Result<Assignment, EvaluationError> {
         let flag = self.get_flag(flag_key)?;
 
         if let Some(ty) = expected_type {
@@ -98,24 +84,24 @@ impl CompiledFlagsConfig {
         flag.eval(subject, now)
     }
 
-    fn get_flag(&self, flag_key: &str) -> Result<&Flag, EvaluationFailure> {
+    fn get_flag(&self, flag_key: &str) -> Result<&Flag, EvaluationError> {
         self.flags
             .get(flag_key)
-            .ok_or(EvaluationFailure::FlagUnrecognizedOrDisabled)?
+            .ok_or(EvaluationError::FlagUnrecognizedOrDisabled)?
             .as_ref()
             .map_err(Clone::clone)
     }
 }
 
 impl Flag {
-    fn verify_type(&self, ty: VariationType) -> Result<(), EvaluationFailure> {
+    fn verify_type(&self, ty: VariationType) -> Result<(), EvaluationError> {
         if self.variation_type == ty {
             Ok(())
         } else {
-            Err(EvaluationFailure::Error(EvaluationError::TypeMismatch {
+            Err(EvaluationError::TypeMismatch {
                 expected: ty,
                 found: self.variation_type,
-            }))
+            })
         }
     }
 
@@ -123,14 +109,14 @@ impl Flag {
         &self,
         subject: &EvaluationContext,
         now: DateTime<Utc>,
-    ) -> Result<Assignment, EvaluationFailure> {
+    ) -> Result<Assignment, EvaluationError> {
         let Some((allocation, (split, reason))) = self.allocations.iter().find_map(|allocation| {
             let result = allocation.get_matching_split(subject, now);
             result
                 .ok()
                 .map(|(split, reason)| (allocation, (split, reason)))
         }) else {
-            return Err(EvaluationFailure::DefaultAllocationNull);
+            return Err(EvaluationError::DefaultAllocationNull);
         };
 
         let value = split.value.clone();

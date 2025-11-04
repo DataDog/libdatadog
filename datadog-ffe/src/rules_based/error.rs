@@ -5,12 +5,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::rules_based::ufc::VariationType;
 
-/// Enum representing possible errors that can occur during evaluation.
+/// Enum representing all possible reasons that could result in evaluation returning an error or
+/// default assignment.
+///
+/// Not all of these are technically "errors"—some can be expected to occur frequently (e.g.,
+/// `FlagDisabled` or `DefaultAllocation`).
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[non_exhaustive]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[non_exhaustive]
 pub enum EvaluationError {
-    /// Requested flag has invalid type.
+    /// Requested flag has unexpected type.
     #[error("invalid flag type (expected: {expected:?}, found: {found:?})")]
     TypeMismatch {
         /// Expected type of the flag.
@@ -19,23 +23,13 @@ pub enum EvaluationError {
         found: VariationType,
     },
 
-    /// Configuration received from the server is invalid for the SDK. This should normally never
-    /// happen and is likely a signal that you should update SDK.
-    #[error("unexpected configuration received from the server")]
-    UnexpectedConfigurationError,
-}
-
-/// Enum representing all possible reasons that could result in evaluation returning an error or
-/// default assignment.
-#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum EvaluationFailure {
-    /// True evaluation error that should be returned to the user.
-    #[error(transparent)]
-    Error(EvaluationError),
+    /// Failed to parse configuration. This should normally never happen and is likely a signal
+    /// that you should update SDK.
+    #[error("failed to parse configuration")]
+    ConfigurationParseError,
 
     /// Configuration has not been fetched yet.
-    #[error("configuration has not been fetched yet")]
+    #[error("flags configuration is missing")]
     ConfigurationMissing,
 
     /// The requested flag configuration was not found. It either does not exist or is disabled.
@@ -50,10 +44,4 @@ pub enum EvaluationFailure {
     /// being assigned.
     #[error("default allocation is matched and is serving NULL")]
     DefaultAllocationNull,
-}
-
-impl From<EvaluationError> for EvaluationFailure {
-    fn from(value: EvaluationError) -> EvaluationFailure {
-        EvaluationFailure::Error(value)
-    }
 }

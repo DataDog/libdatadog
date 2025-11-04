@@ -245,7 +245,7 @@ impl TryFrom<ConditionWire> for Condition {
                             "failed to parse condition: {:?} condition with non-string condition value",
                             condition.operator
                         );
-                        return Err(EvaluationError::UnexpectedConfigurationError);
+                        return Err(EvaluationError::ConfigurationParseError);
                     }
                 };
                 let regex = match Regex::new(&regex_string) {
@@ -254,7 +254,7 @@ impl TryFrom<ConditionWire> for Condition {
                         log::warn!(
                             "failed to parse condition: failed to compile regex {regex_string:?}: {err:?}"
                         );
-                        return Err(EvaluationError::UnexpectedConfigurationError);
+                        return Err(EvaluationError::ConfigurationParseError);
                     }
                 };
 
@@ -282,7 +282,7 @@ impl TryFrom<ConditionWire> for Condition {
                         "failed to parse condition: comparison value is not a number: {:?}",
                         condition.value
                     );
-                    return Err(EvaluationError::UnexpectedConfigurationError);
+                    return Err(EvaluationError::ConfigurationParseError);
                 };
                 ConditionCheck::Comparison {
                     operator,
@@ -298,7 +298,7 @@ impl TryFrom<ConditionWire> for Condition {
                             "failed to parse condition: membership condition with non-array value: {:?}",
                             condition.value
                         );
-                        return Err(EvaluationError::UnexpectedConfigurationError);
+                        return Err(EvaluationError::ConfigurationParseError);
                     }
                 };
                 ConditionCheck::Membership {
@@ -312,7 +312,7 @@ impl TryFrom<ConditionWire> for Condition {
                     log::warn!(
                         "failed to parse condition: IS_NULL condition with non-boolean condition value"
                     );
-                    return Err(EvaluationError::UnexpectedConfigurationError);
+                    return Err(EvaluationError::ConfigurationParseError);
                 };
                 ConditionCheck::Null { expected_null }
             }
