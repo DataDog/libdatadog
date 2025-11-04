@@ -1301,7 +1301,6 @@ dependencies = [
  "clap",
  "criterion",
  "datadog-ddsketch",
- "datadog-trace-protobuf",
  "datadog-trace-stats",
  "datadog-trace-utils",
  "ddcommon",
@@ -1314,6 +1313,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libdd-log",
+ "libdd-trace-protobuf",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1615,7 +1615,6 @@ dependencies = [
  "base64 0.22.1",
  "datadog-live-debugger",
  "datadog-remote-config",
- "datadog-trace-protobuf",
  "ddcommon",
  "futures",
  "futures-util",
@@ -1623,6 +1622,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "libdd-trace-protobuf",
  "manual_future",
  "serde",
  "serde_json",
@@ -1729,8 +1729,8 @@ version = "23.0.0"
 dependencies = [
  "anyhow",
  "criterion",
- "datadog-trace-protobuf",
  "duplicate",
+ "libdd-trace-protobuf",
  "rand 0.8.5",
 ]
 
@@ -1740,10 +1740,10 @@ version = "23.0.0"
 dependencies = [
  "anyhow",
  "criterion",
- "datadog-trace-protobuf",
  "datadog-trace-utils",
  "ddcommon",
  "duplicate",
+ "libdd-trace-protobuf",
  "log",
  "percent-encoding",
  "regex",
@@ -1753,27 +1753,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-trace-protobuf"
-version = "23.0.0"
-dependencies = [
- "prost",
- "prost-build",
- "protoc-bin-vendored",
- "serde",
- "serde_bytes",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "datadog-trace-stats"
 version = "23.0.0"
 dependencies = [
  "criterion",
  "datadog-ddsketch",
- "datadog-trace-protobuf",
  "datadog-trace-utils",
  "hashbrown 0.15.1",
+ "libdd-trace-protobuf",
  "rand 0.8.5",
 ]
 
@@ -1788,7 +1775,6 @@ dependencies = [
  "cargo_metadata",
  "criterion",
  "datadog-trace-normalization",
- "datadog-trace-protobuf",
  "datadog-trace-utils",
  "ddcommon",
  "flate2",
@@ -1796,6 +1782,7 @@ dependencies = [
  "http-body-util",
  "httpmock",
  "hyper",
+ "libdd-trace-protobuf",
  "prost",
  "rand 0.8.5",
  "rmp",
@@ -3135,6 +3122,19 @@ dependencies = [
  "build_common",
  "ddcommon-ffi",
  "libdd-log",
+]
+
+[[package]]
+name = "libdd-trace-protobuf"
+version = "1.0.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

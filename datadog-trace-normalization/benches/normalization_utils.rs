@@ -8,7 +8,7 @@ use criterion::{
 };
 use datadog_trace_normalization::normalize_utils::{normalize_name, normalize_service};
 use datadog_trace_normalization::normalizer::normalize_trace;
-use datadog_trace_protobuf::pb;
+use libdd_trace_protobuf::pb;
 use std::hint::black_box;
 use std::{collections::HashMap, time::Duration};
 

@@ -8,7 +8,6 @@ use crate::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryResult
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use anyhow::{anyhow, Context};
-use datadog_trace_protobuf::pb::{AgentPayload, TracerPayload};
 use ddcommon::HttpClient;
 use ddcommon::{
     header::{
@@ -20,6 +19,7 @@ use ddcommon::{
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use hyper::header::CONTENT_TYPE;
+use libdd_trace_protobuf::pb::{AgentPayload, TracerPayload};
 use send_data_result::SendDataResult;
 use std::collections::HashMap;
 #[cfg(feature = "compression")]
@@ -35,7 +35,7 @@ use zstd::stream::write::Encoder;
 /// # Example
 ///
 /// ```rust
-/// use datadog_trace_protobuf::pb::TracerPayload;
+/// use libdd_trace_protobuf::pb::TracerPayload;
 /// use datadog_trace_utils::send_data::{
 ///     SendData,
 /// };
@@ -428,10 +428,10 @@ mod tests {
     use crate::test_utils::create_test_no_alloc_span;
     use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, RootSpanTags};
     use crate::tracer_header_tags::TracerHeaderTags;
-    use datadog_trace_protobuf::pb::Span;
     use ddcommon::Endpoint;
     use httpmock::prelude::*;
     use httpmock::MockServer;
+    use libdd_trace_protobuf::pb::Span;
     use std::collections::HashMap;
     use std::time::Duration;
 

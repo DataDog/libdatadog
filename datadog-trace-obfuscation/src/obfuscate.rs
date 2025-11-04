@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use datadog_trace_protobuf::pb;
+use libdd_trace_protobuf::pb;
 
 use crate::{
     http::obfuscate_url_string,

@@ -6,11 +6,11 @@ pub use mini_agent::*;
 
 #[cfg(feature = "mini_agent")]
 mod mini_agent {
-    use datadog_trace_protobuf::pb;
     use ddcommon::hyper_migration;
     use ddcommon::Endpoint;
     use http_body_util::BodyExt;
     use hyper::{body::Buf, Method, Request, StatusCode};
+    use libdd_trace_protobuf::pb;
     use std::io::Write;
     use tracing::debug;
 
@@ -86,11 +86,11 @@ mod mini_agent {
 #[cfg(feature = "mini_agent")]
 mod mini_agent_tests {
     use crate::stats_utils;
-    use datadog_trace_protobuf::pb::{
-        ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet,
-    };
     use ddcommon::hyper_migration;
     use hyper::Request;
+    use libdd_trace_protobuf::pb::{
+        ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet,
+    };
     use serde_json::Value;
 
     #[tokio::test]

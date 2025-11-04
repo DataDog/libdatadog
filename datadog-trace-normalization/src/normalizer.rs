@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::normalize_utils;
-use datadog_trace_protobuf::pb;
+use libdd_trace_protobuf::pb;
 
 const TAG_SAMPLING_PRIORITY: &str = "_sampling_priority_v1";
 const TAG_ORIGIN: &str = "_dd.origin";
@@ -112,7 +112,7 @@ mod tests {
     use crate::normalize_utils;
     use crate::normalize_utils::{DEFAULT_SPAN_NAME, MAX_TYPE_LEN};
     use crate::normalizer;
-    use datadog_trace_protobuf::pb;
+    use libdd_trace_protobuf::pb;
     use rand::Rng;
     use std::collections::HashMap;
     use std::time::SystemTime;
