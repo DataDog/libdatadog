@@ -1,0 +1,14 @@
+[package]
+edition = "2021"
+name = "cc_utils"
+version = "0.1.0"
+
+# Important: This crate is not published and only exists as a way to include cc_utils without all the heavy dependencies of ddcommon. (like in spawn_worker build.rs or php_sidecar_mockgen of dd-trace-php.)
+
+[dependencies]
+anyhow = {version = "1.0"}
+cc = {version = "1.0"}
+
+[lib]
+bench = false
+
