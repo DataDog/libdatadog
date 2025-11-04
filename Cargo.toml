@@ -33,6 +33,7 @@ members = [
   "ddtelemetry",
   "ddtelemetry-ffi",
   "tools",
+  "tools/cc_utils",
   "tools/sidecar_mockgen",
   "spawn_worker",
   "tests/spawn_from_lib",
