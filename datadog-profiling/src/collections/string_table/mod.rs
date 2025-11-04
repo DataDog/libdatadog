@@ -9,7 +9,7 @@ pub use error::*;
 
 use crate::collections::identifiable::StringId;
 use crate::iter::{IntoLendingIterator, LendingIterator};
-use datadog_alloc::{AllocError, Allocator, ChainAllocator, VirtualAllocator};
+use libdd_alloc::{AllocError, Allocator, ChainAllocator, VirtualAllocator};
 use std::alloc::Layout;
 
 /// A trait that indicates an allocator is arena allocator, meaning it doesn't
