@@ -6,11 +6,14 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 mod assignment;
 mod configuration;
 mod evaluation_context;
+mod handle;
 
 pub use assignment::*;
 pub use configuration::*;
 pub use evaluation_context::*;
+pub use handle::*;
