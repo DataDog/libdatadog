@@ -6,7 +6,7 @@ use std::ffi::{c_char, CStr, CString};
 use anyhow::ensure;
 use function_name::named;
 
-use datadog_ffe::rules_based::{get_assignment, now, Assignment, AssignmentValue, AssignmentReason, Configuration, EvaluationContext};
+use datadog_ffe::rules_based::{get_assignment, now, Assignment, AssignmentValue, AssignmentReason, Configuration, EvaluationContext, EvaluationError};
 use ddcommon_ffi::{wrap_with_ffi_result, Handle, Result, ToInner};
 
 #[repr(C)]
@@ -54,6 +54,17 @@ impl ResolutionDetails {
             allocation_key: std::ptr::null(),
             do_log: false,
         }
+    }
+}
+
+fn convert_evaluation_error(error: &EvaluationError) -> ErrorCode {
+    use datadog_ffe::rules_based::EvaluationError;
+    
+    match error {
+        EvaluationError::TypeMismatch { .. } => ErrorCode::TypeMismatch,
+        EvaluationError::UnexpectedConfigurationError => ErrorCode::General,
+        // Handle any future variants that might be added
+        _ => ErrorCode::General,
     }
 }
 
@@ -124,7 +135,16 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment(
                 // Return empty handle to signal no assignment found
                 return Ok(Handle::empty());
             },
-            Err(_evaluation_error) => ResolutionDetails::empty(Reason::Error),
+            Err(evaluation_error) => ResolutionDetails {
+                value_type: std::ptr::null(),
+                value_string: std::ptr::null(),
+                error_code: Some(convert_evaluation_error(&evaluation_error)),
+                error_message: CString::new(evaluation_error.to_string()).unwrap().into_raw(),
+                reason: Some(Reason::Error),
+                variant: std::ptr::null(),
+                allocation_key: std::ptr::null(),
+                do_log: false,
+            },
         };
       
         Ok(Handle::from(resolution_details))
