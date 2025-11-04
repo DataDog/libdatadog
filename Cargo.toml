@@ -44,8 +44,8 @@ members = [
   "ddsketch-ffi",
   "tinybytes",
   "dogstatsd-client",
-  "datadog-log",
-  "datadog-log-ffi",
+  "libdd-log",
+  "libdd-log-ffi",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html
