@@ -848,6 +848,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cc_utils"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+]
+
+[[package]]
 name = "cexpr"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4702,8 +4710,7 @@ name = "spawn_worker"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "cc",
- "ddcommon",
+ "cc_utils",
  "fastrand",
  "io-lifetimes",
  "kernel32-sys",
