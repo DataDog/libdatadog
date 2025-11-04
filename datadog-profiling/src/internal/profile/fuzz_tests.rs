@@ -7,7 +7,7 @@ use bolero::generator::TypeGenerator;
 use core::cmp::Ordering;
 use core::hash::Hasher;
 use core::ops::Deref;
-use datadog_profiling_protobuf::prost_impls as pprof;
+use libdd_profiling_protobuf::prost_impls as pprof;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Hash, TypeGenerator)]
 struct Function {
