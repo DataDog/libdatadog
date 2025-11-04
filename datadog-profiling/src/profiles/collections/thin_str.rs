@@ -492,6 +492,8 @@ pub struct ConstString<const N: usize> {
 impl<const N: usize> ConstString<N> {
     const fn new(str: &str) -> Self {
         if str.len() != N {
+            // Meant for complile-time validation.
+            #[allow(clippy::panic)]
             panic!("string length and storage mismatch for ConstString")
         }
         ConstString::<N> {
