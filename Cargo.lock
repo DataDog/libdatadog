@@ -1307,13 +1307,13 @@ dependencies = [
  "datadog-trace-utils",
  "ddcommon",
  "ddtelemetry",
- "dogstatsd-client",
  "either",
  "http",
  "http-body-util",
  "httpmock",
  "hyper",
  "hyper-util",
+ "libdd-dogstatsd-client",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1686,13 +1686,13 @@ dependencies = [
  "ddcommon",
  "ddcommon-ffi",
  "ddtelemetry",
- "dogstatsd-client",
  "futures",
  "http",
  "http-body-util",
  "httpmock",
  "hyper",
  "libc",
+ "libdd-dogstatsd-client",
  "manual_future",
  "memory-stats",
  "microseh",
@@ -1734,9 +1734,9 @@ dependencies = [
  "ddcommon-ffi",
  "ddtelemetry",
  "ddtelemetry-ffi",
- "dogstatsd-client",
  "http",
  "libc",
+ "libdd-dogstatsd-client",
  "paste",
  "rmp-serde",
  "tempfile",
@@ -2036,19 +2036,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.87",
-]
-
-[[package]]
-name = "dogstatsd-client"
-version = "23.0.0"
-dependencies = [
- "anyhow",
- "cadence",
- "ddcommon",
- "http",
- "serde",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -3126,6 +3113,19 @@ name = "libc"
 version = "0.2.176"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58f929b4d672ea937a23a1ab494143d968337a5f47e56d0815df1e0890ddf174"
+
+[[package]]
+name = "libdd-dogstatsd-client"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "cadence",
+ "ddcommon",
+ "http",
+ "serde",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "libloading"

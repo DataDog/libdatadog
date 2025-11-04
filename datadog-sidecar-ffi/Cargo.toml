@@ -20,7 +20,7 @@ ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false }
 datadog-remote-config = { path = "../datadog-remote-config" }
 datadog-live-debugger = { path = "../datadog-live-debugger" }
-dogstatsd-client = { path = "../dogstatsd-client" }
+libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 tinybytes = { path = "../tinybytes", features = ["bytes_string"] }
 paste = "1"
 libc = "0.2"
