@@ -81,7 +81,7 @@ async fn async_main() {
     };
     let host = build_host();
 
-    let mut sketch = datadog_ddsketch::DDSketch::default();
+    let mut sketch = libdd_ddsketch::DDSketch::default();
     for i in 0..1000 {
         for j in 0..1000 {
             sketch.add((i + j) as f64 / 1000.0).unwrap();

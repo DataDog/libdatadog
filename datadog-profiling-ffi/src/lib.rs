@@ -29,7 +29,7 @@ pub use data_pipeline_ffi::*;
 // re-export ddsketch ffi
 #[cfg(feature = "ddsketch-ffi")]
 #[allow(unused_imports)]
-pub use ddsketch_ffi::*;
+pub use libdd_ddsketch_ffi::*;
 
 // re-export library-config ffi
 #[cfg(feature = "datadog-library-config-ffi")]

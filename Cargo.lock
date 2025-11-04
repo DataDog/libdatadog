@@ -1313,7 +1313,7 @@ dependencies = [
  "httpmock",
  "hyper",
  "hyper-util",
- "libdd-sketch",
+ "libdd-ddsketch",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1600,7 +1600,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "libc",
- "libdd-sketch-ffi",
+ "libdd-ddsketch-ffi",
  "serde_json",
  "symbolizer-ffi",
  "tokio-util",
@@ -1793,7 +1793,7 @@ dependencies = [
  "datadog-trace-protobuf",
  "datadog-trace-utils",
  "hashbrown 0.15.1",
- "libdd-sketch",
+ "libdd-ddsketch",
  "rand 0.8.5",
 ]
 
@@ -1910,7 +1910,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libc",
- "libdd-sketch",
+ "libdd-ddsketch",
  "serde",
  "serde_json",
  "sys-info",
@@ -3110,7 +3110,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58f929b4d672ea937a23a1ab494143d968337a5f47e56d0815df1e0890ddf174"
 
 [[package]]
-name = "libdd-sketch"
+name = "libdd-ddsketch"
 version = "1.0.0"
 dependencies = [
  "prost",
@@ -3119,12 +3119,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "libdd-sketch-ffi"
+name = "libdd-ddsketch-ffi"
 version = "23.0.0"
 dependencies = [
  "build_common",
  "ddcommon-ffi",
- "libdd-sketch",
+ "libdd-ddsketch",
 ]
 
 [[package]]

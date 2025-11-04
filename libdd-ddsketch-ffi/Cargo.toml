@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "libdd-sketch-ffi"
+name = "libdd-ddsketch-ffi"
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true
@@ -20,7 +20,7 @@ cbindgen = ["build_common/cbindgen", "ddcommon-ffi/cbindgen"]
 build_common = { path = "../build-common" }
 
 [dependencies]
-libdd-sketch = { version = "1.0.0", path = "../libdd-sketch" }
+libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
 ddcommon-ffi = { path = "../ddcommon-ffi", default-features = false }
 
 [dev-dependencies]

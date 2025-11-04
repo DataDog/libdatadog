@@ -1,4 +1,4 @@
-# libdd-sketch
+# libdd-ddsketch
 
 Minimal implementation of Datadog's DDSketch for accurate quantile estimation.
 

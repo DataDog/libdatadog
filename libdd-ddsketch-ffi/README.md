@@ -1,6 +1,6 @@
-# libdd-sketch-ffi
+# libdd-ddsketch-ffi
 
-C FFI bindings for the `libdd-sketch` crate.
+C FFI bindings for the `libdd-ddsketch` crate.
 
 ## Overview
 

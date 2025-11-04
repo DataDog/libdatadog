@@ -9,7 +9,7 @@
 
 use ddcommon_ffi as ffi;
 use ddcommon_ffi::{Error, Handle, ToInner, VoidResult};
-use libdd_sketch::DDSketch;
+use libdd_ddsketch::DDSketch;
 use std::mem::MaybeUninit;
 
 const NULL_POINTER_ERROR: &str = "null pointer provided";
