@@ -1,10 +1,11 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::ffi::{c_char, CStr};
+use std::ffi::{c_char, c_uchar, CStr};
 
 use datadog_ffe::rules_based::{
-    now, Assignment, Configuration, EvaluationContext, EvaluationError, Str,
+    now, Assignment, AssignmentValue, Configuration, EvaluationContext, EvaluationError, Str,
+    VariationType,
 };
 
 use crate::Handle;
@@ -21,6 +22,18 @@ pub enum FlagType {
     Float,
     Boolean,
     Object,
+}
+
+impl From<VariationType> for FlagType {
+    fn from(value: VariationType) -> Self {
+        match value {
+            VariationType::String => FlagType::String,
+            VariationType::Integer => FlagType::Integer,
+            VariationType::Numeric => FlagType::Float,
+            VariationType::Boolean => FlagType::Boolean,
+            VariationType::Json => FlagType::Object,
+        }
+    }
 }
 
 #[repr(C)]
@@ -86,7 +99,73 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment(
     Handle::from(ResolutionDetails(assignment_result))
 }
 
-// TODO: accessors for various data inside ResolutionDetails.
+#[repr(C)]
+pub enum VariantValue {
+    /// Evaluation did not produce any value.
+    None,
+    String(*const c_uchar),
+    Integer(i64),
+    Float(f64),
+    Boolean(bool),
+    Object(*const c_char),
+}
+
+/// Get value produced by evaluation.
+///
+/// # Ownership
+///
+/// The returned `VariantValue` borrows from `assignment`. It must not be used after `assignment` is
+/// freed.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_ffe_assignment_get_value(
+    assignment: Handle<ResolutionDetails>,
+) -> VariantValue {
+    match unsafe { assignment.as_ref() } {
+        ResolutionDetails(Ok(assignment)) => match &assignment.value {
+            AssignmentValue::String(s) => VariantValue::String(s.as_ptr()),
+            AssignmentValue::Integer(v) => VariantValue::Integer(*v),
+            AssignmentValue::Float(v) => VariantValue::Float(*v),
+            AssignmentValue::Boolean(v) => VariantValue::Boolean(*v),
+            AssignmentValue::Json(_value) => todo!("make AssignmentValue hold onto raw json value"),
+        },
+        _ => VariantValue::None,
+    }
+}
+
+/// Get variant key produced by evaluation. Returns `NULL` if evaluation did not produce any value.
+///
+/// # Ownership
+///
+/// The returned string borrows from `assignment`. It must not be used after `assignment` is
+/// freed.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_ffe_assignment_get_variant(
+    assignment: Handle<ResolutionDetails>,
+) -> *const c_uchar {
+    match unsafe { assignment.as_ref() } {
+        ResolutionDetails(Ok(assignment)) => assignment.variation_key.as_ptr(),
+        _ => std::ptr::null(),
+    }
+}
+
+/// Get allocation key produced by evaluation. Returns `NULL` if evaluation did not produce any
+/// value.
+///
+/// # Ownership
+///
+/// The returned string borrows from `assignment`. It must not be used after `assignment` is
+/// freed.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_ffe_assignment_get_allocation_key(
+    assignment: Handle<ResolutionDetails>,
+) -> *const c_uchar {
+    match unsafe { assignment.as_ref() } {
+        ResolutionDetails(Ok(assignment)) => assignment.allocation_key.as_ptr(),
+        _ => std::ptr::null(),
+    }
+}
+
+// TODO: add accessors for various data inside ResolutionDetails.
 
 /// Frees an Assignment handle.
 ///
