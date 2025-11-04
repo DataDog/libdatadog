@@ -1,40 +1,15 @@
 # libdd-library-config
 
-Library configuration management for Datadog products.
+Configuration management library for Datadog products.
 
 ## Overview
 
-`libdd-library-config` provides utilities for managing library configuration from environment variables, files, and remote sources.
+`libdd-library-config` provides functionality for reading and managing configuration settings from multiple sources with defined precedence rules.
 
 ## Features
 
-- **Environment Variables**: Read configuration from env vars
-- **Configuration Files**: Parse JSON and YAML config files
-- **Validation**: Validate configuration values
-- **Defaults**: Provide sensible defaults
-- **Type Safety**: Strongly-typed configuration structs
-- **Remote Config**: Integration with remote configuration
-
-## Configuration Sources
-
-Priority order (highest to lowest):
-1. Environment variables
-2. Configuration file
-3. Remote configuration
-4. Defaults
-
-## Example Usage
-
-```rust
-use libdd_library_config;
-
-// Load configuration
-// let config = LibraryConfig::from_env()?;
-
-// Or from file
-// let config = LibraryConfig::from_file("config.json")?;
-
-// Access configuration
-// let service_name = config.service_name();
-```
-
+- **Multiple Configuration Sources**: Support for local and managed configuration files
+- **Rule-Based Matching**: Apply different configurations based on process characteristics
+- **Priority Handling**: Higher-priority sources override lower-priority ones
+- **Template Support**: Dynamic value substitution in configuration strings
+- **Type Safety**: Strongly-typed configuration structures
