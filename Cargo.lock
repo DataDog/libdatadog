@@ -1301,7 +1301,6 @@ dependencies = [
  "clap",
  "criterion",
  "datadog-ddsketch",
- "datadog-log",
  "datadog-trace-protobuf",
  "datadog-trace-stats",
  "datadog-trace-utils",
@@ -1314,6 +1313,7 @@ dependencies = [
  "httpmock",
  "hyper",
  "hyper-util",
+ "libdd-log",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1529,26 +1529,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-log"
-version = "23.0.0"
-dependencies = [
- "chrono",
- "tempfile",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "datadog-log-ffi"
-version = "23.0.0"
-dependencies = [
- "build_common",
- "datadog-log",
- "ddcommon-ffi",
-]
-
-[[package]]
 name = "datadog-profiling"
 version = "23.0.0"
 dependencies = [
@@ -1589,7 +1569,6 @@ dependencies = [
  "data-pipeline-ffi",
  "datadog-crashtracker-ffi",
  "datadog-library-config-ffi",
- "datadog-log-ffi",
  "datadog-profiling",
  "ddcommon",
  "ddcommon-ffi",
@@ -1600,6 +1579,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "libc",
+ "libdd-log-ffi",
  "serde_json",
  "symbolizer-ffi",
  "tokio-util",
@@ -3125,6 +3105,26 @@ dependencies = [
  "bolero",
  "libc",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "libdd-log"
+version = "1.0.0"
+dependencies = [
+ "chrono",
+ "tempfile",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "libdd-log-ffi"
+version = "23.0.0"
+dependencies = [
+ "build_common",
+ "ddcommon-ffi",
+ "libdd-log",
 ]
 
 [[package]]

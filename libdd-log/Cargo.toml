@@ -1,0 +1,21 @@
+[package]
+name = "libdd-log"
+version = "1.0.0"
+description = "A bridge from Rust to {language} logging"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-log"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-log"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+bench = false
+
+[dependencies]
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+tracing-subscriber = { version = "0.3.18", default-features = false, features = ["json", "env-filter"] }
+tracing-appender = "0.2.3"
+chrono = { version = "0.4.38", default-features = false, features = ["clock", "std"] }
+
+[dev-dependencies]
+tempfile = "3.10"
