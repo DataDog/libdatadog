@@ -41,7 +41,7 @@ members = [
   "data-pipeline-ffi",
   "ddsketch",
   "ddsketch-ffi",
-  "tinybytes",
+  "libdd-tinybytes",
   "dogstatsd-client",
   "datadog-log",
   "datadog-log-ffi",

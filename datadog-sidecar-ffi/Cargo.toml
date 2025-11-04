@@ -21,7 +21,7 @@ ddtelemetry-ffi = { path = "../ddtelemetry-ffi", default-features = false }
 datadog-remote-config = { path = "../datadog-remote-config" }
 datadog-live-debugger = { path = "../datadog-live-debugger" }
 dogstatsd-client = { path = "../dogstatsd-client" }
-tinybytes = { path = "../tinybytes", features = ["bytes_string"] }
+libdd-tinybytes = { path = "../libdd-tinybytes", features = ["bytes_string"] }
 paste = "1"
 libc = "0.2"
 tracing = { version = "0.1", default-features = false }

@@ -1306,6 +1306,7 @@ dependencies = [
  "httpmock",
  "hyper",
  "hyper-util",
+ "libdd-tinybytes",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -1313,7 +1314,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
- "tinybytes",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1329,8 +1329,8 @@ dependencies = [
  "datadog-trace-utils",
  "ddcommon-ffi",
  "httpmock",
+ "libdd-tinybytes",
  "rmp-serde",
- "tinybytes",
  "tracing",
 ]
 
@@ -1439,6 +1439,7 @@ dependencies = [
  "glibc_version",
  "io-lifetimes",
  "libc",
+ "libdd-tinybytes",
  "memfd",
  "nix",
  "page_size",
@@ -1449,7 +1450,6 @@ dependencies = [
  "spawn_worker",
  "tarpc",
  "tempfile",
- "tinybytes",
  "tokio",
  "tokio-serde",
  "tokio-util",
@@ -1685,6 +1685,7 @@ dependencies = [
  "httpmock",
  "hyper",
  "libc",
+ "libdd-tinybytes",
  "manual_future",
  "memory-stats",
  "microseh",
@@ -1700,7 +1701,6 @@ dependencies = [
  "simd-json",
  "spawn_worker",
  "tempfile",
- "tinybytes",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1729,10 +1729,10 @@ dependencies = [
  "dogstatsd-client",
  "http",
  "libc",
+ "libdd-tinybytes",
  "paste",
  "rmp-serde",
  "tempfile",
- "tinybytes",
  "tracing",
 ]
 
@@ -1817,6 +1817,7 @@ dependencies = [
  "http-body-util",
  "httpmock",
  "hyper",
+ "libdd-tinybytes",
  "prost",
  "rand 0.8.5",
  "rmp",
@@ -1825,7 +1826,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tinybytes",
  "tokio",
  "tracing",
  "urlencoding",
@@ -3118,6 +3118,20 @@ name = "libc"
 version = "0.2.176"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "58f929b4d672ea937a23a1ab494143d968337a5f47e56d0815df1e0890ddf174"
+
+[[package]]
+name = "libdd-tinybytes"
+version = "1.0.0"
+dependencies = [
+ "libdd-tinybytes",
+ "once_cell",
+ "pretty_assertions",
+ "proptest",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "test-case",
+]
 
 [[package]]
 name = "libloading"
@@ -5154,20 +5168,6 @@ checksum = "3526739392ec93fd8b359c8e98514cb3e8e021beb4e5f597b00a0221f8ed8a49"
 dependencies = [
  "num-conv",
  "time-core",
-]
-
-[[package]]
-name = "tinybytes"
-version = "23.0.0"
-dependencies = [
- "once_cell",
- "pretty_assertions",
- "proptest",
- "rmp-serde",
- "serde",
- "serde_json",
- "test-case",
- "tinybytes",
 ]
 
 [[package]]

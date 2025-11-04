@@ -61,7 +61,7 @@ pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
     // flushes
     let data = rmp_serde::to_vec(&generate_trace_chunks(20, 2_075))
         .expect("Failed to serialize test spans.");
-    let data_as_bytes = tinybytes::Bytes::copy_from_slice(&data);
+    let data_as_bytes = libdd_tinybytes::Bytes::copy_from_slice(&data);
 
     c.bench_function(
         "benching deserializing traces from msgpack to their internal representation ",
