@@ -10,40 +10,42 @@ use super::super::Sample;
 use super::super::StackTraceId;
 use crate::collections::identifiable::Id;
 use crate::internal::Timestamp;
+use crate::profiles::{DefaultObservationCodec as DefaultCodec, ObservationCodec};
 use byteorder::{NativeEndian, ReadBytesExt};
-use lz4_flex::frame::FrameDecoder;
-use lz4_flex::frame::FrameEncoder;
-use std::io::Cursor;
-use std::io::Write;
+use std::io::{self, Write};
 
-#[derive(Debug)]
-pub struct TimestampedObservations {
-    compressed_timestamped_data: FrameEncoder<Vec<u8>>,
+pub type TimestampedObservations = TimestampedObservationsImpl<DefaultCodec>;
+
+pub struct TimestampedObservationsImpl<C: ObservationCodec> {
+    compressed_timestamped_data: C::Encoder,
     sample_types_len: usize,
 }
 
-impl TimestampedObservations {
+pub struct TimestampedObservationsIterImpl<C: ObservationCodec> {
+    decoder: C::Decoder,
+    sample_types_len: usize,
+}
+
+impl<C: ObservationCodec> TimestampedObservationsImpl<C> {
     // As documented in the internal Datadog doc "Ruby timeline memory fragmentation impact
     // investigation", allowing the timeline storage vec to slowly expand creates A LOT of
     // memory fragmentation for apps that employ multiple threads.
     // To avoid this, we've picked a default buffer size of 1MB that very rarely needs to grow, and
     // when it does, is expected to grow in larger steps.
-    const DEFAULT_BUFFER_SIZE: usize = 1_048_576;
+    const DEFAULT_BUFFER_SIZE: usize = 1024 * 1024;
 
-    pub fn new(sample_types_len: usize) -> Self {
-        Self {
-            compressed_timestamped_data: FrameEncoder::new(Vec::with_capacity(
+    // Protobufs can't exceed 2 GiB, if our observations grow this large, then
+    // the profile as a whole would defintely exceed this.
+    const MAX_CAPACITY: usize = i32::MAX as usize;
+
+    pub fn try_new(sample_types_len: usize) -> io::Result<Self> {
+        Ok(Self {
+            compressed_timestamped_data: C::new_encoder(
                 Self::DEFAULT_BUFFER_SIZE,
-            )),
+                Self::MAX_CAPACITY,
+            )?,
             sample_types_len,
-        }
-    }
-
-    pub fn with_no_backing_store() -> Self {
-        Self {
-            compressed_timestamped_data: FrameEncoder::new(vec![]),
-            sample_types_len: 0,
-        }
+        })
     }
 
     pub fn add(&mut self, sample: Sample, ts: Timestamp, values: &[i64]) -> anyhow::Result<()> {
@@ -71,23 +73,15 @@ impl TimestampedObservations {
         Ok(())
     }
 
-    pub fn into_iter(self) -> TimestampedObservationsIter {
-        #[allow(clippy::unwrap_used)]
-        TimestampedObservationsIter {
-            decoder: FrameDecoder::new(Cursor::new(
-                self.compressed_timestamped_data.finish().unwrap(),
-            )),
+    pub fn try_into_iter(self) -> io::Result<TimestampedObservationsIterImpl<C>> {
+        Ok(TimestampedObservationsIterImpl {
+            decoder: C::encoder_into_decoder(self.compressed_timestamped_data)?,
             sample_types_len: self.sample_types_len,
-        }
+        })
     }
 }
 
-pub struct TimestampedObservationsIter {
-    decoder: FrameDecoder<Cursor<Vec<u8>>>,
-    sample_types_len: usize,
-}
-
-impl Iterator for TimestampedObservationsIter {
+impl<C: ObservationCodec> Iterator for TimestampedObservationsIterImpl<C> {
     type Item = (Sample, Timestamp, Vec<i64>);
 
     fn next(&mut self) -> Option<Self::Item> {

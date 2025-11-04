@@ -166,6 +166,14 @@ impl AgentInfoFetcher {
 
         (fetcher, response_observer)
     }
+
+    /// Drain message from the trigger channel.
+    pub fn drain(&mut self) {
+        // We read only once as the channel has a capacity of 1
+        if let Some(rx) = &mut self.trigger_rx {
+            let _ = rx.try_recv();
+        }
+    }
 }
 
 impl Worker for AgentInfoFetcher {
@@ -271,6 +279,11 @@ impl ResponseObserver {
                 }
             }
         }
+    }
+
+    /// Manually send a message to the trigger channel.
+    pub fn manual_trigger(&self) {
+        let _ = self.trigger_tx.try_send(());
     }
 }
 
