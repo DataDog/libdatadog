@@ -11,7 +11,8 @@ use ddcommon_ffi::{wrap_with_ffi_result, Handle, Result, ToInner};
 
 #[repr(C)]
 pub struct ResolutionDetails {
-    pub value: Option<AssignmentValue>,
+    pub value_type: *const c_char,    // "STRING", "INTEGER", "FLOAT", "BOOLEAN", "JSON", or NULL
+    pub value_string: *const c_char,  // String representation of the value, or NULL
     pub error_code: Option<ErrorCode>,
     pub error_message: *const c_char, // C-compatible string
     pub reason: Option<Reason>,
@@ -44,7 +45,8 @@ pub enum Reason {
 impl ResolutionDetails {
     fn empty(reason: Reason) -> Self {
         Self {
-            value: None,
+            value_type: std::ptr::null(),
+            value_string: std::ptr::null(),
             error_code: None,
             error_message: std::ptr::null(),
             reason: Some(reason),
@@ -53,6 +55,23 @@ impl ResolutionDetails {
             do_log: false,
         }
     }
+}
+
+fn convert_assignment_value(value: &AssignmentValue) -> (*const c_char, *const c_char) {
+    use std::ffi::CString;
+    use datadog_ffe::rules_based::AssignmentValue;
+    
+    let (type_name, value_string) = match value {
+        AssignmentValue::String(s) => ("STRING", s.as_str().to_owned()),
+        AssignmentValue::Integer(i) => ("INTEGER", i.to_string()),
+        AssignmentValue::Float(f) => ("FLOAT", f.to_string()),
+        AssignmentValue::Boolean(b) => ("BOOLEAN", b.to_string()),
+        AssignmentValue::Json(j) => ("JSON", j.to_string()),
+    };
+    
+    let type_str = CString::new(type_name).unwrap().into_raw();
+    let value_str = CString::new(value_string).unwrap().into_raw();
+    (type_str, value_str)
 }
 
 impl From<AssignmentReason> for Reason {
@@ -88,16 +107,23 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment(
         let assignment_result = get_assignment(Some(config), flag_key, context, None, now());
 
         let resolution_details = match assignment_result {
-            Ok(Some(assignment)) => ResolutionDetails {
-                value: Some(assignment.value),
-                error_code: None,
-                error_message: std::ptr::null(),
-                reason: Some(assignment.reason.into()),
-                variant: CString::new(assignment.variation_key.as_str()).unwrap().into_raw(),
-                allocation_key: CString::new(assignment.allocation_key.as_str()).unwrap().into_raw(),
-                do_log: assignment.do_log,
+            Ok(Some(assignment)) => {
+                let (value_type, value_string) = convert_assignment_value(&assignment.value);
+                ResolutionDetails {
+                    value_type,
+                    value_string,
+                    error_code: None,
+                    error_message: std::ptr::null(),
+                    reason: Some(assignment.reason.into()),
+                    variant: CString::new(assignment.variation_key.as_str()).unwrap().into_raw(),
+                    allocation_key: CString::new(assignment.allocation_key.as_str()).unwrap().into_raw(),
+                    do_log: assignment.do_log,
+                }
             },
-            Ok(None) => ResolutionDetails::empty(Reason::Default),
+            Ok(None) => {
+                // Return empty handle to signal no assignment found
+                return Ok(Handle::empty());
+            },
             Err(_evaluation_error) => ResolutionDetails::empty(Reason::Error),
         };
       
