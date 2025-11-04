@@ -11,7 +11,7 @@
 #![allow(clippy::todo)]
 #![allow(clippy::unimplemented)]
 
-use crate::fetch::ConfigInvariants;
+use crate::fetch::{ConfigInvariants, ConfigOptions, ConfigProductCapabilities};
 use crate::targets::{TargetData, TargetsCustom, TargetsData, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use base64::Engine;
@@ -209,11 +209,13 @@ impl RemoteConfigServer {
         server
     }
 
-    pub fn dummy_invariants(&self) -> ConfigInvariants {
-        ConfigInvariants {
-            language: "php".to_string(),
-            tracer_version: "1.2.3".to_string(),
-            endpoint: self.endpoint.clone(),
+    pub fn dummy_options(&self) -> ConfigOptions {
+        ConfigOptions {
+            invariants: ConfigInvariants {
+                language: "php".to_string(),
+                tracer_version: "1.2.3".to_string(),
+                endpoint: self.endpoint.clone(),
+            },
             #[cfg(not(feature = "live-debugger"))]
             products: vec![RemoteConfigProduct::ApmTracing],
             #[cfg(feature = "live-debugger")]
@@ -223,5 +225,12 @@ impl RemoteConfigServer {
             ],
             capabilities: vec![RemoteConfigCapabilities::ApmTracingCustomTags],
         }
+    }
+
+    pub fn dummy_product_capabilities(&self) -> ConfigProductCapabilities {
+        ConfigProductCapabilities::new(
+            self.dummy_options().products,
+            self.dummy_options().capabilities,
+        )
     }
 }

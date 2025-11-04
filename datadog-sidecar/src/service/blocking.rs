@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{
-    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
-    SidecarInterfaceRequest, SidecarInterfaceResponse,
+    DynamicInstrumentationConfigState, InstanceId, QueueId, SerializedTracerHeaderTags,
+    SessionConfig, SidecarAction, SidecarInterfaceRequest, SidecarInterfaceResponse,
 };
 use datadog_ipc::platform::{Channel, FileBackedHandle, ShmHandle};
 use datadog_ipc::transport::blocking::BlockingTransport;
@@ -430,10 +430,13 @@ pub fn acquire_exception_hash_rate_limiter(
 /// * `service_name` - The name of the service.
 /// * `env_name` - The name of the environment.
 /// * `app_version` - The metadata of the runtime.
+/// * `global_tags` - Global tags.
+/// * `dynamic_instrumentation_state` - Whether dynamic instrumentation is enabled.
 ///
 /// # Returns
 ///
 /// An `io::Result<()>` indicating the result of the operation.
+#[allow(clippy::too_many_arguments)]
 pub fn set_universal_service_tags(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
@@ -442,6 +445,7 @@ pub fn set_universal_service_tags(
     env_name: String,
     app_version: String,
     global_tags: Vec<Tag>,
+    dynamic_instrumentation_state: DynamicInstrumentationConfigState,
 ) -> io::Result<()> {
     transport.send(SidecarInterfaceRequest::SetUniversalServiceTags {
         instance_id: instance_id.clone(),
@@ -450,6 +454,34 @@ pub fn set_universal_service_tags(
         env_name,
         app_version,
         global_tags,
+        dynamic_instrumentation_state,
+    })
+}
+
+/// Sets request state which do not directly affect the RC connection.
+/// The queue id is shared with telemetry and the associated data will be freed upon a
+/// `Lifecycle::Stop` event.
+///
+/// # Arguments
+///
+/// * `transport` - The transport used for communication.
+/// * `instance_id` - The ID of the instance.
+/// * `queue_id` - The unique identifier for the action in the queue.
+/// * `dynamic_instrumentation_state` - Whether dynamic instrumentation is enabled.
+///
+/// # Returns
+///
+/// An `io::Result<()>` indicating the result of the operation.
+pub fn set_request_config(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+    dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+) -> io::Result<()> {
+    transport.send(SidecarInterfaceRequest::SetRequestConfig {
+        instance_id: instance_id.clone(),
+        queue_id: *queue_id,
+        dynamic_instrumentation_state,
     })
 }
 

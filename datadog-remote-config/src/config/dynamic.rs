@@ -61,6 +61,9 @@ pub struct DynamicConfig {
     pub(crate) tracing_tags: Option<Vec<String>>,
     pub(crate) tracing_enabled: Option<bool>,
     pub(crate) tracing_sampling_rules: Option<Vec<TracingSamplingRule>>,
+    pub(crate) dynamic_instrumentation_enabled: Option<bool>,
+    pub(crate) exception_replay_enabled: Option<bool>,
+    pub(crate) code_origin_enabled: Option<bool>,
 }
 
 impl From<DynamicConfig> for Vec<Configs> {
@@ -86,6 +89,15 @@ impl From<DynamicConfig> for Vec<Configs> {
         if let Some(sampling_rules) = value.tracing_sampling_rules {
             vec.push(Configs::TracingSamplingRules(sampling_rules));
         }
+        if let Some(enabled) = value.dynamic_instrumentation_enabled {
+            vec.push(Configs::DynamicInstrumentationEnabled(enabled));
+        }
+        if let Some(enabled) = value.exception_replay_enabled {
+            vec.push(Configs::ExceptionReplayEnabled(enabled));
+        }
+        if let Some(enabled) = value.code_origin_enabled {
+            vec.push(Configs::CodeOriginEnabled(enabled));
+        }
         vec
     }
 }
@@ -97,6 +109,9 @@ pub enum Configs {
     TracingTags(Vec<String>), // "key:val" format
     TracingEnabled(bool),
     TracingSamplingRules(Vec<TracingSamplingRule>),
+    DynamicInstrumentationEnabled(bool),
+    ExceptionReplayEnabled(bool),
+    CodeOriginEnabled(bool),
 }
 
 pub fn parse_json(data: &[u8]) -> serde_json::error::Result<DynamicConfigFile> {

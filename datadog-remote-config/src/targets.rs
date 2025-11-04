@@ -9,6 +9,7 @@ use time::OffsetDateTime;
 
 #[derive(Deserialize)]
 #[cfg_attr(any(test, feature = "test"), derive(serde::Serialize))]
+#[allow(dead_code)]
 pub struct TargetsList<'a> {
     #[serde(borrow)]
     pub signatures: Vec<TargetsSignature<'a>>,
@@ -17,6 +18,7 @@ pub struct TargetsList<'a> {
 
 #[derive(Deserialize)]
 #[cfg_attr(any(test, feature = "test"), derive(serde::Serialize))]
+#[allow(dead_code)]
 pub struct TargetsSignature<'a> {
     pub keyid: &'a str,
     pub sig: &'a str,
@@ -24,6 +26,7 @@ pub struct TargetsSignature<'a> {
 
 #[derive(Deserialize)]
 #[cfg_attr(any(test, feature = "test"), derive(serde::Serialize))]
+#[allow(dead_code)]
 pub struct TargetsData<'a> {
     pub _type: &'a str,
     pub custom: TargetsCustom<'a>,
@@ -36,6 +39,7 @@ pub struct TargetsData<'a> {
 
 #[derive(Deserialize)]
 #[cfg_attr(any(test, feature = "test"), derive(serde::Serialize))]
+#[allow(dead_code)]
 pub struct TargetsCustom<'a> {
     pub agent_refresh_interval: Option<u64>,
     pub opaque_backend_state: &'a str,
@@ -43,6 +47,7 @@ pub struct TargetsCustom<'a> {
 
 #[derive(Deserialize)]
 #[cfg_attr(any(test, feature = "test"), derive(serde::Serialize))]
+#[allow(dead_code)]
 pub struct TargetData<'a> {
     #[serde(borrow)]
     pub custom: HashMap<&'a str, &'a RawValue>,

@@ -3,7 +3,7 @@
 
 use crate::fetch::{
     ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState,
-    ConfigFetcherStateStats, ConfigInvariants, FileStorage,
+    ConfigFetcherStateStats, ConfigInvariants, ConfigProductCapabilities, FileStorage,
 };
 use crate::{RemoteConfigPath, Target};
 use libdd_common::MutexExt;
@@ -30,9 +30,11 @@ pub struct SharedFetcher {
     pub target: Arc<Target>, // could be theoretically also Mutex<>ed if needed
     /// A unique runtime id. It must not be used by any other remote config client at the same
     /// time. Is allowed to be changed at any time.
-    pub runtime_id: Arc<Mutex<String>>,
+    pub runtime_id: Mutex<Arc<String>>,
     /// Each fetcher must have an unique id. Defaults to a random UUID.
     pub client_id: String,
+    /// Products&Capabilities used to query the remote config server.
+    pub product_capabilities: Mutex<Arc<ConfigProductCapabilities>>,
     cancellation: CancellationToken,
     /// Refetch interval in nanoseconds.
     pub interval: AtomicU64,
@@ -246,11 +248,16 @@ where
 }
 
 impl SharedFetcher {
-    pub fn new(target: Arc<Target>, runtime_id: String) -> Self {
+    pub fn new(
+        target: Arc<Target>,
+        runtime_id: String,
+        product_capabilities: ConfigProductCapabilities,
+    ) -> Self {
         SharedFetcher {
             target,
-            runtime_id: Arc::new(Mutex::new(runtime_id)),
+            runtime_id: Mutex::new(Arc::new(runtime_id)),
             client_id: uuid::Uuid::new_v4().to_string(),
+            product_capabilities: Mutex::new(Arc::new(product_capabilities)),
             cancellation: CancellationToken::new(),
             interval: AtomicU64::new(5_000_000_000),
         }
@@ -278,10 +285,12 @@ impl SharedFetcher {
             let first_run_id = fetcher.file_storage.run_id.inc_runners();
 
             let runtime_id = self.runtime_id.lock_or_panic().clone();
+            let product_capabilities = self.product_capabilities.lock_or_panic().clone();
             let fetched = fetcher
                 .fetch_once(
                     runtime_id.as_str(),
                     self.target.clone(),
+                    &product_capabilities,
                     self.client_id.as_str(),
                     &mut opaque_state,
                 )
@@ -425,7 +434,7 @@ pub mod tests {
         let storage = RcFileStorage::default();
         let rc_storage = RefcountingStorage::new(
             storage.clone(),
-            ConfigFetcherState::new(server.dummy_invariants()),
+            ConfigFetcherState::new(server.dummy_options().invariants),
         );
 
         server.files.lock().unwrap().insert(
@@ -436,6 +445,7 @@ pub mod tests {
         let fetcher = SharedFetcher::new(
             DUMMY_TARGET.clone(),
             "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
+            server.dummy_product_capabilities(),
         );
         let iteration = AtomicU32::new(0);
         let inner_fetcher = unsafe { &*(&fetcher as *const SharedFetcher) };
@@ -486,7 +496,7 @@ pub mod tests {
         let storage = RcFileStorage::default();
         let rc_storage = RefcountingStorage::new(
             storage.clone(),
-            ConfigFetcherState::new(server.dummy_invariants()),
+            ConfigFetcherState::new(server.dummy_options().invariants),
         );
 
         server.files.lock().unwrap().insert(
@@ -560,10 +570,12 @@ pub mod tests {
         let fetcher_1 = SharedFetcher::new(
             DUMMY_TARGET.clone(),
             "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
+            server.dummy_product_capabilities(),
         );
         let fetcher_2 = SharedFetcher::new(
             OTHER_TARGET.clone(),
             "ae588386-8464-43ba-bd3a-3e2d36b2c22c".to_string(),
+            server.dummy_product_capabilities(),
         );
         let iteration = Arc::new(AtomicU32::new(0));
         let iteration_1 = iteration.clone();

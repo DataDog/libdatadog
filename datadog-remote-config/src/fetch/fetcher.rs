@@ -57,8 +57,6 @@ pub struct ConfigInvariants {
     pub language: String,
     pub tracer_version: String,
     pub endpoint: Endpoint,
-    pub products: Vec<RemoteConfigProduct>,
-    pub capabilities: Vec<RemoteConfigCapabilities>,
 }
 
 struct StoredTargetFile<S> {
@@ -75,11 +73,47 @@ pub enum ConfigApplyState {
     Error(String),
 }
 
+#[derive(Debug, Clone)]
+pub struct ConfigProductCapabilities {
+    products: Vec<RemoteConfigProduct>,
+    capabilities: Vec<RemoteConfigCapabilities>,
+    encoded_capabilities: Vec<u8>,
+}
+
+impl ConfigProductCapabilities {
+    pub fn new(
+        products: Vec<RemoteConfigProduct>,
+        capabilities: Vec<RemoteConfigCapabilities>,
+    ) -> Self {
+        ConfigProductCapabilities {
+            encoded_capabilities: Self::encode_capatibilites(&capabilities),
+            products,
+            capabilities,
+        }
+    }
+
+    fn encode_capatibilites(capabilities: &[RemoteConfigCapabilities]) -> Vec<u8> {
+        let capability_len = capabilities
+            .iter()
+            .map(|c| *c as usize / 8 + 1)
+            .max()
+            .unwrap_or(0);
+        let mut encoded_capabilities = vec![0; capability_len];
+        for capability in capabilities.iter().map(|c| *c as usize) {
+            encoded_capabilities[capability_len - (capability >> 3) - 1] |= 1 << (capability & 7);
+        }
+        encoded_capabilities
+    }
+
+    pub fn into_parts(self) -> (Vec<RemoteConfigProduct>, Vec<RemoteConfigCapabilities>) {
+        (self.products, self.capabilities)
+    }
+}
+
 pub struct ConfigFetcherState<S> {
     target_files_by_path: Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
-    encoded_capabilities: Vec<u8>,
     pub expire_unused_files: bool,
 }
 
@@ -126,21 +160,10 @@ impl<S> ConfigFetcherFilesLock<'_, S> {
 
 impl<S> ConfigFetcherState<S> {
     pub fn new(invariants: ConfigInvariants) -> Self {
-        let capability_len = invariants
-            .capabilities
-            .iter()
-            .map(|c| *c as usize / 8 + 1)
-            .max()
-            .unwrap_or(0);
-        let mut encoded_capabilities = vec![0; capability_len];
-        for capability in invariants.capabilities.iter().map(|c| *c as usize) {
-            encoded_capabilities[capability_len - (capability >> 3) - 1] |= 1 << (capability & 7);
-        }
         ConfigFetcherState {
             target_files_by_path: Default::default(),
             endpoint: get_product_endpoint(PROD_INTAKE_SUBDOMAIN, &invariants.endpoint),
             invariants,
-            encoded_capabilities,
             expire_unused_files: true,
         }
     }
@@ -240,6 +263,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
         &mut self,
         runtime_id: &str,
         target: Arc<Target>,
+        product_capabilities: &ConfigProductCapabilities,
         client_id: &str,
         opaque_state: &mut ConfigClientState,
     ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
@@ -286,9 +310,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
                     backend_client_state: std::mem::take(&mut opaque_state.opaque_backend_state),
                 }),
                 id: client_id.into(),
-                products: self
-                    .state
-                    .invariants
+                products: product_capabilities
                     .products
                     .iter()
                     .map(|p| p.to_string())
@@ -307,7 +329,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 is_agent: false,
                 client_agent: None,
                 last_seen: 0,
-                capabilities: self.state.encoded_capabilities.clone(),
+                capabilities: product_capabilities.encoded_capabilities.clone(),
             }),
             cached_target_files,
         };
@@ -656,7 +678,7 @@ pub mod tests {
         let storage = Arc::new(Storage::default());
         let mut fetcher = ConfigFetcher::new(
             storage.clone(),
-            Arc::new(ConfigFetcherState::new(server.dummy_invariants())),
+            Arc::new(ConfigFetcherState::new(server.dummy_options().invariants)),
         );
         let mut opaque_state = ConfigClientState::default();
 
@@ -668,6 +690,7 @@ pub mod tests {
             .fetch_once(
                 DUMMY_RUNTIME_ID,
                 DUMMY_TARGET.clone(),
+                &server.dummy_product_capabilities(),
                 "foo",
                 &mut opaque_state,
             )
@@ -694,12 +717,14 @@ pub mod tests {
             language: "php".to_string(),
             tracer_version: "1.2.3".to_string(),
             endpoint: server.endpoint.clone(),
-            products: vec![
+        };
+        let product_capabilities = ConfigProductCapabilities::new(
+            vec![
                 RemoteConfigProduct::ApmTracing,
                 RemoteConfigProduct::AgentConfig,
             ],
-            capabilities: vec![RemoteConfigCapabilities::ApmTracingCustomTags],
-        };
+            vec![RemoteConfigCapabilities::ApmTracingCustomTags],
+        );
 
         let mut fetcher = ConfigFetcher::new(
             storage.clone(),
@@ -713,6 +738,7 @@ pub mod tests {
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
                     DUMMY_TARGET.clone(),
+                    &product_capabilities,
                     "foo",
                     &mut opaque_state,
                 )
@@ -766,6 +792,7 @@ pub mod tests {
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
                     DUMMY_TARGET.clone(),
+                    &product_capabilities,
                     "foo",
                     &mut opaque_state,
                 )
@@ -809,6 +836,7 @@ pub mod tests {
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
                     DUMMY_TARGET.clone(),
+                    &product_capabilities,
                     "foo",
                     &mut opaque_state,
                 )
@@ -844,6 +872,7 @@ pub mod tests {
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
                     DUMMY_TARGET.clone(),
+                    &product_capabilities,
                     "foo",
                     &mut opaque_state,
                 )
@@ -859,6 +888,7 @@ pub mod tests {
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
                     DUMMY_TARGET.clone(),
+                    &product_capabilities,
                     "foo",
                     &mut opaque_state,
                 )
@@ -873,18 +903,12 @@ pub mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_capability_encoding() {
-        let state = ConfigFetcherState::<()>::new(ConfigInvariants {
-            language: "".to_string(),
-            tracer_version: "".to_string(),
-            endpoint: Default::default(),
-            products: vec![],
-            capabilities: unsafe {
-                vec![
-                    transmute::<u32, RemoteConfigCapabilities>(1u32),
-                    transmute::<u32, RemoteConfigCapabilities>(24u32),
-                    transmute::<u32, RemoteConfigCapabilities>(31u32),
-                ]
-            },
+        let state = ConfigProductCapabilities::new(vec![], unsafe {
+            vec![
+                transmute::<u32, RemoteConfigCapabilities>(1u32),
+                transmute::<u32, RemoteConfigCapabilities>(24u32),
+                transmute::<u32, RemoteConfigCapabilities>(31u32),
+            ]
         });
         assert_eq!(state.encoded_capabilities.len(), 4);
         assert_eq!(
