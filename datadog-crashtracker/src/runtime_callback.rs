@@ -15,7 +15,7 @@ use std::ffi::c_char;
 use std::{
     ptr,
     str::from_utf8,
-    sync::atomic::{AtomicPtr, Ordering},
+    sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
 use thiserror::Error;
 
@@ -243,45 +243,38 @@ pub unsafe fn clear_runtime_callback() {
 pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
     writer: &mut W,
 ) -> Result<(), std::io::Error> {
+    static CURRENT_WRITER_DATA_ADDR: AtomicUsize = AtomicUsize::new(0);
+    static CURRENT_WRITER_VTABLE_ADDR: AtomicUsize = AtomicUsize::new(0);
+
     let callback_ptr = RUNTIME_CALLBACK.load(Ordering::SeqCst);
     if callback_ptr.is_null() {
         return Err(std::io::Error::other("No runtime callback registered"));
     }
-
-    // Safety: callback_ptr was checked to be non-null above, and was created by
-    // Box::into_raw() in registration functions, so it's a valid pointer
-    // to a properly aligned, initialized CallbackData.
     let callback_data = &*callback_ptr;
 
-    use portable_atomic::{AtomicU128, Ordering};
-    // TODO: Replace portable_atomic::AtomicU128 with std::sync::atomic::AtomicU128
-    // when it stabilizes (see https://docs.rs/aarch64-std/latest/aarch64_std/sync/atomic/struct.AtomicU128.html)
-
-    // Thread-safe storage for the current callback context
-    // Store the fat pointer as an atomic u128 to ensure atomic access
-    // Fat pointers on 64-bit platforms are exactly 128 bits (data ptr + vtable ptr)
-    static CURRENT_WRITER_FAT_PTR: AtomicU128 = AtomicU128::new(0);
-
     let writer_trait_obj: *mut dyn std::io::Write = writer;
-    let fat_ptr_bits: u128 = unsafe { std::mem::transmute(writer_trait_obj) };
+    let (data_ptr, vtable_ptr): (*mut (), *const ()) =
+        std::mem::transmute::<*mut dyn std::io::Write, (*mut (), *const ())>(writer_trait_obj);
 
-    CURRENT_WRITER_FAT_PTR.store(fat_ptr_bits, Ordering::SeqCst);
+    CURRENT_WRITER_DATA_ADDR.store(data_ptr as usize, Ordering::SeqCst);
+    CURRENT_WRITER_VTABLE_ADDR.store(vtable_ptr as usize, Ordering::SeqCst);
 
-    // Define the emit functions that read from the atomic storage
     unsafe extern "C" fn emit_frame_collector(frame: &RuntimeStackFrame) {
-        let fat_ptr_bits = CURRENT_WRITER_FAT_PTR.load(Ordering::SeqCst);
-        if fat_ptr_bits == 0 {
+        let data_addr = CURRENT_WRITER_DATA_ADDR.load(Ordering::SeqCst);
+        if data_addr == 0 {
             return;
         }
+        let vtable_addr = CURRENT_WRITER_VTABLE_ADDR.load(Ordering::SeqCst);
 
-        // Reconstruct fat pointer from the atomic u128
-        // Note: clippy suggests using `as` cast, but that doesn't work for fat pointers
-        // which require both data and vtable pointers to be reconstructed from the u128
-        #[allow(clippy::useless_transmute)]
-        let writer_trait_obj: *mut dyn std::io::Write =
-            unsafe { std::mem::transmute(fat_ptr_bits) };
+        // Rebuild the raw parts from exposed addresses
+        let data = ptr::without_provenance_mut::<()>(data_addr);
+        let vtable = ptr::without_provenance::<()>(vtable_addr);
+
+        // Recreate the fat pointer
+        let writer_trait_obj =
+            std::mem::transmute::<(*mut (), *const ()), *mut dyn std::io::Write>((data, vtable));
+
         let writer = &mut *writer_trait_obj;
-
         let _ = emit_frame_as_json(writer, frame);
         let _ = writer.flush();
     }
@@ -291,41 +284,35 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
             return;
         }
 
-        let fat_ptr_bits = CURRENT_WRITER_FAT_PTR.load(Ordering::SeqCst);
-        if fat_ptr_bits == 0 {
+        let data_addr = CURRENT_WRITER_DATA_ADDR.load(Ordering::SeqCst);
+        if data_addr == 0 {
             return;
         }
+        let vtable_addr = CURRENT_WRITER_VTABLE_ADDR.load(Ordering::SeqCst);
 
-        // Reconstruct fat pointer from the atomic u128
-        // Note: clippy suggests using `as` cast, but that doesn't work for fat pointers
-        // which require both data and vtable pointers to be reconstructed from the u128
-        #[allow(clippy::useless_transmute)]
-        let writer_trait_obj: *mut dyn std::io::Write =
-            unsafe { std::mem::transmute(fat_ptr_bits) };
+        let data = ptr::without_provenance_mut::<()>(data_addr);
+        let vtable = ptr::without_provenance::<()>(vtable_addr);
+
+        let writer_trait_obj =
+            std::mem::transmute::<(*mut (), *const ()), *mut dyn std::io::Write>((data, vtable));
         let writer = &mut *writer_trait_obj;
 
-        // Safety: stacktrace_string is guaranteed by the runtime callback contract to be
-        // a valid, null-terminated C string that remains valid for the duration of this call.
+        // SAFETY: the runtime guarantees a valid, null-terminated C string.
         let cstr = std::ffi::CStr::from_ptr(stacktrace_string);
         let bytes = cstr.to_bytes();
-
         let _ = writer.write_all(bytes);
         let _ = writeln!(writer);
         let _ = writer.flush();
     }
 
-    // Invoke the user callback with the simplified emit functions
-    // Safety: callback functions were verified to be non-null during registration, and the
-    // emit functions are valid for the duration of this call.
     match callback_data {
-        CallbackData::Frame(callback_fn) => {
-            callback_fn(emit_frame_collector);
-        }
-        CallbackData::StacktraceString(callback_fn) => {
-            callback_fn(emit_stacktrace_string_collector);
-        }
+        CallbackData::Frame(cb) => cb(emit_frame_collector),
+        CallbackData::StacktraceString(cb) => cb(emit_stacktrace_string_collector),
     }
-    CURRENT_WRITER_FAT_PTR.store(0, Ordering::SeqCst);
+
+    // Clean up
+    CURRENT_WRITER_DATA_ADDR.store(0, Ordering::SeqCst);
+    CURRENT_WRITER_VTABLE_ADDR.store(0, Ordering::SeqCst);
 
     Ok(())
 }
