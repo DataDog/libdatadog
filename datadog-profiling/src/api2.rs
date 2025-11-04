@@ -150,7 +150,7 @@ impl<'a> Label<'a> {
 /// Represents a pointer to a string's header. Its definition is intentionally obscured.
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct StringHeader(());
+pub struct StringHeader(u8);
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug)]
