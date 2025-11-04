@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{c_char, CStr};
 
 use anyhow::ensure;
 use function_name::named;
@@ -45,17 +45,21 @@ pub enum Reason {
     Error,
 }
 
-impl ResolutionDetails {
-    fn empty(reason: Reason) -> Self {
-        Self {
-            value_type: std::ptr::null(),
-            value_string: std::ptr::null(),
-            error_code: None,
-            error_message: std::ptr::null(),
-            reason: Some(reason),
-            variant: std::ptr::null(),
-            allocation_key: std::ptr::null(),
-            do_log: false,
+
+/// Helper function to safely create a CString, replacing null bytes with a placeholder
+fn safe_cstring(input: &str) -> *const c_char {
+    use std::ffi::CString;
+    
+    // Replace null bytes with a placeholder to avoid CString::new() panics
+    let sanitized = input.replace('\0', "\\0");
+    
+    match CString::new(sanitized) {
+        Ok(cstring) => cstring.into_raw(),
+        Err(_) => {
+            // Fallback to a static error message if somehow still fails
+            // This should never happen since we sanitized the input, but safety first
+            static FALLBACK: &[u8] = b"invalid_string\0";
+            FALLBACK.as_ptr() as *const c_char
         }
     }
 }
@@ -73,7 +77,6 @@ fn convert_evaluation_error(error: &EvaluationError) -> ErrorCode {
 
 fn convert_assignment_value(value: &AssignmentValue) -> (*const c_char, *const c_char) {
     use datadog_ffe::rules_based::AssignmentValue;
-    use std::ffi::CString;
 
     let (type_name, value_string) = match value {
         AssignmentValue::String(s) => ("STRING", s.as_str().to_owned()),
@@ -83,8 +86,8 @@ fn convert_assignment_value(value: &AssignmentValue) -> (*const c_char, *const c
         AssignmentValue::Json(j) => ("JSON", j.to_string()),
     };
 
-    let type_str = CString::new(type_name).unwrap().into_raw();
-    let value_str = CString::new(value_string).unwrap().into_raw();
+    let type_str = safe_cstring(type_name);
+    let value_str = safe_cstring(&value_string);
     (type_str, value_str)
 }
 
@@ -129,12 +132,8 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment(
                     error_code: None,
                     error_message: std::ptr::null(),
                     reason: Some(assignment.reason.into()),
-                    variant: CString::new(assignment.variation_key.as_str())
-                        .unwrap()
-                        .into_raw(),
-                    allocation_key: CString::new(assignment.allocation_key.as_str())
-                        .unwrap()
-                        .into_raw(),
+                    variant: safe_cstring(assignment.variation_key.as_str()),
+                    allocation_key: safe_cstring(assignment.allocation_key.as_str()),
                     do_log: assignment.do_log,
                 }
             }
@@ -146,9 +145,7 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment(
                 value_type: std::ptr::null(),
                 value_string: std::ptr::null(),
                 error_code: Some(convert_evaluation_error(&evaluation_error)),
-                error_message: CString::new(evaluation_error.to_string())
-                    .unwrap()
-                    .into_raw(),
+                error_message: safe_cstring(&evaluation_error.to_string()),
                 reason: Some(Reason::Error),
                 variant: std::ptr::null(),
                 allocation_key: std::ptr::null(),
