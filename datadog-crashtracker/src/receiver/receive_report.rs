@@ -13,25 +13,39 @@ use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct RuntimeStackFrameByteArray {
+struct DebugStackFrameByteSequence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    column: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     function: Vec<u8>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     type_name: Vec<u8>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     file: Vec<u8>,
-    line: u32,
-    column: u32,
 }
 
-impl From<RuntimeStackFrameByteArray> for StackFrame {
-    fn from(value: RuntimeStackFrameByteArray) -> Self {
+impl From<DebugStackFrameByteSequence> for StackFrame {
+    fn from(value: DebugStackFrameByteSequence) -> Self {
         let mut stack_frame = StackFrame::new();
-        stack_frame.function = Some(String::from_utf8_lossy(&value.function).to_string());
-        stack_frame.type_name = Some(String::from_utf8_lossy(&value.type_name).to_string());
-        stack_frame.file = Some(String::from_utf8_lossy(&value.file).to_string());
-        stack_frame.line = Some(value.line);
-        stack_frame.column = Some(value.column);
+        stack_frame.function = if value.function.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8_lossy(&value.function).to_string())
+        };
+        stack_frame.type_name = if value.type_name.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8_lossy(&value.type_name).to_string())
+        };
+        stack_frame.file = if value.file.is_empty() {
+            None
+        } else {
+            Some(String::from_utf8_lossy(&value.file).to_string())
+        };
+        stack_frame.line = value.line;
+        stack_frame.column = value.column;
         stack_frame
     }
 }
@@ -147,7 +161,7 @@ fn process_line(
             StdinState::Waiting
         }
         StdinState::RuntimeStackFrame(mut frames) => {
-            let frame_json: RuntimeStackFrameByteArray = serde_json::from_str(line)?;
+            let frame_json: DebugStackFrameByteSequence = serde_json::from_str(line)?;
             frames.push(frame_json.into());
             StdinState::RuntimeStackFrame(frames)
         }

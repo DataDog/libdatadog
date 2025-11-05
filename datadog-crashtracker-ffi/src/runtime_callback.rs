@@ -9,10 +9,9 @@
 use datadog_crashtracker::{
     get_registered_callback_type_ptr, is_runtime_callback_registered,
     register_runtime_frame_callback, register_runtime_stacktrace_string_callback, CallbackError,
-    RuntimeStacktraceStringCallback,
+    RuntimeStackFrame, RuntimeStacktraceStringCallback,
 };
 
-pub use datadog_crashtracker::RuntimeStackFrame as ddog_RuntimeStackFrame;
 use ddcommon_ffi::CharSlice;
 
 /// Result type for runtime callback registration
@@ -53,19 +52,15 @@ pub type RuntimeStackFrameCallback =
 #[cfg(unix)]
 static mut STORED_FFI_CALLBACK: Option<RuntimeStackFrameCallback> = None;
 
-/// Global storage for the core emit function during callback execution
+/// Global storage for the core emit function
 #[cfg(unix)]
-static mut STORED_CORE_EMIT: Option<
-    unsafe extern "C" fn(&datadog_crashtracker::RuntimeStackFrame),
-> = None;
+static mut STORED_CORE_EMIT: Option<unsafe extern "C" fn(&RuntimeStackFrame)> = None;
 
 #[cfg(unix)]
-fn convert_ffi_to_core_frame(
-    ffi_frame: &RuntimeStackFrameFFI,
-) -> datadog_crashtracker::RuntimeStackFrame<'_> {
+fn convert_ffi_to_core_frame(ffi_frame: &RuntimeStackFrameFFI) -> RuntimeStackFrame<'_> {
     use ddcommon_ffi::slice::AsBytes;
 
-    datadog_crashtracker::RuntimeStackFrame {
+    RuntimeStackFrame {
         line: ffi_frame.line,
         column: ffi_frame.column,
         function: ffi_frame.function.as_bytes(),
@@ -90,7 +85,7 @@ unsafe extern "C" fn emit_ffi_frame(ffi_frame_ptr: *const RuntimeStackFrameFFI) 
 /// Wrapper function that bridges FFI callback to core callback
 #[cfg(unix)]
 unsafe extern "C" fn ffi_callback_wrapper(
-    emit_core_frame: unsafe extern "C" fn(&datadog_crashtracker::RuntimeStackFrame),
+    emit_core_frame: unsafe extern "C" fn(&RuntimeStackFrame),
 ) {
     if let Some(ffi_callback) = STORED_FFI_CALLBACK {
         STORED_CORE_EMIT = Some(emit_core_frame);
@@ -98,15 +93,11 @@ unsafe extern "C" fn ffi_callback_wrapper(
         // Call the original FFI callback with our converting emit function
         ffi_callback(emit_ffi_frame);
 
-        // Clear the stored function
         STORED_CORE_EMIT = None;
     }
 }
 
 /// Register a runtime stack collection callback
-///
-/// This function allows language runtimes to register a callback that will be invoked
-/// during crash handling to collect runtime-specific stack traces.
 ///
 /// # Arguments
 /// - `callback`: The callback function to invoke during crashes
@@ -123,42 +114,21 @@ unsafe extern "C" fn ffi_callback_wrapper(
 /// # Example Usage from C
 /// ```c
 /// static void my_runtime_callback(
-///     void (*emit_frame)(const ddog_RuntimeStackFrame*),
+///     void (*emit_frame)(const ddog_RuntimeStackFrameFFI*),
 /// ) {
 ///     // Collect runtime frames and call emit_frame for each one
 ///     const char* function_name = "my_function";
 ///     const char* file_name = "script.rb";
 ///     ddog_CharSlice type_name = DDOG_CHARSLICE_FROM_CSTR("MyModule.MyClass");
-///     ddog_crasht_RuntimeStackFrame frame = {
+///     ddog_crasht_RuntimeStackFrameFFI frame = {
 ///         .type_name = &type_name,
-///         .function_name = DDOG_CHARSLICE_FROM_CSTR(function_name),
-///         .file_name = DDOG_CHARSLICE_FROM_CSTR(file_name),
-///         .line_number = 42,
-///         .column_number = 10
+///         .function = DDOG_CHARSLICE_FROM_CSTR(function_name),
+///         .file = DDOG_CHARSLICE_FROM_CSTR(file_name),
+///         .line = 42,
+///         .column = 10
 ///     };
 ///     emit_frame(&frame);
 /// }
-///
-///
-/// ddog_CallbackResult result = ddog_crasht_register_runtime_frame_callback(
-///     my_runtime_callback
-/// );
-/// ```
-/// Register a runtime frame collection callback
-///
-/// This function allows language runtimes to register a callback that will be invoked
-/// during crash handling to collect runtime-specific stack frames.
-///
-/// # Arguments
-/// - `callback`: The callback function to invoke during crashes
-///
-/// # Returns
-/// - `CallbackResult::Ok` if registration succeeds (replaces any existing callback)
-/// - `CallbackResult::Error` if registration fails
-///
-/// # Safety
-/// - The callback must be signal-safe
-/// - Only one callback can be registered at a time (this replaces any existing one)
 #[cfg(unix)]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_crasht_register_runtime_frame_callback(
@@ -174,9 +144,6 @@ pub unsafe extern "C" fn ddog_crasht_register_runtime_frame_callback(
 }
 
 /// Register a runtime stacktrace string collection callback
-///
-/// This function allows language runtimes to register a callback that will be invoked
-/// during crash handling to collect runtime-specific stacktrace strings.
 ///
 /// # Arguments
 /// - `callback`: The callback function to invoke during crashes
@@ -199,8 +166,6 @@ pub unsafe extern "C" fn ddog_crasht_register_runtime_stacktrace_string_callback
     }
 }
 
-/// Check if a runtime callback is currently registered
-///
 /// Returns true if a callback is registered, false otherwise
 ///
 /// # Safety
@@ -212,9 +177,6 @@ pub extern "C" fn ddog_crasht_is_runtime_callback_registered() -> bool {
 }
 
 /// Get the callback type from the currently registered callback context
-///
-/// Returns the callback type C string pointer if a callback with valid context is registered,
-/// null pointer otherwise
 ///
 /// # Safety
 /// - The returned pointer is valid only while the callback remains registered
@@ -232,7 +194,7 @@ mod tests {
     use datadog_crashtracker::clear_runtime_callback;
     use std::sync::Mutex;
 
-    // Use a mutex to ensure tests run sequentially to avoid race conditions
+    // So we don't have race conditions with global static variable
     // with the global static variable
     static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
@@ -271,9 +233,7 @@ mod tests {
             assert_eq!(result, CallbackResult::Ok);
 
             // Test that the wrapper can be invoked successfully
-            unsafe extern "C" fn mock_emit_core_frame(
-                _frame: &datadog_crashtracker::RuntimeStackFrame,
-            ) {
+            unsafe extern "C" fn mock_emit_core_frame(_frame: &RuntimeStackFrame) {
                 // Callback invoked successfully
             }
 

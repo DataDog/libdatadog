@@ -161,6 +161,16 @@ fn test_crash_tracking_bin_no_runtime_callback() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8() {
+    test_crash_tracking_bin_runtime_callback_frame_invalid_utf8_impl(
+        BuildProfile::Release,
+        "runtime_callback_frame_invalid_utf8",
+        "null_deref",
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn test_crash_ping_timing_and_content() {
     test_crash_tracking_bin(BuildProfile::Release, "donothing", "null_deref");
 }
@@ -339,6 +349,84 @@ fn test_crash_tracking_bin_runtime_callback_frame_impl(
     assert_telemetry_message(&crash_telemetry, crash_typ);
 }
 
+fn test_crash_tracking_bin_runtime_callback_frame_invalid_utf8_impl(
+    crash_tracking_receiver_profile: BuildProfile,
+    mode: &str,
+    crash_typ: &str,
+) {
+    let (crashtracker_bin, crashtracker_receiver) =
+        setup_crashtracking_crates(crash_tracking_receiver_profile);
+    let fixtures = setup_test_fixtures(&[&crashtracker_receiver, &crashtracker_bin]);
+
+    let mut p = process::Command::new(&fixtures.artifacts[&crashtracker_bin])
+        .arg(format!("file://{}", fixtures.crash_profile_path.display()))
+        .arg(fixtures.artifacts[&crashtracker_receiver].as_os_str())
+        .arg(&fixtures.output_dir)
+        .arg(mode)
+        .arg(crash_typ)
+        .spawn()
+        .unwrap();
+
+    let exit_status = bin_tests::timeit!("exit after signal", {
+        eprintln!("Waiting for exit");
+        p.wait().unwrap()
+    });
+
+    assert!(!exit_status.success());
+
+    let stderr_path = format!("{0}/out.stderr", fixtures.output_dir.display());
+    let stderr = fs::read(stderr_path)
+        .context("reading crashtracker stderr")
+        .unwrap();
+    let stdout_path = format!("{0}/out.stdout", fixtures.output_dir.display());
+    let stdout = fs::read(stdout_path)
+        .context("reading crashtracker stdout")
+        .unwrap();
+    let s = String::from_utf8(stderr);
+    assert!(
+        matches!(
+            s.as_deref(),
+            Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n")
+            | Ok("Failed to fully receive crash.  Exit state was: InternalError(\"{\\\"ip\\\": \\\"\")\n"),
+        ),
+        "got {s:?}"
+    );
+    assert_eq!(Ok(""), String::from_utf8(stdout).as_deref());
+
+    // Check the crash data
+    let crash_profile = fs::read(&fixtures.crash_profile_path)
+        .context("reading crashtracker profiling payload")
+        .unwrap();
+    let crash_payload = serde_json::from_slice::<serde_json::Value>(&crash_profile)
+        .context("deserializing crashtracker profiling payload to json")
+        .unwrap();
+
+    // Validate normal crash data first
+    assert_eq!(
+        serde_json::json!({
+          "profiler_collecting_sample": 1,
+          "profiler_inactive": 0,
+          "profiler_serializing": 0,
+          "profiler_unwinding": 0
+        }),
+        crash_payload["counters"],
+    );
+
+    let sig_info = &crash_payload["sig_info"];
+    assert_siginfo_message(sig_info, crash_typ);
+
+    let error = &crash_payload["error"];
+    assert_error_message(&error["message"], sig_info);
+
+    // Validate runtime callback frame data with invalid UTF-8
+    validate_runtime_callback_frame_invalid_utf8_data(&crash_payload);
+
+    let crash_telemetry = fs::read(&fixtures.crash_telemetry_path)
+        .context("reading crashtracker telemetry payload")
+        .unwrap();
+    assert_telemetry_message(&crash_telemetry, crash_typ);
+}
+
 fn validate_runtime_callback_frame_data(crash_payload: &Value) {
     // Look for runtime stack frames in the experimental section
     let experimental = crash_payload.get("experimental");
@@ -419,6 +507,195 @@ fn validate_runtime_callback_frame_data(crash_payload: &Value) {
             );
         }
     }
+
+    // Ensure stacktrace_string is null for frame mode
+    assert!(
+        runtime_stack.get("stacktrace_string").is_none()
+            || runtime_stack["stacktrace_string"].is_null(),
+        "Stacktrace string should be null/absent for frame mode"
+    );
+}
+
+fn validate_runtime_callback_frame_invalid_utf8_data(crash_payload: &Value) {
+    // Look for runtime stack frames in the experimental section
+    let experimental = crash_payload.get("experimental");
+    assert!(
+        experimental.is_some(),
+        "Experimental section should be present in crash payload for runtime callback test"
+    );
+
+    let runtime_stack = experimental.unwrap().get("runtime_stack");
+    assert!(
+        runtime_stack.is_some(),
+        "Runtime stack should be present in experimental section for frame mode"
+    );
+
+    let runtime_stack = runtime_stack.unwrap();
+
+    // Check the format field
+    assert_eq!(
+        runtime_stack["format"].as_str().unwrap(),
+        "Datadog Runtime Callback 1.0",
+        "Runtime stack format should be correct"
+    );
+
+    // The runtime stack should have a frames array
+    let frames = runtime_stack.get("frames");
+    assert!(frames.is_some(), "Runtime stack should have frames array");
+
+    let frames = frames.unwrap().as_array();
+    assert!(frames.is_some(), "Runtime stack frames should be an array");
+
+    let frames = frames.unwrap();
+    assert!(
+        frames.len() == 7,
+        "Should have 7 runtime frames (including invalid UTF-8 and null byte frames), got {}",
+        frames.len()
+    );
+
+    // Validate frames with invalid UTF-8 are properly converted
+    // Frame 1: Invalid UTF-8 in function name - should be converted with lossy conversion
+    let frame1 = &frames[0];
+    if let Some(function) = frame1.get("function") {
+        let function_str = function.as_str().unwrap();
+        assert!(
+            function_str.contains("runtime_function_") && function_str.contains("_invalid"),
+            "Frame 0 function should contain lossy-converted invalid UTF-8, got: {}",
+            function_str
+        );
+        // Should contain replacement character (�) for invalid UTF-8
+        assert!(
+            function_str.contains("�"),
+            "Frame 0 function should contain replacement character for invalid UTF-8, got: {}",
+            function_str
+        );
+    }
+
+    // Frame 2: Invalid UTF-8 in type name
+    let frame2 = &frames[1];
+    if let Some(type_name) = frame2.get("type_name") {
+        let type_name_str = type_name.as_str().unwrap();
+        assert!(
+            type_name_str.contains("TestModule") && type_name_str.contains("TestClass"),
+            "Frame 1 type_name should contain lossy-converted invalid UTF-8, got: {}",
+            type_name_str
+        );
+        assert!(
+            type_name_str.contains("�"),
+            "Frame 1 type_name should contain replacement character for invalid UTF-8, got: {}",
+            type_name_str
+        );
+    }
+
+    // Frame 3: Invalid UTF-8 in file name
+    let frame3 = &frames[2];
+    if let Some(file) = frame3.get("file") {
+        let file_str = file.as_str().unwrap();
+        assert!(
+            file_str.contains("script_") && file_str.contains(".py"),
+            "Frame 2 file should contain lossy-converted invalid UTF-8, got: {}",
+            file_str
+        );
+        assert!(
+            file_str.contains("�"),
+            "Frame 2 file should contain replacement character for invalid UTF-8, got: {}",
+            file_str
+        );
+    }
+
+    // Frame 4: Valid UTF-8 for comparison (should be unchanged)
+    let frame4 = &frames[3];
+    if let Some(function) = frame4.get("function") {
+        assert_eq!(
+            function.as_str().unwrap(),
+            "valid_runtime_function",
+            "Frame 3 function should be valid UTF-8"
+        );
+    }
+    if let Some(file) = frame4.get("file") {
+        assert_eq!(
+            file.as_str().unwrap(),
+            "valid_script.py",
+            "Frame 3 file should be valid UTF-8"
+        );
+    }
+
+    // Frame 5: Mixed invalid UTF-8 sequences
+    let frame5 = &frames[4];
+    if let Some(function) = frame5.get("function") {
+        let function_str = function.as_str().unwrap();
+        assert!(
+            function_str.contains("func_") && function_str.contains("_invalid_overlong"),
+            "Frame 4 function should contain lossy-converted invalid UTF-8, got: {}",
+            function_str
+        );
+        assert!(
+            function_str.contains("�"),
+            "Frame 4 function should contain replacement character for invalid UTF-8, got: {}",
+            function_str
+        );
+    }
+
+    if let Some(type_name) = frame5.get("type_name") {
+        let type_name_str = type_name.as_str().unwrap();
+        assert!(
+            type_name_str.contains("Class") && type_name_str.contains("Name"),
+            "Frame 4 type_name should contain lossy-converted invalid UTF-8, got: {}",
+            type_name_str
+        );
+        assert!(
+            type_name_str.contains("�"),
+            "Frame 4 type_name should contain replacement character for invalid UTF-8, got: {}",
+            type_name_str
+        );
+    }
+
+    // Frame 6: Null bytes (should be handled without truncation)
+    let frame6 = &frames[5];
+    if let Some(function) = frame6.get("function") {
+        let function_str = function.as_str().unwrap();
+        assert!(
+            function_str.contains("func_with_") && function_str.contains("_null_byte"),
+            "Frame 5 function should contain null byte content, got: {}",
+            function_str
+        );
+        // Null bytes should be preserved (unlike C strings, Rust strings can contain them)
+        assert!(
+            function_str.contains('\0'),
+            "Frame 5 function should preserve null byte, got: {}",
+            function_str
+        );
+    }
+
+    if let Some(type_name) = frame6.get("type_name") {
+        let type_name_str = type_name.as_str().unwrap();
+        assert!(
+            type_name_str.contains("Type") && type_name_str.contains("WithNull"),
+            "Frame 5 type_name should contain null byte content, got: {}",
+            type_name_str
+        );
+        assert!(
+            type_name_str.contains('\0'),
+            "Frame 5 type_name should preserve null byte, got: {}",
+            type_name_str
+        );
+    }
+
+    // Frame 7: Empty fields (edge case) - should not have fields
+    let frame7 = &frames[6];
+    // Empty fields should be omitted from the JSON output
+    assert!(
+        frame7.get("function").is_none() || frame7["function"].as_str().unwrap_or("").is_empty(),
+        "Frame 6 function should be empty or omitted"
+    );
+    assert!(
+        frame7.get("type_name").is_none() || frame7["type_name"].as_str().unwrap_or("").is_empty(),
+        "Frame 6 type_name should be empty or omitted"
+    );
+    assert!(
+        frame7.get("file").is_none() || frame7["file"].as_str().unwrap_or("").is_empty(),
+        "Frame 6 file should be empty or omitted"
+    );
 
     // Ensure stacktrace_string is null for frame mode
     assert!(

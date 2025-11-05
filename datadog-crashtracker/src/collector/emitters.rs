@@ -5,8 +5,8 @@ use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::{emit_spans, emit_traces};
 use crate::runtime_callback::{
-    get_registered_callback_type_internal, invoke_runtime_callback_with_writer,
-    is_runtime_callback_registered,
+    get_registered_callback, invoke_runtime_callback_with_writer, is_runtime_callback_registered,
+    CallbackData,
 };
 use crate::shared::constants::*;
 use crate::{translate_si_code, CrashtrackerConfiguration, SignalNames, StacktraceCollection};
@@ -236,24 +236,21 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
 ///     callbacks and writing to the provided stream. The runtime callback itself
 ///     must be signal safe.
 fn emit_runtime_stack(w: &mut impl Write) -> Result<(), EmitterError> {
-    let callback_type = unsafe { get_registered_callback_type_internal() };
+    let callback = unsafe { get_registered_callback() };
 
-    let callback_type = match callback_type {
-        Some(ct) => ct,
-        None => return Ok(()), // No callback registered
+    let callback = match callback {
+        Some(callback) => callback,
+        None => return Ok(()),
     };
 
-    match callback_type {
-        "frame" => emit_runtime_stack_by_frames(w),
-        "stacktrace_string" => emit_runtime_stack_by_stacktrace_string(w),
-        _ => Ok(()), // Unknown callback type
+    match callback {
+        CallbackData::Frame(_) => emit_runtime_stack_by_frames(w),
+        CallbackData::StacktraceString(_) => emit_runtime_stack_by_stacktrace_string(w),
     }
 }
 
 fn emit_runtime_stack_by_frames(w: &mut impl Write) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME}")?;
-
-    // JSON array for frames
     unsafe { invoke_runtime_callback_with_writer(w)? };
     writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_FRAME}")?;
     w.flush()?;
@@ -262,8 +259,6 @@ fn emit_runtime_stack_by_frames(w: &mut impl Write) -> Result<(), EmitterError> 
 
 fn emit_runtime_stack_by_stacktrace_string(w: &mut impl Write) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_STRING}")?;
-
-    // Emit the stacktrace string
     unsafe { invoke_runtime_callback_with_writer(w)? };
     writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_STRING}")?;
     w.flush()?;

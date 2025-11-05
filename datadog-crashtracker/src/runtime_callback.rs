@@ -23,10 +23,9 @@ static FRAME_CSTR: &std::ffi::CStr = c"frame";
 #[cfg(unix)]
 static STACKTRACE_STRING_CSTR: &std::ffi::CStr = c"stacktrace_string";
 
-/// Enum to store different types of callbacks
 #[cfg(unix)]
 #[derive(Debug)]
-enum CallbackData {
+pub enum CallbackData {
     Frame(RuntimeFrameCallback),
     StacktraceString(RuntimeStacktraceStringCallback),
 }
@@ -52,10 +51,6 @@ pub struct RuntimeStackFrame<'a> {
 /// Function signature for runtime frame collection callbacks
 ///
 /// This callback is invoked during crash handling in a signal context, so it must be signal-safe:
-/// - No dynamic memory allocation
-/// - No mutex operations
-/// - No I/O operations
-/// - Only async-signal-safe functions
 ///
 /// # Parameters
 /// - `emit_frame`: Function to call for each runtime frame (takes frame pointer)
@@ -70,10 +65,6 @@ pub type RuntimeFrameCallback =
 /// Function signature for runtime stacktrace string collection callbacks
 ///
 /// This callback is invoked during crash handling in a signal context, so it must be signal-safe:
-/// - No dynamic memory allocation
-/// - No mutex operations
-/// - No I/O operations
-/// - Only async-signal-safe functions
 ///
 /// # Parameters
 /// - `emit_stacktrace_string`: Function to call for complete stacktrace string (takes C string)
@@ -88,7 +79,6 @@ pub type RuntimeStacktraceStringCallback =
 /// Runtime stack representation for JSON serialization
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct RuntimeStack {
-    /// Format identifier for this runtime stack
     pub format: String,
     /// Array of runtime-specific stack frames (optional, mutually exclusive with
     /// stacktrace_string)
@@ -99,14 +89,12 @@ pub struct RuntimeStack {
     pub stacktrace_string: Option<String>,
 }
 
-/// Errors that can occur during callback registration
 #[derive(Debug, Error)]
 pub enum CallbackError {
     #[error("Null callback function provided")]
     NullCallback,
 }
 
-/// Register a runtime frame collection callback
 #[cfg(unix)]
 pub fn register_runtime_frame_callback(
     callback: RuntimeFrameCallback,
@@ -127,7 +115,6 @@ pub fn register_runtime_frame_callback(
     Ok(())
 }
 
-/// Register a runtime stacktrace string collection callback
 #[cfg(unix)]
 pub fn register_runtime_stacktrace_string_callback(
     callback: RuntimeStacktraceStringCallback,
@@ -148,15 +135,13 @@ pub fn register_runtime_stacktrace_string_callback(
     Ok(())
 }
 
-/// Check if a runtime callback is currently registered
-///
 /// Returns true if a callback is registered, false otherwise
 #[cfg(unix)]
 pub fn is_runtime_callback_registered() -> bool {
     !RUNTIME_CALLBACK.load(Ordering::SeqCst).is_null()
 }
 
-/// Internal function to get the callback type for formatting purposes
+/// Internal function to get the callback
 ///
 /// # Safety
 /// This function loads from an atomic pointer and dereferences it.
@@ -164,7 +149,7 @@ pub fn is_runtime_callback_registered() -> bool {
 /// or registration functions concurrently, as those could invalidate
 /// the pointer between the null check and dereferencing.
 #[cfg(all(unix, feature = "collector"))]
-pub(crate) unsafe fn get_registered_callback_type_internal() -> Option<&'static str> {
+pub(crate) unsafe fn get_registered_callback() -> Option<CallbackData> {
     let callback_ptr = RUNTIME_CALLBACK.load(Ordering::SeqCst);
     if callback_ptr.is_null() {
         return None;
@@ -173,11 +158,7 @@ pub(crate) unsafe fn get_registered_callback_type_internal() -> Option<&'static 
     // Safety: callback_ptr was checked to be non-null above, and was created by
     // Box::into_raw() in registration functions, so it's a valid pointer
     // to a properly aligned, initialized CallbackData.
-    let callback_data = &*callback_ptr;
-    match callback_data {
-        CallbackData::Frame(_) => Some("frame"),
-        CallbackData::StacktraceString(_) => Some("stacktrace_string"),
-    }
+    Some(callback_ptr.read())
 }
 
 /// Get the callback type C string pointer from the currently registered callback
@@ -207,13 +188,9 @@ pub unsafe fn get_registered_callback_type_ptr() -> *const std::ffi::c_char {
 
 /// Clear the registered runtime callback
 ///
-/// This function is primarily intended for testing purposes to clean up state
-/// between tests. In production, callbacks typically remain registered for the
-/// lifetime of the process.
-///
 /// # Safety
 /// This function should only be called when it's safe to clear the callback,
-/// such as during testing or application shutdown. The caller must ensure:
+/// like during testing or application shutdown. The caller must ensure:
 /// - No other thread is concurrently calling functions that dereference the callback pointer
 /// - No signal handlers are currently executing that might invoke the callback
 /// - The callback is not being used in any other way
@@ -228,9 +205,6 @@ pub unsafe fn clear_runtime_callback() {
 }
 
 /// Internal function to invoke the registered runtime callback with direct pipe writing
-///
-/// This is called during crash handling to collect runtime-specific stack frames
-/// and write them directly to the provided writer for efficiency.
 ///
 /// # Safety
 /// This function is intended to be called from signal handlers and must maintain
@@ -318,9 +292,6 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
 
 /// Emit a single runtime frame as JSON to the writer
 ///
-/// This function writes a RuntimeStackFrame directly as JSON without intermediate allocation.
-/// It must be signal-safe.
-///
 /// # Safety
 /// The caller must ensure that `frame` is either null or points to a valid, properly
 /// initialized RuntimeStackFrame. All C string pointers within the frame must be either
@@ -330,7 +301,7 @@ unsafe fn emit_frame_as_json(
     writer: &mut dyn std::io::Write,
     frame: &RuntimeStackFrame,
 ) -> std::io::Result<()> {
-    // function, type_name, file fields can have invalid utf8 characters
+    // `function`, `type_name`, `file` fields can have invalid utf8 characters
     // Converting them to str might error, and we can't use from_utf8_lossy because
     // it's not signal safe. So we just write the raw bytes and convert on the
     // receiver side
@@ -387,8 +358,7 @@ mod tests {
     use std::ffi::CString;
     use std::sync::Mutex;
 
-    // Use a mutex to ensure tests run sequentially to avoid race conditions
-    // with the global static variable
+    // So we don't have race conditions with global static variable
     static TEST_MUTEX: Mutex<()> = Mutex::new(());
 
     unsafe extern "C" fn test_emit_frame_callback(
@@ -414,12 +384,10 @@ mod tests {
     ) {
         let stacktrace_string = CString::new("test_stacktrace_string").unwrap();
 
-        // Safety: stacktrace_string.as_ptr() returns a valid null-terminated C string
         emit_stacktrace_string(stacktrace_string.as_ptr());
     }
 
     fn ensure_callback_cleared() {
-        // Ensure no callback is registered before starting
         let old_ptr = RUNTIME_CALLBACK.swap(ptr::null_mut(), Ordering::SeqCst);
         if !old_ptr.is_null() {
             let _ = unsafe { Box::from_raw(old_ptr) };
@@ -431,20 +399,15 @@ mod tests {
         let _guard = TEST_MUTEX.lock().unwrap();
         ensure_callback_cleared();
 
-        // Test successful registration
         let result = register_runtime_frame_callback(test_emit_frame_callback);
         assert!(result.is_ok(), "Failed to register callback: {:?}", result);
 
-        // Test duplicate registration succeeds
         let result = register_runtime_frame_callback(test_emit_frame_callback);
         assert!(
             result.is_ok(),
             "Failed to re-register callback: {:?}",
             result
         );
-
-        // Clean up
-        ensure_callback_cleared();
     }
 
     #[test]
@@ -453,11 +416,9 @@ mod tests {
         let _guard = TEST_MUTEX.lock().unwrap();
         ensure_callback_cleared();
 
-        // Register callback
         let result = register_runtime_frame_callback(test_emit_frame_callback);
         assert!(result.is_ok(), "Failed to register callback: {:?}", result);
 
-        // Invoke callback and collect frames using writer
         let mut buffer = Vec::new();
         let invocation_result = unsafe { invoke_runtime_callback_with_writer(&mut buffer) };
         assert!(
@@ -502,9 +463,6 @@ mod tests {
             json_output.contains("\"column\": 10"),
             "Missing column number"
         );
-
-        // Clean up
-        ensure_callback_cleared();
     }
 
     #[test]
@@ -513,7 +471,6 @@ mod tests {
         let _guard = TEST_MUTEX.lock().unwrap();
         ensure_callback_cleared();
 
-        // Register callback
         let result =
             register_runtime_stacktrace_string_callback(test_emit_stacktrace_string_callback);
         assert!(result.is_ok(), "Failed to register callback: {:?}", result);
@@ -531,8 +488,6 @@ mod tests {
             json_output.contains("test_stacktrace_string"),
             "Missing stacktrace string"
         );
-
-        ensure_callback_cleared();
     }
 
     #[test]
@@ -610,7 +565,5 @@ mod tests {
             json_output.contains("\"column\": 10"),
             "Missing column number"
         );
-
-        ensure_callback_cleared();
     }
 }
