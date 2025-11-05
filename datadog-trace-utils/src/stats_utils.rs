@@ -127,8 +127,8 @@ mod mini_agent_tests {
                                 0
                             ],
                             "GrpcStatusCode": "0",
-                            "HttpMethod": "GET",
-                            "HttpEndpoint": "/test"
+                            "HTTPMethod": "GET",
+                            "HTTPEndpoint": "/test"
                         }
                     ]
                 }

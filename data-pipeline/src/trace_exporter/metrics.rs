@@ -3,8 +3,8 @@
 
 use crate::health_metrics::HealthMetric;
 use ddcommon::tag::Tag;
-use dogstatsd_client::{Client, DogStatsDAction};
 use either::Either;
+use libdd_dogstatsd_client::{Client, DogStatsDAction};
 use tracing::debug;
 
 /// Handles emission of health metrics to DogStatsD

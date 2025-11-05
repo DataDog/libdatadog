@@ -1304,7 +1304,6 @@ dependencies = [
  "datadog-trace-utils",
  "ddcommon",
  "ddtelemetry",
- "dogstatsd-client",
  "either",
  "http",
  "http-body-util",
@@ -1312,6 +1311,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libdd-ddsketch",
+ "libdd-dogstatsd-client",
  "libdd-log",
  "libdd-tinybytes",
  "libdd-trace-protobuf",
@@ -1612,13 +1612,13 @@ dependencies = [
  "ddcommon",
  "ddcommon-ffi",
  "ddtelemetry",
- "dogstatsd-client",
  "futures",
  "http",
  "http-body-util",
  "httpmock",
  "hyper",
  "libc",
+ "libdd-dogstatsd-client",
  "libdd-tinybytes",
  "manual_future",
  "memory-stats",
@@ -1660,9 +1660,9 @@ dependencies = [
  "ddcommon-ffi",
  "ddtelemetry",
  "ddtelemetry-ffi",
- "dogstatsd-client",
  "http",
  "libc",
+ "libdd-dogstatsd-client",
  "libdd-tinybytes",
  "paste",
  "rmp-serde",
@@ -1940,19 +1940,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.87",
-]
-
-[[package]]
-name = "dogstatsd-client"
-version = "23.0.0"
-dependencies = [
- "anyhow",
- "cadence",
- "ddcommon",
- "http",
- "serde",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -3066,6 +3053,19 @@ dependencies = [
  "build_common",
  "ddcommon-ffi",
  "libdd-ddsketch",
+]
+
+[[package]]
+name = "libdd-dogstatsd-client"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "cadence",
+ "ddcommon",
+ "http",
+ "serde",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

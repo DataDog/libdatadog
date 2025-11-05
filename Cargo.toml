@@ -43,7 +43,7 @@ members = [
   "libdd-ddsketch",
   "libdd-ddsketch-ffi",
   "libdd-tinybytes",
-  "dogstatsd-client",
+  "libdd-dogstatsd-client",
   "libdd-log",
   "libdd-log-ffi",
 ]

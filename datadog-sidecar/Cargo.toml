@@ -25,7 +25,7 @@ datadog-trace-utils = { path = "../datadog-trace-utils" }
 datadog-remote-config = { path = "../datadog-remote-config" , features = ["live-debugger"]}
 datadog-live-debugger = { path = "../datadog-live-debugger" }
 datadog-crashtracker = { path = "../datadog-crashtracker" }
-dogstatsd-client = { path = "../dogstatsd-client" }
+libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 libdd-tinybytes = { path = "../libdd-tinybytes" }
 
 futures = { version = "0.3", default-features = false }

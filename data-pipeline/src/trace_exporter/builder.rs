@@ -14,7 +14,7 @@ use crate::trace_exporter::{
 use arc_swap::ArcSwap;
 use ddcommon::hyper_migration::new_default_client;
 use ddcommon::{parse_uri, tag, Endpoint};
-use dogstatsd_client::new;
+use libdd_dogstatsd_client::new;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
