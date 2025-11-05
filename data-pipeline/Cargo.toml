@@ -36,9 +36,9 @@ ddtelemetry = { path = "../ddtelemetry", default-features = false }
 datadog-trace-protobuf = { path = "../datadog-trace-protobuf" }
 datadog-trace-stats = { path = "../datadog-trace-stats"}
 datadog-trace-utils = { path = "../datadog-trace-utils", default-features = false }
-datadog-ddsketch = { path = "../ddsketch" }
+libdd-ddsketch = { version = "1.0.0", path = "../libdd-ddsketch" }
 dogstatsd-client = { path = "../dogstatsd-client", default-features = false }
-tinybytes = { path = "../tinybytes", features = [
+libdd-tinybytes = { path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }
@@ -47,7 +47,7 @@ tinybytes = { path = "../tinybytes", features = [
 bench = false
 
 [dev-dependencies]
-datadog-log = { path = "../datadog-log" }
+libdd-log = { path = "../libdd-log" }
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5.1"
 datadog-trace-utils = { path = "../datadog-trace-utils", features = [

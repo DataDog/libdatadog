@@ -5,13 +5,11 @@ use std::{collections::HashMap, sync::Arc};
 
 use serde::Deserialize;
 
-use crate::rules_based::{
-    error::EvaluationFailure, sharder::PreSaltedSharder, Error, EvaluationError, Str,
-};
+use crate::rules_based::{error::EvaluationError, sharder::PreSaltedSharder, Str, Timestamp};
 
 use super::{
     AllocationWire, AssignmentValue, Environment, FlagWire, RuleWire, ShardRange, ShardWire,
-    SplitWire, Timestamp, UniversalFlagConfigWire, VariationType,
+    SplitWire, UniversalFlagConfigWire, VariationType,
 };
 
 #[derive(Debug)]
@@ -25,14 +23,13 @@ pub struct UniversalFlagConfig {
 #[serde(from = "UniversalFlagConfigWire")]
 pub(crate) struct CompiledFlagsConfig {
     /// When configuration was last updated.
-    #[allow(dead_code)]
     pub created_at: Timestamp,
     /// Environment this configuration belongs to.
     pub environment: Environment,
     /// Flags configuration.
     ///
     /// For flags that failed to parse or are disabled, we store the evaluation failure directly.
-    pub flags: HashMap<Str, Result<Flag, EvaluationFailure>>,
+    pub flags: HashMap<Str, Result<Flag, EvaluationError>>,
 }
 
 #[derive(Debug)]
@@ -66,11 +63,8 @@ pub(crate) struct Shard {
 }
 
 impl UniversalFlagConfig {
-    pub fn from_json(json: Vec<u8>) -> Result<Self, Error> {
-        let config: CompiledFlagsConfig = serde_json::from_slice(&json).map_err(|err| {
-            log::warn!("failed to compile flag configuration: {err:?}");
-            Error::EvaluationError(EvaluationError::UnexpectedConfigurationError)
-        })?;
+    pub fn from_json(json: Vec<u8>) -> Result<Self, serde_json::Error> {
+        let config: CompiledFlagsConfig = serde_json::from_slice(&json)?;
         Ok(UniversalFlagConfig {
             wire_json: json,
             compiled: config,
@@ -85,33 +79,29 @@ impl UniversalFlagConfig {
 impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
     fn from(config: UniversalFlagConfigWire) -> Self {
         let flags = config
-            .data
-            .attributes
             .flags
             .into_iter()
             .map(|(key, flag)| {
                 (
                     key,
                     Option::from(flag)
-                        .ok_or(EvaluationFailure::Error(
-                            EvaluationError::UnexpectedConfigurationError,
-                        ))
+                        .ok_or(EvaluationError::ConfigurationParseError)
                         .and_then(compile_flag),
                 )
             })
             .collect();
 
         CompiledFlagsConfig {
-            created_at: config.data.attributes.created_at.into(),
-            environment: config.data.attributes.environment,
+            created_at: config.created_at,
+            environment: config.environment,
             flags,
         }
     }
 }
 
-fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationFailure> {
+fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationError> {
     if !flag.enabled {
-        return Err(EvaluationFailure::FlagDisabled);
+        return Err(EvaluationError::FlagDisabled);
     }
 
     let variation_values = flag
@@ -119,7 +109,7 @@ fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationFailure> {
         .into_values()
         .map(|variation| {
             let assignment_value = AssignmentValue::from_wire(flag.variation_type, variation.value)
-                .ok_or(EvaluationError::UnexpectedConfigurationError)?;
+                .ok_or(EvaluationError::ConfigurationParseError)?;
 
             Ok((variation.key, assignment_value))
         })
@@ -175,7 +165,7 @@ fn compile_split(
     let result = variation_values
         .get(&split.variation_key)
         .cloned()
-        .ok_or(EvaluationError::UnexpectedConfigurationError)?;
+        .ok_or(EvaluationError::ConfigurationParseError)?;
 
     Ok(Split {
         shards,

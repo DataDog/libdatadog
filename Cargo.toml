@@ -4,14 +4,14 @@
 [workspace]
 members = [
   "builder",
-  "datadog-alloc",
+  "libdd-alloc",
   "datadog-crashtracker",
   "datadog-crashtracker-ffi",
   "datadog-ffe",
   "datadog-ipc",
   "datadog-ipc-macros",
-  "datadog-library-config",
-  "datadog-library-config-ffi",
+  "libdd-library-config",
+  "libdd-library-config-ffi",
   "datadog-live-debugger",
   "datadog-live-debugger-ffi",
   "datadog-profiling",
@@ -40,12 +40,12 @@ members = [
   "bin_tests",
   "data-pipeline",
   "data-pipeline-ffi",
-  "ddsketch",
-  "ddsketch-ffi",
-  "tinybytes",
+  "libdd-ddsketch",
+  "libdd-ddsketch-ffi",
+  "libdd-tinybytes",
   "dogstatsd-client",
-  "datadog-log",
-  "datadog-log-ffi",
+  "libdd-log",
+  "libdd-log-ffi",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html

@@ -997,10 +997,10 @@ mod tests {
     use datadog_trace_utils::span::SpanBytes;
     use httpmock::prelude::*;
     use httpmock::MockServer;
+    use libdd_tinybytes::{Bytes, BytesString};
     use std::collections::HashMap;
     use std::net;
     use std::time::Duration;
-    use tinybytes::BytesString;
     use tokio::time::sleep;
 
     // v05 messagepack empty payload -> [[""], []]
@@ -1728,7 +1728,7 @@ mod tests {
                     }"#;
         let traces_endpoint = server.mock(|when, then| {
             when.method(POST).path("/v0.5/traces").is_true(|req| {
-                let bytes = tinybytes::Bytes::copy_from_slice(req.body_ref());
+                let bytes = Bytes::copy_from_slice(req.body_ref());
                 bytes.to_vec() == V5_EMPTY
             });
             then.status(200)

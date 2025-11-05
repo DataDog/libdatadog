@@ -7,8 +7,8 @@ use std::{
     time,
 };
 
-use datadog_ddsketch::DDSketch;
 use ddcommon::tag::Tag;
+use libdd_ddsketch::DDSketch;
 use serde::{Deserialize, Serialize};
 
 use crate::data::{self, metrics};
