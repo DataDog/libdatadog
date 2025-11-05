@@ -117,7 +117,7 @@ impl From<FlagType> for VariationType {
 #[allow(missing_docs)]
 pub(crate) struct VariationWire {
     pub key: Str,
-    pub value: serde_json::Value,
+    pub value: Arc<serde_json::value::RawValue>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

@@ -47,7 +47,7 @@ impl Configuration {
                 log::trace!(
                     flag_key,
                     targeting_key = context.targeting_key(),
-                    assignment:serde = assignment.value;
+                    assignment:? = assignment.value;
                     "evaluated a flag");
             }
 
@@ -209,7 +209,7 @@ mod tests {
     struct TestCase {
         flag: String,
         variation_type: FlagType,
-        default_value: serde_json::Value,
+        default_value: Arc<serde_json::value::RawValue>,
         targeting_key: Str,
         attributes: Arc<HashMap<Str, Attribute>>,
         result: TestResult,
@@ -217,7 +217,7 @@ mod tests {
 
     #[derive(Debug, Serialize, Deserialize)]
     struct TestResult {
-        value: serde_json::Value,
+        value: Arc<serde_json::value::RawValue>,
     }
 
     #[test]
