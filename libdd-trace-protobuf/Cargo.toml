@@ -1,7 +1,6 @@
 [package]
 name = "libdd-trace-protobuf"
 version = "1.0.0"
-authors = ["David Lee <david.lee@datadoghq.com>"]
 description = "Protobuf utils for Datadog's traces serialization"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-protobuf"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-protobuf"
