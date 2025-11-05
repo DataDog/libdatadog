@@ -156,13 +156,37 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../docs/RFCs/artifacts/0011-crashtracker-unified-runtime-stack-schema.json"
         );
-        let rfc_schema_json = fs::read_to_string(rfc_schema_filename).expect("File to exist");
-        let rfc_schema: RootSchema = serde_json::from_str(&rfc_schema_json).expect("Valid json");
         let schema = schemars::schema_for!(CrashInfo);
+        let schema_json = serde_json::to_string_pretty(&schema).expect("Schema to serialize");
 
-        assert_eq!(rfc_schema, schema);
-        // If it doesn't match, you can use this command to generate a new schema json
-        // println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+        // Try to load the existing RFC schema
+        let path = Path::new(rfc_schema_filename);
+        let existing_schema_json = fs::read_to_string(path);
+
+        match existing_schema_json {
+            Ok(rfc_schema_json) => {
+                let rfc_schema: RootSchema =
+                    serde_json::from_str(&rfc_schema_json).expect("RFC schema to be valid JSON");
+                if rfc_schema != schema {
+                    eprintln!(
+                        "Schema mismatch — updating file at {} with the latest schema.",
+                        rfc_schema_filename
+                    );
+                    fs::write(path, &schema_json).expect("Failed to write updated schema");
+                    panic!("Schema updated. Please commit the new file.");
+                }
+            }
+            Err(_) => {
+                eprintln!(
+                    "RFC schema file not found — creating new schema file at {}",
+                    rfc_schema_filename
+                );
+                fs::create_dir_all(path.parent().unwrap())
+                    .expect("Failed to create parent directories");
+                fs::write(path, &schema_json).expect("Failed to write schema file");
+                panic!("New schema file created. Please commit it.");
+            }
+        }
     }
 
     impl test_utils::TestInstance for CrashInfo {

@@ -262,7 +262,6 @@
       ],
       "properties": {
         "format": {
-          "description": "Format identifier for this runtime stack",
           "type": "string"
         },
         "frames": {
