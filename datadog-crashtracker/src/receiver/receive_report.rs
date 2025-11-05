@@ -8,8 +8,33 @@ use crate::{
     CrashtrackerConfiguration,
 };
 use anyhow::Context;
+use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct RuntimeStackFrameByteArray {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    function: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    type_name: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    file: Vec<u8>,
+    line: u32,
+    column: u32,
+}
+
+impl From<RuntimeStackFrameByteArray> for StackFrame {
+    fn from(value: RuntimeStackFrameByteArray) -> Self {
+        let mut stack_frame = StackFrame::new();
+        stack_frame.function = Some(String::from_utf8_lossy(&value.function).to_string());
+        stack_frame.type_name = Some(String::from_utf8_lossy(&value.type_name).to_string());
+        stack_frame.file = Some(String::from_utf8_lossy(&value.file).to_string());
+        stack_frame.line = Some(value.line);
+        stack_frame.column = Some(value.column);
+        stack_frame
+    }
+}
 
 /// The crashtracker collector sends data in blocks.
 /// This enum tracks which block we're currently in, and, for multi-line blocks,
@@ -122,8 +147,8 @@ fn process_line(
             StdinState::Waiting
         }
         StdinState::RuntimeStackFrame(mut frames) => {
-            let frame_json: StackFrame = serde_json::from_str(line)?;
-            frames.push(frame_json);
+            let frame_json: RuntimeStackFrameByteArray = serde_json::from_str(line)?;
+            frames.push(frame_json.into());
             StdinState::RuntimeStackFrame(frames)
         }
         StdinState::RuntimeStackString(lines)

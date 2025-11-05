@@ -14,7 +14,6 @@ use std::ffi::c_char;
 #[cfg(unix)]
 use std::{
     ptr,
-    str::from_utf8,
     sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
 use thiserror::Error;
@@ -331,35 +330,36 @@ unsafe fn emit_frame_as_json(
     writer: &mut dyn std::io::Write,
     frame: &RuntimeStackFrame,
 ) -> std::io::Result<()> {
+    // function, type_name, file fields can have invalid utf8 characters
+    // Converting them to str might error, and we can't use from_utf8_lossy because
+    // it's not signal safe. So we just write the raw bytes and convert on the
+    // receiver side
     write!(writer, "{{")?;
 
     let mut first_field = true;
 
     if !frame.function.is_empty() {
-        if let Ok(function_name) = from_utf8(frame.function) {
-            write!(writer, "\"function\": \"{}\"", function_name)?;
-            first_field = false;
+        if !first_field {
+            write!(writer, ", ")?;
         }
+        write!(writer, "\"function\": {:?}", frame.function)?;
+        first_field = false;
     }
 
     if !frame.type_name.is_empty() {
-        if let Ok(type_name) = from_utf8(frame.type_name) {
-            if !first_field {
-                write!(writer, ", ")?;
-            }
-            write!(writer, "\"type_name\": \"{}\"", type_name)?;
-            first_field = false;
+        if !first_field {
+            write!(writer, ", ")?;
         }
+        write!(writer, "\"type_name\": {:?}", frame.type_name)?;
+        first_field = false;
     }
 
     if !frame.file.is_empty() {
-        if let Ok(file_name) = from_utf8(frame.file) {
-            if !first_field {
-                write!(writer, ", ")?;
-            }
-            write!(writer, "\"file\": \"{}\"", file_name)?;
-            first_field = false;
+        if !first_field {
+            write!(writer, ", ")?;
         }
+        write!(writer, "\"file\": {:?}", frame.file)?;
+        first_field = false;
     }
 
     if frame.line != 0 {
@@ -394,11 +394,12 @@ mod tests {
     unsafe extern "C" fn test_emit_frame_callback(
         emit_frame: unsafe extern "C" fn(&RuntimeStackFrame),
     ) {
-        let function_name = "TestModule.TestClass.test_function";
+        let type_name = "TestModule.TestClass";
+        let function_name = "test_function";
         let file_name = "test.rb";
 
         let frame = RuntimeStackFrame {
-            type_name: "TestModule.TestClass".as_bytes(),
+            type_name: type_name.as_bytes(),
             function: function_name.as_bytes(),
             file: file_name.as_bytes(),
             line: 42,
@@ -466,25 +467,36 @@ mod tests {
 
         let json_output = String::from_utf8(buffer).expect("Invalid UTF-8 in output");
 
-        // Should contain the frame data as JSON
+        // Should contain the frame data as JSON with string fields as UTF-8 byte arrays
         assert!(
             json_output.contains("\"function\""),
             "Missing function field"
         );
+
+        let function_bytes = format!("{:?}", "test_function".as_bytes());
         assert!(
-            json_output.contains("TestModule.TestClass.test_function"),
-            "Missing function name"
+            json_output.contains(&function_bytes),
+            "Missing function name as byte array"
         );
+
         assert!(
             json_output.contains("\"type_name\""),
             "Missing type_name field"
         );
+
+        let type_name_bytes = format!("{:?}", "TestModule.TestClass".as_bytes());
         assert!(
-            json_output.contains("TestModule.TestClass"),
-            "Missing type_name name"
+            json_output.contains(&type_name_bytes),
+            "Missing type_name as byte array"
         );
+
         assert!(json_output.contains("\"file\""), "Missing file field");
-        assert!(json_output.contains("test.rb"), "Missing file name");
+
+        let file_bytes = format!("{:?}", "test.rb".as_bytes());
+        assert!(
+            json_output.contains(&file_bytes),
+            "Missing file name as byte array"
+        );
         assert!(json_output.contains("\"line\": 42"), "Missing line number");
         assert!(
             json_output.contains("\"column\": 10"),
@@ -514,7 +526,6 @@ mod tests {
         );
 
         let json_output = String::from_utf8(buffer).expect("Invalid UTF-8 in output");
-
         // Should contain the stacktrace string
         assert!(
             json_output.contains("test_stacktrace_string"),
@@ -562,26 +573,38 @@ mod tests {
             "Failed to invoke callback with writer"
         );
 
-        // Convert buffer to string and check JSON format
+        // Convert buffer to string and check JSON format with string fields as UTF-8 byte arrays
         let json_output = String::from_utf8(buffer).expect("Invalid UTF-8 in output");
+
         assert!(
             json_output.contains("\"function\""),
             "Missing function field"
         );
+
+        let function_bytes = format!("{:?}", "test_function".as_bytes());
         assert!(
-            json_output.contains("TestModule.TestClass.test_function"),
-            "Missing function name"
+            json_output.contains(&function_bytes),
+            "Missing function name as byte array"
         );
+
         assert!(
             json_output.contains("\"type_name\""),
             "Missing type_name field"
         );
+
+        let type_name_bytes = format!("{:?}", "TestModule.TestClass".as_bytes());
         assert!(
-            json_output.contains("TestModule.TestClass"),
-            "Missing type name"
+            json_output.contains(&type_name_bytes),
+            "Missing type name as byte array"
         );
+
         assert!(json_output.contains("\"file\""), "Missing file field");
-        assert!(json_output.contains("test.rb"), "Missing file name");
+
+        let file_bytes = format!("{:?}", "test.rb".as_bytes());
+        assert!(
+            json_output.contains(&file_bytes),
+            "Missing file name as byte array"
+        );
         assert!(json_output.contains("\"line\": 42"), "Missing line number");
         assert!(
             json_output.contains("\"column\": 10"),
