@@ -23,8 +23,7 @@ pub enum AssignmentReason {
 }
 
 /// Result of assignment evaluation.
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct Assignment {
     /// Assignment value that should be returned to the user.
     pub value: AssignmentValue,
@@ -53,8 +52,7 @@ pub struct Assignment {
 /// ```json
 /// {"type":"JSON","value":{"hello":"world"}}
 /// ```
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE", tag = "type", content = "value")]
+#[derive(Debug, Clone)]
 pub enum AssignmentValue {
     /// A string value.
     String(Str),
@@ -65,24 +63,37 @@ pub enum AssignmentValue {
     /// A boolean value.
     Boolean(bool),
     /// Arbitrary JSON value.
-    Json(Arc<serde_json::Value>),
+    Json {
+        value: Arc<serde_json::Value>,
+        raw: Arc<serde_json::value::RawValue>,
+    },
 }
 
 impl AssignmentValue {
     pub(crate) fn from_wire(
         ty: VariationType,
-        value: serde_json::Value,
+        value: Arc<serde_json::value::RawValue>,
     ) -> Option<AssignmentValue> {
-        use serde_json::Value;
-        Some(match (ty, value) {
-            (VariationType::String, Value::String(s)) => AssignmentValue::String(s.into()),
-            (VariationType::Integer, Value::Number(n)) => AssignmentValue::Integer(n.as_i64()?),
-            (VariationType::Numeric, Value::Number(n)) => AssignmentValue::Float(n.as_f64()?),
-            (VariationType::Boolean, Value::Bool(v)) => AssignmentValue::Boolean(v),
-            (VariationType::Json, v) => AssignmentValue::Json(Arc::new(v)),
-            // Type mismatch
-            _ => return None,
-        })
+        let result = match ty {
+            VariationType::String => {
+                AssignmentValue::String(serde_json::from_str(value.get()).ok()?)
+            }
+            VariationType::Integer => {
+                AssignmentValue::Integer(serde_json::from_str(value.get()).ok()?)
+            }
+            VariationType::Numeric => {
+                AssignmentValue::Float(serde_json::from_str(value.get()).ok()?)
+            }
+            VariationType::Boolean => {
+                AssignmentValue::Boolean(serde_json::from_str(value.get()).ok()?)
+            }
+            VariationType::Json => AssignmentValue::Json {
+                value: serde_json::from_str(value.get()).ok()?,
+                raw: value,
+            },
+        };
+
+        Some(result)
     }
 
     /// Checks if the assignment value is of type String.
@@ -244,7 +255,7 @@ impl AssignmentValue {
     /// - The JSON value if the assignment value is of type Json, otherwise `None`.
     pub fn as_json(&self) -> Option<&serde_json::Value> {
         match self {
-            Self::Json(value) => Some(value),
+            Self::Json { value, raw: _ } => Some(value),
             _ => None,
         }
     }
@@ -254,7 +265,7 @@ impl AssignmentValue {
     /// - The JSON value if the assignment value is of type Json, otherwise `None`.
     pub fn to_json(self) -> Option<Arc<serde_json::Value>> {
         match self {
-            Self::Json(value) => Some(value),
+            Self::Json { value, raw: _ } => Some(value),
             _ => None,
         }
     }
@@ -278,7 +289,7 @@ impl AssignmentValue {
             AssignmentValue::Integer(_) => VariationType::Integer,
             AssignmentValue::Float(_) => VariationType::Numeric,
             AssignmentValue::Boolean(_) => VariationType::Boolean,
-            AssignmentValue::Json(_) => VariationType::Json,
+            AssignmentValue::Json { .. } => VariationType::Json,
         }
     }
 
@@ -295,7 +306,7 @@ impl AssignmentValue {
                 Value::Number(Number::from_f64(*n).expect("value should not be infinite/NaN"))
             }
             AssignmentValue::Boolean(b) => Value::Bool(*b),
-            AssignmentValue::Json(value) => value.as_ref().clone(),
+            AssignmentValue::Json { value, raw: _ } => value.as_ref().clone(),
         }
     }
 }
@@ -323,7 +334,7 @@ mod pyo3_impl {
                 AssignmentValue::Integer(v) => v.into_pyobject(py)?.into_any(),
                 AssignmentValue::Float(v) => v.into_pyobject(py)?.into_any(),
                 AssignmentValue::Boolean(v) => v.into_pyobject(py)?.to_owned().into_any(),
-                AssignmentValue::Json(v) => json_to_pyobject(v, py)?,
+                AssignmentValue::Json { value, raw: _ } => json_to_pyobject(value, py)?,
             };
             Ok(obj)
         }

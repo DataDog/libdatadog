@@ -50,7 +50,7 @@ impl Configuration {
                 log::trace!(
                     flag_key,
                     targeting_key = context.targeting_key(),
-                    assignment:serde = assignment.value;
+                    assignment:? = assignment.value;
                     "evaluated a flag");
             }
 

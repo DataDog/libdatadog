@@ -1,12 +1,16 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::ffi::{c_char, c_uchar, CStr};
+use std::{
+    ffi::{c_char, c_uchar, CStr},
+    marker::PhantomData,
+};
 
 use datadog_ffe::rules_based::{
     now, Assignment, AssignmentValue, Configuration, EvaluationContext, EvaluationError, Str,
     VariationType,
 };
+use ddcommon_ffi::CharSlice;
 
 use crate::Handle;
 
@@ -103,11 +107,54 @@ pub unsafe extern "C" fn ddog_ffe_get_assignment(
 pub enum VariantValue {
     /// Evaluation did not produce any value.
     None,
-    String(*const c_uchar),
+    String(BorrowedStr),
     Integer(i64),
     Float(f64),
     Boolean(bool),
-    Object(*const c_char),
+    Object(BorrowedStr),
+}
+
+/// A string that has been borrowed. Beware that it is NOT nul-terminated!
+///
+/// # Ownership
+///
+/// This string is non-owning. You must not free `ptr`.
+///
+/// # Safety
+///
+/// - The string is not NUL-terminated, it can only be used with API that accept the len as an
+///   additional parameter.
+/// - The value must not be used after the value it borrowed from has been moved, modified, or
+///   freed.
+#[repr(C)]
+pub struct BorrowedStr {
+    /// May be NULL if `len` is `0`.
+    pub ptr: *const u8,
+    pub len: usize,
+}
+
+impl<'a> BorrowedStr {
+    /// Borrow string from `s`.
+    ///
+    /// # Safety
+    ///
+    /// - The returned value must non outlive `s`.
+    /// - `s` must not be modified while `BorrowedStr` is alive.
+    #[inline]
+    unsafe fn new(s: &str) -> BorrowedStr {
+        BorrowedStr {
+            ptr: s.as_ptr(),
+            len: s.len(),
+        }
+    }
+
+    #[inline]
+    const fn empty() -> BorrowedStr {
+        BorrowedStr {
+            ptr: std::ptr::null(),
+            len: 0,
+        }
+    }
 }
 
 /// Get value produced by evaluation.
@@ -117,16 +164,28 @@ pub enum VariantValue {
 /// The returned `VariantValue` borrows from `assignment`. It must not be used after `assignment` is
 /// freed.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_ffe_assignment_get_value(
+pub unsafe extern "C" fn ddog_ffe_assignment_get_value<'a>(
     assignment: Handle<ResolutionDetails>,
 ) -> VariantValue {
     match unsafe { assignment.as_ref() } {
         ResolutionDetails(Ok(assignment)) => match &assignment.value {
-            AssignmentValue::String(s) => VariantValue::String(s.as_ptr()),
+            AssignmentValue::String(s) => {
+                VariantValue::String(unsafe {
+                    // SAFETY: caller is required to not use return value after freeing
+                    // `assignment`.
+                    BorrowedStr::new(s.as_str())
+                })
+            }
             AssignmentValue::Integer(v) => VariantValue::Integer(*v),
             AssignmentValue::Float(v) => VariantValue::Float(*v),
             AssignmentValue::Boolean(v) => VariantValue::Boolean(*v),
-            AssignmentValue::Json(_value) => todo!("make AssignmentValue hold onto raw json value"),
+            AssignmentValue::Json { value: _, raw } => {
+                VariantValue::Object(unsafe {
+                    // SAFETY: caller is required to not use return value after freeing
+                    // `assignment`.
+                    BorrowedStr::new(raw.get())
+                })
+            }
         },
         _ => VariantValue::None,
     }
@@ -141,10 +200,14 @@ pub unsafe extern "C" fn ddog_ffe_assignment_get_value(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_ffe_assignment_get_variant(
     assignment: Handle<ResolutionDetails>,
-) -> *const c_uchar {
+) -> BorrowedStr {
     match unsafe { assignment.as_ref() } {
-        ResolutionDetails(Ok(assignment)) => assignment.variation_key.as_ptr(),
-        _ => std::ptr::null(),
+        ResolutionDetails(Ok(assignment)) => unsafe {
+            // SAFETY: caller is required to not use return value after freeing
+            // `assignment`.
+            BorrowedStr::new(&assignment.variation_key)
+        },
+        _ => BorrowedStr::empty(),
     }
 }
 
@@ -158,10 +221,14 @@ pub unsafe extern "C" fn ddog_ffe_assignment_get_variant(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_ffe_assignment_get_allocation_key(
     assignment: Handle<ResolutionDetails>,
-) -> *const c_uchar {
+) -> BorrowedStr {
     match unsafe { assignment.as_ref() } {
-        ResolutionDetails(Ok(assignment)) => assignment.allocation_key.as_ptr(),
-        _ => std::ptr::null(),
+        ResolutionDetails(Ok(assignment)) => unsafe {
+            // SAFETY: caller is required to not use return value after freeing
+            // `assignment`.
+            BorrowedStr::new(assignment.allocation_key.as_str())
+        },
+        _ => BorrowedStr::empty(),
     }
 }
 
