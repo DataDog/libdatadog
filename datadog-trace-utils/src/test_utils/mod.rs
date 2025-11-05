@@ -22,8 +22,8 @@ use crate::tracer_payload::TracerPayloadCollection;
 use datadog_trace_protobuf::pb;
 use ddcommon::Endpoint;
 use httpmock::Mock;
+use libdd_tinybytes::BytesString;
 use serde_json::json;
-use tinybytes::BytesString;
 use tokio::time::sleep;
 
 pub fn create_test_no_alloc_span(

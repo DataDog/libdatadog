@@ -49,7 +49,7 @@ impl<T: SpanText> Default for SharedDict<T> {
 
 #[cfg(test)]
 mod tests {
-    use tinybytes::{Bytes, BytesString};
+    use libdd_tinybytes::{Bytes, BytesString};
 
     use super::*;
 
